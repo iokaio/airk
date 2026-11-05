@@ -1,12 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
 """Fixture identity, replay safety, counting units and concurrent wire accounting."""
 import importlib.util
+import copy
+import io
 import json
 from pathlib import Path
 import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
+from unittest import mock
 
 SPEC = importlib.util.spec_from_file_location("mcp_investigation_benchmark", Path(__file__).parents[1] / "benchmark-mcp-investigation.py")
 BENCH = importlib.util.module_from_spec(SPEC)
@@ -38,8 +41,393 @@ for line in sys.stdin:
         threading.Thread(target=respond,args=(request,)).start()
 '''
 
+PAIRED_SERVER = r'''
+import json, os, sys
+calls = 0
+for line in sys.stdin:
+    request = json.loads(line)
+    if "id" not in request:
+        continue
+    if request["method"] == "initialize":
+        result = {"serverInfo":{"version":"1.8.2"}}
+    elif request["method"] == "tools/list":
+        result = {"tools":[]}
+    else:
+        calls += 1
+        if os.environ.get("BENCH_BUSY_FIRST") == "1" and calls == 1:
+            result = {"isError":True,"structuredContent":{"error":{"code":"fixture_busy","query_submitted":False,"retryable":True,"retry_after_ms":0}}}
+        else:
+            result = json.loads(os.environ["BENCH_REPLY"])
+    print(json.dumps({"jsonrpc":"2.0","id":request["id"],"result":result}),flush=True)
+'''
+
 
 class InvestigationBenchmarkTests(unittest.TestCase):
+    def legacy_metadata_fixture(self, temporary):
+        owner = Path(temporary).resolve()
+        control, source = owner / "control", owner / "source"
+        control.mkdir()
+        source.mkdir()
+        namespace = "01" * 16
+        configuration = {"command": str(Path(sys.executable).resolve()),
+                         "args": ["--service-runtime-dir", str(control), "--combined-session", json.dumps({"namespace": namespace}), "mcp"],
+                         "route": "isolated-approved-runtime", "expected_version": "fixture"}
+        case = {"index_ids": ["idx_" + "02" * 16]}
+        registration = {"binding": "b" * 64, "root": str(source), "data_root": str(owner / "data"), "collection": "original-fixture"}
+        epoch = {"status": "request_epoch", "namespace": namespace, "epoch": 0}
+        eligibility = {"status": "catalog_legacy_binding", "observation": {"schema": 1, "namespace": namespace,
+                        "project": registration["binding"], "eligibility": {"kind": "imported_snapshot", "registration": registration}}}
+        return configuration, case, source, registration, epoch, eligibility
+
+    def metadata_response(self, value):
+        return SimpleNamespace(returncode=0, stdout=json.dumps(value).encode())
+
+    def test_owned_legacy_lookup_requires_opt_in_and_never_uses_a_global_service(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            configuration, case, source, *_ = self.legacy_metadata_fixture(temporary)
+            with mock.patch.dict(BENCH.os.environ, {BENCH.LEGACY_COMPARE_ENV: "0"}), mock.patch.object(BENCH.subprocess, "run") as run:
+                with self.assertRaisesRegex(BENCH.LegacyComparisonError, "legacy_comparison_not_authorized"):
+                    BENCH.owned_legacy_configuration(configuration, case, source, 5)
+                run.assert_not_called()
+            configuration["args"] = ["--combined-session", "{}", "mcp"]
+            with mock.patch.dict(BENCH.os.environ, {BENCH.LEGACY_COMPARE_ENV: "1"}), mock.patch.object(BENCH.subprocess, "run") as run:
+                with self.assertRaisesRegex(BENCH.LegacyComparisonError, "explicit_owned_control_required"):
+                    BENCH.owned_legacy_configuration(configuration, case, source, 5)
+                run.assert_not_called()
+
+    def test_owned_legacy_lookup_uses_exact_native_pages_and_unique_explicit_root(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            configuration, case, source, registration, epoch, eligibility = self.legacy_metadata_fixture(temporary)
+            unselected = {**registration, "binding": "a" * 64, "root": str(source.parent / "unselected-never-opened")}
+            responses = [epoch,
+                         {"status": "projects", "page": {"revision": 7, "projects": [{"registration": unselected}], "after": unselected["binding"]}},
+                         {"status": "projects", "page": {"revision": 7, "projects": [{"registration": registration}], "after": None}},
+                         eligibility, epoch]
+            with mock.patch.dict(BENCH.os.environ, {BENCH.LEGACY_COMPARE_ENV: "1"}), mock.patch.object(BENCH.subprocess, "run", side_effect=[self.metadata_response(row) for row in responses]) as run:
+                legacy, evidence = BENCH.owned_legacy_configuration(configuration, case, source, 5)
+            self.assertEqual(legacy["args"], ["--service-runtime-dir", str(source.parent / "control"), "--service-project", registration["binding"], "mcp"])
+            methods = [json.loads(call.kwargs["input"]) for call in run.call_args_list]
+            self.assertEqual(methods[2], {"projects": {"after": unselected["binding"], "revision": 7, "limit": 32}})
+            self.assertEqual(methods[3], {"catalog_legacy_binding": {"project": registration["binding"], "expected_catalog_revision": None}})
+            self.assertTrue(all(call.args[0][1:3] == ["service", "rpc"] for call in run.call_args_list))
+            self.assertEqual(evidence["metadata_requests"], 5)
+            self.assertEqual(evidence["legacy_eligibility"], "imported_snapshot")
+            self.assertNotIn(str(source), json.dumps(evidence))
+
+    def test_owned_legacy_lookup_refuses_missing_ambiguous_changed_or_unimported_authority(self):
+        for condition, code in [("missing", "legacy_registration_missing"), ("ambiguous", "legacy_registration_ambiguous"),
+                                ("changed", "legacy_metadata_authority_changed"), ("unimported", "legacy_compatibility_snapshot_unavailable")]:
+            with self.subTest(condition=condition), tempfile.TemporaryDirectory() as temporary:
+                configuration, case, source, registration, epoch, eligibility = self.legacy_metadata_fixture(temporary)
+                rows = [] if condition == "missing" else [{"registration": registration}]
+                if condition == "ambiguous":
+                    rows.append({"registration": {**registration, "binding": "c" * 64}})
+                if condition == "unimported":
+                    eligibility["observation"]["eligibility"] = {"kind": "unavailable"}
+                final_epoch = {**epoch, "namespace": "ff" * 16} if condition == "changed" else epoch
+                responses = [epoch, {"status": "projects", "page": {"revision": 7, "projects": rows, "after": None}}, eligibility, final_epoch]
+                with mock.patch.dict(BENCH.os.environ, {BENCH.LEGACY_COMPARE_ENV: "1"}), mock.patch.object(BENCH.subprocess, "run", side_effect=[self.metadata_response(row) for row in responses]):
+                    with self.assertRaisesRegex(BENCH.LegacyComparisonError, code):
+                        BENCH.owned_legacy_configuration(configuration, case, source, 5)
+
+    def test_one_index_comparison_preserves_full_hits_and_does_not_claim_body_equivalence(self):
+        envelope, case, _ = self.combined()
+        member = envelope["structuredContent"]["members"][0]["result"]["structuredContent"]
+        member["publication"] = {"token": "exact-private-token"}
+        member["scope_observation"] = {"qualifier": "selected_subset"}
+        legacy = {"structuredContent": {"hits": copy.deepcopy(member["hits"]), "publication": member["publication"],
+                                        "semantic_readiness": {"state": "disabled"}}}
+        original = copy.deepcopy([envelope, legacy])
+        self.assertTrue(BENCH.compare_one_index(envelope, legacy, case)["full_hit_records_equal"])
+        self.assertEqual([envelope, legacy], original)
+        legacy["structuredContent"]["hits"][0]["text"] = "different text"
+        with self.assertRaisesRegex(BENCH.LegacyComparisonError, "one_index_hit_records_differ"):
+            BENCH.compare_one_index(envelope, legacy, case)
+        legacy["structuredContent"]["hits"] = copy.deepcopy(member["hits"])
+        legacy["structuredContent"]["publication"] = {"token": "changed"}
+        with self.assertRaisesRegex(BENCH.LegacyComparisonError, "one_index_publication_differ"):
+            BENCH.compare_one_index(envelope, legacy, case)
+
+    def test_one_index_comparison_materializes_hidden_header_publication_before_matching(self):
+        envelope, case, _ = self.combined()
+        combined = envelope["structuredContent"]
+        hits = combined["members"][0]["result"]["structuredContent"]["hits"]
+        template = {"fields": {"publication": {"member": None}},
+                    "slots": [{"path": ["publication", "member"], "kind": "integer"}]}
+        identity = BENCH.combined_evidence.framed_digest("airk/shared-native-header-template/1", template)
+        combined["shared_values"] = {"schema": BENCH.combined_evidence.HEADER_SCHEMA, "values": {identity: template}}
+        combined["members"][0]["result"] = {"hits": hits, BENCH.combined_evidence.HEADER_REFERENCE: {"id": identity, "values": [0]}}
+        legacy = {"structuredContent": {"hits": copy.deepcopy(hits), "publication": {"token": "exact-private-token"}}}
+        raw = copy.deepcopy(envelope)
+        self.assertTrue(BENCH.compare_one_index(envelope, legacy, case)["full_hit_records_equal"])
+        self.assertEqual(envelope, raw)
+        combined["members"][0]["result"][BENCH.combined_evidence.HEADER_REFERENCE]["values"] = [True]
+        with self.assertRaisesRegex(ValueError, "combined_header_slot_kind"):
+            BENCH.compare_one_index(envelope, legacy, case)
+
+    def test_opted_in_paired_protocol_retains_every_raw_attempt_and_fails_on_changed_hit(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            owner = Path(temporary)
+            source = owner / "source"
+            (source / "src").mkdir(parents=True)
+            (source / "src/shared.rs").write_text("needle\n", encoding="utf-8")
+            inventory = BENCH.combined_source_inventory(source)
+            envelope, case, _ = self.combined()
+            case["arguments"].update(query="needle", mode="lexical", path_prefix="src/", verification="off")
+            member = envelope["structuredContent"]["members"][0]["result"]["structuredContent"]
+            member["hits"][0]["citation"]["content_hash"] = inventory[0]["sha256"]
+            member["publication"] = {"token": "exact-private-token"}
+            legacy = {"structuredContent": copy.deepcopy(member)}
+            legacy["structuredContent"]["semantic_readiness"] = {"state": "disabled"}
+            server = owner / "paired.py"
+            server.write_text(PAIRED_SERVER, encoding="utf-8")
+            configuration = {"command": str(Path(sys.executable).resolve()),
+                             "args": [str(server), "--combined-session", json.dumps({"project_ids": case["project_ids"]}), "mcp"],
+                             "launcher_sha256": BENCH.digest_bytes(Path(sys.executable).read_bytes()),
+                             "route": "isolated-approved-runtime", "expected_version": "1.8.2", "env": {"BENCH_REPLY": json.dumps(envelope)}}
+            legacy_configuration = {**configuration, "args": [str(server), "--service-project", "b" * 64, "mcp"],
+                                    "env": {"BENCH_REPLY": json.dumps(legacy), "BENCH_BUSY_FIRST": "1"}}
+            config_path, scenario_path = owner / "configuration.json", owner / "scenario.json"
+            config_path.write_text(json.dumps(configuration), encoding="utf-8")
+            scenario_path.write_text(json.dumps({"schema": BENCH.COMBINED_SCHEMA,
+                "indexes": [{"index_id": case["index_ids"][0], "source_root": str(source), "inventory": inventory}], "cases": [case]}), encoding="utf-8")
+            args = SimpleNamespace(configuration=config_path, scenario=scenario_path, output=owner / "matched", samples=2, fanouts=[1], timeout=5)
+            with mock.patch.dict(BENCH.os.environ, {BENCH.LEGACY_COMPARE_ENV: "1"}), mock.patch.object(BENCH, "owned_legacy_configuration", return_value=(legacy_configuration, {"unique_explicit_root_match": True})):
+                self.assertTrue(BENCH.combined(args))
+            report = json.loads((args.output / "report.json").read_text())
+            comparison = report["legacy_one_index"]
+            self.assertTrue(comparison["passed"] and comparison["source_unchanged"])
+            self.assertEqual(comparison["errors"], 1)
+            self.assertEqual(comparison["retries"], 1)
+            self.assertEqual(comparison["legacy_latency_ms"]["samples"], 2)
+            self.assertNotIn("exact-private-token", json.dumps(report))
+            raw = [json.loads(line) for line in (args.output / comparison["raw_outcomes"]).read_text().splitlines()]
+            self.assertEqual(len(raw), 5, "both complete responses plus the complete busy retry remain available")
+            self.assertEqual([row["attempt"] for row in raw if row["route"] == "legacy" and row["sample"] == 0], [1, 2])
+            self.assertIn("exact-private-token", json.dumps(raw))
+            legacy["structuredContent"]["hits"][0]["text"] = "changed native hit text"
+            legacy_configuration["env"] = {"BENCH_REPLY": json.dumps(legacy)}
+            args.output = owner / "mismatched"
+            with mock.patch.dict(BENCH.os.environ, {BENCH.LEGACY_COMPARE_ENV: "1"}), mock.patch.object(BENCH, "owned_legacy_configuration", return_value=(legacy_configuration, {})):
+                self.assertFalse(BENCH.combined(args))
+            failed = json.loads((args.output / "report.json").read_text())
+            self.assertEqual(failed["failure_code"], "one_index_hit_records_differ")
+            self.assertFalse(failed["legacy_one_index"]["passed"])
+            self.assertTrue(failed["source_unchanged"])
+            self.assertTrue(failed["legacy_one_index"]["frontend_cleanup"]["graceful_eof"])
+
+    def combined(self):
+        index = "idx_" + "01" * 16
+        project = "prj_" + "02" * 16
+        source = "src_" + "03" * 16
+        hit = {"citation": {"path": "src/shared.rs", "content_hash": "a" * 64}, "text": "needle"}
+        result = {"schema": "airk.combined-read/1", "members": [{"index_id": index, "outcome": "complete",
+            "allocation": {"limit": 2, "max_bytes": 100, "verification_max_sources": 0,
+                           "verification_max_bytes": 0, "verification_deadline_ms": 0},
+            "result": {"structuredContent": {"hits": [hit]}}}],
+            "ranking": [{"index_id": index, "result_pointer": "/members/0/result/structuredContent/hits/0",
+                "origin": {"index_id": index, "project_ids": [project], "source_root_id": source}}],
+            "publication_vector": {"members": [{"index_id": index, "publication": {"token": "exact-private-token"}}]},
+            "partial": False, "truncated": False}
+        result["ranking"][0]["origin"]["publication"] = {"token": "exact-private-token"}
+        case = {"index_ids": [index], "project_ids": [project], "arguments": {"limit": 2, "max_bytes": 100},
+                "expected": [{"index_id": index, "path": "src/shared.rs", "project_ids": [project], "source_root_id": source}]}
+        return {"structuredContent": result}, case, {(index, "src/shared.rs"): "a" * 64}
+
+    def test_combined_observation_retains_identity_proof_without_private_tokens_or_paths(self):
+        envelope, case, hashes = self.combined()
+        observed = BENCH.combined_observation(envelope, case, hashes)
+        self.assertEqual(observed["selected_indexes"], 1)
+        self.assertTrue(observed["source_hashes_and_attribution_match"])
+        self.assertIsNone(observed["unselected_native_work"], "response membership cannot prove zero worker access")
+        self.assertNotIn("exact-private-token", json.dumps(observed))
+        self.assertNotIn("src/shared.rs", json.dumps(observed))
+
+    def test_combined_observation_resolves_publication_refs_without_rewriting_raw(self):
+        envelope, case, hashes = self.combined()
+        origin = envelope["structuredContent"]["ranking"][0]["origin"]
+        origin.pop("publication")
+        origin["publication_ref"] = {"member": 0}
+        raw = copy.deepcopy(envelope)
+        self.assertTrue(BENCH.combined_observation(envelope, case, hashes)["source_hashes_and_attribution_match"])
+        self.assertEqual(envelope, raw)
+        for reference in ({"member": True}, {"member": 1}, {"member": 0, "extra": 1}):
+            origin["publication_ref"] = reference
+            with self.assertRaisesRegex(ValueError, "combined_origin_or_hash_mismatch"):
+                BENCH.combined_observation(envelope, case, hashes)
+
+    def test_combined_observation_rejects_duplicate_or_unselected_members(self):
+        envelope, case, hashes = self.combined()
+        envelope["structuredContent"]["members"] *= 2
+        with self.assertRaisesRegex(ValueError, "combined_member_selection_mismatch"):
+            BENCH.combined_observation(envelope, case, hashes)
+
+    def test_combined_observation_rejects_wrong_shared_project_attribution(self):
+        envelope, case, hashes = self.combined()
+        envelope["structuredContent"]["ranking"][0]["origin"]["project_ids"] += ["prj_" + "04" * 16]
+        with self.assertRaisesRegex(ValueError, "combined_origin_or_hash_mismatch"):
+            BENCH.combined_observation(envelope, case, hashes)
+
+    def test_combined_observation_preserves_separate_index_origins_and_hash_validation(self):
+        envelope, case, hashes = self.combined()
+        envelope["structuredContent"]["members"][0]["result"]["structuredContent"]["hits"][0]["citation"]["content_hash"] = "b" * 64
+        with self.assertRaisesRegex(ValueError, "combined_origin_or_hash_mismatch"):
+            BENCH.combined_observation(envelope, case, hashes)
+
+    def test_combined_observation_detects_multiplied_total_budgets(self):
+        envelope, case, hashes = self.combined()
+        envelope["structuredContent"]["members"][0]["allocation"]["verification_max_sources"] = 9
+        with self.assertRaisesRegex(ValueError, "combined_budget_multiplied"):
+            BENCH.combined_observation(envelope, case, hashes)
+
+    def test_combined_fixture_snapshot_refuses_capacity_excess_before_reading_content(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / "oversized.txt"
+            with path.open("wb") as source:
+                source.truncate(16 * 1024 * 1024 + 1)
+            with self.assertRaisesRegex(ValueError, "combined_fixture_size_limit"):
+                BENCH.combined_source_inventory(root)
+
+    def test_combined_configuration_rejects_implicit_or_mixed_legacy_scope(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "config.json"
+            value = {"command": str(Path(sys.executable).resolve()), "args": ["--root", temporary, "mcp"],
+                     "launcher_sha256": BENCH.digest_bytes(Path(sys.executable).read_bytes()),
+                     "route": "isolated-approved-runtime", "expected_version": "fixture"}
+            path.write_text(json.dumps(value), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "explicit_combined_scope_required"):
+                BENCH.load_combined_configuration(path)
+            session = json.dumps({"project_ids": ["prj_" + "02" * 16]})
+            value["args"] = ["--combined-session", session, "mcp"]
+            path.write_text(json.dumps(value), encoding="utf-8")
+            accepted, _ = BENCH.load_combined_configuration(path)
+            self.assertEqual(accepted, value)
+            value["args"] += ["--additional-root", temporary, "mcp"]
+            path.write_text(json.dumps(value), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "explicit_combined_scope_required"):
+                BENCH.load_combined_configuration(path)
+
+    def test_combined_replay_keeps_failed_attempt_and_actual_frontend_cleanup(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            owner = Path(temporary)
+            fixture = owner / "fixture"
+            BENCH.create_fixture(fixture)
+            root, manifest = BENCH.load_fixture(fixture)
+            server = owner / "fake.py"
+            server.write_text(SERVER, encoding="utf-8")
+            index = "idx_" + "01" * 16
+            project = "prj_" + "02" * 16
+            config = {"command": str(Path(sys.executable).resolve()),
+                      "args": [str(server), "--combined-session", json.dumps({"project_ids": [project]}), "mcp"],
+                      "launcher_sha256": BENCH.digest_bytes(Path(sys.executable).read_bytes()),
+                      "route": "isolated-approved-runtime", "expected_version": "1.8.2"}
+            config_path = owner / "configuration.json"
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+            scenario = {"schema": BENCH.COMBINED_SCHEMA,
+                        "indexes": [{"index_id": index, "source_root": str(root), "inventory": manifest["inventory"]}],
+                        "cases": [{"index_ids": [index], "project_ids": [project],
+                                   "arguments": {"query": "Session", "mode": "lexical", "limit": 1, "max_bytes": 100},
+                                   "expected": [{"index_id": index, "path": "src/alpha.rs", "source_root_id": "src_" + "03" * 16,
+                                                 "project_ids": [project]}]}]}
+            scenario_path = owner / "scenario.json"
+            scenario_path.write_text(json.dumps(scenario), encoding="utf-8")
+            args = SimpleNamespace(configuration=config_path, scenario=scenario_path, output=owner / "output",
+                                   samples=1, fanouts=[1], timeout=5)
+            with mock.patch.dict(BENCH.os.environ, {BENCH.COMBINED_RAW_ENV: "0", BENCH.LEGACY_COMPARE_ENV: "0"}):
+                self.assertFalse(BENCH.combined(args), "a successful protocol reply without combined evidence is a failed measurement")
+            report = json.loads((args.output / "report.json").read_text())
+            trial = report["cases"][0]["trials"][0]
+            self.assertEqual(trial["failure_class"], "ValueError")
+            self.assertFalse(trial["validated"])
+            self.assertEqual(len(trial["attempts"]), 1)
+            self.assertGreater(trial["response_bytes"], 0)
+            self.assertTrue(report["cases"][0]["frontend_cleanup"]["graceful_eof"])
+            self.assertTrue(report["source_unchanged"])
+            self.assertNotIn("raw_outcomes", report)
+            self.assertFalse((args.output / "raw.jsonl").exists())
+            # A typed native size failure remains an exact full raw outcome;
+            # the positive evidence oracle and its original budgets still fail.
+            failed_envelope = {"isError": True, "structuredContent": {"error": {"code": "combined_reply_budget", "retryable": False},
+                "future_error_observation": {"complete_budget_data": [1, 2, 4, 32]}}}
+            server.write_text(PAIRED_SERVER, encoding="utf-8")
+            config["env"] = {"BENCH_REPLY": json.dumps(failed_envelope)}
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+            args.output = owner / "raw-output"
+            with mock.patch.dict(BENCH.os.environ, {BENCH.COMBINED_RAW_ENV: "1", BENCH.LEGACY_COMPARE_ENV: "0"}):
+                self.assertFalse(BENCH.combined(args))
+            report = json.loads((args.output / "report.json").read_text())
+            raw = [json.loads(line) for line in (args.output / "raw.jsonl").read_text().splitlines()]
+            self.assertEqual(len(raw), 1)
+            self.assertEqual(raw[0]["envelope"], failed_envelope)
+            self.assertEqual(raw[0]["selected_indexes"], 1)
+            self.assertFalse(report["cases"][0]["trials"][0]["validated"])
+            self.assertTrue(report["cases"][0]["trials"][0]["observation"]["is_error"])
+            self.assertTrue(report["source_unchanged"])
+
+    def test_raw_retention_keeps_a_received_jsonrpc_failure_without_fabricating_a_result(self):
+        error = RuntimeError("protocol_error")
+        error.raw_response = {"jsonrpc": "2.0", "id": 7, "error": {"code": -32000, "data": {"future": True}}}
+        session = BENCH.RetainedSession({}, 5)
+        with mock.patch.object(BENCH.Session, "request", side_effect=error):
+            with self.assertRaisesRegex(RuntimeError, "protocol_error"):
+                session.request("tools/call", {"name": "search"})
+        retained = io.StringIO()
+        BENCH.retain_query_replies(retained, session, 0, "combined", selected_indexes=32)
+        row = json.loads(retained.getvalue())
+        self.assertEqual(row["envelope"], {"jsonrpc_response": error.raw_response})
+        self.assertEqual(row["selected_indexes"], 32)
+        self.assertEqual(session.query_replies, [])
+
+    def phase_report(self):
+        return {"schema": BENCH.SCHEMA, "status": "complete", "source_unchanged": True,
+                "route": "isolated-approved-runtime",
+                "fixture_sha256": "5c0ddbe2197afd930d64d6f3dbef844e3247fb52ebb2b35175ca9597397da256",
+                "cohorts": [{"connection": name, "concurrency": 1, "coverage_complete": True,
+                    "cleanup_clean": True, "task_ms": {"median": 0, "p95": 0},
+                    "trials": [{"coverage": {"complete": True}, "publication_consistent": True,
+                        "task_ms": 100, "task_with_connection_ms": 120,
+                        "calls": [{"retries": 0, "attempts": [{"is_error": False, "source_verification": None}]}
+                                  for _ in range(9)]} for _ in range(30)]}
+                    for name, _, _ in BENCH.COHORTS]}
+
+    def test_phase_gate_input_recomputes_latency_and_preserves_fixed_sample_requirements(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "report.json"
+            report = self.phase_report()
+            path.write_text(json.dumps(report), encoding="utf-8")
+            groups, counts = BENCH.phase_measurement(path, "off")
+            self.assertEqual(next(iter(groups.values()))["task_ms"]["median"], 100,
+                             "an edited summary must not replace retained trial timings")
+            self.assertEqual(counts["calls"], 810)
+            report["cohorts"][0]["trials"].pop()
+            path.write_text(json.dumps(report), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "phase_sample_or_coverage_contract"):
+                BENCH.phase_measurement(path, "off")
+
+    def test_phase_gate_inputs_reject_retry_or_off_source_checks(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "report.json"
+            for mutation, expected in (({"retries": 1}, "phase_error_or_retry"),
+                                       ({"attempts": [{"is_error": False, "source_verification": {"mode": "report"}}]}, "phase_off_source_checks")):
+                report = self.phase_report()
+                report["cohorts"][0]["trials"][0]["calls"][0].update(mutation)
+                path.write_text(json.dumps(report), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, expected):
+                    BENCH.phase_measurement(path, "off")
+
+    def test_phase_compare_keeps_unchanged_absolute_and_relative_allowances(self):
+        def groups(median, p95):
+            return {"cohort": {metric: {"median": median, "p95": p95}
+                               for metric in ("task_ms", "task_with_connection_ms")}}
+        gates = BENCH.phase_compare(groups(125, 150), groups(100, 100), "control")
+        self.assertTrue(all(gate["passed"] for gate in gates))
+        gates = BENCH.phase_compare(groups(125.01, 150.01), groups(100, 100), "control")
+        self.assertFalse(any(gate["passed"] for gate in gates))
+        gates = BENCH.phase_compare(groups(1100, 1150), groups(1000, 1000), "control")
+        self.assertTrue(all(gate["passed"] for gate in gates))
+        self.assertEqual({gate["bound"] for gate in gates}, {1100, 1150})
+
     def test_verification_observations_keep_cost_without_source_locations_or_prose(self):
         receipt = {"schema": "airk.saved-source-verification/1", "mode": "report", "status": "partial",
                    "counts": {"bytes_read": 4096, "matched_sources": 1, "requested_sources": None},

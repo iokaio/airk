@@ -4,6 +4,8 @@ import { test } from 'node:test';
 import { EvidenceClient, EvidenceFailure, EXPLORER_CLIENT_NAME, NativeTool } from '../explorerEvidence';
 import { McpSessionError } from '../mcpStdioSession';
 import { LaunchSpec } from '../model';
+import { sharedCapabilityDigest } from '../sharedCapabilityFields';
+import { nativeHeaderTemplateDigest } from '../nativeMetadata';
 
 const project = 'ab'.repeat(32);
 const spec: LaunchSpec = { command: '/install/airk-launcher', root: '/source', dataDir: '/data', collection: 'demo', name: 'demo',
@@ -136,4 +138,58 @@ test('native refusals retain the exact original MCP envelope and transport failu
     try {await assert.rejects(offline.client.call('airk_status',{}),(error:unknown)=>{
         assert.ok(error instanceof EvidenceFailure);assert.equal(error.nativeResponse,undefined);return true;
     });}finally{offline.client.dispose();}
+});
+
+
+test('native ingress materializes metadata once and preserves original encoded receipts for copies', async () => {
+    const fields = { adapters: [{ id: 'native' }], workbench: { operations: {} } }, id = sharedCapabilityDigest(fields);
+    const raw = { schema: 'airk.combined-read/1', shared_values: { schema: 'airk.shared-capability-fields/1', values: { [id]: fields } },
+        members: [{ index_id: 'idx_' + '12'.repeat(16), outcome: 'complete', result: { $airk_shared_capability_fields: id, future_inline: { retained: true } } }],
+        delivery_observation: { digest: 'authenticated-original' } };
+    const original = structuredClone(raw);
+    const { client } = harness(async () => text(raw));
+    try {
+        const result = await client.call('airk_capabilities', {});
+        assert.deepEqual(result.rawPayload, original);
+        assert.equal(result.payload.delivery_observation, undefined, 'old digest does not describe the derived projection');
+        const member = (result.payload.members as any[])[0].result;
+        assert.deepEqual(member.adapters, fields.adapters);
+        assert.deepEqual(member.future_inline, { retained: true });
+        assert.equal(member.$airk_shared_capability_fields, undefined);
+        assert.deepEqual(raw, original);
+    } finally { client.dispose(); }
+});
+
+test('unresolvable metadata refuses derived evidence and retains the complete original reply without retry', async () => {
+    let calls = 0;
+    const raw = { schema: 'airk.combined-read/1', members: [{ index_id: 'idx_' + '12'.repeat(16), outcome: 'complete', result: { $airk_shared_capability_fields: 'ab'.repeat(32), hits: [] } }] };
+    const wire = text(raw), { client } = harness(async () => { calls++; return wire; });
+    try {
+        await assert.rejects(client.call('airk_search', {}), error => {
+            assert.ok(error instanceof EvidenceFailure);
+            assert.deepEqual(error.nativeResponse, wire);
+            assert.deepEqual(error.nativePayload, {});
+            return true;
+        });
+        assert.equal(calls, 1);
+    } finally { client.dispose(); }
+});
+
+
+test('new native header template slots decode at ingress without altering raw metadata tables', async () => {
+    const template = { fields: { collection: null, generation: null, truncated: null, request_id: null }, slots: [
+        { path: ['collection'], kind: 'string' }, { path: ['generation'], kind: 'integer' },
+        { path: ['request_id'], kind: 'null' }, { path: ['truncated'], kind: 'boolean' }] };
+    const id = nativeHeaderTemplateDigest(template);
+    const raw = { schema: 'airk.combined-read/1', shared_values: { schema: 'airk.shared-native-header-templates/1', values: { [id]: template } },
+        members: [{ index_id: 'idx_' + '12'.repeat(16), outcome: 'complete', result: { $airk_shared_native_header_fields: { id, values: ['member', 7, null, false] },
+            hits: [{ citation: { path: 'a.rs', start_line: 1, end_line: 1 }, text: 'inline evidence' }], source_verification: { retained: true } } }],
+        delivery_observation: { digest: 'raw-header-only' } };
+    const { client } = harness(async () => text(raw));
+    try {
+        const result = await client.call('airk_search', {}), body = (result.payload.members as any[])[0].result;
+        assert.equal(body.collection, 'member'); assert.equal(body.generation, 7); assert.equal(body.truncated, false); assert.equal(body.request_id, null);
+        assert.deepEqual(body.hits, raw.members[0].result.hits); assert.deepEqual(body.source_verification, { retained: true });
+        assert.equal(result.payload.delivery_observation, undefined); assert.deepEqual(result.rawPayload, raw);
+    } finally { client.dispose(); }
 });

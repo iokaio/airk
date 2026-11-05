@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
-import { FactItemView, FactListView, OpenSourceResult } from '../explorerContracts';
+import { appendFactPage, FactItemView, FactListView, OpenSourceResult } from '../explorerContracts';
 import { request } from './api';
 import { countLine, shortToken } from './format';
+import { CompleteNativeResponse } from './components';
 
 const CLASS_TITLE: Record<string, string> = {
     E1: 'E1 indexed text: a textual hit, not a binding or coverage',
@@ -49,7 +50,7 @@ export function FactList(props: { list: FactListView; empty: string; actions?: (
         setLoading(true); setError(undefined);
         try {
             const next = await request<FactListView>('list.more', { more: list.more });
-            setList({ ...next, items: [...list.items, ...next.items], returned: list.returned + next.returned });
+            setList(appendFactPage(list, next));
         } catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
         finally { setLoading(false); }
     };
@@ -58,6 +59,8 @@ export function FactList(props: { list: FactListView; empty: string; actions?: (
             <p class="result-meta"><strong>{countLine(list.returned, list.limit, list.truncated || !!list.more)}</strong>
                 {' · '}publication <span title={list.publication}>{shortToken(list.publication)}</span></p>
             {list.notes.map(note => <p key={note} class="muted">{note}</p>)}
+            {list.nativeFailure && <p class="callout" role="alert">The native read failed. Retained attempted results do not satisfy the requested requirements.</p>}
+            <CompleteNativeResponse value={list.nativePages ? { schema: 'airk.explorer.native-pages/1', pages: list.nativePages } : list.nativeResult} />
             {!list.items.length && <p class="callout">{props.empty}</p>}
             <ol class="hits">
                 {list.items.map((item, index) => (
@@ -65,6 +68,7 @@ export function FactList(props: { list: FactListView; empty: string; actions?: (
                         <div class="hit-head">
                             <code class="path">{item.path}{item.startLine ? `:${item.startLine}${item.endLine && item.endLine !== item.startLine ? `–${item.endLine}` : ''}` : ''}</code>
                             {item.location && <span class="tag" title="Original document location">{item.location}</span>}
+                            {item.indexId && <span class="tag" title={`Selected Projects: ${item.projectIds?.join(', ') ?? ''}`}>{item.indexId}</span>}
                             <span class="tag" title={CLASS_TITLE[item.evidenceClass]}>{item.evidenceClass}</span>
                             <span class="tag">{item.kind}</span>
                             {item.resolution && <span class="tag" title="Written targets are not resolved bindings">{item.resolution.replaceAll('_', ' ')}</span>}

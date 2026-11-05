@@ -45,7 +45,7 @@ cross-platform qualification.
 | P4 | Complete - `a425ba0` | Single-index saved-source verification; maintainer selected Report as the default, with explicit Off and Require |
 | P5 | Complete — this locally qualified checkpoint | Inert normalized catalogs and owned U0–U6 upgrade/recovery; production activation disabled until P6 |
 | P6 | Complete — Windows local qualification and required full Neo checkpoint | Guarded authority-1 activation, reviewed setup/grants, installed Windows scenarios, all 84 matched native latency gates and source-bound Neo campaign with explicit corrections/reruns; release/platform limits remain separate |
-| P7 | Not started | Complete combined-read parity after P6 |
+| P7 | Complete — locally qualified checkpoint | Unique-index composition and complete native/CLI/MCP/Workbench/parse/session/verification support; Windows release and Neo debug actual suites, all 84 latency gates and 120 Windows fan-out trials passed; platform/release limits below |
 | P8–P10 | Not started | Recommendations/harness scopes, permanent trim, split and integrated advice |
 | P11a–P12 | Not started | Effective-profile reporting, explicit retained-profile migration and refresh |
 | P13a/P13b | Conditional | Ranking/diversity only if frozen relevance/resource gates pass |
@@ -3343,3 +3343,444 @@ ACL, global resource limit, installed user runtime or private/index-state export
 was required. No P7, push, PR or publication occurred. Version remains **1.8.8**.
 The primary agent reviewed the combined change and validation evidence; no
 independent review is claimed.
+
+## P7 — combined retrieval and consumers
+
+Started 4 November 2026. Initial development checkpoints below retain their
+observed failures and pending states; the final local qualification follows them.
+
+Entry commit: `83d6084b14326e057fc85cda9dc0b717c1c36f41`. The required P6f/Neo
+checkpoint above was complete before this work began. Working version remains
+**1.8.8**; no additional version increment, commit, push, PR, installation or
+publication has been performed for P7. The pre-existing untracked research note
+was preserved.
+
+The user authorized parallel agents for separate native composition, transport,
+parse/session, verification, Workbench and qualification owners. The primary
+agent integrates the shared contracts and performs a separate review. At entry,
+full P7 acceptance remained pending the native process, complete repository and
+frozen performance checks; the observations below begin with development checkpoints.
+
+Implemented contracts are described in [combined reads](../combined-reads.md):
+explicit grant-bound Project/index selection, canonical unique-index unions,
+fan-out one, deterministic shared budgets, equal-rank contributions, precise
+source/Project origins, complete member failures and verification, publication
+vectors and full-vector continuations. File follow-ups require one origin.
+CLI convenience reads, tool calls/shell, MCP, plans, Workbench and Explorer
+consumers retain qualified evidence and full JSON/Markdown results. Applying a
+combined Search draft only prefills its captured reviewed selection.
+
+Review found and corrected two native identity/fencing gaps. Current catalog
+aliases cannot qualify retained citation paths; an exact-publication protected
+source projection now supplies the published mapping without source I/O. A saved
+catalog revision alone cannot detect an in-memory pending revoke; the final
+native receipt checks the shared admission gate at actual receipt-write polls.
+Its scope-admission guarantee does not recall bytes already received by a
+frontend. Transport capacity observations precede the finalized body digest,
+and subsequent transport rendering preserves that body and receipt together.
+
+Development validation so far:
+
+- Workspace all-target/all-feature check passed, most recently in **15.06 s**.
+- Workspace all-target/all-feature Clippy passed with warnings denied, after
+  correcting ordinary style diagnostics without lint exemptions.
+- The initial focused combined run passed **28 tests** across Core, Kernel and
+  MCP, including genuine native handlers through duplex MCP/Unified adapters.
+- A broader library run passed **104 Core** and **189 Kernel** cases, with one
+  explicitly ignored role measurement. Kernel included the real retained-alias
+  regression and its existing large-catalog workload (**397.84 s** total). MCP
+  passed **117** and failed **three** discovery integration assertions; the
+  unsupported plan response-option injection and metadata-family assertions
+  were corrected. The affected final rerun remains required.
+- The integrated extension build passed all three TypeScript projects and
+  bundling; **667 passed, 19 environment-gated skips, zero failures**. Separate
+  source-origin host checks passed **44/44**. Earlier stale catalog-count and
+  pure-module inventory failures are retained in the ignored logs.
+- Python's full script suite ran **428 cases**, with nine skips and one Git
+  ownership-environment error. Its complete affected packaging suite then
+  passed **14/14** with a process-local safe-directory setting. No global Git
+  configuration or ownership was changed. Focused new benchmark/relevance
+  tests passed **25/25** and **12/12**; historical evaluator equivalence
+  reproduced **84/84 P6f gates**, which is not P7 performance evidence.
+- Repository checks passed for **1,709 public files** at that checkpoint;
+  version checks confirmed native/extension/locks agree on **1.8.8**. Final
+  repository, formatting and whitespace checks remain required after freeze.
+
+Logs remain under ignored `artifacts/v190/p7-*`. Fresh native-pair and actual
+service/CLI/MCP checks are in progress. No P7 timing, installed editor,
+macOS/Linux, signing or release success is asserted by the component results.
+
+The next actual-process checkpoint used a fresh, source-bound debug pair
+(`p7-runtime-debug-r2`). The selected-subset/revocation, member availability and
+**1/2/4/32-index count-one** cases passed. Three other cases failed: the fixture
+prepared requests through the test executable's producer identity, parity
+comparison retained elapsed allocation/cursor dates, and capabilities exceeded
+the canonical body allowance through repeated static catalogs. These are retained
+as failed observations, not qualifications. The fixture now uses the actual
+staged main for request preparation; timing normalization validates original
+delivery/cursor digests before excluding dated observations. Capabilities require
+an explicit lossless shared-field representation rather than an increased frame
+limit or omitted native data. The corrected actual-process run remains pending.
+
+A separate review found lost Explorer outer continuations and a fresh timeout
+per member after an exhausted final source-check deadline. Continuations now
+retain exact request inputs, the complete vector and outer cursors up to 32 KiB;
+source-check admission uses one aggregate deadline and explicit unqueried
+outcomes without native submission after expiry. These corrections still require
+the final native regression run. The complete extension suite subsequently
+passed **671 tests**, with **19 environment-gated skips** and zero failures
+(`p7-vscode-r3.log`); further capabilities consumer changes invalidate the
+affected extension checks. Python's complete suite passed **428 tests**, with
+**nine skips**, in **22.962 s** (`p7-python-all-r2.log`) using only a process-local
+Git safe-directory setting.
+
+After the shared-capabilities and final-receipt consumer corrections, the
+integrated extension suite passed **679 tests**, with **19 environment-gated
+skips** and zero failures, including compilation of all three TypeScript
+projects and bundling (`p7-vscode-r4.log`). The affected packaging suite passed
+**21/21**. Workspace all-target/all-feature Clippy passed with warnings denied
+in **29.61 s**; its preceding attempt retained one ordinary test-only
+`useless_vec` diagnostic, corrected without an exemption. The focused combined
+native-library gate passed **59/59** (**17 CLI, 15 Core, 21 Kernel, six MCP**),
+including the 32-member exhausted-verification fixture and shared-field
+materialization checks. The canonical parser regenerated the CLI reference and
+both documentation tests passed. Repository checks passed for **1,713 public
+files**, and native/extension/lock versions still agree on **1.8.8**.
+
+The live ignore inventory was regenerated: **57 literal Rust ignores**, split
+into **11 helper entry points** and **46 explicit qualification cases**, with
+no missing reasons and the same four routine nextest exclusions. These counts
+are inventory, not passing qualification. A fresh release pair is being built
+before the actual-service and performance runs; no timing pass is inferred from
+the focused gates above.
+
+The fresh Windows x64 **release** pair (`p7-runtime-release-r3`) staged
+successfully after separate optimized helper (**4m 21s**) and lightweight-main
+(**7m 04s**) builds, model verification and notices for **366** dependencies.
+Its build receipt binds **906 native source inputs**:
+
+- Source: `079c175deb66cfff56cd437321194f91e0f117a330b2516dfbd6e79a4ac58573`.
+- Main: `52088503389829db71fc232abd1f98081efff9d71e03770d819d5b9374a3211a`.
+- Helper: `59e549e6e38f50fe3d81b5dacfa697a3b9fce5f90d00da90bab0a544a6052128`.
+- Install manifest: `58d768515d7266095a2732a4c8b8a69e26229787e46d1dc6c856d5204e676bc0`.
+
+Against that exact pair, all **seven actual-process combined tests passed** in
+**96.90 s**, with the opt-in measurement holder separately ignored
+(`p7-native-combined-r3.log`). These cover full native/CLI/MCP read-family
+parity, exact capability materialization against canonical scoped handlers,
+three paged discovery views, shared-index/source attribution, explicit subsets,
+stale/revoked grants, independent member availability, 1/2/4/32-index count-one
+budgets, and real helper outage followed by a fresh selected source publication.
+The fixture verifies complete authority-format DDL and scoped delivery; it is
+not a new Genesis or installed-editor qualification. The legacy native
+client/model smoke also passed in **24.404 s**, with original source bytes
+preserved (`p7-service-clients-r3.json`). Workspace build passed in **49.26 s**.
+
+The broader nextest CI-profile suite is in progress. It reuses the separately
+passed combined integration binary and retains the checked-in four long-case
+exclusions. The existing large-catalog Kernel measurement had already passed
+in the earlier P7 library checkpoint. Performance runs remain queued until
+compilation and tests finish. Current P7 Neo qualification is unavailable in
+this sandbox: the historical `neo` target does not resolve and its SSH
+configuration is absent; the existing endpoint was requested without changing
+credentials, accounts or remote state. Earlier Neo results are not P7 evidence.
+
+The broad Windows CI-profile nextest run finished in **1,189.236 s**:
+**2,405 passed, four failed, 50 skipped** (`p7-workspace-nextest-r1.log`).
+All **122 MCP library tests** passed. The four failures were CLI catalog
+assertions still expecting 18 native/28 public tools. After auditing related
+callers, the test-only correction retained exact **19/29** counts, uniqueness,
+read-only checks and the closed scope-discovery schema. All four corrected
+cases passed in **17.424 s**. The other broad suites were not repeated.
+Workspace rustdoc compiled all eight targets successfully; they contain zero
+runnable doctest examples. Formatting and all-target/all-feature Clippy passed
+again in **5.85 s**.
+
+CI fixture review found that the new helper case needed an owned Cargo-image
+pair when no external staged candidate is supplied. The fixture now creates
+that exact main/helper digest receipt only in its disposable owner. With the
+candidate environment genuinely unset, **six default-feature cases passed** in
+**106.70 s**, and the all-feature helper case passed in **29.91 s**. The existing
+Windows/macOS focused CI command now includes this one integration target in
+its existing one-slot group; no job, matrix or broad suite was added. Python's
+updated complete suite passed **433 cases**, with nine skips, in **26.286 s**.
+The extension's next complete checkpoint passed **681 tests**, with 19 skips;
+a later narrow valid-step-ID cache fix passed its **53 affected tests**.
+
+The refreshed `p7-runtime-release-r4` build reused unchanged optimized binaries
+(**5.87 s** helper / **0.82 s** main), verified the payload and recorded the
+corrected test sources. Its native input digest is
+`f487cd3fd5c1b3b8af01c4430792e3de6bfa8a8338d02ec63e3045e2d6eaf74f`
+(906 inputs), and its install manifest is
+`94af1805042c4820c75f767a5bc548f2b325c8e29a3107e1d07ef37d5a8d1cef`.
+Both executable hashes are byte-identical to r3; the only changed payload files
+are `airk-build.json` and `airk-install.json`. The comparison is retained in
+`p7-r3-r4-runtime-equivalence.json`; no receipt or producer identity was edited.
+
+On that exact r4 pair, all **84/84 unchanged latency gates passed**
+(`p7-gates.json`) against the frozen, archived P5, fresh contemporary P5 and
+immediately preceding corrected P6f reports. Each candidate/control Off or
+Report replay completed its 90 trials/810 calls with source preservation and
+owned shutdown; the evaluator checks the original error/retry and verification
+receipt requirements. A separate real predecessor-upgrade fixture created a
+new reviewed one-index grant through native draft/apply, preserving its original
+imported snapshot. Its **30 paired one-index reads** returned matching complete
+hits/publications with zero errors/retries. Observed median/p95 were
+**106.20/139.50 ms combined** and **32.22/33.80 ms legacy**. These measurements
+show the additional routing cost; they do not claim equal speed.
+
+The first combined fan-out campaign passed **30 samples each at 1, 2 and 4
+indexes**, then failed the first 32-index/32-result sample with the explicit
+`combined_reply_budget` refusal after **8,351.05 ms**. This failure remains in
+`p7-combined-release-r1`; it is not a passing 32-index measurement. A separate
+one-sample diagnostic retained full replies and confirmed that repeated header
+structure and publication envelopes exceed the canonical 64 KiB allowance.
+Lossless header templates, typed member values and exact publication references
+are being implemented, leaving evidence rows inline and limits unchanged.
+The new production bytes require a fresh matching pair and affected native,
+consumer and performance validation before P7 acceptance.
+
+### P7 checkpoint — 4 November 2026, lossless metadata and Windows R6
+
+The combined response now retains native metadata through bounded, typed header
+templates and exact references into its publication vector. Evidence rows and
+their original result pointers stay inline. Consumers materialize a logical
+copy after validating the template namespace, digest, slots, member identity
+and publication; raw delivery bytes and saved verification receipt digests are
+preserved. Malformed templates refuse explicitly. Whole-file `file_info`
+verification compares the logical member copy at the original returned pointer,
+including final Report and Require response checks. Rust, Workbench and Python
+consumer regressions cover these encoded forms. The Python reader matches the
+Core/host golden header digest and validates every actual returned member.
+
+The earlier reply-budget failure above remains part of the record. The separate
+R5 diagnostic fitted its response but returned only 29 successful hits: the last
+three members reported `scoped_connection_unavailable`, with no query submitted.
+Its 32-member positive oracle correctly failed; offline replay confirmed that
+all headers and origins decoded and the raw reply stayed unchanged. It is not
+a passing 32-result measurement.
+
+The final Windows x64 release pair is `p7-runtime-release-r6`, version **1.8.8**.
+Its build receipt binds **908 native inputs**:
+
+- Source: `b09693c5ddb2671f6ac4cab5e0983ee6899df82be79eee4173639ea191673832`.
+- Main: `3b997978760662db7de0d3d897deff8b48946bf32b0fd29a978782a87f61c54a`.
+- Helper: `e8bfd3defea5492c1fa14080cb265a501610946884ae80ae0b21ce086819278e`.
+- Install manifest: `f8a29957c0052b46ed45268e3581f3c58438b4500197067730aefcfdfa73d7aa`.
+
+Against that exact pair, all **seven actual-process combined cases passed** in
+**98.40 s**, with the opt-in benchmark holder separately ignored
+(`p7-native-combined-r6.log`). The completed fan-out campaign then passed all
+**120 samples**, 30 each at 1, 2, 4 and 32 indexes, retaining complete raw replies
+and checking the predefined positive evidence oracle without relaxing count or
+byte limits (`p7-combined-release-final/measurement/report.json`). Sources were
+unchanged and each frontend exited through graceful EOF. Observed latency was:
+
+| Selected indexes | Samples | Median (ms) | p95 (ms) |
+| --- | ---: | ---: | ---: |
+| 1 | 30 | 136.69 | 210.62 |
+| 2 | 30 | 221.19 | 253.78 |
+| 4 | 30 | 393.95 | 431.95 |
+| 32 | 30 | 2,816.64 | 3,007.36 |
+
+These are absolute local observations with service and OS caches retained.
+They do not establish multi-index legacy equivalence or measure process RSS,
+CPU, physical I/O or unselected-work counters.
+
+The broad Windows checkpoint remains **2,405 passed, four failed, 50 skipped**;
+the four tool-count assertion corrections separately passed **4/4**, as recorded
+above. It is not relabeled as a fresh complete broad run. The latest focused
+combined library checks passed **66 tests**, verification libraries passed
+**36**, and process ownership passed **11**. Formatting and all-target/all-feature
+Clippy passed, with the latest Clippy run finishing in **11.37 s**. Python's
+complete checkpoint passed **439 tests with nine skips** in **25.615 s**; the
+subsequent header-reader and benchmark/retrieval selection passed **49 focused
+tests** in **1.541 s**. The extension's complete R6 run passed **693 tests with
+19 skips** in **6.868 s** (`p7-vscode-r6.log`).
+
+Neo is reachable again, but its first P7 actual-process run failed **all seven
+cases** after the Unix test helper's `SIGCHLD` handling interfered with native
+child ownership. The fixture correction and rerun are in progress. No passing
+P7 macOS actual-process or release/performance qualification is claimed.
+
+The final R6 legacy Off and Report replays both passed: each retained **90
+trials/810 calls**, zero errors/retries, and respectively zero/**720** source
+verification receipts. All **84/84 unchanged latency gates passed**
+(`p7-final-gates.json`), using the frozen baseline, archived and contemporary P5
+controls and the corrected preceding P6f reports. No threshold changed.
+
+The fresh R6 predecessor-upgrade fixture passed **30 paired one-index reads**
+with matching complete native hit records and exact member publications, zero
+errors/retries and unchanged sources (`p7-one-index-routing-final`). Combined
+median/p95 were **103.23/136.72 ms**, versus **32.73/34.37 ms** for legacy.
+The complete raw outcomes retain different authority, scope and transport
+observations. Calls use a fixed combined-then-legacy order with shared, unflushed
+caches; this can favor the second route. The comparison does not assert equal
+authority, full response-body equality or equal speed. Outstanding platform
+checks still prevent this checkpoint from marking P7 complete.
+
+The final complete Python rerun ran **440 tests**, with **nine skips** and zero
+failures in **22.278 s** (`p7-python-final.log`). Repository checks passed for
+**1,719 public files** using a process-local Git safe-directory setting; the
+first attempt without that setting stopped at Git's ownership check before
+enumerating files. The final R6 native client/model smoke passed in **24.314 s**
+with source bytes preserved (`p7-service-clients-final.log`).
+
+The frozen original graded corpus rerun passed (`p7-relevance-final-r2.json`):
+three trials of all nine cases, with every lexical/vector/hybrid development and
+held-out nDCG@10, Recall@10 and negative-empty observation exactly matching the
+P5 1.8.8 control. Both compact/rich plan probes completed. This remains the
+small original corpus, not broad relevance qualification. The first attempt
+completed its queries but correctly failed its checkout identity fence while
+the Unix regression test was being edited; its receipt is retained separately.
+
+The Unix-only test runner correction and regressions changed the native input
+inventory to **`3a9079a4f2c2c0b09fbed0e358e4bb970a84e6a87aecb43137a82a17be42798c`**
+(908 inputs). The canonical final Windows release stage completed in **8.517 s**
+(`p7-runtime-release-final`). Its complete payload comparison with R6 found only
+`airk-build.json` and `airk-install.json` changed; main, helper and every other
+payload byte are identical (`p7-final-runtime-equivalence.json`). Receipts were
+generated by the builder, not edited. Its install-manifest SHA-256 is
+`c473c14e6807d7ab0e76b40f6cd9e7fe92039b40945975d2c4652c4afda41828`.
+Final formatting and workspace all-target/all-feature Clippy passed. The final
+staged-pair Windows actual-process rerun passed **7/7** in **97.63 s**
+(`p7-native-combined-final.log`); the opt-in measurement holder was ignored in
+this functional run and was exercised separately in the 120-trial campaign.
+The corrected Neo actual-process run completed with **five passed, two failed
+and one ignored** in **116.67 s**. Both failures involve a shared-index native
+connection refusal; other fixtures successfully exercise that same scope, so a
+deterministic union defect is not established. The six targeted Unix CLI helper
+regressions passed, and the earlier **97** scoped native library cases remain
+separate evidence. No complete P7 Mac qualification is claimed.
+
+Review found that the positive read-family parity matrix could compare matching
+member failures under Report. It now requires every selected member to complete
+successfully, preserving complete failed replies and continuing the other read
+families. Debug-only, explicitly opted-in diagnostics expose bounded internal
+connect/install/renew/grant causes without changing public errors or admission.
+The focused diagnostic rerun is pending. Its first observer attempt stopped at
+the build script because the wrapper omitted the bundled-model environment;
+zero test cases ran, and that harness failure is retained.
+
+The focused diagnostic recovered **`project capacity busy`**, before worker
+scope installation or query submission. Neo's observed hardware is **8 GiB RAM
+and six logical CPUs**; the unchanged Balanced policy derives a 2 GiB memory
+budget and one resident worker there. The positive three-index fixture assumed
+two or three residents. Its correction uses native `ConfigureResources` with an
+explicit 4 GiB disposable-fixture budget and checks accepted resident capacity;
+production defaults, physical-memory clamping and the 32-index measurement
+fixture remain unchanged. Temporary debug instrumentation was removed after
+collecting the cause.
+
+The strengthened Windows matrix finished **six passed, one failed, one ignored**
+in **99.00 s**. The sole failure was the expected canonical refusal of status and
+diagnostics under partial source scopes, now incorrectly asserted as positive.
+The correction exercises those positive reads through the whole-index C grant
+and retains partial-scope refusals as separate negative checks. Evidence reads
+still require complete successful members. Corrected platform runs remain pending.
+
+The reviewed final fixture source is
+**`823653aa3db28d20099a38c4de9ce94b0873f72d2fb5f766b78241ff2b57eb04`**
+(908 native inputs), identical on Windows and Neo. Separate review confirmed
+that the explicit fixture budget retains native physical-memory clamping and
+pressure/admission checks, requires accepted three-reader capacity, and leaves
+the 32-index fixture unchanged. Exact nonempty member sets and successful
+outcomes are now checked across every positive native/CLI/MCP family; the
+whole-index observation refusals remain separate negative parity cases.
+
+On Neo, the final **debug** pair passed **all seven actual-process tests** in
+**110.94 s**, with the opt-in measurement holder ignored. Formatting,
+all-target/all-feature Clippy and canonical staging passed on the exact source.
+The earlier six Unix ownership regressions and 97 scoped native library cases
+remain separately identified evidence. This qualifies the exercised Apple
+Silicon native correctness paths; no Mac release latency, installed editor,
+Developer ID signing/notarization, Intel or Linux qualification follows.
+The final source-bound Windows release stage and corrected-fixture rerun are
+still in progress.
+
+Neo's sealed final debug payload (`runtime-qualified-final`) records main
+`2a22fdf95044cf60ad8a9f29346f5c7c1ed2876017af2c7ada9e58bd564375a6`,
+helper `e19caa405c784fe9b0caf42c1e339bdfa0a50f3224d431974adc22cec6105e3f`
+and install manifest
+`dd3349746db112d8ccbdfe24310bc423066feca2b376456b8bdb3b2e80509f95`.
+All **678 sealed payload files** verified; both executable signatures are
+development ad-hoc signatures with no Team Identifier. The **1,718-file public
+snapshot** was unchanged before/after the final run and no owned runtime
+processes remained. Final receipts are retained in
+`p7-neo-native-r5/qualified-final-summary.json` and the `r10-*` logs. The existing
+Neo connection is stored in ignored `artifacts/v190/neo-connection.local.json`,
+with no key material or committed connection configuration.
+
+### P7 final local qualification — 4 November 2026
+
+The final Windows x64 release stage (`p7-runtime-release-r8`) binds the same
+**823653aa… / 908-input** native source as Neo. Its optimized helper/main builds
+finished in **3m 17s / 6m 42s**, with pinned model/runtime verification and notices
+for **366 dependencies**. Final identities are:
+
+- Main: `58d7b8c83a2a664e221713e02a57429155b8c87fe21976267e6a0a4e984622d6`.
+- Helper: `ac09ac7741223d3e508200f09962b71c25636247f6f3885f81ccbba0a89682ff`.
+- Install manifest: `248783608ab355f0618aede02dd067d36490cdcb9e2ce1bf47447ac124fe4425`.
+
+Rebuilding produced different executable hashes; the comparison was retained in
+`p7-r6-r8-runtime-equivalence.json`, and earlier measurements were **not** relabeled
+as final-binary evidence. Against R8, the corrected actual-process suite passed
+**7/7** in **92.80 s**, with its opt-in measurement holder separately ignored
+(`p7-native-combined-r8.log`). This includes strict successful-member parity,
+whole-index status/diagnostics and explicit partial-scope refusals. Final
+formatting and all-target/all-feature Clippy passed; workspace rustdoc compiled
+all eight targets with zero runnable doctest examples. The broader Windows test
+checkpoint and separately corrected catalog cases remain recorded above rather
+than being claimed as a fresh broad run.
+
+With compilation and competing tests stopped, both final R8 Off/Report replays
+completed **90 trials / 810 calls each**, zero errors/retries and respectively
+zero/**720** source-verification receipts. All **84/84 unchanged latency gates
+passed** (`p7-r8-gates.json`) against the frozen baseline, archived/contemporary
+P5 and corrected preceding P6f controls. Limits and workloads were unchanged.
+
+The final R8 fan-out campaign passed **120/120 trials** in **160.46 s**, with all
+required member results and source preservation (`p7-combined-release-r8`).
+Each case retains 30 samples and full raw outcomes:
+
+| Selected indexes | Median ms | p95 ms |
+| --- | ---: | ---: |
+| 1 | 124.26 | 185.10 |
+| 2 | 210.29 | 245.38 |
+| 4 | 368.14 | 424.02 |
+| 32 | 2,692.86 | 2,945.58 |
+
+These are local absolute observations with verification Off and unflushed caches;
+they do not establish multi-index legacy equivalence or measure RSS, CPU or
+physical I/O. The reviewed 32-index fixture and original limits were unchanged.
+
+The separate R8 predecessor-upgrade fixture passed **30 paired one-index reads**,
+matching complete hit records and exact member publications with zero errors or
+retries (`p7-one-index-routing-r8`). Combined median/p95 were **96.64/130.85 ms**,
+versus **29.79/32.51 ms** for legacy. The previously stated different-authority,
+fixed combined-then-legacy order and shared-cache qualifications still apply;
+equal response bodies or equal speed are not claimed.
+
+The final R8 frozen original corpus passed all nine cases over three trials,
+with every measured lexical/vector/hybrid development/held-out quality score
+exactly matching P5 (`p7-relevance-r8.json`). The final native client/model smoke
+passed in **24.157 s**, preserving source bytes (`p7-service-clients-r8.log`).
+The separately recorded extension **693 passed / 19 skipped** and Python
+**440 run / nine skipped / zero failures** checks cover the unchanged consumer
+sources. Independent review covered the integrated production diff and final
+fixture corrections, including previously untracked implementation files.
+
+P7 is complete at this locally qualified checkpoint. The native/extension/lock
+version remains **1.8.8**, unpublished. No P7 installed-editor, Linux, Intel,
+Mac release-performance or release-signing/notarization qualification was run.
+No commit, push, PR, installation or publication was performed for P7; historical
+failures and explicit skips remain visible above.
+
+Final documentation/repository checks passed for **1,719 public files**; native,
+extension and lock versions agree on **1.8.8**. The final Python suite ran
+**440 tests**, with **nine skips**, zero failures and **21.382 s** elapsed.
+Whitespace checks passed and `AGENTS.md`/`CLAUDE.md` remain byte-identical. The
+local Neo connection artifact remains excluded by the existing `artifacts/`
+ignore rule. A final independent documentation review corrected an inline-only
+wording ambiguity; capability-field groups and ordinary native-header templates
+are now distinguished explicitly.

@@ -15,6 +15,11 @@ export function panelDetails(view: ManagementView, section: string, version: str
     if(entry){
         lines.push(`Project: ${entry.summary.name}`,`Project identity: ${entry.summary.project}`,`Health: ${entry.health.title}`,entry.health.detail);
     }
+    if (status?.combined && ['index', 'semantic', 'health', 'progress', 'activity'].includes(section)) {
+        lines.push('', 'Combined status observations', status.combined.countsQualifier,
+            'Independent member publications; no global atomic publication or unique-source count is claimed.',
+            JSON.stringify(status.combined.nativeResult, null, 2));
+    }
     if(entry&&['index','health','progress','activity'].includes(section)){
         const saved=indexContents(entry.summary,status);
         facts('Published index',[

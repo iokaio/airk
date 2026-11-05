@@ -39,8 +39,60 @@ fn tools_help_works_without_a_workspace_and_exposes_live_schemas() {
             .unwrap(),
     );
     let tools = list["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 18);
+    assert_eq!(tools.len(), 19);
+    assert_eq!(
+        list["tools"],
+        serde_json::to_value(airk_mcp::local::tools()).unwrap()
+    );
     assert!(tools.iter().any(|tool| tool["name"] == "airk_help"));
+    let query_scope = tools
+        .iter()
+        .find(|tool| tool["name"] == "airk_query_scope")
+        .expect("query scope metadata tool");
+    assert_eq!(query_scope["annotations"]["readOnlyHint"], true);
+    assert_eq!(
+        query_scope["inputSchema"]["properties"],
+        airk_core::combined_reads::query_scope::schema()["properties"]
+    );
+    assert_eq!(query_scope["inputSchema"]["additionalProperties"], false);
+    for field in [
+        "project",
+        "project_ids",
+        "index_ids",
+        "verification",
+        "response_mode",
+    ] {
+        assert!(
+            query_scope["inputSchema"]["properties"]
+                .get(field)
+                .is_none(),
+            "discovery must not advertise {field}"
+        );
+    }
+    let discovery = evidence(
+        command(&root, &state)
+            .args([
+                "tools",
+                "call",
+                "airk_query_scope",
+                "--args",
+                r#"{"view":"projects"}"#,
+            ])
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(discovery["schema"], "airk.query-scope/1");
+    assert_eq!(discovery["mode"], "legacy");
+    assert_eq!(discovery["status"], "configuration_required");
+    for field in ["projects", "indexes", "sources"] {
+        assert_eq!(discovery[field], json!([]));
+    }
+    assert_eq!(discovery["grant"], Value::Null);
+    assert!(discovery.get("publication").is_none());
+    assert!(
+        !root.exists() && !state.exists(),
+        "legacy discovery created source/private state"
+    );
     let help = evidence(
         command(&root, &state)
             .args(["tools", "call", "airk_help"])

@@ -20,6 +20,19 @@ export function assertPortablePlanInputs(plan:Value):void {
 /** A saved form cannot turn an old byte-span identity into a new publication. */
 export function assertOriginalPublicationForSymbolInputs(plan:Value):void {
     if(!hasRevisionBoundSymbolInputs(plan))return;
+    const scope=object(plan.query_scope);
+    if(Array.isArray(scope.index_ids)&&scope.index_ids.length===1&&typeof scope.index_ids[0]==='string'&&/^idx_[0-9a-f]{32}$/.test(scope.index_ids[0])
+        &&Array.isArray(scope.project_ids)&&scope.project_ids.length>0&&scope.project_ids.length<=32&&scope.project_ids.every(id=>typeof id==='string'&&/^prj_[0-9a-f]{32}$/.test(id))){
+        const bound=(Array.isArray(plan.steps)?plan.steps:[]).filter(raw=>{
+            const args=object(object(raw).args);return ['name','symbol'].some(field=>typeof args[field]==='string'&&/^(syntax|scip|ctags|lsp):(?!:)/.test(args[field] as string));
+        });
+        if(bound.every(raw=>{
+            const args=object(object(raw).args),token=args.revision??args.origin_publication;
+            if(typeof token!=='string')return false;
+            const match=/^airk-r1:[0-9a-f]{32}:(0|[1-9][0-9]{0,19}):[0-9a-f]{64}$/.exec(token);
+            return !!match&&BigInt(match[1])<=18446744073709551615n;
+        }))return;
+    }
     const token=typeof plan.publication==='string'?plan.publication:'';
     const match=/^airk-r1:[0-9a-f]{32}:(0|[1-9][0-9]{0,19}):[0-9a-f]{64}$/.exec(token);
     if(!match||BigInt(match[1])>18446744073709551615n){
@@ -34,12 +47,13 @@ export function planForWorkbenchRerun(plan:Value):Value {
     for(const key of ['digest','publication','catalog','collection'])delete fresh[key];
     for(const raw of Array.isArray(fresh.steps)?fresh.steps:[]){
         const args=object(object(raw).args);
-        for(const key of ['known_hash','revision','cursor'])delete args[key];
+        for(const key of ['known_hash','revision','origin_publication','cursor'])delete args[key];
     }
     return fresh;
 }
 
 export function strategyFromPlan(plan:Value,title:string,objective:string):StudioDocument {
+    if(plan.query_scope!==undefined)throw new Error('This plan contains an explicit combined scope. Use Save export to preserve its Projects, index subset and native authority identity.');
     const names:Record<string,OperatorId>={status:'airk.status',capabilities:'airk.capabilities',search:'airk.search',list_files:'airk.listFiles',symbols:'airk.symbols',imports:'airk.imports',code_facts:'airk.codeFacts',document_facts:'airk.documentFacts',references:'airk.references',relationships:'airk.relationships',outline:'airk.outline',read_file:'airk.readFile',changes:'airk.changes',file_info:'airk.fileInfo'};
     const steps:StrategyStep[]=[{id:'workbench-status',op:'airk.status',args:{}}];
     if(!Array.isArray(plan.steps)){throw new Error('Prepare a plan before saving a strategy.');}

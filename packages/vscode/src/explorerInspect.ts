@@ -3,10 +3,10 @@ import type { ChangesView, CitationCheckView, CitationResult, InspectView, LiveC
 import { parseCitations } from './explorerContracts';
 import { explorerError } from './explorerErrors';
 import { absentFromIndex, EvidenceClient, EvidenceFailure, samePublication } from './explorerEvidence';
-import { RefRegistry } from './explorerSearch';
+import { originArgs, originatingResult, RefRegistry } from './explorerSearch';
 import { FactHandles } from './explorerFacts';
 import { displayPath, sourceFile } from './explorerSource';
-import { nativeVerification, verificationLabel } from './sourceVerification';
+import { nativeVerification, readResultBody, verificationLabel } from './sourceVerification';
 
 type Value = Record<string, unknown>;
 const obj = (value: unknown): Value => value && typeof value === 'object' && !Array.isArray(value) ? value as Value : {};
@@ -48,26 +48,36 @@ async function liveOf(info: Value, contentHash: string, dirty: DirtyCheck): Prom
 /** Evidence › Inspector: the full indexed record for one cited file, compared with its saved bytes. */
 export async function inspect(session: EvidenceClient, refs: RefRegistry, project: string, id: string | undefined, dirty: DirtyCheck, selectedPath?: string): Promise<InspectView> {
     let ref = id ? refs.get(id, project) : undefined;
+    if (session.spec?.combinedSession && !ref?.origin) { throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED', 'Choose qualified evidence with one originating index before inspecting a combined source.')); }
     const path = ref?.path ?? selectedPath;
     if (!path) { throw new EvidenceFailure(explorerError('NO_SOURCE_FILE')); }
-    const result = await session.call('airk_file_info', { path, response_mode: 'full' }, { timeout: 30000 });
-    const info = result.payload;
+    let nativeFailure: Value | undefined;
+    const result = await session.call('airk_file_info', { path, response_mode: 'full', ...originArgs(ref?.origin) }, { timeout: 30000 }).catch(error => {
+        if (ref?.origin && error instanceof EvidenceFailure && error.nativeResponse) {
+            const payload = error.nativePayload ?? readResultBody(error.nativeResponse);
+            if (payload.schema === 'airk.combined-read/1' || error.nativePayload && !Object.keys(payload).length) { nativeFailure = error.nativeResponse; return { payload, rawPayload: error.nativeResponse }; }
+        }
+        throw error;
+    });
+    const selected = originatingResult(result.payload, ref?.origin), info = selected.payload;
+    const publication = selected.publication ?? ('publication' in result ? result.publication : undefined);
     if (!ref) {
         if (absentFromIndex(info)) { throw new EvidenceFailure(explorerError('TOOL_ERROR', 'The selected file is not in this project’s published index.')); }
-        if (typeof info.content_hash !== 'string' || !/^[0-9a-f]{64}$/.test(info.content_hash) || !result.publication) {
+        if (typeof info.content_hash !== 'string' || !/^[0-9a-f]{64}$/.test(info.content_hash) || !publication) {
             throw new EvidenceFailure(explorerError('EVIDENCE_MISMATCH', 'AIRK did not report the selected file’s indexed hash and publication.'));
         }
-        ref = { project, path, startLine: 1, endLine: 1, contentHash: info.content_hash, publication: result.publication };
+        ref = { project, path, startLine: 1, endLine: 1, contentHash: info.content_hash, publication };
         id = refs.add(ref);
     }
     const indexedHash = typeof info.content_hash === 'string' ? info.content_hash : ref.contentHash;
     const { live, root, receipt, message: observed } = await liveOf(info, indexedHash, dirty);
-    const description = live === 'not_saved' ? `${LIVE_MESSAGE[live]} ${observed ?? ''}` : observed ?? LIVE_MESSAGE[live];
+    const description = nativeFailure && !Object.keys(info).length ? 'Native metadata could not be decoded. Source status is unknown; the complete original response remains below.'
+        : live === 'not_saved' ? `${LIVE_MESSAGE[live]} ${observed ?? ''}` : observed ?? LIVE_MESSAGE[live];
     const message = indexedHash !== ref.contentHash
         ? `${description} The index was republished since this citation was captured.` : description;
     return {
         ref: id!, path: ref.path, startLine: ref.startLine, endLine: ref.endLine, contentHash: indexedHash, live, liveMessage: message,
-        ...(result.publication ? { publication: result.publication } : {}),
+        ...(publication ? { publication } : {}), ...(nativeFailure ? { nativeResult: nativeFailure, nativeFailure: true } : selected.nativeResult ? { nativeResult: result.rawPayload ?? selected.nativeResult } : {}),
         ...(text(info.language) ? { language: text(info.language) } : {}), ...(text(info.parse_status) ? { parseStatus: text(info.parse_status) } : {}),
         ...(text(info.line_basis) ? { lineBasis: text(info.line_basis) } : {}), ...(text(info.extraction_method) ? { extractionMethod: text(info.extraction_method) } : {}),
         ...(count(info.indexed_lines) !== undefined ? { indexedLines: count(info.indexed_lines) } : {}),
@@ -95,6 +105,7 @@ const STATUS_MESSAGE: Record<CitationResult['status'], string> = {
  * unsupported, never as a pass. Each distinct path costs one airk_file_info call.
  */
 export async function checkCitations(session: EvidenceClient, refs: RefRegistry, project: string, input: string, dirty: DirtyCheck): Promise<CitationCheckView> {
+    if (session.spec?.combinedSession) { throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED', 'Pasted paths have no originating index. Choose qualified evidence in Workbench to check a combined result.')); }
     const parsed = parseCitations(input);
     const paths = [...new Set(parsed.citations.filter(entry => !entry.absolute).map(entry => entry.path))].slice(0, 25);
     const records = new Map<string, { info?: Value; live?: LiveCheck; publication?: string; receipt?: Value; message?: string }>();
@@ -102,6 +113,7 @@ export async function checkCitations(session: EvidenceClient, refs: RefRegistry,
     for (const path of paths) {
         try {
             const result = await session.call('airk_file_info', { path }, { timeout: 30000 });
+            if (result.payload.schema === 'airk.combined-read/1') { throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED', 'Choose an originating index before checking pasted paths.')); }
             publication = samePublication(publication, result);
             if (absentFromIndex(result.payload)) { records.set(path, {}); continue; }
             const hash = typeof result.payload.content_hash === 'string' ? result.payload.content_hash : '';
@@ -134,11 +146,13 @@ export async function checkCitations(session: EvidenceClient, refs: RefRegistry,
 
 /** Evidence › Changes: bounded observed changes since an earlier publication token. */
 export async function changesSince(session: EvidenceClient, since: string, limit: number, handles?: FactHandles, project?: string, more?: string): Promise<ChangesView> {
+    if (session.spec?.combinedSession) { throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED', 'Choose one originating index and its member publication in Workbench to compare changes.')); }
     const handle = more && handles ? handles.cursors.get(more, project) : undefined;
     const args = handle ? { ...handle.args, cursor: handle.cursor } : { since, limit, max_bytes: 32768 };
     const result = await session.call('airk_changes', args, { timeout: 30000 });
     if (handle) { samePublication(handle.publication, result); since = String(handle.args.since); limit = handle.limit; }
     const payload = result.payload;
+    if (payload.schema === 'airk.combined-read/1') { throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED', 'Choose one originating index and its member publication in Workbench to compare changes.')); }
     const endpoint = (value: unknown) => { const point = obj(value); return text(point.citation_path, 4096) ?? text(point.path, 4096); };
     const items = (Array.isArray(payload.changes) ? payload.changes : []).map(raw => {
         const change = obj(raw), subject = obj(change.subject), [kind] = Object.keys(subject);

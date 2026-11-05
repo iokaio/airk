@@ -50,9 +50,76 @@ impl ScopedConnectRequest {
     }
 }
 
+/// Frozen Project selection inside one native-reviewed grant. This is inert
+/// connection configuration, not a credential and not a new IPC grant shape.
+/// Every selected index still uses the protected scoped connection protocol.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CombinedConnectRequest {
+    pub schema: u32,
+    pub context_key: Sha256Digest,
+    pub namespace: Incarnation,
+    pub expected_catalog_revision: crate::index_catalog::CatalogRevision,
+    pub grant_id: crate::index_catalog::GrantId,
+    pub expected_grant_revision: crate::index_catalog::CatalogRevision,
+    pub project_ids: Vec<crate::index_catalog::QueryProjectId>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "combined_present"
+    )]
+    pub index_ids: Option<Vec<crate::index_catalog::IndexId>>,
+}
+
+fn combined_present<'de, D, T>(deserializer: D) -> std::result::Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
+}
+
+impl CombinedConnectRequest {
+    pub fn selection(&self) -> crate::combined_reads::QuerySelection {
+        crate::combined_reads::QuerySelection {
+            project_ids: self.project_ids.clone(),
+            index_ids: self.index_ids.clone(),
+            member_availability: crate::combined_reads::MemberAvailability::Report,
+        }
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        ensure!(self.schema == 1, crate::scoped_reads::ScopeReadRefused);
+        self.selection().validate()?;
+        crate::index_catalog::encoded_size(self, 4096)?;
+        Ok(())
+    }
+}
+
+/// One authenticated native delivery observation for a prepared combined reply.
+/// It is neither a bearer credential nor authority to replay a read.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CombinedDeliveryReceipt {
+    pub schema: u32,
+    pub service_instance: Incarnation,
+    pub namespace: Incarnation,
+    pub catalog_revision: crate::index_catalog::CatalogRevision,
+    pub scope_identity: Sha256Digest,
+    pub result_digest: Sha256Digest,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum ControlMethod {
+    /// Validate a prepared combined reply against the live native admission
+    /// gate. No source, worker election, grant issuance or query replay occurs.
+    ValidateCombinedDelivery {
+        selection: CombinedConnectRequest,
+        query_selection: crate::combined_reads::QuerySelection,
+        scope_identity: Sha256Digest,
+        result_digest: Sha256Digest,
+    },
     /// Native administrative read. Runtime consumes its worker credential;
     /// this route never returns a reusable evidence connection.
     NativeRead {
@@ -342,6 +409,9 @@ pub struct RuntimeProcess {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ControlResponse {
+    CombinedDeliveryValidated {
+        receipt: CombinedDeliveryReceipt,
+    },
     SourceChangeBusy {
         code: String,
         busy: crate::catalog_source_change::SourceChangeBusy,

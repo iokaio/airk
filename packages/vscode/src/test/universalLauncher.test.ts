@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import { parse } from 'jsonc-parser';
 import { migrateAgentConfig } from '../agentMigration';
 import { launchDescriptorPath } from '../explorerAssistanceLaunch';
-import { assistanceEntry, launchArgs, LaunchSpec, retrievalEntry, unifiedEntry, serializeServers } from '../model';
+import { assistanceEntry, launchArgs, LaunchSpec, retrievalEntry, unifiedEntry, serializeServers, UNIFIED_TOOLS } from '../model';
 import { probeMcp } from '../native';
 import { NativeServiceFixture } from './nativeServiceFixture';
 
@@ -60,11 +60,11 @@ test('a real universal launcher reads its pointer on every launch and forwards t
         const pointer = (install: string) => fs.writeFileSync(path.join(launcherDir, 'airk-launcher.json'), JSON.stringify({ schema: 1, install, launcher_sha256: sha }), { mode: 0o600 });
         pointer(spec.service!.installDir);
         const universalCall: LaunchSpec = { ...spec, command: executable, service: { ...spec.service!, universal: true } };
-        assert.equal((await probeMcp(universalCall)).tools.length, 28, 'the universal launcher reaches the installed service');
+        assert.equal((await probeMcp(universalCall)).tools.length, UNIFIED_TOOLS.length, 'the universal launcher reaches the installed service');
         pointer(path.join(directory, 'missing-install'));
         await assert.rejects(probeMcp(universalCall), 'a pointer to a missing installation fails instead of guessing');
         pointer(spec.service!.installDir);
-        assert.equal((await probeMcp(universalCall)).tools.length, 28, 'the next launch follows the rewritten pointer');
+        assert.equal((await probeMcp(universalCall)).tools.length, UNIFIED_TOOLS.length, 'the next launch follows the rewritten pointer');
     } finally {
         // Closing a probe signals its child asynchronously. Windows may still
         // hold the copied executable briefly; always drain the owned fixture,

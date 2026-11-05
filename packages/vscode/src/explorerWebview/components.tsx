@@ -4,6 +4,23 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { request } from './api';
 import type { WebviewMessageOf } from '../explorerContracts';
 
+/** Complete canonical native data survives the friendly cards and both copies. */
+export function CompleteNativeResponse(props: { value?: Record<string, unknown> }) {
+    const [message, setMessage] = useState('');
+    useEffect(() => { setMessage(''); }, [props.value]);
+    if (!props.value) { return null; }
+    const json = JSON.stringify(props.value, null, 2);
+    const copy = async (markdown: boolean) => {
+        try { await request('clipboard.write', { text: markdown ? `Complete AIRK native response, including independent member publications and dated receipts.\n\n\`\`\`json\n${json}\n\`\`\`\n` : json }); setMessage('Copied complete response'); }
+        catch (error) { setMessage(error instanceof Error ? error.message : String(error)); }
+    };
+    return <details><summary>Complete native response</summary>
+        <p class="muted">Includes every member outcome, publication, execution policy, retry detail and saved-source receipt. Viewing or copying does not refresh these observations.</p>
+        <div class="actions"><button class="ghost" onClick={() => { void copy(false); }}>Copy JSON</button><button class="ghost" onClick={() => { void copy(true); }}>Copy Markdown</button>{message && <span role="status">{message}</span>}</div>
+        <pre>{json}</pre>
+    </details>;
+}
+
 export function CopyDetails(props: { section: WebviewMessageOf<'details.copy'>['section']; project?: string }) {
     const [message,setMessage]=useState(''),[busy,setBusy]=useState(false);
     useEffect(()=>{setMessage('');},[props.section,props.project]);

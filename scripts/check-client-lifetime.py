@@ -2,6 +2,7 @@
 """Exercise real MCP EOF and abrupt client loss; only temporary fixture clients are stopped."""
 import argparse
 import ctypes
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,11 @@ import sys
 import threading
 import time
 import uuid
+
+
+catalog_spec = importlib.util.spec_from_file_location("lifetime_service_clients", Path(__file__).with_name("check-service-clients.py"))
+catalog_clients = importlib.util.module_from_spec(catalog_spec)
+catalog_spec.loader.exec_module(catalog_clients)
 
 
 def lines(stream):
@@ -107,6 +113,9 @@ def owner(launcher, root, control, selection):
                 return
             send({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
             tools = receive(replies).get("result", {}).get("tools", [])
+            names = [tool.get("name") for tool in tools]
+            if len(names) != len(catalog_clients.MCP_TOOLS) or set(names) != catalog_clients.MCP_TOOLS:
+                raise RuntimeError("Live MCP connection changed its supported tool catalog")
             print(json.dumps({"pid": server.pid, "tools": len(tools)}), flush=True)
         server.stdin.close()
         server.wait(timeout=10)
@@ -237,7 +246,7 @@ def exercise_clients(launcher, root, control, selector):
             child.stdin.write("tools\n")
             child.stdin.flush()
             value = receive(replies)
-            if value.get("tools") != 28:
+            if value.get("tools") != len(catalog_clients.MCP_TOOLS):
                 raise RuntimeError("Live MCP connection lost its tool catalog")
             return value["pid"]
         first = ObservedProcess(catalog(clients[0]))

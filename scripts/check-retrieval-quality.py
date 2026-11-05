@@ -27,6 +27,9 @@ fixture_spec.loader.exec_module(clients)
 judgments_spec = importlib.util.spec_from_file_location("retrieval_judgments", Path(__file__).with_name("retrieval_judgments.py"))
 judgments = importlib.util.module_from_spec(judgments_spec)
 judgments_spec.loader.exec_module(judgments)
+evidence_spec = importlib.util.spec_from_file_location("combined_evidence", Path(__file__).with_name("combined_evidence.py"))
+combined_evidence = importlib.util.module_from_spec(evidence_spec)
+evidence_spec.loader.exec_module(combined_evidence)
 
 
 CASES = [
@@ -64,6 +67,63 @@ def source_identity():
             source.update(name.encode() + b"\0" + bytes.fromhex(digest(path)))
     dirty = bool(subprocess.check_output(command + ["status", "--porcelain", "--untracked-files=normal"]))
     return {"commit": commit, "dirty": dirty, "public_tree_sha256": source.hexdigest()}
+
+
+def judge_combined(value, sources, grades):
+    """Score an explicit index/root/path oracle without collapsing origins.
+
+    `sources` maps (index_id, source_root_id, source_relative_path) to an exact
+    source hash and its expected selected Project attribution. `grades` uses the
+    same qualified keys. Callers freeze these judgments before candidate output.
+    No canonical root is inferred from a virtual citation spelling.
+    """
+    if (value.get("schema") != "airk.combined-read/1" or not set(grades) <= set(sources)
+            or any(type(grade) is not int or not 0 <= grade <= 3 for grade in grades.values())):
+        raise AssertionError("qualified relevance oracle required")
+    ranked = []
+    members = value.get("members", [])
+    member_ids = [member.get("index_id") for member in members]
+    if len(member_ids) != len(set(member_ids)) or any(identity is None for identity in member_ids):
+        raise AssertionError("qualified relevance member identity differs")
+    vector = value.get("publication_vector", {}).get("members", [])
+    if [member.get("index_id") for member in vector] != member_ids:
+        raise AssertionError("qualified relevance publication vector differs")
+    publications = {member["index_id"]: member.get("publication") for member in vector}
+    try:
+        for index in member_ids:
+            combined_evidence.member_result(value, index)
+    except (KeyError, TypeError, ValueError) as error:
+        raise AssertionError("qualified relevance native metadata differs") from error
+    for rank in value.get("ranking", []):
+        try:
+            origin = combined_evidence.ranked_origin(value, rank)
+        except (KeyError, TypeError, ValueError) as error:
+            raise AssertionError("qualified relevance citation source or scope differs") from error
+        key = (origin.get("index_id"), origin.get("source_root_id"), origin.get("source_relative_path"))
+        if (key not in sources or rank.get("index_id") != key[0] or key[0] not in member_ids
+                or publications[key[0]] is None or origin.get("publication") != publications[key[0]]):
+            raise AssertionError("qualified relevance citation source or scope differs")
+        pointer = rank.get("result_pointer", "")
+        if not isinstance(pointer, str) or not pointer.startswith("/members/"):
+            raise AssertionError("qualified relevance citation locator differs")
+        record = value
+        try:
+            parts = pointer[1:].split("/")
+            if member_ids[int(parts[1])] != key[0]:
+                raise AssertionError("qualified relevance citation member differs")
+            for token in parts:
+                token = token.replace("~1", "/").replace("~0", "~")
+                record = record[int(token)] if isinstance(record, list) else record[token]
+            source = sources[key]
+            if (record["citation"]["content_hash"] != source["sha256"]
+                    or origin.get("project_ids") != sorted(source["project_ids"])):
+                raise AssertionError("qualified relevance citation source or scope differs")
+        except (KeyError, TypeError, ValueError, IndexError) as error:
+            raise AssertionError("qualified relevance citation locator differs") from error
+        ranked.append(key)
+    return {"ranking_units": "returned chunks; distinct index/root/path origins; repeated same-origin chunks consume rank",
+            "partial": value.get("partial", False), "truncated": value.get("truncated", False),
+            **judgments.score(ranked, grades)}
 
 
 class Session:
@@ -124,7 +184,7 @@ class Session:
                 raise TimeoutError("MCP qualification deadline")
 
     def query(self, case, limit):
-        arguments = {key: case[key] for key in ("query", "mode", "path_prefix") if key in case}
+        arguments = {key: case[key] for key in ("query", "mode", "path_prefix", "project_ids", "index_ids", "member_availability") if key in case}
         arguments.update(limit=limit, max_bytes=65536, response_mode="full")
         start = time.perf_counter_ns()
         retry_deadline = time.monotonic() + 15
@@ -134,6 +194,15 @@ class Session:
         if result.get("isError"):
             raise RuntimeError(str(result["content"]))
         value = json.loads(result["content"][0]["text"])
+        if value.get("schema") == "airk.combined-read/1":
+            vector = value["publication_vector"]
+            selected = (vector["authority"], tuple(member["index_id"] for member in vector["members"]))
+            identity = json.dumps({"authority": vector["authority"], "members": vector["members"]}, sort_keys=True)
+            observations = getattr(self, "combined_publications", {})
+            if selected in observations and observations[selected] != identity:
+                raise AssertionError("fixed fixture member publication changed during session")
+            self.combined_publications = {**observations, selected: identity}
+            return value, elapsed, attempt
         publication = value["publication"]["token"]
         if self.publication is not None and publication != self.publication:
             raise AssertionError("fixed fixture publication changed during session")
@@ -168,6 +237,12 @@ class Session:
                 "response_json_bytes": len(json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode()),
                 "truncated": value.get("truncated", False),
                 **judgments.score(paths, case["grades"])}
+
+    def judged_combined_search(self, case, sources, grades):
+        value, elapsed, attempt = self.query(case, 10)
+        return {"status": "ok", "latency_ms": elapsed, "admission_retries": attempt,
+                "response_json_bytes": len(json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode()),
+                **judge_combined(value, sources, grades)}
 
     def compact_plan_probe(self, probe):
         """Retain the known compact/rich workflow comparison independently of rankings."""

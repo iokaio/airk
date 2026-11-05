@@ -75,7 +75,11 @@ export function Inbox(props: InboxProps) {
         if (!detail) { return; }
         if (generation() !== inspectedGeneration) { setError('The target draft changed while loading this suggestion; review it again.'); return; }
         const body = detail.body;
-        if (body.kind === 'search') { await finish(detail, () => props.applySearch(body.search), () => undefined); return; }
+        if (body.kind === 'search') {
+            // Combined drafts are applied by the host to the exact reviewed
+            // Workbench session. Never drop their selectors into legacy Search.
+            await finish(detail, () => { if (!body.search.project_ids) { props.applySearch(body.search); } }, body.search.project_ids ? props.close : () => undefined); return;
+        }
         if (body.kind === 'navigation') { await finish(detail, () => props.applyNavigation(body), () => undefined); return; }
         if (body.kind === 'review' || body.kind === 'management') {
             const route = parseRoute(body.kind === 'review' ? `#review/${body.scope}` : `#${MANAGEMENT_INTENTS[body.intent].route}`);
@@ -177,7 +181,9 @@ function Review(props: { detail: Detail }) {
     const { body, evidence } = props.detail;
     return (
         <div class="review">
-            {body.kind === 'search' && <p>Search <code>{body.search.query}</code> · {body.search.mode} · scope {body.search.pathPrefix ?? '(all)'} · limit {body.search.limit}{body.intent ? <><br />Intent: {body.intent}</> : null}</p>}
+            {body.kind === 'search' && <p>Search <code>{body.search.query}</code> · {body.search.mode} · scope {body.search.pathPrefix ?? '(all)'} · limit {body.search.limit}
+                {body.search.project_ids ? <><br />Workbench Projects: <code>{body.search.project_ids.join(', ')}</code><br />Indexes: <code>{body.search.index_ids?.join(', ') ?? 'all permitted members of these Projects'}</code><br />Member availability: {body.search.member_availability ?? 'report'}</> : null}
+                {body.intent ? <><br />Intent: {body.intent}</> : null}</p>}
             {body.kind === 'strategy' && <>
                 <p>{body.strategy.title} <code>{body.strategy.id}</code>{body.objective ? <> · {body.objective}</> : null}</p>
                 <ol class="steps">{body.strategy.steps.map(step => <li key={step.id}><code>{step.op}</code> {step.id}{step.input ? ` ← ${step.input}` : ''}</li>)}</ol>

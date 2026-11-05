@@ -1,15 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Read-only stdio adapter: the native host supplies an authenticated direct connection.
+pub use rmcp::model::Tool;
 use rmcp::{
     ErrorData, RoleServer, ServerHandler,
     model::{
         CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ListToolsResult,
-        PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
+        PaginatedRequestParams, ServerCapabilities, ServerInfo,
     },
     service::RequestContext,
 };
 use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 
+#[cfg(test)]
+#[path = "remote_combined_tests.rs"]
+mod combined_tests;
 #[cfg(test)]
 #[path = "remote_scoped_tests.rs"]
 mod scoped_tests;
@@ -26,6 +30,10 @@ impl std::fmt::Display for PreparationExpired {
 }
 impl std::error::Error for PreparationExpired {}
 pub trait RemoteTools: Send + Sync + 'static {
+    /// Frozen explicit selection only; live grant admission remains native.
+    fn combined_selection(&self) -> Option<&airk_core::service::CombinedConnectRequest> {
+        None
+    }
     /// Requested native selector only; this is not installed read authority.
     fn scoped_selection(&self) -> Option<&airk_core::service::ScopedConnectRequest> {
         None
@@ -50,8 +58,8 @@ pub trait RemoteTools: Send + Sync + 'static {
     fn local_help(&self) -> bool {
         true
     }
-    fn uses_response_mode(&self, _tool: &str) -> bool {
-        true
+    fn uses_response_mode(&self, tool: &str) -> bool {
+        !matches!(tool, "query_scope" | "airk_query_scope")
     }
     fn client(&self, _client: airk_core::usage::ClientFamily) {}
     fn call(
@@ -59,6 +67,16 @@ pub trait RemoteTools: Send + Sync + 'static {
         tool: String,
         arguments: serde_json::Map<String, serde_json::Value>,
     ) -> RemoteFuture<'_>;
+    /// Capacity observed by the outer frontend at admission. A native combined
+    /// owner incorporates it before sealing its final delivery observation.
+    fn call_with_capacity(
+        &self,
+        tool: String,
+        arguments: serde_json::Map<String, serde_json::Value>,
+        _limit: usize,
+    ) -> RemoteFuture<'_> {
+        self.call(tool, arguments)
+    }
 }
 
 /// A known pre-query setup refusal. The requested selector is explicitly
@@ -91,6 +109,18 @@ pub fn scoped_observation_failure(
 }
 fn scoped_failure_envelope(body: serde_json::Value) -> serde_json::Value {
     serde_json::json!({"content":[{"type":"text","text":body.to_string()}],"structuredContent":body,"isError":true})
+}
+
+/// A lost outer composite exchange is uncertain; never replay its child reads.
+pub fn combined_observation_failure(
+    selection: &airk_core::service::CombinedConnectRequest,
+    code: &str,
+) -> serde_json::Value {
+    scoped_failure_envelope(serde_json::json!({
+        "error":{"code":code,"retryable":true,"query_submitted":null,
+            "fresh_brokerage_required":true,"query_replay_safe":false},
+        "requested_scope":{"confirmed":false,"selection":selection}
+    }))
 }
 
 #[derive(Clone)]
@@ -262,6 +292,7 @@ impl ServerHandler for Bridge {
         if request.name == "airk_help"
             && self.backend.local_help()
             && self.backend.scoped_selection().is_none()
+            && self.backend.combined_selection().is_none()
         {
             return Ok(crate::help::call(serde_json::Value::Object(arguments)).into());
         }
@@ -316,12 +347,21 @@ async fn call_at_capacity(
     arguments: serde_json::Map<String, serde_json::Value>,
     limit: usize,
 ) -> anyhow::Result<CallToolResult> {
-    let value = match backend.call(tool.clone(), arguments).await {
+    let value = match backend
+        .call_with_capacity(tool.clone(), arguments, limit)
+        .await
+    {
         Ok(value) => value,
         Err(_) if backend.scoped_selection().is_some() => scoped_observation_failure(
             backend.scoped_selection().expect("checked scoped selector"),
             "scoped_observation_unavailable",
             true,
+        ),
+        Err(_) if backend.combined_selection().is_some() => combined_observation_failure(
+            backend
+                .combined_selection()
+                .expect("checked combined selector"),
+            "combined_observation_unavailable",
         ),
         Err(error) => return Err(error),
     };
@@ -350,6 +390,39 @@ fn report_query_concurrency(result: &mut CallToolResult, tool: &str, limit: usiz
             .first()
             .and_then(|content| content.as_text())
             .and_then(|text| serde_json::from_str(&text.text).ok());
+    }
+    if let Some(body) = result.structured_content.as_ref()
+        && body.get("delivery_observation").is_some()
+    {
+        // Finalized combined bodies already contain the capacity observation.
+        // The receipt binds their complete canonical body, so a transport may
+        // neither add fields nor deserialize away the delivery observation.
+        let valid = (|| -> anyhow::Result<bool> {
+            let observation = &body["delivery_observation"];
+            let receipt: airk_core::service::CombinedDeliveryReceipt =
+                serde_json::from_value(observation["receipt"].clone())?;
+            if receipt.schema != 1
+                || observation["digest_basis"] != "canonical_body_without_delivery_observation"
+            {
+                return Ok(false);
+            }
+            let mut canonical = body.clone();
+            canonical
+                .as_object_mut()
+                .ok_or_else(|| anyhow::anyhow!("combined body must be an object"))?
+                .remove("delivery_observation");
+            let digest = airk_core::identity::framed_digest(
+                b"airk/combined-delivery-result/1",
+                &[&serde_json::to_vec(&canonical)?],
+            );
+            Ok(receipt.result_digest == digest)
+        })()
+        .unwrap_or(false);
+        if !valid {
+            let body = serde_json::json!({"error":{"code":"combined_delivery_changed","retryable":false,"query_replay_safe":false}});
+            *result = CallToolResult::error(vec![ContentBlock::text(body.to_string())]);
+        }
+        return;
     }
     if matches!(tool, "parse" | "airk_parse") {
         if let Some(value) = result.structured_content.clone() {
@@ -669,6 +742,45 @@ mod tests {
             "steps":[{"id":"query","tool":"status","arguments":{},"elapsed_ms":6,
                 "status":"complete","error":null,"result":{"files":1414}}]
         })
+    }
+
+    #[test]
+    fn plan_transport_maps_and_preserves_every_expanded_report() -> anyhow::Result<()> {
+        let mut value = plan_fixture();
+        let reports=(0..airk_core::workbench::MAX_STEP_REPORTS).map(|offset|serde_json::json!({
+            "id":format!("expanded_{offset}"),"tool":"status","arguments":{"origin":offset},"elapsed_ms":offset,
+            "status":"complete","error":null,"result":{"native_receipt":{"member":offset,"retry":{"retained":true}}}
+        })).collect::<Vec<_>>();
+        value["payload_bytes"] = reports
+            .iter()
+            .map(|report| serde_json::to_vec(&report["result"]).unwrap().len())
+            .sum::<usize>()
+            .into();
+        value["steps"] = serde_json::Value::Array(reports.clone());
+        value["plan"]["output"]["max_bytes"] = 65536.into();
+        let mapped = report_plan_query_concurrency(value, 32)?;
+        assert_eq!(
+            mapped["steps"].as_array().unwrap().len(),
+            airk_core::workbench::MAX_STEP_REPORTS
+        );
+        for (offset, report) in mapped["steps"].as_array().unwrap().iter().enumerate() {
+            assert_eq!(report["result"]["query_concurrency"], 32, "{offset}");
+            assert_eq!(
+                report["result"]["native_receipt"],
+                reports[offset]["result"]["native_receipt"]
+            );
+            assert_eq!(report["arguments"], reports[offset]["arguments"]);
+        }
+        assert_eq!(
+            mapped["payload_bytes"],
+            mapped["steps"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|report| serde_json::to_vec(&report["result"]).unwrap().len())
+                .sum::<usize>()
+        );
+        Ok(())
     }
 
     #[tokio::test]

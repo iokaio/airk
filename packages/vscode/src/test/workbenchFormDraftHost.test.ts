@@ -175,3 +175,16 @@ test('webview rejects stale scalar acknowledgements and full snapshots without l
     first.values.search={query:'must stay local'};
     assert.deepEqual(second.values,{},'new/legacy defaults cannot share a mutable values map');
 });
+
+
+test('actual Workbench host keeps encoded native metadata raw while presenting verified per-member headers',async()=>{
+ const {nativeHeaderTemplateDigest,NATIVE_HEADER_REFERENCE}=await import('../nativeMetadata');
+ const template={fields:{request_id:null},slots:[{path:['request_id'],kind:'string'}]},id=nativeHeaderTemplateDigest(template);
+ const encoded={schema:'airk.combined-read/1',shared_values:{schema:'airk.shared-native-header-templates/1',values:{[id]:template}},members:[{index_id:'idx_'+'12'.repeat(16),result:{[NATIVE_HEADER_REFERENCE]:{id,values:['actual-member-request']}}}],ranking:[],delivery_observation:{digest:'raw-only'}};
+ const f=hostFixture();try{
+  f.state.session!.turns.push({id:'encoded',at:1,input:'read',format:'structured',envelope:encoded});
+  const state=f.state.state();assert.equal(state.session!.turns[0].envelope,encoded);assert.equal(state.session!.turns[0].envelope!.delivery_observation,encoded.delivery_observation);
+  assert.equal(object(object((state.metadataViews!.encoded.members as Value[])[0]).result).request_id,'actual-member-request');
+  assert.equal(state.metadataViews!.encoded.delivery_observation,undefined);assert.deepEqual(Object.keys(state.capabilityDetails!.encoded),[]);assert.deepEqual(f.calls,[]);
+ }finally{f.provider.dispose();}
+});

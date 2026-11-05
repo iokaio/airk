@@ -1,5 +1,14 @@
 # Architecture
 
+P7 adds transport-independent combined-read selection/result contracts in Core
+and canonical scope/budget/rank composition in Kernel. CLI resolves the frozen
+reviewed grant and reuses protected scoped native connections for each unique
+selected index; MCP and Workbench preserve complete member responses. Composite
+publication observations remain vectors, and source verification stays with each
+originating native owner. [Combined-read contracts](combined-reads.md) and the
+[phase ledger](research/implementation-v190.md) distinguish implementation from
+completed qualification. No new scheduler, external service or database is added.
+
 P6f keeps typed catalog/grant/setup contracts in Core and bounded durable catalog,
 setup, source-change and fencing journals in Store. CLI owns the native installer,
 provider containment, authenticated admission and receipt reconciliation; the

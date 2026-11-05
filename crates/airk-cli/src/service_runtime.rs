@@ -70,6 +70,7 @@ pub async fn administrative_read(
 }
 
 struct State {
+    control_root: std::path::PathBuf,
     instance: airk_core::identity::Incarnation,
     policy: Arc<Mutex<Broker>>,
     started: Instant,
@@ -117,6 +118,71 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
         }
     } else {
         match request.method {
+            ControlMethod::ValidateCombinedDelivery {
+                selection,
+                query_selection,
+                scope_identity,
+                result_digest,
+            } => {
+                let Some(gate) = state.catalog_gate.as_ref() else {
+                    return local_ipc::write_message(
+                        &mut stream,
+                        &ControlResponse::Failure {
+                            code: "combined_delivery_scope_unavailable".into(),
+                        },
+                        Duration::from_secs(5),
+                    )
+                    .await;
+                };
+                let Some(clock) = gate.catalog_clock() else {
+                    return local_ipc::write_message(
+                        &mut stream,
+                        &ControlResponse::Failure {
+                            code: "combined_delivery_scope_unavailable".into(),
+                        },
+                        Duration::from_secs(5),
+                    )
+                    .await;
+                };
+                let control = state.control_root.clone();
+                let expected_revision = clock.revision;
+                let observed = tokio::task::spawn_blocking(move || {
+                    crate::combined_frontend::validate_delivery(
+                        &control,
+                        &selection,
+                        &query_selection,
+                        scope_identity,
+                        expected_revision,
+                    )
+                })
+                .await;
+                let admitted = match observed {
+                    Ok(Ok(())) => gate.begin_issue(clock.namespace, clock.revision),
+                    _ => Err(airk_core::scoped_reads::ScopeReadRefused.into()),
+                };
+                match admitted {
+                    Ok(ticket) => {
+                        let response = ControlResponse::CombinedDeliveryValidated {
+                            receipt: airk_core::service::CombinedDeliveryReceipt {
+                                schema: 1,
+                                service_instance: state.instance,
+                                namespace: clock.namespace,
+                                catalog_revision: clock.revision,
+                                scope_identity,
+                                result_digest,
+                            },
+                        };
+                        // A partial refused write closes this exchange. Never
+                        // append an unguarded fallback after protected bytes.
+                        return gate
+                            .deliver_issue(ticket, &mut stream, &response, Duration::from_secs(5))
+                            .await;
+                    }
+                    Err(_) => ControlResponse::Failure {
+                        code: "combined_delivery_scope_expired".into(),
+                    },
+                }
+            }
             ControlMethod::Health => {
                 let now = Instant::now();
                 let policy = state
@@ -370,6 +436,7 @@ pub async fn serve_with_idle(root: &Path, idle_grace: Option<Duration>) -> Resul
     let address = local_ipc::endpoint(root, "control")?;
     let mut listener = Listener::bind(&address)?;
     let state = Arc::new(State {
+        control_root: root.canonicalize()?,
         instance,
         policy: policy.clone(),
         started: Instant::now(),

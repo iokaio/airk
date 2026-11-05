@@ -43,7 +43,8 @@ async fn handle(
         }
         // Exhaustive review: a new service method must be considered here before
         // a trusted console can expose it. No default credential-bearing path.
-        ControlMethod::NativeRead { .. }
+        ControlMethod::ValidateCombinedDelivery { .. }
+        | ControlMethod::NativeRead { .. }
         | ControlMethod::CatalogPage { .. }
         | ControlMethod::CatalogDetail { .. }
         | ControlMethod::CatalogContext { .. }

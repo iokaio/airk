@@ -695,7 +695,7 @@ impl airk_mcp::remote::RemoteTools for Backend {
         tool: String,
         arguments: serde_json::Map<String, serde_json::Value>,
     ) -> airk_mcp::remote::RemoteFuture<'_> {
-        self.call_bound(tool, arguments, None, None)
+        self.call_bound(tool, arguments, None, None, None)
     }
 }
 
@@ -738,7 +738,7 @@ impl Backend {
         arguments: serde_json::Map<String, serde_json::Value>,
         fence: SourceFence,
     ) -> airk_mcp::remote::RemoteFuture<'_> {
-        self.call_bound(tool, arguments, Some(fence), None)
+        self.call_bound(tool, arguments, Some(fence), None, None)
     }
     pub(crate) fn call_observed_until(
         &self,
@@ -747,7 +747,15 @@ impl Backend {
         fence: SourceFence,
         expires: Instant,
     ) -> airk_mcp::remote::RemoteFuture<'_> {
-        self.call_bound(tool, arguments, Some(fence), Some(expires))
+        self.call_bound(tool, arguments, Some(fence), Some(expires), None)
+    }
+    /// Typed native reads use the same bounded pool and admission/delivery
+    /// tickets; no internal native operation becomes a callable MCP tool name.
+    pub(crate) fn call_native(
+        &self,
+        request: airk_core::native_reads::NativeRead,
+    ) -> airk_mcp::remote::RemoteFuture<'_> {
+        self.call_bound(String::new(), Default::default(), None, None, Some(request))
     }
     fn call_bound(
         &self,
@@ -755,6 +763,7 @@ impl Backend {
         arguments: serde_json::Map<String, serde_json::Value>,
         observed: Option<SourceFence>,
         source_expires: Option<Instant>,
+        native: Option<airk_core::native_reads::NativeRead>,
     ) -> airk_mcp::remote::RemoteFuture<'_> {
         Box::pin(async move {
             if tool == "airk_help" && self.catalog_session.is_none() {
@@ -972,7 +981,10 @@ impl Backend {
                 Ok(permit) => permit,
                 Err(_) => return Ok(source_scope_superseded()),
             };
-            let result = connection.call(tool, arguments).await;
+            let result = match native {
+                Some(request) => connection.read_native(request).await,
+                None => connection.call(tool, arguments).await,
+            };
             if result.is_ok() {
                 let receipt = connection.status_receipt();
                 state.status_receipt = receipt;
@@ -1035,6 +1047,14 @@ pub fn scoped_tools(
     project: ProjectBinding,
     selection: airk_core::service::ScopedConnectRequest,
 ) -> Result<Arc<dyn airk_mcp::remote::RemoteTools>> {
+    Ok(scoped_backend(root, project, selection)?)
+}
+
+pub(crate) fn scoped_backend(
+    root: PathBuf,
+    project: ProjectBinding,
+    selection: airk_core::service::ScopedConnectRequest,
+) -> Result<Arc<Backend>> {
     selection.validate()?;
     let status = Arc::new(StatusOwner::default());
     let semantic = (

@@ -29,7 +29,7 @@ MODULES = ("extension.js", "extensionUninstall.js", "uninstallHook.js", "diagnos
            "explorerCommands.js", "explorerAssistanceHost.js", "explorerAssistanceLaunch.js",
            "explorerStrategies.js", "explorerStrategyRunner.js",
            "explorerDrafts.js", "explorerSuggestions.js", "explorerReview.js", "explorerHandoffs.js", "explorerPlanFiles.js",
-           "workbenchView.js", "workbenchContracts.js", "workbenchRender.js", "sourceVerification.js", "publications.js", "workbenchSessions.js", "workbenchStrategies.js")
+           "workbenchView.js", "workbenchContracts.js", "workbenchRender.js", "sharedCapabilityFields.js", "nativeMetadata.js", "sourceVerification.js", "publications.js", "workbenchSessions.js", "workbenchStrategies.js")
 # esbuild outputs; referenced by URI or path from host modules, never require()d.
 BUNDLES = ("explorerWebview.js", "explorerWebview.css", "explorerAssistance.js", "workbenchWebview.js", "workbenchWebview.css")
 # Host-only implementations that must never ship a second bundled copy.

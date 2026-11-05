@@ -20,7 +20,7 @@ import sys
 
 TOOLS = {"airk_" + name for name in (
     "capabilities", "changes", "code_facts", "context", "document_facts", "file_info", "help", "imports",
-    "list_files", "outline", "parse", "read_file", "references", "relationships", "search", "status", "diagnostics", "symbols")}
+    "list_files", "outline", "parse", "query_scope", "read_file", "references", "relationships", "search", "status", "diagnostics", "symbols")}
 
 # Plan execution can already have partial work; never replay a whole plan here.
 RETRYABLE_TOOLS = TOOLS - {"airk_parse"}
@@ -29,6 +29,15 @@ RETRYABLE_TOOLS = TOOLS - {"airk_parse"}
 MCP_TOOLS = {name.removeprefix("airk_") for name in TOOLS} | {
     "projects", "draft_search", "draft_strategy", "draft_plan", "suggest_view",
     "list_templates", "get_template", "validate_draft", "proposal_status", "get_handoff"}
+
+
+def assert_legacy_query_scope(value):
+    """The public discovery addition must never broaden a legacy connection."""
+    assert value.get("schema") == "airk.query-scope/1", value
+    assert value.get("mode") == "legacy" and value.get("status") == "configuration_required", value
+    assert all(value.get(key) == [] for key in ("projects", "indexes", "sources")), value
+    assert value.get("grant") is None and value.get("scope_revision") is None, value
+    assert value.get("truncated") is False and value.get("continuation") is None, value
 
 # Match service_management::execute_request's registry-contention contract.
 # RequestEpoch prunes receipts and is deliberately not a read-only observation.
@@ -564,6 +573,15 @@ class Fixture:
             scopes = tool_value(receive(4)["result"])
             assert scopes["default_project"] == self.projects[name]["binding"]
             assert len(scopes["projects"]) == 1
+            # This metadata-only call must preserve the exact native CLI body,
+            # while granting no new Project or machine-library discovery.
+            send({"jsonrpc": "2.0", "id": 8, "method": "tools/call", "params": {
+                **params, "name": "query_scope", "arguments": {"view": "projects"}}})
+            scope_reply = receive(8)["result"]
+            assert scope_reply.get("isError") is not True, scope_reply
+            query_scope = tool_value(scope_reply)
+            assert_legacy_query_scope(query_scope)
+            assert query_scope == self.tool(name, "airk_query_scope", {"view": "projects"}), query_scope
             if workbench:
                 # Keep learned review and finite conversational execution distinct.
                 # Each execution is sent once, never replayed after uncertainty.
@@ -610,8 +628,8 @@ def mixed_mcp_clients(fixture, project):
     for _ in range(2):
         with ThreadPoolExecutor(max_workers=3) as pool:
             checks = [pool.submit(fixture.stdio, project, lifecycle, client) for lifecycle, client in modes]
-            assert all(check.result() == 28 for check in checks)
-    return {"connections": 6, "simultaneous_clients": 3, "tools_per_connection": 28,
+            assert all(check.result() == len(MCP_TOOLS) for check in checks)
+    return {"connections": 6, "simultaneous_clients": 3, "tools_per_connection": len(MCP_TOOLS),
             "lifecycles": [mode for mode, _ in modes], "reconnect": True, "same_project_reads": True}
 
 

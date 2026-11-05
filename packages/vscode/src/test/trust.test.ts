@@ -194,6 +194,31 @@ async function contextReadStarted(keys:string[],count=1):Promise<void>{
     assert.equal(keys.length,count,'explicit context read reached the existing control client');
 }
 
+test('combined Use Grant freezes selected Projects, deduplicates shared indexes and asks which index to manage',async context=>{
+    const f=await serviceTestHost(context,{registered:false}),controller=f.context.subscriptions.find((item:any)=>typeof item.useGrant==='function');
+    const namespace='34'.repeat(16),host='56'.repeat(32),grantId='grt_'+'11'.repeat(16),shared='idx_'+'22'.repeat(16),other='idx_'+'23'.repeat(16),a='prj_'+'33'.repeat(16),b='prj_'+'34'.repeat(16),unselected='prj_'+'35'.repeat(16);
+    const backing=(suffix:string)=>({binding:suffix.repeat(32),root:path.join(f.root,'native-'+suffix),data_root:path.join(f.root,'storage-'+suffix),collection:'fixture-'+suffix});
+    const indexes=[{id:shared,name:'Shared',backing:backing('77')},{id:other,name:'Other',backing:backing('88')}];const rows:any[]=[];let selected:LaunchSpec|undefined;
+    try{
+        await controller.refresh();await controller.console.controller.refresh();await controller.prepareWindowContext();
+        const grant={grant:{id:grantId,host,revision:1,revoked:false,memberships:[[a,shared,'api'],[b,shared,'impl'],[b,other,''],[unselected,shared,'private']].map(([project_id,index_id,prefix])=>({
+            membership:{project_id,index_id,revision:1,scope:[{source_root_id:'src_'+(index_id===shared?'44':'45').repeat(16),kind:'subtree',path:prefix}]},source_revision:1,policy_epoch:0,policy_digest:null}))},provenance:{kind:'user_reviewed_project_grant'}};
+        f.state.catalogDetailReply=args=>{rows.push(args);const entity=args.entity as any,index=indexes.find(row=>row.id===entity.id);return {status:'catalog_detail',detail:{namespace,revision:1,item:{kind:entity.kind,value:entity.kind==='grant'?grant:{...index,definition_revision:1,source_revision:1,tombstone:false,source_import:'complete',policy:null}}}};};
+        controller.attachWorkbench({async useScope(spec:LaunchSpec){selected=spec;}});
+        const before=f.writes.length,result=await controller.useGrant({grant_id:grantId,expected_grant_revision:1,project_ids:[b,a]},namespace,1,()=>true);
+        assert.equal(f.writes.length,before);assert.ok(selected?.combinedSession);assert.equal(selected?.catalogSession,undefined);
+        assert.deepEqual(selected!.combinedSession!.project_ids,[a,b]);assert.equal(selected!.combinedSession!.index_ids,undefined);
+        assert.deepEqual(result.selection.indexes.map((row:any)=>row.id),[shared,other]);assert.deepEqual(rows.map(row=>row.entity.kind),['grant','index','index']);
+        assert.deepEqual(result.index_details.map((row:any)=>row.detail.item.value.id),[shared,other]);
+        const definitions=await controller.provideDefinitions();assert.equal(definitions.length,1);const args=definitions[0].args,at=args.indexOf('--combined-session');assert.ok(at>=0);assert.deepEqual(JSON.parse(args[at+1]),selected!.combinedSession);assert.ok(!args.includes('--root'));
+        f.state.pick=items=>items.find((item:any)=>item.index?.id===other)??items[0];
+        await controller.index();assert.equal(f.writes.length,before+1);assert.equal(f.writes.at(-1)!.enqueue?.project,indexes[1].backing.binding,'management follows the explicit member picker rather than the display origin');
+        assert.equal(selected!.service!.project,indexes[0].backing.binding,'display metadata does not become management authority');
+        assert.equal(rows.at(-1).entity.id,other,'the chosen native backing was revalidated before management');
+        const prior=f.writes.length;f.state.pick=()=>undefined;await controller.pause(true);assert.equal(f.writes.length,prior,'cancelled member selection dispatches no pause');
+    }finally{await f.close();}
+});
+
 for(const peerInstalled of [false,true])test(`explicit Use Grant validates native metadata and publishes the exact selector (${peerInstalled?'installed by another window':'present at startup'})`,async context=>{
     const f=await serviceTestHost(context,{registered:false,fresh:peerInstalled}),controller=f.context.subscriptions.find((item:any)=>typeof item.useGrant==='function'),namespace='34'.repeat(16),host='56'.repeat(32),grantId='grt_'+'11'.repeat(16),indexId='idx_'+'22'.repeat(16),projectId='prj_'+'33'.repeat(16),sourceId='src_'+'44'.repeat(16);
     const rows:any[]=[];let workbenchSpec:LaunchSpec|undefined;

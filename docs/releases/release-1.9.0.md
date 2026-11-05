@@ -1,5 +1,13 @@
 # Planned AIRK 1.9.0 release and development checkpoints
 
+P7 implements [combined Project reads](../combined-reads.md) with complete
+native, CLI, MCP, Workbench, plan/session, verification and export support.
+Windows release and Apple Silicon debug native suites passed, as did all 84
+unchanged legacy latency gates and 120 Windows fan-out trials. Exact evidence
+and unrun platform/release checks are in the
+[implementation ledger](../research/implementation-v190.md#p7--combined-retrieval-and-consumers).
+The unpublished working version remains **1.8.8**.
+
 P6c's [search execution contract](../search-execution.md) discloses policy-qualified lexical results when the embedding helper is unavailable, preserving strict explicit semantic requests and independent source-verification receipts. Local Windows/Mac ARM gates and all 84 unchanged-bound latency comparisons passed; the ledger records exact coverage and remaining release limits.
 
 Started 2 November 2026 on `feat/finetuning`, from the 1.8.7 source baseline.
@@ -24,7 +32,7 @@ refusal, bounded backup/import/recovery and the no-restore barrier after writes.
 The [storage boundary](../storage-formats.md#development-catalog-boundary)
 and [ledger](../research/implementation-v190.md) record qualified coordinator and
 performance results, including completed local UI/grant qualification and the
-pending full Neo checkpoint before P7. Installing
+completed full Neo checkpoint before P7. Installing
 the working candidate requires qualified native Genesis/upgrade readiness;
 full release acceptance remains separate.
 
@@ -87,8 +95,9 @@ P4 passed local native/transport checks and frozen/preceding latency and relevan
 gates. Report adds intentional checking cost: small-file median 135.76 ms versus
 66.67 ms with Off in the final warm-cache campaign. This does not qualify installed
 editors, concurrent editor saves, physical disk I/O or other platforms. Earlier
-failures and their corrections remain in the ledger. Project/index management,
-upgrade activation, combined scope, recommendations, trim and split remain planned.
+failures and their corrections remain in the ledger. At that P4 checkpoint,
+Project/index management, upgrade activation and combined scope remained planned;
+P6f and P7 now implement those paths. Recommendations, trim and split remain planned.
 
 ## Performance and validation evidence
 

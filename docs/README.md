@@ -1,6 +1,9 @@
 # AIRK documentation
 
-P6f implements reviewed Indexing/setup/grant forms and scoped native reads. Native Genesis/upgrade admits only qualified authority-1 activation. Windows installed-editor qualification and all 84 matched native performance gates passed. The full Neo checkpoint is complete, including recorded fixture corrections and qualified reruns. P7 has not started. [Evidence and platform limits](research/implementation-v190.md#p6f--catalog-management-and-scoped-native-activation). Version remains **1.8.8**.
+[Combined Project reads](combined-reads.md) records P7's unique-index composition,
+shared budgets, member-qualified results and current acceptance boundary.
+
+P7 implements [combined Project reads](combined-reads.md) across native, CLI, MCP and Workbench, including plans, sessions, verification and exports. Windows release and Apple Silicon debug native checks passed, along with all 84 unchanged legacy latency gates and 120 Windows fan-out trials. [Evidence and platform limits](research/implementation-v190.md#p7--combined-retrieval-and-consumers). Working version **1.8.8** remains unpublished.
 
 P6e makes [oversized stdio input](mcp.md) an explicit bounded failure and uses [qualified Workbench publication comparisons](workbench/implementation.md) instead of treating unequal tokens as older. It adds no status polling and preserves retained exports. Local qualification and release limits remain in the implementation ledger.
 
@@ -49,7 +52,7 @@ reasons, empty-result limits and inert next reads across CLI/MCP/Workbench.
 
 Unreleased developer workflow: [native build reuse and Darwin failure diagnostics](ci-and-builds.md#native-build-reuse-and-darwin-failure-diagnostics) describes the separate build/validation jobs, complete-attempt release rule, focused repetitions and remaining Intel failure. Product versions remain synchronized at 1.8.8 for manual testing before later 1.9.0 promotion.
 
-Developer references: [MCP tools](mcp-developer-guide.md) covers all 28 public tools with inputs, examples, evidence limits and implementation/test links. [CLI commands](cli-developer-guide.md) covers each command, its purpose, native ownership and guarded workflows. Both explain why `airk tools list` has 18 native tools while unified MCP has 28, and map the remaining capabilities to separate terminal commands.
+Developer references: [MCP tools](mcp-developer-guide.md) covers all 29 public tools with inputs, examples, evidence limits and implementation/test links. [CLI commands](cli-developer-guide.md) covers each command, its purpose, native ownership and guarded workflows. Both explain why `airk tools list` has 19 native tools while unified MCP has 29, and map the remaining capabilities to separate terminal commands.
 
 The [CLI/MCP/Workbench parity audit](read-interface-parity.md) maps every native read, complete response/input contracts, conditional/continuity options and full versus selected exports. [Installed MCP checks](mcp-improvements-test-results.md#installed-187-acceptance--november-1-2026) record the 78-check Windows campaign, its permitted retry and the remaining navigation limits. Earlier 20-scenario investigations remain explicitly historical.
 
@@ -65,7 +68,7 @@ Workbench opens once after successful trusted setup. Its compact header provides
 
 [Experiment with parser training in a fork](parser-training.md) explains the public role inventory, exact compressed corpora, verify/restore commands, whole-family split regeneration, offline fitting/evaluation and suggestion-only asset review. The [data catalog](../tools/parser-train/data/README.md) preserves historical inputs, hashes and source attribution.
 
-**Workbench introduced in 1.7.2:** [implementation and validation](workbench/implementation.md), [target design and linked mockups](workbench/design.md). Direct evidence workflows and the agent-facing `parse` tool share one bounded native runner. The development catalog has 28 tools; the dated 1.6.4 record remains preserved.
+**Workbench introduced in 1.7.2:** [implementation and validation](workbench/implementation.md), [target design and linked mockups](workbench/design.md). Direct evidence workflows and the agent-facing `parse` tool share one bounded native runner. The development catalog has 29 tools, including grant-bound scope discovery; the dated 1.6.4 record remains preserved.
 
 **Version 1.6.4 — runtime upgrades, project cleanup and responsive diagnostics.** This public release consolidates the unpublished 1.6.1–1.6.3 branch work. Supported runtimes upgrade before connection checks; uninstall removes owned executables and recorded agent entries while preserving index data. Trusted open folders register and index automatically, subject to saved opt-out, pause and manual-update settings. Removing a project drains its workers and deletes its AIRK index and saved settings while preserving source files.
 

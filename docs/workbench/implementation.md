@@ -1,5 +1,11 @@
 # Workbench development branch
 
+P7 adds explicit reviewed combined sessions, unique-index execution, shared
+budgets and complete member-qualified results. [Combined-read contracts](../combined-reads.md)
+record selectors, discovery, publication vectors, plan verification and the
+current qualification boundary. Legacy source bindings retain their one-index
+meaning. Use the actual connection catalog for supported inputs.
+
 **1.8.8 P6e working change:** Workbench orders publication generations only
 within the same host-captured backend authority, collection and index incarnation.
 Different scopes and inconsistent same-generation digests receive qualified
@@ -86,7 +92,7 @@ Sessions are local to extension storage, with ten recent sessions per project, a
 
 ## Agent and CLI interface
 
-The unified MCP catalog adds `parse`, for 28 public tools. Native `airk_parse` remains the compatibility alias. An editor attachment is unnecessary. `schema` is `airk.parse.request/1`; `mode` defaults to `prepare`. Supply exactly one of `text`, `recipe` or `plan`. `plan.steps` contains stable IDs, public operation names, argument objects and optional bindings to earlier steps. The kernel owns validation and execution; it does not recursively call MCP.
+The unified MCP catalog includes `parse` and grant-bound `query_scope`, for 29 public tools. Native `airk_parse` remains the compatibility alias. An editor attachment is unnecessary. `schema` is `airk.parse.request/1`; `mode` defaults to `prepare`. Supply exactly one of `text`, `recipe` or `plan`. `plan.steps` contains stable IDs, public operation names, argument objects and optional bindings to earlier steps. The kernel owns validation and execution; it does not recursively call MCP.
 
 ```json
 {

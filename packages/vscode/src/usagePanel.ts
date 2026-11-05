@@ -56,7 +56,7 @@ export interface UsageAccess {
     openIndexAdministration?:()=>Promise<void>;
 }
 function validateAdministration(spec:LaunchSpec,selection:AdministrativeIndexSelection):void {
-    if(spec.catalogSession!==undefined||selection.purpose!=='index_administration'||selection.label!==ADMINISTRATIVE_USAGE_LABEL
+    if(spec.catalogSession!==undefined||spec.combinedSession!==undefined||selection.purpose!=='index_administration'||selection.label!==ADMINISTRATIVE_USAGE_LABEL
         ||!spec.service||selection.backing!==spec.service.project)throw new Error('invalid_usage_administrative_purpose');
     catalogHex(selection.namespace);catalogRevision(selection.catalogRevision);catalogId(selection.indexId,'idx_');
     catalogHex(selection.backing,64);catalogHex(selection.runtime.runtimeSha256,64);
@@ -71,7 +71,7 @@ export async function openUsagePanel(spec: LaunchSpec, valid: () => boolean,
     write: (args: string[], valid?: () => boolean) => Promise<unknown>, surface?: UsageSurface, access:UsageAccess={}): Promise<void> {
     const administration=access.administration?structuredClone(access.administration):undefined;
     if(administration)validateAdministration(spec,administration);
-    const scoped=spec.catalogSession!==undefined;
+    const scoped=spec.catalogSession!==undefined||spec.combinedSession!==undefined;
     const panel = surface ? undefined : vscode.window.createWebviewPanel('airk.usage', `AIRK ${administration?'Index administration':'Usage & Savings'}: ${spec.name}`, vscode.ViewColumn.Active, { enableScripts: true, localResourceRoots: [] });
     let days = 30, price: object | undefined, report: object = {}, busy = false, disposed = false;
     const check = () => { if (disposed || !vscode.workspace.isTrusted || !valid()) { throw new Error('This collection or storage selection changed. Reopen Usage & Savings from the current collection.'); } };

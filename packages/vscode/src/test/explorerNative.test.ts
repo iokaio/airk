@@ -8,6 +8,7 @@ import { continueFacts, FactHandles, runFacts } from '../explorerFacts';
 import { RefRegistry } from '../explorerSearch';
 import { liveCheck, sourceFile } from '../explorerSource';
 import { probeMcp } from '../native';
+import { UNIFIED_TOOLS } from '../model';
 import { record } from '../serviceClient';
 import { CORE_PACK } from '../explorerStrategies';
 import { runStrategy } from '../explorerStrategyRunner';
@@ -24,7 +25,7 @@ test('the Explorer evidence session reads one pinned publication through the ver
         await fixture.job(spec);
         const published = await fixture.publishedStatus(spec);
         const token = String(record(published.publication).token);
-        assert.equal((await probeMcp(spec)).tools.length, 28, 'the public endpoint has one unified catalog');
+        assert.equal((await probeMcp(spec)).tools.length, UNIFIED_TOOLS.length, 'the public endpoint has one unified catalog');
 
         client = new EvidenceClient(spec, 'native-test', { timeout: 60000 });
         const status = await client.call('airk_status', {}, { timeout: 60000 });

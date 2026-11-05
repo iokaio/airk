@@ -7,14 +7,14 @@ import { ago, countLine, shortToken } from './format';
 import type { ScreenProps } from './workspaces';
 import { FileBrowser, type LibraryFile } from './fileBrowser';
 import { currentSelection } from './strategyStore';
-import { dialogFocus } from './components';
+import { CompleteNativeResponse, dialogFocus } from './components';
 import { beginSearch, consumeSearchInput, editSearch, editSearchPage, failSearch, searchPage, useSearchSession } from './searchStore';
 
 type Form = SearchForm;
 
 export function SearchScreen(props: ScreenProps) {
     const status = props.state.status;
-    const { form, result, error, busy, page } = useSearchSession();
+    const { form, result, error, busy, page, nativeFailure } = useSearchSession();
     const [passages, setPassages] = useState<Record<string, PassageView>>({});
     const [opened, setOpened] = useState<Record<string, OpenSourceResult | string>>({});
     const input = useRef<HTMLInputElement>(null);
@@ -95,6 +95,7 @@ export function SearchScreen(props: ScreenProps) {
             <SaveRecipe form={form} />
             {!canSearch && <p class="callout">Search needs a connected AIRK service and a published index ({props.state.connection}).</p>}
             {error && <p class="callout" role="alert">{error}</p>}
+            <CompleteNativeResponse value={nativeFailure} />
             {result && (
                 <section aria-label="Search results">
                     <p class="muted">Results for “{result.query}”</p>
@@ -104,6 +105,7 @@ export function SearchScreen(props: ScreenProps) {
                         {' · '}mode: {result.appliedMode === 'vector' ? 'semantic' : result.appliedMode}{result.semantic && <> · semantic coverage: {result.semantic}</>}{' · '}publication <span title={result.publication}>{shortToken(result.publication)}</span>
                     </p>
                     {result.warnings.map(warning => <p key={warning} class="muted">{warning}</p>)}
+                    <CompleteNativeResponse value={result.nativeResult} />
                     {result.hits.length > 0 && <nav class="actions pagination" aria-label="Search result pages">
                         <button class="ghost" disabled={page === 0} onClick={() => editSearchPage(page - 1)}>Previous</button>
                         <span role="status" aria-live="polite" aria-atomic="true">{page * 20 + 1}–{Math.min((page + 1) * 20, result.hits.length)} of {result.hits.length} results · Page {page + 1} of {Math.ceil(result.hits.length / 20)}</span>
@@ -120,6 +122,7 @@ export function SearchScreen(props: ScreenProps) {
                                         <code class="path">{hit.path}:{hit.startLine}{hit.endLine !== hit.startLine ? `–${hit.endLine}` : ''}</code>
                                         <span class="tag" title="E1: indexed text — not a resolved binding or coverage">{hit.evidenceClass}</span>
                                         {hit.location && <span class="tag" title="Original document location">{hit.location}</span>}
+                                        {hit.indexId && <span class="tag" title={`Selected Projects: ${hit.projectIds?.join(', ') ?? ''}`}>{hit.indexId}</span>}
                                         {hit.truncated && <span class="tag">truncated</span>}
                                         <span class="spacer" />
                                         <button type="button" class="ghost" onClick={() => { void expand(hit.ref); }}>Expand</button>

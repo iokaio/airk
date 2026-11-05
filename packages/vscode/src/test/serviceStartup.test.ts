@@ -124,7 +124,7 @@ test('connection check publishes preparation, progress and failure, coalesces cl
         assert.equal(probes,2);
         const check=panel.posted.filter((entry:any)=>entry.state?.connectionCheck).at(-1) as any;
         assert.equal(check.state.connectionCheck.phase,'verified');
-        assert.equal(check.state.connectionCheck.tools.length,28);
+        assert.equal(check.state.connectionCheck.tools.length,UNIFIED_TOOLS.length);
         assert.equal(check.state.connectionCheck.project,project);
         assert.equal(check.state.connectionCheck.indexState,'unknown');
         assert.match(check.state.connectionCheck.message,/Index readiness is unconfirmed/);

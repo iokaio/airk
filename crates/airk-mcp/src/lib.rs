@@ -17,6 +17,7 @@ mod lifecycle;
 pub mod response;
 mod workbench;
 use response::ResponseArgs;
+pub mod combined;
 pub mod explorer_offline;
 pub mod help;
 pub mod local;
@@ -623,6 +624,24 @@ impl AirkServer {
     )]
     async fn help(&self, Parameters(args): Parameters<help::HelpArgs>) -> CallToolResult {
         response::with_scope(&self.kernel, help::reply(args))
+    }
+
+    #[tool(
+        name = "airk_query_scope",
+        description = "Discover only the connection's reviewed Project/index grant. Projects, indexes and sources have independently bounded pages and revision-bound continuations. Legacy connections report configuration_required; this never enumerates the machine library or opens sources.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn query_scope(
+        &self,
+        Parameters(args): Parameters<combined::QueryScopeParameters>,
+    ) -> CallToolResult {
+        let arguments = serde_json::to_value(args).expect("query scope serialization");
+        serde_json::from_value(combined::legacy_discovery(arguments))
+            .expect("canonical legacy discovery envelope")
     }
 
     #[tool(

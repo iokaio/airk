@@ -118,6 +118,16 @@ test('the real bundled MCP server reaches its project window for validation, nav
         const validation = await call('airk_explorer_validate_draft', { kind: 'search', draft: search }); assert.equal(validation.live_checked, true); assert.equal(store.list().length, 0);
         const proposal = await call('airk_explorer_suggest_navigation', { schema_version: '1.0', title: 'Read references', idempotency_key: 'nav', route: 'code/references', filters: { name: 'sample' } });
         assert.equal(proposal.destination, 'code/references'); assert.equal((await call('airk_explorer_proposal_status', { proposal_id: proposal.proposal_id })).reason, 'awaiting_user_review');
+        const projects = ['prj_' + '01'.repeat(16)], indexes = ['idx_' + '02'.repeat(16)];
+        const combined = await call('airk_explorer_suggest_search', { ...search, idempotency_key: 'combined-native-transport',
+            draft: { query: 'original', project_ids: projects, index_ids: indexes, member_availability: 'require' } });
+        assert.equal(combined.destination, 'workbench/search');
+        assert.equal(combined.executed, false);
+        const combinedBody = store.list().find(item => item.id === combined.proposal_id)?.draft.body;
+        assert.ok(combinedBody?.kind === 'search');
+        assert.deepEqual(combinedBody.search.project_ids, projects);
+        assert.deepEqual(combinedBody.search.index_ids, indexes);
+        assert.equal(combinedBody.search.member_availability, 'require');
         const shared = handoffs.share('studio', revision, 'Shared complete text');
         assert.equal((await call('airk_explorer_handoff_get', { token: shared.token })).content, 'Shared complete text');
         generation++;

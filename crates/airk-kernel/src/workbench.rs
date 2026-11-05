@@ -16,6 +16,7 @@ use std::{
     time::Instant,
 };
 
+pub mod combined;
 mod locations;
 mod natural;
 pub use locations::locations;
@@ -79,6 +80,7 @@ const TOOLS: &[&str] = &[
     "status",
     "diagnostics",
     "capabilities",
+    "query_scope",
     "help",
 ];
 
@@ -123,7 +125,10 @@ fn numeric_max(key: &str) -> u64 {
     }
 }
 fn is_evidence(tool: &str) -> bool {
-    !matches!(tool, "help" | "status" | "diagnostics" | "capabilities")
+    !matches!(
+        tool,
+        "help" | "status" | "diagnostics" | "capabilities" | "query_scope"
+    )
 }
 fn step(id: &str, tool: &str, args: Value) -> Step {
     Step {
@@ -1023,6 +1028,7 @@ pub fn parse_text(text: &str) -> Result<(Vec<Step>, Vec<String>)> {
         "status" => "status",
         "diagnostics" => "diagnostics",
         "capabilities" => "capabilities",
+        "query-scope" | "query_scope" => "query_scope",
         "help" => "help",
         _ if !explicit => {
             if let Some(parsed) = scoped_prose(text, &words)? {
@@ -1207,6 +1213,13 @@ pub fn parse_text(text: &str) -> Result<(Vec<Step>, Vec<String>)> {
         "relationships" => {
             args.insert("symbol".into(), json!(value));
         }
+        "query_scope" => {
+            ensure!(
+                positional.len() == 1,
+                "query_scope needs one view: projects, indexes or sources"
+            );
+            args.insert("view".into(), json!(value));
+        }
         "help" if !value.is_empty() => {
             args.insert("topic".into(), json!(value));
         }
@@ -1347,6 +1360,14 @@ fn fields(tool: &str) -> &'static [&'static str] {
             "cursor",
         ],
         "capabilities" => &["adapter", "rich"],
+        "query_scope" => &[
+            "view",
+            "project_id",
+            "index_id",
+            "cursor",
+            "limit",
+            "max_bytes",
+        ],
         "help" => &["topic", "command", "tool", "start_line", "max_bytes"],
         "relationships" => &[
             "symbol",
@@ -1363,6 +1384,7 @@ fn fields(tool: &str) -> &'static [&'static str] {
 /// Forms and agents inspect the same closed argument inventory used by validation.
 pub fn operation_catalog() -> Value {
     let operations:Map<String,Value>=TOOLS.iter().map(|tool|{
+        if *tool == "query_scope" {return (tool.to_string(),airk_core::combined_reads::query_scope::schema());}
         let properties:Map<String,Value>=fields(tool).iter().copied().chain(std::iter::once("reply_detail")).chain(verification_fields(tool).iter().copied()).map(|key|{
             let schema = argument_schema(key);
             (key.to_string(),schema)
@@ -1501,6 +1523,11 @@ fn validate_step(step: &Step, prefix: &str, bound: bool) -> Result<()> {
         TOOLS.contains(&step.tool.as_str()),
         "operation is not read-only evidence"
     );
+    if step.tool == "query_scope" {
+        let args: airk_core::combined_reads::query_scope::QueryScopeArgs =
+            serde_json::from_value(json!(step.args))?;
+        return args.validate();
+    }
     verification_controls(&step.args)?.resolve()?;
     for (key, value) in &step.args {
         ensure!(
@@ -1759,6 +1786,13 @@ pub fn bounded_result(mut result: ResultEnvelope) -> Result<ResultEnvelope> {
     if bytes <= result.plan.output.max_bytes {
         return Ok(result);
     }
+    // Combined checks bind the already-final projection. A transport may add
+    // observations, but cannot clip records after those member checks and keep
+    // the old receipt as a statement about a different selection.
+    ensure!(
+        result.member_verification.is_none(),
+        airk_core::verification::VerificationProjectionChanged
+    );
     result.truncated = true;
     if !result
         .completeness
@@ -1861,6 +1895,13 @@ impl Kernel {
         observations: &Value,
         reader: Option<&PlanReader<'_>>,
     ) -> Result<ResultEnvelope> {
+        ensure!(
+            request
+                .plan
+                .as_ref()
+                .is_none_or(|plan| plan.query_scope.is_none() && plan.scope_identity.is_none()),
+            "a combined plan requires its original combined session"
+        );
         ensure!(
             serde_json::to_vec(&request)?.len() <= 32768,
             "parse request exceeds 32 KiB"
@@ -2033,6 +2074,7 @@ impl Kernel {
         let mut ids: BTreeMap<String, String> = BTreeMap::new();
         for step in &mut plan.steps {
             if let Some(detail) = request.reply_detail
+                && step.tool != "query_scope"
                 && step.args.get("reply_detail").is_none_or(Value::is_null)
             {
                 step.args.insert("reply_detail".into(), json!(detail));
@@ -2319,7 +2361,7 @@ impl Kernel {
             }
         }
         plan.digest = digest(&plan)?;
-        let mut result = ResultEnvelope {scope_observation:self.scope_observation().cloned(),source_verification:None,schema: RESULT_SCHEMA.into(), reply_detail:request.reply_detail, collection:self.collection().into(),publication:plan.publication.clone(), status:if needs.is_empty(){"prepared"}else{"needs_input"}.into(),executed:false, plan:plan.clone(),requires_input:needs.into_iter().map(|reason|RequiredInput{field:"text".into(),step:None,reason,choices:vec![]}).collect(),steps:vec![],evidence:vec![],warnings:vec!["Untrusted indexed evidence; verify live files before edits. Syntax relationships are candidates, not resolved calls.".into()],truncated:false,completeness:vec![],calls,payload_bytes:resolution_bytes};
+        let mut result = ResultEnvelope {query_scope:None,scope_identity:None,member_verification:None,scope_observation:self.scope_observation().cloned(),source_verification:None,schema: RESULT_SCHEMA.into(), reply_detail:request.reply_detail, collection:self.collection().into(),publication:plan.publication.clone(), status:if needs.is_empty(){"prepared"}else{"needs_input"}.into(),executed:false, plan:plan.clone(),requires_input:needs.into_iter().map(|reason|RequiredInput{field:"text".into(),step:None,reason,choices:vec![]}).collect(),steps:vec![],evidence:vec![],warnings:vec!["Untrusted indexed evidence; verify live files before edits. Syntax relationships are candidates, not resolved calls.".into()],truncated:false,completeness:vec![],calls,payload_bytes:resolution_bytes};
         result.requires_input.extend(choices);
         if unfenced_literal_symbols {
             result.status = "needs_input".into();
@@ -2727,6 +2769,9 @@ impl Kernel {
             json!({"revision":revision,"known_hash":args.get("known_hash")}),
         )?;
         let mut value = match tool {
+            "query_scope" => airk_core::combined_reads::query_scope::legacy_body(
+                &serde_json::from_value(json!(args))?,
+            )?,
             "status" => self.status_summary()?,
             "diagnostics" => {
                 let mut value = serde_json::to_value(self.status()?)?;
@@ -2743,7 +2788,7 @@ impl Kernel {
                 value
             }
             "help" => {
-                json!({"commands":"/search /symbols /code-facts /refs /read /outline /files /info /imports /facts /changes --since /status /diagnostics /capabilities /context /relationships /help","recipes":["definition","documents","impact","tests","component","readiness"],"parser":"deterministic rules; unsupported phrasing returns needs_input","navigation_options":"search/refs: --language, --evidence-kind, --exclude-path-prefix; symbols/imports/code-facts: --name-match, --include-count; refs: --cursor, --order, --include-files, --include-count; fact reads/outline: --compact. Boolean flags accept optional true/false. Workbench compact omission keeps rich facts; MCP compact discovery has its own default."})
+                json!({"commands":"/search /symbols /code-facts /refs /read /outline /files /info /imports /facts /changes --since /status /diagnostics /capabilities /query-scope /context /relationships /help","recipes":["definition","documents","impact","tests","component","readiness"],"parser":"deterministic rules; unsupported phrasing returns needs_input","navigation_options":"search/refs: --language, --evidence-kind, --exclude-path-prefix; symbols/imports/code-facts: --name-match, --include-count; refs: --cursor, --order, --include-files, --include-count; fact reads/outline: --compact. Boolean flags accept optional true/false. Workbench compact omission keeps rich facts; MCP compact discovery has its own default."})
             }
             "capabilities" => {
                 json!({"adapters":Kernel::extraction_adapters().iter().map(|a|json!({"id":a.profile.adapter_id})).collect::<Vec<_>>(),"workbench":operation_catalog(),"read_guidance":airk_core::guidance::catalog(),"source_verification_capability":airk_core::verification::catalog()})
@@ -3007,6 +3052,29 @@ fn expand(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_query_scope_plan_is_metadata_only_without_an_index_publication() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let root = temp.path().join("source");
+        std::fs::create_dir(&root)?;
+        let kernel = Kernel::open(&root, Some(temp.path().join("state")))?;
+        let result = kernel.evidence_plan(serde_json::from_value(json!({
+            "schema":REQUEST_SCHEMA,"mode":"execute","text":"/query-scope projects"
+        }))?)?;
+        assert_eq!(result.status, "complete");
+        assert!(result.plan.publication.is_none());
+        assert_eq!(
+            result.steps[0].result.as_ref().unwrap()["status"],
+            "configuration_required"
+        );
+        assert!(result.source_verification.is_none());
+        assert_eq!(
+            operation_catalog()["operations"]["query_scope"],
+            airk_core::combined_reads::query_scope::schema()
+        );
+        Ok(())
+    }
 
     #[test]
     fn strict_search_failure_retains_the_canonical_receipt_and_underlying_context() -> Result<()> {

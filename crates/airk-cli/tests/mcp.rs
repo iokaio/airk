@@ -15,6 +15,30 @@ struct Session {
     input: ChildStdin,
     output: Receiver<String>,
 }
+fn assert_query_scope_metadata_tool(tools: &[Value], name: &str) {
+    let tool = tools
+        .iter()
+        .find(|tool| tool["name"] == name)
+        .expect("query scope metadata tool");
+    assert_eq!(tool["annotations"]["readOnlyHint"], true);
+    assert_eq!(
+        tool["inputSchema"]["properties"],
+        airk_core::combined_reads::query_scope::schema()["properties"]
+    );
+    assert_eq!(tool["inputSchema"]["additionalProperties"], false);
+    for field in [
+        "project",
+        "project_ids",
+        "index_ids",
+        "verification",
+        "response_mode",
+    ] {
+        assert!(
+            tool["inputSchema"]["properties"].get(field).is_none(),
+            "discovery must not advertise {field}"
+        );
+    }
+}
 impl Session {
     fn start(root: &std::path::Path, state: &std::path::Path) -> anyhow::Result<Self> {
         // Existing rich-payload parity and publication tests explicitly use Full.
@@ -1058,13 +1082,10 @@ fn durable_key_reads_match_cli_and_mcp_and_reject_filter_combinations() -> anyho
     session.receive(1)?;
     session.send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
     session.send(json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}))?;
-    assert_eq!(
-        session.receive(2)?["result"]["tools"]
-            .as_array()
-            .unwrap()
-            .len(),
-        28
-    );
+    let catalog = session.receive(2)?;
+    let tools = catalog["result"]["tools"].as_array().unwrap();
+    assert_eq!(tools.len(), 29);
+    assert_query_scope_metadata_tool(tools, "query_scope");
     session.wait_source_idle(30)?;
     for (id, command, option, tool, field, key) in [
         (
@@ -1457,15 +1478,21 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
     let catalog: Value = serde_json::from_slice(&catalog.stdout)?;
     assert_eq!(
         catalog["tools"].as_array().unwrap().len(),
-        18,
+        19,
         "terminal evidence adapter retains compatibility aliases"
     );
-    assert_eq!(tools.len(), 28);
+    assert_eq!(
+        catalog["tools"],
+        serde_json::to_value(airk_mcp::local::tools())?
+    );
+    assert_query_scope_metadata_tool(catalog["tools"].as_array().unwrap(), "airk_query_scope");
+    assert_eq!(tools.len(), 29);
     let names: std::collections::BTreeSet<_> = tools
         .iter()
         .map(|tool| tool["name"].as_str().unwrap())
         .collect();
-    assert_eq!(names.len(), 28);
+    assert_eq!(names.len(), 29);
+    assert_query_scope_metadata_tool(tools, "query_scope");
     for tool in catalog["tools"].as_array().unwrap() {
         let name = tool["name"]
             .as_str()

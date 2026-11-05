@@ -17,6 +17,70 @@ SPEC.loader.exec_module(QUALITY)
 
 
 class RetrievalQualityTests(unittest.TestCase):
+    def test_combined_publication_refs_preserve_raw_and_reject_wrong_member(self):
+        value, sources = self.combined()
+        for number, rank in enumerate(value["ranking"]):
+            rank["origin"].pop("publication")
+            rank["origin"]["publication_ref"] = {"member": number}
+        raw = json.dumps(value, sort_keys=True)
+        self.assertEqual(QUALITY.judge_combined(value, sources, {key: 3 for key in sources})["recall_at_10"], 1)
+        self.assertEqual(json.dumps(value, sort_keys=True), raw)
+        for invalid in (1, -1, True, 32):
+            value["ranking"][0]["origin"]["publication_ref"] = {"member": invalid}
+            with self.assertRaises(AssertionError):
+                QUALITY.judge_combined(value, sources, {key: 3 for key in sources})
+
+    def combined(self):
+        projects = ["prj_" + "03" * 16]
+        indexes = ["idx_" + "01" * 16, "idx_" + "02" * 16]
+        root = "src_" + "04" * 16
+        sources = {(index, root, "same.rs"): {"sha256": "a" * 64, "project_ids": projects}
+                   for index in indexes}
+        value = {"schema": "airk.combined-read/1", "members": [{"index_id": index,
+            "result": {"structuredContent": {"hits": [self.hit("same.rs")]}}} for index in indexes],
+            "publication_vector": {"members": [{"index_id": index, "publication": {"token": f"fixture-{index}"}} for index in indexes]},
+            "ranking": [{"index_id": index,
+                "result_pointer": f"/members/{number}/result/structuredContent/hits/0",
+                "origin": {"index_id": index, "source_root_id": root, "source_relative_path": "same.rs",
+                           "project_ids": projects, "publication": {"token": f"fixture-{index}"}}} for number, index in enumerate(indexes)]}
+        return value, sources
+
+    def test_combined_relevance_keeps_identical_paths_in_independent_indexes(self):
+        value, sources = self.combined()
+        grades = {key: 3 for key in sources}
+        result = QUALITY.judge_combined(value, sources, grades)
+        self.assertEqual(result["relevant_files"], 2)
+        self.assertEqual(result["recall_at_10"], 1)
+        self.assertEqual(result["ndcg_at_10"], 1)
+        value["ranking"].pop()
+        self.assertEqual(QUALITY.judge_combined(value, sources, grades)["recall_at_10"], .5)
+
+    def test_combined_relevance_rejects_false_project_or_member_origin(self):
+        value, sources = self.combined()
+        grades = {key: 3 for key in sources}
+        value["ranking"][0]["origin"]["project_ids"] = []
+        with self.assertRaisesRegex(AssertionError, "source or scope differs"):
+            QUALITY.judge_combined(value, sources, grades)
+        value, sources = self.combined()
+        value["ranking"][0]["result_pointer"] = "/members/1/result/structuredContent/hits/0"
+        with self.assertRaisesRegex(AssertionError, "member differs"):
+            QUALITY.judge_combined(value, sources, grades)
+
+    def test_combined_relevance_duplicate_chunks_do_not_boost_shared_index_gain(self):
+        value, sources = self.combined()
+        grades = {key: 3 for key in sources}
+        value["ranking"].insert(1, value["ranking"][0].copy())
+        result = QUALITY.judge_combined(value, sources, grades)
+        self.assertEqual(result["recall_at_10"], 1)
+        self.assertLess(result["ndcg_at_10"], 1)
+        self.assertEqual(result["returned_chunks"], 3)
+
+    def test_combined_relevance_rejects_cross_member_publication_substitution(self):
+        value, sources = self.combined()
+        value["ranking"][0]["origin"]["publication"] = value["ranking"][1]["origin"]["publication"]
+        with self.assertRaisesRegex(AssertionError, "source or scope differs"):
+            QUALITY.judge_combined(value, sources, {key: 3 for key in sources})
+
     def test_only_unsubmitted_busy_rejections_are_retried(self):
         for submitted in (False, True):
             session = self.session([self.hit("wanted.txt")])

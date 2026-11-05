@@ -11,9 +11,15 @@ Fresh status-first, fresh unprimed and primed reused connections are separate
 cohorts. Unprimed startup performs only initialization/catalog discovery before
 the identical nine-tool batch; its separate initial-status timing is null. The
 reused cohort retains one serial warmup batch separately from measured samples.
+An explicit AIRK_COMBINED_COMPARE_LEGACY=1 owned-fixture comparison additionally
+retains full query replies in its ignored output directory; its summary remains
+content-free and never claims whole-body or multi-index legacy equivalence.
+AIRK_COMBINED_RETAIN_RAW=1 separately retains complete received combined query
+attempts for bounded diagnostics, including failed responses; neither is default.
 """
 import argparse
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 import hashlib
 import importlib.util
 import json
@@ -28,6 +34,10 @@ import tempfile
 import threading
 import time
 
+evidence_spec = importlib.util.spec_from_file_location("combined_evidence", Path(__file__).with_name("combined_evidence.py"))
+combined_evidence = importlib.util.module_from_spec(evidence_spec)
+evidence_spec.loader.exec_module(combined_evidence)
+
 SCHEMA = "airk.mcp-investigation/1"
 MAX_LINE = 2 * 1024 * 1024
 MAX_READ_ATTEMPTS = 64
@@ -38,6 +48,16 @@ COHORTS = (("fresh-frontend-status-first", True, False),
            ("reused-connection-status-first", True, True))
 ALLOWED = frozenset({"status", "symbols", "references", "search", "code_facts",
                      "read_file", "context", "outline", "file_info"})
+COMBINED_SCHEMA = "airk.combined-investigation/1"
+LEGACY_COMPARE_ENV = "AIRK_COMBINED_COMPARE_LEGACY"
+COMBINED_RAW_ENV = "AIRK_COMBINED_RETAIN_RAW"
+
+
+class LegacyComparisonError(ValueError):
+    """Fixed content-free outcome for the explicitly opted-in owned comparison."""
+    def __init__(self, code):
+        super().__init__(code)
+        self.code = code
 
 
 def digest_bytes(value):
@@ -73,6 +93,29 @@ def source_inventory(root):
         if path.is_file():
             rows.append({"path": path.relative_to(root).as_posix(), "bytes": path.stat().st_size,
                          "sha256": digest_bytes(path.read_bytes())})
+    return rows
+
+
+def combined_source_inventory(root):
+    """Bound snapshots of the deliberately small original fan-out fixtures."""
+    paths, entries, total = [], 0, 0
+    for path in Path(root).rglob("*"):
+        entries += 1
+        if entries > 512 or path.is_symlink():
+            raise ValueError("combined_fixture_entries_or_link")
+        if path.is_file():
+            size = path.stat().st_size
+            total += size
+            if len(paths) >= 128 or total > 16 * 1024 * 1024:
+                raise ValueError("combined_fixture_size_limit")
+            paths.append((path, size))
+    rows = []
+    for path, size in sorted(paths):
+        with path.open("rb") as source:
+            raw = source.read(size + 1)
+        if len(raw) != size:
+            raise ValueError("combined_fixture_changed_during_snapshot")
+        rows.append({"path": path.relative_to(root).as_posix(), "bytes": size, "sha256": digest_bytes(raw)})
     return rows
 
 
@@ -313,7 +356,9 @@ class Session:
                 raise RuntimeError("transport_closed")
             message, size, received = item
             if "error" in message or not isinstance(message.get("result"), dict):
-                raise RuntimeError("protocol_error")
+                error = RuntimeError("protocol_error")
+                error.raw_response = message
+                raise error
             return message["result"], {"request_bytes": sent, "response_bytes": size,
                 "elapsed_ms": (received-started)*1000, "completed_at": received}
         finally:
@@ -358,6 +403,39 @@ class Session:
             self.cleanup["exit_code"] = self.child.returncode
             self.child.stdout.close()
             self.reader.join(timeout=1)
+
+
+class RetainedSession(Session):
+    """Opt-in raw query outcomes, drained after timing and never in summaries."""
+    def __init__(self, *args, **kwargs):
+        self.query_replies = []
+        super().__init__(*args, **kwargs)
+
+    def request(self, method, params, deadline=None):
+        try:
+            result, metadata = super().request(method, params, deadline)
+        except RuntimeError as error:
+            if method == "tools/call" and hasattr(error, "raw_response"):
+                self.query_replies.append({"jsonrpc_response": error.raw_response})
+            raise
+        if method == "tools/call":
+            self.query_replies.append(result)
+        return result, metadata
+
+
+def retain_query_replies(stream, session, sample, route, additional_stream=None, selected_indexes=None):
+    replies, session.query_replies = session.query_replies, []
+    for attempt, envelope in enumerate(replies, 1):
+        row = {"sample": sample, "route": route, "attempt": attempt, "envelope": envelope}
+        if selected_indexes is not None:
+            row["selected_indexes"] = selected_indexes
+        encoded = json.dumps(row, ensure_ascii=False) + "\n"
+        for destination in (stream, additional_stream):
+            if destination is not None:
+                destination.write(encoded)
+    for destination in (stream, additional_stream):
+        if destination is not None:
+            destination.flush()
 
 
 def workload():
@@ -452,6 +530,558 @@ def distribution(values):
     values = sorted(values)
     return {"samples": len(values), "median": statistics.median(values) if values else None,
             "p95": values[max(0, math.ceil(len(values)*.95)-1)] if values else None}
+
+
+def combined_observation(envelope, case, source_hashes):
+    """Check native combined evidence without retaining source text or locations.
+
+    Result membership alone does not prove zero work on unselected indexes.
+    That invariant needs native work counters or the actual-process tests.
+    """
+    value = body(envelope)
+    if value.get("schema") != "airk.combined-read/1":
+        raise ValueError("combined_result_required")
+    selected = case["index_ids"]
+    members = value.get("members", [])
+    observed = [member.get("index_id") for member in members]
+    if observed != sorted(selected) or len(set(observed)) != len(observed):
+        raise ValueError("combined_member_selection_mismatch")
+    limits = case["arguments"]
+    for field, maximum in (("limit", limits["limit"]), ("max_bytes", limits["max_bytes"]),
+                           ("verification_max_sources", limits.get("verification_max_sources", 8)),
+                           ("verification_max_bytes", limits.get("verification_max_bytes", 16 * 1024 * 1024)),
+                           ("verification_deadline_ms", limits.get("verification_deadline_ms", 2000))):
+        allocations = [member.get("allocation", {}).get(field) for member in members]
+        if any(type(part) is not int or part < 0 for part in allocations) or sum(allocations) > maximum:
+            raise ValueError("combined_budget_multiplied")
+    expected_outcomes = case.get("member_outcomes", {})
+    for member in members:
+        combined_evidence.member_result(value, member["index_id"])
+        if member.get("outcome") != expected_outcomes.get(member["index_id"], "complete"):
+            raise ValueError("combined_member_outcome_mismatch")
+    expected = {(row["index_id"], row["path"]): row for row in case["expected"]}
+    returned = set()
+    text_bytes = 0
+    vector = value.get("publication_vector", {})
+    if [row.get("index_id") for row in vector.get("members", [])] != observed:
+        raise ValueError("combined_publication_member_mismatch")
+    member_publications = {row["index_id"]: row.get("publication") for row in vector["members"]}
+    ranked_pointers = set()
+    for rank in value.get("ranking", []):
+        pointer = rank.get("result_pointer")
+        if not isinstance(pointer, str) or not pointer.startswith("/members/") or pointer in ranked_pointers:
+            raise ValueError("combined_origin_pointer_invalid")
+        ranked_pointers.add(pointer)
+        record = value
+        try:
+            parts = pointer[1:].split("/")
+            if observed[int(parts[1])] != rank["index_id"]:
+                raise ValueError("combined_origin_member_mismatch")
+            for token in parts:
+                token = token.replace("~1", "/").replace("~0", "~")
+                record = record[int(token)] if isinstance(record, list) else record[token]
+            citation = record["citation"]
+            origin = combined_evidence.ranked_origin(value, rank)
+            key = (rank["index_id"], citation["path"])
+            judged = expected[key]
+            if (origin["index_id"] != key[0] or origin["project_ids"] != sorted(judged["project_ids"])
+                    or origin["source_root_id"] != judged["source_root_id"]
+                    or member_publications[key[0]] is None or origin.get("publication") != member_publications[key[0]]
+                    or citation["content_hash"] != source_hashes[key]):
+                raise ValueError("combined_origin_or_hash_mismatch")
+        except (KeyError, TypeError, IndexError, ValueError) as error:
+            raise ValueError("combined_origin_or_hash_mismatch") from error
+        returned.add(key)
+        text_bytes += len(record.get("text", "").encode("utf-8"))
+    if returned != set(expected) or len(value.get("ranking", [])) > limits["limit"] or text_bytes > limits["max_bytes"]:
+        raise ValueError("combined_evidence_or_budget_mismatch")
+    # Preserve each member token, never treat the vector as a scalar clock.
+    publications = [{"index_id": row["index_id"], "publication": row.get("publication")}
+                    for row in vector["members"]]
+    return {"selected_indexes": len(selected), "members": len(members),
+            "complete_members": sum(member["outcome"] == "complete" for member in members),
+            "failed_members": sum(member["outcome"] == "failed" for member in members),
+            "unqueried_members": sum(member["outcome"] == "unqueried" for member in members),
+            "ranked_records": len(value.get("ranking", [])), "distinct_sources": len(returned),
+            "text_bytes": text_bytes, "partial": value.get("partial"), "truncated": value.get("truncated"),
+            "is_error": envelope.get("isError") is True,
+            "publication_vector_sha256": digest_bytes(canonical(publications)),
+            "selected_members_only": True, "budget_allocations_bounded": True,
+            "source_hashes_and_attribution_match": True,
+            "unselected_native_work": None}
+
+
+def load_combined_configuration(path):
+    with Path(path).open("rb") as source:
+        raw = source.read(65537)
+    if len(raw) > 65536:
+        raise ValueError("configuration_byte_limit")
+    config = json.loads(raw)
+    command = Path(config["command"])
+    if not command.is_absolute() or not command.is_file() or command.is_symlink():
+        raise ValueError("absolute_regular_launcher_required")
+    if digest_bytes(command.read_bytes()) != config.get("launcher_sha256"):
+        raise ValueError("launcher_identity_mismatch")
+    args = config.get("args", [])
+    if (config.get("route") not in ("installed-launcher", "isolated-approved-runtime")
+            or not isinstance(args, list) or not args or args[-1] != "mcp"
+            or not all(isinstance(arg, str) for arg in args) or args.count("--combined-session") != 1
+            or any(option in args for option in ("--root", "--catalog-session", "--service-project",
+                                                "--additional-root", "--additional-project", "--explorer-descriptor"))):
+        raise ValueError("explicit_combined_scope_required")
+    try:
+        session = json.loads(args[args.index("--combined-session") + 1])
+        if not session.get("project_ids") or len(canonical(session)) > 4096:
+            raise ValueError("invalid_combined_session")
+    except (IndexError, TypeError, ValueError) as error:
+        raise ValueError("invalid_combined_session") from error
+    return config, digest_bytes(raw)
+
+
+def owned_legacy_configuration(configuration, case, source_root, timeout):
+    """Resolve exactly one explicit fixture root through its owned native CLI.
+
+    This administrative metadata read is opt-in benchmark setup, never a
+    fallback for a reviewed connection. It cannot discover another control root,
+    register an index, start a service, open an unselected root or infer a binding.
+    """
+    if os.environ.get(LEGACY_COMPARE_ENV) != "1":
+        raise LegacyComparisonError("legacy_comparison_not_authorized")
+    args = configuration.get("args", [])
+    if (configuration.get("route") != "isolated-approved-runtime"
+            or args.count("--service-runtime-dir") != 1
+            or args.count("--combined-session") != 1
+            or len(args) != 5 or args[-1] != "mcp"
+            or len(case["index_ids"]) != 1):
+        raise LegacyComparisonError("explicit_owned_control_required")
+    try:
+        control = Path(args[args.index("--service-runtime-dir") + 1])
+        session = json.loads(args[args.index("--combined-session") + 1])
+        if not control.is_absolute() or control.is_symlink() or not control.is_dir():
+            raise ValueError("control")
+        control = control.resolve(strict=True)
+        namespace = session["namespace"]
+        if not isinstance(namespace, str) or not re.fullmatch(r"[0-9a-f]{32}", namespace):
+            raise ValueError("namespace")
+    except (KeyError, IndexError, TypeError, OSError, ValueError) as error:
+        raise LegacyComparisonError("invalid_owned_control_selection") from error
+    source_root = Path(source_root)
+    if not source_root.is_absolute():
+        raise LegacyComparisonError("explicit_fixture_root_required")
+    deadline = time.monotonic() + timeout
+    observations = []
+
+    def metadata(method):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise LegacyComparisonError("legacy_metadata_deadline")
+        try:
+            result = subprocess.run([configuration["command"], "service", "rpc", "--runtime-dir", str(control), "--stdin"],
+                input=canonical(method), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                cwd=configuration.get("cwd"), env={**os.environ, **configuration.get("env", {})},
+                timeout=remaining, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+        except subprocess.TimeoutExpired as error:
+            raise LegacyComparisonError("legacy_metadata_deadline") from error
+        except OSError as error:
+            raise LegacyComparisonError("legacy_metadata_transport_unavailable") from error
+        if result.returncode or len(result.stdout) > 65536:
+            raise LegacyComparisonError("legacy_metadata_transport_unavailable")
+        try:
+            value = json.loads(result.stdout)
+        except (TypeError, ValueError) as error:
+            raise LegacyComparisonError("legacy_metadata_invalid_response") from error
+        if not isinstance(value, dict) or value.get("status") in ("failure", "incompatible"):
+            raise LegacyComparisonError("legacy_metadata_refused")
+        observations.append(digest_bytes(canonical(value)))
+        return value
+
+    epoch = metadata("request_epoch")
+    if (epoch.get("status") != "request_epoch" or epoch.get("namespace") != namespace
+            or type(epoch.get("epoch")) is not int or not 0 <= epoch["epoch"] <= (1 << 63) - 1):
+        raise LegacyComparisonError("legacy_metadata_authority_changed")
+    after, revision, seen, matching = None, None, set(), []
+    for _ in range(33):
+        response = metadata({"projects": {"after": after, "revision": revision, "limit": 32}})
+        page = response.get("page")
+        if response.get("status") != "projects" or not isinstance(page, dict):
+            raise LegacyComparisonError("legacy_metadata_invalid_page")
+        observed_revision = page.get("revision")
+        if type(observed_revision) is not int or not 0 <= observed_revision <= (1 << 63) - 1:
+            raise LegacyComparisonError("legacy_metadata_invalid_page")
+        if revision is not None and observed_revision != revision:
+            raise LegacyComparisonError("legacy_metadata_authority_changed")
+        revision = observed_revision
+        projects = page.get("projects")
+        if not isinstance(projects, list) or len(projects) > 32:
+            raise LegacyComparisonError("legacy_metadata_invalid_page")
+        previous = after or ""
+        for project in projects:
+            registration = project.get("registration") if isinstance(project, dict) else None
+            if not isinstance(registration, dict):
+                raise LegacyComparisonError("legacy_metadata_invalid_registration")
+            binding = registration.get("binding")
+            root, data_root, collection = (registration.get(key) for key in ("root", "data_root", "collection"))
+            if (not isinstance(binding, str) or not re.fullmatch(r"[0-9a-f]{64}", binding)
+                    or binding in seen or binding <= previous
+                    or any(not isinstance(path, str) or not path or len(path.encode("utf-8")) > 4096
+                           or not Path(path).is_absolute() for path in (root, data_root))
+                    or not isinstance(collection, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", collection)
+                    or collection in (".", "..")):
+                raise LegacyComparisonError("legacy_metadata_invalid_registration")
+            previous = binding
+            seen.add(binding)
+            if len(seen) > 1024:
+                raise LegacyComparisonError("legacy_metadata_registration_limit")
+            # Both roots are native canonical identities from the explicit
+            # scenario/registration. Never resolve another registration's path
+            # or guess an alias, collection or machine-wide default.
+            if root == str(source_root):
+                matching.append(registration)
+        cursor = page.get("after")
+        if cursor is None:
+            break
+        if not projects or cursor != previous or cursor == after:
+            raise LegacyComparisonError("legacy_metadata_invalid_cursor")
+        after = cursor
+    else:
+        raise LegacyComparisonError("legacy_metadata_registration_limit")
+    if len(matching) != 1:
+        raise LegacyComparisonError("legacy_registration_ambiguous" if matching else "legacy_registration_missing")
+    registration = matching[0]
+    eligibility = metadata({"catalog_legacy_binding": {"project": registration["binding"], "expected_catalog_revision": None}})
+    observed = eligibility.get("observation", {})
+    choice = observed.get("eligibility", {}) if isinstance(observed, dict) else {}
+    if (eligibility.get("status") != "catalog_legacy_binding" or observed.get("schema") != 1
+            or observed.get("namespace") != namespace or observed.get("project") != registration["binding"]):
+        raise LegacyComparisonError("legacy_metadata_authority_changed")
+    if choice.get("kind") not in ("authority_zero", "imported_snapshot"):
+        raise LegacyComparisonError("legacy_compatibility_snapshot_unavailable")
+    if canonical(choice.get("registration")) != canonical(registration):
+        raise LegacyComparisonError("legacy_metadata_authority_changed")
+    if metadata("request_epoch") != epoch:
+        raise LegacyComparisonError("legacy_metadata_authority_changed")
+    result = {**configuration, "args": ["--service-runtime-dir", str(control), "--service-project", registration["binding"], "mcp"]}
+    return result, {"metadata_requests": len(observations), "metadata_observations_sha256": digest_bytes(canonical(observations)),
+                    "registry_revision": revision, "registration_sha256": digest_bytes(canonical(registration)),
+                    "namespace_sha256": digest_bytes(namespace.encode("ascii")), "unique_explicit_root_match": True,
+                    "legacy_eligibility": choice["kind"]}
+
+
+def one_index_evidence(envelope, combined=None, index_id=None):
+    if not isinstance(envelope, dict):
+        raise LegacyComparisonError("one_index_read_invalid")
+    value = body(envelope) if "structuredContent" in envelope or "content" in envelope else envelope
+    if envelope.get("isError") is True or value.get("error"):
+        raise LegacyComparisonError("one_index_read_failed")
+    for _ in range(4):
+        if isinstance(value.get("hits"), list):
+            publication = value.get("publication")
+            if combined is not None:
+                # Hits remain inline. Only the logical publication is needed
+                # for this evidence comparison; retain the full raw reply too.
+                publication = combined_evidence.publication(combined, publication, index_id)
+            if not isinstance(publication, dict) or not isinstance(publication.get("token"), str) or not publication["token"]:
+                raise LegacyComparisonError("one_index_publication_missing")
+            return value["hits"], publication
+        value = value.get("evidence")
+        if not isinstance(value, dict):
+            break
+    raise LegacyComparisonError("one_index_hit_records_missing")
+
+
+def compare_one_index(combined_envelope, legacy_envelope, case):
+    value = body(combined_envelope)
+    members = value.get("members", [])
+    if len(members) != 1 or members[0].get("index_id") != case["index_ids"][0]:
+        raise LegacyComparisonError("one_index_member_required")
+    combined_hits, publication = one_index_evidence(combined_evidence.member_result(value, members[0]["index_id"]), value, members[0]["index_id"])
+    legacy_hits, legacy_publication = one_index_evidence(legacy_envelope)
+    if canonical(combined_hits) != canonical(legacy_hits):
+        raise LegacyComparisonError("one_index_hit_records_differ")
+    if canonical(publication) != canonical(legacy_publication):
+        raise LegacyComparisonError("one_index_publication_differ")
+    return {"full_hit_records_equal": True, "exact_member_publication_equal": True,
+            "hit_records_sha256": digest_bytes(canonical(combined_hits)), "hit_records": len(combined_hits)}
+
+
+def combined(args):
+    """Read-only replay against an explicitly prepared original fixture catalog.
+
+    Scenario JSON is private input: indexes name source_root directories and
+    their exact inventory; cases freeze selected Projects/indexes and expected
+    index/path/source-root/Project attribution before candidate execution.
+    This command performs no catalog mutation, registration, scan or repair.
+    """
+    with args.scenario.open("rb") as source:
+        raw = source.read(1024 * 1024 + 1)
+    if len(raw) > 1024 * 1024:
+        raise ValueError("combined_scenario_byte_limit")
+    scenario = json.loads(raw)
+    if scenario.get("schema") != COMBINED_SCHEMA or not 1 <= len(scenario["indexes"]) <= 32:
+        raise ValueError("combined_scenario_schema")
+    sources, hashes = {}, {}
+    for index in scenario["indexes"]:
+        identity = index["index_id"]
+        if identity in sources or not re.fullmatch(r"idx_[0-9a-f]{32}", identity):
+            raise ValueError("combined_scenario_index")
+        requested_root = Path(index["source_root"])
+        if requested_root.is_symlink():
+            raise ValueError("combined_source_identity_mismatch")
+        root = requested_root.resolve(strict=True)
+        if combined_source_inventory(root) != index["inventory"]:
+            raise ValueError("combined_source_identity_mismatch")
+        sources[identity] = (root, index["inventory"])
+        hashes.update({(identity, row["path"]): row["sha256"] for row in index["inventory"]})
+    cases = scenario["cases"]
+    if not isinstance(cases, list) or not 1 <= len(cases) <= 32:
+        raise ValueError("combined_scenario_case_limit")
+    for case in cases:
+        ids = case["index_ids"]
+        if (len(ids) not in (1, 2, 4, 32) or len(set(ids)) != len(ids)
+                or not set(ids) <= set(sources) or not case["project_ids"]
+                or not case["expected"] or not isinstance(case["arguments"], dict)
+                or case["arguments"].get("mode") != "lexical"
+                or not 1 <= case["arguments"].get("limit", 0) <= 100
+                or not 1 <= case["arguments"].get("max_bytes", 0) <= 65536
+                or any((row["index_id"], row["path"]) not in hashes for row in case["expected"])):
+            raise ValueError("combined_scenario_case")
+    configuration, config_digest = load_combined_configuration(args.configuration)
+    output = args.output.resolve()
+    for root, _ in sources.values():
+        if output == root or root in output.parents or output in root.parents:
+            raise ValueError("output_source_overlap")
+    output.mkdir(parents=True, exist_ok=False)
+    report = {"schema": COMBINED_SCHEMA, "scenario_sha256": digest_bytes(raw),
+              "configuration_sha256": config_digest, "launcher_sha256": configuration["launcher_sha256"],
+              "route": configuration["route"], "expected_version": configuration["expected_version"],
+              "samples_per_case": args.samples, "cases": [], "passed": False,
+              "limitations": ["Frontend and shared service/OS caches are not flushed.",
+                              "No legacy equivalent exists for a multi-index query; absolute observed latency is reported.",
+                              "No process RSS, CPU, physical I/O or unselected-work counters are available from this transport.",
+                              "Selected-member output checks supplement, but do not replace, actual native work/isolation tests."]}
+    group_session = None
+    compare_legacy = os.environ.get(LEGACY_COMPARE_ENV) == "1"
+    retain_raw = os.environ.get(COMBINED_RAW_ENV) == "1"
+    raw_stream = None
+    legacy_configuration, comparison_session = None, None
+    if compare_legacy:
+        report["legacy_one_index"] = {
+            "enabled": True, "passed": False, "trials": [],
+            "runner_sha256": digest_bytes(Path(__file__).read_bytes()),
+            "comparison_basis": "Exact native hit records (including all citation/text/truncation fields) and member publication only; complete outcomes retained separately.",
+            "limitations": [
+                "The legacy connection authorizes the full fixture index; the reviewed connection authorizes only its frozen Project scope. Scope, coverage/readiness, grant/admission and transport observations retain their separate meanings in the raw replies.",
+                "Query, index, literal prefix, result/text budgets and verification choice match; full response-body equality and equal authority are not asserted.",
+                "Each measured combined call precedes its paired legacy call; service and OS caches are shared and unflushed. This fixed order can favor the second route.",
+                "No legacy-equivalence claim applies to more than one selected index."]}
+    try:
+        if retain_raw:
+            raw_stream = (output / "raw.jsonl").open("x", encoding="utf-8")
+            report["raw_outcomes"] = "raw.jsonl"
+            report["raw_basis"] = "Every received combined tools/call outcome, including retries and failures; no response is invented after transport loss. Full original-fixture source evidence may be retained only through this explicit opt-in."
+        if compare_legacy:
+            case = cases[0]
+            if (len(case["index_ids"]) != 1 or 1 not in args.fanouts
+                    or not case["arguments"].get("path_prefix")
+                    or any(key in case["arguments"] for key in ("project", "project_ids", "index_ids", "member_availability", "origin_publication"))):
+                raise LegacyComparisonError("explicit_one_index_case_required")
+            legacy_configuration, metadata = owned_legacy_configuration(
+                configuration, case, sources[case["index_ids"][0]][0], args.timeout)
+            legacy_directory = output / "legacy-one-index"
+            legacy_directory.mkdir()
+            (legacy_directory / "configuration.json").write_text(json.dumps(legacy_configuration, indent=2) + "\n", encoding="utf-8")
+            report["legacy_one_index"].update(metadata, configuration_sha256=digest_bytes(canonical(legacy_configuration)),
+                                              raw_outcomes="legacy-one-index/raw.jsonl")
+        for case in cases:
+            if len(case["index_ids"]) not in args.fanouts:
+                continue
+            group = {"selected_indexes": len(case["index_ids"]), "selection_sha256": digest_bytes(canonical(case)), "trials": []}
+            report["cases"].append(group)
+            matched_case = compare_legacy and case is cases[0]
+            group_session = (RetainedSession if matched_case or retain_raw else Session)(configuration, args.timeout, prime_status=False)
+            comparison_session = RetainedSession(legacy_configuration, args.timeout, prime_status=False) if matched_case else None
+            with group_session as session, (comparison_session if matched_case else nullcontext()) as legacy, \
+                    ((output / "legacy-one-index/raw.jsonl").open("x", encoding="utf-8") if matched_case else nullcontext()) as retained:
+                arguments = {**case["arguments"], "project_ids": case["project_ids"], "index_ids": case["index_ids"], "response_mode": "full"}
+                for sample in range(args.samples):
+                    started = time.perf_counter()
+                    trial = {"sample": sample, "validated": False}
+                    group["trials"].append(trial)
+                    try:
+                        envelope, metadata = session.tool(("search", arguments))
+                        if retained is not None or raw_stream is not None:
+                            retain_query_replies(retained, session, sample, "combined", raw_stream, len(case["index_ids"]))
+                        trial.update(elapsed_ms=metadata["elapsed_ms"], retries=metadata["retries"],
+                                     attempts=metadata["attempts"], observation=observation(envelope),
+                                     response_bytes=sum(attempt["response_bytes"] for attempt in metadata["attempts"]))
+                        trial.update(combined_observation(envelope, case, hashes), validated=True)
+                        if legacy is not None:
+                            paired = {"sample": sample, "validated": False}
+                            report["legacy_one_index"]["trials"].append(paired)
+                            at = time.perf_counter()
+                            try:
+                                legacy_envelope, legacy_metadata = legacy.tool(("search", {**case["arguments"], "response_mode": "full"}))
+                                retain_query_replies(retained, legacy, sample, "legacy")
+                                paired.update(elapsed_ms=legacy_metadata["elapsed_ms"], retries=legacy_metadata["retries"],
+                                              attempts=legacy_metadata["attempts"], observation=observation(legacy_envelope),
+                                              response_bytes=sum(attempt["response_bytes"] for attempt in legacy_metadata["attempts"]))
+                                paired.update(compare_one_index(envelope, legacy_envelope, case), validated=True)
+                                trial["legacy_one_index_sample"] = sample
+                            except (OSError, ValueError, RuntimeError, TimeoutError) as error:
+                                paired.setdefault("elapsed_ms", (time.perf_counter() - at) * 1000)
+                                paired["failure_class"] = type(error).__name__
+                                if isinstance(error, LegacyComparisonError):
+                                    paired["failure_code"] = error.code
+                                if "attempts" not in paired:
+                                    paired["submission"] = "uncertain"
+                                raise
+                    except (OSError, ValueError, RuntimeError, TimeoutError) as error:
+                        if retained is not None or raw_stream is not None:
+                            retain_query_replies(retained, session, sample, "combined", raw_stream, len(case["index_ids"]))
+                        if retained is not None:
+                            retain_query_replies(retained, legacy, sample, "legacy")
+                        trial.setdefault("elapsed_ms", (time.perf_counter() - started) * 1000)
+                        trial.update(failure_class=type(error).__name__)
+                        if "attempts" not in trial:
+                            trial["submission"] = "uncertain"
+                        raise
+            group["frontend_cleanup"] = session.cleanup
+            group["latency_ms"] = distribution([row["elapsed_ms"] for row in group["trials"]])
+            if matched_case:
+                comparison = report["legacy_one_index"]
+                comparison["frontend_cleanup"] = legacy.cleanup
+                comparison["combined_latency_ms"] = group["latency_ms"]
+                comparison["legacy_latency_ms"] = distribution([row["elapsed_ms"] for row in comparison["trials"]])
+                comparison["errors"] = sum(attempt.get("is_error") is True for row in comparison["trials"] for attempt in row.get("attempts", []))
+                comparison["retries"] = sum(row.get("retries", 0) for row in comparison["trials"])
+                comparison["passed"] = (len(comparison["trials"]) == args.samples and all(row["validated"] for row in comparison["trials"])
+                                        and comparison["frontend_cleanup"]["graceful_eof"])
+        if not report["cases"]:
+            raise ValueError("combined_fanout_cases_missing")
+        report["passed"] = all(group["frontend_cleanup"]["graceful_eof"] for group in report["cases"])
+        if compare_legacy:
+            report["passed"] = report["passed"] and report["legacy_one_index"]["passed"]
+    except (OSError, ValueError, RuntimeError, TimeoutError) as error:
+        report["failure_class"] = type(error).__name__
+        if isinstance(error, LegacyComparisonError):
+            report["failure_code"] = error.code
+    finally:
+        if raw_stream is not None:
+            raw_stream.close()
+        if report["cases"] and group_session is not None:
+            report["cases"][-1].setdefault("frontend_cleanup", getattr(group_session, "cleanup", {"observed": False}))
+        try:
+            report["source_unchanged"] = all(combined_source_inventory(root) == inventory for root, inventory in sources.values())
+        except (OSError, ValueError):
+            report["source_unchanged"] = False
+        report["passed"] = report["passed"] and report["source_unchanged"]
+        if compare_legacy:
+            report["legacy_one_index"]["source_unchanged"] = report["source_unchanged"]
+            report["legacy_one_index"]["passed"] = report["legacy_one_index"]["passed"] and report["source_unchanged"]
+            if comparison_session is not None:
+                report["legacy_one_index"].setdefault("frontend_cleanup", getattr(comparison_session, "cleanup", {"observed": False}))
+        (output / "report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    return report["passed"]
+
+
+def phase_measurement(path, mode):
+    """Admit the unchanged90-trial/810-call single-index phase workload.
+
+    Recompute distributions from retained trials rather than trusting summary
+    fields. A successful report is bounded evidence, not binary provenance.
+    """
+    with Path(path).open("rb") as source:
+        raw = source.read(16 * 1024 * 1024 + 1)
+    if len(raw) > 16 * 1024 * 1024:
+        raise ValueError("phase_report_byte_limit")
+    report = json.loads(raw)
+    if (report.get("schema") != SCHEMA or report.get("status") != "complete"
+            or report.get("source_unchanged") is not True
+            or report.get("route") != "isolated-approved-runtime"
+            or report.get("fixture_sha256") != "5c0ddbe2197afd930d64d6f3dbef844e3247fb52ebb2b35175ca9597397da256"):
+        raise ValueError("phase_report_contract")
+    groups = report.get("cohorts", [])
+    if len(groups) != 3 or {group.get("connection") for group in groups} != {row[0] for row in COHORTS}:
+        raise ValueError("phase_cohort_contract")
+    cohorts, receipts = {}, 0
+    for group in groups:
+        if (group.get("concurrency") != 1 or len(group.get("trials", [])) != 30
+                or group.get("coverage_complete") is not True or group.get("cleanup_clean") is not True):
+            raise ValueError("phase_sample_or_coverage_contract")
+        for trial in group["trials"]:
+            if (trial.get("coverage", {}).get("complete") is not True
+                    or trial.get("publication_consistent") is not True or len(trial.get("calls", [])) != 9):
+                raise ValueError("phase_trial_contract")
+            for call in trial["calls"]:
+                attempts = call.get("attempts", [])
+                if call.get("retries") != 0 or len(attempts) != 1 or attempts[0].get("is_error") is not False:
+                    raise ValueError("phase_error_or_retry")
+                receipt = attempts[0].get("source_verification")
+                if mode == "off" and receipt is not None:
+                    raise ValueError("phase_off_source_checks")
+                if mode == "report" and receipt is not None:
+                    if receipt.get("mode") != "report" or receipt.get("status") != "verified":
+                        raise ValueError("phase_report_verification")
+                    receipts += 1
+        metrics = {}
+        for metric in ("task_ms", "task_with_connection_ms"):
+            values = [trial[metric] for trial in group["trials"]]
+            if any(type(value) not in (int, float) or not math.isfinite(value) or value < 0 for value in values):
+                raise ValueError("phase_invalid_latency")
+            metrics[metric] = distribution(values)
+        cohorts[group["connection"]] = metrics
+    if receipts != (720 if mode == "report" else 0):
+        raise ValueError("phase_verification_count")
+    return cohorts, {"sha256": digest_bytes(raw), "trials": 90, "calls": 810,
+                     "errors": 0, "retries": 0, "verified_receipts": receipts}
+
+
+def phase_compare(candidate, reference, label):
+    """Frozen P0/P4/P5 thresholds; no caller-adjustable allowances."""
+    if set(candidate) != set(reference):
+        raise ValueError("phase_reference_cohorts")
+    gates = []
+    for name, group in candidate.items():
+        for metric in ("task_ms", "task_with_connection_ms"):
+            for quantile, fraction, allowance in (("median", .10, 25), ("p95", .15, 50)):
+                observed, expected = group[metric][quantile], reference[name][metric][quantile]
+                if any(type(number) not in (int, float) or not math.isfinite(number) or number < 0
+                       for number in (observed, expected)):
+                    raise ValueError("phase_invalid_latency")
+                bound = expected + max(expected * fraction, allowance)
+                gates.append({"reference": label, "connection": name, "metric": metric,
+                              "quantile": quantile, "observed": observed, "reference_value": expected,
+                              "bound": bound, "passed": observed <= bound})
+    return gates
+
+
+def phase_gates(args):
+    """One canonical evaluator for the unchanged84 legacy phase comparisons."""
+    reports, evidence = {}, {}
+    for label in ("candidate_off", "candidate_report", "archive_off", "archive_report",
+                  "control_off", "control_report", "preceding_off", "preceding_report"):
+        reports[label], evidence[label] = phase_measurement(getattr(args, label), label.rsplit("_", 1)[1])
+    frozen_raw = args.baseline.read_bytes()
+    frozen = json.loads(frozen_raw)
+    if frozen.get("schema") != "airk.v190-baseline/1" or frozen.get("mcp_fixture_sha256") != "5c0ddbe2197afd930d64d6f3dbef844e3247fb52ebb2b35175ca9597397da256":
+        raise ValueError("phase_frozen_baseline_identity")
+    frozen_groups = {group["connection"]: group for group in frozen["mcp_cohorts"] if group["concurrency"] == 1}
+    if len(frozen_groups) != 3 or any(group.get("samples") != 30 for group in frozen_groups.values()):
+        raise ValueError("phase_frozen_sample_contract")
+    gates = phase_compare(reports["candidate_off"], frozen_groups, "frozen_archived")
+    for mode in ("off", "report"):
+        for reference in ("archive", "control", "preceding"):
+            gates.extend(phase_compare(reports[f"candidate_{mode}"], reports[f"{reference}_{mode}"], f"{reference}_{mode}"))
+    if len(gates) != 84:
+        raise ValueError("phase_gate_count")
+    result = {"schema": "airk.legacy-phase-gates/1", "passed": all(gate["passed"] for gate in gates),
+              "limits_changed": False, "baseline_sha256": digest_bytes(frozen_raw),
+              "limits": "median +max(10%,25ms); p95 +max(15%,50ms)", "evidence": evidence, "gates": gates}
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    with args.output.open("x", encoding="utf-8") as destination:
+        destination.write(json.dumps(result, indent=2) + "\n")
+    print(json.dumps({"passed": result["passed"], "passed_gates": sum(gate["passed"] for gate in gates), "total_gates": len(gates)}))
+    return result["passed"]
 
 
 def load_configuration(path, source):
@@ -606,6 +1236,19 @@ def main():
     fixture.add_argument("--destination", type=Path, required=True)
     audit = commands.add_parser("audit-record")
     audit.add_argument("--record", type=Path, required=True)
+    combined_parser = commands.add_parser("combined", help="Read-only selected-index replay on an explicitly prepared original catalog")
+    combined_parser.add_argument("--configuration", type=Path, required=True)
+    combined_parser.add_argument("--scenario", type=Path, required=True)
+    combined_parser.add_argument("--output", type=Path, required=True)
+    combined_parser.add_argument("--samples", type=int, default=30)
+    combined_parser.add_argument("--timeout", type=float, default=30)
+    combined_parser.add_argument("--fanouts", type=int, nargs="+", choices=(1, 2, 4, 32), default=[1, 2, 4, 32])
+    gates_parser = commands.add_parser("phase-gates", help="Evaluate unchanged84 frozen/archive/control/preceding legacy latency gates")
+    gates_parser.add_argument("--baseline", type=Path, default=Path("docs/research/baseline-v190.json"))
+    for name in ("candidate-off", "candidate-report", "archive-off", "archive-report",
+                 "control-off", "control-report", "preceding-off", "preceding-report"):
+        gates_parser.add_argument("--" + name, type=Path, required=True)
+    gates_parser.add_argument("--output", type=Path, required=True)
     for operation in ("run", "owned"):
         replay = commands.add_parser(operation)
         if operation == "run":
@@ -617,7 +1260,7 @@ def main():
         replay.add_argument("--output", type=Path, required=True)
         replay.add_argument("--label", choices=("baseline", "candidate"), required=True)
         replay.add_argument("--samples", type=int, default=30)
-        replay.add_argument("--concurrency", type=int, nargs="+", choices=(1, 4, 6, 8), default=[1, 4, 6, 8])
+        replay.add_argument("--concurrency", type=int, nargs="+", choices=(1, 4, 6, 8, 16, 32, 64), default=[1, 4, 6, 8])
         replay.add_argument("--timeout", type=float, default=30)
         replay.add_argument("--verification", choices=("off", "report", "require"),
                             help="Explicit evidence-read override, recorded separately from frozen fixture identity; omission measures runtime defaults")
@@ -628,10 +1271,13 @@ def main():
         print(json.dumps({"fixture_sha256": result["fixture_sha256"], "files": len(result["inventory"])}))
     elif args.operation == "audit-record":
         print(json.dumps(reconcile_record(args.record), indent=2))
+    elif args.operation == "phase-gates":
+        raise SystemExit(0 if phase_gates(args) else 1)
     else:
         if not 1 <= args.samples <= 1000 or not 0 < args.timeout <= 120:
             parser.error("samples must be 1..1000 and timeout >0..120 seconds")
-        raise SystemExit(0 if (owned(args) if args.operation == "owned" else run(args)) else 1)
+        execute = combined if args.operation == "combined" else owned if args.operation == "owned" else run
+        raise SystemExit(0 if execute(args) else 1)
 
 
 if __name__ == "__main__":

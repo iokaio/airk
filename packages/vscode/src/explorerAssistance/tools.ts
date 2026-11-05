@@ -58,12 +58,19 @@ export function toolDefinitions(index: HelpIndex): object[] {
             inputSchema: { type: 'object', additionalProperties: false, properties: {} }, annotations: READ_ONLY,
         },
         airk_explorer_suggest_search: {
-            description: `Propose a Search › Query form (lexical, vector or hybrid; literal path prefix; limit; byte budget). The user decides whether to run it.${DRAFT_NOTE}`,
+            description: `Propose a Search › Query form, or a matching reviewed combined Workbench Search form when explicit Project selectors are supplied (lexical, vector or hybrid; literal path prefix; limit; byte budget). Combined selectors must match the captured session and are never applied to a legacy form. The user decides whether to run it.${DRAFT_NOTE}`,
             inputSchema: { type: 'object', additionalProperties: false, required: ['schema_version', 'idempotency_key', 'title', 'draft'], properties: { ...ENVELOPE,
                 draft: { type: 'object', additionalProperties: false, required: ['query'], properties: {
                     query: { type: 'string', minLength: 1, maxLength: 4096 }, mode: { type: 'string', enum: ['policy', 'lexical', 'vector', 'hybrid'], default: 'lexical' },
                     path_prefix: { type: 'string', maxLength: 1024 }, limit: { type: 'integer', minimum: 1, maximum: 100 }, max_bytes: { type: 'integer', minimum: 1024, maximum: 65536 },
-                    full_chunks: { type: 'boolean' } } },
+                    full_chunks: { type: 'boolean' },
+                    project_ids: { type: 'array', minItems: 1, maxItems: 32, uniqueItems: true, items: { type: 'string', pattern: '^prj_[0-9a-f]{32}$' }, description: 'Exact captured reviewed combined-session Projects; applying only prefills its matching Workbench form.' },
+                    index_ids: { type: 'array', minItems: 1, maxItems: 32, uniqueItems: true, items: { type: 'string', pattern: '^idx_[0-9a-f]{32}$' }, description: 'Exact captured index subset when the combined session has one; requires project_ids.' },
+                    member_availability: { type: 'string', enum: ['report', 'require'], description: 'Independent member availability policy for the draft; requires project_ids.' } },
+                    allOf: [
+                        { if: { required: ['index_ids'] }, then: { required: ['project_ids'] } },
+                        { if: { required: ['member_availability'] }, then: { required: ['project_ids'] } },
+                    ] },
                 intent: { type: 'string', maxLength: 1000 } } }, annotations: DRAFT,
         },
         airk_explorer_suggest_strategy: {

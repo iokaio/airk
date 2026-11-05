@@ -1,5 +1,11 @@
 # CLI, MCP and Workbench read parity
 
+P7 adds explicit reviewed combined sessions, unique-index execution, shared
+budgets and complete member-qualified results. [Combined-read contracts](combined-reads.md)
+record selectors, discovery, publication vectors, plan verification and the
+current qualification boundary. Legacy source bindings retain their one-index
+meaning. Use the actual connection catalog for supported inputs.
+
 P6f keeps single-index scoped reads on the canonical native handlers. CLI tool
 calls/shell and convenience commands, MCP aliases and public names, and Workbench
 complete or explicitly selected JSON/Markdown exports retain scope provenance,

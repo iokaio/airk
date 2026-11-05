@@ -75,6 +75,15 @@ export interface ProjectSummary {
 
 /** Published readiness of the bound project from airk_status; absent fields stay unknown. */
 export interface StatusSummary {
+    readonly nativeFailure?: Record<string, unknown>;
+    /** Independent member observations; their counts are sums, never unique-source counts. */
+    readonly combined?: {
+        readonly available: number; readonly total: number; readonly partial: boolean;
+        readonly countsQualifier: string;
+        readonly members: readonly { indexId: string; outcome: string; status: StatusSummary }[];
+        readonly publicationVector?: Record<string, unknown>;
+        readonly nativeResult: Record<string, unknown>;
+    };
     readonly indexState: IndexState;
     readonly indexError?: string;
     readonly publication?: string;
@@ -155,6 +164,8 @@ export interface SuggestionsView { readonly open: number; readonly cards: readon
 
 /** One search hit. `ref` is an opaque host-issued handle; the webview never sends paths back. */
 export interface HitView {
+    readonly indexId?: string;
+    readonly projectIds?: readonly string[];
     readonly ref: string;
     readonly path: string;
     readonly startLine: number;
@@ -166,6 +177,8 @@ export interface HitView {
     readonly location?: string;
 }
 export interface SearchResultView {
+    /** Complete canonical response, including every member's receipt and failures. */
+    readonly nativeResult?: Record<string, unknown>;
     readonly query: string;
     readonly appliedMode: string;
     readonly ordering: 'index_identity' | 'fused_rank' | 'unknown';
@@ -180,6 +193,7 @@ export interface SearchResultView {
 /** Window-session state only; never written to workspace storage. */
 export interface SearchForm { query: string; mode: SearchMode; pathPrefix: string; limit: number; maxBytes: number; fullChunks: boolean }
 export interface SearchSessionView {
+    readonly nativeFailure?: Record<string, unknown>;
     readonly project: string;
     readonly selectionEpoch: number;
     readonly form: SearchForm;
@@ -203,6 +217,8 @@ export interface OpenSourceResult { readonly live: LiveCheck; readonly opened: b
 export interface ProvenanceView { readonly producer: string; readonly basis?: string; readonly coverage?: string }
 /** One structural or document fact with its cited location. Handles are opaque and host-issued. */
 export interface FactItemView {
+    readonly indexId?: string;
+    readonly projectIds?: readonly string[];
     readonly ref?: string;
     readonly path: string;
     readonly startLine?: number;
@@ -224,6 +240,10 @@ export interface FactItemView {
     readonly detail?: string;
 }
 export interface FactListView {
+    readonly nativeResult?: Record<string, unknown>;
+    /** Complete independent native pages retained when the UI appends results. */
+    readonly nativePages?: readonly Record<string, unknown>[];
+    readonly nativeFailure?: boolean;
     readonly tool: string;
     readonly items: readonly FactItemView[];
     readonly returned: number;
@@ -236,8 +256,21 @@ export interface FactListView {
     readonly notes: readonly string[];
 }
 
+/** Append only a host-validated page. Each native page remains a self-contained
+ * result with its original member receipts and relative reference pointers. */
+export function appendFactPage(previous: FactListView, next: FactListView): FactListView {
+    const pages = [...(previous.nativePages ?? (previous.nativeResult ? [previous.nativeResult] : [])),
+        ...(next.nativePages ?? (next.nativeResult ? [next.nativeResult] : []))];
+    return { ...next, items: [...previous.items, ...next.items], returned: previous.returned + next.returned,
+        provenance: [...previous.provenance, ...next.provenance], notes: [...new Set([...previous.notes, ...next.notes])],
+        ...(previous.nativeFailure || next.nativeFailure ? { nativeFailure: true } : {}),
+        ...(pages.length ? { nativePages: pages } : {}) };
+}
+
 /** One file's indexed record compared with its saved bytes (Evidence › Inspector). */
 export interface InspectView {
+    readonly nativeResult?: Record<string, unknown>;
+    readonly nativeFailure?: boolean;
     readonly ref: string;
     readonly path: string;
     readonly startLine: number;

@@ -74,7 +74,12 @@ fn build_tools() -> Vec<Tool> {
         .map(|tool| {
             let mut value = serde_json::to_value(tool).expect("tool serialization");
             public_text(&mut value);
-            scoped(serde_json::from_value(value).expect("public native tool"))
+            let tool: Tool = serde_json::from_value(value).expect("public native tool");
+            if tool.name == "query_scope" {
+                tool
+            } else {
+                scoped(tool)
+            }
         })
         .collect();
     let legacy: Vec<Tool> = serde_json::from_str(include_str!("unified_explorer.json"))
@@ -163,6 +168,94 @@ pub struct Unified {
     client: std::sync::Mutex<airk_core::usage::ClientFamily>,
 }
 impl Unified {
+    /// A combined connection has no invented legacy ProjectBinding. The
+    /// sentinel is internal routing identity, never a discovery/grant token.
+    pub fn combined(
+        backend: Arc<dyn RemoteTools>,
+        explorer: Option<Arc<dyn ExplorerTools>>,
+    ) -> Result<Self> {
+        ensure!(
+            backend.combined_selection().is_some(),
+            "combined session selection required"
+        );
+        backend
+            .combined_selection()
+            .expect("checked combined selector")
+            .validate()?;
+        Ok(Self {
+            projects: BTreeMap::from([(
+                "combined".into(),
+                Project {
+                    binding: "combined".into(),
+                    name: "Selected Projects".into(),
+                    collection: "combined".into(),
+                    backend,
+                },
+            )]),
+            default: Some("combined".into()),
+            explorer,
+            client: std::sync::Mutex::new(airk_core::usage::ClientFamily::Unknown),
+        })
+    }
+    fn combined_backend(&self) -> Option<&Arc<dyn RemoteTools>> {
+        // One service authority per combined session. A set of independently
+        // configured legacy bindings never acquires a union implicitly.
+        if self.projects.len() != 1 {
+            return None;
+        }
+        self.projects
+            .values()
+            .next()
+            .map(|project| &project.backend)
+            .filter(|backend| backend.combined_selection().is_some())
+    }
+    fn validate_combined_search_draft(&self, args: &Map<String, Value>) -> Result<()> {
+        let backend = self
+            .combined_backend()
+            .ok_or_else(|| anyhow::anyhow!("combined selection required"))?;
+        let frozen = backend
+            .combined_selection()
+            .expect("selected combined backend");
+        ensure!(
+            !args.contains_key("project"),
+            "combined draft cannot select a legacy binding"
+        );
+        let draft = args
+            .get("draft")
+            .and_then(Value::as_object)
+            .ok_or_else(|| anyhow::anyhow!("search draft requires an object"))?;
+        let selector = Value::Object(
+            draft
+                .iter()
+                .filter(|(key, _)| {
+                    matches!(
+                        key.as_str(),
+                        "project_ids" | "index_ids" | "member_availability"
+                    )
+                })
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
+        );
+        let selected: airk_core::combined_reads::QuerySelection = serde_json::from_value(selector)?;
+        selected.validate()?;
+        let mut projects = selected.project_ids;
+        projects.sort();
+        let mut frozen_projects = frozen.project_ids.clone();
+        frozen_projects.sort();
+        let indexes = selected.index_ids.map(|mut ids| {
+            ids.sort();
+            ids
+        });
+        let frozen_indexes = frozen.index_ids.clone().map(|mut ids| {
+            ids.sort();
+            ids
+        });
+        ensure!(
+            projects == frozen_projects && indexes == frozen_indexes,
+            "search draft must retain the exact frozen connection selection"
+        );
+        Ok(())
+    }
     pub fn new(
         projects: Vec<Project>,
         default: Option<String>,
@@ -197,6 +290,12 @@ impl Unified {
         })
     }
     fn select(&self, args: &mut Map<String, Value>) -> std::result::Result<&Project, Value> {
+        if self.combined_backend().is_some() {
+            return Err(failure(
+                "QUALIFIED_UI_SCOPE_REQUIRED",
+                "This connection has a combined query selection. Choose an originating index in Workbench before creating a scoped editor draft.",
+            ));
+        }
         let selected = match args.remove("project") {
             Some(Value::String(id)) => Some(id),
             Some(_) => {
@@ -230,6 +329,23 @@ impl Unified {
                 })
             });
         if native_selector {
+            if let Some(backend) = self.combined_backend() {
+                if args.contains_key("project") {
+                    return failure(
+                        "INVALID_QUERY_SCOPE",
+                        "A combined session cannot select a legacy project binding.",
+                    );
+                }
+                return match backend.call("airk_help".into(), args).await {
+                    Ok(result) => result,
+                    Err(_) => crate::remote::combined_observation_failure(
+                        backend
+                            .combined_selection()
+                            .expect("selected combined backend"),
+                        "combined_observation_unavailable",
+                    ),
+                };
+            }
             let mut native_args = args.clone();
             if let Ok(project) = self.select(&mut native_args)
                 && let Some(selection) = project.backend.scoped_selection()
@@ -300,9 +416,11 @@ impl Unified {
                 "tool".into(),
                 json!(name.strip_prefix("airk_").unwrap_or(name)),
             );
-            let result =
-                serde_json::to_value(crate::help::call_with_catalog(Value::Object(args), tools()))
-                    .unwrap();
+            let result = serde_json::to_value(crate::help::call_with_catalog(
+                Value::Object(args),
+                self.catalog(),
+            ))
+            .unwrap();
             return result;
         }
         // Native CLI examples and error envelopes retain their exact names.
@@ -318,6 +436,34 @@ fn status_not_observed(project: &str, stage: &str, expired: bool) -> Value {
     )
 }
 impl RemoteTools for Unified {
+    fn call_with_capacity(
+        &self,
+        tool: String,
+        args: Map<String, Value>,
+        limit: usize,
+    ) -> RemoteFuture<'_> {
+        if let Some(backend) = self.combined_backend()
+            && tool != "help"
+            && let Some(native) = crate::local::tools().into_iter().find(|entry| {
+                entry.name == tool || entry.name.strip_prefix("airk_") == Some(tool.as_str())
+            })
+        {
+            if args.contains_key("project") {
+                return Box::pin(async {
+                    Ok(failure(
+                        "INVALID_QUERY_SCOPE",
+                        "A combined session cannot select a legacy project binding.",
+                    ))
+                });
+            }
+            return backend.call_with_capacity(native.name.to_string(), args, limit);
+        }
+        self.call(tool, args)
+    }
+    fn combined_selection(&self) -> Option<&airk_core::service::CombinedConnectRequest> {
+        self.combined_backend()
+            .and_then(|backend| backend.combined_selection())
+    }
     fn query_concurrency(&self) -> usize {
         self.projects
             .values()
@@ -350,7 +496,11 @@ impl RemoteTools for Unified {
         })
     }
     fn catalog(&self) -> Vec<Tool> {
-        tools()
+        if self.combined_backend().is_some() {
+            crate::combined::public_catalog()
+        } else {
+            tools()
+        }
     }
     fn guidance(&self) -> &'static str {
         GUIDANCE
@@ -359,6 +509,9 @@ impl RemoteTools for Unified {
         false
     }
     fn uses_response_mode(&self, tool: &str) -> bool {
+        if matches!(tool, "query_scope" | "airk_query_scope") {
+            return false;
+        }
         crate::local::tools()
             .iter()
             .any(|t| t.name == tool || t.name.strip_prefix("airk_") == Some(tool))
@@ -372,6 +525,11 @@ impl RemoteTools for Unified {
     fn call(&self, tool: String, mut args: Map<String, Value>) -> RemoteFuture<'_> {
         Box::pin(async move {
             if tool == "projects" {
+                if self.combined_backend().is_some() && args.is_empty() {
+                    return Ok(success(
+                        json!({"default_project":null,"projects":[],"mode":"combined","query_scope":"Use query_scope to discover only the frozen reviewed grant."}),
+                    ));
+                }
                 return Ok(if args.is_empty() {
                     success(
                         json!({"default_project":self.default,"projects":self.projects.values().map(|p|json!({"project":p.binding,"name":p.name,"collection":p.collection})).collect::<Vec<_>>()}),
@@ -382,6 +540,27 @@ impl RemoteTools for Unified {
             }
             if tool == "help" {
                 return Ok(self.help(args).await);
+            }
+            if matches!(tool.as_str(), "query_scope" | "airk_query_scope") {
+                return match self.combined_backend() {
+                    Some(backend) => backend.call("airk_query_scope".into(), args).await,
+                    None => Ok(crate::combined::legacy_discovery(Value::Object(args))),
+                };
+            }
+            if matches!(
+                tool.as_str(),
+                "draft_search" | "airk_explorer_suggest_search"
+            ) && self.combined_backend().is_some()
+            {
+                if self.validate_combined_search_draft(&args).is_err() {
+                    return Ok(failure(
+                        "INVALID_QUERY_SCOPE",
+                        "A combined Search draft must carry the exact frozen project_ids and index_ids selection inside draft; legacy project bindings are not accepted.",
+                    ));
+                }
+                // Inert form proposal to the descriptor's window. The complete
+                // explicit selection travels in the draft and grants no access.
+                return Ok(self.ui(None, "airk_explorer_suggest_search", args).await);
             }
             if tool.starts_with("airk_explorer_")
                 && serde_json::from_str::<Vec<Tool>>(include_str!("unified_explorer.json"))?
@@ -409,6 +588,35 @@ impl RemoteTools for Unified {
                 .into_iter()
                 .find(|t| t.name == tool || t.name.strip_prefix("airk_") == Some(tool.as_str()));
             if let Some(native) = native {
+                if let Some(backend) = self.combined_backend() {
+                    if args.contains_key("project") {
+                        return Ok(failure(
+                            "INVALID_QUERY_SCOPE",
+                            "A combined session cannot select a legacy project binding.",
+                        ));
+                    }
+                    // The native owner enforces the one outer deadline and
+                    // selected-member budgets, including status and parse.
+                    // Preserve its complete result without legacy/UI enrichment.
+                    return match backend.call(native.name.to_string(), args).await {
+                        Ok(result) => Ok(result),
+                        Err(_) => Ok(crate::remote::combined_observation_failure(
+                            backend
+                                .combined_selection()
+                                .expect("selected combined backend"),
+                            "combined_observation_unavailable",
+                        )),
+                    };
+                }
+                if ["project_ids", "index_ids", "member_availability"]
+                    .iter()
+                    .any(|key| args.contains_key(*key))
+                {
+                    return Ok(failure(
+                        "QUERY_SCOPE_CONFIGURATION_REQUIRED",
+                        "Connect using an explicitly reviewed Project/index grant before selecting combined query scope.",
+                    ));
+                }
                 if native.name == "airk_help" {
                     let mut native_args = args.clone();
                     if let Ok(project) = self.select(&mut native_args)
@@ -1006,10 +1214,11 @@ mod tests {
     #[test]
     fn one_catalog_has_unique_unprefixed_names_and_honest_effect_annotations() {
         let catalog = tools();
-        assert_eq!(catalog.len(), 28);
+        assert_eq!(catalog.len(), 29);
         let names: std::collections::BTreeSet<_> =
             catalog.iter().map(|t| t.name.as_ref()).collect();
-        assert_eq!(names.len(), 28);
+        assert_eq!(names.len(), 29);
+        assert!(names.contains("query_scope"));
         assert!(names.iter().all(|n| !n.starts_with("airk_")));
         for tool in catalog {
             let value = serde_json::to_value(&tool).unwrap();

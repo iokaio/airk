@@ -3,11 +3,12 @@ import * as path from 'node:path';
 import { explorerError, ExplorerError } from './explorerErrors';
 import { McpSessionError, McpStdioOptions, McpStdioSession } from './mcpStdioSession';
 import { LaunchSpec, launchArgs } from './model';
+import { hasNativeMetadataReferences, materializeNativeMetadata } from './nativeMetadata';
 
-/** The 17 read-only native tools. The Explorer calls nothing else on AIRK Retrieval. */
+/** Read-only native tool catalog. The Explorer calls nothing else on AIRK Retrieval. */
 export const NATIVE_TOOLS = ['airk_search', 'airk_read_file', 'airk_list_files', 'airk_status', 'airk_diagnostics', 'airk_help', 'airk_file_info', 'airk_outline',
     'airk_symbols', 'airk_imports', 'airk_document_facts', 'airk_references', 'airk_context', 'airk_capabilities', 'airk_code_facts',
-    'airk_relationships', 'airk_changes'] as const;
+    'airk_relationships', 'airk_changes', 'airk_query_scope'] as const;
 export type NativeTool = typeof NATIVE_TOOLS[number];
 export const WORKBENCH_TOOLS = [...NATIVE_TOOLS, 'airk_parse'] as const;
 export type EvidenceTool = typeof WORKBENCH_TOOLS[number];
@@ -19,12 +20,14 @@ export class EvidenceFailure extends Error {
     /** An actual native error reply, retained separately from friendly guidance.
      * Transport failures have no native response and never synthesize one. */
     readonly nativeResponse?: Record<string,unknown>;
-    constructor(readonly error: ExplorerError, nativeResponse?:Record<string,unknown>) {
+    readonly nativePayload?: Record<string,unknown>;
+    constructor(readonly error: ExplorerError, nativeResponse?:Record<string,unknown>, nativePayload?:Record<string,unknown>) {
         super(error.message);
         if(nativeResponse)this.nativeResponse=structuredClone(nativeResponse);
+        if(nativePayload)this.nativePayload=structuredClone(nativePayload);
     }
 }
-export interface ToolResult { readonly payload: Record<string, unknown>; readonly publication?: string }
+export interface ToolResult { readonly payload: Record<string, unknown>; readonly rawPayload?: Record<string, unknown>; readonly publication?: string }
 /** A changed, present identity is retryable at report scope; missing identity is not. */
 export class PublicationChanged extends EvidenceFailure {
     constructor() { super(explorerError('EVIDENCE_MISMATCH', 'The index changed during this report; refresh it.')); }
@@ -83,18 +86,25 @@ function publicationOf(payload: Record<string, unknown>): string | undefined {
 }
 
 function toolFailure(text: string, nativeResponse:Record<string,unknown>): EvidenceFailure {
-    if (/current revision expired|known_hash does not match/.test(text)) { return new EvidenceFailure(explorerError('EVIDENCE_MISMATCH'),nativeResponse); }
-    if (/workspace is not indexed|index_unavailable|no readable publication/i.test(text)) { return new EvidenceFailure(explorerError('INDEX_UNAVAILABLE'),nativeResponse); }
+    let nativePayload: Record<string,unknown> | undefined;
+    try {
+        const parsed: unknown = JSON.parse(text);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            nativePayload = materializeNativeMetadata(parsed as Record<string,unknown>);
+        }
+    } catch { nativePayload = {}; /* Refuse derived cards; retain the original response for copying. */ }
+    if (/current revision expired|known_hash does not match/.test(text)) { return new EvidenceFailure(explorerError('EVIDENCE_MISMATCH'),nativeResponse,nativePayload); }
+    if (/workspace is not indexed|index_unavailable|no readable publication/i.test(text)) { return new EvidenceFailure(explorerError('INDEX_UNAVAILABLE'),nativeResponse,nativePayload); }
     try {
         const parsed = JSON.parse(text);
         const error = parsed?.error ?? parsed;
         if (error && typeof error === 'object' && typeof error.code === 'string') {
             // Native messages may contain source excerpts or paths. Preserve
             // them only in the original result, never in persistable guidance.
-            return new EvidenceFailure(explorerError(error.code),nativeResponse);
+            return new EvidenceFailure(explorerError(error.code),nativeResponse,nativePayload);
         }
     } catch { /* Plain native error text belongs only to nativeResponse. */ }
-    return new EvidenceFailure(explorerError('TOOL_ERROR'),nativeResponse);
+    return new EvidenceFailure(explorerError('TOOL_ERROR'),nativeResponse,nativePayload);
 }
 
 interface Task { tool: EvidenceTool; args: Record<string, unknown>; options: CallOptions; generation?: number; resolve(value: ToolResult): void; reject(error: Error): void }
@@ -192,8 +202,11 @@ export class EvidenceClient {
             let payload: unknown;
             try { payload = JSON.parse(text); } catch { throw new EvidenceFailure(explorerError('TOOL_ERROR', 'AIRK returned content that is not JSON.')); }
             if (!payload || typeof payload !== 'object' || Array.isArray(payload)) { throw new EvidenceFailure(explorerError('TOOL_ERROR', 'AIRK returned an unexpected payload.')); }
-            const record = payload as Record<string, unknown>;
-            return { payload: record, publication: publicationOf(record) };
+            const raw = payload as Record<string, unknown>;
+            let record: Record<string,unknown>;
+            try { record = materializeNativeMetadata(raw); }
+            catch { throw new EvidenceFailure(explorerError('TOOL_ERROR', 'AIRK native metadata could not be decoded. The original response is retained.'), envelope, {}); }
+            return { payload: record, ...(hasNativeMetadataReferences(raw) ? { rawPayload: raw } : {}), publication: publicationOf(record) };
         }
     }
 

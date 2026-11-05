@@ -17,6 +17,23 @@ SPEC.loader.exec_module(CLIENTS)
 
 
 class ServiceClientTests(unittest.TestCase):
+    def test_catalog_and_retry_inputs_include_query_scope_as_a_native_read(self):
+        self.assertIn("airk_query_scope", CLIENTS.TOOLS)
+        self.assertIn("airk_query_scope", CLIENTS.RETRYABLE_TOOLS)
+        self.assertIn("query_scope", CLIENTS.MCP_TOOLS)
+        self.assertEqual((len(CLIENTS.TOOLS), len(CLIENTS.MCP_TOOLS)), (19, 29))
+
+    def test_legacy_query_scope_never_accepts_catalog_expansion_or_false_completeness(self):
+        reply = {"schema": "airk.query-scope/1", "mode": "legacy", "status": "configuration_required",
+                 "projects": [], "indexes": [], "sources": [], "grant": None, "scope_revision": None,
+                 "truncated": False, "continuation": None}
+        CLIENTS.assert_legacy_query_scope(reply)
+        for field, value in (("projects", [{"id": "unselected"}]), ("indexes", ["unselected"]),
+                             ("sources", ["private"]), ("grant", "invented"), ("scope_revision", 1),
+                             ("mode", "reviewed"), ("status", "complete"), ("truncated", True), ("continuation", "cursor")):
+            with self.subTest(field=field), self.assertRaises(AssertionError):
+                CLIENTS.assert_legacy_query_scope({**reply, field: value})
+
     def test_inference_replies_cannot_hide_a_native_exit_abort(self):
         responses = [{"status": "extracted"},
                      {"status": "opened", "protocol": 1, "version": "1.6.4", "identity": "fixture-model"},

@@ -1,12 +1,18 @@
 # AIRK command-line guide
 
+P7 adds explicit reviewed combined sessions, unique-index execution, shared
+budgets and complete member-qualified results. [Combined-read contracts](combined-reads.md)
+record selectors, discovery, publication vectors, plan verification and the
+current qualification boundary. Legacy source bindings retain their one-index
+meaning. Use the actual connection catalog for supported inputs.
+
 The 1.8.8 working build supplies optional [evidence guidance](evidence-guidance.md)
 from returned metadata. Advice is bounded and inert; CLI/MCP/Workbench and
 complete/selected exports retain applicable reasons without additional reads.
 
 The `airk` executable is the whole engine, not only a VS Code helper. This guide explains how the commands fit together. The [CLI reference](cli-reference.md) documents every public command and option exactly as `airk <command> --help` prints them; it is generated from the parser, and a test keeps it current. [Running AIRK headless](headless-cli.md) maps each VS Code feature to its command.
 
-For each command's purpose, implementation, tests and guarded behavior, see the [CLI developer guide](cli-developer-guide.md). The [MCP developer guide](mcp-developer-guide.md) covers the corresponding agent interface. `airk tools list` exposes 18 native prefixed operations; unified MCP adds projects and nine Assistance operations. The terminal exposes those separately through `airk projects` and `airk explorer`, so 18 is not a count of all CLI capabilities.
+For each command's purpose, implementation, tests and guarded behavior, see the [CLI developer guide](cli-developer-guide.md). The [MCP developer guide](mcp-developer-guide.md) covers the corresponding agent interface. `airk tools list` exposes 19 native prefixed operations, including `query_scope`; unified MCP adds projects and nine Assistance operations. The terminal exposes those separately through `airk projects` and `airk explorer`, so the native catalog size is not a count of all CLI capabilities.
 
 ## Complete read results in 1.8.7
 

@@ -153,6 +153,148 @@ fn fixture() -> Result<(tempfile::TempDir, Kernel)> {
 }
 
 #[tokio::test]
+async fn native_final_projection_verification_uses_only_its_installed_owner() -> Result<()> {
+    use airk_core::{
+        SearchQuery,
+        verification::{VerificationControls, VerificationMode},
+    };
+    let (_temporary, kernel) = fixture()?;
+    let mut owner = LocalTools::new(kernel.clone()).await?;
+    let authority = authority(&kernel, false, "public")?;
+    let binding = authority.backing;
+    let mut scoped = owner.scoped_session(authority).await?;
+    let query = SearchQuery {
+        text: "Public".into(),
+        path_prefix: None,
+        limit: 4,
+        max_bytes: 1024,
+    };
+    let projection = serde_json::to_value(kernel.search(&query)?)?;
+    let publication = serde_json::from_value::<airk_core::evidence::RevisionEnvelope>(
+        projection["publication"].clone(),
+    )?
+    .token;
+    let proof = scoped
+        .read_native(NativeRead::SourceProjection { publication }, binding)
+        .await?;
+    assert_eq!(proof["publication"], projection["publication"]);
+    assert_eq!(proof["sources"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        proof["sources"][0]["source_root_id"],
+        json!(SourceRootId::from_identity(Incarnation::from_bytes(
+            [3; 16]
+        )))
+    );
+    assert_eq!(proof["sources"][0]["primary"], true);
+    assert_eq!(proof["sources"][0]["aliases"], json!([]));
+    assert!(
+        owner
+            .read_native(NativeRead::SourceProjection { publication }, binding)
+            .await
+            .unwrap_err()
+            .is::<ScopeReadRefused>()
+    );
+    assert!(
+        scoped
+            .read_native(
+                NativeRead::SourceProjection { publication },
+                Sha256Digest::from_bytes([99; 32])
+            )
+            .await
+            .unwrap_err()
+            .is::<ScopeReadRefused>()
+    );
+    let controls = VerificationControls {
+        verification: Some(VerificationMode::Require),
+        ..Default::default()
+    };
+    let result = scoped
+        .read_native(
+            NativeRead::VerifyProjection {
+                value: projection.clone(),
+                controls,
+                allocation: None,
+                receipt_bytes_budget: None,
+            },
+            binding,
+        )
+        .await?;
+    assert!(result.get("scope_observation").is_some(), "{result}");
+    assert!(
+        result.get("verification_owner_publication").is_some(),
+        "{result}"
+    );
+    assert_eq!(
+        result["source_verification"]["status"], "verified",
+        "{result}"
+    );
+    assert_eq!(
+        result["source_verification"]["requirements_satisfied"],
+        true
+    );
+    assert_eq!(result["hits"], projection["hits"]);
+    assert!(
+        owner
+            .read_native(
+                NativeRead::VerifyProjection {
+                    value: projection.clone(),
+                    controls,
+                    allocation: None,
+                    receipt_bytes_budget: None,
+                },
+                binding
+            )
+            .await
+            .unwrap_err()
+            .is::<ScopeReadRefused>()
+    );
+    assert!(
+        scoped
+            .read_native(
+                NativeRead::VerifyProjection {
+                    value: projection.clone(),
+                    controls,
+                    allocation: None,
+                    receipt_bytes_budget: None,
+                },
+                Sha256Digest::from_bytes([99; 32])
+            )
+            .await
+            .unwrap_err()
+            .is::<ScopeReadRefused>()
+    );
+    // Require remains a complete native body so the combined owner can retain
+    // checked member failures alongside usable outcomes from other indexes.
+    std::fs::write(kernel.root().join("public/a.rs"), "pub struct Changed;\n")?;
+    let failed = scoped
+        .read_native(
+            NativeRead::VerifyProjection {
+                value: projection,
+                controls,
+                allocation: None,
+                receipt_bytes_budget: None,
+            },
+            binding,
+        )
+        .await?;
+    assert_eq!(
+        failed["error"]["code"], "verification_required_unmet",
+        "{failed}"
+    );
+    assert_eq!(
+        failed["source_verification"]["requirements_satisfied"],
+        false
+    );
+    assert_eq!(
+        failed["source_verification"]["sources"][0]["state"],
+        "mismatch"
+    );
+    scoped.close().await?;
+    owner.close().await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn full_reviewed_and_imported_native_settings_preserve_complete_canonical_bodies()
 -> Result<()> {
     let (_temporary, kernel) = fixture()?;

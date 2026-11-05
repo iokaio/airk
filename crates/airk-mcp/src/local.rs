@@ -151,12 +151,76 @@ impl LocalTools {
         request: NativeRead,
         project: airk_core::service::ProjectBinding,
     ) -> anyhow::Result<serde_json::Value> {
-        if self
+        let scoped = self
             .kernel
             .scoped_read_fingerprint()
             .map_err(|error| self.kernel.observe_scoped_error(error))?
-            .is_some()
+            .is_some();
+        if let NativeRead::SourceProjection { publication } = &request {
+            if !scoped {
+                return Err(airk_core::scoped_reads::ScopeReadRefused.into());
+            }
+            let permit = self.admission.admit(true).await.map_err(|_| {
+                self.kernel
+                    .observe_scoped_error(anyhow::anyhow!("native read admission unavailable"))
+            })?;
+            let kernel = self.kernel.clone();
+            let publication = *publication;
+            // One exact retained publication observation. This does not probe
+            // current source roots, reread configuration or repeat evidence.
+            let result = tokio::task::spawn_blocking(move || {
+                let _permit = permit;
+                serde_json::to_value(kernel.scoped_source_projection(project, publication)?)
+                    .map_err(anyhow::Error::from)
+            })
+            .await
+            .map_err(|error| self.kernel.observe_scoped_error(error.into()))?
+            .map_err(|error| self.kernel.observe_scoped_error(error))?;
+            self.kernel
+                .scoped_read_fingerprint()
+                .map_err(|error| self.kernel.observe_scoped_error(error))?;
+            return Ok(result);
+        }
+        if let NativeRead::VerifyProjection {
+            value,
+            controls,
+            allocation,
+            receipt_bytes_budget,
+        } = &request
         {
+            if !scoped {
+                return Err(airk_core::scoped_reads::ScopeReadRefused.into());
+            }
+            // Source checking is one dispatched observation. In particular,
+            // never replay it through the settings reader's contention loop.
+            let permit = self.admission.admit(true).await.map_err(|_| {
+                self.kernel
+                    .observe_scoped_error(anyhow::anyhow!("native read admission unavailable"))
+            })?;
+            let kernel = self.kernel.clone();
+            let value = value.clone();
+            let controls = *controls;
+            let allocation = *allocation;
+            let receipt_bytes_budget = *receipt_bytes_budget;
+            let result = tokio::task::spawn_blocking(move || {
+                let _permit = permit;
+                kernel.verify_scoped_projection_budgeted(
+                    project,
+                    value,
+                    controls,
+                    allocation,
+                    receipt_bytes_budget,
+                )
+            })
+            .await
+            .map_err(|error| self.kernel.observe_scoped_error(error.into()))?
+            .map_err(|error| self.kernel.observe_scoped_error(error))?;
+            self.kernel
+                .scoped_read_fingerprint()
+                .map_err(|error| self.kernel.observe_scoped_error(error))?;
+            return Ok(result);
+        }
+        if scoped {
             // InputFile validation opens caller-selected paths; quota is shared
             // across collections and usage includes retained historical scopes.
             // Full current-index permission does not authorize those families.
@@ -201,6 +265,10 @@ impl LocalTools {
                         )?)?);
                     }
                     match kernel.prepare_native_read(request.clone())? {
+                        NativeRead::VerifyProjection { .. }
+                        | NativeRead::SourceProjection { .. } => {
+                            anyhow::bail!("verification requires its scoped single-dispatch owner")
+                        }
                         NativeRead::ValidateSettingsFile { .. }
                         | NativeRead::UsageReportFile { .. } => {
                             anyhow::bail!("native file intent was not prepared")
@@ -727,9 +795,28 @@ mod tests {
     }
 
     #[test]
-    fn every_tool_advertises_response_controls_and_full_mode_guidance() {
+    fn evidence_tools_advertise_response_controls_and_discovery_keeps_its_closed_metadata_contract()
+    {
         for tool in tools() {
             let schema = serde_json::to_value(&tool.input_schema).unwrap();
+            if tool.name == "airk_query_scope" {
+                assert_eq!(
+                    schema["properties"],
+                    airk_core::combined_reads::query_scope::schema()["properties"]
+                );
+                for key in [
+                    "response_mode",
+                    "include_status",
+                    "reply_detail",
+                    "verification",
+                ] {
+                    assert!(
+                        schema["properties"].get(key).is_none(),
+                        "query_scope must not advertise {key}"
+                    );
+                }
+                continue;
+            }
             assert!(
                 schema["properties"].get("response_mode").is_some(),
                 "{}",

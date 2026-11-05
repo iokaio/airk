@@ -90,6 +90,11 @@ def check_stdio(name):
         result, _ = clients.read_envelope(read, time.monotonic() + 10)
         evidence = json.loads(result["content"][0]["text"])
         assert evidence["collection"] == "project-a" and evidence["items"]
+        send({"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {
+            "name": "query_scope", "arguments": {"view": "projects"}}})
+        reply = receive(4)["result"]
+        assert reply.get("isError") is not True, reply
+        clients.assert_legacy_query_scope(clients.tool_value(reply))
     finally:
         process.stdin.close()
         try:

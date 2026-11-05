@@ -7,13 +7,23 @@ import { LaunchSpec } from './model';
 import { exactScopeMatches, NativeSourceScope, ProjectRegistrationReview, RuntimeBinding, RuntimeHost } from './serviceBootstrap';
 import { identifier, record, ServiceError, type ConsolePage } from './serviceClient';
 import { IntentStorage } from './serviceIntents';
-import type { ReviewedScopeSelection } from './scopeSelection';
-import { validateCatalogSession } from './catalogSession';
+import type { ReviewedWindowScopeSelection } from './scopeSelection';
+import { validateCatalogSession, validateCombinedCatalogSession } from './catalogSession';
 
 /** Pure adapter from reviewed native metadata. It does not resolve folders,
  * register an Index, connect, activate preferences or manufacture authority. */
-export function nativeScopeLaunchSpec(binding:RuntimeBinding,selection:ReviewedScopeSelection):LaunchSpec {
+export function nativeScopeLaunchSpec(binding:RuntimeBinding,selection:ReviewedWindowScopeSelection):LaunchSpec {
     if(!binding.launcher||binding.payloadVerified===false)throw new ServiceError('stable_launcher_unavailable');
+    if('indexes' in selection){
+        const session=validateCombinedCatalogSession(selection.session),index=selection.indexes[0];
+        if(!index||selection.indexes.length>32)throw new ServiceError('combined_scope_indexes_unavailable');
+        identifier(index.backing.binding,32);
+        // The first native member supplies display/storage origins only. Launch
+        // arguments carry the complete frozen selector and no legacy root flag.
+        return {command:binding.universalLauncher??binding.launcher,root:absolute(index.backing.root),dataDir:absolute(index.backing.data_root),
+            collection:index.backing.collection,name:selection.label,combinedSession:session,
+            service:{installDir:binding.installDir,project:index.backing.binding,...(binding.universalLauncher?{universal:true}:{})}};
+    }
     const session=validateCatalogSession(selection.session),index=selection.index;
     if(index.id!==session.index_id)throw new ServiceError('crossed_scope_launch_index');
     identifier(index.backing.binding,32);

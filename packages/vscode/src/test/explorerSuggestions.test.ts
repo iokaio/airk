@@ -29,6 +29,34 @@ test('a valid search draft is admitted for review only: never accepted, applied 
     assert.equal(inbox.list()[0].client.name, 'claude-code');
 });
 
+test('combined search drafts retain exact selectors and target the matching Workbench form', () => {
+    const projects = ['prj_' + '01'.repeat(16), 'prj_' + '02'.repeat(16)];
+    const indexes = ['idx_' + '03'.repeat(16)];
+    const { store: inbox } = store();
+    const submitted = inbox.submit('search', search('combined-search', { draft: {
+        query: 'session refresh', project_ids: projects, index_ids: indexes, member_availability: 'require',
+    } }), CLIENT);
+    assert.ok(submitted.ok);
+    assert.equal(submitted.receipt.destination, 'workbench/search');
+    assert.equal(submitted.receipt.executed, false);
+    const body = inbox.list()[0].draft.body;
+    assert.equal(body.kind, 'search');
+    if (body.kind !== 'search') { assert.fail(); }
+    assert.deepEqual(body.search.project_ids, projects);
+    assert.deepEqual(body.search.index_ids, indexes);
+    assert.equal(body.search.member_availability, 'require');
+    assert.match(suggestionsView(inbox.list()).cards[0].summary, /Workbench: 2 Project/);
+    for (const invalid of [
+        { index_ids: indexes }, { member_availability: 'require' },
+        { project_ids: [] }, { project_ids: [projects[0], projects[0]] },
+        { project_ids: ['prj_' + 'a'.repeat(33)] }, { project_ids: projects, index_ids: null },
+        { project_ids: projects, index_ids: [] }, { project_ids: projects, member_availability: 'ignore' },
+        { project_ids: projects, project: 'ab'.repeat(32) },
+    ]) {
+        assert.equal(validateDraft('search', search('bad-combined', { draft: { query: 'x', ...invalid } })).ok, false, JSON.stringify(invalid));
+    }
+});
+
 test('proposal status reports admitted, current and acknowledged application revisions without claiming execution', () => {
     const revisions = { planner: 2 }, { store: inbox } = store({ revisions });
     const draft = { schema_version: '1.0', idempotency_key: 'plan-revisions', title: 'A plan', expected_target_revision: 2,

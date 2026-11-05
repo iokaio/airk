@@ -200,7 +200,7 @@ export class SuggestionStore {
 const VISIBLE_CARDS = 20;
 function summary(item: Suggestion): string {
     const body = item.draft.body;
-    if (body.kind === 'search') { return `"${body.search.query.slice(0, 120)}" · ${body.search.mode}${body.search.pathPrefix ? ` · ${body.search.pathPrefix}` : ''}`; }
+    if (body.kind === 'search') { return `"${body.search.query.slice(0, 120)}" · ${body.search.mode}${body.search.pathPrefix ? ` · ${body.search.pathPrefix}` : ''}${body.search.project_ids ? ` · Workbench: ${body.search.project_ids.length} Project(s), ${body.search.index_ids ? `${body.search.index_ids.length} index(es)` : 'all permitted members'}` : ''}`; }
     if (body.kind === 'strategy') { return `${body.strategy.id}@${body.strategy.version} · ${body.strategy.steps.length} steps`; }
     if (body.kind === 'plan') { return `${body.plan.tasks.length} task(s)${body.pathHint ? ` · suggested path ${body.pathHint}` : ''}`; }
     if (body.kind === 'review') { return `Review › ${body.scope}${body.names.length ? ` · ${body.names.slice(0, 5).join(', ')}` : ''}`; }

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { ConnectionState, FreshnessState, IndexState, ProjectSummary, ProjectWorkView, SemanticState, StatusSummary } from './explorerContracts';
+import { comparePublicationVector } from './publications';
 
 type Value = Record<string, unknown>;
 const obj = (value: unknown): Value => value && typeof value === 'object' && !Array.isArray(value) ? value as Value : {};
@@ -68,7 +69,8 @@ export function semanticExplanation(status: Pick<StatusSummary, 'semantic' | 've
 }
 
 /** airk_status payload → published readiness summary. Unknown or absent values stay unknown. */
-export function statusSummary(payload: Value, observedAt = Date.now()): StatusSummary {
+export function statusSummary(payload: Value, observedAt = Date.now(), rawPayload: Value = payload): StatusSummary {
+    if (payload.schema === 'airk.combined-read/1') { return combinedStatusSummary(payload, observedAt, rawPayload); }
     const indexState: IndexState = payload.index_state === 'available' ? 'available' : payload.index_state === 'unavailable' ? 'unavailable' : 'unknown';
     const publication = obj(payload.publication), semantic = obj(payload.semantic_readiness), freshness = obj(payload.freshness), discovery=obj(payload.discovery_readiness);
     const runtime = obj(payload.runtime), work = obj(payload.work), progress = obj(work.progress), indexError = obj(payload.index_error);
@@ -102,6 +104,54 @@ export function statusSummary(payload: Value, observedAt = Date.now()): StatusSu
     return summary;
 }
 
+function combinedStatusSummary(payload: Value, observedAt: number, rawPayload: Value): StatusSummary {
+    const rows = Array.isArray(payload.members) && payload.members.length <= 32 ? payload.members.map(obj) : [];
+    const seen = new Set<string>();
+    const members = rows.map(member => {
+        const indexId = typeof member.index_id === 'string' && /^idx_[0-9a-f]{32}$/.test(member.index_id) ? member.index_id : '';
+        const envelope = obj(member.result);
+        const body = Array.isArray(envelope.content) && Object.keys(obj(envelope.structuredContent)).length ? obj(envelope.structuredContent) : envelope;
+        const valid = !!indexId && !seen.has(indexId) && body.schema !== 'airk.combined-read/1';
+        seen.add(indexId);
+        const stamp = count(body.observed_unix_ms), received = stamp === undefined ? observedAt : Math.min(stamp, observedAt);
+        const outcome = valid && member.outcome === 'complete' && member.is_error !== true ? 'complete' : typeof member.outcome === 'string' ? member.outcome : 'unknown';
+        return { indexId, outcome, status: statusSummary(valid && outcome === 'complete' ? body : {}, received) };
+    });
+    const usable = members.filter(member => member.outcome === 'complete' && member.status.indexState === 'available');
+    const complete = rows.length > 0 && members.every(member => member.indexId && member.outcome === 'complete' && member.status.indexState === 'available');
+    const sum = (key: 'files' | 'chunks' | 'vectors' | 'semanticCompleted' | 'semanticSelected'): number | undefined => {
+        if (!usable.length || usable.some(member => member.status[key] === undefined)) { return undefined; }
+        const value = usable.reduce((total, member) => total + member.status[key]!, 0);
+        return Number.isSafeInteger(value) ? value : undefined;
+    };
+    const all = <T>(key: keyof StatusSummary, values: readonly T[]): T | undefined => {
+        const valuesSeen = members.map(member => member.status[key]);
+        return complete && valuesSeen.length && valuesSeen.every(value => value === valuesSeen[0]) && values.includes(valuesSeen[0] as T) ? valuesSeen[0] as T : undefined;
+    };
+    const states = members.map(member => member.status.semantic);
+    const semantic: SemanticState = states.length && states.every(state => state === 'ready') ? 'ready'
+        : states.length && states.every(state => state === 'disabled') ? 'disabled'
+        : states.some(state => state === 'ready' || state === 'partial') ? 'partial'
+        : states.some(state => state === 'failed') ? 'failed'
+        : states.length && states.every(state => state === 'pending') ? 'pending' : 'unknown';
+    const freshness = (['failed', 'blocked', 'running', 'pending', 'paused', 'unavailable', 'unregistered', 'unknown', 'idle'] as const)
+        .find(state => members.some(member => member.status.freshness === state)) ?? 'unknown';
+    const vectorsEnabled = all('vectorsEnabled', [true, false]), localModelReady = all('localModelReady', [true, false]);
+    const partial = !complete || payload.partial === true;
+    return {
+        indexState: usable.length ? 'available' : members.length && members.every(member => member.status.indexState === 'unavailable') ? 'unavailable' : 'unknown',
+        semantic, freshness, observedAt, liveSourceVerified: false,
+        ...(sum('files') !== undefined ? { files: sum('files') } : {}), ...(sum('chunks') !== undefined ? { chunks: sum('chunks') } : {}),
+        ...(sum('vectors') !== undefined ? { vectors: sum('vectors') } : {}),
+        ...(sum('semanticCompleted') !== undefined ? { semanticCompleted: sum('semanticCompleted') } : {}),
+        ...(sum('semanticSelected') !== undefined ? { semanticSelected: sum('semanticSelected') } : {}),
+        ...(vectorsEnabled !== undefined ? { vectorsEnabled } : {}), ...(localModelReady !== undefined ? { localModelReady } : {}),
+        combined: { available: usable.length, total: rows.length, partial,
+            countsQualifier: `Counts sum ${usable.length} available member index(es), not unique sources.${partial ? ' Unavailable or unqueried members are omitted; their outcomes remain below.' : ''}`,
+            members, ...(Object.keys(obj(payload.publication_vector)).length ? { publicationVector: obj(payload.publication_vector) } : {}), nativeResult: rawPayload },
+    };
+}
+
 /** One word for the status bar and pill: the worst current condition, never a merged "OK". */
 export function headline(connection: ConnectionState, status: StatusSummary | undefined, projects: number): { word: string; severity: 'ok' | 'warn' | 'error' | 'info' } {
     if (connection === 'untrusted') { return { word: 'untrusted', severity: 'warn' }; }
@@ -110,6 +160,7 @@ export function headline(connection: ConnectionState, status: StatusSummary | un
     if (connection === 'connecting') { return { word: 'connecting', severity: 'info' }; }
     if (!projects) { return { word: 'no projects', severity: 'info' }; }
     if (!status) { return { word: connection === 'degraded' ? 'degraded' : 'ready', severity: connection === 'degraded' ? 'warn' : 'info' }; }
+    if (status.combined?.partial) { return { word: status.combined.available ? 'partial indexes' : 'member status unknown', severity: 'warn' }; }
     if (status.indexState !== 'available') { return { word: 'index unavailable', severity: 'warn' }; }
     if (status.freshness === 'failed' || status.freshness === 'blocked' || status.semantic === 'failed') { return { word: 'attention', severity: 'error' }; }
     if (connection === 'degraded') { return { word: 'degraded', severity: 'warn' }; }
@@ -128,7 +179,9 @@ export function scalarWithRetainedDetails(scalar: StatusSummary, details?: Statu
         ...(details.versionsMatch !== undefined ? { versionsMatch: details.versionsMatch } : {}),
         ...(details.runtimeVersions !== undefined ? { runtimeVersions: details.runtimeVersions } : {}),
     };
-    const samePublication = publicationDetailsValid && scalar.publication !== undefined && scalar.publication === details.publication;
+    const samePublication = publicationDetailsValid && (scalar.combined && details.combined
+        ? comparePublicationVector({ authority: 'same-bound-status', vector: scalar.combined.publicationVector }, { authority: 'same-bound-status', vector: details.combined.publicationVector }) === 'equal'
+        : scalar.publication !== undefined && scalar.publication === details.publication);
     const publicationDetails = samePublication ? {
         ...(details.vectorsEnabled !== undefined ? { vectorsEnabled: details.vectorsEnabled } : {}),
         ...(details.localModelReady !== undefined ? { localModelReady: details.localModelReady } : {}),

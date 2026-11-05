@@ -4,7 +4,7 @@ The 1.8.8 working build supplies optional [evidence guidance](evidence-guidance.
 from returned metadata. Advice is bounded and inert; CLI/MCP/Workbench and
 complete/selected exports retain applicable reasons without additional reads.
 
-This guide explains **all 28 public tools in the AIRK 1.8.8 manual-test working build**: why each exists, when to choose it, how it works, its inputs/results, a request example, and the owning implementation/tests. It complements the [catalog and connection contract](unified-mcp.md), [native protocol/evidence contract](mcp.md), [response modes](mcp-response-modes.md) and [CLI developer guide](cli-developer-guide.md). Current qualification is in the [1.8.8 working build record](releases/release-1.8.8.md); the inherited 1.8.7 contracts and evidence remain in their [dated record](releases/release-1.8.7.md).
+This guide explains **the public tools in the AIRK 1.8.8 manual-test working build**: why each exists, when to choose it, how it works, its inputs/results, a request example, and the owning implementation/tests. It complements the [catalog and connection contract](unified-mcp.md), [native protocol/evidence contract](mcp.md), [response modes](mcp-response-modes.md) and [CLI developer guide](cli-developer-guide.md). Current qualification is in the [1.8.8 working build record](releases/release-1.8.8.md); the inherited 1.8.7 contracts and evidence remain in their [dated record](releases/release-1.8.7.md).
 
 ## Start with the right layer
 
@@ -26,7 +26,14 @@ The CLI composes the unified MCP frontend. Native schemas and rendering belong t
 | Prepare or run a bounded native evidence recipe | parse |
 | Learn AIRK or construct an editor proposal | help, list_templates, get_template, draft_search, draft_strategy, draft_plan, suggest_view, validate_draft, proposal_status, get_handoff |
 
-Use `tools/list` on the actual MCP connection as the authoritative public catalog. Client namespaces such as `mcp__airk__` are client presentation, not part of these tool names. The terminal's `airk tools list --json` exposes the **18 native prefixed aliases**, not the complete 28-tool unified/Assistance catalog. [CLI Explorer commands](cli-developer-guide.md#airk-explorer) have separate offline-file behavior. Unified MCP adds projects and nine Assistance operations to the 18 native operations. The terminal provides those capabilities through airk projects and nine airk explorer commands; it also has indexing, configuration, runtime and service commands beyond either tool catalog. MCP projects is connection-allowlisted, whereas CLI projects lists the selected service registry.
+Use `tools/list` on the actual MCP connection as the authoritative public catalog.
+Client namespaces such as `mcp__airk__` are client presentation. Native CLI sessions expose 19 prefixed operations, including `airk_query_scope`;
+reviewed combined sessions additionally expose their selector controls. Unified MCP adds `projects`,
+`query_scope` and nine Assistance operations. Legacy `query_scope` reports
+`configuration_required`; it never enumerates the machine library. `projects`
+keeps the existing connection-binding meaning. CLI `projects` remains a separate
+administrative service-registry read. [Combined-read contracts](combined-reads.md)
+record the new session, authority and qualification boundary.
 
 ## Shared request and evidence rules
 
@@ -46,6 +53,7 @@ Examples below are **tool argument objects**, not executed calls. Source paths/n
 ## Tool index
 
 - [projects](#projects)
+- [query_scope](#query_scope)
 - [status](#status)
 - [diagnostics](#diagnostics)
 - [capabilities](#capabilities)
@@ -73,6 +81,25 @@ Examples below are **tool argument objects**, not executed calls. Source paths/n
 - [validate_draft](#validate_draft)
 - [proposal_status](#proposal_status)
 - [get_handoff](#get_handoff)
+
+## query_scope
+
+**Why and when:** Discover Projects, indexes and sources within the connection's
+frozen native-reviewed grant before forming a combined request.
+
+**Inputs:** `view: projects` accepts no IDs; `indexes` requires `project_id`;
+`sources` requires both `project_id` and `index_id`. Optional `limit` is 1–32,
+`max_bytes` is 1–65,536, and `cursor` continues the exact view and revisions.
+These are new opaque `prj_`/`idx_` identities, separate from legacy `project`.
+
+**Result and limits:** Granted-only metadata, exact scope/grant revisions,
+observation, pagination and truncation. No source scan or evidence worker is
+needed for discovery. Legacy connections return explicit `configuration_required`.
+A changed authority expires the page; it never restarts against broader scope.
+
+**Implementation:** [selected catalog](../crates/airk-mcp/src/combined.rs),
+[native owner](../crates/airk-cli/src/combined_frontend.rs), and
+[actual-process tests](../crates/airk-cli/tests/combined_reads.rs).
 
 ## projects
 

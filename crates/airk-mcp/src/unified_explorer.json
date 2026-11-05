@@ -96,7 +96,7 @@
   },
   {
     "name": "airk_explorer_suggest_search",
-    "description": "Propose a Search › Query form (lexical, vector or hybrid; literal path prefix; limit; byte budget). The user decides whether to run it. The draft goes to the Suggestions Inbox of the attached Explorer window and waits for the user; nothing is applied, saved or run. Bodies are limited to 16384 bytes; unknown fields are refused.",
+    "description": "Propose a Search › Query form, or a matching reviewed combined Workbench Search form when explicit Project selectors are supplied (lexical, vector or hybrid; literal path prefix; limit; byte budget). Combined selectors must match the captured session and are never applied to a legacy form. The user decides whether to run it. The draft goes to the Suggestions Inbox of the attached Explorer window and waits for the user; nothing is applied, saved or run. Bodies are limited to 16384 bytes; unknown fields are refused.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
@@ -212,8 +212,64 @@
             },
             "full_chunks": {
               "type": "boolean"
+            },
+            "project_ids": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 32,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "pattern": "^prj_[0-9a-f]{32}$"
+              },
+              "description": "Exact captured reviewed combined-session Projects; applying only prefills its matching Workbench form."
+            },
+            "index_ids": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 32,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "pattern": "^idx_[0-9a-f]{32}$"
+              },
+              "description": "Exact captured index subset when the combined session has one; requires project_ids."
+            },
+            "member_availability": {
+              "type": "string",
+              "enum": [
+                "report",
+                "require"
+              ],
+              "description": "Independent member availability policy for the draft; requires project_ids."
             }
-          }
+          },
+          "allOf": [
+            {
+              "if": {
+                "required": [
+                  "index_ids"
+                ]
+              },
+              "then": {
+                "required": [
+                  "project_ids"
+                ]
+              }
+            },
+            {
+              "if": {
+                "required": [
+                  "member_availability"
+                ]
+              },
+              "then": {
+                "required": [
+                  "project_ids"
+                ]
+              }
+            }
+          ]
         },
         "intent": {
           "type": "string",

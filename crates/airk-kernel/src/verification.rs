@@ -161,6 +161,98 @@ fn trim_metadata(receipt: &mut VerificationReceipt, limit: usize) -> Result<()> 
 }
 
 impl Kernel {
+    /// Check a final one-member projection through its already installed read
+    /// authority. Inputs remain untrusted: only retained current identities and
+    /// authorized source locations can become eligible saved-byte checks.
+    pub fn verify_scoped_projection(
+        &self,
+        project: airk_core::service::ProjectBinding,
+        value: Value,
+        controls: VerificationControls,
+    ) -> Result<Value> {
+        self.verify_scoped_projection_allocated(project, value, controls, None)
+    }
+
+    /// An internal member allocation may be zero but cannot widen the valid
+    /// caller policy. Public verification controls retain their positive bounds.
+    pub fn verify_scoped_projection_allocated(
+        &self,
+        project: airk_core::service::ProjectBinding,
+        value: Value,
+        controls: VerificationControls,
+        allocation: Option<VerificationAllocation>,
+    ) -> Result<Value> {
+        self.verify_scoped_projection_budgeted(project, value, controls, allocation, None)
+    }
+
+    /// Metadata bytes share the outer composition allocation just as source
+    /// bytes do. Establish this cap before any saved-source reads or hashing.
+    pub fn verify_scoped_projection_budgeted(
+        &self,
+        project: airk_core::service::ProjectBinding,
+        mut value: Value,
+        controls: VerificationControls,
+        allocation: Option<VerificationAllocation>,
+        receipt_bytes_budget: Option<usize>,
+    ) -> Result<Value> {
+        use airk_core::scoped_reads::ScopeReadRefused;
+        anyhow::ensure!(self.scoped_read_fingerprint()?.is_some(), ScopeReadRefused);
+        airk_core::index_catalog::encoded_size(
+            &(&value, &controls, &allocation, &receipt_bytes_budget),
+            airk_core::service::MAX_FRAME_BYTES - 4096,
+        )?;
+        anyhow::ensure!(
+            value.is_object(),
+            "verification projection must be an object"
+        );
+        anyhow::ensure!(
+            value.get("source_verification").is_none(),
+            "verification projection already carries a response-wide receipt"
+        );
+        let registration = airk_core::service::ProjectRegistration::new(
+            self.root_id(),
+            self.data_root.to_string_lossy().into_owned(),
+            self.collection.clone(),
+        )?;
+        anyhow::ensure!(registration.binding == project, ScopeReadRefused);
+        let read = self.current_reader()?;
+        let publication = crate::current::runtime::envelope(&read)?;
+        self.annotate_scoped_read(&mut value)?;
+        // This is a dated owner observation, separate from each evidence item's
+        // exact member publication. Do not supply a missing evidence token from
+        // the owner's current head.
+        value["verification_owner_publication"] = serde_json::to_value(publication)?;
+        if let Some(requested) = controls.resolve()? {
+            let budget = allocation.map_or(Ok(requested), |share| share.apply(requested))?;
+            let receipt_budget = receipt_bytes_budget.unwrap_or(MAX_RECEIPT_BYTES);
+            anyhow::ensure!(
+                (1024..=MAX_RECEIPT_BYTES).contains(&receipt_budget),
+                VerificationReplyBudget
+            );
+            let receipt = self.verify_returned_sources_allocated_before(
+                &value,
+                budget,
+                None,
+                receipt_budget_for_reply(&value)?.min(receipt_budget),
+                true,
+            )?;
+            attach_response(&mut value, receipt)?;
+        } else {
+            anyhow::ensure!(
+                allocation.is_none(),
+                "off verification cannot carry a member allocation"
+            );
+            anyhow::ensure!(
+                receipt_bytes_budget.is_none(),
+                "off verification cannot carry a receipt allocation"
+            );
+        }
+        read.token()?;
+        self.annotate_scoped_read(&mut value)?;
+        validate_projection(&value)?;
+        Ok(value)
+    }
+
     /// Per-request cooperative cancellation; never changes scope or admission.
     pub fn with_verification_cancellation(
         mut self,
@@ -192,15 +284,52 @@ impl Kernel {
         outer_deadline: Option<Instant>,
         receipt_bytes_budget: usize,
     ) -> Result<VerificationReceipt> {
+        self.verify_returned_sources_allocated_before(
+            value,
+            budget,
+            outer_deadline,
+            receipt_bytes_budget,
+            false,
+        )
+    }
+
+    fn verify_returned_sources_allocated_before(
+        &self,
+        value: &Value,
+        budget: VerificationBudget,
+        outer_deadline: Option<Instant>,
+        receipt_bytes_budget: usize,
+        allow_zero: bool,
+    ) -> Result<VerificationReceipt> {
+        // A Kernel owns one index. Combined reads retain the member owners'
+        // receipts under their native envelopes; never resolve another index's
+        // path through this Kernel merely because its spelling matches.
+        anyhow::ensure!(
+            value["schema"] != "airk.combined-read/1"
+                && value["structuredContent"]["schema"] != "airk.combined-read/1",
+            "combined saved-source verification requires the originating member owners"
+        );
         anyhow::ensure!(
             budget.mode != VerificationMode::Off,
             "off verification must bypass source checking"
         );
         VerificationControls {
             verification: Some(budget.mode),
-            verification_max_sources: Some(budget.max_sources),
-            verification_max_bytes: Some(budget.max_bytes),
-            verification_deadline_ms: Some(budget.deadline_ms),
+            verification_max_sources: Some(if allow_zero {
+                budget.max_sources.max(1)
+            } else {
+                budget.max_sources
+            }),
+            verification_max_bytes: Some(if allow_zero {
+                budget.max_bytes.max(1)
+            } else {
+                budget.max_bytes
+            }),
+            verification_deadline_ms: Some(if allow_zero {
+                budget.deadline_ms.max(1)
+            } else {
+                budget.deadline_ms
+            }),
         }
         .resolve()?;
         anyhow::ensure!(
@@ -215,6 +344,10 @@ impl Kernel {
         let deadline = outer_deadline.map_or(deadline, |outer| outer.min(deadline));
         limits.effective_deadline_ms = deadline.saturating_duration_since(began).as_millis() as u64;
         let inventory = ReferenceInventory::collect(value);
+        anyhow::ensure!(
+            !inventory.contains_combined,
+            "combined saved-source verification requires the originating member owners"
+        );
         if inventory.complete && inventory.references.is_empty() {
             let receipt = VerificationReceipt {
                 schema: "airk.saved-source-verification/1".into(),
@@ -278,6 +411,13 @@ impl Kernel {
                 &serde_json::to_vec(&configured.roots)?,
             ],
         );
+        let scope_digest = match self.scoped_read_fingerprint()? {
+            Some(authority) => framed_digest(
+                b"saved-source-verification-scoped/1",
+                &[scope_digest.as_bytes(), authority.as_bytes()],
+            ),
+            None => scope_digest,
+        };
         let selection_digest = selection_digest(value)?;
         let mut receipt = VerificationReceipt {
             schema: "airk.saved-source-verification/1".into(),
@@ -314,6 +454,9 @@ impl Kernel {
         let mut source_positions = BTreeMap::<Sha256Digest, usize>::new();
         let mut identities =
             BTreeMap::<String, Option<(Sha256Digest, Option<Sha256Digest>)>>::new();
+        let scoped_member = self
+            .scope_observation()
+            .and_then(|observation| observation.members.first());
         for reference in &inventory.references {
             let publication = reference.publication.unwrap_or(original);
             let publication_text = publication.to_string();
@@ -329,12 +472,20 @@ impl Kernel {
                 origins.insert(publication_text.clone(), id.clone());
                 receipt.origins.push(VerificationOrigin {
                     id: id.clone(),
-                    index_id: None,
+                    index_id: scoped_member.map(|member| member.index_id.to_string()),
                     legacy_project: registration.binding.to_string(),
                     collection: self.collection.clone(),
                     incarnation: publication.incarnation,
                     publication,
-                    project_ids: vec![],
+                    project_ids: scoped_member
+                        .map(|member| {
+                            member
+                                .memberships
+                                .iter()
+                                .map(|membership| membership.project_id.to_string())
+                                .collect()
+                        })
+                        .unwrap_or_default(),
                 });
                 id
             };
@@ -395,6 +546,13 @@ impl Kernel {
                 .or(reference.source_relative_path.as_deref())
                 .or(path)
                 .unwrap_or("");
+            let attribution = location
+                .as_ref()
+                .map(|location| {
+                    self.scoped_source_attribution(&location.root, &location.relative_path)
+                })
+                .transpose()?
+                .flatten();
             let source_id = framed_digest(
                 b"saved-source-verification-subject/1",
                 &[
@@ -440,13 +598,19 @@ impl Kernel {
                     (SourceCheckState::Unsupported, "reference_root_mismatch")
                 } else if expected != identity.map(|identity| identity.0) {
                     (SourceCheckState::Unsupported, "reference_identity_mismatch")
+                } else if reference.profile_digest.is_some()
+                    && reference.profile_digest != identity.and_then(|identity| identity.1)
+                {
+                    (SourceCheckState::Unsupported, "reference_profile_mismatch")
                 } else {
                     (SourceCheckState::BudgetExhausted, "source_count_budget")
                 };
                 receipt.sources.push(VerifiedSource {
                     id: source_id,
                     origin_id: origin_id.clone(),
-                    source_root_id: None,
+                    source_root_id: attribution
+                        .as_ref()
+                        .map(|(_, root_id, _)| root_id.to_string()),
                     original_root: if !current_reference {
                         reference.original_root.clone()
                     } else {
@@ -476,10 +640,13 @@ impl Kernel {
                     path: path.map(str::to_owned),
                     expected_hash: expected,
                     observed_hash: None,
-                    profile_digest: reference
-                        .profile_digest
-                        .or(identity.and_then(|identity| identity.1)),
-                    project_ids: vec![],
+                    profile_digest: identity
+                        .and_then(|identity| identity.1)
+                        .or(reference.profile_digest),
+                    project_ids: attribution
+                        .as_ref()
+                        .map(|(_, _, projects)| projects.iter().map(ToString::to_string).collect())
+                        .unwrap_or_default(),
                     reference_ids: vec![],
                     state: check_state,
                     reason: Some(reason.into()),
@@ -489,6 +656,16 @@ impl Kernel {
                 });
                 position
             };
+            // Deduplicated references may disagree about a claimed extraction
+            // profile. A preceding valid association cannot certify a later
+            // forged profile claim for the same saved-byte subject.
+            if current_reference
+                && reference.profile_digest.is_some()
+                && reference.profile_digest != identity.and_then(|identity| identity.1)
+            {
+                receipt.sources[position].state = SourceCheckState::Unsupported;
+                receipt.sources[position].reason = Some("reference_profile_mismatch".into());
+            }
             let id = format!("ref-{}", receipt.references.len());
             receipt.sources[position].reference_ids.push(id.clone());
             receipt.references.push(VerifiedReference {
@@ -517,8 +694,17 @@ impl Kernel {
         let mut policies =
             BTreeMap::<String, airk_ingest::source_scope::SelectedSourcePolicy>::new();
         let mut attempted = 0;
+        let allocation_exhausted =
+            budget.max_sources == 0 || budget.max_bytes == 0 || budget.deadline_ms == 0;
+        if allocation_exhausted && !receipt.sources.is_empty() {
+            receipt.limits.hit.push("member_allocation".into());
+        }
         for source in &mut receipt.sources {
             if source.state != SourceCheckState::BudgetExhausted {
+                continue;
+            }
+            if allocation_exhausted {
+                source.reason = Some("member_allocation".into());
                 continue;
             }
             if attempted == budget.max_sources {
@@ -747,6 +933,176 @@ mod tests {
     use super::*;
     use airk_core::evidence::EvidenceReadOptions;
     use serde_json::json;
+
+    fn scoped_fixture(kernel: &Kernel) -> Result<Kernel> {
+        use airk_core::{
+            grant_provenance::GrantProvenance, identity::Incarnation, index_catalog::*,
+            scoped_reads::SourceDescriptor,
+        };
+        let index = IndexId::from_identity(Incarnation::from_bytes([1; 16]));
+        let root = SourceRootId::from_identity(Incarnation::from_bytes([2; 16]));
+        let projects =
+            [3, 4].map(|byte| QueryProjectId::from_identity(Incarnation::from_bytes([byte; 16])));
+        let backing = airk_core::service::ProjectRegistration::new(
+            kernel.root_id(),
+            kernel.data_root.to_string_lossy().into_owned(),
+            kernel.collection.clone(),
+        )?
+        .binding;
+        kernel.with_scoped_reads(crate::scoped_reads::ScopedReadAuthority {
+            schema: 1,
+            backing,
+            index_id: index,
+            project_ids: projects.to_vec(),
+            provenance: GrantProvenance::UserReviewedProjectGrant,
+            sources: vec![SourceDescriptor {
+                source_root_id: root,
+                original_root: kernel.root_id(),
+            }],
+            grant: ReviewedGrant {
+                id: GrantId::from_identity(Incarnation::from_bytes([5; 16])),
+                host: Sha256Digest::from_bytes([6; 32]),
+                revision: CatalogRevision::INITIAL,
+                revoked: false,
+                memberships: projects
+                    .into_iter()
+                    .zip(["shared/a.rs", "shared/b.rs"])
+                    .map(|(project_id, path)| GrantedMembership {
+                        membership: Membership {
+                            project_id,
+                            index_id: index,
+                            revision: CatalogRevision::INITIAL,
+                            scope: vec![ScopeAtom {
+                                source_root_id: root,
+                                kind: PathScope::Exact,
+                                path: path.into(),
+                            }],
+                        },
+                        source_revision: CatalogRevision::INITIAL,
+                        policy_epoch: 0,
+                        policy_digest: None,
+                    })
+                    .collect(),
+            },
+        })
+    }
+
+    #[test]
+    fn scoped_member_receipts_fill_precise_source_associations_and_zero_shares_do_no_hashing()
+    -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let root = temp.path().join("source");
+        std::fs::create_dir_all(root.join("shared"))?;
+        for (path, content) in [
+            ("shared/a.rs", "pub struct Alpha;\n"),
+            ("shared/b.rs", "pub struct Beta;\n"),
+            ("secret.rs", "pub struct Hidden;\n"),
+        ] {
+            std::fs::write(root.join(path), content)?;
+        }
+        let kernel = Kernel::open(&root, Some(temp.path().join("data")))?;
+        kernel.configure_vectors(false)?;
+        kernel.index()?;
+        let scoped = scoped_fixture(&kernel)?;
+        let a = serde_json::to_value(
+            kernel.file_info_conditional("shared/a.rs", &EvidenceReadOptions::default())?,
+        )?;
+        let b = serde_json::to_value(
+            kernel.file_info_conditional("shared/b.rs", &EvidenceReadOptions::default())?,
+        )?;
+        let value = json!({"steps":[{"result":a.clone()},{"result":b}]});
+        let receipt = scoped.verify_returned_sources(&value, budget(VerificationMode::Report))?;
+        assert_eq!(receipt.status, "verified");
+        assert_eq!(receipt.origins.len(), 1);
+        assert!(receipt.origins[0].index_id.is_some());
+        assert_eq!(receipt.origins[0].project_ids.len(), 2);
+        assert_eq!(receipt.sources.len(), 2);
+        assert!(
+            receipt
+                .sources
+                .iter()
+                .all(|source| source.source_root_id.is_some() && source.project_ids.len() == 1)
+        );
+        assert_ne!(
+            receipt.sources[0].project_ids,
+            receipt.sources[1].project_ids
+        );
+        assert_eq!(
+            receipt.sources[0].source_root_id,
+            receipt.sources[1].source_root_id
+        );
+        let unscoped = kernel.verify_returned_sources(&value, budget(VerificationMode::Report))?;
+        assert_ne!(receipt.scope_digest, unscoped.scope_digest);
+        let mut forged = a.clone();
+        forged["profile_id"] = json!("f".repeat(64));
+        let rejected =
+            scoped.verify_returned_sources(&forged, budget(VerificationMode::Require))?;
+        assert_eq!(rejected.status, "requirements_unmet");
+        assert_eq!(rejected.counts.bytes_read, 0);
+        assert_eq!(rejected.sources[0].state, SourceCheckState::Unsupported);
+        let registration = airk_core::service::ProjectRegistration::new(
+            kernel.root_id(),
+            kernel.data_root.to_string_lossy().into_owned(),
+            kernel.collection.clone(),
+        )?;
+        std::fs::remove_file(root.join("shared/a.rs"))?;
+        let result = scoped.verify_scoped_projection_allocated(
+            registration.binding,
+            a.clone(),
+            VerificationControls {
+                verification: Some(VerificationMode::Require),
+                ..Default::default()
+            },
+            Some(VerificationAllocation {
+                max_sources: 0,
+                max_bytes: 0,
+                deadline_ms: 0,
+            }),
+        )?;
+        assert_eq!(
+            result["source_verification"]["status"],
+            "requirements_unmet"
+        );
+        assert_eq!(result["source_verification"]["counts"]["bytes_read"], 0);
+        assert_eq!(
+            result["source_verification"]["counts"]["checked_sources"],
+            0
+        );
+        assert_eq!(
+            result["source_verification"]["sources"][0]["state"],
+            "budget_exhausted"
+        );
+        assert_eq!(result["source_verification"]["limits"]["max_sources"], 0);
+        assert_eq!(result["error"]["code"], "verification_required_unmet");
+        assert!(
+            kernel
+                .verify_scoped_projection(registration.binding, a, VerificationControls::default())
+                .is_err()
+        );
+        let unauthorized = serde_json::to_value(
+            kernel.file_info_conditional("secret.rs", &EvidenceReadOptions::default())?,
+        )?;
+        assert!(
+            scoped
+                .verify_scoped_projection(
+                    registration.binding,
+                    unauthorized,
+                    VerificationControls::default()
+                )
+                .is_err()
+        );
+        let oversized = json!({"unused":"x".repeat(airk_core::service::MAX_FRAME_BYTES)});
+        assert!(
+            scoped
+                .verify_scoped_projection(
+                    registration.binding,
+                    oversized,
+                    VerificationControls::default()
+                )
+                .is_err()
+        );
+        Ok(())
+    }
 
     fn budget(mode: VerificationMode) -> VerificationBudget {
         VerificationBudget {

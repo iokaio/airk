@@ -117,7 +117,7 @@ export class SessionStore {
         if(!Array.isArray(plan.steps)||!plan.steps.length){throw new Error('Prepare an executable plan before remembering it.');}
         assertPortablePlanInputs(plan);
         const template=structuredClone(plan);delete template.digest;delete template.publication;delete template.collection;
-        for(const raw of Array.isArray(template.steps)?template.steps:[]){const args=object(object(raw).args);if(args.symbol){throw new Error('A direct symbol ID cannot be remembered; bind symbol IDs from a fresh definition query.');}for(const key of ['known_hash','revision','cursor']){delete args[key];}}
+        for(const raw of Array.isArray(template.steps)?template.steps:[]){const args=object(object(raw).args);if(args.symbol){throw new Error('A direct symbol ID cannot be remembered; bind symbol IDs from a fresh definition query.');}for(const key of ['known_hash','revision','origin_publication','cursor']){delete args[key];}}
         await this.lock(project,async root=>{
             const scope=String(template.path_prefix??''),entries=(await this.shortcuts(project)).filter(entry=>entry.input!==input||entry.scope!==scope);
             entries.unshift({input,scope,plan:template});while(entries.length>32||Buffer.byteLength(JSON.stringify({schema:1,entries}))>131072){entries.pop();}

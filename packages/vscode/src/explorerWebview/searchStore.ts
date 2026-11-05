@@ -26,7 +26,7 @@ export function editSearch(form: SearchForm): void {
 }
 export function beginSearch(form: SearchForm): string {
     pageEdited = false;
-    editSearch(form); commit({ ...current, busy: true, error: undefined, result: undefined, page: 0 });
+    editSearch(form); commit({ ...current, busy: true, error: undefined, result: undefined, nativeFailure: undefined, page: 0 });
     return `${owner(current)}:${++operation}`;
 }
 export function searchPage<T>(hits: readonly T[], page: number): readonly T[] { return hits.slice(page * 20, (page + 1) * 20); }

@@ -1,5 +1,11 @@
 # Running AIRK headless
 
+P7 adds explicit reviewed combined sessions, unique-index execution, shared
+budgets and complete member-qualified results. [Combined-read contracts](combined-reads.md)
+record selectors, discovery, publication vectors, plan verification and the
+current qualification boundary. Legacy source bindings retain their one-index
+meaning. Use the actual connection catalog for supported inputs.
+
 Everything AIRK indexes and answers is available without VS Code. This page maps each extension feature to its CLI equivalent and lists the places where the CLI still needs raw JSON. See the [CLI guide](cli.md) and the generated [CLI reference](cli-reference.md), which documents every command. Run `airk --help` for the built-in guide, which covers how the service works, how to select a project, a headless quick start and how to learn the tools. `airk <command> --help` describes each command. The same help text is available to agents through `airk tools call airk_help`.
 
 To experiment without any installation, build with `build.ps1` or `build.sh` at the repository root. Each build writes `builds/<UTC timestamp>-<platform>/` with the runtime and a README that walks through starting the service and registering a project.

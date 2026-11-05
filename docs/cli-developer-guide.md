@@ -8,13 +8,25 @@ Current command behavior for the **AIRK 1.8.8 manual-test working build**, inher
 
 **Related developer reference: [MCP developer guide](mcp-developer-guide.md)** explains every unified MCP tool, inputs, examples, limitations and implementation/test ownership.
 
-## Why 18 native tools and 28 MCP tools?
+## Native and unified catalogs
 
-These counts describe different catalogs, not the size of the CLI. `airk tools list` exposes **18 prefixed native tools** for retrieval, parsing, readiness/diagnostics and help. The unified agent MCP endpoint composes those operations with **projects plus nine Explorer Assistance operations**, yielding **28 unprefixed tools**. The full terminal CLI additionally has project, indexing, configuration, service, runtime and usage commands.
+`airk tools list --json` describes the selected connection. Ordinary native
+sessions expose 19 prefixed operations, including `airk_query_scope`; a reviewed
+`--combined-session` adds Project/index selectors to eligible reads. Unified MCP adds
+legacy `projects`, granted-only `query_scope` and nine Assistance operations.
+A legacy connection's `query_scope` reports `configuration_required`. Use the
+actual catalog rather than treating a tool count as a capability check.
+
+Use `--project-ids` and optional `--index-ids` to narrow a combined convenience
+read, or pass the same fields through `tools call`/shell. `--member-availability`
+is independent of source verification. The session JSON selects a reviewed grant;
+IDs, saved defaults and the Workbench dropdown cannot grant access. Complete
+member results, qualified ranking, publication vectors and typed failures survive
+CLI and MCP output. See [combined reads](combined-reads.md).
 
 | Unified MCP capability | Terminal entrypoint | Scope or workflow difference |
 |---|---|---|
-| 18 native operations | `airk tools list/help/call/shell`, e.g. `airk tools call airk_search` | Prefixed native names; direct commands such as `airk search` provide convenient flags. |
+| Native operations | `airk tools list/help/call/shell`, e.g. `airk tools call airk_search` | Prefixed native names; direct commands such as `airk search` provide convenient flags. |
 | `projects` | `airk projects` | MCP lists connection-configured bindings; CLI lists the selected service registry. |
 | `list_templates`, `get_template` | `airk explorer list-templates/get-template` | CLI writes results to an explicit output file. |
 | `draft_search`, `draft_strategy`, `draft_plan`, `suggest_view`, `validate_draft` | Corresponding hyphenated `airk explorer` commands | Ordinary CLI proposals are offline files; MCP can propose to an attached trusted Explorer for user review. Neither executes the proposed work. |
@@ -1532,9 +1544,9 @@ Usage: airk tools help [OPTIONS] <TOOL>
 
 ## airk tools list
 
-**Purpose:** List the 18 native prefixed tools; --json includes schemas. Unified MCP adds projects and nine Explorer Assistance tools.
+**Purpose:** List the selected connection's native prefixed tools; `--json` includes schemas.
 
-**Behavior and developer use:** Lists 18 native prefixed tool schemas. It does not list all 28 unified MCP tools; projects and Explorer Assistance have separate CLI commands.
+**Behavior and developer use:** Lists the canonical schemas for the selected session, including combined selector and discovery inputs when configured. Explorer Assistance has separate CLI commands.
 
 ```text
 Usage: airk tools list [OPTIONS]

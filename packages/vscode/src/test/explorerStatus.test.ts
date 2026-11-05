@@ -22,6 +22,32 @@ test('airk_status maps to separate readiness, freshness and semantic observation
     assert.equal(statusSummary({ index_state: 'odd', semantic_readiness: { state: 'bogus' }, freshness: { state: 'great' } }).semantic, 'unknown');
 });
 
+test('combined status aggregates bounded readable members without inventing scalar publication or unique counts', () => {
+    const member = (number: number, files: unknown) => ({ index_id: `idx_${String(number).repeat(32)}`, outcome: 'complete', result: {
+        index_state: 'available', files, chunks: 4, indexed_vectors: 3, observed_unix_ms: 5,
+        publication: { token: `member-${number}` }, semantic_readiness: { state: 'ready' }, freshness: { state: 'idle', live_source_verified: false }, vectors_enabled: true,
+    } });
+    const payload = { schema: 'airk.combined-read/1', partial: false, members: [member(1, 5), member(2, 5)], publication_vector: { authority: 'a'.repeat(64), members: [] } };
+    const summary = statusSummary(payload, 10);
+    assert.equal(summary.indexState, 'available'); assert.equal(summary.files, 10);
+    assert.equal(summary.semantic, 'ready'); assert.equal(summary.freshness, 'idle');
+    assert.equal(summary.vectorsEnabled, true); assert.equal(summary.publication, undefined);
+    assert.equal(summary.liveSourceVerified, false);
+    assert.equal(summary.combined?.available, 2); assert.equal(summary.combined?.total, 2); assert.equal(summary.combined?.partial, false);
+    assert.match(summary.combined!.countsQualifier, /not unique sources/);
+    assert.deepEqual(summary.combined!.nativeResult, payload);
+    assert.deepEqual(summary.combined!.members.map(member => member.status.observedAt), [5, 5]);
+    const failed = { index_id: 'idx_' + '3'.repeat(32), outcome: 'failed', is_error: true, result: { error: { code: 'helper_unavailable', retryable: true, retry: { complete: true } } } };
+    const partial = statusSummary({ ...payload, partial: true, members: [member(1, 5), failed] }, 10);
+    assert.equal(partial.indexState, 'available', 'one usable member stays searchable');
+    assert.equal(partial.files, 5); assert.equal(partial.semantic, 'partial');
+    assert.equal(partial.combined?.partial, true); assert.equal(partial.vectorsEnabled, undefined);
+    assert.deepEqual(headline('ready', partial, 1), { word: 'partial indexes', severity: 'warn' });
+    assert.deepEqual(partial.combined!.nativeResult.members, [member(1, 5), failed]);
+    assert.equal(statusSummary({ ...payload, members: [member(1, null)] }, 10).files, undefined);
+    assert.equal(statusSummary({ schema: 'airk.combined-read/1', members: [] }).indexState, 'unknown');
+});
+
 test('the headline reports the worst condition and never merges states into OK', () => {
     const ready = statusSummary({ index_state: 'available', semantic_readiness: { state: 'ready' }, freshness: { state: 'idle' } });
     assert.deepEqual(headline('ready', ready, 1), { word: 'ready', severity: 'ok' });

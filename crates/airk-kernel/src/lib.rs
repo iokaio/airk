@@ -11,6 +11,7 @@ pub use airk_store::current::CurrentGateContention;
 
 pub mod analysis;
 pub mod changes;
+pub mod combined_reads;
 pub mod compression;
 mod continuity;
 pub mod coverage;

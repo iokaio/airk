@@ -3,7 +3,7 @@ import { ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import { AGENT_INSTRUCTION_FILES, AIRK_AGENT_INSTRUCTIONS, FactRow, MANAGE_ACTIONS, MANAGE_COMMANDS, ManagedProject, ManagementView, ProjectSummary, StatusSummary } from '../explorerContracts';
 import { request } from './api';
-import { CopyDetails, Facts } from './components';
+import { CompleteNativeResponse, CopyDetails, Facts } from './components';
 import type { Route } from '../explorerRoutes';
 import { ago, byteSize, duration, observed, shortToken } from './format';
 import type { ScreenProps } from './workspaces';
@@ -122,6 +122,7 @@ export function IndexContents(props:{project:ProjectSummary;status?:StatusSummar
     return <section class="card index-contents" aria-label="Published index contents">
         <div class="section-head"><h2>In your index</h2><CopyDetails section="index" project={props.project.project}/></div>
         <p><strong>{available?'Published for search':saved.indexState==='unavailable'?'Published index unavailable':'Waiting for a published index observation'}</strong> · observed {ago(saved.observedAt)}{!props.connected?' · disconnected; showing retained observations':''}</p>
+        {props.status?.combined && <p class={props.status.combined.partial ? 'callout' : 'muted'}>{props.status.combined.available} of {props.status.combined.total} selected member indexes are readable. {props.status.combined.countsQualifier}</p>}
         <dl class="project-metrics progress-metrics">
             <div><dt>Files indexed</dt><dd>{observed(saved.files)}</dd></div>
             <div><dt>Searchable text chunks</dt><dd>{observed(saved.chunks)}</dd></div>
@@ -133,6 +134,7 @@ export function IndexContents(props:{project:ProjectSummary;status?:StatusSummar
             <p class="muted">{saved.semantic==='ready'?'Semantic coverage is ready.':saved.semantic==='partial'?'Some selected files have published semantic data. Current work and waits are shown below.':saved.semantic==='disabled'?'This publication has no semantic coverage. Saved setup and current work are separate.':saved.semantic==='failed'?'Semantic indexing reported a failure; review Activity for its outcome.':`Semantic readiness: ${saved.semantic}.`} {saved.discoveryState==='ready'?'Source discovery completed for this snapshot.':saved.discoveryState==='partial'?'Source discovery is still partial.':''}</p>
         </div>
         <p>{sourceWorkExplanation(saved.freshness)}</p>
+        <CompleteNativeResponse value={props.status?.nativeFailure ?? props.status?.combined?.nativeResult} />
         <details><summary>Publication details</summary><p>These are saved results, separate from the current attempt below. Updates appear automatically. File coverage is not a time estimate.</p><Facts rows={[
             ['Publication',shortToken(saved.publication)],['Observed',saved.observedAt===undefined?'Not observed':new Date(saved.observedAt).toISOString()],
             ['Source discovery',saved.discoveryState??'Not observed'],['Source updates',saved.freshness??'Not observed'],

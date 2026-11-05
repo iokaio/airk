@@ -329,6 +329,59 @@ impl SessionScope {
     }
 }
 impl Kernel {
+    /// Read only the selected authority's source-name projection from the exact
+    /// retained publication. This never consults current source configuration,
+    /// enumerates files, opens live sources or hashes their bytes.
+    pub fn scoped_source_projection(
+        &self,
+        project: airk_core::service::ProjectBinding,
+        expected: airk_core::identity::RevisionToken,
+    ) -> Result<airk_core::scoped_reads::ScopedSourceProjection> {
+        use airk_core::scoped_reads::{MemberSourceProjection, ScopedSourceProjection};
+        let scope = self.read_scope.as_ref().ok_or(ScopeReadRefused)?;
+        scope.live()?;
+        ensure!(scope.authority.backing == project, ScopeReadRefused);
+        let read = self.current_reader()?;
+        let publication = crate::current::runtime::envelope(&read)?;
+        ensure!(publication.token == expected, ScopeReadRefused);
+        let state = read.collection_state()?.ok_or(ScopeReadRefused)?;
+        let primary = &read.head().scope.root;
+        let mut sources = Vec::with_capacity(scope.authority.sources.len());
+        for source in &scope.authority.sources {
+            let is_primary = source.original_root == *primary;
+            let aliases = if is_primary {
+                Vec::new()
+            } else {
+                state
+                    .configuration
+                    .roots
+                    .iter()
+                    .filter(|(_, root)| **root == source.original_root)
+                    .map(|(alias, _)| alias.clone())
+                    .collect::<Vec<_>>()
+            };
+            ensure!(is_primary || !aliases.is_empty(), ScopeReadRefused);
+            sources.push(MemberSourceProjection {
+                source_root_id: source.source_root_id,
+                original_root: source.original_root.clone(),
+                primary: is_primary,
+                aliases,
+            });
+        }
+        sources.sort_by_key(|source| source.source_root_id);
+        let projection = ScopedSourceProjection {
+            publication,
+            scope_fingerprint: scope.fingerprint,
+            sources,
+        };
+        projection.validate()?;
+        ensure!(
+            crate::current::runtime::revision(read.token()?) == expected,
+            ScopeReadRefused
+        );
+        scope.live()?;
+        Ok(projection)
+    }
     /// Inspect only the selected index after full frozen-source coverage and
     /// current/published configuration agreement. Never clears installed scope,
     /// enumerates sources, reads an arbitrary input file, or grants administration.
@@ -464,6 +517,58 @@ impl Kernel {
                 Ok(s.fingerprint)
             })
             .transpose()
+    }
+    /// Attribute an already resolved native source to its exact selected
+    /// memberships. No filesystem read or virtual-alias inference occurs.
+    pub(crate) fn scoped_source_attribution(
+        &self,
+        root: &str,
+        path: &str,
+    ) -> Result<
+        Option<(
+            IndexId,
+            airk_core::index_catalog::SourceRootId,
+            Vec<QueryProjectId>,
+        )>,
+    > {
+        let Some(scope) = &self.read_scope else {
+            return Ok(None);
+        };
+        scope.live()?;
+        airk_core::index_catalog::relative_path(path, false)?;
+        let source = scope
+            .authority
+            .sources
+            .iter()
+            .find(|source| source.original_root == root)
+            .ok_or(ScopeReadRefused)?;
+        let mut projects = scope
+            .authority
+            .grant
+            .memberships
+            .iter()
+            .filter(|member| {
+                member.membership.index_id == scope.authority.index_id
+                    && scope
+                        .authority
+                        .project_ids
+                        .contains(&member.membership.project_id)
+                    && member
+                        .membership
+                        .scope
+                        .iter()
+                        .any(|atom| atom.matches_canonical(source.source_root_id, path))
+            })
+            .map(|member| member.membership.project_id)
+            .collect::<Vec<_>>();
+        projects.sort();
+        ensure!(!projects.is_empty(), ScopeReadRefused);
+        scope.live()?;
+        Ok(Some((
+            scope.authority.index_id,
+            source.source_root_id,
+            projects,
+        )))
     }
     /// Frozen installed authorization identity, independent of live admission
     /// and publication. Safe to retain with refusals; never renews authority.
@@ -820,6 +925,98 @@ mod tests {
         assert!(full.current_reader()?.restricts_paths());
         assert!(full.status_summary().unwrap_err().is::<ScopeReadRefused>());
         assert!(admin.status_summary().is_ok());
+        Ok(())
+    }
+    #[test]
+    fn source_projection_uses_exact_retained_aliases_and_only_selected_sources() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let primary = directory.path().join("primary");
+        let external = directory.path().join("external");
+        let private = directory.path().join("private");
+        for root in [&primary, &external, &private] {
+            std::fs::create_dir(root)?;
+        }
+        std::fs::write(primary.join("main.rs"), "pub struct Primary;\n")?;
+        std::fs::write(external.join("allowed.rs"), "pub struct External;\n")?;
+        std::fs::write(private.join("private.rs"), "pub struct Private;\n")?;
+        let admin = Kernel::open(&primary, Some(directory.path().join("data")))?;
+        admin.configure_vectors(false)?;
+        admin.add_root("old", &external)?;
+        admin.add_root("hidden", &private)?;
+        admin.index()?;
+        let original_roots = admin.configured_roots()?;
+        let mut authority = fixture(&admin.root_id());
+        authority.backing = airk_core::service::ProjectRegistration::new(
+            admin.root_id(),
+            admin.data_root.to_string_lossy().into_owned(),
+            admin.collection.clone(),
+        )?
+        .binding;
+        let backing = authority.backing;
+        let source = SourceRootId::from_identity(Incarnation::from_bytes([9; 16]));
+        authority.sources.push(SourceDescriptor {
+            source_root_id: source,
+            original_root: original_roots["old"].clone(),
+        });
+        authority.grant.memberships[0]
+            .membership
+            .scope
+            .push(ScopeAtom {
+                source_root_id: source,
+                kind: PathScope::Exact,
+                path: "allowed.rs".into(),
+            });
+        let scoped = admin.with_scoped_reads(authority)?;
+        let token = crate::current::runtime::revision(admin.current_reader()?.token()?);
+        let initial = scoped.scoped_source_projection(backing, token)?;
+        assert_eq!(initial.sources.len(), 2);
+        assert_eq!(
+            initial
+                .sources
+                .iter()
+                .find(|entry| entry.source_root_id == source)
+                .unwrap()
+                .aliases,
+            vec!["old"]
+        );
+        assert!(
+            initial
+                .sources
+                .iter()
+                .all(|entry| entry.original_root != original_roots["hidden"])
+        );
+        admin.remove_root("old")?;
+        admin.add_root("new", &external)?;
+        // Removing the isolated fixture's live external bytes demonstrates that
+        // this proof uses retained metadata, not live location or hash probes.
+        std::fs::remove_file(external.join("allowed.rs"))?;
+        std::fs::remove_dir(&external)?;
+        let pending = scoped.scoped_source_projection(backing, token)?;
+        assert_eq!(
+            pending, initial,
+            "current aliases must never rename a retained citation origin"
+        );
+        assert!(
+            pending
+                .sources
+                .iter()
+                .all(|entry| !entry.aliases.contains(&"new".into()))
+        );
+        let mut wrong = token;
+        wrong.generation += 1;
+        assert!(scoped.scoped_source_projection(backing, wrong).is_err());
+        assert!(
+            scoped
+                .scoped_source_projection(Sha256Digest::from_bytes([0; 32]), token)
+                .is_err()
+        );
+        assert!(admin.scoped_source_projection(backing, token).is_err());
+        scoped.revoke_scoped_reads();
+        assert!(scoped.scoped_source_projection(backing, token).is_err());
+        assert_eq!(
+            std::fs::read_to_string(primary.join("main.rs"))?,
+            "pub struct Primary;\n"
+        );
         Ok(())
     }
     fn fixture(root: &str) -> ScopedReadAuthority {

@@ -94,6 +94,12 @@ def run(args):
                     controls = ("verification", "verification_max_sources", "verification_max_bytes", "verification_deadline_ms")
                     cli_catalog = json.loads(service.run(*service.arguments("verification"), "tools", "list", "--json").stdout)
                     cli_tools = {tool["name"].removeprefix("airk_"): tool for tool in cli_catalog["tools"]}
+                    expected_native = {tool.removeprefix("airk_") for tool in clients.TOOLS}
+                    expected_operations = expected_native - {"parse"}
+                    assert len(cli_catalog["tools"]) == len(expected_native) and set(cli_tools) == expected_native, "native_cli_tool_inventory_changed"
+                    assert set(operations) == expected_operations, "canonical_operation_inventory_changed"
+                    public_names = [tool["name"] for tool in catalog["tools"]]
+                    assert len(public_names) == len(clients.MCP_TOOLS) and set(public_names) == clients.MCP_TOOLS, "public_tool_inventory_changed"
                     compared = 0
                     cli_compared = 0
                     for tool in catalog["tools"]:
@@ -114,8 +120,8 @@ def run(args):
                             assert effective(native) == effective(workbench), "verification_input_catalog_mismatch"
                             assert (field in tool["inputSchema"].get("required", [])) == (field in operations[name].get("required", [])), "verification_required_input_mismatch"
                             compared += 1
-                    assert compared == 68, "canonical_operation_inventory_changed"
-                    assert cli_compared == 72, "native_cli_tool_inventory_changed"
+                    assert compared == len(expected_operations) * len(controls), "canonical_operation_field_comparisons_incomplete"
+                    assert cli_compared == len(expected_native) * len(controls), "native_cli_tool_field_comparisons_incomplete"
                     report["checks"]["native_mcp_workbench_verification_input_catalog_parity"] = True
                     report["input_catalog_field_comparisons"] = {"mcp_workbench": compared, "cli_mcp": cli_compared}
                     report["stage"] = "measurements"

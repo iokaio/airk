@@ -189,6 +189,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -282,6 +296,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -331,17 +359,28 @@ Options:
 
           [possible values: lean, rich]
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
       --since <SINCE>
 
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
 
       --selector <SELECTORS>
           Repeatable tagged JSON selector, e.g. {"kind":"path","path":"one.rs"}
 
-      --service-project <SERVICE_PROJECT>
-
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
 
       --path <PATHS>
           Remember an exact collection-relative indexed path
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --path-prefix <PATH_PREFIX>
           [default: ""]
@@ -350,6 +389,9 @@ Options:
 
 
       --include-documents
+
+
+      --service-project <SERVICE_PROJECT>
 
 
       --include-suggestions
@@ -410,6 +452,9 @@ Options:
 
           [possible values: lean, rich]
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
       --name-match <NAME_MATCH>
           Default exact lookup; suffix/contains match simple or qualified names case-sensitively
 
@@ -418,21 +463,32 @@ Options:
       --include-count
           Request qualified match counts; a bounded partial scan can report an unknown total
 
-      --service-project <SERVICE_PROJECT>
-
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
 
       --compact [<COMPACT>]
           False includes rich facts and durable IDs; independent of response mode
 
           [possible values: true, false]
 
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
       --cursor <CURSOR>
           Continue the same revision-bound discovery with unchanged filters
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --symbol-key <SYMBOL_KEY>
           Durable symbol key from indexed continuity evidence; excludes textual filters
 
       --name <NAME>
+
+
+      --service-project <SERVICE_PROJECT>
 
 
       --kind <KIND>
@@ -484,6 +540,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -541,26 +611,40 @@ Options:
 
           [possible values: lean, rich]
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
       --revision <REVISION>
 
 
       --if-evidence <IF_EVIDENCE>
 
 
-      --service-project <SERVICE_PROJECT>
-
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
 
       --follow-moves
 
 
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
       --known-hash <KNOWN_HASH>
 
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --artifact-id <ARTIFACT_ID>
 
 
       --before <BEFORE>
           [default: 5]
+
+      --service-project <SERVICE_PROJECT>
+
 
       --after <AFTER>
           [default: 5]
@@ -609,6 +693,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -646,6 +744,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -685,6 +797,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -722,6 +848,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -764,6 +904,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -801,6 +955,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -840,6 +1008,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -875,6 +1057,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -914,6 +1110,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -951,6 +1161,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -1005,6 +1229,9 @@ Options:
 
           [possible values: lean, rich]
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
       --compact [<COMPACT>]
           False includes rich facts and durable IDs; independent of response mode
 
@@ -1013,11 +1240,19 @@ Options:
       --cursor <CURSOR>
           Continue the same revision-bound discovery with unchanged filters
 
-      --service-project <SERVICE_PROJECT>
-
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
 
       --document-key <DOCUMENT_KEY>
           Durable document key; excludes textual filters
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --name <NAME>
 
@@ -1027,6 +1262,9 @@ Options:
 
       --limit <LIMIT>
           [default: 50]
+
+      --service-project <SERVICE_PROJECT>
+
 
       --max-bytes <MAX_BYTES>
           [default: 8192]
@@ -1081,17 +1319,31 @@ Options:
 
           [possible values: lean, rich]
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
       --cursor <CURSOR>
           Continue the same revision-bound discovery with unchanged filters
 
       --limit <LIMIT>
           [default: 10]
 
-      --service-project <SERVICE_PROJECT>
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
 
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
 
       --max-bytes <MAX_BYTES>
           [default: 8192]
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --service-project <SERVICE_PROJECT>
+
 
   -h, --help
           Print help
@@ -1119,6 +1371,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -1173,6 +1439,9 @@ Options:
 
           [possible values: lean, rich]
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
       --compact [<COMPACT>]
           False includes rich facts and durable IDs; independent of response mode
 
@@ -1180,6 +1449,17 @@ Options:
 
       --cursor <CURSOR>
           Continue the same revision-bound discovery with unchanged filters
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -1215,6 +1495,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -1269,22 +1563,36 @@ Options:
 
           [possible values: lean, rich]
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
       --revision <REVISION>
 
 
       --if-evidence <IF_EVIDENCE>
 
 
-      --service-project <SERVICE_PROJECT>
-
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
 
       --follow-moves
 
 
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
       --known-hash <KNOWN_HASH>
 
 
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --artifact-id <ARTIFACT_ID>
+
+
+      --service-project <SERVICE_PROJECT>
 
 
   -h, --help
@@ -1316,6 +1624,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -1345,6 +1667,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -1391,6 +1727,20 @@ Options:
       --no-default-project
           Require a project argument for scoped tools in multi-root workspaces
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -1420,6 +1770,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -1474,6 +1838,9 @@ Options:
 
           [possible values: lean, rich]
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
       --cursor <CURSOR>
           Continue the same revision-bound discovery with unchanged filters
 
@@ -1482,8 +1849,11 @@ Options:
 
           [possible values: true, false]
 
-      --service-project <SERVICE_PROJECT>
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
 
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
 
       --revision <REVISION>
 
@@ -1491,10 +1861,18 @@ Options:
       --if-evidence <IF_EVIDENCE>
 
 
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --follow-moves
 
 
       --known-hash <KNOWN_HASH>
+
+
+      --service-project <SERVICE_PROJECT>
 
 
       --artifact-id <ARTIFACT_ID>
@@ -1558,20 +1936,34 @@ Options:
 
           [possible values: lean, rich]
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
       --project <PROJECT>
           Configured native project binding (alias for global --service-project)
 
       --execute
 
 
-      --service-project <SERVICE_PROJECT>
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
 
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
 
       --request <REQUEST>
           Structured request file; '-' reads bounded JSON from stdin
 
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --path-prefix <PATH_PREFIX>
           [default: ""]
+
+      --service-project <SERVICE_PROJECT>
+
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1599,6 +1991,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -1634,6 +2040,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -1688,22 +2108,36 @@ Options:
 
           [possible values: lean, rich]
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
       --revision <REVISION>
 
 
       --if-evidence <IF_EVIDENCE>
 
 
-      --service-project <SERVICE_PROJECT>
-
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
 
       --follow-moves
 
 
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
       --known-hash <KNOWN_HASH>
 
 
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --artifact-id <ARTIFACT_ID>
+
+
+      --service-project <SERVICE_PROJECT>
 
 
       --start-line <START_LINE>
@@ -1765,6 +2199,9 @@ Options:
 
           [possible values: lean, rich]
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
       --language <LANGUAGE>
           Exact indexed extraction-language label; not a filename-extension filter
 
@@ -1773,14 +2210,22 @@ Options:
 
           [possible values: code, document, configuration, unknown]
 
-      --service-project <SERVICE_PROJECT>
-
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
 
       --exclude-path-prefix <EXCLUDE_PATH_PREFIX>
           Exclude one literal collection-relative prefix from this query only
 
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
       --cursor <CURSOR>
           Continue one exact publication with identical identifier, filters and ordering
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --order <ORDER>
           Omit for the legacy response; paged index order uses stable IDs, with path/code_first alternatives
@@ -1789,6 +2234,9 @@ Options:
 
       --include-files
           Summarize returned page records by file; bounded metadata is additional to the text-byte budget
+
+      --service-project <SERVICE_PROJECT>
+
 
       --include-count
           Request candidate-scoped counts; the whole-query total remains unknown
@@ -1852,14 +2300,20 @@ Options:
 
           [possible values: lean, rich]
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
       --direction <DIRECTION>
           [default: incoming]
 
       --kind <KIND>
 
 
-      --service-project <SERVICE_PROJECT>
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
 
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
 
       --path-prefix <PATH_PREFIX>
           [default: ""]
@@ -1867,11 +2321,19 @@ Options:
       --hops <HOPS>
           [default: 1]
 
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --limit <LIMIT>
           [default: 10]
 
       --max-bytes <MAX_BYTES>
           [default: 8192]
+
+      --service-project <SERVICE_PROJECT>
+
 
   -h, --help
           Print help
@@ -1899,6 +2361,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -1967,6 +2443,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -2002,6 +2492,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -2042,6 +2546,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -2075,6 +2593,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -2107,6 +2639,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -2143,6 +2689,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -2182,6 +2742,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -2223,6 +2797,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -2255,6 +2843,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -2289,6 +2891,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -2322,6 +2938,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -2354,6 +2984,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -2391,6 +3035,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -2423,6 +3081,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -2461,6 +3133,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -2493,6 +3179,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -2527,6 +3227,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -2570,6 +3284,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -2599,6 +3327,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -2630,6 +3372,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -2659,6 +3415,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -2690,6 +3460,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -2720,6 +3504,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -2749,6 +3547,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -2796,12 +3608,26 @@ Options:
           [default: external]
           [possible values: external, user-on-demand]
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
       --state-dir <STATE_DIR>
 
 
       --channel <CHANNEL>
           [default: stable]
           [possible values: stable, preview]
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -2835,6 +3661,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -2875,6 +3715,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -2911,6 +3765,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -2943,6 +3811,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -2986,6 +3868,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -3018,6 +3914,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -3055,6 +3965,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -3088,6 +4012,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -3117,6 +4055,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -3159,6 +4111,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -3204,6 +4170,20 @@ Options:
 
       --index-collection <INDEX_COLLECTION>
 
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -3254,6 +4234,20 @@ Options:
           [default: stable]
           [possible values: stable, preview]
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -3287,6 +4281,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -3319,6 +4327,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -3375,6 +4397,9 @@ Options:
 
           [possible values: lean, rich]
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
       --language <LANGUAGE>
           Exact indexed extraction-language label; not a filename-extension filter
 
@@ -3383,11 +4408,19 @@ Options:
 
           [possible values: code, document, configuration, unknown]
 
-      --service-project <SERVICE_PROJECT>
-
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
 
       --exclude-path-prefix <EXCLUDE_PATH_PREFIX>
           Exclude one literal collection-relative prefix from this query only
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --mode <MODE>
           [possible values: lexical, vector, hybrid]
@@ -3396,6 +4429,9 @@ Options:
           Use the configured local embedding model and disk-backed vector graph
 
       --path-prefix <PATH_PREFIX>
+
+
+      --service-project <SERVICE_PROJECT>
 
 
       --limit <LIMIT>
@@ -3438,6 +4474,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -3484,6 +4534,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -3520,6 +4584,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -3552,6 +4630,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -3595,6 +4687,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -3627,6 +4733,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -3664,6 +4784,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -3700,6 +4834,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -3733,6 +4881,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -3765,6 +4927,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -3801,6 +4977,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -3841,6 +5031,20 @@ Options:
       --approval <APPROVAL>
 
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -3877,6 +5081,20 @@ Options:
       --executable <EXECUTABLE>
 
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -3912,6 +5130,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -3958,9 +5190,23 @@ Options:
       --output <OUTPUT>
           Capture raw retained diagnostics into a new local file without buffering stdout
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
       --format <FORMAT>
           [default: json]
           [possible values: json, text]
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -3998,6 +5244,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -4027,6 +5287,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -4064,6 +5338,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -4100,6 +5388,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -4132,6 +5434,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -4174,6 +5490,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -4208,6 +5538,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -4237,6 +5581,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -4275,6 +5633,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -4311,6 +5683,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -4344,6 +5730,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -4384,6 +5784,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -4416,6 +5830,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -4456,6 +5884,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -4490,6 +5932,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -4519,6 +5975,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -4554,6 +6024,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -4608,6 +6092,9 @@ Options:
 
           [possible values: lean, rich]
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
       --name-match <NAME_MATCH>
           Default exact lookup; suffix/contains match simple or qualified names case-sensitively
 
@@ -4616,22 +6103,33 @@ Options:
       --include-count
           Request qualified match counts; a bounded partial scan can report an unknown total
 
-      --service-project <SERVICE_PROJECT>
-
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
 
       --compact [<COMPACT>]
           False includes rich facts and durable IDs; independent of response mode
 
           [possible values: true, false]
 
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
       --cursor <CURSOR>
           Continue the same revision-bound discovery with unchanged filters
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --language <LANGUAGE>
 
 
       --path-prefix <PATH_PREFIX>
           [default: ""]
+
+      --service-project <SERVICE_PROJECT>
+
 
       --limit <LIMIT>
           [default: 10]
@@ -4653,7 +6151,7 @@ List, describe or call the read-only MCP tools from the terminal.
 Usage: airk tools [OPTIONS] <COMMAND>
 
 Commands:
-  list   List the 18 native prefixed tools; --json includes schemas. Unified MCP adds projects and nine Explorer Assistance tools
+  list   List the connection's native prefixed tools; --json includes schemas. Unified MCP also supplies scope discovery and Explorer Assistance
   help   Show a tool's description, input schema, defaults and argument template
   call   Invoke an MCP tool and print its unchanged result envelope as JSON
   shell  Open a collection-bound interactive console with help and examples
@@ -4673,6 +6171,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -4714,6 +6226,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -4729,7 +6255,7 @@ Use 'airk tools help airk_search' for the JSON format. Tool errors exit nonzero.
 ## airk tools list
 
 ```text
-List the 18 native prefixed tools; --json includes schemas. Unified MCP adds projects and nine Explorer Assistance tools
+List the connection's native prefixed tools; --json includes schemas. Unified MCP also supplies scope discovery and Explorer Assistance
 
 Usage: airk tools list [OPTIONS]
 
@@ -4751,6 +6277,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -4781,6 +6321,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -4821,6 +6375,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -4867,8 +6435,22 @@ Options:
       --content-kind <CONTENT_KIND>
 
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
       --record
 
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -4899,6 +6481,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -4932,6 +6528,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -4969,6 +6579,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -5010,6 +6634,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -5039,6 +6677,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 
@@ -5080,6 +6732,20 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -5113,6 +6779,20 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
 
       --service-project <SERVICE_PROJECT>
 

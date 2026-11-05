@@ -2,11 +2,12 @@
 import { createHash } from 'node:crypto';
 import * as path from 'node:path';
 import type { VectorStatus } from './vectorModel';
-import { validateCatalogSession, type CatalogSessionSelector } from './catalogSession';
+import { validateCatalogSession, validateCombinedCatalogSession, type CatalogSessionSelector, type CombinedCatalogSessionSelector } from './catalogSession';
 
 export interface LaunchSpec { command: string; root: string; dataDir: string; collection: string; name: string;
     /** Explicit native-reviewed selection; display origins remain native Index metadata. */
     catalogSession?: CatalogSessionSelector;
+    combinedSession?: CombinedCatalogSessionSelector;
     /** `universal`: `command` is the version-free universal launcher, which finds the install root itself. */
     service?: { installDir: string; project: string; universal?: boolean } }
 export interface Usage { collection: string; disk_bytes: number; indexed_files: number | null; generation: number | null; status: string }
@@ -28,6 +29,12 @@ export function collectionId(canonicalRoot: string, platform = process.platform)
 }
 
 export function launchArgs(spec: LaunchSpec, command = 'mcp', pinProject = false): string[] {
+    if(spec.combinedSession!==undefined){
+        if(spec.catalogSession!==undefined)throw new Error('Cannot mix catalog session selectors.');
+        if(!spec.service||!path.isAbsolute(spec.service.installDir))throw new Error('Invalid trusted combined catalog launch binding.');
+        const selected=['--combined-session',JSON.stringify(validateCombinedCatalogSession(spec.combinedSession)),command];
+        return spec.service.universal?selected:['runtime','launch','--install-dir',spec.service.installDir,'--',...selected];
+    }
     if(spec.catalogSession!==undefined){
         if(!spec.service||!path.isAbsolute(spec.service.installDir)||!/^[a-f0-9]{64}$/.test(spec.service.project))throw new Error('Invalid trusted catalog launch binding.');
         const selected=['--catalog-session',JSON.stringify(validateCatalogSession(spec.catalogSession)),command];
@@ -58,7 +65,7 @@ export function eligibleEvent(file: string, root: string, dataDir: string): bool
 export interface ServerEntry { readonly key: string; readonly command: string; readonly args: readonly string[]; readonly label: string }
 export const ASSISTANCE_KEY = 'airk_explorer';
 export const UNIFIED_KEY = 'airk';
-export const RETRIEVAL_TOOLS = ['capabilities','changes','code_facts','context','document_facts','file_info','help','imports','list_files','outline','read_file','references','relationships','search','status','diagnostics','symbols'] as const;
+export const RETRIEVAL_TOOLS = ['capabilities','changes','code_facts','context','document_facts','file_info','help','imports','list_files','outline','query_scope','read_file','references','relationships','search','status','diagnostics','symbols'] as const;
 export const UNIFIED_TOOLS = [...RETRIEVAL_TOOLS, 'parse', 'projects', 'draft_search', 'draft_strategy', 'draft_plan', 'suggest_view', 'list_templates', 'get_template', 'validate_draft', 'proposal_status', 'get_handoff'] as const;
 export const EXPLORER_TOOL_RENAMES: Readonly<Record<string,string>> = {
     airk_explorer_help_search:'help', airk_explorer_help_get:'help', airk_explorer_ui_status:'status',
@@ -70,7 +77,7 @@ export const EXPLORER_TOOL_RENAMES: Readonly<Record<string,string>> = {
 
 /** One public endpoint; editor attachment never chooses the retrieval binding. */
 export function unifiedEntry(spec: LaunchSpec, descriptor?: string, additional: readonly LaunchSpec[] = []): ServerEntry {
-    if(additional.length&&(spec.catalogSession!==undefined||additional.some(value=>value.catalogSession!==undefined)))throw new Error('Catalog sessions support one selected Index.');
+    if(additional.length&&(spec.catalogSession!==undefined||spec.combinedSession!==undefined||additional.some(value=>value.catalogSession!==undefined||value.combinedSession!==undefined)))throw new Error('Catalog sessions support one explicit native selection; a legacy catalog session supports one selected Index.');
     const args = launchArgs(spec);
     if (descriptor) {
         if (!path.isAbsolute(descriptor)) { throw new Error('Invalid Explorer descriptor.'); }

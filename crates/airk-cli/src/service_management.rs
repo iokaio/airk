@@ -553,6 +553,11 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         .as_millis()
         .try_into()?;
     Ok(match method {
+        // Only the native Runtime's actual guarded socket writer can make a
+        // final combined delivery observation; the metadata actor cannot.
+        ControlMethod::ValidateCombinedDelivery { .. } => ControlResponse::Failure {
+            code: "combined_delivery_native_owner_required".into(),
+        },
         ControlMethod::CatalogPage { request } => ControlResponse::CatalogPage {
             page: registry.catalog_page(&request)?,
         },

@@ -13,6 +13,89 @@ pub fn locations(value: &Value) -> Result<Vec<Value>> {
     fn visit(value: &Value, out: &mut Vec<Value>) -> Result<()> {
         match value {
             Value::Object(map)
+                if map.get("schema").and_then(Value::as_str)
+                    == Some(airk_core::combined_reads::COMBINED_READ_SCHEMA) =>
+            {
+                let ranking = map
+                    .get("ranking")
+                    .and_then(Value::as_array)
+                    .context("combined ranking is missing")?;
+                let members = map
+                    .get("members")
+                    .and_then(Value::as_array)
+                    .context("combined members are missing")?;
+                ensure!(
+                    ranking.len() <= 100 && members.len() <= 32,
+                    "combined location bound exceeded"
+                );
+                for member in members {
+                    let index: airk_core::index_catalog::IndexId =
+                        serde_json::from_value(member["index_id"].clone())?;
+                    // Validate/materialize metadata on a copy. Inline evidence
+                    // paths and the caller's original compact response stay intact.
+                    airk_core::combined_reads::shared_values::materialize_combined_member_result(
+                        value, index,
+                    )?;
+                }
+                for rank in ranking {
+                    let origin = airk_core::combined_reads::materialize_ranked_origin(value, rank)
+                        .context("invalid combined origin")?;
+                    airk_core::index_catalog::unique_bounded(&origin.project_ids, 32)?;
+                    ensure!(
+                        !origin.project_ids.is_empty(),
+                        "combined origin has no selected membership"
+                    );
+                    airk_core::index_catalog::relative_path(&origin.source_relative_path, false)?;
+                    ensure!(
+                        rank["index_id"] == serde_json::to_value(origin.index_id)?,
+                        "combined ranking origin mismatch"
+                    );
+                    let pointer = rank["result_pointer"]
+                        .as_str()
+                        .context("combined result pointer missing")?;
+                    let member = pointer
+                        .strip_prefix("/members/")
+                        .and_then(|tail| tail.split_once("/result"))
+                        .and_then(|(index, suffix)| {
+                            if suffix.is_empty() || suffix.starts_with('/') {
+                                index.parse::<usize>().ok()
+                            } else {
+                                None
+                            }
+                        })
+                        .and_then(|index| members.get(index))
+                        .context("combined pointer is outside member results")?;
+                    ensure!(
+                        member["index_id"] == rank["index_id"],
+                        "combined pointer names another member"
+                    );
+                    let target = value
+                        .pointer(pointer)
+                        .context("combined result pointer expired")?;
+                    let at = out.len();
+                    if target.get("citation").is_none()
+                        && let Some((page_pointer, row)) = pointer.rsplit_once("/items/")
+                        && row.parse::<usize>().is_ok()
+                        && let Some(page) = value.pointer(page_pointer)
+                        && page.get("files").is_some_and(Value::is_array)
+                        && page.get("provenance").is_some_and(Value::is_array)
+                    {
+                        // A ranking pointer into a compact page is page-local.
+                        // Materialize only that selected row with its own tables;
+                        // visiting the whole page would broaden the ranked subset.
+                        let mut selected_page = page.clone();
+                        selected_page["items"] = json!([target]);
+                        visit(&selected_page, out)?;
+                    } else {
+                        visit(target, out)?;
+                    }
+                    for record in &mut out[at..] {
+                        record["origin"] = serde_json::to_value(&origin)?;
+                        record["publication"] = serde_json::to_value(&origin.publication)?;
+                    }
+                }
+            }
+            Value::Object(map)
                 if map.get("representation").and_then(Value::as_str) == Some("minimal")
                     // The typed native MinimalFacts wrapper precedes MCP's discriminator.
                     || (map.len()==3 && ["items","files","provenance"].iter().all(|key|map.get(*key).is_some_and(Value::is_array))) =>
@@ -113,7 +196,7 @@ pub fn locations(value: &Value) -> Result<Vec<Value>> {
     let mut out = Vec::new();
     visit(value, &mut out)?;
     let mut seen = BTreeSet::new();
-    out.retain(|v| seen.insert(v["citation"].to_string()));
+    out.retain(|v| seen.insert(json!([v.get("origin"), v["citation"]]).to_string()));
     Ok(out)
 }
 
@@ -155,6 +238,61 @@ mod tests {
         assert_eq!(rows[1]["fact"]["candidate"], true);
         assert!(rows[1]["fact"]["file"].get("provenance").is_none());
         assert!(rows[1]["fact"].get("symbol_id").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn combined_compact_ranking_materializes_only_its_selected_page_local_row() -> Result<()> {
+        use airk_core::{
+            identity::{Incarnation, RevisionToken, Sha256Digest},
+            index_catalog::{IndexId, QueryProjectId, SourceRootId},
+        };
+        let mut minimal = page("one.rs");
+        minimal["files"]
+            .as_array_mut()
+            .unwrap()
+            .push(page("two.rs")["files"][0].clone());
+        let mut second = minimal["items"][0].clone();
+        second["file"] = json!(1);
+        second["name"] = json!("OtherQueue");
+        minimal["items"].as_array_mut().unwrap().push(second);
+        let index = IndexId::from_identity(Incarnation::from_bytes([1; 16]));
+        let publication = airk_core::evidence::RevisionEnvelope::new(
+            "fixture".into(),
+            RevisionToken {
+                incarnation: Incarnation::from_bytes([2; 16]),
+                generation: 1,
+                revision: Sha256Digest::from_bytes([3; 32]),
+            },
+        );
+        let value = json!({"schema":"airk.combined-read/1","members":[{"index_id":index,"result":minimal}],
+            "ranking":[{"index_id":index,"result_pointer":"/members/0/result/items/1","origin":{"index_id":index,"project_ids":[QueryProjectId::from_identity(Incarnation::from_bytes([4;16]))],
+                "source_root_id":SourceRootId::from_identity(Incarnation::from_bytes([5;16])),"source_relative_path":"two.rs","publication":publication}}]});
+        let records = locations(&value)?;
+        assert_eq!(
+            records.len(),
+            1,
+            "unranked rows cannot enter bound followups"
+        );
+        assert_eq!(records[0]["citation"]["path"], "two.rs");
+        assert_eq!(
+            records[0]["fact"]["provenance"]["producer"],
+            "original-fixture"
+        );
+        assert_eq!(records[0]["origin"]["index_id"], json!(index));
+        let mut referenced = value.clone();
+        referenced["publication_vector"] =
+            json!({"members":[{"index_id":index,"publication":publication}]});
+        referenced["ranking"][0]["origin"]
+            .as_object_mut()
+            .unwrap()
+            .remove("publication");
+        referenced["ranking"][0]["origin"]["publication_ref"] = json!({"member":0});
+        let raw = referenced.clone();
+        assert_eq!(locations(&referenced)?, records);
+        assert_eq!(referenced, raw);
+        referenced["ranking"][0]["origin"]["publication_ref"] = json!({"member":1});
+        assert!(locations(&referenced).is_err());
         Ok(())
     }
 

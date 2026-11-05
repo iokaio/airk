@@ -87,3 +87,16 @@ test('continuations replay the exact arguments and refuse a republished index', 
     assert.deepEqual(scoped({ a: 1 }, 'src/'), { a: 1, path_prefix: 'src/' });
     assert.throws(() => scoped({}, '../up'), failure('INVALID_MESSAGE'));
 });
+
+test('native reference page cursors stay opaque and preserve exact options through Load more', async () => {
+    const h = handles(), cursor = 'airk-rf1:' + 'x'.repeat(9000), args = { name: 'sample', order: 'path', include_files: true, include_count: true, max_bytes: 16384, limit: 2 };
+    const payload = { evidence: { hits: [{ citation: citation('same.rs', 1, 1), text: 'sample' }], truncated: true },
+        page: { cursor, more: true, coverage: { query_complete: false, candidate_scan_complete: false } }, resolution: 'textual' };
+    const first = factList({ tool: 'airk_references', args, limit: 2 }, payload, 'airk-r1:old', project, h);
+    assert.ok(first.more); assert.equal(first.truncated, true); assert.deepEqual(first.nativeResult, payload);
+    const calls: unknown[] = [];
+    await continueFacts({ call: async (tool: string, input: unknown) => { calls.push([tool, input]); return { payload: { evidence: { hits: [] }, page: { more: false } }, publication: 'airk-r1:old' }; } } as any, h, project, first.more);
+    assert.deepEqual(calls, [['airk_references', { ...args, cursor }]]);
+    assert.throws(() => factList({ tool: 'airk_references', args, limit: 2 }, { ...payload, cursor: 'competing' }, 'airk-r1:old', project, h), /ambiguous continuation/);
+    await assert.rejects(continueFacts({ call: async () => ({ payload: { items: [] } }) } as any, h, project, first.more), failure('EVIDENCE_MISMATCH'));
+});

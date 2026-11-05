@@ -92,6 +92,7 @@ pub fn output_until(
 /// A fixture-owned leaf CLI read, preserving its arguments, explicit environment
 /// overrides and working directory (callers do not use env_clear/raw_arg/stdio).
 /// Timeout kills and awaits only this client, never its separately owned service.
+#[cfg(not(unix))]
 pub fn once_until(
     command: &std::process::Command,
     deadline: Instant,
@@ -157,6 +158,121 @@ pub fn once_until(
                 }
             }
         })
+}
+
+/// Unix native owners require SIGCHLD's default disposition. Tokio's process
+/// driver installs a process-wide handler, so even a blocking-thread wrapper
+/// cannot coexist with GroupChild. Keep this leaf under the same native owner.
+#[cfg(unix)]
+pub fn once_until(
+    command: &std::process::Command,
+    deadline: Instant,
+) -> std::io::Result<std::process::Output> {
+    use std::{
+        io::{self, Read},
+        process::{Command, Stdio},
+        sync::mpsc,
+        thread,
+    };
+    const CLEANUP_ALLOWANCE: Duration = Duration::from_secs(2);
+    if Instant::now() >= deadline {
+        return Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "CLI read deadline exhausted",
+        ));
+    }
+    let mut bounded = Command::new(command.get_program());
+    bounded.args(command.get_args());
+    if let Some(directory) = command.get_current_dir() {
+        bounded.current_dir(directory);
+    }
+    for (key, value) in command.get_envs() {
+        if let Some(value) = value {
+            bounded.env(key, value);
+        } else {
+            bounded.env_remove(key);
+        }
+    }
+    bounded
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = airk_process::GroupChild::spawn(&mut bounded)?;
+    let (failed_sender, failed_receiver) = mpsc::channel();
+    let mut stdout_reader = None;
+    let mut stderr_reader = None;
+    let mut reader_failed = false;
+    let completed = (|| -> io::Result<()> {
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| io::Error::other("piped CLI stdout missing"))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| io::Error::other("piped CLI stderr missing"))?;
+        let spawn_reader = |mut stream: std::fs::File, name: &str| {
+            let failed = failed_sender.clone();
+            thread::Builder::new()
+                .name(name.into())
+                .spawn(move || -> io::Result<Vec<u8>> {
+                    let mut bytes = Vec::new();
+                    let result = stream.read_to_end(&mut bytes).map(|_| bytes);
+                    if result.is_err() {
+                        let _ = failed.send(());
+                    }
+                    result
+                })
+        };
+        stdout_reader = Some(spawn_reader(stdout, "airk-read-stdout")?);
+        stderr_reader = Some(spawn_reader(stderr, "airk-read-stderr")?);
+        loop {
+            if failed_receiver.try_recv().is_ok() {
+                reader_failed = true;
+                return Err(io::Error::other("CLI output reader failed"));
+            }
+            if child.try_wait()?.is_some() {
+                return Ok(());
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "CLI read deadline exhausted",
+                ));
+            }
+            thread::sleep(Duration::from_millis(5).min(deadline.saturating_duration_since(now)));
+        }
+    })();
+    // A terminal leader does not prove inherited pipes are closed. Drain its
+    // exact private group on success, timeout and errors BEFORE joining readers.
+    // Cleanup gets its own nonzero allowance after the request deadline. If the
+    // native proof fails, return that error without joining blocked readers;
+    // GroupChild's existing RAII owner retains/drains the group on drop.
+    let status = child.terminate_and_wait(CLEANUP_ALLOWANCE)?;
+    let join_reader =
+        |reader: Option<thread::JoinHandle<io::Result<Vec<u8>>>>| -> io::Result<Vec<u8>> {
+            match reader {
+                Some(reader) => reader
+                    .join()
+                    .map_err(|_| io::Error::other("CLI output reader panicked"))?,
+                None => Ok(Vec::new()),
+            }
+        };
+    let stdout = join_reader(stdout_reader);
+    let stderr = join_reader(stderr_reader);
+    if reader_failed {
+        // Preserve the actual read error after the owned group has drained.
+        stdout?;
+        stderr?;
+        return Err(io::Error::other("CLI output reader failed"));
+    }
+    completed?;
+    Ok(std::process::Output {
+        status,
+        stdout: stdout?,
+        stderr: stderr?,
+    })
 }
 
 pub fn status_summary(value: &Value) -> Value {

@@ -21,6 +21,22 @@ impl ReportFormat {
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum NativeRead {
+    /// Protected exact-publication source identity for combined composition.
+    /// Administrative/legacy readers cannot obtain an installed scoped proof.
+    SourceProjection {
+        publication: crate::identity::RevisionToken,
+    },
+    /// Internal combined-plan final projection check. The originating scoped
+    /// evidence session owns this request; administrative/legacy sessions may
+    /// not use it to acquire source authority. This is not an MCP tool.
+    VerifyProjection {
+        value: serde_json::Value,
+        controls: crate::verification::VerificationControls,
+        #[serde(default)]
+        allocation: Option<crate::verification::VerificationAllocation>,
+        #[serde(default)]
+        receipt_bytes_budget: Option<usize>,
+    },
     /// A native file selector, opened only after read-scope admission.
     ValidateSettingsFile {
         view: SettingsView,

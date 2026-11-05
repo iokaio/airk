@@ -2,13 +2,15 @@
 /** Pure host/webview contract. Evidence content is always inert text. */
 import type { PublicationRelation } from './publications';
 export type Value = Record<string, unknown>;
+/** Core workbench::MAX_STEP_REPORTS: twelve calls with six bound report slots. */
+export const WORKBENCH_MAX_STEP_REPORTS=72;
 export const WORKBENCH_HELP_ROUTE='help?focus=engine-workbench';
 export interface WorkbenchTurn { id: string; at: number; input: string; format: 'structured' | 'json' | 'markdown'; request?: Value; envelope?: Value; error?: string;
     /** Full original native error reply, never a fabricated successful result. */
     nativeFailure?:Value;trimmed?: boolean }
 export interface WorkbenchFormDraft { activeTool:string; values:Record<string,Record<string,string>>; revision:number; scope:string; recipe:string }
 export interface WorkbenchSession { schema: 1; id: string; project: string; title: string; createdAt: number; updatedAt: number; revision: number; omitted: number; turns: WorkbenchTurn[]; formDraft?:WorkbenchFormDraft }
-const FORM_TOOLS=['search','symbols','references','read_file','outline','list_files','file_info','imports','code_facts','document_facts','changes','context','relationships','status','diagnostics','capabilities','help'];
+const FORM_TOOLS=['search','symbols','references','read_file','outline','list_files','file_info','imports','code_facts','document_facts','changes','context','relationships','status','diagnostics','capabilities','query_scope','help'];
 const FORM_RECIPES=['','definition','documents','impact','tests','component','readiness'];
 const validFormText=(value:unknown,max=32768):value is string=>typeof value==='string'&&value.length<=max&&!/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value);
 export const defaultWorkbenchFormDraft=():WorkbenchFormDraft=>({activeTool:'search',values:{},revision:0,scope:'',recipe:''});
@@ -38,14 +40,19 @@ export function normalizeWorkbenchFormDraft(raw:unknown):WorkbenchFormDraft|unde
     if(new TextEncoder().encode(JSON.stringify(normalized)).length>131072)return;
     return normalized;
 }
-export interface EvidenceCard { id: string; path: string; start: number; end: number; hash: string; text: string; location?: unknown; step: string; publication?: string }
+export interface EvidenceCard { id: string; path: string; start: number; end: number; hash: string; text: string; location?: unknown; step: string; publication?: string;
+    indexId?:string;projectIds?:string[];sourceRootId?:string;sourceRelativePath?:string;resultPointer?:string }
 export interface Continuation { id:string; tool:string; callsRemaining:number;requiredRecordBytes?:number }
 export interface WorkbenchSessionSummary { id: string; title: string; updatedAt: number; turns: number }
+/** Verified by the host for presentation only; native envelopes remain unchanged. */
+export type CapabilityFieldDisplay={state:'verified';values:Record<string,Value>}|{state:'unavailable';error:string};
 export interface WorkbenchState {
     projects: { id: string; name: string }[]; project?: string; session?: WorkbenchSession;
     recent: WorkbenchSessionSummary[];
     cards: Record<string, EvidenceCard[]>; busy: boolean; notice?: string; save: string;
     continuations?:Record<string,Continuation[]>;
+    metadataViews?:Record<string,Value>;metadataIssues?:Record<string,string>;
+    capabilityDetails?:Record<string,Record<string,CapabilityFieldDisplay>>;
     status?: Value; publicationRelations?:Record<string,PublicationRelation>; persistence: boolean; operations?: Value;
     sessionEpoch?:number;
 }
@@ -81,7 +88,7 @@ export interface WorkbenchToolField {
     name:string;label:string;type:'string'|'integer'|'boolean'|'json';required:boolean;
     values?:string[];description?:string;defaultValue?:string|number|boolean;minimum?:number;maximum?:number;minLength?:number;maxLength?:number;
 }
-const fieldLabels:Record<string,string>={path_prefix:'Path prefix',exclude_path_prefix:'Exclude path prefix',evidence_kind:'Evidence type',name_match:'Name matching',reply_detail:'Reply detail',verification:'Saved-source verification',verification_max_sources:'Maximum sources to check',verification_max_bytes:'Raw-source byte budget',verification_deadline_ms:'Verification deadline (ms)',compact:'Compact results',include_count:'Show count precision',include_files:'Summarize files',max_bytes:'Response byte budget'};
+const fieldLabels:Record<string,string>={project_ids:'Project IDs (JSON array)',index_ids:'Index subset (JSON array)',member_availability:'Member availability',path_prefix:'Path prefix',exclude_path_prefix:'Exclude path prefix',evidence_kind:'Evidence type',name_match:'Name matching',reply_detail:'Reply detail',verification:'Saved-source verification',verification_max_sources:'Maximum sources to check',verification_max_bytes:'Raw-source byte budget',verification_deadline_ms:'Verification deadline (ms)',compact:'Compact results',include_count:'Show count precision',include_files:'Summarize files',max_bytes:'Response byte budget'};
 /** Resolve only bundled local schema alternatives; no remote schema loading. */
 function fieldSchema(raw:unknown,root:Value,depth=0):Value {
     const schema=object(raw);if(depth>4)return {};

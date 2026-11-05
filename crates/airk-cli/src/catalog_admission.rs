@@ -436,6 +436,68 @@ impl NativeCatalogAdmission {
             .map_err(|_| ScopeReadRefused)?
             .check_issue(ticket)
     }
+    /// A synchronous nonblocking delivery poll runs under the same lock as
+    /// admission close, including its pre-persistence pending-fence interval.
+    pub(crate) fn with_issue<T>(
+        &self,
+        ticket: IssueTicket,
+        effect: impl FnOnce() -> T,
+    ) -> Result<T> {
+        let state = self.0.lock().map_err(|_| ScopeReadRefused)?;
+        state.check_issue(ticket)?;
+        Ok(effect())
+    }
+    /// Deliver the final bounded native receipt while checking the shared
+    /// admission fence at each actual nonblocking write/flush poll.
+    pub(crate) async fn deliver_issue<S: tokio::io::AsyncWrite + Unpin>(
+        &self,
+        ticket: IssueTicket,
+        stream: &mut S,
+        response: &airk_core::service::ControlResponse,
+        budget: Duration,
+    ) -> Result<()> {
+        let mut frame = Vec::new();
+        crate::service_ipc::write_frame(&mut frame, response)?;
+        tokio::time::timeout(budget, async {
+            let mut offset = 0;
+            while offset < frame.len() {
+                let count = std::future::poll_fn(|cx| {
+                    self.with_issue(ticket, || {
+                        tokio::io::AsyncWrite::poll_write(
+                            std::pin::Pin::new(&mut *stream),
+                            cx,
+                            &frame[offset..],
+                        )
+                    })
+                    .unwrap_or_else(|_| {
+                        std::task::Poll::Ready(Err(std::io::Error::new(
+                            std::io::ErrorKind::PermissionDenied,
+                            "combined_delivery_scope_expired",
+                        )))
+                    })
+                })
+                .await?;
+                ensure!(count > 0, "combined delivery stream closed");
+                offset += count;
+            }
+            std::future::poll_fn(|cx| {
+                self.with_issue(ticket, || {
+                    tokio::io::AsyncWrite::poll_flush(std::pin::Pin::new(&mut *stream), cx)
+                })
+                .unwrap_or_else(|_| {
+                    std::task::Poll::Ready(Err(std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        "combined_delivery_scope_expired",
+                    )))
+                })
+            })
+            .await?;
+            Ok::<(), anyhow::Error>(())
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("combined native delivery deadline expired"))??;
+        Ok(())
+    }
     pub fn check_legacy_admission(&self) -> Result<()> {
         let state = self.0.lock().map_err(|_| ScopeReadRefused)?;
         ensure!(

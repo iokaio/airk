@@ -593,6 +593,34 @@ test('the Inbox reaches the webview as summaries; review, resolve and discard go
     explorer.dispose();
 });
 
+test('combined Inbox Apply prefills only the host-owned matching Workbench form and never runs a read', async () => {
+    const f = controller(), applied: unknown[] = [];
+    (f.host as any).prefillCombinedSearch = async (search: unknown) => { applied.push(structuredClone(search)); };
+    const projects = ['prj_' + '01'.repeat(16)], indexes = ['idx_' + '02'.repeat(16)];
+    const submitted = f.suggestions.submit('search', { schema_version: '1.0', idempotency_key: 'combined-apply', title: 'Find originals',
+        draft: { query: 'original', project_ids: projects, index_ids: indexes, member_availability: 'require' } }, { name: 'agent', version: '1' });
+    assert.ok(submitted.ok);
+    try {
+        await (f.explorer as any).dispatch({ type: 'suggestions.resolve', id: submitted.receipt.proposal_id, status: 'applied' });
+        assert.equal(applied.length, 1);
+        assert.deepEqual((applied[0] as any).project_ids, projects);
+        assert.deepEqual((applied[0] as any).index_ids, indexes);
+        assert.equal((applied[0] as any).member_availability, 'require');
+        assert.equal(f.suggestions.status(submitted.receipt.proposal_id)?.status, 'applied');
+        assert.equal(f.suggestions.status(submitted.receipt.proposal_id)?.executed, false);
+        assert.deepEqual(f.runs, []);
+        await assert.rejects((f.explorer as any).dispatch({ type: 'suggestions.resolve', id: submitted.receipt.proposal_id, status: 'applied' }));
+        assert.equal(applied.length, 1, 'a resolved proposal cannot fill a form again');
+        const changed = f.suggestions.submit('search', { schema_version: '1.0', idempotency_key: 'changed-combined', title: 'Another search',
+            draft: { query: 'original', project_ids: projects } }, { name: 'agent', version: '1' });
+        assert.ok(changed.ok);
+        (f.host as any).prefillCombinedSearch = async () => { throw new Error('combined_draft_scope_changed'); };
+        await assert.rejects((f.explorer as any).dispatch({ type: 'suggestions.resolve', id: changed.receipt.proposal_id, status: 'applied' }), /combined_draft_scope_changed/);
+        assert.equal(f.suggestions.status(changed.receipt.proposal_id)?.status, 'conflicted');
+        assert.deepEqual(f.runs, []);
+    } finally { f.explorer.dispose(); }
+});
+
 
 // Actual console -> event -> ExplorerController -> cloned panel-message path.
 // Only the native control transport and evidence boundary are deferred fixtures.

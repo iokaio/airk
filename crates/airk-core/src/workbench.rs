@@ -7,6 +7,9 @@ pub const REQUEST_SCHEMA: &str = "airk.parse.request/1";
 pub const PLAN_SCHEMA: &str = "airk.parse.plan/1";
 pub const RESULT_SCHEMA: &str = "airk.workbench.result/1";
 pub const CATALOG: &str = "airk.evidence-plans/1";
+/// Reports are expanded by typed bindings; they are not limited to the six
+/// authored plan steps. Native composition retains every bounded fanout report.
+pub const MAX_STEP_REPORTS: usize = 6 * 12;
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -72,6 +75,12 @@ pub struct Step {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Plan {
+    /// Frozen explicit combined selection; context preferences cannot widen it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query_scope: Option<crate::combined_reads::QuerySelection>,
+    /// Native authority identity captured at preparation, separate from evidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_identity: Option<crate::identity::Sha256Digest>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification_scope: Option<crate::verification::VerificationScope>,
     #[serde(flatten)]
@@ -137,6 +146,14 @@ pub struct RequiredInput {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ResultEnvelope {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query_scope: Option<crate::combined_reads::QuerySelection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_identity: Option<crate::identity::Sha256Digest>,
+    /// Complete native member verification outcomes for a combined response.
+    /// A single-index receipt cannot describe several collection authorities.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub member_verification: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope_observation: Option<crate::scoped_reads::ScopeObservation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

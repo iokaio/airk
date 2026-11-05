@@ -39,13 +39,20 @@ export type ManagementIntent = keyof typeof MANAGEMENT_INTENTS;
 
 /** Where a draft would go in the Explorer. */
 export function destinationOf(body: DraftBody): string {
-    return body.kind === 'navigation' ? ROUTE_ALIASES[body.route] ?? body.route : body.kind === 'review' ? `review/${body.scope}` : body.kind === 'management' ? MANAGEMENT_INTENTS[body.intent].route : DESTINATIONS[body.kind];
+    return body.kind === 'search' && body.search.project_ids ? 'workbench/search' : body.kind === 'navigation' ? ROUTE_ALIASES[body.route] ?? body.route : body.kind === 'review' ? `review/${body.scope}` : body.kind === 'management' ? MANAGEMENT_INTENTS[body.intent].route : DESTINATIONS[body.kind];
 }
 export interface NavigationFilters { readonly name?: string; readonly path_prefix?: string; readonly kind?: string; readonly text?: string; readonly since?: string }
 export const navigationFilters = (props: { navigation?: { route: string; filters: NavigationFilters } }, route: string): NavigationFilters => props.navigation?.route === route ? props.navigation.filters : {};
 export type ProposalStatus = 'pending_review' | 'applied' | 'rejected' | 'deferred' | 'expired' | 'conflicted';
 
-export interface SearchDraft { readonly query: string; readonly mode: 'policy' | 'lexical' | 'vector' | 'hybrid'; readonly pathPrefix?: string; readonly limit: number; readonly maxBytes: number; readonly fullChunks: boolean }
+export interface SearchDraft {
+    readonly query: string; readonly mode: 'policy' | 'lexical' | 'vector' | 'hybrid'; readonly pathPrefix?: string;
+    readonly limit: number; readonly maxBytes: number; readonly fullChunks: boolean;
+    /** Frozen explicit selectors are copied only into the matching combined Workbench form. */
+    readonly project_ids?: readonly string[];
+    readonly index_ids?: readonly string[];
+    readonly member_availability?: 'report' | 'require';
+}
 /** Evidence the agent cites; checked against the current publication when the card is shown, never trusted. */
 export interface DraftEvidence { readonly publication: string; readonly citations: readonly { path: string; startLine: number; endLine: number; contentHash?: string }[] }
 export type DraftBody =
@@ -135,7 +142,23 @@ function evidence(value: unknown, errors: string[]): DraftEvidence | undefined {
 function searchBody(value: Record<string, unknown>, errors: string[]): DraftBody | undefined {
     const draft = value.draft;
     if (!record(draft)) { errors.push('draft must be an object'); return undefined; }
-    keys(draft, ['query', 'mode', 'path_prefix', 'limit', 'max_bytes', 'full_chunks'], ['query'], 'draft', errors);
+    keys(draft, ['query', 'mode', 'path_prefix', 'limit', 'max_bytes', 'full_chunks', 'project_ids', 'index_ids', 'member_availability'], ['query'], 'draft', errors);
+    const ids = (value: unknown, prefix: 'prj_' | 'idx_', field: string): string[] | undefined => {
+        if (value === undefined) { return undefined; }
+        if (!Array.isArray(value) || !value.length || value.length > 32 || new Set(value).size !== value.length
+            || !value.every(id => typeof id === 'string' && new RegExp(`^${prefix}[0-9a-f]{32}$`).test(id))) {
+            errors.push(`draft: ${field} must contain 1–32 unique typed IDs`); return undefined;
+        }
+        return [...value].sort() as string[];
+    };
+    const projects = ids(draft.project_ids, 'prj_', 'project_ids');
+    const indexes = ids(draft.index_ids, 'idx_', 'index_ids');
+    if ((draft.index_ids !== undefined || draft.member_availability !== undefined) && !projects) {
+        errors.push('draft: index_ids and member_availability require explicit project_ids');
+    }
+    if (draft.member_availability !== undefined && !['report', 'require'].includes(draft.member_availability as string)) {
+        errors.push('draft: member_availability must be report or require');
+    }
     const mode = draft.mode ?? 'lexical';
     if (!text(draft.query, 4096) || !['policy', 'lexical', 'vector', 'hybrid'].includes(mode as string)) { errors.push('draft: query and mode are required'); }
     if (draft.path_prefix !== undefined && (typeof draft.path_prefix !== 'string' || !safePrefix(draft.path_prefix))) { errors.push('draft: path_prefix must be a relative literal prefix'); }
@@ -144,7 +167,9 @@ function searchBody(value: Record<string, unknown>, errors: string[]): DraftBody
     if (draft.full_chunks !== undefined && typeof draft.full_chunks !== 'boolean') { errors.push('draft: full_chunks must be true or false'); }
     if (value.intent !== undefined && !text(value.intent, 1000)) { errors.push('intent must be at most 1000 characters'); }
     return { kind: 'search', search: { query: String(draft.query), mode: mode as SearchDraft['mode'], ...(draft.path_prefix ? { pathPrefix: String(draft.path_prefix) } : {}),
-        limit: (draft.limit as number | undefined) ?? 20, maxBytes: (draft.max_bytes as number | undefined) ?? 16384, fullChunks: draft.full_chunks === true },
+        limit: (draft.limit as number | undefined) ?? 20, maxBytes: (draft.max_bytes as number | undefined) ?? 16384, fullChunks: draft.full_chunks === true,
+        ...(projects ? { project_ids: projects } : {}), ...(indexes ? { index_ids: indexes } : {}),
+        ...(draft.member_availability !== undefined ? { member_availability: draft.member_availability as 'report' | 'require' } : {}) },
         ...(value.intent ? { intent: String(value.intent) } : {}) };
 }
 

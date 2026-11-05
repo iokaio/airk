@@ -100,7 +100,7 @@ impl ChildJob {
             } != 0,
             io::Error::last_os_error()
         );
-        Ok(Self(handle, Mutex::new(None)))
+        Ok(Self(handle, Mutex::new(None), 32))
     }
 
     /// This observes only an existing object. Native metadata and user/owner
@@ -147,7 +147,9 @@ impl ChildJob {
                 && (1..=32).contains(&limits.BasicLimitInformation.ActiveProcessLimit),
             "named helper job containment policy changed"
         );
-        Ok(NamedJobOpen::Owned(Self(handle, Mutex::new(None))))
+        // Protected producer jobs start at 32. A previous drain may already
+        // have closed creation at one while its descendants are still exiting.
+        Ok(NamedJobOpen::Owned(Self(handle, Mutex::new(None), 32)))
     }
 
     /// Atomically places the child in this exact job during CreateProcess.

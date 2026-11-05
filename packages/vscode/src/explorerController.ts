@@ -11,7 +11,7 @@ import { formatRoute, parseRoute, WORKSPACES } from './explorerRoutes';
 import { continueFacts, FactHandles, runFacts, scoped } from './explorerFacts';
 import { changesSince, checkCitations, inspect } from './explorerInspect';
 import { managementView, panelDetails } from './explorerManagement';
-import { passageView, RefRegistry, searchArgs, searchView } from './explorerSearch';
+import { originArgs, originatingResult, passageView, RefRegistry, searchArgs, searchView } from './explorerSearch';
 import { headline, statusSummary, scalarWithRetainedDetails } from './explorerStatus';
 import { displayPath } from './explorerSource';
 import { exportStrategy, importPlan, importRecipe, importStrategy, listWorkspaceFiles, loadWorkspaceFile, liveAt, openPlanDraft, openSource, savePlanInWorkspace } from './explorerWorkspaceIO';
@@ -30,9 +30,13 @@ import { catalogExport, CatalogObject, WindowContextDescriptor } from './indexin
 import { MANAGE_WORKSPACE_TRUST_COMMAND } from './explorerCommands';
 import { NativeExecutionDisabled } from './nativeGate';
 import type { AssistanceWindowStatus } from './explorerContracts';
+import type { SearchDraft } from './explorerDrafts';
+import { readResultBody } from './sourceVerification';
 
 /** The narrow surface of the service extension that the Explorer may use. */
 export interface ExplorerHost {
+    /** Validate the active frozen combined selection and prefill an inert form. */
+    prefillCombinedSearch?(search: SearchDraft): Promise<void>;
     /** Trusted owning adapter supplies canonical identity; absence keeps window association controls gated. */
     windowContext?(): WindowContextDescriptor | undefined;
     windowContextObservation?(): CatalogObject | undefined;
@@ -372,7 +376,7 @@ export class ExplorerController implements vscode.Disposable {
                     const received = Date.now();
                     const observed = kind === 'scalar' && typeof raw === 'number'
                         && Number.isSafeInteger(raw) && raw >= 0 ? Math.min(raw, received) : received;
-                    const summary = statusSummary(result.payload, observed);
+                    const summary = statusSummary(result.payload, observed, result.rawPayload);
                     if (kind === 'details') { this.retainedDetails = { project, binding, identity, summary: { ...summary, detailsObservedAt: observed }, settings }; }
                     const prior = this.retainedDetails;
                     const detail = prior?.project === project && prior.binding === binding && prior.identity === identity
@@ -381,6 +385,16 @@ export class ExplorerController implements vscode.Disposable {
                     this.statusFor = project; this.statusIdentity = identity; this.notice = undefined;
                 }
             } catch (error) {
+                if (current() && error instanceof EvidenceFailure && error.nativeResponse) {
+                    const body = error.nativePayload ?? readResultBody(error.nativeResponse);
+                    if (body.schema === 'airk.combined-read/1') {
+                        this.status = statusSummary(body, Date.now(), error.nativeResponse);
+                        this.statusFor = project; this.statusIdentity = identity;
+                    } else if (error.nativePayload && !Object.keys(body).length) {
+                        this.status = { ...statusSummary({}, Date.now()), nativeFailure: error.nativeResponse };
+                        this.statusFor = project; this.statusIdentity = identity;
+                    }
+                }
                 if (current() && failure(error).code !== 'NO_PROJECT') { this.notice = failure(error); }
             } finally {
                 this.statusLoading = undefined; this.statusLoadingKind = undefined;
@@ -588,13 +602,14 @@ export class ExplorerController implements vscode.Disposable {
                     if (!current()) { throw new EvidenceFailure(explorerError('REQUEST_SUPERSEDED')); }
                     const status = this.statusFor === project && this.statusIdentity === this.control.observationIdentity ? this.status : undefined;
                     const view = searchView(project, typed, result.payload, result.publication, this.refs,
-                        { ...(status?.semantic ? { semantic: status.semantic } : {}), ...(status?.vectorsEnabled !== undefined ? { vectorsEnabled: status.vectorsEnabled } : {}) });
+                        { ...(status?.semantic ? { semantic: status.semantic } : {}), ...(status?.vectorsEnabled !== undefined ? { vectorsEnabled: status.vectorsEnabled } : {}) }, result.rawPayload);
                     this.searchState = { ...this.searchState!, result: view, busy: false }; publish();
                     // Search evidence travels once through search.session. The
                     // correlated response only releases the requesting waiter.
                     return { completed: true };
                 } catch (error) {
-                    if (current()) { this.searchState = { ...this.searchState!, result: undefined, busy: false, error: failure(error).message }; publish(); }
+                    if (current()) { this.searchState = { ...this.searchState!, result: undefined, busy: false, error: failure(error).message,
+                        ...(error instanceof EvidenceFailure && error.nativeResponse ? { nativeFailure: error.nativeResponse } : {}) }; publish(); }
                     throw error;
                 }
             }
@@ -603,13 +618,15 @@ export class ExplorerController implements vscode.Disposable {
                 const project = this.requireProject();
                 const ref = this.refs.get(typed.ref, project);
                 if (!ref.publication) { throw new EvidenceFailure(explorerError('EVIDENCE_MISMATCH')); }
-                const info = await this.session().call('airk_file_info', { path: ref.path, revision: ref.publication, known_hash: ref.contentHash });
-                if (info.publication !== ref.publication) { throw new EvidenceFailure(explorerError('EVIDENCE_MISMATCH')); }
+                const infoResult = await this.session().call('airk_file_info', { path: ref.path, revision: ref.publication, known_hash: ref.contentHash, ...originArgs(ref.origin) });
+                const info = originatingResult(infoResult.payload, ref.origin);
+                if ((info.publication ?? infoResult.publication) !== ref.publication) { throw new EvidenceFailure(explorerError('EVIDENCE_MISMATCH')); }
                 // Extracted coordinates have no host-known page boundary: keep one cited line.
                 const sourceLines = info.payload.line_basis === 'source';
                 const result = await this.session().call('airk_context', { path: ref.path, line: ref.startLine,
-                    before: sourceLines ? typed.before : 0, after: sourceLines ? typed.after : 0, revision: ref.publication, known_hash: ref.contentHash, max_bytes: 32768 }, { timeout: 30000 });
-                if (result.publication !== ref.publication) { throw new EvidenceFailure(explorerError('EVIDENCE_MISMATCH')); }
+                    before: sourceLines ? typed.before : 0, after: sourceLines ? typed.after : 0, revision: ref.publication, known_hash: ref.contentHash, max_bytes: 32768, ...originArgs(ref.origin) }, { timeout: 30000 });
+                const selected = originatingResult(result.payload, ref.origin);
+                if ((selected.publication ?? result.publication) !== ref.publication) { throw new EvidenceFailure(explorerError('EVIDENCE_MISMATCH')); }
                 return passageView(project, result.payload, result.publication, this.refs);
             }
             case 'source.open': {
@@ -617,7 +634,7 @@ export class ExplorerController implements vscode.Disposable {
                 const project = this.requireProject();
                 const ref = this.refs.get(typed.ref, project);
                 // The location on disk comes from AIRK's own file record, never from the webview.
-                const info = (await this.session().call('airk_file_info', { path: ref.path }, { timeout: 30000 })).payload;
+                const info = originatingResult((await this.session().call('airk_file_info', { path: ref.path, ...originArgs(ref.origin) }, { timeout: 30000 })).payload, ref.origin).payload;
                 const source = info.source as Record<string, unknown> | undefined;
                 if (!source || typeof source.root !== 'string' || typeof source.relative_path !== 'string') {
                     throw new EvidenceFailure(explorerError('TOOL_ERROR', 'AIRK did not report a source location for this file.'));
@@ -644,13 +661,14 @@ export class ExplorerController implements vscode.Disposable {
                 const typed = message as WebviewMessageOf<'code.relationships'>, project = this.requireProject();
                 const symbol = this.facts.symbols.get(typed.symbol, project);
                 return runFacts(this.session(), this.facts, project, { tool: 'airk_relationships', limit: typed.limit,
-                    args: { symbol: symbol.symbolId, direction: typed.direction, hops: typed.hops, limit: typed.limit, max_bytes: 16384 } });
+                    args: { symbol: symbol.symbolId, direction: typed.direction, hops: typed.hops, limit: typed.limit, max_bytes: 16384, ...originArgs(symbol.origin) } });
             }
             case 'code.outline': {
                 const typed = message as WebviewMessageOf<'code.outline'>, project = this.requireProject();
-                const path = typed.ref ? this.refs.get(typed.ref, project).path : this.activeRelativePath();
+                const ref = typed.ref ? this.refs.get(typed.ref, project) : undefined;
+                const path = ref?.path ?? this.activeRelativePath();
                 if (!path) { throw new EvidenceFailure(explorerError('NO_SOURCE_FILE')); }
-                return runFacts(this.session(), this.facts, project, { tool: 'airk_outline', limit: 100, args: { path, limit: 100, max_bytes: 32768 } });
+                return runFacts(this.session(), this.facts, project, { tool: 'airk_outline', limit: 100, args: { path, limit: 100, max_bytes: 32768, ...originArgs(ref?.origin) } });
             }
             case 'docs.facts': {
                 const typed = message as WebviewMessageOf<'docs.facts'>, project = this.requireProject();
@@ -738,6 +756,15 @@ export class ExplorerController implements vscode.Disposable {
                 const item = this.host.suggestions.get(typed.id);
                 const current = item?.kind === 'strategy' ? this.draftRevisions.studio : item?.kind === 'plan' ? this.draftRevisions.planner : undefined;
                 if (typed.status === 'applied' && current !== undefined && typed.targetRevision !== current) { throw new EvidenceFailure(explorerError('PROPOSAL_CONFLICT')); }
+                if (typed.status === 'applied' && item?.draft.body.kind === 'search' && item.draft.body.search.project_ids) {
+                    const status = this.host.suggestions.status(typed.id)?.status;
+                    if (status !== 'pending_review' && status !== 'deferred') { throw new EvidenceFailure(explorerError('PROPOSAL_EXPIRED')); }
+                    if (!this.host.prefillCombinedSearch) { throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED', 'A matching reviewed combined Workbench session is required to apply this draft.')); }
+                    if (!this.host.suggestions.resolve(typed.id, 'applied')) { throw new EvidenceFailure(explorerError('PROPOSAL_EXPIRED')); }
+                    try { await this.host.prefillCombinedSearch(item.draft.body.search); }
+                    catch (error) { this.host.suggestions.resolve(typed.id, 'conflicted'); throw error; }
+                    return;
+                }
                 if (!this.host.suggestions.resolve(typed.id, typed.status)) { throw new EvidenceFailure(explorerError('PROPOSAL_EXPIRED', 'This suggestion was already resolved or has expired.')); }
                 return;
             }
@@ -833,6 +860,7 @@ export class ExplorerController implements vscode.Disposable {
     private reviewContext(): ReviewContext {
         const project = this.requireProject();
         const spec = this.host.specs().find(entry => entry.service?.project === project)!;
+        if (spec.combinedSession) { throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED', 'Git Review needs one explicit source/index context. Use qualified combined evidence in Workbench for member reads.')); }
         return { session: this.session(), handles: this.facts, project, root: displayPath(spec.root) };
     }
 

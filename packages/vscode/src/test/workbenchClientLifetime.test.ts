@@ -3,7 +3,7 @@ import { strict as assert } from 'node:assert';
 import Module from 'node:module';
 import { test } from 'node:test';
 import type { LaunchSpec } from '../model';
-import { applyWorkbenchUpdate, defaultWorkbenchFormDraft, type WorkbenchState, type WorkbenchUpdate, type WorkbenchSession, type Value } from '../workbenchContracts';
+import { applyWorkbenchUpdate, defaultWorkbenchFormDraft, object, type WorkbenchState, type WorkbenchUpdate, type WorkbenchSession, type Value } from '../workbenchContracts';
 import { newSession, SessionStore } from '../workbenchSessions';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
@@ -11,7 +11,8 @@ import * as path from 'node:path';
 import { renderExport } from '../workbenchRender';
 import { EvidenceClient, EvidenceFailure } from '../explorerEvidence';
 import { explorerError } from '../explorerErrors';
-import { scopeSelectionIdentity, type CatalogSessionSelector } from '../scopeSelection';
+import { combinedScopeSelectionIdentity, scopeSelectionIdentity, type CatalogSessionSelector, type CombinedCatalogSessionSelector } from '../scopeSelection';
+import { sharedCapabilityDigest } from '../sharedCapabilityFields';
 
 function deferred<T>() { let resolve!: (value:T)=>void,reject!: (error:Error)=>void; const promise=new Promise<T>((done,fail)=>{resolve=done;reject=fail;}); return {promise,resolve,reject}; }
 const tick=()=>new Promise<void>(resolve=>setImmediate(resolve));
@@ -26,7 +27,7 @@ const spec=(project:string):LaunchSpec=>({command:'/fixture/airk',root:`/fixture
 function fixture(attach=false) {
     let specs=[spec(A),spec(B)],trusted=true,native=true;
     const changed=new Emitter<void>(),configuration=new Emitter<{affectsConfiguration(key:string):boolean}>();
-    const created:FakeClient[]=[],messages:unknown[]=[],removed:string[]=[],saved:WorkbenchSession[]=[],exports:Buffer[]=[];
+    const created:FakeClient[]=[],messages:unknown[]=[],removed:string[]=[],saved:WorkbenchSession[]=[],exports:Buffer[]=[],opened:Value[]=[];
     let response:(tool:string,client:FakeClient)=>Promise<{payload:Value}> = async tool=>({payload:{tag:tool}});
     let confirm=()=>Promise.resolve('Delete sessions');
     const store={
@@ -42,7 +43,7 @@ function fixture(attach=false) {
         cancel():void{this.canceled++;}
         dispose():void{this.disposed++;}
     }
-    const stub={EventEmitter:Emitter,workspace:{
+    const stub={EventEmitter:Emitter,ViewColumn:{Active:1},workspace:{
         getConfiguration:()=>({get:(_key:string,fallback:unknown)=>fallback,inspect:()=>({globalValue:native})}),
         onDidChangeConfiguration:configuration.event,fs:{writeFile:async(_uri:unknown,bytes:Uint8Array)=>{exports.push(Buffer.from(bytes));}},
     },window:{showWarningMessage:()=>confirm(),showSaveDialog:async()=>({fsPath:'/fixture/export.json'})},commands:{executeCommand:async()=>undefined},
@@ -51,7 +52,7 @@ function fixture(attach=false) {
     loader._load=function(name:string,...args:any[]){
         if(name==='vscode'){return stub;}
         if(name==='./explorerEvidence'){return {...original.call(this,name,...args),EvidenceClient:FakeClient};}
-        if(name==='./explorerWorkspaceIO'){return {openSource:async()=>undefined,saveStudioInWorkspace:async()=>({saved:false})};}
+        if(name==='./explorerWorkspaceIO'){return {openSource:async(location:Value)=>{opened.push(location);return {message:'opened'};},saveStudioInWorkspace:async()=>({saved:false})};}
         return original.call(this,name,...args);
     };
     let WorkbenchView:typeof import('../workbenchView').WorkbenchView;
@@ -66,7 +67,7 @@ function fixture(attach=false) {
         postMessage:(message:unknown)=>{messages.push(structuredClone(message));return Promise.resolve(true);},onDidReceiveMessage:()=>({dispose(){}})},
         onDidChangeVisibility:visibility.event,onDidDispose:release.event};
     if(attach){provider.resolveWebviewView(view as any);}
-    return {provider,state,store,created,messages,removed,saved,exports,
+    return {provider,state,store,created,messages,removed,saved,exports,opened,
         respond:(handler:typeof response)=>{response=handler;},confirm:(handler:typeof confirm)=>{confirm=handler;},
         specs:()=>specs,replace:(next:LaunchSpec[])=>{specs=next;changed.fire();},
         trust:(value:boolean)=>{trusted=value;changed.fire();},native:(value:boolean)=>{native=value;configuration.fire({affectsConfiguration:key=>key==='airk.runtime.nativeExecution'});},
@@ -577,6 +578,90 @@ test('error-only turns retain canonical native refusals in full copies and actua
 });
 
 const scopedSelector=(project:string):CatalogSessionSelector=>({schema:1,context_key:'12'.repeat(32),namespace:'34'.repeat(16),expected_catalog_revision:8,grant_id:'grt_'+ '11'.repeat(16),expected_grant_revision:7,index_id:'idx_'+ '22'.repeat(16),project_ids:['prj_'+project.repeat(16)]});
+const combinedSelector=():CombinedCatalogSessionSelector=>({schema:1,context_key:'12'.repeat(32),namespace:'34'.repeat(16),expected_catalog_revision:8,grant_id:'grt_'+'11'.repeat(16),expected_grant_revision:7,project_ids:['prj_'+'44'.repeat(16)],index_ids:['idx_'+'22'.repeat(16),'idx_'+'33'.repeat(16)]});
+
+test('combined search Apply stores exact editable inputs and launches no evidence process',async()=>{
+    const f=fixture(),selected={...spec(A),combinedSession:combinedSelector()};
+    try{
+        f.replace([selected]);
+        await f.provider.prefillSearchForm(selected,{query:'review retry',mode:'lexical',limit:8,maxBytes:4096,fullChunks:false,pathPrefix:'src/',
+            project_ids:selected.combinedSession.project_ids,index_ids:selected.combinedSession.index_ids,member_availability:'require'});
+        await f.state.saveQueue;
+        assert.equal(f.created.length,0,'Apply never opens an MCP session, reads readiness, prepares a plan or runs evidence');
+        assert.equal(f.state.session!.project,combinedScopeSelectionIdentity(selected.combinedSession));
+        assert.deepEqual(f.state.session!.formDraft!.values.search,{query:'review retry',mode:'lexical',limit:'8',max_bytes:'4096',full_chunks:'false',path_prefix:'src/',
+            project_ids:JSON.stringify(selected.combinedSession.project_ids),index_ids:JSON.stringify(selected.combinedSession.index_ids),member_availability:'require'});
+        assert.equal(f.state.session!.turns.length,0);
+        await assert.rejects(f.provider.prefillSearchForm({...selected,combinedSession:{...selected.combinedSession,project_ids:['prj_'+'55'.repeat(16)]}},
+            {query:'changed',mode:'policy',limit:8,maxBytes:4096,fullChunks:false}),/scope changed/);
+        assert.equal(f.created.length,0);
+    }finally{f.provider.dispose();}
+});
+
+test('actual Workbench host verifies shared capability display while durable/native copies retain exact references',async()=>{
+    const f=fixture(),fields={adapters:[{id:'original'}],workbench:{operations:{search:{type:'object'}}}},id=sharedCapabilityDigest(fields),stepId='__proto__';
+    const member={request_admission:{limit:16},$airk_shared_capability_fields:id},combined={schema:'airk.combined-read/1',shared_values:{schema:'airk.shared-capability-fields/1',values:{[id]:fields}},
+        members:[{index_id:'idx_'+'12'.repeat(16),outcome:'complete',result:{content:[{type:'text',text:JSON.stringify(member)}],structuredContent:member,isError:false}}],ranking:[]};
+    try{
+        await f.state.select(A);await tick();
+        f.respond(async()=>({payload:{status:'complete',executed:true,steps:[{id:stepId,tool:'capabilities',status:'complete',result:combined}]}}));
+        await f.state.run('/capabilities');await f.state.saveQueue;
+        const turn=f.state.session!.turns[0],raw=structuredClone(turn.envelope),snapshot=()=> (f.provider as unknown as {state():WorkbenchState}).state();
+        const display=snapshot().capabilityDetails![turn.id][stepId];assert.equal(display.state,'verified');if(display.state==='verified')assert.deepEqual(display.values[id],fields);
+        assert.equal(JSON.parse(JSON.stringify(snapshot())).capabilityDetails[turn.id][stepId].state,'verified','valid native step IDs survive the actual host state message');
+        assert.deepEqual(turn.envelope,raw);const returned=object((turn.envelope!.steps as Value[])[0].result),nativeMember=object((returned.members as Value[])[0].result);
+        assert.equal(object(nativeMember.structuredContent).$airk_shared_capability_fields,id);
+        await f.state.message({type:'export',turn:turn.id,format:'json'});assert.deepEqual(JSON.parse(f.exports.at(-1)!.toString()).turns[0].envelope,raw);
+        assert.ok(!JSON.stringify(f.saved.at(-1)).includes('capabilityDetails'),'verified display tables are not persisted as native evidence');
+        const altered=structuredClone(raw!);object(object(object((altered.steps as Value[])[0].result).shared_values).values)[id]={adapters:[]};turn.envelope=altered;
+        const calls=f.created[0].calls.length;assert.equal(snapshot().capabilityDetails![turn.id][stepId].state,'unavailable');assert.equal(f.created[0].calls.length,calls,'invalid saved capability data never starts native work');
+    }finally{f.provider.dispose();}
+});
+
+test('combined card context retains originating index, Projects and member publication through the real host run path',async()=>{
+    const f=fixture(),selected={...spec(A),combinedSession:combinedSelector()},originIndex=selected.combinedSession.index_ids![1],projects=selected.combinedSession.project_ids;
+    try{
+        f.replace([selected]);await f.provider.prefillSearchForm(selected,{query:'search',mode:'lexical',limit:8,maxBytes:4096,fullChunks:false,project_ids:projects,index_ids:selected.combinedSession.index_ids});
+        f.state.session!.turns.push({id:'qualified',at:1,input:'search',format:'structured',envelope:{evidence:[{step:'search',text:'original',publication:publicationToken(4),
+            citation:{path:'same.rs',content_hash:'66'.repeat(32),start_line:1,end_line:1,location:{Lines:{start:1,end:1}}},
+            origin:{index_id:originIndex,project_ids:projects,source_root_id:'src_'+'77'.repeat(16),source_relative_path:'same.rs',publication:{token:publicationToken(4)}}}]}});
+        await f.state.message({type:'context',turn:'qualified',card:'record-0'});
+        const request=f.created[0].requests.find(value=>value.tool==='airk_parse')!.args,plan=object(request.plan),step=object((plan.steps as unknown[])[0]),args=object(step.args);
+        assert.deepEqual(request.project_ids,projects);assert.deepEqual(request.index_ids,[originIndex]);assert.deepEqual(plan.query_scope,{project_ids:projects,index_ids:[originIndex]});
+        assert.equal(plan.publication,undefined,'a combined plan has no invented scalar publication');assert.equal(args.revision,publicationToken(4));assert.equal(args.known_hash,'66'.repeat(32));
+        assert.equal(args.path,'same.rs');assert.equal(f.created[0].spec.combinedSession?.index_ids!.length,2,'the temporary follow-up never changes the frozen window session');
+    }finally{f.provider.dispose();}
+});
+
+test('combined host publication observations compare member vectors and preserve captured result identity',async()=>{
+    const f=fixture(),selected={...spec(A),combinedSession:combinedSelector()};let generations=[2,2];
+    const vector=()=>({authority:'88'.repeat(32),members:selected.combinedSession.index_ids!.map((index_id,i)=>({index_id,publication:{collection:'fixture',token:publicationToken(generations[i])}}))});
+    f.respond(async tool=>({payload:tool==='airk_parse'?{executed:true,status:'complete',steps:[{id:'search',tool:'search',status:'complete',result:{schema:'airk.combined-read/1',publication_vector:vector(),members:[],ranking:[]}}]}:{schema:'airk.combined-read/1',publication_vector:vector(),members:[],ranking:[]}}));
+    const snapshot=()=> (f.provider as unknown as {state():WorkbenchState}).state();
+    try{
+        f.replace([selected]);await f.provider.useScope(selected);await tick();await f.state.run('/status');
+        const turn=f.state.session!.turns[0];assert.equal(snapshot().publicationRelations?.[turn.id],'equal');
+        const original=structuredClone(turn.envelope);generations=[3,1];await f.state.message({type:'refresh'});assert.equal(snapshot().publicationRelations?.[turn.id],'mixed');
+        assert.deepEqual(turn.envelope,original);generations=[3,3];await f.state.message({type:'refresh'});assert.equal(snapshot().publicationRelations?.[turn.id],'older');
+        const current=f.state.session;const refreshed={...selected,combinedSession:{...selected.combinedSession,expected_catalog_revision:9}};f.replace([refreshed]);await f.provider.useScope(refreshed);await f.state.message({type:'refresh'});
+        assert.equal(f.state.session,current);assert.equal(snapshot().publicationRelations?.[turn.id],'older','a metadata clock refresh does not change causal query authority');
+    }finally{f.provider.dispose();}
+});
+
+test('combined source Open checks the held canonical root and relative path against native metadata ranking',async()=>{
+    const f=fixture(),selected={...spec(A),combinedSession:combinedSelector()},indexId=selected.combinedSession.index_ids![0],projects=selected.combinedSession.project_ids,rootId='src_'+'77'.repeat(16);let returnedRoot=rootId;
+    try{
+        f.replace([selected]);await f.provider.prefillSearchForm(selected,{query:'search',mode:'lexical',limit:8,maxBytes:4096,fullChunks:false,project_ids:projects,index_ids:selected.combinedSession.index_ids});
+        const origin={index_id:indexId,project_ids:projects,source_root_id:rootId,source_relative_path:'same.rs',publication:{token:publicationToken(4)}};
+        f.state.session!.turns.push({id:'qualified-open',at:1,input:'search',format:'structured',envelope:{evidence:[{step:'search',text:'original',publication:publicationToken(4),
+            citation:{path:'same.rs',content_hash:'66'.repeat(32),start_line:1,end_line:1,location:{Lines:{start:1,end:1}}},origin}]}});
+        f.respond(async tool=>({payload:tool==='airk_file_info'?{schema:'airk.combined-read/1',members:[{index_id:indexId,outcome:'complete',result:{content:[],structuredContent:{path:'same.rs',content_hash:'66'.repeat(32),source:{root:'/native/original',relative_path:'same.rs'},line_basis:'source'}}}],
+            ranking:[{index_id:indexId,result_pointer:'/members/0/result/structuredContent',origin:{...origin,source_root_id:returnedRoot}}]}:{}}));
+        await f.state.message({type:'open',turn:'qualified-open',card:'record-0'});assert.equal(f.opened.length,1);assert.equal(f.opened[0].root,'/native/original');
+        returnedRoot='src_'+'88'.repeat(16);
+        await assert.rejects(f.state.message({type:'open',turn:'qualified-open',card:'record-0'}),/source identity changed/);assert.equal(f.opened.length,1,'changed canonical root cannot open a same-named file');
+    }finally{f.provider.dispose();}
+});
 test('scoped histories separate same backing subsets, preserve old turns, and fence late replies',async()=>{
     const f=fixture(),one={...spec(A),catalogSession:scopedSelector('44')},two={...spec(A),catalogSession:scopedSelector('55')};
     const keyOne=scopeSelectionIdentity(one.catalogSession),keyTwo=scopeSelectionIdentity(two.catalogSession);

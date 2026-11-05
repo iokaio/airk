@@ -256,7 +256,7 @@ pub fn call(arguments: Value) -> CallToolResult {
 }
 
 /// Public composition supplies its catalog while retaining the same byte/line contract.
-pub(crate) fn call_with_catalog(arguments: Value, tools: Vec<rmcp::model::Tool>) -> CallToolResult {
+pub fn call_with_catalog(arguments: Value, tools: Vec<rmcp::model::Tool>) -> CallToolResult {
     match serde_json::from_value(arguments) {
         Ok(args) => match answer_with_catalog(args, Some(tools)) {
             Ok(value) => CallToolResult::success(vec![ContentBlock::text(value.to_string())]),

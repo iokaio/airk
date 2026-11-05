@@ -16,8 +16,20 @@ impl AirkServer {
             "plan reader requires an admitted outer request"
         );
         let mut arguments = arguments.clone();
-        arguments.insert("response_mode".into(), json!("full"));
-        arguments.insert("include_status".into(), json!(true));
+        let catalog = crate::local::tools();
+        let definition = catalog
+            .iter()
+            .find(|entry| entry.name.strip_prefix("airk_") == Some(tool))
+            .ok_or_else(|| anyhow::anyhow!("unknown evidence operation"))?;
+        let properties = definition.input_schema["properties"]
+            .as_object()
+            .ok_or_else(|| anyhow::anyhow!("native read has no object inputs"))?;
+        if properties.contains_key("response_mode") {
+            arguments.insert("response_mode".into(), json!("full"));
+        }
+        if properties.contains_key("include_status") {
+            arguments.insert("include_status".into(), json!(true));
+        }
         if matches!(tool, "read_file" | "file_info" | "outline" | "context")
             && let Some(revision) = revision
         {
@@ -59,6 +71,7 @@ impl AirkServer {
             "diagnostics" => read!(diagnostics),
             "capabilities" => read!(capabilities),
             "help" => read!(help),
+            "query_scope" => read!(query_scope),
             _ => bail!("unknown evidence operation"),
         };
         // The SDK's complete response wrapper removes this discriminator on the

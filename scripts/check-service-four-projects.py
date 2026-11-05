@@ -51,8 +51,9 @@ def qualify(runtime, files):
                 assert time.monotonic() < deadline, states
                 time.sleep(0.2)
             with ThreadPoolExecutor(max_workers=4) as pool:
-                # Every simultaneous session must receive all sixteen tools.
-                list(pool.map(fixture.stdio, names))
+                # Every simultaneous session must receive the complete public catalog.
+                mcp_counts = list(pool.map(fixture.stdio, names))
+                assert all(count == len(clients.MCP_TOOLS) for count in mcp_counts), mcp_counts
             statuses = [fixture.published_status(name, deadline) for name in names]
             for number, (name, status) in enumerate(zip(names, statuses)):
                 assert status["files"] == files and status["collection"] == name, status
@@ -72,7 +73,7 @@ def qualify(runtime, files):
             assert all(hashlib.sha256(file.read_bytes()).hexdigest() == expected for file, expected in originals.items())
             return {"schema": 1, "version": json.loads((runtime / "airk-runtime.json").read_text())["version"],
                     "projects": 4, "files_per_project": files, "directories_per_project": 601,
-                    "mcp_tools_per_session": len(clients.TOOLS), "same_service_instance": True,
+                    "mcp_tools_per_session": mcp_counts[0], "native_cli_tools": len(clients.TOOLS), "same_service_instance": True,
                     "collection_isolation": True, "native_watch_roots": [watch["native_roots"] for watch in watches],
                     "peak_running_jobs_observed": max(sample["running_jobs"] for sample in samples),
                     "peak_reserved_bytes": max(sample["memory_reserved_bytes"] for sample in samples),

@@ -419,3 +419,114 @@ fn bounded_cli_timeout_terminates_its_owned_leaf_client() -> Result<()> {
     );
     Ok(())
 }
+
+#[cfg(unix)]
+fn unix_leaf_command(mode: &str, directory: &std::path::Path) -> std::process::Command {
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    command
+        .args(["--exact", "bounded_cli_unix_fixture", "--nocapture"])
+        .env("AIRK_TEST_UNIX_LEAF", mode)
+        .env("AIRK_TEST_UNIX_DIRECTORY", directory)
+        .env_remove("PATH")
+        .current_dir(directory);
+    command
+}
+
+#[cfg(unix)]
+#[test]
+fn bounded_cli_unix_fixture() -> Result<()> {
+    use std::io::Write;
+    let Some(mode) = std::env::var_os("AIRK_TEST_UNIX_LEAF") else {
+        return Ok(()); // Re-exec entry point, invoked by the owning tests below.
+    };
+    let directory = std::path::PathBuf::from(std::env::var_os("AIRK_TEST_UNIX_DIRECTORY").unwrap());
+    assert_eq!(
+        fs::canonicalize(std::env::current_dir()?)?,
+        fs::canonicalize(&directory)?
+    );
+    assert!(std::env::var_os("PATH").is_none());
+    if mode == "streams" {
+        let stderr = std::thread::spawn(|| {
+            std::io::stderr().write_all(&vec![0xb2; 262_144]).unwrap();
+        });
+        std::io::stdout().write_all(&vec![0xa1; 262_144])?;
+        stderr.join().unwrap();
+    } else if mode == "holder" {
+        fs::write(directory.join("holder-ready"), b"ready")?;
+        std::thread::sleep(Duration::from_secs(30));
+    } else {
+        assert!(mode == "exited-leader" || mode == "timeout-tree");
+        // Deliberately inherit the owned leaf group and both output pipes.
+        let mut descendant = unix_leaf_command("holder", &directory).spawn()?;
+        let ready_deadline = Instant::now() + Duration::from_secs(5);
+        while !directory.join("holder-ready").exists() {
+            ensure!(Instant::now() < ready_deadline, "descendant did not start");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        if mode == "exited-leader" {
+            std::process::exit(0);
+        }
+        std::thread::sleep(Duration::from_secs(30));
+        descendant.wait()?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn bounded_cli_unix_preserves_all_output_and_native_child_ownership() -> Result<()> {
+    airk_process::child_group::require_waitable_children()?;
+    let directory = tempfile::tempdir()?;
+    let output = read_retry::once_until(
+        &unix_leaf_command("streams", directory.path()),
+        Instant::now() + Duration::from_secs(10),
+    )?;
+    assert!(output.status.success());
+    assert_eq!(
+        output.stdout.iter().filter(|&&byte| byte == 0xa1).count(),
+        262_144
+    );
+    assert_eq!(
+        output.stderr.iter().filter(|&&byte| byte == 0xb2).count(),
+        262_144
+    );
+    // A Tokio process driver would leave a global SIGCHLD handler here and
+    // prevent the next real native GroupChild from acquiring its child.
+    airk_process::child_group::require_waitable_children()?;
+    let mut sibling =
+        airk_process::GroupChild::spawn(&mut unix_leaf_command("holder", directory.path()))?;
+    assert!(sibling.try_wait()?.is_none());
+    sibling.terminate_and_wait(Duration::from_secs(2))?;
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn bounded_cli_unix_drains_inherited_pipes_after_exit_and_timeout() -> Result<()> {
+    for mode in ["exited-leader", "timeout-tree"] {
+        let directory = tempfile::tempdir()?;
+        let sibling_directory = tempfile::tempdir()?;
+        let mut sibling = airk_process::GroupChild::spawn(&mut unix_leaf_command(
+            "holder",
+            sibling_directory.path(),
+        ))?;
+        let started = Instant::now();
+        let output = read_retry::once_until(
+            &unix_leaf_command(mode, directory.path()),
+            started + Duration::from_secs(2),
+        );
+        assert!(directory.path().join("holder-ready").exists());
+        if mode == "exited-leader" {
+            assert!(output?.status.success());
+        } else {
+            assert_eq!(output.unwrap_err().kind(), std::io::ErrorKind::TimedOut);
+        }
+        // The descendant holds both pipes for30s; a reader join before group
+        // drain would hang. A separately owned service group must survive.
+        assert!(started.elapsed() < Duration::from_secs(10));
+        assert!(sibling.try_wait()?.is_none());
+        sibling.terminate_and_wait(Duration::from_secs(2))?;
+        airk_process::child_group::require_waitable_children()?;
+    }
+    Ok(())
+}

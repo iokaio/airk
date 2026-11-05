@@ -112,6 +112,25 @@ struct Cli {
     #[arg(long, global = true, value_parser = parse_catalog_session,
         conflicts_with_all = ["service_project", "root", "data_dir", "collection"])]
     catalog_session: Option<airk_core::service::ScopedConnectRequest>,
+    /// Frozen reviewed multi-Project session JSON; indexes are executed once each.
+    #[arg(long, global = true, value_parser = parse_combined_session,
+        conflicts_with_all = ["catalog_session", "service_project", "root", "data_dir", "collection"])]
+    combined_session: Option<airk_core::service::CombinedConnectRequest>,
+    /// Narrow a combined read to explicit Projects from its reviewed session.
+    #[arg(
+        long,
+        global = true,
+        value_delimiter = ',',
+        num_args = 1,
+        requires = "combined_session"
+    )]
+    project_ids: Option<Vec<airk_core::index_catalog::QueryProjectId>>,
+    /// Narrow a combined read to member indexes; requires explicit Project scope.
+    #[arg(long, global = true, value_delimiter = ',', num_args = 1, requires_all = ["combined_session", "project_ids"])]
+    index_ids: Option<Vec<airk_core::index_catalog::IndexId>>,
+    /// Report member failures or require every selected member to answer.
+    #[arg(long, global = true, value_parser = ["report", "require"], requires_all = ["combined_session", "project_ids"])]
+    member_availability: Option<String>,
     #[arg(
         long,
         global = true,
@@ -135,6 +154,19 @@ fn parse_catalog_session(
     selection
         .validate()
         .map_err(|_| "invalid reviewed catalog session".to_owned())?;
+    Ok(selection)
+}
+fn parse_combined_session(
+    value: &str,
+) -> std::result::Result<airk_core::service::CombinedConnectRequest, String> {
+    if value.len() > 8192 {
+        return Err("combined session exceeds its byte allowance".into());
+    }
+    let selection: airk_core::service::CombinedConnectRequest =
+        serde_json::from_str(value).map_err(|_| "invalid combined session JSON".to_owned())?;
+    selection
+        .validate()
+        .map_err(|_| "invalid reviewed combined session".to_owned())?;
     Ok(selection)
 }
 #[derive(Subcommand)]
@@ -1099,7 +1131,8 @@ async fn run() -> Result<()> {
     ensure!(
         cli.service_runtime_dir.is_none()
             || cli.service_project.is_some()
-            || cli.catalog_session.is_some(),
+            || cli.catalog_session.is_some()
+            || cli.combined_session.is_some(),
         "native control selection requires a project binding or catalog session"
     );
     if cli.catalog_session.is_some() {
@@ -1129,6 +1162,31 @@ async fn run() -> Result<()> {
                     | Command::Context { .. }
             ),
             "catalog sessions are read-only; administrative commands require an explicit administrative invocation"
+        );
+    }
+    if cli.combined_session.is_some() {
+        ensure!(
+            matches!(
+                &cli.command,
+                Command::Tools { .. }
+                    | Command::Parse { project: None, .. }
+                    | Command::Changes { .. }
+                    | Command::CodeFacts { .. }
+                    | Command::Relationships { .. }
+                    | Command::Status { .. }
+                    | Command::Search { .. }
+                    | Command::Files { .. }
+                    | Command::Read { .. }
+                    | Command::Info { .. }
+                    | Command::Mcp { .. }
+                    | Command::Outline { .. }
+                    | Command::Symbol { .. }
+                    | Command::Imports { .. }
+                    | Command::Facts { .. }
+                    | Command::Refs { .. }
+                    | Command::Context { .. }
+            ),
+            "combined sessions are read-only; settings and administrative commands require an explicit index or administrative invocation"
         );
     }
     if let Command::Parse {
@@ -1203,7 +1261,8 @@ async fn run() -> Result<()> {
             return print_json(&report);
         }
         Command::Tools { action }
-            if tools::inspect_selected(action, cli.catalog_session.is_some())? =>
+            if cli.combined_session.is_none()
+                && tools::inspect_selected(action, cli.catalog_session.is_some())? =>
         {
             return Ok(());
         }
@@ -1214,6 +1273,26 @@ async fn run() -> Result<()> {
             index_collection,
             no_default_project,
         } => {
+            if let Some(selection) = &cli.combined_session {
+                ensure!(
+                    additional_project.is_empty()
+                        && additional_root.is_empty()
+                        && index_collection.is_none()
+                        && !no_default_project
+                        && cli.project_ids.is_none()
+                        && cli.index_ids.is_none()
+                        && cli.member_availability.is_none(),
+                    "combined MCP uses its frozen session selection; supply read selectors as tool arguments"
+                );
+                let backend = airk_cli::combined_frontend::resolve(
+                    cli.service_install_dir.as_deref(),
+                    cli.service_runtime_dir.as_deref(),
+                    selection,
+                )
+                .await?;
+                return airk_cli::unified_mcp::serve_combined(backend, explorer_descriptor.clone())
+                    .await;
+            }
             if let Some(selection) = &cli.catalog_session {
                 ensure!(
                     additional_project.is_empty()
@@ -1304,6 +1383,36 @@ async fn run() -> Result<()> {
             "full rebuilds require a guarded maintenance preview and separate approval; use Service Console or typed service RPC"
         ),
         _ => (),
+    }
+    if let Some(selection) = &cli.combined_session {
+        let backend = airk_cli::combined_frontend::resolve(
+            cli.service_install_dir.as_deref(),
+            cli.service_runtime_dir.as_deref(),
+            selection,
+        )
+        .await?;
+        let mut defaults = serde_json::Map::new();
+        if let Some(ids) = &cli.project_ids {
+            defaults.insert("project_ids".into(), serde_json::to_value(ids)?);
+        }
+        if let Some(ids) = &cli.index_ids {
+            defaults.insert("index_ids".into(), serde_json::to_value(ids)?);
+        }
+        if let Some(policy) = &cli.member_availability {
+            defaults.insert("member_availability".into(), json!(policy));
+        }
+        let action = match cli.command {
+            Command::Tools { action } => action,
+            command => {
+                let (name, arguments) = query(command)?;
+                tools::ToolsCommand::Call {
+                    tool: name.into(),
+                    args: Some(serde_json::to_string(&arguments)?),
+                    args_file: None,
+                }
+            }
+        };
+        return tools::run_backend(action, backend, defaults).await;
     }
     let project = if let Some(selection) = &cli.catalog_session {
         let selected = airk_cli::service_frontend::resolve_scoped(
@@ -2594,6 +2703,83 @@ mod tests {
             Cli::try_parse_from(["airk", "--root", "/missing/source", "tools", "list"]).is_ok()
         );
         assert!(Cli::try_parse_from(["airk", "--service-project", "bad", "mcp"]).is_err());
+    }
+
+    #[test]
+    fn combined_sessions_require_explicit_reviewed_scope_and_reject_legacy_mixing() -> Result<()> {
+        let project = format!("prj_{}", "01".repeat(16));
+        let index = format!("idx_{}", "02".repeat(16));
+        let session = json!({"schema":1,"context_key":"03".repeat(32),"namespace":"04".repeat(16),
+            "expected_catalog_revision":1,"grant_id":format!("grt_{}","05".repeat(16)),
+            "expected_grant_revision":1,"project_ids":[project],"index_ids":[index]});
+        let encoded = session.to_string();
+        for command in [
+            vec!["status"],
+            vec!["search", "original"],
+            vec!["tools", "list", "--json"],
+            vec!["mcp"],
+        ] {
+            let mut args = vec!["airk", "--combined-session", &encoded];
+            args.extend(command);
+            assert!(Cli::try_parse_from(args)?.combined_session.is_some());
+        }
+        let narrowed = Cli::try_parse_from([
+            "airk",
+            "--combined-session",
+            &encoded,
+            "--project-ids",
+            &project,
+            "--index-ids",
+            &index,
+            "--member-availability",
+            "require",
+            "search",
+            "original",
+        ])?;
+        assert_eq!(narrowed.project_ids.as_ref().map(Vec::len), Some(1));
+        assert_eq!(narrowed.member_availability.as_deref(), Some("require"));
+        for selector in ["--root", "--data-dir", "--collection", "--service-project"] {
+            assert!(
+                Cli::try_parse_from([
+                    "airk",
+                    "--combined-session",
+                    &encoded,
+                    selector,
+                    "original",
+                    "status"
+                ])
+                .is_err()
+            );
+        }
+        assert!(Cli::try_parse_from(["airk", "--project-ids", &project, "status"]).is_err());
+        assert!(
+            Cli::try_parse_from([
+                "airk",
+                "--combined-session",
+                &encoded,
+                "--index-ids",
+                &index,
+                "status"
+            ])
+            .is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "airk",
+                "--combined-session",
+                &encoded,
+                "--member-availability",
+                "require",
+                "status"
+            ])
+            .is_err()
+        );
+        for invalid in [json!([]), Value::Null, json!([index.clone(), index])] {
+            let mut malformed = session.clone();
+            malformed["index_ids"] = invalid;
+            assert!(parse_combined_session(&malformed.to_string()).is_err());
+        }
+        Ok(())
     }
 
     #[test]

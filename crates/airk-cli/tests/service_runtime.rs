@@ -1487,7 +1487,7 @@ fn probe_stdio_bridge(
             .context("bridge tool list missing")?;
         if unified {
             ensure!(
-                tools.len() == 28
+                tools.len() == 29
                     && tools
                         .iter()
                         .all(|tool| !tool["name"].as_str().unwrap_or("").starts_with("airk_")),
@@ -1495,11 +1495,33 @@ fn probe_stdio_bridge(
             );
         } else {
             ensure!(
-                tools.len() == 18
+                tools.len() == 19
                     && tools
                         .iter()
                         .all(|tool| tool["annotations"]["readOnlyHint"] == true),
                 "bridge exposed a management tool"
+            );
+        }
+        let scope_name = if unified {
+            "query_scope"
+        } else {
+            "airk_query_scope"
+        };
+        let scope = tools
+            .iter()
+            .find(|tool| tool["name"] == scope_name)
+            .context("query scope metadata tool missing")?;
+        ensure!(
+            scope["annotations"]["readOnlyHint"] == true
+                && scope["inputSchema"]["additionalProperties"] == false
+                && scope["inputSchema"]["properties"]
+                    == airk_core::combined_reads::query_scope::schema()["properties"],
+            "bridge query scope discovery diverged from its closed read-only metadata contract"
+        );
+        if !unified {
+            ensure!(
+                listed["result"]["tools"] == serde_json::to_value(airk_mcp::local::tools())?,
+                "native bridge catalog diverged from the canonical read-only catalog"
             );
         }
         let name = if unified { "search" } else { "airk_search" };

@@ -12,6 +12,7 @@ pub use named::{AtomicJobChild, NamedJobOpen};
 pub struct ChildJob(
     std::os::windows::io::OwnedHandle,
     std::sync::Mutex<Option<Vec<std::os::windows::io::OwnedHandle>>>,
+    u32,
 );
 #[cfg(not(windows))]
 pub struct ChildJob;
@@ -67,6 +68,17 @@ impl ChildJob {
                 } != 0,
                 "owned job limits unavailable"
             );
+            let process_limit = self.2;
+            anyhow::ensure!(
+                (1..=64).contains(&process_limit)
+                    && (limits.BasicLimitInformation.ActiveProcessLimit == 1
+                        || limits.BasicLimitInformation.ActiveProcessLimit == process_limit),
+                "owned job process ceiling changed"
+            );
+            anyhow::ensure!(
+                limits.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_ACTIVE_PROCESS != 0,
+                "owned job process ceiling unavailable"
+            );
             limits.BasicLimitInformation.LimitFlags |=
                 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
             limits.BasicLimitInformation.ActiveProcessLimit = 1;
@@ -86,12 +98,12 @@ impl ChildJob {
             struct ProcessList {
                 assigned: u32,
                 listed: u32,
-                ids: [usize; 32],
+                ids: [usize; 64],
             }
             let mut list = ProcessList {
                 assigned: 0,
                 listed: 0,
-                ids: [0; 32],
+                ids: [0; 64],
             };
             anyhow::ensure!(
                 unsafe {
@@ -103,8 +115,8 @@ impl ChildJob {
                         std::ptr::null_mut(),
                     )
                 } != 0
-                    && list.assigned <= 32
-                    && list.listed <= 32,
+                    && list.assigned <= process_limit
+                    && list.listed == list.assigned,
                 "owned descendant snapshot unavailable: {}",
                 std::io::Error::last_os_error()
             );
@@ -186,7 +198,24 @@ impl ChildJob {
 
     /// Failure is explicit: do not continue with an uncontained running child.
     pub fn attach(child: &mut std::process::Child) -> Result<Self> {
-        match Self::try_attach(child) {
+        Self::attach_with_process_limit(child, 32)
+    }
+
+    /// Contain an explicitly bounded aggregate topology. Ordinary child owners
+    /// retain the default 32-process ceiling; the caller must account for its
+    /// parent, workers and service descendants within this finite ceiling.
+    pub fn attach_with_process_limit(
+        child: &mut std::process::Child,
+        process_limit: u32,
+    ) -> Result<Self> {
+        let attached = (|| {
+            anyhow::ensure!(
+                (1..=64).contains(&process_limit),
+                "invalid owned process ceiling"
+            );
+            Self::try_attach(child, process_limit)
+        })();
+        match attached {
             Ok(job) => Ok(job),
             Err(error) => {
                 let _ = child.kill();
@@ -197,14 +226,14 @@ impl ChildJob {
     }
 
     #[cfg(not(windows))]
-    fn try_attach(_child: &std::process::Child) -> Result<Self> {
+    fn try_attach(_child: &std::process::Child, _process_limit: u32) -> Result<Self> {
         Ok(Self)
     }
 
     #[cfg(windows)]
-    fn try_attach(child: &std::process::Child) -> Result<Self> {
+    fn try_attach(child: &std::process::Child, process_limit: u32) -> Result<Self> {
         use std::os::windows::io::AsRawHandle;
-        let job = Self::unassigned()?;
+        let job = Self::unassigned_with_process_limit(process_limit)?;
         // SAFETY: both owned handles remain live; nested-job denial stays an error.
         if unsafe {
             windows_sys::Win32::System::JobObjects::AssignProcessToJobObject(
@@ -222,6 +251,11 @@ impl ChildJob {
     /// strengthen limits and assign that child before allowing execution.
     #[cfg(windows)]
     pub fn unassigned() -> Result<Self> {
+        Self::unassigned_with_process_limit(32)
+    }
+
+    #[cfg(windows)]
+    fn unassigned_with_process_limit(process_limit: u32) -> Result<Self> {
         use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
         use windows_sys::Win32::System::JobObjects::{
             CreateJobObjectW, JOB_OBJECT_LIMIT_ACTIVE_PROCESS, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
@@ -239,7 +273,11 @@ impl ChildJob {
         let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
         info.BasicLimitInformation.LimitFlags =
             JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
-        info.BasicLimitInformation.ActiveProcessLimit = 32;
+        anyhow::ensure!(
+            (1..=64).contains(&process_limit),
+            "invalid owned process ceiling"
+        );
+        info.BasicLimitInformation.ActiveProcessLimit = process_limit;
         // SAFETY: live handle and initialized fixed-size structure with correct byte count.
         if unsafe {
             SetInformationJobObject(
@@ -252,7 +290,7 @@ impl ChildJob {
         {
             return Err(std::io::Error::last_os_error().into());
         }
-        Ok(Self(handle, std::sync::Mutex::new(None)))
+        Ok(Self(handle, std::sync::Mutex::new(None), process_limit))
     }
 }
 
@@ -293,7 +331,9 @@ mod tests {
             // The parent attaches the job before allowing any descendant launch.
             std::io::stdin().read_exact(&mut [0])?;
             let mut ids = Vec::new();
-            for _ in 0..2 {
+            let count = std::env::var("AIRK_JOB_DRAIN_DESCENDANTS")
+                .map_or(Ok(2), |value| value.parse::<usize>())?;
+            for _ in 0..count {
                 let child = Command::new(std::env::current_exe()?)
                     .args([
                         "--exact",
@@ -312,6 +352,32 @@ mod tests {
 
     #[test]
     fn drain_confirms_descendant_exit_after_its_parent_has_already_exited() -> Result<()> {
+        drain_descendants(2, 32)
+    }
+
+    #[test]
+    fn aggregate_topology_retains_and_drains_more_than_32_owned_processes() -> Result<()> {
+        drain_descendants(34, 35)
+    }
+
+    #[test]
+    fn unsupported_process_ceiling_refuses_and_reaps_child() -> Result<()> {
+        let mut child = Command::new(std::env::current_exe()?)
+            .args([
+                "--exact",
+                "child_job::tests::descendant_fixture",
+                "--nocapture",
+            ])
+            .env("AIRK_JOB_DRAIN_FIXTURE", "descendant")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()?;
+        assert!(ChildJob::attach_with_process_limit(&mut child, 65).is_err());
+        assert!(child.try_wait()?.is_some());
+        Ok(())
+    }
+
+    fn drain_descendants(count: usize, process_limit: u32) -> Result<()> {
         use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
         use windows_sys::Win32::System::Threading::{
             OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject,
@@ -326,11 +392,35 @@ mod tests {
                 "--nocapture",
             ])
             .env("AIRK_JOB_DRAIN_FIXTURE", &receipt)
+            .env("AIRK_JOB_DRAIN_DESCENDANTS", count.to_string())
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
         let mut child = command.spawn()?;
-        let job = ChildJob::attach(&mut child)?;
+        let job = if process_limit == 32 {
+            ChildJob::attach(&mut child)?
+        } else {
+            ChildJob::attach_with_process_limit(&mut child, process_limit)?
+        };
+        let mut limits: windows_sys::Win32::System::JobObjects::JOBOBJECT_EXTENDED_LIMIT_INFORMATION =
+            unsafe { std::mem::zeroed() };
+        // SAFETY: retained owned job and correctly sized writable output.
+        assert_ne!(
+            unsafe {
+                windows_sys::Win32::System::JobObjects::QueryInformationJobObject(
+                job.0.as_raw_handle(),
+                windows_sys::Win32::System::JobObjects::JobObjectExtendedLimitInformation,
+                (&mut limits as *mut windows_sys::Win32::System::JobObjects::JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                std::mem::size_of_val(&limits) as u32,
+                std::ptr::null_mut(),
+            )
+            },
+            0
+        );
+        assert_eq!(
+            limits.BasicLimitInformation.ActiveProcessLimit,
+            process_limit
+        );
         child.stdin.take().unwrap().write_all(&[1])?;
         anyhow::ensure!(child.wait()?.success(), "descendant fixture failed");
         let mut processes = Vec::new();
@@ -366,7 +456,7 @@ mod tests {
             );
             processes.push(process);
         }
-        assert_eq!(processes.len(), 2);
+        assert_eq!(processes.len(), count);
         job.terminate_and_wait(Duration::from_secs(5))?;
         for process in processes {
             assert_eq!(

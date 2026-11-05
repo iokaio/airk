@@ -25,6 +25,79 @@ pub struct SourceDescriptor {
     pub original_root: String,
 }
 
+/// Exact retained source-name projection supplied only through protected native
+/// reads. Current catalog aliases cannot substitute for published aliases.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MemberSourceProjection {
+    pub source_root_id: SourceRootId,
+    pub original_root: String,
+    pub primary: bool,
+    pub aliases: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScopedSourceProjection {
+    pub publication: crate::evidence::RevisionEnvelope,
+    pub scope_fingerprint: Sha256Digest,
+    pub sources: Vec<MemberSourceProjection>,
+}
+
+impl ScopedSourceProjection {
+    pub fn validate(&self) -> Result<()> {
+        use crate::index_catalog::{MAX_SOURCE_ROOTS, unique_bounded};
+        use std::collections::BTreeSet;
+        ensure!(
+            !self.publication.collection.is_empty()
+                && self.publication.collection.len() <= 128
+                && self.publication.incarnation == self.publication.token.incarnation
+                && self.publication.generation == self.publication.token.generation
+                && self.publication.revision == self.publication.token.revision,
+            ScopeReadRefused
+        );
+        unique_bounded(
+            &self
+                .sources
+                .iter()
+                .map(|source| source.source_root_id)
+                .collect::<Vec<_>>(),
+            MAX_SOURCE_ROOTS,
+        )?;
+        let mut roots = BTreeSet::new();
+        let mut aliases = BTreeSet::new();
+        ensure!(
+            self.sources.iter().filter(|source| source.primary).count() <= 1,
+            ScopeReadRefused
+        );
+        for source in &self.sources {
+            ensure!(
+                roots.insert(&source.original_root)
+                    && source.original_root.len() <= 4096
+                    && std::path::Path::new(&source.original_root).is_absolute()
+                    && source.aliases.len() <= 16
+                    && (!source.primary || source.aliases.is_empty())
+                    && (source.primary || !source.aliases.is_empty()),
+                ScopeReadRefused
+            );
+            for alias in &source.aliases {
+                ensure!(
+                    !alias.is_empty()
+                        && alias.len() <= 32
+                        && alias.bytes().all(|byte| byte.is_ascii_lowercase()
+                            || byte.is_ascii_digit()
+                            || b"_-".contains(&byte))
+                        && aliases.insert(alias),
+                    ScopeReadRefused
+                );
+            }
+        }
+        ensure!(aliases.len() <= 16, ScopeReadRefused);
+        crate::index_catalog::encoded_size(self, crate::MAX_RESPONSE_BYTES)?;
+        Ok(())
+    }
+}
+
 /// Installed authorization identity only. This is not a freshness observation,
 /// a publication selector, a live grant check, or permission to widen a read.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

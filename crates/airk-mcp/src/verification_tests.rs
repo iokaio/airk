@@ -442,7 +442,11 @@ fn only_evidence_and_parse_catalogs_offer_explicit_verification_controls() {
             offered,
             !matches!(
                 tool.name.as_ref(),
-                "airk_status" | "airk_diagnostics" | "airk_capabilities" | "airk_help"
+                "airk_status"
+                    | "airk_diagnostics"
+                    | "airk_capabilities"
+                    | "airk_help"
+                    | "airk_query_scope"
             ),
             "{}",
             tool.name

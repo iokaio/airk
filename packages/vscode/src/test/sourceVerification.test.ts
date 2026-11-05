@@ -73,3 +73,51 @@ test('typed error receipts and per-step metadata survive structured details and 
     assert.throws(()=>toolFormArguments(schema,{verification_max_sources:'257'}));
     assert.match(markdown(original),/"source_verification"/);
 });
+
+test('actual response-wide combined verification receipts follow native member bindings into selected exports',()=>{
+    const check=receipt(),source=(check.sources as Value[])[0],nativeOrigin=(check.origins as Value[])[0];
+    const index=(number:number)=>`idx_${String(number).repeat(32)}`,root=(number:number)=>`src_${String(number).repeat(32)}`,project=(number:number)=>`prj_${String(number).repeat(32)}`;
+    const scope='ab'.repeat(32),publication=String(nativeOrigin.publication);
+    check.status='partial';check.requirements_satisfied=false;
+    source.source_root_id=root(1);source.project_ids=[project(1)];source.reference_ids=['ref-0'];
+    nativeOrigin.index_id=index(1);nativeOrigin.project_ids=[project(1)];
+    check.references=[{id:'ref-0',source_id:source.id,result_pointer:'/steps/0/result/citation',kind:'citation'}];
+    check.counts={...objectValue(check.counts),references:1};
+    const evidence=[1,2].map(number=>({step:'query',publication,citation:{path:source.path,content_hash:source.expected_hash,start_line:1,end_line:2},text:`member ${number}`,
+        origin:{index_id:index(number),source_root_id:root(number),project_ids:[project(number)],source_relative_path:source.source_relative_path,publication:{token:publication}}}));
+    const own={steps:[{result:{citation:structuredClone(evidence[0].citation),publication}}],source_verification:check};
+    const envelope:Value={status:'verification_failed',executed:true,scope_identity:scope,evidence,steps:[],
+        member_verification:{schema:'airk.combined-verification/1',scope_identity:scope,partial:true,error:{code:'member_verification_failed',retryable:false},members:[
+            {index_id:index(1),reference_bindings:[{member_pointer:'/steps/0/result',result_pointer:'/evidence/0'}],result:own},
+            {index_id:index(2),reference_bindings:[],result:{error:{code:'verification_deadline_exhausted',retryable:false},future_private_payload:'UNSELECTED_FINAL_PAYLOAD'}},
+        ]}};
+    const cards=evidenceCards(envelope),selected=selectedVerification(envelope,cards);
+    assert.equal(selected.requested,true);assert.equal(selected.observations.length,1);assert.equal(selected.accounting.with_retained_observations,1);
+    assert.deepEqual(selected.accounting.without_retained_observations,['record-1']);
+    const observation=selected.observations[0];
+    assert.equal(observation.index_id,index(1));assert.equal(observation.original_member_scope_identity,scope);
+    assert.equal(observation.original_status,'partial');assert.equal(observation.original_requirements_satisfied,false);
+    assert.deepEqual(observation.original_reference_associations,[{selected_reference_id:'ref-0',reference_id:'ref-0',member_pointer:'/steps/0/result/citation',result_pointer:'/evidence/0/citation'}]);
+    assert.equal((observation.references as Value[])[0].result_pointer,'/evidence/0/citation');
+    const value:WorkbenchSession={schema:1,id:'session',project:'a'.repeat(64),title:'Saved',createdAt:0,updatedAt:0,revision:0,omitted:0,
+        turns:[{id:'final',at:1000,input:'Combined',format:'structured',envelope}]};
+    const exported=JSON.parse(renderExport(value,'json','final',['record-0'])).turns[0].envelope;
+    assert.equal(exported.source_verification_observations[0].index_id,index(1));
+    assert.equal(exported.source_verification_observations[0].observed_to_unix_ms,check.observed_to_unix_ms);
+    assert.equal(JSON.stringify(exported).includes('UNSELECTED_FINAL_PAYLOAD'),false);
+    assert.match(renderExport(value,'markdown','final',['record-0']),/Selected evidence and dated source observations/);
+    assert.match(renderExport(value,'markdown','final',['record-0']),/original_member_scope_identity/);
+    for(const change of ['index','scope','binding','target','missing_binding'] as const){
+        const altered=structuredClone(envelope),final=objectValue(altered.member_verification),members=final.members as Value[];
+        if(change==='index')members[0].index_id=index(2);
+        if(change==='scope')final.scope_identity='cd'.repeat(32);
+        if(change==='binding')(members[0].reference_bindings as Value[])[0].result_pointer='/evidence/1';
+        if(change==='target')((altered.evidence as Value[])[0].citation as Value).start_line=2;
+        if(change==='missing_binding')members[0].reference_bindings=[];
+        const invalid=selectedVerification(altered,evidenceCards(altered));
+        assert.equal(invalid.requested,true);assert.equal(invalid.observations.length,0,change);
+    }
+    assert.equal(selectedVerification(envelope,[cards[1]]).observations.length,0,'identical paths/hashes/publications in another index cannot acquire this receipt');
+});
+
+function objectValue(value:unknown):Value{return value&&typeof value==='object'&&!Array.isArray(value)?value as Value:{};}

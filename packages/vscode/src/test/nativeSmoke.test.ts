@@ -4,7 +4,7 @@ import {test} from 'node:test';
 import {probeMcp} from '../native';
 import {record} from '../serviceClient';
 import {NativeServiceFixture} from './nativeServiceFixture';
-import {LaunchSpec} from '../model';
+import {LaunchSpec,UNIFIED_TOOLS} from '../model';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import {McpStdioSession} from '../mcpStdioSession';
@@ -40,7 +40,7 @@ test('one root-scoped MCP session survives late registration and rejects ambiguo
     try{
         const root=path.join(fixture.owner,'late-source');await fs.mkdir(root);
         session=(await McpStdioSession.open({command:fixture.launcher,args:['runtime','launch','--install-dir',fixture.install,'--','--root',root,'mcp'],cwd:fixture.owner,clientName:'root-recovery-test',clientVersion:'1.6.1'},60000)).session;
-        assert.equal((await session.request('tools/list',{},10000)).tools.length,28);
+        assert.equal((await session.request('tools/list',{},10000)).tools.length,UNIFIED_TOOLS.length);
         const body=(result:any)=>JSON.parse(result.content[0].text);
         // Repeated quick reads must complete cold verification without a diagnostics warm-up.
         let status=await quickStatus(session);
@@ -66,7 +66,7 @@ test('reviewed native setup verifies without starting inference', {skip:!process
     const fixture=await NativeServiceFixture.create(process.env.AIRK_TEST_BINARY!);
     try{
         const spec=await fixture.register('unindexed');
-        const result=await probeMcp(spec);assert.equal(result.tools.length,28);
+        const result=await probeMcp(spec);assert.equal(result.tools.length,UNIFIED_TOOLS.length);
         const quick=JSON.parse((record(result.status).content as {text:string}[])[0].text);
         if(quick.index_state==='unknown'){assertQuickStatusTimeout(quick);assert.equal(record(result.status).state,'index_unknown');}
         else {assertEmptySetupStatus(quick);assertSelectedScope(quick,spec);assert.equal(record(result.status).state,quick.index_state==='available'?undefined:'index_unavailable');}

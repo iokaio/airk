@@ -4,7 +4,7 @@ import { render } from 'preact';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { applyWorkbenchUpdate, defaultWorkbenchFormDraft, normalizeWorkbenchFormDraft, object, parseWorkbenchMessage, toolFormArguments, toolFormFields, Value, WorkbenchFormDraft, WorkbenchMessage, WorkbenchState, WorkbenchTurn } from '../workbenchContracts';
 import {verificationLabel} from '../sourceVerification';
-import { canonical, discoveryDetails, markdown, searchExecutionLabel } from '../workbenchRender';
+import { canonical, combinedReadDetails, discoveryDetails, markdown, materializeCapabilityMember, searchExecutionLabel, workbenchStepReportOmissions } from '../workbenchRender';
 import './style.css';
 declare function acquireVsCodeApi(): { postMessage(message:WorkbenchMessage):void };
 const vscode=acquireVsCodeApi(),send=(message:WorkbenchMessage)=>vscode.postMessage(message);
@@ -17,7 +17,7 @@ interface ToolFormProps {
 function ToolForm({state,issue,currentDraft,onSelect,onField,onReset,onIssue}:ToolFormProps){
     const draft=normalizeWorkbenchFormDraft(state.session?.formDraft)??defaultWorkbenchFormDraft(),tool=draft.activeTool,values=draft.values[tool]??{};
     const schema=object(state.operations?.[tool]),fields=toolFormFields(schema);
-    const submit=(execute:boolean)=>{try{const latest=currentDraft();if(!latest||latest.activeTool!==tool)throw new Error('Choose the tool form in the current session.');const args=toolFormArguments(schema,latest.values[tool]??{}),scope=latest.scope;send({type:'run',input:`${tool} form`,prepare:!execute,pathPrefix:scope,plan:{steps:[{id:'form',tool,args}],path_prefix:scope}});onIssue('');}catch(error){onIssue(error instanceof Error?error.message:'Review the form values.');}};
+    const submit=(execute:boolean)=>{try{const latest=currentDraft();if(!latest||latest.activeTool!==tool)throw new Error('Choose the tool form in the current session.');const args=toolFormArguments(schema,latest.values[tool]??{}),scope=latest.scope,queryScope:Value={};for(const key of ['project_ids','index_ids','member_availability']){if(args[key]!==undefined){queryScope[key]=args[key];delete args[key];}}send({type:'run',input:`${tool} form`,prepare:!execute,pathPrefix:scope,plan:{steps:[{id:'form',tool,args}],path_prefix:scope,...(Object.keys(queryScope).length?{query_scope:queryScope}:{})}});onIssue('');}catch(error){onIssue(error instanceof Error?error.message:'Review the form values.');}};
     return <details class="tool-form" open><summary>Tool form</summary><div class="tool-form-toolbar"><label>Operation<select aria-label="Operation" value={tool} onChange={e=>onSelect(e.currentTarget.value)}>{Object.keys(state.operations??{}).map(name=><option value={name}>{name}</option>)}</select></label><button class="icon-button" type="button" title="Reset this tool form" aria-label="Reset this tool form" disabled={!state.session} onClick={()=>onReset(tool)}><Icon name="reset"/></button></div><form onSubmit={e=>{e.preventDefault();submit(false);}}>
         {fields.map(field=><label key={field.name}>{field.label}{field.required?' *':''}
             {field.type==='boolean'||field.values?<select aria-label={field.label} required={field.required} value={values[field.name]??''} onChange={e=>onField(tool,field.name,e.currentTarget.value)}><option value="">{field.defaultValue!==undefined?`Default (${String(field.defaultValue)})`:'Default'}</option>{field.type==='boolean'?<><option value="true">Yes</option><option value="false">No</option></>:field.values?.map(value=><option value={value}>{value}</option>)}</select>
@@ -34,9 +34,29 @@ function countLabel(count:Value,unit:string):string {
     if(count.complete===true&&typeof count.total_matches==='number')return `${count.total_matches} ${unit} (${scope})`;
     return `${typeof count.lower_bound==='number'?`At least ${count.lower_bound} verified ${unit}`:'Total unknown'} (${scope}; total unknown)`;
 }
+function CombinedMemberDetails({member,display}:{member:Value;display?:import('../workbenchContracts').CapabilityFieldDisplay}){
+    const [opened,setOpened]=useState(false),native=object(object(member.result).structuredContent??member.result);
+    let materialized:Value|undefined,issue:string|undefined;
+    if(opened){try{materialized=materializeCapabilityMember(member.result,display);}catch(error){issue=error instanceof Error?error.message:'Capability display unavailable.';}}
+    const outcome=member.outcome??object(native.source_verification).status??(object(member.result).isError===true?'failed':'observed');
+    return <details onToggle={event=>setOpened(event.currentTarget.open)}><summary>{String(member.index_id)}: {String(outcome)}</summary>
+        <pre>{canonical({allocation:member.allocation,cutoff:member.cutoff,reference_bindings:member.reference_bindings})}</pre>
+        {native.source_verification&&<p>{verificationLabel(native.source_verification)}</p>}{native.execution&&<p>{searchExecutionLabel(native.execution)}</p>}
+        {issue&&<p class="warning">{issue} The complete original response remains available below.</p>}
+        {opened&&<pre>{canonical(materialized??member.result)}</pre>}
+    </details>;
+}
 function DiscoveryDetails({turn,state}:{turn:WorkbenchTurn;state:WorkbenchState}){
-    const details=useMemo(()=>discoveryDetails(turn.envelope??{}),[turn.envelope]);
-    return <>{turn.envelope?.scope_observation!==undefined&&<details><summary>Recorded scope observation</summary><p class="note">Authorization identity for the returned subset; current access and publication freshness remain separate.</p><pre>{canonical(turn.envelope.scope_observation)}</pre></details>}{turn.envelope?.source_verification&&<details open><summary>{verificationLabel(turn.envelope.source_verification)}</summary><p class="note">Dated saved-byte agreement; viewing this receipt performs no new check. Unsaved editor buffers, extraction accuracy and search completeness are not certified.</p><pre>{canonical(turn.envelope.source_verification)}</pre></details>}{details.map(step=><section class="discovery-details" aria-label={`${step.tool} discovery details`} key={step.id}>
+    const logical=state.metadataViews?.[turn.id]??turn.envelope??{};
+    const details=useMemo(()=>discoveryDetails(logical),[logical]);
+    const combined=useMemo(()=>combinedReadDetails(logical),[logical]);
+    return <>{state.metadataIssues?.[turn.id]&&<p class="warning">{state.metadataIssues[turn.id]}</p>}{workbenchStepReportOmissions(turn.envelope??{})>0&&<p class="warning">{workbenchStepReportOmissions(turn.envelope??{})} step reports exceed the supported display limit. The complete original response remains in copies and exports.</p>}{combined.map(({step,result})=><section class="discovery-details" key={'combined-'+step}><h3>{step?'Combined members for '+step:'Combined members'}</h3>
+        {result.schema==='airk.combined-verification/1'?<p class="note">Dated saved-source checks retain each member's complete receipt and original reference associations. Viewing them performs no new check.</p>:<p class="note">Each selected index runs once. Member publications describe an observation interval; they do not form one atomic snapshot.</p>}
+        <pre>{canonical({selection:result.selection,publication_vector:result.publication_vector,rank_policy:result.rank_policy,partial:result.partial,truncated:result.truncated,error:result.error,scope_identity:result.scope_identity,binding_basis:result.binding_basis})}</pre>
+        {state.capabilityDetails?.[turn.id]?.[step]?.state==='unavailable'&&<p class="warning">Shared capability fields could not be validated. Inspect the complete original response.</p>}
+        {(Array.isArray(result.members)?result.members:[]).map((raw,i)=><CombinedMemberDetails key={i} member={object(raw)} display={state.capabilityDetails?.[turn.id]?.[step]}/>)}
+    </section>)}{turn.envelope?.scope_observation!==undefined&&<details><summary>Recorded scope observation</summary><p class="note">Authorization identity for the returned subset; current access and publication freshness remain separate.</p><pre>{canonical(turn.envelope.scope_observation)}</pre></details>}{turn.envelope?.source_verification&&<details open><summary>{verificationLabel(turn.envelope.source_verification)}</summary><p class="note">Dated saved-byte agreement; viewing this receipt performs no new check. Unsaved editor buffers, extraction accuracy and search completeness are not certified.</p><pre>{canonical(turn.envelope.source_verification)}</pre></details>}{details.map(step=><section class="discovery-details" aria-label={`${step.tool} discovery details`} key={step.id}>
+        {step.indexId&&<p class="note">Index: <code>{step.indexId}</code> | Selected Projects: {step.projectIds?.length?step.projectIds.join(", "):"not observed"}</p>}
         {step.sourceVerification&&<details open><summary>{verificationLabel(step.sourceVerification)}</summary><p class="note">Saved disk bytes only, at the original observation time. Extraction, coverage, relevance and unsaved buffers remain qualified.</p><pre>{canonical(step.sourceVerification)}</pre></details>}
         {step.scopeObservation&&<details><summary>Recorded scope observation</summary><p class="note">Authorization identity for this returned subset. This record does not establish current access or publication freshness.</p><pre>{canonical({scope_observation:step.scopeObservation})}</pre></details>}
         {step.execution&&<details open><summary>Search execution</summary>{searchExecutionLabel(step.execution)&&<p class={step.execution.incomplete===true?'warning':'note'}>{searchExecutionLabel(step.execution)}</p>}<pre>{canonical(step.execution)}</pre></details>}
@@ -79,7 +99,7 @@ function Turn({turn,state}:{turn:WorkbenchTurn;state:WorkbenchState}){
     const selectionUi=format==='structured'&&cards.length>0;
     const selectionRow=()=><div class="selection-toolbar"><SelectAll count={rows.length} checked={allSelected} mixed={mixedSelection} onChange={selectMatching}/><button title={copySelectionTitle} aria-label={copySelectionLabel} disabled={!copySelectionAllowed} onClick={()=>send(copySelection)}>Copy selected ({selected.length})</button></div>;
     const planText=useMemo(()=>canonical(plan),[turn.envelope]);
-    const formatted=useMemo(()=>format==='json'?canonical(envelope):format==='markdown'?markdown(turn):'', [format,turn]);
+    const formatted=useMemo(()=>format==='json'?canonical(envelope):format==='markdown'?markdown(turn,undefined,state.metadataViews?.[turn.id]??turn.envelope):'', [format,turn]);
     const publicationNotice=publicationRelationLabel(state.publicationRelations?.[turn.id]??'unknown');
     const runPlan=(prepare:boolean)=>{try{const parsed=JSON.parse(draft);if(prepare){parsed.digest='';}send({type:'run',input:turn.input,prepare,plan:parsed});setIssue('');}catch{setIssue('Enter a valid JSON plan.');}};
     return <article class="turn">
@@ -109,7 +129,7 @@ function Turn({turn,state}:{turn:WorkbenchTurn;state:WorkbenchState}){
                     {cards.length>0&&selectionTooLarge&&<p class="note" role="status">Too many selected results to copy together. Select fewer results or use Save export.</p>}
                     {rows.slice(0,show).map(card=><div class="card" key={card.id}>
                         <div class="card-title"><input type="checkbox" aria-label={`Select ${card.path}:${card.start}`} checked={selected.includes(card.id)} onChange={e=>{const checked=e.currentTarget.checked;setSelected(previous=>checked?[...new Set([...previous,card.id])]:previous.filter(id=>id!==card.id));}}/><button class="source" onClick={()=>send({type:'open',turn:turn.id,card:card.id})}>{card.path}:{card.start}–{card.end}</button></div>
-                        <pre>{card.text}</pre><details class="source-details"><summary>Source details</summary><small>Step: {card.step}</small><pre>{canonical({location:card.location,sourceHash:card.hash,publication:card.publication})}</pre></details><button disabled={state.busy} onClick={()=>send({type:'context',turn:turn.id,card:card.id})}>Expand context</button>
+                        <pre>{card.text}</pre><details class="source-details"><summary>Source details</summary><small>Step: {card.step}</small><pre>{canonical({index_id:card.indexId,project_ids:card.projectIds,source_root_id:card.sourceRootId,source_relative_path:card.sourceRelativePath,location:card.location,sourceHash:card.hash,publication:card.publication})}</pre></details><button disabled={state.busy} onClick={()=>send({type:'context',turn:turn.id,card:card.id})}>Expand context</button>
                     </div>)}
                     {cards.length>0&&selectionRow()}
                     {rows.length>show&&<button onClick={()=>setShow(show+20)}>Show 20 more retained records</button>}
@@ -169,7 +189,7 @@ function App(){
     },[state.session?.id,latest?.id,!!latest?.envelope,latest?.error]);
     openMenu.current=menu;
     const toggle=(next:Menu,event:Event)=>{menuTrigger.current=(event.currentTarget as HTMLElement).getAttribute('aria-controls')??undefined;setMenu(menu===next?undefined:next);setTitle(state.session?.title??'');};
-    useEffect(()=>{const listener=(event:MessageEvent)=>{if(['state','status','saved','formDraft'].includes(event.data?.type)){setState(previous=>{const next=applyWorkbenchUpdate(previous,event.data);liveState.current=next;return next;});}else if(event.data?.type==='prefill'&&typeof event.data.input==='string'){setInput(event.data.input);composer.current?.focus();}};window.addEventListener('message',listener);send({type:'ready'});return()=>window.removeEventListener('message',listener);},[]);
+    useEffect(()=>{const listener=(event:MessageEvent)=>{if(['state','status','saved','formDraft'].includes(event.data?.type)){setState(previous=>{const next=applyWorkbenchUpdate(previous,event.data);liveState.current=next;return next;});}else if(event.data?.type==='prefillForm'){setMenu('add');}else if(event.data?.type==='prefill'&&typeof event.data.input==='string'){setInput(event.data.input);composer.current?.focus();}};window.addEventListener('message',listener);send({type:'ready'});return()=>window.removeEventListener('message',listener);},[]);
     useEffect(()=>{setHistory(-1);setFormIssue('');},[state.session?.id]);
     useEffect(()=>{const escape=(event:KeyboardEvent)=>{if(event.key==='Escape'&&openMenu.current){setMenu(undefined);requestAnimationFrame(()=>{document.querySelector<HTMLButtonElement>(`button[aria-controls="${menuTrigger.current}"]`)?.focus();});}},outside=(event:PointerEvent)=>{if(!(event.target as Element).closest('.menu-anchor'))setMenu(undefined);};document.addEventListener('keydown',escape);document.addEventListener('pointerdown',outside);return()=>{document.removeEventListener('keydown',escape);document.removeEventListener('pointerdown',outside);};},[]);
     const run=(prepare=false)=>{const current=currentDraft();if(current&&!state.busy&&(input.trim()||current.recipe)){send({type:'run',input,prepare,pathPrefix:current.scope,...(current.recipe?{recipe:current.recipe}:{})});setInput('');setHistory(-1);setMenu(undefined);}};

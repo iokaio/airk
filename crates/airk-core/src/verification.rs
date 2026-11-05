@@ -47,6 +47,20 @@ impl std::error::Error for VerificationProjectionChanged {}
 /// Late transport observations may consume output budget, but cannot leave a
 /// dated receipt pointing at evidence removed by subsequent projection.
 pub fn validate_projection(value: &serde_json::Value) -> Result<()> {
+    let mut visited = 0;
+    validate_projection_inner(value, 0, &mut visited)
+}
+
+fn validate_projection_inner(
+    value: &serde_json::Value,
+    depth: usize,
+    visited: &mut usize,
+) -> Result<()> {
+    *visited += 1;
+    ensure!(
+        depth <= 32 && *visited <= 32_768,
+        VerificationProjectionChanged
+    );
     if value["source_verification"]["schema"] == "airk.saved-source-verification/1" {
         let references = value["source_verification"]["references"]
             .as_array()
@@ -68,13 +82,274 @@ pub fn validate_projection(value: &serde_json::Value) -> Result<()> {
         }
     }
     if let Some(steps) = value.get("steps").and_then(serde_json::Value::as_array) {
-        for step in steps.iter().take(12) {
+        ensure!(
+            steps.len() <= crate::workbench::MAX_STEP_REPORTS,
+            VerificationProjectionChanged
+        );
+        for step in steps {
             if let Some(result) = step.get("result") {
-                validate_projection(result)?;
+                validate_projection_inner(result, depth + 1, visited)?;
             }
         }
     }
+    // A combined result retains complete native responses, including their
+    // independently dated receipts. Their JSON pointers remain relative to
+    // each native body; do not rebase them onto the composite or certify only
+    // its ranking references.
+    if let Some(members) = value.get("members").and_then(serde_json::Value::as_array) {
+        ensure!(
+            members.len() <= crate::index_catalog::MAX_SELECTION,
+            VerificationProjectionChanged
+        );
+        for member in members {
+            if let Some(result) = member.get("result") {
+                if value["schema"] == crate::combined_reads::COMBINED_READ_SCHEMA {
+                    let index = serde_json::from_value::<crate::index_catalog::IndexId>(
+                        member["index_id"].clone(),
+                    )
+                    .map_err(|_| VerificationProjectionChanged)?;
+                    let logical =
+                        crate::combined_reads::shared_values::materialize_combined_member_result(
+                            value, index,
+                        )
+                        .map_err(|_| VerificationProjectionChanged)?;
+                    validate_projection_inner(&logical, depth + 1, visited)?;
+                } else {
+                    validate_projection_inner(result, depth + 1, visited)?;
+                }
+            }
+        }
+    }
+    if value["schema"] == crate::combined_reads::COMBINED_READ_SCHEMA
+        && let Some(ranking) = value.get("ranking").and_then(serde_json::Value::as_array)
+    {
+        ensure!(ranking.len() <= 100, VerificationProjectionChanged);
+        for rank in ranking {
+            crate::combined_reads::materialize_ranked_origin(value, rank)
+                .map_err(|_| VerificationProjectionChanged)?;
+        }
+    }
+    if let Some(body) = value.get("structuredContent") {
+        validate_projection_inner(body, depth + 1, visited)?;
+    }
+    if let Some(verification) = value
+        .get("member_verification")
+        .filter(|verification| !verification.is_null())
+    {
+        validate_member_projection(value, verification, depth + 1, visited)?;
+    }
     Ok(())
+}
+
+fn validate_member_projection(
+    projection: &serde_json::Value,
+    verification: &serde_json::Value,
+    depth: usize,
+    visited: &mut usize,
+) -> Result<()> {
+    use crate::index_catalog::IndexId;
+    if verification["schema"] != "airk.combined-verification/1" {
+        // A failed native observation has no dated success claim to rebase.
+        // Retain its complete typed failure, rather than invent member receipts
+        // or lose the error while validating an unavailable observation.
+        let body = verification
+            .get("structuredContent")
+            .unwrap_or(verification);
+        ensure!(
+            verification["isError"] == true
+                || body.get("error").is_some_and(|error| !error.is_null()),
+            VerificationProjectionChanged
+        );
+        ensure!(
+            body.get("source_verification").is_none() && body.get("members").is_none(),
+            VerificationProjectionChanged
+        );
+        return Ok(());
+    }
+    ensure!(
+        verification["scope_identity"] == projection["scope_identity"]
+            && verification["scope_identity"].is_string(),
+        VerificationProjectionChanged
+    );
+    let members = verification["members"]
+        .as_array()
+        .ok_or(VerificationProjectionChanged)?;
+    ensure!(
+        members.len() <= crate::index_catalog::MAX_SELECTION,
+        VerificationProjectionChanged
+    );
+    let mut seen = std::collections::BTreeSet::new();
+    for member in members {
+        let index: IndexId = serde_json::from_value(member["index_id"].clone())
+            .map_err(|_| VerificationProjectionChanged)?;
+        ensure!(seen.insert(index), VerificationProjectionChanged);
+        let result = member.get("result").ok_or(VerificationProjectionChanged)?;
+        validate_projection_inner(result, depth + 1, visited)?;
+        let body = result.get("structuredContent").unwrap_or(result);
+        let Some(receipt) = body.get("source_verification") else {
+            // A complete failed observation may contain no source receipt.
+            ensure!(
+                result["isError"] == true
+                    || body.get("error").is_some_and(|error| !error.is_null()),
+                VerificationProjectionChanged
+            );
+            continue;
+        };
+        ensure!(
+            receipt["schema"] == "airk.saved-source-verification/1",
+            VerificationProjectionChanged
+        );
+        let bindings = member["reference_bindings"]
+            .as_array()
+            .ok_or(VerificationProjectionChanged)?;
+        let references = receipt["references"]
+            .as_array()
+            .ok_or(VerificationProjectionChanged)?;
+        ensure!(
+            bindings.len() <= MAX_REFERENCES && references.len() <= MAX_REFERENCES,
+            VerificationProjectionChanged
+        );
+        for reference in references {
+            let pointer = reference["result_pointer"]
+                .as_str()
+                .ok_or(VerificationProjectionChanged)?;
+            let binding = bindings
+                .iter()
+                .filter_map(|binding| {
+                    let prefix = binding["member_pointer"].as_str()?;
+                    let suffix = pointer.strip_prefix(prefix)?;
+                    (suffix.is_empty() || suffix.starts_with('/'))
+                        .then_some((prefix, suffix, binding))
+                })
+                .max_by_key(|(prefix, _, _)| prefix.len())
+                .ok_or(VerificationProjectionChanged)?;
+            let outer = binding.2["result_pointer"]
+                .as_str()
+                .ok_or(VerificationProjectionChanged)?;
+            ensure!(
+                binding.0.len() <= 4096
+                    && outer.len() <= 4096
+                    && (outer.is_empty() || outer.starts_with('/')),
+                VerificationProjectionChanged
+            );
+            let outer_pointer = format!("{outer}{}", binding.1);
+            let target = logical_projection_target(projection, &outer_pointer)?;
+            let checked = body
+                .pointer(pointer)
+                .filter(|target| !target.is_null())
+                .ok_or(VerificationProjectionChanged)?;
+            ensure!(&target == checked, VerificationProjectionChanged);
+            // Identical bytes in another index remain another authority. Find
+            // the explicit nearest member/flattened origin, never infer it from
+            // matching source paths or hashes.
+            let mut ancestor = outer_pointer.as_str();
+            let explicit = loop {
+                if let Some(value) = projection.pointer(ancestor)
+                    && let Some(raw) = value
+                        .pointer("/origin/index_id")
+                        .or_else(|| value.get("index_id"))
+                {
+                    break serde_json::from_value::<IndexId>(raw.clone()).ok();
+                }
+                let Some((parent, _)) = ancestor.rsplit_once('/') else {
+                    break None;
+                };
+                ancestor = parent;
+            };
+            ensure!(explicit == Some(index), VerificationProjectionChanged);
+        }
+    }
+    let inventory = ReferenceInventory::collect(projection);
+    ensure!(inventory.complete, VerificationProjectionChanged);
+    ensure!(
+        inventory.references.iter().all(|reference| reference
+            .index_id
+            .is_some_and(|index| seen.contains(&index))),
+        VerificationProjectionChanged
+    );
+    Ok(())
+}
+
+/// Resolve a reference at its ORIGINAL returned pointer while comparing a
+/// logical copy of an encoded member header. Evidence rows never move, and no
+/// receipt digest, saved plan result or raw projection is rewritten or rehashed.
+fn logical_projection_target(
+    projection: &serde_json::Value,
+    pointer: &str,
+) -> Result<serde_json::Value> {
+    let raw = projection
+        .pointer(pointer)
+        .filter(|value| !value.is_null())
+        .ok_or(VerificationProjectionChanged)?;
+    let mut ancestor = pointer;
+    loop {
+        if canonical_result_container(ancestor)
+            && let Some(combined) = projection.pointer(ancestor)
+            && combined["schema"] == crate::combined_reads::COMBINED_READ_SCHEMA
+        {
+            let relative = pointer
+                .strip_prefix(ancestor)
+                .ok_or(VerificationProjectionChanged)?;
+            let tail = relative
+                .strip_prefix("/members/")
+                .ok_or(VerificationProjectionChanged)?;
+            let (offset, suffix) = tail
+                .split_once("/result")
+                .ok_or(VerificationProjectionChanged)?;
+            ensure!(
+                suffix.is_empty() || suffix.starts_with('/'),
+                VerificationProjectionChanged
+            );
+            let offset = offset
+                .parse::<usize>()
+                .map_err(|_| VerificationProjectionChanged)?;
+            let member = combined
+                .get("members")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|members| members.get(offset))
+                .ok_or(VerificationProjectionChanged)?;
+            let index =
+                serde_json::from_value::<crate::index_catalog::IndexId>(member["index_id"].clone())
+                    .map_err(|_| VerificationProjectionChanged)?;
+            let logical = crate::combined_reads::shared_values::materialize_combined_member_result(
+                combined, index,
+            )
+            .map_err(|_| VerificationProjectionChanged)?;
+            return logical
+                .pointer(suffix)
+                .filter(|value| !value.is_null())
+                .cloned()
+                .ok_or_else(|| VerificationProjectionChanged.into());
+        }
+        let Some((parent, _)) = ancestor.rsplit_once('/') else {
+            break;
+        };
+        ancestor = parent;
+    }
+    Ok(raw.clone())
+}
+
+// Only transport envelopes and generated step results contain native codecs.
+// JSON embedded inside source records is ordinary evidence, even if it happens
+// to contain a schema with the same spelling.
+fn canonical_result_container(pointer: &str) -> bool {
+    let mut tokens = pointer.split('/').skip(1);
+    while let Some(token) = tokens.next() {
+        match token {
+            "structuredContent" => {}
+            "steps" => {
+                if !tokens
+                    .next()
+                    .is_some_and(|index| index.parse::<usize>().is_ok())
+                    || tokens.next() != Some("result")
+                {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+    }
+    true
 }
 
 mod inventory;
@@ -152,6 +427,32 @@ pub struct VerificationBudget {
     pub max_sources: usize,
     pub max_bytes: u64,
     pub deadline_ms: u64,
+}
+
+/// Internal deterministic share of a valid outer verification request. Zero
+/// means no source work is available for this member, never the public default.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VerificationAllocation {
+    pub max_sources: usize,
+    pub max_bytes: u64,
+    pub deadline_ms: u64,
+}
+impl VerificationAllocation {
+    pub fn apply(self, requested: VerificationBudget) -> Result<VerificationBudget> {
+        ensure!(
+            self.max_sources <= requested.max_sources
+                && self.max_bytes <= requested.max_bytes
+                && self.deadline_ms <= requested.deadline_ms,
+            "member verification allocation exceeds the requested outer budget"
+        );
+        Ok(VerificationBudget {
+            mode: requested.mode,
+            max_sources: self.max_sources,
+            max_bytes: self.max_bytes,
+            deadline_ms: self.deadline_ms,
+        })
+    }
 }
 
 impl VerificationControls {
@@ -462,6 +763,193 @@ mod tests {
             validate_projection(&plan)
                 .unwrap_err()
                 .is::<VerificationProjectionChanged>()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn encoded_file_info_final_bindings_compare_logical_copies_without_changing_raw() -> Result<()>
+    {
+        use crate::{
+            identity::{Incarnation, RevisionToken, Sha256Digest},
+            index_catalog::IndexId,
+        };
+        let index = IndexId::from_identity(Incarnation::from_bytes([21; 16]));
+        let other = IndexId::from_identity(Incarnation::from_bytes([22; 16]));
+        let publication = crate::evidence::RevisionEnvelope::new(
+            "fixture".into(),
+            RevisionToken {
+                incarnation: Incarnation::from_bytes([23; 16]),
+                generation: 1,
+                revision: Sha256Digest::from_bytes([24; 32]),
+            },
+        );
+        let logical = serde_json::json!({"path":"same.rs","content_hash":"ab".repeat(32),
+            "collection":"fixture".repeat(1024),"publication":publication,"generation":1});
+        let mut first = logical.clone();
+        let mut second = logical.clone();
+        first["publication"] = serde_json::json!({"member":0});
+        second["publication"] = serde_json::json!({"member":1});
+        let table = crate::combined_reads::header_templates::share_native_headers(&mut [
+            &mut first,
+            &mut second,
+        ])?
+        .expect("large repeated headers factor");
+        for mode in ["report", "require"] {
+            let mut projection = serde_json::json!({"scope_identity":"cd".repeat(32),"steps":[{"result":{
+                "schema":"airk.combined-read/1","shared_values":table,
+                "publication_vector":{"members":[{"index_id":index,"publication":publication},{"index_id":other,"publication":publication}]},
+                "members":[{"index_id":index,"result":first},{"index_id":other,"result":second}]}}],
+                "member_verification":{"schema":"airk.combined-verification/1","scope_identity":"cd".repeat(32),"members":[]}});
+            for (offset, id) in [index, other].iter().enumerate() {
+                projection["member_verification"]["members"].as_array_mut().unwrap().push(serde_json::json!({
+                    "index_id":id,"reference_bindings":[{"member_pointer":"/steps/0/result","result_pointer":format!("/steps/0/result/members/{offset}/result")}],
+                    "result":{"steps":[{"result":logical}],"source_verification":{"schema":"airk.saved-source-verification/1","mode":mode,
+                        "references":[{"result_pointer":"/steps/0/result"}]}}}));
+            }
+            let raw = projection.clone();
+            validate_projection(&projection)?;
+            let inventory = ReferenceInventory::collect(&projection);
+            assert!(inventory.complete);
+            assert!(
+                inventory
+                    .references
+                    .iter()
+                    .all(|reference| reference.publication == Some(publication.token))
+            );
+            assert_eq!(
+                projection, raw,
+                "decoding never rewrites returned receipt bytes"
+            );
+            projection["steps"][0]["result"]["shared_values"]["values"] = serde_json::json!({});
+            assert!(!ReferenceInventory::collect(&projection).complete);
+            assert!(validate_projection(&projection).is_err());
+        }
+        assert!(!canonical_result_container("/facts/0/attributes"));
+        Ok(())
+    }
+
+    #[test]
+    fn combined_projection_preserves_member_relative_receipts_and_checks_every_member() -> Result<()>
+    {
+        let member = serde_json::json!({"content":[],"structuredContent":{
+            "hits":[{"citation":{"path":"shared/a.rs"}}],
+            "source_verification":{"schema":"airk.saved-source-verification/1",
+                "references":[{"result_pointer":"/hits/0/citation"}]}}});
+        let mut combined = serde_json::json!({"schema":"airk.combined-read/1",
+            "members":[{"index_id":crate::index_catalog::IndexId::from_identity(crate::identity::Incarnation::from_bytes([1;16])),"result":member.clone()},
+                {"index_id":crate::index_catalog::IndexId::from_identity(crate::identity::Incarnation::from_bytes([2;16])),"result":member}]});
+        validate_projection(&combined)?;
+        combined["members"][1]["result"]["structuredContent"]["hits"] = serde_json::json!([]);
+        assert!(
+            validate_projection(&combined)
+                .unwrap_err()
+                .is::<VerificationProjectionChanged>()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn final_member_checks_bind_the_outer_qualified_projection_and_expire_after_clipping()
+    -> Result<()> {
+        use crate::{
+            identity::{Incarnation, RevisionToken, Sha256Digest},
+            index_catalog::{IndexId, QueryProjectId, SourceRootId},
+        };
+        let index = IndexId::from_identity(Incarnation::from_bytes([3; 16]));
+        let other = IndexId::from_identity(Incarnation::from_bytes([4; 16]));
+        let citation = serde_json::json!({"path":"same.rs","content_hash":"ab".repeat(32)});
+        let origin = serde_json::json!({"index_id":index,"source_root_id":SourceRootId::from_identity(Incarnation::from_bytes([5;16])),
+            "project_ids":[QueryProjectId::from_identity(Incarnation::from_bytes([6;16]))],"source_relative_path":"same.rs",
+            "publication":crate::evidence::RevisionEnvelope::new("fixture".into(),RevisionToken{incarnation:Incarnation::from_bytes([7;16]),generation:1,revision:Sha256Digest::from_bytes([8;32])})});
+        let mut projection = serde_json::json!({"scope_identity":"cd".repeat(32),"evidence":[{"citation":citation,"origin":origin}],
+            "member_verification":{"schema":"airk.combined-verification/1","scope_identity":"cd".repeat(32),"members":[{"index_id":index,
+                "reference_bindings":[{"member_pointer":"/steps/0/result","result_pointer":"/evidence/0"}],
+                "result":{"steps":[{"result":{"citation":citation}}],"source_verification":{"schema":"airk.saved-source-verification/1","references":[{"result_pointer":"/steps/0/result/citation"}]}}}]}});
+        validate_projection(&projection)?;
+        projection["evidence"][0]["origin"]["index_id"] = serde_json::json!(other);
+        assert!(
+            validate_projection(&projection).is_err(),
+            "identical bytes cannot change originating index"
+        );
+        projection["evidence"][0]["origin"]["index_id"] = serde_json::json!(index);
+        projection["evidence"][0]["citation"]["content_hash"] = serde_json::json!("ef".repeat(32));
+        assert!(
+            validate_projection(&projection).is_err(),
+            "changed source identity expires checked projection"
+        );
+        projection["evidence"] = serde_json::json!([]);
+        assert!(
+            validate_projection(&projection).is_err(),
+            "late clipping cannot retain an old member claim"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn expanded_plan_reports_validate_every_receipt_through_the_full_bound() -> Result<()> {
+        for count in [13, crate::workbench::MAX_STEP_REPORTS] {
+            let report = serde_json::json!({"result":{"hits":[{"citation":{"path":"fixture.rs"}}],
+                "source_verification":{"schema":"airk.saved-source-verification/1","references":[{"result_pointer":"/hits/0/citation"}]}}});
+            let mut value = serde_json::json!({"steps":vec![report.clone();count]});
+            validate_projection(&value)?;
+            value["steps"][count - 1]["result"]["hits"] = serde_json::json!([]);
+            assert!(
+                validate_projection(&value).is_err(),
+                "late fanout report {count} must remain validated"
+            );
+        }
+        let value = serde_json::json!({"steps":vec![serde_json::json!({});crate::workbench::MAX_STEP_REPORTS+1]});
+        assert!(validate_projection(&value).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn unavailable_final_observation_retains_its_failure_without_a_verification_claim() -> Result<()>
+    {
+        let mut value = serde_json::json!({"member_verification":{"isError":true,"structuredContent":{"error":{"code":"verification_reply_budget","verification_performed":false}}}});
+        validate_projection(&value)?;
+        value["member_verification"]["structuredContent"]["source_verification"] =
+            serde_json::json!({"schema":"airk.saved-source-verification/1","references":[]});
+        assert!(
+            validate_projection(&value).is_err(),
+            "an unavailable observation cannot carry an unbound dated claim"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn internal_member_allocations_never_expand_public_request_or_reinterpret_zero() -> Result<()> {
+        let requested = VerificationControls::default().resolve()?.unwrap();
+        let zero = VerificationAllocation {
+            max_sources: 0,
+            max_bytes: 0,
+            deadline_ms: 0,
+        };
+        assert_eq!(zero.apply(requested)?.max_sources, 0);
+        for share in [
+            VerificationAllocation {
+                max_sources: requested.max_sources + 1,
+                ..zero
+            },
+            VerificationAllocation {
+                max_bytes: requested.max_bytes + 1,
+                ..zero
+            },
+            VerificationAllocation {
+                deadline_ms: requested.deadline_ms + 1,
+                ..zero
+            },
+        ] {
+            assert!(share.apply(requested).is_err());
+        }
+        assert!(
+            VerificationControls {
+                verification_max_sources: Some(0),
+                ..Default::default()
+            }
+            .resolve()
+            .is_err()
         );
         Ok(())
     }

@@ -3,6 +3,73 @@ use super::*;
 use airk_core::{index_catalog::*, scoped_reads::SourceDescriptor, service::ProjectBinding};
 
 #[test]
+fn combined_delivery_poll_refuses_the_pre_persistence_pending_fence() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let (gate, _, authority, namespace) = fixture(directory.path().to_str().unwrap());
+    let issue = gate.begin_issue(namespace, CatalogRevision::INITIAL)?;
+    let mut delivered = 0;
+    gate.with_issue(issue, || delivered += 1)?;
+    assert_eq!(delivered, 1);
+    // This native close precedes any durable registry mutation. A persisted
+    // metadata snapshot alone would still see the original catalog revision.
+    let _pending = gate.close_request_admission(&request(namespace, &authority))?;
+    assert!(gate.with_issue(issue, || delivered += 1).is_err());
+    assert_eq!(delivered, 1, "revoked delivery effect must never be polled");
+    assert!(
+        gate.begin_issue(namespace, CatalogRevision::INITIAL)
+            .is_err()
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn combined_delivery_stops_an_actual_partial_native_write_after_admission_close() -> Result<()>
+{
+    use tokio::io::AsyncReadExt;
+    let directory = tempfile::tempdir()?;
+    let (gate, worker, authority, namespace) = fixture(directory.path().to_str().unwrap());
+    let issue = gate.begin_issue(namespace, CatalogRevision::INITIAL)?;
+    let response = airk_core::service::ControlResponse::CombinedDeliveryValidated {
+        receipt: airk_core::service::CombinedDeliveryReceipt {
+            schema: 1,
+            service_instance: worker.service,
+            namespace,
+            catalog_revision: CatalogRevision::INITIAL,
+            scope_identity: Sha256Digest::from_bytes([21; 32]),
+            result_digest: Sha256Digest::from_bytes([22; 32]),
+        },
+    };
+    let (mut reader, mut writer) = tokio::io::duplex(1);
+    let owner = gate.clone();
+    let writing = tokio::spawn(async move {
+        owner
+            .deliver_issue(issue, &mut writer, &response, Duration::from_secs(5))
+            .await
+    });
+    let mut prefix = [0; 1];
+    reader.read_exact(&mut prefix).await?;
+    let _pending = gate.close_request_admission(&request(namespace, &authority))?;
+    // Wake a writer already waiting for buffer capacity; its next actual poll
+    // must observe the close even though the registry clock is unchanged.
+    let mut buffered = [0; 1];
+    let buffered_bytes = reader.read(&mut buffered).await?;
+    let error = writing.await?.unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("combined_delivery_scope_expired"),
+        "{error:#}"
+    );
+    let mut remainder = Vec::new();
+    reader.read_to_end(&mut remainder).await?;
+    assert!(
+        buffered_bytes + remainder.len() < 4,
+        "a partial native frame cannot become a complete receipt"
+    );
+    Ok(())
+}
+
+#[test]
 fn retirement_captures_unscoped_worker_and_reopens_only_after_exact_reap_proof() -> Result<()> {
     let root = tempfile::tempdir()?;
     let (gate, worker, authority, namespace) = fixture(root.path().to_str().unwrap());

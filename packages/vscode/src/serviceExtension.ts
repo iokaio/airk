@@ -6,7 +6,7 @@ import { statSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import * as path from 'node:path';
 import { setupAgent, AgentSetupHost } from './agentSetup';
-import { launchArgs, LaunchSpec, McpVerification, unifiedEntry, ServerEntry } from './model';
+import { launchArgs, LaunchSpec, McpVerification, unifiedEntry, ServerEntry, UNIFIED_TOOLS } from './model';
 import { probeMcp, runText } from './native';
 import { automaticUpgrade, BootstrapObservation, nativeRunner, RuntimeBinding, RuntimeHost } from './serviceBootstrap';
 import { ConsoleRuntime, ServiceConsole, serviceRuntimeOptions } from './serviceConsole';
@@ -19,7 +19,8 @@ import { openUsagePanel, type AdministrativeIndexSelection, type UsageAccess } f
 import { ADMINISTRATIVE_USAGE_LABEL, renderUsage } from './usageReport';
 import { COMMAND_ROUTES, MANAGE_WORKSPACE_TRUST_COMMAND, NATIVE_COMMANDS } from './explorerCommands';
 import { CatalogObject, WindowContextDescriptor, catalogBound, catalogId, catalogObject, catalogRevision, catalogHex, validateNativeHostContext, validateWindowContext } from './indexingCatalog';
-import { reviewScopeSelection, scopeSelectionPreference, type ReviewedScopeSelection } from './scopeSelection';
+import { reviewScopeSelection, reviewCombinedScopeSelection, scopeSelectionPreference, type ReviewedWindowScopeSelection } from './scopeSelection';
+import type { SearchDraft } from './explorerDrafts';
 import { ExplorerSidebar } from './explorerSidebar';
 import { WorkbenchView } from './workbenchView';
 import type { ExplorerController, ExplorerHost } from './explorerController';
@@ -77,7 +78,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     private windowContextRead?:{identity:string;work:Promise<void>};
     private windowContextValue?:{identity:string;generation:number;controller:ServiceConsole['controller'];controlIdentity:string;response:CatalogObject;descriptor:WindowContextDescriptor};
     private specs:LaunchSpec[]=[];
-    private explicitCatalogScope?:{selection:ReviewedScopeSelection;spec:LaunchSpec;generation:number;window:string;controlIdentity:string;runtime:string};
+    private explicitCatalogScope?:{selection:ReviewedWindowScopeSelection;spec:LaunchSpec;generation:number;window:string;controlIdentity:string;runtime:string};
     // Early UI availability is deliberately separate from complete workspace MCP scopes.
     private selectedEligible?:{spec:LaunchSpec;opened:string;generation:number;folders:string;host:RuntimeHost};
     private selectedScope?:{root:string;collection:string|null;outcome:'registered'|'missing'|'removed'|'ambiguous';generation:number;folders:string;host:RuntimeHost};
@@ -248,7 +249,9 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             const saved=this.context.workspaceState.get('airk.scope.explicitWithdrawal.1');if(saved===undefined)return false;
             const value=catalogObject(saved);catalogBound(value,4096);
             if(value.schema!==1||!Array.isArray(value.project_ids)||!value.project_ids.length||value.project_ids.length>32||new Set(value.project_ids).size!==value.project_ids.length)throw new Error('invalid_scope_withdrawal');
-            catalogHex(value.namespace);catalogHex(value.host,64);catalogHex(value.context_key,64);catalogId(value.grant_id,'grt_');catalogRevision(value.expected_grant_revision);catalogId(value.index_id,'idx_');value.project_ids.forEach(id=>catalogId(id,'prj_'));
+            catalogHex(value.namespace);catalogHex(value.host,64);catalogHex(value.context_key,64);catalogId(value.grant_id,'grt_');catalogRevision(value.expected_grant_revision);value.project_ids.forEach(id=>catalogId(id,'prj_'));
+            if(value.index_id!==undefined)catalogId(value.index_id,'idx_');
+            if(value.index_ids!==undefined){if(!Array.isArray(value.index_ids)||!value.index_ids.length||value.index_ids.length>32||new Set(value.index_ids).size!==value.index_ids.length)throw new Error('invalid_scope_withdrawal');value.index_ids.forEach(id=>catalogId(id,'idx_'));}
             return true;
         }catch{return true;} // Uncertain local storage can withdraw access, never enable a legacy fallback.
     }
@@ -258,12 +261,29 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         if(!context||!binding||!controller.state.connected)throw new ServiceError('read_current_native_window_context_before_use_grant');
         const descriptor=validateNativeHostContext(context.response.descriptor);catalogHex(namespace);catalogRevision(revision);
         if(descriptor.namespace!==namespace||descriptor.catalog_revision!==revision)throw new ServiceError('read_current_native_window_context_before_use_grant');
-        if(Object.keys(input).sort().join(',')!=='expected_grant_revision,grant_id,index_id,project_ids'||!Array.isArray(input.project_ids)||!input.project_ids.length||input.project_ids.length>32||new Set(input.project_ids).size!==input.project_ids.length)throw new ServiceError('invalid_scope_selection');
-        const choice={grant_id:catalogId(input.grant_id,'grt_'),expected_grant_revision:catalogRevision(input.expected_grant_revision),index_id:catalogId(input.index_id,'idx_'),project_ids:input.project_ids.map(id=>catalogId(id,'prj_'))};
+        const keys=Object.keys(input).sort().join(','),legacy=keys==='expected_grant_revision,grant_id,index_id,project_ids';
+        if(!legacy&&keys!=='expected_grant_revision,grant_id,project_ids'&&keys!=='expected_grant_revision,grant_id,index_ids,project_ids')throw new ServiceError('invalid_scope_selection');
+        if(!Array.isArray(input.project_ids)||!input.project_ids.length||input.project_ids.length>32||new Set(input.project_ids).size!==input.project_ids.length)throw new ServiceError('invalid_scope_selection');
+        const common={grant_id:catalogId(input.grant_id,'grt_'),expected_grant_revision:catalogRevision(input.expected_grant_revision),project_ids:input.project_ids.map(id=>catalogId(id,'prj_'))};
         const current=()=>{this.trusted();if(!valid()||generation!==this.generation||binding!==this.binding||controller!==this.console.controller||controlIdentity!==controller.observationIdentity||context!==this.currentWindowContext())throw new ServiceError('stale_scope_selection');};
-        current();const grant=await controller.catalogRead({catalog_detail:{entity:{kind:'grant',id:choice.grant_id},expected_catalog_revision:revision}});current();
-        const index=await controller.catalogRead({catalog_detail:{entity:{kind:'index',id:choice.index_id},expected_catalog_revision:revision}});current();
-        const selection=reviewScopeSelection(choice,descriptor,grant.detail,index.detail),spec=nativeScopeLaunchSpec(binding,selection);current();
+        current();const grant=await controller.catalogRead({catalog_detail:{entity:{kind:'grant',id:common.grant_id},expected_catalog_revision:revision}});current();
+        let selection:ReviewedWindowScopeSelection,index:CatalogObject|undefined,indexes:CatalogObject[]|undefined;
+        if(legacy){
+            const choice={...common,index_id:catalogId(input.index_id,'idx_')};
+            index=await controller.catalogRead({catalog_detail:{entity:{kind:'index',id:choice.index_id},expected_catalog_revision:revision}});current();
+            selection=reviewScopeSelection(choice,descriptor,grant.detail,index.detail);
+        }else{
+            if(input.index_ids!==undefined&&(!Array.isArray(input.index_ids)||!input.index_ids.length||input.index_ids.length>32||new Set(input.index_ids).size!==input.index_ids.length))throw new ServiceError('invalid_scope_selection');
+            const subset=input.index_ids===undefined?undefined:(input.index_ids as unknown[]).map(id=>catalogId(id,'idx_'));
+            const frozen=catalogObject(catalogObject(catalogObject(grant.detail).item).value),members=catalogObject(frozen.grant).memberships;
+            if(!Array.isArray(members)||members.length>1024)throw new ServiceError('reviewed_scope_grant_unavailable');
+            const union=[...new Set(members.map(raw=>catalogObject(catalogObject(raw).membership)).filter(member=>common.project_ids.includes(String(member.project_id))).map(member=>catalogId(member.index_id,'idx_')))].sort();
+            const ids=subset??union;if(!ids.length||ids.length>32||ids.some(id=>!union.includes(id)))throw new ServiceError('scope_selection_outside_reviewed_grant');
+            indexes=[];
+            for(const id of ids){current();indexes.push(await controller.catalogRead({catalog_detail:{entity:{kind:'index',id},expected_catalog_revision:revision}}));current();}
+            selection=reviewCombinedScopeSelection({...common,...(subset?{index_ids:subset}:{})},descriptor,grant.detail,indexes.map(value=>value.detail));
+        }
+        const spec=nativeScopeLaunchSpec(binding,selection);current();
         // An inert local withdrawal survives reload; stored choices never activate access.
         await this.context.workspaceState.update('airk.scope.explicitWithdrawal.1',scopeSelectionPreference(selection));current();
         // No asynchronous gap between the final fence and publishing the new authority.
@@ -274,7 +294,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         this.trusted();if(this.currentCatalogScope()?.spec!==spec)throw new ServiceError('stale_scope_selection');
         await this.openWorkbenchAfterSetup();
         this.trusted();if(this.currentCatalogScope()?.spec!==spec)throw new ServiceError('stale_scope_selection');
-        return {selection,host_context:context.response,grant_detail:grant,index_detail:index,selected_subset:true};
+        return {selection,host_context:context.response,grant_detail:grant,...(index?{index_detail:index}:{}),...(indexes?{index_details:indexes}:{}),selected_subset:true};
     }
     /** Reported instead of probing: native status is never inferred while execution is off. */
     private renderNativeDisabled():void{
@@ -297,8 +317,8 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     isCurrent(spec:LaunchSpec):boolean{
         if(this.disposed||!this.currentBinding())return false;
         const selected=this.currentCatalogScope();
-        if(!spec.catalogSession&&(this.explicitCatalogScope||this.hasScopeWithdrawal()))return false;
-        const candidates=spec.catalogSession?selected?[selected.spec]:[]:this.specs;
+        if(!spec.catalogSession&&!spec.combinedSession&&(this.explicitCatalogScope||this.hasScopeWithdrawal()))return false;
+        const candidates=spec.catalogSession||spec.combinedSession?selected?[selected.spec]:[]:this.specs;
         return candidates.some(current=>current.command===spec.command&&current.dataDir===spec.dataDir&&current.collection===spec.collection&&current.service?.project===spec.service?.project&&JSON.stringify(launchArgs(current))===JSON.stringify(launchArgs(spec)));
     }
     subscribe(panel:vscode.WebviewPanel):void{this.context.subscriptions.push(panel);}
@@ -439,10 +459,26 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         if(selected?.length===1)return selected[0];
         return (await vscode.window.showQuickPick(this.specs.map(spec=>({label:spec.name,description:spec.root,spec})),{title:'AIRK registered project'}))?.spec;
     }
+    /** A combined evidence selection never implicitly targets its display member
+     * for management. Keep native metadata and the explicit picker fenced. */
+    private async managementProject(spec:LaunchSpec):Promise<string|undefined>{
+        if(!spec.combinedSession)return spec.service?.project;
+        const selected=this.currentCatalogScope(),context=this.currentWindowContext(),generation=this.generation,controller=this.console.controller,identity=controller.observationIdentity;
+        if(!selected||!context||selected.spec!==spec||!('indexes' in selected.selection))throw new ServiceError('explicit_scope_selection_changed');
+        const current=()=>{this.trusted();if(generation!==this.generation||selected!==this.currentCatalogScope()||context!==this.currentWindowContext()||identity!==controller.observationIdentity)throw new ServiceError('explicit_scope_selection_changed');};
+        current();const indexes=selected.selection.indexes;
+        const chosen=indexes.length===1?indexes[0]:(await vscode.window.showQuickPick(indexes.map(index=>({label:index.name,description:index.id,index})),{title:'Choose the index to manage'}))?.index;
+        current();if(!chosen)return;
+        const descriptor=validateNativeHostContext(context.response.descriptor),response=await controller.catalogRead({catalog_detail:{entity:{kind:'index',id:chosen.id},expected_catalog_revision:descriptor.catalog_revision}});current();
+        const detail=catalogObject(response.detail),item=catalogObject(detail.item),index=catalogObject(item.value),backing=catalogObject(index.backing);
+        if(detail.namespace!==descriptor.namespace||detail.revision!==descriptor.catalog_revision||item.kind!=='index'||index.id!==chosen.id||index.tombstone!==false||index.source_import!=='complete'
+            ||backing.binding!==chosen.backing.binding||backing.root!==chosen.backing.root||backing.data_root!==chosen.backing.data_root||backing.collection!==chosen.backing.collection)throw new ServiceError('crossed_native_index_administration');
+        return catalogHex(backing.binding,64);
+    }
     async resolveAgentSpec(spec:LaunchSpec):Promise<LaunchSpec>{
         this.trusted();
         if(!this.binding||!this.isCurrent(spec))throw new ServiceError('workspace_registration_changed');
-        if(spec.catalogSession)return spec;
+        if(spec.catalogSession||spec.combinedSession)return spec;
         const binding=this.binding,generation=this.generation,client=this.runtime().client(binding);
         try{
             const selected=await this.workspace.resolveConnection(binding,spec,async(after,revision)=>{
@@ -487,26 +523,26 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             if(this.explicitCatalogScope||this.hasScopeWithdrawal())throw new ServiceError('explicit_scope_selection_changed');
             await this.registerWorkspace();return;
         }
-        const spec=await this.chooseSpec(requested);if(!spec)return;this.trusted();
+        const spec=await this.chooseSpec(requested);if(!spec)return;this.trusted();const project=await this.managementProject(spec);if(!project)return;
         const generation=this.generation,binding=await this.runtime().ensure();this.trusted();
         if(generation!==this.generation||!this.isCurrent(spec))throw new ServiceError('workspace_registration_changed');
-        await this.enqueue(binding,spec.service!.project,'index');
+        await this.enqueue(binding,project,'index');
         await this.showManagement('#manage/activity');
     }
     async watching():Promise<void>{
         const spec=await this.chooseSpec();if(!spec)return;
         const selected=await vscode.window.showQuickPick([{label:'Automatic; continues after windows close',enabled:true},{label:'Manual',enabled:false}],{title:'Native source watching'});
-        if(!selected)return;this.trusted();const binding=await this.runtime().ensure(),client=this.runtime().client(binding);
-        try{this.trusted();await client.rpc({configure_watch:{project:spec.service!.project,enabled:selected.enabled}});this.trusted();}finally{client.dispose();}
+        if(!selected)return;this.trusted();const project=await this.managementProject(spec);if(!project)return;const binding=await this.runtime().ensure(),client=this.runtime().client(binding);
+        try{this.trusted();await client.rpc({configure_watch:{project,enabled:selected.enabled}});this.trusted();}finally{client.dispose();}
         await this.showManagement('#manage/indexing');
     }
     async repair(operation:'rebuild'|'auto'|'verify',requested?:LaunchSpec):Promise<void>{
-        const spec=await this.chooseSpec(requested);if(!spec)return;this.trusted();await this.runtime().ensure();this.trusted();
-        await this.console.previewRepair(spec.service!.project,operation);await this.showManagement('#manage/repair');
+        const spec=await this.chooseSpec(requested);if(!spec)return;this.trusted();const project=await this.managementProject(spec);if(!project)return;await this.runtime().ensure();this.trusted();
+        await this.console.previewRepair(project,operation);await this.showManagement('#manage/repair');
     }
     async pause(paused:boolean,requested?:LaunchSpec):Promise<void>{
-        const spec=await this.chooseSpec(requested);if(!spec)return;this.trusted();const binding=await this.runtime().ensure(),client=this.runtime().client(binding);
-        try{this.trusted();await client.rpc({pause:{project:spec.service!.project,paused}});this.trusted();}finally{client.dispose();}
+        const spec=await this.chooseSpec(requested);if(!spec)return;this.trusted();const project=await this.managementProject(spec);if(!project)return;const binding=await this.runtime().ensure(),client=this.runtime().client(binding);
+        try{this.trusted();await client.rpc({pause:{project,paused}});this.trusted();}finally{client.dispose();}
         await this.showManagement('#manage/activity');
     }
     async verify(spec?:LaunchSpec):Promise<void>{
@@ -529,7 +565,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             if(!selected)throw new Error('No project selected. Select a registered project and check again.');
             publish({phase:'preparing',message:`Checking the native registration for ${selected.name}…`});
             selected=await this.resolveAgentSpec(selected);
-            const result=await probeMcp(selected,28,this.runningVersion,this.connectionEntries(selected)[0],
+            const result=await probeMcp(selected,UNIFIED_TOOLS.length,this.runningVersion,this.connectionEntries(selected)[0],
                 message=>publish({phase:'checking',message}));
             publish({phase:'verified',tools:result.tools,checkedAt:Date.now(),handshakeMs:result.handshakeMs,
                 message:`AIRK responded with ${result.tools.length} tools. This checks AIRK; each agent must load its saved configuration separately.${record(result.status).state==='index_unknown'?' Index readiness is unconfirmed; call diagnostics or check again.':''}${result.handshakeMs!==undefined&&result.handshakeMs>10000?` The handshake took ${(result.handshakeMs/1000).toFixed(1)} seconds; an agent with a shorter startup deadline may time out.`:''}`,
@@ -582,7 +618,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     private usageWriter(spec:LaunchSpec,valid:()=>boolean):(args:string[],continuing?:()=>boolean)=>Promise<unknown>{
         return async(args,continuing)=>{
             this.trusted();if(!valid()||continuing?.()===false)throw new ServiceError('project_configuration_selection_changed');
-            if(spec.catalogSession)throw new ServiceError('explicit_index_administration_required');
+            if(spec.catalogSession||spec.combinedSession)throw new ServiceError('explicit_index_administration_required');
             let draft:Record<string,unknown>;
             if(args.length===1&&args[0]==='clear')draft={operation:'clear_usage'};
             else if(args.length===3&&args[0]==='configure'&&args[1]==='--mode'&&['disabled','aggregates-only','diagnostic-events'].includes(args[2]))draft={operation:'usage',mode:args[2].replaceAll('-','_')};
@@ -596,23 +632,26 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         };
     }
     private usageAccess(spec:LaunchSpec,valid:()=>boolean):UsageAccess{
-        return spec.catalogSession?{openIndexAdministration:()=>this.openIndexAdministration(spec,valid)}:{};
+        return spec.catalogSession||spec.combinedSession?{openIndexAdministration:()=>this.openIndexAdministration(spec,valid)}:{};
     }
     private async openIndexAdministration(spec:LaunchSpec,valid:()=>boolean):Promise<void>{
         this.trusted();const selected=this.currentCatalogScope(),context=this.currentWindowContext(),binding=this.binding,controller=this.console.controller,generation=this.generation,controlIdentity=controller.observationIdentity;
-        if(!selected||!context||!binding||!spec.catalogSession||!this.isUiCurrent(spec))throw new ServiceError('explicit_scope_selection_changed');
+        if(!selected||!context||!binding||(!spec.catalogSession&&!spec.combinedSession)||!this.isUiCurrent(spec))throw new ServiceError('explicit_scope_selection_changed');
         const descriptor=validateNativeHostContext(context.response.descriptor);
         const current=()=>{this.trusted();if(!valid()||generation!==this.generation||binding!==this.binding||context!==this.currentWindowContext()||selected!==this.currentCatalogScope()||controlIdentity!==controller.observationIdentity)throw new ServiceError('stale_index_administration_selection');};
-        current();const response=await controller.catalogRead({catalog_detail:{entity:{kind:'index',id:selected.selection.session.index_id},expected_catalog_revision:descriptor.catalog_revision}});current();
+        current();
+        const chosen='indexes' in selected.selection?await vscode.window.showQuickPick(selected.selection.indexes.map(index=>({label:index.name,description:index.id,index})),{title:'Choose an index for administration'}).then(value=>value?.index):selected.selection.index;
+        current();if(!chosen)return;
+        const response=await controller.catalogRead({catalog_detail:{entity:{kind:'index',id:chosen.id},expected_catalog_revision:descriptor.catalog_revision}});current();
         const detail=catalogObject(response.detail),item=catalogObject(detail.item),index=catalogObject(item.value),backing=catalogObject(index.backing);
-        if(detail.namespace!==descriptor.namespace||detail.revision!==descriptor.catalog_revision||item.kind!=='index'||index.id!==selected.selection.session.index_id||index.tombstone!==false||index.source_import!=='complete'
-            ||backing.binding!==selected.selection.index.backing.binding||backing.root!==selected.selection.index.backing.root||backing.data_root!==selected.selection.index.backing.data_root||backing.collection!==selected.selection.index.backing.collection)throw new ServiceError('crossed_native_index_administration');
+        if(detail.namespace!==descriptor.namespace||detail.revision!==descriptor.catalog_revision||item.kind!=='index'||index.id!==chosen.id||index.tombstone!==false||index.source_import!=='complete'
+            ||backing.binding!==chosen.backing.binding||backing.root!==chosen.backing.root||backing.data_root!==chosen.backing.data_root||backing.collection!==chosen.backing.collection)throw new ServiceError('crossed_native_index_administration');
         const command=binding.universalLauncher??binding.launcher;
         if(!command||binding.payloadVerified===false)throw new ServiceError('stable_launcher_unavailable');
         const administration:AdministrativeIndexSelection & {nativeObservation:{host_context:CatalogObject;index_detail:CatalogObject}}={purpose:'index_administration',label:ADMINISTRATIVE_USAGE_LABEL,namespace:descriptor.namespace,catalogRevision:descriptor.catalog_revision,indexId:String(index.id),backing:catalogHex(backing.binding,64),
             runtime:{installDir:binding.installDir,controlDir:binding.controlDir,runtimeSha256:binding.runtimeSha256},nativeObservation:{host_context:context.response,index_detail:response}};
-        const administrativeSpec:LaunchSpec={command,root:selected.selection.index.backing.root,dataDir:selected.selection.index.backing.data_root,collection:selected.selection.index.backing.collection,
-            name:`${selected.selection.index.name} · Entire Index administration`,service:{installDir:binding.installDir,project:administration.backing,...(binding.universalLauncher?{universal:true}:{})}};
+        const administrativeSpec:LaunchSpec={command,root:chosen.backing.root,dataDir:chosen.backing.data_root,collection:chosen.backing.collection,
+            name:`${chosen.name} · Entire Index administration`,service:{installDir:binding.installDir,project:administration.backing,...(binding.universalLauncher?{universal:true}:{})}};
         const authorized=()=>{try{current();return true;}catch{return false;}};current();
         await openUsagePanel(administrativeSpec,authorized,this.usageWriter(administrativeSpec,authorized),undefined,{administration});
     }
@@ -1066,6 +1105,15 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             windowContext:()=>this.currentWindowContext()?.descriptor,windowContextObservation:()=>this.currentWindowContext()?.response,
             prepareWindowContext:()=>this.prepareWindowContext(),onDidChangeWindowContext:this.windowContextChanges.event,
             useGrant:(choice,namespace,revision,valid)=>this.useGrant(choice,namespace,revision,valid),
+            prefillCombinedSearch:async(search:SearchDraft)=>{
+                this.trusted();const selected=this.currentCatalogScope(),spec=selected?.spec,session=spec?.combinedSession;
+                const choice=search as SearchDraft&{project_ids?:string[];index_ids?:string[]};
+                if(!selected||!spec||!session||!choice.project_ids||!this.workbench
+                    ||JSON.stringify([...choice.project_ids].sort())!==JSON.stringify(session.project_ids)
+                    ||JSON.stringify(choice.index_ids?[...choice.index_ids].sort():null)!==JSON.stringify(session.index_ids??null))throw new ServiceError('combined_draft_scope_changed');
+                await this.workbench.prefillSearchForm(spec,search);
+                this.trusted();if(this.currentCatalogScope()?.spec!==spec)throw new ServiceError('combined_draft_scope_changed');
+            },
             activeProject:()=>{
                 const active=vscode.window.activeTextEditor&&vscode.workspace.getWorkspaceFolder(vscode.window.activeTextEditor.document.uri);
                 const root=active&&this.roots.find(root=>same(root.opened,active.uri.fsPath));
@@ -1140,7 +1188,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         this.trusted();
         const entry=this.connectionEntries(spec)[0];
         await writeLaunchDescriptor(this.context.globalStorageUri.fsPath,this.context.extensionPath,this.runningVersion,undefined,()=>this.assistanceEnabled());
-        const result=await probeMcp(spec,28,this.runningVersion,entry);this.trusted();
+        const result=await probeMcp(spec,UNIFIED_TOOLS.length,this.runningVersion,entry);this.trusted();
         return result.tools;
     }
     provideAssistanceDefinitions():vscode.McpStdioServerDefinition[]{

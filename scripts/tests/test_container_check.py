@@ -20,11 +20,12 @@ class ContainerCheckTests(unittest.TestCase):
         names = [
             "capabilities", "changes", "code_facts", "context", "document_facts",
             "file_info", "help", "imports", "list_files", "outline", "read_file", "references",
-            "relationships", "search", "status", "diagnostics", "symbols", "parse", "projects", "draft_search",
+            "relationships", "search", "status", "diagnostics", "symbols", "parse", "query_scope", "projects", "draft_search",
             "draft_strategy", "draft_plan", "suggest_view", "list_templates", "get_template",
             "validate_draft", "proposal_status", "get_handoff"]
         for catalog, accepted in ((names, True), (names[:-1], False),
                                   ([name for name in names if name != "parse"], False),
+                                  ([name for name in names if name != "query_scope"], False),
                                   (names + ["airk_history"], False),
                                   (["airk_" + name for name in names[:16]], False),
                                   (names[:-1] + [names[0]], False)):
@@ -36,6 +37,10 @@ class ContainerCheckTests(unittest.TestCase):
                     {"id": 2, "result": {"tools": [{"name": name} for name in catalog]}},
                     {"id": 3, "result": {"content": [{"text": json.dumps({
                         "collection": "project-a", "items": [1]})}]}},
+                    {"id": 4, "result": {"content": [{"type": "text", "text": json.dumps({
+                        "schema": "airk.query-scope/1", "mode": "legacy", "status": "configuration_required",
+                        "projects": [], "indexes": [], "sources": [], "grant": None, "scope_revision": None,
+                        "truncated": False, "continuation": None})}]}},
                 )))
                 with patch.object(smoke.subprocess, "Popen", return_value=process):
                     if accepted:

@@ -12,6 +12,7 @@ pub mod catalog_source_change;
 pub mod catalog_source_draft;
 pub mod changes;
 pub mod code;
+pub mod combined_reads;
 pub mod compression;
 pub mod continuity;
 pub mod discovery;

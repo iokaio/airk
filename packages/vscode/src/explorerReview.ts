@@ -115,6 +115,7 @@ export interface ReviewContext { readonly session: EvidenceClient; readonly hand
 
 /** Restart the whole read-only report once; never combine results from attempts. */
 async function consistentReview<T extends { notes: readonly string[] }>(context: ReviewContext, read: (context: ReviewContext) => Promise<T>, restart = true): Promise<T> {
+    if (context.session.spec?.combinedSession) { throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED', 'Git Review requires one explicit source/index context; combined paths need an originating index. Use qualified evidence in Workbench.')); }
     const deadline = performance.now() + 90000;
     for (let attempt = 0; ; attempt++) {
         const cache = new Map<string, ReturnType<EvidenceClient['call']>>();
@@ -151,7 +152,7 @@ async function declarations(context: ReviewContext, paths: readonly string[]): P
         const args = { path_prefix: file, limit: 100, max_bytes: 32768 };
         const result = await context.session.call('airk_symbols', args, { timeout: 30000 });
         publication = samePublication(publication, result);
-        const view = factList({ tool: 'airk_symbols', args, limit: 100 }, result.payload, result.publication, context.project, context.handles);
+        const view = factList({ tool: 'airk_symbols', args, limit: 100 }, result.payload, result.publication, context.project, context.handles, result.rawPayload);
         const declarations = view.items.filter(item => /^[A-Za-z_$][\w$]{0,127}$/.test(item.name) && item.path === file);
         // Prefer written public/function/type signatures, then sample across files rather than
         // letting local variables in the first file consume the entire declaration budget.
@@ -176,7 +177,7 @@ async function references(context: ReviewContext, name: string, publication: str
     const args = { name, ...(prefix ? { path_prefix: prefix } : {}), limit: REVIEW_LIMITS.references, max_bytes: 16384 };
     const result = await context.session.call('airk_references', args, { timeout: 30000 });
     samePublication(publication, result);
-    const view = factList({ tool: 'airk_references', args, limit: REVIEW_LIMITS.references }, result.payload, result.publication, context.project, context.handles);
+    const view = factList({ tool: 'airk_references', args, limit: REVIEW_LIMITS.references }, result.payload, result.publication, context.project, context.handles, result.rawPayload);
     const hits = view.items.flatMap(item => item.startLine && (!prefix || item.path.startsWith(prefix)) ? [{ path: item.path, line: item.startLine, text: (item.detail ?? '').slice(0, 300) }] : []);
     return { hits, truncated: view.truncated || hits.length >= REVIEW_LIMITS.references };
 }

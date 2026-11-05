@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { ChangesView, CitationCheckView, InspectView } from '../explorerContracts';
 import { request } from './api';
-import { Facts } from './components';
+import { CompleteNativeResponse, Facts } from './components';
 import { OpenButton, useAsync } from './facts';
 import { ago, observed, shortToken } from './format';
 import type { ScreenProps } from './workspaces';
@@ -56,7 +56,9 @@ export function InspectorScreen(props: ScreenProps) {
                         <span class="spacer" /><OpenButton ref_={view.value.ref} />
                     </div>
                     <p>{view.value.liveMessage}</p>
+                    {view.value.nativeFailure && <p class="callout" role="alert">The native read failed its requested verification requirements. The complete attempted result is retained below.</p>}
                     {view.value.sourceVerification && <details><summary>Dated native source check</summary><pre>{JSON.stringify(view.value.sourceVerification, null, 2)}</pre></details>}
+                    <CompleteNativeResponse value={view.value.nativeResult} />
                     <Facts rows={[
                         ['Publication', <span title={view.value.publication}>{shortToken(view.value.publication)}</span>],
                         ['Indexed content hash', <code>{view.value.contentHash}</code>],

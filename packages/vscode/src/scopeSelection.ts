@@ -4,8 +4,8 @@
 import { createHash } from 'node:crypto';
 import * as path from 'node:path';
 import { catalogBound, catalogHex, catalogId, catalogObject, catalogRevision, validateCatalogScope, validateNativeHostContext } from './indexingCatalog';
-import { validateCatalogSession, type CatalogSessionSelector } from './catalogSession';
-export { validateCatalogSession, type CatalogSessionSelector } from './catalogSession';
+import { validateCatalogSession, validateCombinedCatalogSession, type CatalogSessionSelector, type CombinedCatalogSessionSelector } from './catalogSession';
+export { validateCatalogSession, validateCombinedCatalogSession, type CatalogSessionSelector, type CombinedCatalogSessionSelector } from './catalogSession';
 export interface ReviewedScopeChoice {
     grant_id: string; expected_grant_revision: number; index_id: string; project_ids: string[];
 }
@@ -16,6 +16,21 @@ export interface NativeScopeIndex {
 export interface ReviewedScopeSelection {
     session: CatalogSessionSelector; index: NativeScopeIndex; host: string;
     semanticIdentity: string; label: string;
+}
+export interface ReviewedCombinedScopeChoice {
+    grant_id:string;expected_grant_revision:number;project_ids:string[];index_ids?:string[];
+}
+export interface ReviewedCombinedScopeSelection {
+    session:CombinedCatalogSessionSelector;indexes:NativeScopeIndex[];host:string;semanticIdentity:string;label:string;
+}
+export type ReviewedWindowScopeSelection=ReviewedScopeSelection|ReviewedCombinedScopeSelection;
+export function combinedScopeSelectionIdentity(input:CombinedCatalogSessionSelector,nativeFingerprints?:ReadonlyArray<readonly [string,string]>):string {
+    const session=validateCombinedCatalogSession(input);
+    if(nativeFingerprints&&nativeFingerprints.length>32)throw new Error('invalid_combined_scope_fingerprints');
+    const fingerprints=nativeFingerprints?.map(([id,fingerprint])=>[catalogId(id,'idx_'),catalogHex(fingerprint,64)]).sort(([a],[b])=>a.localeCompare(b));
+    if(fingerprints&&(fingerprints.length>32||new Set(fingerprints.map(([id])=>id)).size!==fingerprints.length))throw new Error('invalid_combined_scope_fingerprints');
+    return createHash('sha256').update(JSON.stringify(['combined',session.namespace,session.context_key,session.grant_id,
+        session.expected_grant_revision,session.project_ids,session.index_ids??null,fingerprints??null])).digest('hex');
 }
 function exact(value: Record<string,unknown>, fields: string): void {
     if(Object.keys(value).sort().join(',')!==fields.split(',').sort().join(','))throw new Error('invalid_catalog_session_fields');
@@ -49,6 +64,30 @@ function detail(input: unknown, kind: string, namespace: string, revision: numbe
     const response=catalogObject(input);catalogBound(response);const item=catalogObject(response.item);
     if(response.namespace!==namespace||response.revision!==revision||item.kind!==kind)throw new Error('crossed_scope_selection_metadata');
     return catalogObject(item.value);
+}
+/** Native metadata review for a single explicit combined choice. Shared indexes
+ * are described once; their selected memberships remain separately attributed. */
+export function reviewCombinedScopeSelection(choiceInput:unknown,contextInput:unknown,grantDetail:unknown,indexDetails:unknown[]):ReviewedCombinedScopeSelection {
+    const choice=catalogObject(choiceInput),context=validateNativeHostContext(contextInput);
+    const keys=Object.keys(choice).sort().join(',');
+    if(keys!=='expected_grant_revision,grant_id,project_ids'&&keys!=='expected_grant_revision,grant_id,index_ids,project_ids')throw new Error('invalid_combined_scope_choice_fields');
+    const session=validateCombinedCatalogSession({schema:1,context_key:context.key,namespace:context.namespace,expected_catalog_revision:context.catalog_revision,...choice});
+    const persisted=detail(grantDetail,'grant',context.namespace,context.catalog_revision),grant=catalogObject(persisted.grant);
+    if(!Array.isArray(grant.memberships)||grant.memberships.length>1024)throw new Error('reviewed_scope_grant_unavailable');
+    const memberships=grant.memberships.map(raw=>catalogObject(catalogObject(raw).membership));
+    if(session.project_ids.some(project=>!memberships.some(member=>member.project_id===project)))throw new Error('scope_selection_outside_reviewed_grant');
+    const union=[...new Set(memberships.filter(member=>session.project_ids.includes(String(member.project_id))).map(member=>catalogId(member.index_id,'idx_')))].sort();
+    const selected=session.index_ids??union;
+    if(!selected.length||selected.length>32||selected.some(index=>!union.includes(index)))throw new Error('scope_selection_outside_reviewed_grant');
+    if(indexDetails.length!==selected.length)throw new Error('incomplete_scope_selection_metadata');
+    const details=new Map<string,unknown>();
+    for(const raw of indexDetails){const row=detail(raw,'index',context.namespace,context.catalog_revision),id=catalogId(row.id,'idx_');if(details.has(id)||!selected.includes(id))throw new Error('crossed_scope_selection_metadata');details.set(id,raw);}
+    const indexes=selected.map(index_id=>{
+        const project_ids=session.project_ids.filter(project=>memberships.some(member=>member.project_id===project&&member.index_id===index_id));
+        return reviewScopeSelection({grant_id:session.grant_id,expected_grant_revision:session.expected_grant_revision,index_id,project_ids},context,grantDetail,details.get(index_id)).index;
+    });
+    return {session,indexes,host:context.host,semanticIdentity:combinedScopeSelectionIdentity(session),
+        label:`${session.project_ids.length} selected Project${session.project_ids.length===1?'':'s'} · ${indexes.length} index${indexes.length===1?'':'es'}`};
 }
 /** Called only for the user's explicit Use Grant action. Defaults and context
  * preferences never select a grant, project subset or index here. */
@@ -98,7 +137,14 @@ export function reviewScopeSelection(input: ReviewedScopeChoice, contextInput: u
 /** Inert preference only. Restoring it never calls use(), connects or creates a
  * grant. The host must perform fresh native review after explicit user action. */
 export interface ScopeSelectionPreference extends ReviewedScopeChoice { schema:1; namespace:string; host:string; context_key:string }
-export function scopeSelectionPreference(selection: ReviewedScopeSelection): ScopeSelectionPreference {
+export function scopeSelectionPreference(selection: ReviewedScopeSelection): ScopeSelectionPreference;
+export function scopeSelectionPreference(selection: ReviewedCombinedScopeSelection): Omit<CombinedCatalogSessionSelector,'expected_catalog_revision'> & {host:string};
+export function scopeSelectionPreference(selection: ReviewedWindowScopeSelection): ScopeSelectionPreference|Omit<CombinedCatalogSessionSelector,'expected_catalog_revision'> & {host:string};
+export function scopeSelectionPreference(selection: ReviewedWindowScopeSelection): ScopeSelectionPreference|Omit<CombinedCatalogSessionSelector,'expected_catalog_revision'> & {host:string} {
+    if('indexes' in selection){
+        const {expected_catalog_revision:_clock,...session}=validateCombinedCatalogSession(selection.session);catalogHex(selection.host,64);
+        return {...session,host:selection.host};
+    }
     const session=validateCatalogSession(selection.session);catalogHex(selection.host,64);
     return {schema:1,namespace:session.namespace,host:selection.host,context_key:session.context_key,
         grant_id:session.grant_id,expected_grant_revision:session.expected_grant_revision,index_id:session.index_id,project_ids:[...session.project_ids]};
@@ -108,12 +154,12 @@ export function scopePreferenceKey(namespace:string,host:string,contextKey:strin
     return 'airk.scope.preference.1.'+createHash('sha256').update(JSON.stringify([namespace,host,contextKey])).digest('hex');
 }
 export class WindowScopeSelection {
-    private value?:ReviewedScopeSelection;
+    private value?:ReviewedWindowScopeSelection;
     private epoch=0;
     get generation():number{return this.epoch;}
-    get current():ReviewedScopeSelection|undefined{return this.value?structuredClone(this.value):undefined;}
+    get current():ReviewedWindowScopeSelection|undefined{return this.value?structuredClone(this.value):undefined;}
     /** Explicit user action only; caller invalidates active transports/turns
      * before publishing this selection. Captured user evidence is retained. */
-    use(selection:ReviewedScopeSelection):void {this.value=structuredClone(selection);this.epoch++;}
+    use(selection:ReviewedWindowScopeSelection):void {this.value=structuredClone(selection);this.epoch++;}
     clear():void {this.value=undefined;this.epoch++;}
 }

@@ -670,6 +670,7 @@ struct Native {
     control: PathBuf,
     ready: Arc<RuntimeReadiness>,
     backend: Arc<dyn RemoteTools>,
+    owns_readiness: bool,
 }
 impl RemoteTools for Native {
     fn local_help(&self) -> bool {
@@ -678,14 +679,34 @@ impl RemoteTools for Native {
     fn scoped_selection(&self) -> Option<&airk_core::service::ScopedConnectRequest> {
         self.backend.scoped_selection()
     }
+    fn combined_selection(&self) -> Option<&airk_core::service::CombinedConnectRequest> {
+        self.backend.combined_selection()
+    }
+    fn catalog(&self) -> Vec<airk_mcp::remote::Tool> {
+        self.backend.catalog()
+    }
+    fn uses_response_mode(&self, tool: &str) -> bool {
+        self.backend.uses_response_mode(tool)
+    }
     fn query_concurrency(&self) -> usize {
         crate::service_resource_policy::query_concurrency(&self.control)
     }
     fn close(&self) {
+        if self.owns_readiness {
+            self.ready.close_admission();
+        }
         self.backend.close();
     }
     fn shutdown(&self) -> airk_mcp::remote::ReadyFuture<'_> {
-        self.backend.shutdown()
+        Box::pin(async move {
+            let backend = self.backend.shutdown().await;
+            let readiness = if self.owns_readiness {
+                self.ready.shutdown().await
+            } else {
+                Ok(())
+            };
+            backend.and(readiness)
+        })
     }
     fn prepare(&self) -> airk_mcp::remote::ReadyFuture<'_> {
         Box::pin(async move {
@@ -699,12 +720,141 @@ impl RemoteTools for Native {
         self.backend.client(client);
     }
     fn call(&self, tool: String, arguments: Map<String, Value>) -> RemoteFuture<'_> {
+        self.call_with_capacity(tool, arguments, self.query_concurrency())
+    }
+    fn call_with_capacity(
+        &self,
+        tool: String,
+        arguments: Map<String, Value>,
+        capacity: usize,
+    ) -> RemoteFuture<'_> {
         Box::pin(async move {
+            if matches!(tool.as_str(), "status" | "airk_status")
+                && let Some(selection) = self.backend.combined_selection()
+            {
+                if let Some(install) = &self.install {
+                    match tokio::time::timeout(
+                        Duration::from_secs(10),
+                        self.ready.prepare_status(install, &self.control),
+                    )
+                    .await
+                    {
+                        Ok(Ok(())) => {}
+                        Ok(Err(error)) => {
+                            return Ok(combined_status_unavailable(
+                                selection,
+                                if error.is::<airk_mcp::remote::PreparationExpired>() {
+                                    "combined_status_prepare_timeout"
+                                } else {
+                                    "combined_status_prepare_unavailable"
+                                },
+                                "prepare",
+                                Some(false),
+                            ));
+                        }
+                        Err(_) => {
+                            return Ok(combined_status_unavailable(
+                                selection,
+                                "combined_status_prepare_timeout",
+                                "prepare",
+                                Some(false),
+                            ));
+                        }
+                    }
+                }
+                return match tokio::time::timeout(
+                    Duration::from_secs(2),
+                    self.backend.call_with_capacity(tool, arguments, capacity),
+                )
+                .await
+                {
+                    Ok(Ok(result)) => Ok(result),
+                    Ok(Err(_)) => Ok(combined_status_unavailable(
+                        selection,
+                        "combined_status_observation_unavailable",
+                        "observation",
+                        None,
+                    )),
+                    Err(_) => Ok(combined_status_unavailable(
+                        selection,
+                        "combined_status_timeout",
+                        "observation",
+                        None,
+                    )),
+                };
+            }
             if let Some(install) = &self.install {
                 self.ready.ensure(install, &self.control).await?;
             }
-            self.backend.call(tool, arguments).await
+            self.backend
+                .call_with_capacity(tool, arguments, capacity)
+                .await
         })
+    }
+}
+
+fn combined_status_unavailable(
+    selection: &airk_core::service::CombinedConnectRequest,
+    code: &str,
+    stage: &str,
+    submitted: Option<bool>,
+) -> Value {
+    let body = json!({"version":env!("CARGO_PKG_VERSION"),"health":"unknown","index_state":"unknown","publication":null,"publication_vector":null,"files":null,"chunks":null,
+        "member_observations":{"state":"unknown","members":null,"selection_confirmed":false},
+        "error":{"code":code,"stage":stage,"retryable":true,"query_submitted":submitted,"query_replay_safe":false,"fresh_brokerage_required":true},
+        "requested_scope":{"confirmed":false,"selection":selection}});
+    json!({"content":[{"type":"text","text":body.to_string()}],"structuredContent":body,"isError":true})
+}
+
+/// Reuse the installed-runtime lifecycle owner for new read frontends. The
+/// wrapped owner remains responsible for its selected native connections.
+pub(crate) fn with_runtime_readiness(
+    install: Option<PathBuf>,
+    control: PathBuf,
+    backend: Arc<dyn RemoteTools>,
+) -> Arc<dyn RemoteTools> {
+    Arc::new(Native {
+        install,
+        control,
+        ready: Arc::new(RuntimeReadiness::default()),
+        backend,
+        owns_readiness: true,
+    })
+}
+
+/// One combined native authority under the same unified MCP endpoint. Explorer
+/// requests carry no arbitrary legacy binding or guessed source-folder origin.
+pub async fn serve_combined(
+    backend: Arc<dyn RemoteTools>,
+    descriptor: Option<PathBuf>,
+) -> Result<()> {
+    ensure!(
+        backend.combined_selection().is_some(),
+        "combined native selection required"
+    );
+    let explorer = descriptor.map(|descriptor| {
+        Arc::new(Explorer {
+            descriptor,
+            roots: BTreeMap::new(),
+            scopes: BTreeMap::new(),
+            control: PathBuf::new(),
+        }) as Arc<dyn ExplorerTools>
+    });
+    let backend = Arc::new(Unified::combined(backend, explorer)?);
+    crate::client_owner::watch()?;
+    let close = backend.clone();
+    let result = airk_mcp::remote::serve_with_input_lifecycle(
+        backend.clone(),
+        Arc::new(move || close.close()),
+    )
+    .await;
+    let cleanup = backend.shutdown().await;
+    match (result, cleanup) {
+        (Err(error), Err(cleanup)) => {
+            Err(error.context(format!("combined native cleanup also failed: {cleanup:#}")))
+        }
+        (Err(error), _) => Err(error),
+        (Ok(()), cleanup) => cleanup,
     }
 }
 impl ExplorerTools for Explorer {
@@ -886,6 +1036,7 @@ async fn serve_selected(
                     install: install.clone(),
                     control: control.clone(),
                     ready: ready.clone(),
+                    owns_readiness: false,
                     backend: match &selection {
                         Some(selection) => crate::project_client::scoped_tools(
                             control.clone(),

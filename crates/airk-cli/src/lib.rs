@@ -10,6 +10,7 @@ mod catalog_index_setup_control;
 mod catalog_source_change_control;
 #[cfg(test)]
 mod catalog_test_fixture;
+pub mod combined_frontend;
 pub mod embedding_client;
 pub mod embedding_pool_bootstrap;
 pub mod embedding_pool_client;

@@ -11,16 +11,24 @@ use std::{
 const MAX_ARGUMENT_BYTES: usize = 64 * 1024;
 
 trait ToolSession {
+    fn catalog(&self) -> Vec<airk_mcp::remote::Tool> {
+        tools()
+    }
     async fn call(&self, tool: String, arguments: Map<String, Value>) -> Result<Value>;
 }
 
 struct RemoteSession(std::sync::Arc<dyn airk_mcp::remote::RemoteTools>);
 impl ToolSession for RemoteSession {
+    fn catalog(&self) -> Vec<airk_mcp::remote::Tool> {
+        self.0.catalog()
+    }
     async fn call(&self, tool: String, mut arguments: Map<String, Value>) -> Result<Value> {
-        arguments.entry("response_mode").or_insert_with(|| {
-            serde_json::to_value(airk_mcp::response::ResponseMode::from_environment())
-                .expect("scalar response mode")
-        });
+        if self.0.uses_response_mode(&tool) {
+            arguments.entry("response_mode").or_insert_with(|| {
+                serde_json::to_value(airk_mcp::response::ResponseMode::from_environment())
+                    .expect("scalar response mode")
+            });
+        }
         airk_mcp::remote::call_observed(self.0.as_ref(), tool, arguments).await
     }
 }
@@ -114,12 +122,33 @@ mod parity_tests {
         );
         Ok(())
     }
+
+    #[tokio::test]
+    async fn cli_discovery_honors_the_same_response_options_as_the_mcp_bridge() -> Result<()> {
+        let backend = Arc::new(Backend {
+            limit: AtomicUsize::new(16),
+        });
+        let session = RemoteSession(backend);
+        for tool in ["airk_query_scope", "query_scope"] {
+            let reply = session
+                .call(
+                    tool.into(),
+                    json!({"view":"projects"}).as_object().unwrap().clone(),
+                )
+                .await?;
+            assert_eq!(
+                reply["structuredContent"]["arguments"],
+                json!({"view":"projects"})
+            );
+        }
+        Ok(())
+    }
 }
 
 #[derive(Subcommand)]
 #[command(disable_help_subcommand = true)]
 pub enum ToolsCommand {
-    /// List the 18 native prefixed tools; --json includes schemas. Unified MCP adds projects and nine Explorer Assistance tools.
+    /// List the connection's native prefixed tools; --json includes schemas. Unified MCP also supplies scope discovery and Explorer Assistance.
     List {
         #[arg(long)]
         json: bool,
@@ -154,6 +183,10 @@ fn print_json(value: &impl serde::Serialize) -> Result<()> {
 
 /// Metadata inspection works even before a workspace has been indexed.
 pub fn inspect(action: &ToolsCommand) -> Result<bool> {
+    inspect_catalog(action, tools())
+}
+
+fn inspect_catalog(action: &ToolsCommand, catalog: Vec<airk_mcp::remote::Tool>) -> Result<bool> {
     match action {
         ToolsCommand::Call {
             tool,
@@ -167,9 +200,24 @@ pub fn inspect(action: &ToolsCommand) -> Result<bool> {
             print_json(&result)?;
             ensure!(result["isError"] != true, "AIRK help request failed");
         }
-        ToolsCommand::List { json: true } => print_json(&json!({"tools": tools()}))?,
+        ToolsCommand::Call {
+            tool,
+            args,
+            args_file,
+        } if tool == "airk_query_scope" => {
+            let result = airk_mcp::combined::legacy_discovery(Value::Object(arguments(
+                args.as_deref(),
+                args_file.as_deref(),
+            )?));
+            print_json(&result)?;
+            ensure!(
+                result["isError"] != true,
+                "AIRK scope discovery request failed"
+            );
+        }
+        ToolsCommand::List { json: true } => print_json(&json!({"tools": catalog}))?,
         ToolsCommand::List { json: false } => {
-            for tool in tools() {
+            for tool in catalog {
                 println!(
                     "{}\n  {}",
                     tool.name,
@@ -182,7 +230,7 @@ pub fn inspect(action: &ToolsCommand) -> Result<bool> {
             tool: name,
             json: raw,
         } => {
-            let tool = tools()
+            let tool = catalog
                 .into_iter()
                 .find(|tool| tool.name == *name)
                 .with_context(|| format!("Unknown MCP tool '{name}'. Use 'airk tools list'."))?;
@@ -341,8 +389,71 @@ pub async fn run_remote_selected(
             )
             .await
         }
-        ToolsCommand::Shell => shell(&session, root, data, collection).await,
+        ToolsCommand::Shell => shell(&session, root, Some(data), collection).await,
         _ => unreachable!("tool metadata handled before connection"),
+    }
+}
+
+/// Combined sessions use the backend's canonical catalog for calls, shell help
+/// and argument templates. The same backend is also served over MCP.
+pub async fn run_backend(
+    action: ToolsCommand,
+    backend: std::sync::Arc<dyn airk_mcp::remote::RemoteTools>,
+    defaults: Map<String, Value>,
+) -> Result<()> {
+    struct SelectedSession {
+        remote: RemoteSession,
+        defaults: Map<String, Value>,
+    }
+    impl ToolSession for SelectedSession {
+        fn catalog(&self) -> Vec<airk_mcp::remote::Tool> {
+            self.remote.catalog()
+        }
+        async fn call(&self, tool: String, mut arguments: Map<String, Value>) -> Result<Value> {
+            for (key, value) in &self.defaults {
+                ensure!(!arguments.contains_key(key), "conflicting {key} selections");
+                arguments.insert(key.clone(), value.clone());
+            }
+            self.remote.call(tool, arguments).await
+        }
+    }
+    let session = SelectedSession {
+        remote: RemoteSession(backend.clone()),
+        defaults,
+    };
+    let result = async {
+        match action {
+            ToolsCommand::Call {
+                tool,
+                args,
+                args_file,
+            } => {
+                call(
+                    &session,
+                    tool,
+                    arguments(args.as_deref(), args_file.as_deref())?,
+                    true,
+                )
+                .await
+            }
+            ToolsCommand::Shell => {
+                shell(&session, Path::new("."), None, "explicit combined session").await
+            }
+            action => {
+                inspect_catalog(&action, session.catalog())?;
+                Ok(())
+            }
+        }
+    }
+    .await;
+    backend.close();
+    let cleanup = backend.shutdown().await;
+    match (result, cleanup) {
+        (Err(error), Err(cleanup)) => {
+            Err(error.context(format!("combined session cleanup also failed: {cleanup:#}")))
+        }
+        (Err(error), _) => Err(error),
+        (_, cleanup) => cleanup,
     }
 }
 
@@ -355,14 +466,20 @@ fn shell_help() {
 async fn shell(
     session: &impl ToolSession,
     root: &Path,
-    data: &Path,
+    data: Option<&Path>,
     collection: &str,
 ) -> Result<()> {
     // Debug formatting escapes control characters in user-selected paths/names.
-    println!(
-        "AIRK Tools\nCollection: {:?}\nWorkspace: {:?}\nStorage: {:?}\n",
-        collection, root, data
-    );
+    if let Some(data) = data {
+        println!(
+            "AIRK Tools\nCollection: {:?}\nWorkspace: {:?}\nStorage: {:?}\n",
+            collection, root, data
+        );
+    } else {
+        println!(
+            "AIRK Tools\nExplicit reviewed combined session. Use query_scope to inspect permitted members.\n"
+        );
+    }
     shell_help();
     let stdin = std::io::stdin();
     let mut input = stdin.lock();
@@ -412,13 +529,16 @@ async fn console_command(session: &impl ToolSession, root: &Path, line: &str) ->
     let rest = rest.trim();
     match command {
         "list" if rest.is_empty() => {
-            inspect(&ToolsCommand::List { json: false })?;
+            inspect_catalog(&ToolsCommand::List { json: false }, session.catalog())?;
         }
         "help" if !rest.is_empty() => {
-            inspect(&ToolsCommand::Help {
-                tool: rest.into(),
-                json: false,
-            })?;
+            inspect_catalog(
+                &ToolsCommand::Help {
+                    tool: rest.into(),
+                    json: false,
+                },
+                session.catalog(),
+            )?;
         }
         "call" if !rest.is_empty() => {
             let (tool, args) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));

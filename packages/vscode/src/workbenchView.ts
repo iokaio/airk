@@ -1,22 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
+import {NativeMetadataProjectionCache} from './nativeMetadata';
 import * as vscode from 'vscode';
 import * as path from 'node:path';
-import { comparePublication, type PublicationObservation, type PublicationRelation } from './publications';
+import { comparePublication, comparePublicationVector, type PublicationObservation, type PublicationRelation } from './publications';
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { ExplorerHost } from './explorerController';
 import type { LaunchSpec } from './model';
-import { observedScopeSelectionIdentity, scopeSelectionIdentity } from './scopeSelection';
+import type { SearchDraft } from './explorerDrafts';
+import { combinedScopeSelectionIdentity, observedScopeSelectionIdentity, scopeSelectionIdentity } from './scopeSelection';
 import { EvidenceClient, EvidenceFailure } from './explorerEvidence';
+import { readResultBody } from './sourceVerification';
+import { SharedCapabilityDisplayCache } from './sharedCapabilityFields';
 import { explorerError } from './explorerErrors';
 import { openSource, saveStudioInWorkspace } from './explorerWorkspaceIO';
 import { assertOriginalPublicationForSymbolInputs, assertPortablePlanInputs, planForWorkbenchRerun, strategyFromPlan } from './workbenchStrategies';
 import { newSession, SessionStore } from './workbenchSessions';
-import { CurrentTurnProjections, continuationCursor, continuationRequiredRecordBytes, continuations, discoveryFollowupPlan, evidenceCards, renderExport } from './workbenchRender';
+import { CurrentTurnProjections, combinedReadDetails, continuationCursor, continuationRequiredRecordBytes, continuations, discoveryFollowupPlan, evidenceCards, evidenceRows, renderExport } from './workbenchRender';
 import { defaultWorkbenchFormDraft, normalizeWorkbenchFormDraft, object, parseWorkbenchMessage, Value, WorkbenchMessage, WorkbenchSession, WorkbenchState, WORKBENCH_HELP_ROUTE } from './workbenchContracts';
 
 /** Separate saved histories for explicit scopes; native backing remains service.project. */
 export function workbenchProjectKey(spec:LaunchSpec):string|undefined {
-    return spec.catalogSession?scopeSelectionIdentity(spec.catalogSession):spec.service?.project;
+    return spec.combinedSession?combinedScopeSelectionIdentity(spec.combinedSession):spec.catalogSession?scopeSelectionIdentity(spec.catalogSession):spec.service?.project;
 }
 
 // Cold native setup (10 s) plus scalar observation (2 s), with transport slack.
@@ -33,6 +37,9 @@ export function workbenchHtml(webview:vscode.Webview, extension:vscode.Uri, nonc
 export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposable {
     private view?:vscode.WebviewView;
     private readonly display=new CurrentTurnProjections();
+    private readonly metadata=new NativeMetadataProjectionCache();
+    private logical(turn:{envelope?:Value}):Value {if(!turn.envelope)return {};const view=this.metadata.view(turn.envelope);if(!view.payload)throw new Error(view.error);return view.payload;}
+    private readonly capabilityDisplay=new SharedCapabilityDisplayCache();
     private readonly visibilityChanged=new vscode.EventEmitter<void>();
     readonly onDidChangeVisibility=this.visibilityChanged.event;
     get visible():boolean{return this.view?.visible===true;}
@@ -60,8 +67,26 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
         const observed=this.permitted()&&this.status&&this.statusAuthority&&this.statusAuthority===JSON.stringify(this.selectedSpec())?this.publicationObservation(this.status,this.statusAuthority):undefined;
         return Object.fromEntries((this.session?.turns??[]).map(turn=>{
             const authority=this.turnAuthorities.get(turn);
+            if(this.selectedSpec()?.combinedSession){
+                const current=this.permitted()&&this.status&&this.statusAuthority===JSON.stringify(this.selectedSpec())?this.combinedPublicationObservation(this.status,this.statusAuthority!):undefined;
+                return [turn.id,comparePublicationVector(turn.envelope&&authority?this.combinedPublicationObservation(turn.envelope,authority):undefined,current)];
+            }
             return [turn.id,comparePublication(turn.envelope&&authority?this.publicationObservation(turn.envelope,authority):undefined,observed)];
         }));
+    }
+    private combinedPublicationObservation(value:Value,captured:string):{authority:string;vector:unknown}|undefined {
+        try{
+            const spec=JSON.parse(captured) as LaunchSpec;if(!spec.combinedSession)return;
+            const authority=JSON.stringify([spec.command,spec.service?.installDir,combinedScopeSelectionIdentity(spec.combinedSession)]);
+            const vectors=[value.publication_vector,object(value.member_verification).publication_vector,
+                ...combinedReadDetails(value).map(detail=>detail.result.publication_vector)].filter(vector=>vector!==undefined);
+            if(!vectors.length)return;
+            const first={authority,vector:vectors[0]};
+            // Multiple step observations can be compared only when all retain
+            // exactly the same member publications and authorization identity.
+            if(vectors.some(vector=>comparePublicationVector(first,{authority,vector})!=='equal'))return;
+            return first;
+        }catch{return undefined;}
     }
     private publicationObservation(value:Value,authority:string):PublicationObservation|undefined{
         const collection=typeof value.collection==='string'?value.collection:typeof object(value.plan).collection==='string'?String(object(value.plan).collection):undefined;
@@ -79,6 +104,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
     private readonly queuedFormSaves=new WeakSet<WorkbenchSession>();
     private disposed=false;
     private pendingInput?:string;
+    private pendingForm=false;
     constructor(private readonly context:vscode.ExtensionContext, private readonly host:ExplorerHost){
         this.subscriptions.push(host.onDidChangeSpecs(()=>{this.invalidateChangedClient();if(this.view){void this.refresh().catch(error=>this.fail(error));}}),vscode.workspace.onDidChangeConfiguration(event=>{
             if(event.affectsConfiguration('airk.runtime.nativeExecution')){this.invalidateChangedClient();if(this.view){void this.refresh().catch(error=>this.fail(error));}}
@@ -116,7 +142,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
     }
     private state():WorkbenchState{
         return {projects:this.host.specs().flatMap(s=>{const id=workbenchProjectKey(s);return id?[{id,name:s.name}]:[];}),project:this.session?.project,session:this.session,sessionEpoch:this.sessionEpoch,recent:this.recent,
-            ...this.display.project(this.session?.turns??[]),busy:this.busy,notice:this.notice,save:this.saving,status:this.status,publicationRelations:this.publicationRelations(),persistence:this.persistence(),operations:this.operations};
+            ...this.display.project(this.session?.turns??[],turn=>this.metadata.view(turn.envelope??{}).payload??{}),metadataViews:Object.fromEntries((this.session?.turns??[]).filter(turn=>turn.envelope).map(turn=>[turn.id,this.metadata.view(turn.envelope!).payload??{}])),metadataIssues:Object.fromEntries((this.session?.turns??[]).filter(turn=>turn.envelope&&this.metadata.view(turn.envelope).error).map(turn=>[turn.id,this.metadata.view(turn.envelope!).error!])),capabilityDetails:this.capabilityDisplay.project(this.session?.turns??[]),busy:this.busy,notice:this.notice,save:this.saving,status:this.status,publicationRelations:this.publicationRelations(),persistence:this.persistence(),operations:this.operations};
     }
     private send():void{if(!this.disposed){void this.view?.webview.postMessage({type:'state',state:this.state()});}}
     private sendStatus():void{if(!this.disposed){void this.view?.webview.postMessage({type:'status',sessionId:this.session?.id,project:this.session?.project,status:this.status,publicationRelations:this.publicationRelations()});}}
@@ -130,14 +156,14 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
         this.invalidateChangedClient();
         if(!this.permitted()){this.send();return;}
         const specs=this.host.specs();
-        if(!this.session){const active=this.host.activeProject(),legacy=specs.find(spec=>!spec.catalogSession&&spec.service?.project===active);const id=legacy?workbenchProjectKey(legacy):specs.length===1?workbenchProjectKey(specs[0]):undefined;if(id){await this.select(id);return;}}
+        if(!this.session){const active=this.host.activeProject(),legacy=specs.find(spec=>!spec.catalogSession&&!spec.combinedSession&&spec.service?.project===active);const id=legacy?workbenchProjectKey(legacy):specs.length===1?workbenchProjectKey(specs[0]):undefined;if(id){await this.select(id);return;}}
         if(this.session&&!specs.some(s=>workbenchProjectKey(s)===this.session!.project)){this.stop();this.releaseClient();this.session=undefined;this.status=undefined;}
         this.send();
     }
     /** Host calls only after an explicit reviewed scope choice is exposed in specs. */
     async useScope(spec:LaunchSpec):Promise<void>{
         const id=workbenchProjectKey(spec);
-        if(!spec.catalogSession||!id||!this.host.specs().some(value=>JSON.stringify(value)===JSON.stringify(spec)))throw new Error('Reviewed scope is not available in this workspace.');
+        if((!spec.catalogSession&&!spec.combinedSession)||!id||!this.host.specs().some(value=>JSON.stringify(value)===JSON.stringify(spec)))throw new Error('Reviewed scope is not available in this workspace.');
         this.invalidateChangedClient();
         if(this.session?.project===id){await this.refresh();return;}
         await this.select(id);
@@ -255,17 +281,17 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
             if(plan)assertOriginalPublicationForSymbolInputs(plan);
             if(remembered){this.notice='Using an explicitly remembered plan; all steps are validated against current evidence.';}
             const request:Value={schema:'airk.parse.request/1',mode:prepare?'prepare':'execute',...(pathPrefix?{path_prefix:pathPrefix}:{})};
-            if(plan){request.plan=plan;}else if(recipe){request.recipe={id:recipe,parameters:input.trim()?{name:input.trim()}:{}};}else{request.text=input;}
+            if(plan){request.plan=plan;if(this.selectedSpec()?.combinedSession&&plan.query_scope){const scope=object(plan.query_scope);for(const key of ['project_ids','index_ids','member_availability'])if(scope[key]!==undefined)request[key]=structuredClone(scope[key]);}}else if(recipe){request.recipe={id:recipe,parameters:input.trim()?{name:input.trim()}:{}};}else{request.text=input;}
             turn.request=structuredClone(request);
             const result=await client.call('airk_parse',request,{supersede:'workbench',timeout:35000});
             if(generation!==this.generation||session!==this.session||client!==this.client||this.clientIdentity!==JSON.stringify(this.selectedSpec())||!this.permitted()){return;}
-            turn.envelope=result.payload;this.turnAuthorities.set(turn,this.clientIdentity!);
+            turn.envelope=result.rawPayload??result.payload;if(result.rawPayload)this.metadata.remember(result.rawPayload,result.payload);this.turnAuthorities.set(turn,this.clientIdentity!);
             if(result.payload.status==='prepared'){this.notice='Plan prepared. Review or edit it, then choose Run plan.';}
         }catch(error){if(generation===this.generation){turn.error=error instanceof Error?error.message:String(error);if(error instanceof EvidenceFailure&&error.nativeResponse){turn.error=explorerError(error.error.code).message;turn.nativeFailure=structuredClone(error.nativeResponse);}}}
         finally{if(generation===this.generation){this.busy=false;session.updatedAt=Date.now();this.save(session);this.send();}}
     }
     private async message(message:WorkbenchMessage):Promise<void>{
-        if(message.type==='ready'){await this.refresh();if(this.pendingInput){void this.view?.webview.postMessage({type:'prefill',input:this.pendingInput});this.pendingInput=undefined;}return;}
+        if(message.type==='ready'){await this.refresh();if(this.pendingInput){void this.view?.webview.postMessage({type:'prefill',input:this.pendingInput});this.pendingInput=undefined;}if(this.pendingForm){void this.view?.webview.postMessage({type:'prefillForm'});this.pendingForm=false;}return;}
         if(message.type==='help'){await vscode.commands.executeCommand('airk.explorer.open',WORKBENCH_HELP_ROUTE);return;}
         this.authorized();
         switch(message.type){
@@ -311,7 +337,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
             }
             case 'remember':{const turn=this.session?.turns.find(t=>t.id===message.turn);if(!this.session||!turn?.envelope||!this.persistence()){throw new Error('Prepare a plan and enable session persistence before remembering it.');}await this.store.remember(this.session.project,turn.input,object(turn.envelope.plan));this.notice='Remembered the accepted inputs for this project and scope. Evidence and revision handles were excluded.';this.send();break;}
             case 'continue':{
-                const turn=this.session?.turns.find(t=>t.id===message.turn),envelope=turn?.envelope;
+                const turn=this.session?.turns.find(t=>t.id===message.turn),envelope=turn?.envelope?this.logical(turn):undefined;
                 if(!envelope||!continuations(envelope).some(c=>c.id===message.step)){throw new Error('No bounded continuation remains for this result.');}
                 const index=Number(message.step.slice(5)),report=object((envelope.steps as unknown[])[index]),result=object(report.result),prior=object(envelope.plan),budgets=object(prior.budgets);
                 const remaining=Number(budgets.max_bytes??524288)-Number(envelope.payload_bytes??0);if(remaining<1024){throw new Error('The original evidence byte budget is exhausted; start a scoped new request.');}
@@ -320,24 +346,35 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
                     if(required>65536||required+512>remaining)throw new Error('The next record cannot fit the remaining evidence budget. Start a scoped request with a larger budget or read its source range.');
                     args.max_bytes=required;
                 }
-                const plan={schema:'airk.parse.plan/1',publication:envelope.publication,collection:prior.collection,path_prefix:prior.path_prefix,budgets:{...budgets,calls:Number(budgets.calls??12)-Number(envelope.calls??0),max_bytes:remaining},steps:[{id:'continuation',tool:report.tool,args}]};
+                const plan={schema:'airk.parse.plan/1',...(prior.query_scope?{query_scope:prior.query_scope,scope_identity:prior.scope_identity}:{publication:envelope.publication}),collection:prior.collection,path_prefix:prior.path_prefix,budgets:{...budgets,calls:Number(budgets.calls??12)-Number(envelope.calls??0),max_bytes:remaining},steps:[{id:'continuation',tool:report.tool,args}]};
                 await this.run(`Continue ${String(report.tool)} from ${turn!.input}`,false,undefined,plan);break;
             }
             case 'followTarget':case 'followDefinition':{
                 const turn=this.session?.turns.find(value=>value.id===message.turn);
                 if(!turn?.envelope)throw new Error('The discovery result is no longer retained.');
                 const target=message.type==='followTarget'?message.target:message.name;
-                const plan=discoveryFollowupPlan(turn.envelope,message.step,target,message.type==='followDefinition'?message.path:undefined);
+                const plan=discoveryFollowupPlan(this.logical(turn),message.step,target,message.type==='followDefinition'?message.path:undefined);
                 await this.run(`${message.type==='followTarget'?'Call candidates for':'Definition of'} ${target}`,false,undefined,plan);break;
             }
             case 'open':case 'context':{
-                const turn=this.session?.turns.find(t=>t.id===message.turn),card=turn&&evidenceCards(turn.envelope??{}).find(c=>c.id===message.card);
+                const turn=this.session?.turns.find(t=>t.id===message.turn),card=turn&&evidenceCards(this.logical(turn)).find(c=>c.id===message.card);
                 if(!card){throw new Error('Evidence handle expired.');}
+                const selected=card.indexId&&card.projectIds?.length?{project_ids:card.projectIds,index_ids:[card.indexId]}:undefined;
+                if(this.selectedSpec()?.combinedSession&&!selected)throw new Error('Choose an originating index from qualified evidence before following this location.');
                 if(message.type==='context'){
-                    const plan={schema:'airk.parse.plan/1',publication:card.publication,steps:[{id:'context',tool:'context',args:{path:card.path,line:card.start,known_hash:card.hash,before:3,after:3}}]};
+                    const plan={schema:'airk.parse.plan/1',...(selected?{query_scope:selected}:{publication:card.publication}),steps:[{id:'context',tool:'context',args:{path:card.path,line:card.start,known_hash:card.hash,before:3,after:3,...(selected?{revision:card.publication}:{})}}]};
                     await this.run(`Context ${card.path}:${card.start}`,false,undefined,plan);
                 }else{
-                    const generation=this.generation,info=(await this.evidence().call('airk_file_info',{path:card.path,response_mode:'full'})).payload,source=object(info.source);
+                    const generation=this.generation,payload=(await this.evidence().call('airk_file_info',{path:card.path,response_mode:'full',...(selected?{...selected,revision:card.publication,known_hash:card.hash}:{})})).payload;
+                    const members=Array.isArray(payload.members)?payload.members.map(object):[];
+                    const origin=selected?members.filter(member=>member.index_id===card.indexId&&member.outcome==='complete'):[];
+                    if(selected&&origin.length!==1)throw new Error('The originating index did not return a complete source location.');
+                    const info=selected?readResultBody(origin[0].result):payload,source=object(info.source);
+                    if(selected){
+                        const returned=evidenceRows(payload).map(row=>object(row.origin)).filter(value=>value.index_id===card.indexId);
+                        if(!card.sourceRootId||!card.sourceRelativePath||returned.length!==1||returned[0].source_root_id!==card.sourceRootId
+                            ||returned[0].source_relative_path!==card.sourceRelativePath||source.relative_path!==card.sourceRelativePath)throw new Error('The originating source identity changed before opening this location.');
+                    }
                     if(generation!==this.generation){throw new Error('Project changed before opening the source.');}this.authorized();
                     if(typeof source.root!=='string'||typeof source.relative_path!=='string'){throw new Error('AIRK did not report the original source location.');}
                     const result=await openSource({root:source.root,relative:source.relative_path,contentHash:card.hash,startLine:card.start,lineBasis:typeof info.line_basis==='string'?info.line_basis:undefined},vscode.ViewColumn.Active);this.notice=result.message;this.send();
@@ -345,7 +382,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
             }
             case 'copy':case 'export':{
                 if(!this.session){return;}
-                const text=renderExport(this.session,message.format,message.turn,message.cards),bytes=Buffer.byteLength(text,'utf8');
+                const text=renderExport(this.session,message.format,message.turn,message.cards,turn=>this.metadata.view(turn.envelope??{}).payload??{}),bytes=Buffer.byteLength(text,'utf8');
                 if(message.type==='copy'){
                     if(bytes>1048576){throw new Error('Copy exceeds 1 MiB. Select fewer records or use Save export.');}
                     await vscode.env.clipboard.writeText(text);this.notice=`Copied ${message.format} · ${bytes.toLocaleString()} bytes`;
@@ -357,7 +394,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
             }
         }
     }
-    dispose():void{this.visibilityChanged.dispose();this.stop();this.disposed=true;this.display.clear();this.releaseClient();for(const sub of this.subscriptions){sub.dispose();}}
+    dispose():void{this.visibilityChanged.dispose();this.stop();this.disposed=true;this.display.clear();this.metadata.clear();this.capabilityDisplay.clear();this.releaseClient();for(const sub of this.subscriptions){sub.dispose();}}
     async removeProject(project:string):Promise<void>{
         if(this.session?.project===project){this.sessionEpoch++;this.stop();this.releaseClient();this.session=undefined;this.status=undefined;}
         await this.saveQueue;await this.store.remove(project);this.send();
@@ -367,5 +404,25 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
         await vscode.commands.executeCommand('workbench.view.extension.airk-workbench');
         this.view?.show(false);
         if(this.view&&input){void this.view.webview.postMessage({type:'prefill',input});this.pendingInput=undefined;}
+    }
+    /** Explicit Inbox Apply only: stores editable inputs, never prepares or runs
+     * evidence and never restores a grant or another window's saved defaults. */
+    async prefillSearchForm(spec:LaunchSpec,search:SearchDraft):Promise<void>{
+        this.authorized();const key=workbenchProjectKey(spec);
+        if(!spec.combinedSession||!key||!this.host.specs().some(value=>JSON.stringify(value)===JSON.stringify(spec)))throw new Error('The combined scope changed before applying the search draft.');
+        if(!search.project_ids||JSON.stringify([...search.project_ids].sort())!==JSON.stringify(spec.combinedSession.project_ids)
+            ||JSON.stringify(search.index_ids?[...search.index_ids].sort():null)!==JSON.stringify(spec.combinedSession.index_ids??null))throw new Error('The search draft does not match the frozen combined scope.');
+        if(!this.session||this.session.project!==key){this.stop();this.releaseClient();this.sessionEpoch++;this.session=newSession(key);this.recent=[];this.status=undefined;this.operations=undefined;}
+        const session=this.session,prior=normalizeWorkbenchFormDraft(session.formDraft)??defaultWorkbenchFormDraft();
+        const scope=search as SearchDraft&{project_ids?:string[];index_ids?:string[];member_availability?:string};
+        const values:Record<string,string>={query:search.query,limit:String(search.limit),max_bytes:String(search.maxBytes),full_chunks:String(search.fullChunks),
+            ...(search.mode!=='policy'?{mode:search.mode}:{}),...(search.pathPrefix?{path_prefix:search.pathPrefix}:{}),
+            ...(scope.project_ids?{project_ids:JSON.stringify(scope.project_ids)}:{}),...(scope.index_ids?{index_ids:JSON.stringify(scope.index_ids)}:{}),
+            ...(scope.member_availability?{member_availability:scope.member_availability}:{})};
+        const draft=normalizeWorkbenchFormDraft({...prior,activeTool:'search',values:{...prior.values,search:values},revision:prior.revision+1});
+        if(!draft)throw new Error('The search draft exceeds the saved form limits.');
+        session.formDraft=draft;session.updatedAt=Date.now();this.notice='Search draft applied to this combined scope. Review it in Tool forms, then choose Prepare or Run.';
+        this.pendingForm=true;this.save(session,true);this.send();await this.focus();
+        if(this.view){void this.view.webview.postMessage({type:'prefillForm'});this.pendingForm=false;}
     }
 }
