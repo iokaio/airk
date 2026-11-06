@@ -66,7 +66,7 @@ failed attempts and platform limits; they are not relabeled.
 | P11a | Accepted locally — `f2bf2d2` | Bounded actual per-file profile family reporting and complete transports |
 | P11b | Accepted locally — `aa28425` | Explicit retained Lean/Rich migration, legacy continuity and paid split inheritance |
 | P12 | Accepted locally | 39 focused Windows native tests; strict scoped Clippy; UI 776 passed/19 skipped; all 12 final Windows release stages and 19 scoped Neo tests passed; clean exit zero and target removed |
-| P13a/P13b | Conditional; current ranking retained | No candidate enabled; adoption needs frozen quality/resource, native disclosure and scope gates |
+| P13a/P13b | Conditional decision: retain current ranking | Candidate remains inert; quality/resource, independent-label, native disclosure and scope gates are not established; no quality gain or candidate failure is claimed |
 | P14 | Pending | Combined qualification, platform/fault/resource coverage and final candidate evidence |
 
 **Additional maintainer request — 5 November 2026:** after P9–P14, reproduce and
@@ -4980,3 +4980,47 @@ and primary review passed. The authorized signed commit remains a separate
 Git action; no human sign-off is invented here. P13 remains
 conditional; P14, the separately requested missing-source isolation/cleanup fix
 and final local test installer are not completed by this entry.
+
+
+### P13 — conditional decision: retain current ranking, 6 November 2026
+
+The plan makes P13a ranking and P13b diversity conditional on measured gains and
+qualified disclosure/scope behavior. The local decision is to **retain the
+current ranker and result-window behavior**. No ranking or diversity candidate
+is enabled. This closes the conditional adoption decision; it does not claim
+that the prospective algorithm passed, failed or improved quality. A speculative
+optimized candidate build would not establish the missing gates.
+
+The existing lexical path keeps normalized AND matching, eligibility filters
+before its limit and deterministic stable-ID ordering. Vector ranking and hybrid
+fusion are unchanged. The retained lexical source is
+`crates/airk-store/src/current/lexical.rs`, SHA-256
+`e8f50e0275e31de2e9422d415ef3e51e397b27160feae52ca5b7c19eda325eed`.
+
+The frozen prospective path-affinity preview remains research only, SHA-256
+`cf38578b33bd7a4772e8413f405ce5845f681c80a21574c7d56be5fb0ada6692`.
+Its additional synthetic corpus has nine sources and eleven queries (ten
+positive, one negative). The frozen label artifact is
+`8f301390a92369fae5ab08e5dd3a973baf3183b17e25e3e9b4dd6a38f16d2db4`;
+the corpus artifact is
+`c9ed78ac0b9cd8c2bf982bb1fe4148c278d174edb3484a84025ff8b2b51d235d`.
+A separate agent checked source ranges and grades without inspecting ranking
+outputs and found no disagreement. That check is not an independently authored
+blind benchmark: the candidate's author also authored these additional labels.
+No 300-query/five-corpus coverage or measured candidate result is claimed.
+
+Candidate adoption would still require the frozen held-out lexical quality and
+Recall gates, unchanged negative/vector/hybrid behavior, three serial paired
+resource trials, all 84 unchanged original latency gates, and qualified native
+ranker/window disclosure with complete transport/export parity. Scope and policy
+must filter before both candidate and output limits; tie, restart, byte-budget
+and refusal cases must remain truthful. Those measurements and disclosure are
+not established here. Missing resource observations are not zero cost. The
+optional diversity candidate has no independent implementation/quality result.
+
+P14 cumulative qualification, the separately requested missing-source
+isolation/cleanup work and final local test installer remain required. This
+conditional decision does not waive them, publish a release, alter source files
+or modify dependency/model/OCR adapters. Any later adoption requires a new
+reviewed evidence-based decision. This P13 record is a separate checkpoint after
+P12 acceptance; its authorized signed commit is a separate Git action.

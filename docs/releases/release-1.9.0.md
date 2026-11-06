@@ -173,3 +173,15 @@ when new features are off. Keep changed local test builds isolated and identifie
 by commit/payload hashes. Do not distribute different installable artifacts under
 the same numeric version or relabel tested binaries. Push, PR, merge and release
 publication remain separate authorized actions.
+
+
+## Conditional P13 decision: current ranker retained
+
+After the accepted local P12 checkpoint, P13 follows the plan's retain-current
+path. No ranking or diversity candidate is enabled. The prospective research
+lacks qualified held-out quality/resource results and native ranker/window
+disclosure; this is an unqualified candidate, not a measured quality failure or
+gain. Current lexical eligibility/order and vector/hybrid behavior remain intact.
+The [dated decision](../research/implementation-v190.md#p13--conditional-decision-retain-current-ranking-6-november-2026)
+records frozen research identities, label-independence limits and remaining gates.
+P14, missing-source cleanup and final manual installer acceptance remain pending.
