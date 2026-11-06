@@ -43,7 +43,7 @@ function fixture(attach=false) {
         cancel():void{this.canceled++;}
         dispose():void{this.disposed++;}
     }
-    const stub={EventEmitter:Emitter,ViewColumn:{Active:1},workspace:{
+    const stub={env:{clipboard:{writeText:async(value:string)=>{exports.push(Buffer.from(value));}}},EventEmitter:Emitter,ViewColumn:{Active:1},workspace:{
         getConfiguration:()=>({get:(_key:string,fallback:unknown)=>fallback,inspect:()=>({globalValue:native})}),
         onDidChangeConfiguration:configuration.event,fs:{writeFile:async(_uri:unknown,bytes:Uint8Array)=>{exports.push(Buffer.from(bytes));}},
     },window:{showWarningMessage:()=>confirm(),showSaveDialog:async()=>({fsPath:'/fixture/export.json'})},commands:{executeCommand:async()=>undefined},
@@ -747,4 +747,27 @@ test('actual evidence failure through Workbench and durable privacy paths never 
             }finally{actual.dispose();f.provider.dispose();}
         }
     }finally{await fs.rm(root,{recursive:true,force:true});}
+});
+
+test('actual host forwards opt-in and preserves flat native and historical nested reports',async()=>{
+    const report={schema:'airk.profile-families/1',file:{path:'api/policy.md',publication:'one-head',source_hash:'ab'.repeat(32)},applied_file:{adapter_id:'markdown',effective_profile_digest:'cd'.repeat(32)},configured_collection_policy:{state:'unavailable',reason:'selected_scope'},published_collection_policy:{state:'unavailable',reason:'selected_scope'},pending_collection_reindex:null,
+        families:Array.from({length:18},(_,i)=>({family:`family-${i}`,support:'unknown',retention:'selected',reply_inclusion:'omitted'})),future_native_field:{complete:'keep-all-fields'}};
+    for(const shape of ['flat','historical_nested'] as const){
+    const envelope={status:'complete',executed:true,publication:'one-head',calls:1,steps:[{id:'info',tool:'file_info',status:'complete',result:shape==='flat'?{read:{status:'content'},path:'api/policy.md',profile_families:report}:{read:{status:'content'},content:{path:'api/policy.md',profile_families:report}}}],evidence:[{step:'info',text:'selected evidence',publication:'one-head',citation:{path:'api/policy.md',start_line:1,end_line:1,content_hash:'ab'.repeat(32)}}]};
+    const f=fixture(true);
+    try{
+        f.respond(async tool=>({payload:tool==='airk_parse'?envelope:{}}));
+        await f.state.select(A);
+        await f.state.message({type:'run',input:'Inspect profile families',prepare:false,plan:{steps:[{id:'info',tool:'file_info',args:{path:'api/policy.md',include_profile_families:true}}]}});
+        const call=f.created.flatMap(client=>client.requests).find(call=>call.tool==='airk_parse'&&object(call.args.plan).steps);
+        assert.equal(object((object(call?.args.plan).steps as Value[])[0].args).include_profile_families,true);
+        const turn=f.state.session!.turns.at(-1)!;
+        const result=object((turn.envelope!.steps as Value[])[0].result);
+        assert.equal(Object.hasOwn(result,'content'),shape==='historical_nested');
+        assert.deepEqual((shape==='flat'?result:object(result.content)).profile_families,report);
+        for(const type of ['copy','export'])for(const format of ['json','markdown'])for(const cards of [undefined,['record-0']])await f.state.message({type,turn:turn.id,format,cards});
+        assert.equal(f.exports.length,8);
+        for(const output of f.exports){assert.ok(output.includes('keep-all-fields'));assert.ok(output.includes('family-17'));assert.ok(output.includes('selected_scope'));}
+    }finally{f.provider.dispose();}
+    }
 });

@@ -151,3 +151,7 @@ These are screenshots of the compiled browser bundle with fictional host data, n
 ![Workbench results](images/workbench-1.7.1-results.png)
 
 The [CLI, MCP and Workbench parity audit](../read-interface-parity.md) maps all read operations and records complete-data, observation, budget and export contracts for 1.8.7.
+
+## P11a: explicit per-file family metadata
+
+The [family report](../profile-family-reporting.md) uses `include_profile_families` on existing FileInfo reads. Default/false retain the old representation and validator. Workbench’s schema-driven File info form offers an explicit choice; complete native report metadata survives structured details, JSON/Markdown copies/exports and session restore. Reporting adds no source reads or profile migration; existing verification remains independent. Focused native, Mac ARM, Workbench and actual CLI/console/MCP parity checks passed. Final qualification gates passed. P11a has passed its local phase checks and is accepted for unpublished local development. P10 is already accepted for local development.

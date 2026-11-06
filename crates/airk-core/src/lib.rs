@@ -33,6 +33,7 @@ pub mod location;
 pub mod mapped_binding;
 pub mod model_objects;
 pub mod native_reads;
+pub mod profile_families;
 pub mod publication;
 pub mod readiness;
 pub mod references;

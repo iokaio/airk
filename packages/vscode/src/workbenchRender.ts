@@ -48,6 +48,7 @@ export interface DiscoveryStepDetails {
     replyDetail?:'lean'|'rich';
     guidance?:Value;
     readGuidance?:Value;
+    profileFamilies?:Value;
     recommendations?:Value;
     sourceVerification?:Value;
     execution?:Value;semanticReadiness?:Value;discoveryReadiness?:Value;readError?:Value;scopeObservation?:Value;
@@ -120,6 +121,7 @@ function resultMetadata(raw:unknown):Value {
         reply_detail:['lean','rich'].includes(String(source.reply_detail))?source.reply_detail:undefined,
         guidance:guidanceMetadata(source.guidance??evidence.guidance),
         read_guidance:Object.keys(object(source.read_guidance)).length?source.read_guidance:undefined,
+        profile_families:Object.keys(object(source.profile_families)).length?source.profile_families:undefined,
         recommendations:source.schema==='airk.recommendations/1'?source:undefined,
         source_verification:nativeVerification(source.source_verification),
         execution:source.execution??evidence.execution,
@@ -150,6 +152,7 @@ export function discoveryDetails(envelope:Value):DiscoveryStepDetails[]{
             ...(metadata.reply_detail==='lean'||metadata.reply_detail==='rich'?{replyDetail:metadata.reply_detail}:{}),
             ...(metadata.guidance?{guidance:object(metadata.guidance)}:{}),
             ...(metadata.read_guidance?{readGuidance:object(metadata.read_guidance)}:{}),
+            ...(metadata.profile_families?{profileFamilies:object(metadata.profile_families)}:{}),
             ...(metadata.recommendations?{recommendations:object(metadata.recommendations)}:{}),
             ...(metadata.source_verification?{sourceVerification:object(metadata.source_verification)}:{}),
             ...(Object.keys(object(metadata.execution)).length?{execution:object(metadata.execution)}:{}),
@@ -303,7 +306,7 @@ function selectedSourceCoverage(turn:WorkbenchTurn,selected:Set<string>):Value[]
         // These observations qualify the selected evidence's original request,
         // not merely its saved bytes. Retain complete native objects, including
         // unknown future fields, without deriving a fresh availability claim.
-        for(const key of ['execution','semantic_readiness','discovery_readiness','error','requested_mode','publication','read_guidance','scope_observation']){
+        for(const key of ['execution','semantic_readiness','discovery_readiness','error','requested_mode','publication','read_guidance','profile_families','scope_observation']){
             if(metadata[key]!==undefined)qualification[key]=metadata[key];
         }
         return Object.keys(qualification).length?[{step:report.id,tool:typeof report.tool==='string'?report.tool:'',scope:'original_source_request',...qualification}]:[];

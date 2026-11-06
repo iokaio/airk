@@ -1529,42 +1529,48 @@ Arguments:
 
 
 Options:
+      --include-profile-families
+          Include eighteen metadata-only effective profile family observations for this file. Collection policy is unavailable under partial Project scopes. Reporting adds no source reads or profile migration; existing verification remains independent.
+
       --root <ROOT>
           [default: .]
+
+      --data-dir <DATA_DIR>
+
 
       --verification <VERIFICATION>
           Dated saved-source checks; default Report, bounded to 8 sources, 16 MiB and 2000 ms. Off skips checking
 
           [possible values: off, report, require]
 
-      --data-dir <DATA_DIR>
-
-
-      --verification-max-sources <VERIFICATION_MAX_SOURCES>
-
-
       --collection <COLLECTION>
           [default: default]
 
-      --verification-max-bytes <VERIFICATION_MAX_BYTES>
+      --verification-max-sources <VERIFICATION_MAX_SOURCES>
 
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
-      --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
+      --verification-max-bytes <VERIFICATION_MAX_BYTES>
 
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
+
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
 
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
           [possible values: lean, rich]
 
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
 
       --revision <REVISION>
 
@@ -1572,22 +1578,19 @@ Options:
       --if-evidence <IF_EVIDENCE>
 
 
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --follow-moves
-
-
       --index-ids <INDEX_IDS>
           Narrow a combined read to member indexes; requires explicit Project scope
 
-      --known-hash <KNOWN_HASH>
+      --follow-moves
 
 
       --member-availability <MEMBER_AVAILABILITY>
           Report member failures or require every selected member to answer
 
           [possible values: report, require]
+
+      --known-hash <KNOWN_HASH>
+
 
       --artifact-id <ARTIFACT_ID>
 

@@ -21,6 +21,7 @@ mod discovery;
 mod execution;
 pub mod extraction;
 mod historical;
+mod profile_families;
 pub use historical::{HistoryAvailability, HistoryAvailabilityRequest};
 pub mod history_controls;
 pub mod limits;
@@ -186,6 +187,8 @@ pub struct FileList {
 
 #[derive(Serialize)]
 pub struct FileInfo {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_families: Option<airk_core::profile_families::ProfileFamilyReport>,
     pub publication: Option<airk_core::evidence::RevisionEnvelope>,
     pub source: airk_store::roots::SourceLocation,
     pub generation: u64,
@@ -789,7 +792,18 @@ impl Kernel {
     }
 
     pub fn file_info(&self, path: &str) -> Result<FileInfo> {
-        self.current_file_info(self.current_reader()?.as_ref(), path)
+        self.file_info_with_profile_families(path, false)
+    }
+    pub fn file_info_with_profile_families(
+        &self,
+        path: &str,
+        include_profile_families: bool,
+    ) -> Result<FileInfo> {
+        self.current_file_info_with_profile_families(
+            self.current_reader()?.as_ref(),
+            path,
+            include_profile_families,
+        )
     }
 
     pub fn relationships(

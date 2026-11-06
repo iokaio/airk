@@ -748,4 +748,21 @@ mod tests {
         Session::default().display(&mut full, ResponseMode::Full, false);
         assert_eq!(full, original);
     }
+
+    #[test]
+    fn conditional_file_family_rows_and_unknown_fields_survive_display_modes() {
+        let report = serde_json::json!({"schema":"airk.profile-families/1","families":airk_core::profile_families::Family::ALL.map(|family|serde_json::json!({"family":family,"support":"unknown","retention":"selected","reply_inclusion":"omitted"})),"future_native_field":{"complete":true}});
+        for mode in [ResponseMode::Terse, ResponseMode::Full] {
+            for detail in [
+                None,
+                Some(airk_core::reply::ReplyDetail::Lean),
+                Some(airk_core::reply::ReplyDetail::Rich),
+            ] {
+                let mut value = serde_json::json!({"read":{"status":"content"},"content":{"path":"api/policy.md","profile_families":report}});
+                airk_core::reply::ReplyDetail::annotate(&mut value, detail);
+                Session::default().display(&mut value, mode, false);
+                assert_eq!(value["content"]["profile_families"], report);
+            }
+        }
+    }
 }

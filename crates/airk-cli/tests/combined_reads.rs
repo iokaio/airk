@@ -2702,3 +2702,6 @@ fn comparison_normalizes_only_validated_member_verification_elapsed_windows() ->
     }
     Ok(())
 }
+
+#[path = "combined_reads/profile_families.rs"]
+mod profile_families;

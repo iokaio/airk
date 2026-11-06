@@ -139,6 +139,14 @@ impl Kernel {
         path: &str,
         options: &EvidenceReadOptions,
     ) -> Result<ConditionalRead<FileInfo>> {
+        self.file_info_conditional_with_profile_families(path, options, false)
+    }
+    pub fn file_info_conditional_with_profile_families(
+        &self,
+        path: &str,
+        options: &EvidenceReadOptions,
+        include_profile_families: bool,
+    ) -> Result<ConditionalRead<FileInfo>> {
         let pinned = self.current_reader()?;
         let read = self.current_resolve(&pinned, path, options)?;
         if read.resolved_path.is_none() {
@@ -151,8 +159,19 @@ impl Kernel {
             .resolved_path
             .clone()
             .context("resolved path missing")?;
-        let payload = self.current_file_info(&pinned, &path)?;
-        self.current_conditional(&pinned, read, options, "file_info/1", payload)
+        let payload =
+            self.current_file_info_with_profile_families(&pinned, &path, include_profile_families)?;
+        if include_profile_families {
+            self.current_conditional(
+                &pinned,
+                read,
+                options,
+                ("file_info/profile_families/1", true),
+                payload,
+            )
+        } else {
+            self.current_conditional(&pinned, read, options, "file_info/1", payload)
+        }
     }
 
     pub fn read_file_conditional(

@@ -741,6 +741,16 @@ impl AdapterRegistry {
         );
         Ok(())
     }
+    /// Pure metadata qualification against the complete supported effective producer.
+    /// Unknown historical grammar/options remain unknown; no source inputs execute.
+    pub fn effective_capabilities(
+        &self,
+        path: &str,
+        profile: &ExtractionProfile,
+    ) -> Option<&AdapterCapabilities> {
+        self.validate_effective_profile(path, profile).ok()?;
+        Some(&self.get(&profile.adapter_id)?.capabilities)
+    }
     pub fn descriptors(&self) -> impl Iterator<Item = &AdapterDescriptor> {
         self.entries.values()
     }
@@ -1193,6 +1203,52 @@ mod tests {
             registry
                 .select_with_prefix("a.unknown", b"#!example\n")
                 .is_err()
+        );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod effective_capability_report_tests {
+    use super::*;
+    #[test]
+    fn metadata_support_requires_complete_producer_without_source_io() -> anyhow::Result<()> {
+        let registry = AdapterRegistry::baseline();
+        let path = "missing/deleted.rs";
+        let base = registry.effective_profile(path, "rust")?;
+        assert!(registry.effective_capabilities(path, &base).is_some());
+        let mut variants = Vec::new();
+        let mut changed = base.clone();
+        changed.grammar_identity = Some("different-supported-history".into());
+        variants.push(changed);
+        let mut changed = base.clone();
+        changed.mapping_version += 1;
+        variants.push(changed);
+        let mut changed = base.clone();
+        changed.chunk_version += 1;
+        variants.push(changed);
+        let mut changed = base.clone();
+        changed.options.insert("unknown_history".into(), "1".into());
+        variants.push(changed);
+        let mut changed = base.clone();
+        changed
+            .configuration_inputs
+            .insert("missing/compiler.json".into(), "ab".repeat(32).parse()?);
+        variants.push(changed);
+        for changed in variants {
+            assert_eq!(changed.adapter_id, base.adapter_id);
+            assert_eq!(changed.adapter_version, base.adapter_version);
+            changed.identity()?;
+            assert!(registry.effective_capabilities(path, &changed).is_none());
+        }
+        // Historical detail is a retention observation, not a producer change.
+        let mut retained = base.clone();
+        retained
+            .options
+            .insert("index_detail".into(), "agent_lean".into());
+        assert_eq!(
+            registry.effective_capabilities(path, &retained),
+            registry.effective_capabilities(path, &base)
         );
         Ok(())
     }

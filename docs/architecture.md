@@ -1,5 +1,17 @@
 # Architecture
 
+P11a's unpublished **1.8.8 working build** adds opt-in
+[per-file family reporting](profile-family-reporting.md). Core owns the fixed
+18-family contract and independent support, retention and reply observations.
+Ingest qualifies the saved producer/profile metadata through its existing pure
+adapter registry; it does not execute a producer for this read. Kernel binds the
+report to one authenticated current file/publication and keeps configured and
+published collection policy separate from that file's applied profile. Scoped
+callers receive explicit unavailable policy observations. Existing canonical
+FileInfo handlers carry the complete report through CLI, MCP and Workbench;
+reporting adds no source scan or profile migration. Existing source verification
+is independent. Focused and final qualification checks passed; P11a has passed its local phase checks and is accepted for unpublished local development.
+
 P10's **1.8.8 working build** adds reviewed [index splitting](index-splitting.md).
 Its frozen Windows qualification passed all 22 gates, including actual process,
 CLI/MCP and full workspace checks. Focused Mac ARM batches passed with Cargo

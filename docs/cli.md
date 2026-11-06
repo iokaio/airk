@@ -28,6 +28,43 @@ For explicit plans, put a JSON object in the `plan` field and pass the request t
 
 MCP-compatible status results can report `status_timeout` with `index_error.stage: setup`, unknown readiness and null evidence. Later polls preserve that explicit setup-deadline outcome after already accepted work drains. Apply the existing bounded read-retry contract with the same scope; genuine setup failures and ordinary session cancellation retain their failure handling. See the [status contract](mcp.md).
 
+## Per-file profile metadata — P11a
+
+The unpublished **1.8.8 P11a working build** adds an explicit opt-in to FileInfo:
+
+```sh
+airk info src/example.rs --include-profile-families --verification off
+
+airk tools call airk_file_info --args '{"path":"src/example.rs","include_profile_families":true,"verification":"off"}'
+```
+
+Inside `airk tools shell`, enter the same JSON directly, without shell quoting:
+
+```text
+call airk_file_info {"path":"src/example.rs","include_profile_families":true,"verification":"off"}
+```
+
+MCP uses boolean `include_profile_families` on `airk_file_info` or its public
+`file_info` alias. This is a FileInfo option, not an option for `read`, `outline`
+or other path-taking commands. Omit the CLI flag to retain the existing
+representation and validator. In tools/MCP JSON, omission or boolean `false`
+preserves compatibility; a string such as `"true"` is invalid.
+
+The report binds the exact applied file profile/publication and distinguishes
+configured and published collection policy. Restricted Project callers receive
+explicit unavailable policy observations. Reporting uses saved metadata; it does
+not select a new profile, reindex, invoke producers or reopen originals. The
+examples independently turn source verification Off; its default and controls
+remain unchanged. Full/Terse encoding and Lean/Rich replies preserve the report.
+A legacy validator cannot suppress a newly opted report; repeat an opted validator
+with the same representation controls.
+
+The console prints a banner, prompts and `Result:` before canonical JSON content;
+it is not a JSON-only stream. One-shot tools calls retain the MCP envelope and
+error flag. See the [profile-family guide](profile-family-reporting.md) for the
+18-family observations and [qualification evidence and limits](research/implementation-v190.md#p11a--local-phase-checkpoint-6-november-2026).
+P11a qualification and primary review passed. P11a is accepted for unpublished local development; the working version remains 1.8.8.
+
 ## Identifier navigation
 
 For a known type/function, use compact `airk symbol` first, scoped `airk refs` for textual uses, and `airk read`/`context` to inspect a selected location. `airk outline` reads one file's structure in source order; it does not propose an Explorer screen. Search remains useful for concepts and supplementary passages, with bounded same-publication definition pointers where available.

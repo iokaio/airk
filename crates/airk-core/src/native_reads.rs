@@ -92,3 +92,10 @@ pub enum SettingsView {
     QuotaPolicy,
     QuotaStatus,
 }
+
+/// Shared input contract for the existing canonical FileInfo tool route. NativeRead
+/// remains the settings/admin channel; there is no parallel FileInfo endpoint.
+pub const FILE_INFO_PROFILE_FAMILIES_HELP: &str = "Include eighteen metadata-only effective profile family observations for this file. Collection policy is unavailable under partial Project scopes. Reporting adds no source reads or profile migration; existing verification remains independent.";
+pub fn file_info_profile_families_schema() -> serde_json::Value {
+    serde_json::json!({"type":"boolean","default":false,"description":FILE_INFO_PROFILE_FAMILIES_HELP})
+}

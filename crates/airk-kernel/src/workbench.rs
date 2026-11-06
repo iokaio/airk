@@ -1316,6 +1316,7 @@ fn fields(tool: &str) -> &'static [&'static str] {
             "max_bytes",
         ],
         "file_info" => &[
+            "include_profile_families",
             "if_evidence",
             "artifact_id",
             "follow_moves",
@@ -1399,6 +1400,7 @@ pub fn operation_catalog() -> Value {
 
 fn argument_schema(key: &str) -> Value {
     match key {
+        "include_profile_families" => airk_core::native_reads::file_info_profile_families_schema(),
         "selection" | "situation" => {
             airk_core::combined_reads::query_scope::schema()["properties"][key].clone()
         }
@@ -1592,6 +1594,7 @@ fn validate_step(step: &Step, prefix: &str, bound: bool) -> Result<()> {
         } else if matches!(
             key.as_str(),
             "include_count"
+                | "include_profile_families"
                 | "include_files"
                 | "compact"
                 | "semantic"
@@ -2879,9 +2882,15 @@ impl Kernel {
                 max,
                 &evidence,
             )?)?,
-            "file_info" => {
-                serde_json::to_value(self.file_info_conditional(string(args, "path")?, &evidence)?)?
-            }
+            "file_info" => serde_json::to_value(
+                self.file_info_conditional_with_profile_families(
+                    string(args, "path")?,
+                    &evidence,
+                    args.get("include_profile_families")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                )?,
+            )?,
             "outline" => serde_json::to_value(self.outline_conditional_page(
                 string(args, "path")?,
                 limit,

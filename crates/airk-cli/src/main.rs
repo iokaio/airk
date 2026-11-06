@@ -446,6 +446,8 @@ enum Command {
     },
     /// Show what the index knows about one file: language, size, extraction method and parse status.
     Info {
+        #[arg(long,help=airk_core::native_reads::FILE_INFO_PROFILE_FAMILIES_HELP)]
+        include_profile_families: bool,
         #[command(flatten)]
         verification: VerificationOptions,
         #[command(flatten)]
@@ -2132,9 +2134,16 @@ fn query(command: Command) -> Result<(&'static str, Value)> {
         ),
         Command::Info {
             path,
+            include_profile_families,
             evidence: options,
             ..
-        } => ("airk_file_info", evidence(json!({"path":path}), options)?),
+        } => {
+            let mut arguments = json!({"path":path});
+            if include_profile_families {
+                arguments["include_profile_families"] = json!(true);
+            }
+            ("airk_file_info", evidence(arguments, options)?)
+        }
         Command::Outline {
             cursor,
             compact,
@@ -2919,5 +2928,24 @@ mod cli_reference_tests {
             missing.is_empty(),
             "commands without help text: {missing:?}"
         );
+    }
+
+    #[test]
+    fn info_family_flag_forwards_only_explicit_opt_in() -> Result<()> {
+        for enabled in [false, true] {
+            let mut arguments = vec!["airk", "info", "api/policy.md"];
+            if enabled {
+                arguments.push("--include-profile-families");
+            }
+            let cli = Cli::try_parse_from(arguments)?;
+            let (tool, args) = query(cli.command)?;
+            assert_eq!(tool, "airk_file_info");
+            if enabled {
+                assert_eq!(args["include_profile_families"], true);
+            } else {
+                assert!(args.get("include_profile_families").is_none());
+            }
+        }
+        Ok(())
     }
 }

@@ -304,9 +304,17 @@ fn default_budget() -> usize {
     8192
 }
 
+fn file_info_profile_families_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    serde_json::from_value(airk_core::native_reads::file_info_profile_families_schema())
+        .expect("static file-info family input")
+}
+
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PathArgs {
+    #[serde(default)]
+    #[schemars(schema_with = "file_info_profile_families_schema")]
+    pub include_profile_families: bool,
     #[serde(flatten)]
     pub verification: response::VerificationArgs,
     #[serde(flatten)]
@@ -997,7 +1005,13 @@ impl AirkServer {
             UsageOperation::FileInfo,
             args.response,
             args.verification.controls(),
-            move |kernel| kernel.file_info_conditional(&args.path, &args.evidence.options()?),
+            move |kernel| {
+                kernel.file_info_conditional_with_profile_families(
+                    &args.path,
+                    &args.evidence.options()?,
+                    args.include_profile_families,
+                )
+            },
         )
         .await
     }
@@ -1307,6 +1321,7 @@ impl AirkServer {
             "changes": {"observed_indexed_changes":false,"remembered_evidence_validation":true,"expired_baseline":"baseline_unavailable","selectors":64,"selector_bytes":32768,"max_payload_bytes":65536,"exact_revision_tokens":true,"live_source_verified":false,"symbol_continuity":"adapter-specific conservative coverage","document_continuity":"adapter-specific conservative coverage"},
             "change_retention": {"generations":64,"age_seconds":86400,"max_records":10000,"max_bytes":16777216,"source_history":false,"validation_current":"index-current","coverage":"independent floors; whole publication groups expire under generation, age or budget pressure"},
             "conditional_reads": {"tools":["airk_file_info","airk_read_file","airk_outline","airk_context"],"validator":"representation-specific if_evidence","follow_moves_default":false,"move_basis":"unique compatible exact content; not filesystem intent"},
+            "file_info_profile_families":{"input":"include_profile_families","default":false,"schema":"airk.profile-families/1","families":airk_core::profile_families::Family::ALL,"basis":"metadata_only","retention":"policy eligibility, not observed presence or completeness","collection_policy":"typed unavailable under partial Project scope","configured_file_profile":"unknown when fresh source/header selection would be required","live_source_checked":false},
             "code": ["rust","python","javascript/jsx","typescript/tsx","go","java","c","cpp","csharp","ruby","php","bash","powershell","lua","swift","kotlin","sql"],
             "structured": ["markdown","json","yaml","toml","html","css","xml","svg","csv","tsv","ini","dockerfile"],
             "documents": ["UTF-8 text","text-layer PDF","DOCX main-body paragraphs/tables with original row locations","XLSX worksheet cells and row facts","PPTX slide text in presentation order"],

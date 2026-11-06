@@ -9,12 +9,14 @@ The maintainer authorized sequential implementation and signed phase commits.
 Progress below is observed local evidence; it does not establish publication or
 cross-platform qualification.
 
-**Current checkpoint, 5 November 2026:** P9 and P10 are accepted for unpublished
-local development. P10 is committed as `c2584cb`; its broad Windows qualification,
-final witness correction, focused Mac ARM checks and Cargo cleanup retain their
-exact source identities below. P11a reporting is being implemented and validated;
-P11–P14 and the deleted-source follow-up remain unaccepted. Earlier dated pending/failure records
-describe their original checkpoints and are not relabeled as current evidence.
+**Current checkpoint, 6 November 2026:** P9 and P10 are accepted for unpublished
+local development; P10 is committed as `c2584cb`. P11a reporting is implemented
+with focused native, Mac ARM, Workbench and actual native/CLI/console/MCP parity
+checks passed. Its final qualification gates and primary review passed; P11a is accepted for
+unpublished local development. The remaining P11b–P14/deleted-source work remain pending. Current test source
+`97956846…` and the reused runtime's original compiled source `33e6df13…` are
+separate identities. Earlier dated pending/failure records retain their original
+status and are not relabeled as current evidence.
 
 ## Entry identity and boundaries
 
@@ -4721,3 +4723,76 @@ installer must be rebuilt from the completed plan. Resource and platform limits
 above still apply. P11–P14, deleted-source recovery, final local test installer
 and contributor PR #60 assessment remain unfinished. No push, publication or
 normal installation is part of this checkpoint.
+
+
+### P10 — supplemental preceding-phase latency comparison, 6 November 2026
+
+`p10-versus-p9-gates-r1.json` compares the existing P10 frozen measurement
+reports with the accepted P9 R5 reports: **all 84 gates passed**, with unchanged
+limits. The earlier P10 helper retained its P8 preceding anchor; this supplemental
+comparison supplies the direct P9 preceding-phase comparison. It reuses actual
+saved measurements and does not rerun workloads, change limits, relabel runtime
+source identities or establish a new speedup claim.
+
+### P11a — local phase checkpoint, 6 November 2026
+
+P11a is accepted for unpublished local development. Version **1.8.8** remains unpublished. The 27-file
+feature/test tree adds opt-in metadata reporting, not Lean/Rich retained-profile
+migration. Later phases and deleted-source recovery remain unfinished.
+
+Completed observations retained separately:
+
+- Original native source **`33e6df135da90839f409dfbba6dd2ce338af31675875e99f20d0b94af212f3f7` / 948 inputs**:
+  scoped formatting/Clippy and **18 focused native tests** passed. The new
+  flattened conditional display regression subsequently passed on its own
+  current test source; this is a display fixture, not native transport evidence.
+- Mac Neo `p11-native-20261106-r1` used that original `33e6df13…` source and
+  passed **nine steps / 12 tests**: formatting, Core3, Ingest1, and Kernel2/MCP1/
+  CLI1 in minimal and all-feature modes. Collected cleanup proves `cargo clean`
+  exit0, target absent, source/reports preserved and timing reports retained.
+  This is focused ARM macOS evidence, not a full Mac workspace/runtime campaign,
+  Intel/Linux, model/OCR, installed-editor or signing qualification.
+- Workbench compile/bundles passed; the full UI run reports **741 passed,
+  0 failed, 19 skipped / 760 total**. Skips remain skips.
+- Actual R4 process checks passed in both feature modes. They exercise complete
+  canonical native, CLI tools call, real tools console, convenience info and MCP
+  alias results and input catalogs; Full/Terse and absent/Lean/Rich reply choices,
+  scoped unknowns, full-root policy observations, conditional validators and
+  invalid boolean refusal are covered. Positive replies check outer error flags
+  before unwrapping and exactly one requested index. Earlier shape/prompt fixture
+  failures remain recorded; assertions were corrected to the existing flattened
+  `ConditionalRead` and `Result:` console protocol, without product changes.
+
+The current test/source identity is
+**`979568465e27b37bc82538ca91e6f5ef843f20886270679ba7da1f42e40e53fc` / 948 inputs**.
+The exact R1 release pair retains its original compiled `33e6df13…` source and
+build receipt. Only two external test inputs differ; **946 other declared native
+inputs and all production module bytes are unchanged**, independently verified.
+Reuse requires equality with the original full runtime seal before/after stages;
+it is not a fresh build or a relabeled producer. Current test revision and
+original binary identity are recorded separately.
+
+`p11a-final-qualification-r3.json` reports **passed**: all 12 continuation stages
+completed successfully, adopting five exact passed R2 prerequisites and the two
+passed R4 transport checks with their original receipts rather than claiming a
+rerun. The original pinned Nextest CI-profile run on `97956846…` collected
+**2,571 passed / one failed / 53 skipped** in 1,243.263 s. Its sole failure was
+stale generated `docs/cli-reference.md`; canonical parser-owned regeneration then
+passed three selected checks, followed by the ordinary strict one-case reference
+verification. The original failed run is retained; the full suite was not rerun
+or relabeled as an initially clean run. All selected cases now have passing
+evidence. Four routine long campaigns and the remaining skipped/ignored cases
+are not converted to passes; P14 retains its required expanded campaign.
+
+R3 passed doctests, native clients, six publication faults, the three local
+runtime smoke suites, Off/Report replay, all **84 unchanged latency gates**,
+repository and license checks, fresh dependency audit, Python tests and whitespace.
+The full UI rerun after flat/historical fixture correction again passed
+**741 / 0 failed / 19 skipped**. Consumer fixtures verify flat canonical and
+historical nested reports through actual host/session persistence and full or
+selected exports; actual native parity is established separately by the R4
+process receipts. No new Mac full workspace or cross-platform claim is inferred.
+
+P11a qualification and primary review passed. P11a is accepted for unpublished local development. P11b–P14, deleted-source recovery and final
+local test installer remain unfinished. No push, publication, normal installation
+or completion of the full plan is claimed.

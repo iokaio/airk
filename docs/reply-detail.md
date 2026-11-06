@@ -94,3 +94,7 @@ external-client cache refresh and platform qualification are separate gates.
 P2b independently adds [evidence guidance](evidence-guidance.md) when existing
 metadata reports a limitation or an empty query. That optional metadata can grow
 a reply; it does not change P2a's projection defaults or legacy evidence encoding.
+
+## P11a: explicit per-file family metadata
+
+The [family report](profile-family-reporting.md) uses `include_profile_families` on existing FileInfo reads. Default/false retain the old representation and validator. Workbench’s schema-driven File info form offers an explicit choice; complete native report metadata survives structured details, JSON/Markdown copies/exports and session restore. Reporting adds no source reads or profile migration; existing verification remains independent. Focused native, Mac ARM, Workbench and actual CLI/console/MCP parity checks passed. Final qualification gates passed. P11a has passed its local phase checks and is accepted for unpublished local development. P10 is already accepted for local development.

@@ -511,6 +511,14 @@ impl Kernel {
     }
 
     pub(crate) fn current_file_info(&self, read: &CurrentRead, path: &str) -> Result<FileInfo> {
+        self.current_file_info_with_profile_families(read, path, false)
+    }
+    pub(crate) fn current_file_info_with_profile_families(
+        &self,
+        read: &CurrentRead,
+        path: &str,
+        include_profile_families: bool,
+    ) -> Result<FileInfo> {
         let artifact = read.artifact(path)?.context("indexed file not found")?;
         let retained = artifact
             .retained
@@ -537,7 +545,19 @@ impl Kernel {
                     .indexed_lines
             }
         };
+        let profile_families = if include_profile_families {
+            Some(self.current_profile_families(
+                read,
+                path,
+                &artifact.content_hash,
+                profile,
+                &state.configuration,
+            )?)
+        } else {
+            None
+        };
         Ok(FileInfo {
+            profile_families,
             publication: Some(envelope(read)?),
             source: airk_store::roots::source_location(
                 &self.root_id(),

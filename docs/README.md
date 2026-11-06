@@ -1,5 +1,7 @@
 # AIRK documentation
 
+P11a’s [per-file profile family reporting](profile-family-reporting.md) adds an explicit opt-in to File info. It keeps applied file-profile identity separate from collection policy, preserves scoped unknowns and retains complete native metadata through Workbench details and exports. P10 is accepted for local development. P11a qualification has passed: focused native, Mac ARM, Workbench and actual CLI/console/MCP checks, followed by the required final gates. P11a has passed its local phase checks and is accepted for unpublished local development. The working version remains **1.8.8**, unpublished.
+
 [Permanent source exclusions](source-policy.md) describes P9's reviewed deny,
 native enforcement, removal and separate cleanup observations. Windows workspace/
 runtime and focused Mac ARM checks passed; qualification and pending-phase limits

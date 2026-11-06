@@ -1,5 +1,7 @@
 # AIRK 1.8.8 manual-test working build
 
+P11a’s [per-file profile family reporting](../profile-family-reporting.md) adds an explicit opt-in to File info. It keeps applied file-profile identity separate from collection policy, preserves scoped unknowns and retains complete native metadata through Workbench details and exports. P10 is accepted for local development. P11a qualification has passed: focused native, Mac ARM, Workbench and actual CLI/console/MCP checks, followed by the required final gates. P11a has passed its local phase checks and is accepted for unpublished local development. The working version remains **1.8.8**, unpublished.
+
 P10's [reviewed split workflow](../index-splitting.md) adds independent
 partitions, sealed build, complete Project review and exact recovery through
 physical cleanup and final funding acknowledgment. Frozen Windows qualification

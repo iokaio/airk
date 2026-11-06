@@ -150,3 +150,50 @@ fn explicit_status_and_full_replies_restore_metadata_without_mutating_source_ide
     session.display(&mut full, ResponseMode::Full, false);
     assert_eq!(full, original);
 }
+
+#[test]
+fn flattened_conditional_file_family_rows_and_unknown_fields_survive_display_modes() {
+    let report = serde_json::json!({"schema":"airk.profile-families/1","families":airk_core::profile_families::Family::ALL.map(|family|serde_json::json!({"family":family,"support":"unknown","retention":"selected","reply_inclusion":"omitted"})),"future_native_field":{"complete":true}});
+    for mode in [ResponseMode::Terse, ResponseMode::Full] {
+        for detail in [
+            None,
+            Some(airk_core::reply::ReplyDetail::Lean),
+            Some(airk_core::reply::ReplyDetail::Rich),
+        ] {
+            // Use the production serializer: ConditionalRead flattens the
+            // payload. This remains a display-only fixture; actual native
+            // transport parity is covered by CLI combined_reads.
+            let mut value = serde_json::to_value(airk_core::evidence::ConditionalRead {
+                read: airk_core::evidence::ReadEvidence {
+                    publication: None,
+                    current_publication: None,
+                    historical: false,
+                    original_root: None,
+                    status: airk_core::evidence::EvidenceReadStatus::Content,
+                    requested_path: "api/policy.md".into(),
+                    resolved_path: Some("api/policy.md".into()),
+                    validator: None,
+                    basis: airk_core::changes::ContinuityBasis::SamePathObservation,
+                    reason: None,
+                },
+                content: Some(serde_json::json!({
+                    "path":"api/policy.md",
+                    "profile_families":report,
+                    "future_native_payload_field":{"complete":true}
+                })),
+            })
+            .unwrap();
+            assert!(value.get("content").is_none());
+            assert_eq!(value["profile_families"], report);
+            airk_core::reply::ReplyDetail::annotate(&mut value, detail);
+            Session::default().display(&mut value, mode, false);
+            assert_eq!(value["profile_families"], report);
+            assert_eq!(value["path"], "api/policy.md");
+            assert_eq!(value["read"]["status"], "content");
+            assert_eq!(
+                value["future_native_payload_field"],
+                serde_json::json!({"complete":true})
+            );
+        }
+    }
+}
