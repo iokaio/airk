@@ -9,11 +9,11 @@ The maintainer authorized sequential implementation and signed phase commits.
 Progress below is observed local evidence; it does not establish publication or
 cross-platform qualification.
 
-**Current checkpoint, 5 November 2026:** P9 is accepted for the unpublished local
-development phase. P10 frozen Windows qualification passed all 22 gates, with
-focused Mac ARM evidence and Cargo cleanup recorded below. **Primary integration
-and review remain pending; P10 is not yet accepted or published.** P11–P14 and the
-deleted-source follow-up remain unaccepted. Earlier dated pending/failure records
+**Current checkpoint, 5 November 2026:** P9 and P10 are accepted for unpublished
+local development. P10 is committed as `c2584cb`; its broad Windows qualification,
+final witness correction, focused Mac ARM checks and Cargo cleanup retain their
+exact source identities below. P11a reporting is being implemented and validated;
+P11–P14 and the deleted-source follow-up remain unaccepted. Earlier dated pending/failure records
 describe their original checkpoints and are not relabeled as current evidence.
 
 ## Entry identity and boundaries
