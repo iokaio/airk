@@ -46,7 +46,16 @@ pub fn native_metadata_capacity(
     let capsules = snapshot
         .checked_mul((MAX_SPLIT_JOBS + 4) as u64)
         .context("split capsule capacity overflow")?;
-    let fixed = (MAX_PAGE_BYTES + 16384 + 16384 + 65536 + 2 * 16384) as u64;
+    // StoredPolicy includes an escaped owning root and the parsed body. Reserve
+    // its full bounded envelope plus one replacement/staging copy, not only the
+    // compact public body's bytes. This is native metadata capacity, not a claim
+    // that selected source payloads fit the separately reviewed build budget.
+    let inherited = if request.extraction_policy.is_some() {
+        2 * 160 * 1024
+    } else {
+        0
+    };
+    let fixed = (MAX_PAGE_BYTES + 16384 + 16384 + 65536 + 2 * 16384) as u64 + inherited;
     let required = capsules
         .checked_add(fixed)
         .context("split metadata capacity overflow")?;
@@ -446,6 +455,24 @@ impl ServiceRegistry {
         baseline: &SourcePolicy,
         plan: &SplitPolicyPlan,
     ) -> Result<SplitSnapshot> {
+        self.catalog_reserve_split_owned(request, baseline, plan, None)
+    }
+    pub fn catalog_reserve_split_with_extraction(
+        &mut self,
+        request: &SplitRequest,
+        baseline: &SourcePolicy,
+        plan: &SplitPolicyPlan,
+        captured: &crate::service::collection::CapturedSplitExtractionPolicy,
+    ) -> Result<SplitSnapshot> {
+        self.catalog_reserve_split_owned(request, baseline, plan, Some(captured))
+    }
+    fn catalog_reserve_split_owned(
+        &mut self,
+        request: &SplitRequest,
+        baseline: &SourcePolicy,
+        plan: &SplitPolicyPlan,
+        captured: Option<&crate::service::collection::CapturedSplitExtractionPolicy>,
+    ) -> Result<SplitSnapshot> {
         request.validate_plan(baseline, plan)?;
         if let Some(saved) = self.catalog_split_receipt(request.caller, &request.key)? {
             ensure!(
@@ -467,6 +494,11 @@ impl ServiceRegistry {
             );
             return Ok(saved);
         }
+        let inherited = match (&request.extraction_policy, captured) {
+            (None, None) => None,
+            (Some(_), Some(captured)) => Some(captured.validate_for(request)?),
+            _ => anyhow::bail!("split retained policy requires exact native capture"),
+        };
         let metadata = native_metadata_capacity(request, baseline, plan)?;
         ensure!(
             request.capacity.cleanup_allowance >= metadata.total,
@@ -494,7 +526,11 @@ impl ServiceRegistry {
         projects_current(&tx, request)?;
         let pending: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM index_operation_receipts WHERE kind='catalog_management_fenced' AND stage<>'metadata_applied')",[],|row|row.get(0))?;
         ensure!(!pending, "split waits for existing native catalog fence");
-        super::apply_split_v2_layout(&tx)?;
+        if inherited.is_some() {
+            super::apply_split_extraction_v3_layout(&tx)?;
+        } else {
+            super::apply_split_v2_layout(&tx)?;
+        }
         let active: i64 = tx.query_row(
             "SELECT count(DISTINCT operation_id) FROM index_split_participants WHERE active=1",
             [],
@@ -560,6 +596,12 @@ impl ServiceRegistry {
                 i64::try_from(RESERVED_COMPLETION_BYTES)?
             ],
         )?;
+        if let Some(body) = inherited {
+            tx.execute(
+                "INSERT INTO index_split_extraction_policies VALUES(?1,?2)",
+                params![request.operation_id()?.to_string(), body],
+            )?;
+        }
         for (id, role) in [
             (request.original_index, "original_remainder"),
             (request.destination.index_id, "destination"),
@@ -872,15 +914,34 @@ impl ServiceRegistry {
                 permit = permit.with_native_retry_predecessor(previous.clone())?;
             }
         }
+        let extraction_policy = if reference.purpose == SplitJobPurpose::DestinationBuild
+            && state.request.extraction_policy.is_some()
+        {
+            let body: Vec<u8> = tx.query_row(
+                "SELECT substr(body,1,131073) FROM index_split_extraction_policies WHERE operation_id=?1",
+                [state.receipt.operation_id.to_string()],
+                |row| row.get(0),
+            )?;
+            Some(
+                crate::service::collection::SavedSplitExtractionPolicy::from_record(
+                    &state.request,
+                    body,
+                )?,
+            )
+        } else {
+            None
+        };
         Ok(ClaimedSplitWork {
             snapshot: state,
             job: reference,
             permit,
+            extraction_policy,
         })
     }
 }
 
 pub struct ClaimedSplitWork {
+    pub extraction_policy: Option<crate::service::collection::SavedSplitExtractionPolicy>,
     pub snapshot: SplitSnapshot,
     pub job: SplitJobRef,
     pub permit: crate::service::collection::SplitBuildPermit,

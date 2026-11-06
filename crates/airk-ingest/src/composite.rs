@@ -373,6 +373,8 @@ mod selected_tests {
                 IndexDetail::Detailed,
             ] {
                 let policy = crate::adapters::profile::ExtractionPolicy {
+                    retained_profile: None,
+                    legacy_fallback_detail: None,
                     version: 3,
                     detail: Some(detail),
                     rules: vec![],

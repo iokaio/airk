@@ -31,7 +31,7 @@ impl crate::Kernel {
             minimal: None,
             page: Default::default(),
             outline: Vec::new(),
-            indexing: state.configuration.index_detail.into(),
+            indexing: state.configuration.index_coverage(),
             publication: Some(crate::current::runtime::envelope(&read)?),
             generation: read.head().sequence,
             collection: self.collection.clone(),

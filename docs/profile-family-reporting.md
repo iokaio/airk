@@ -97,6 +97,17 @@ Workbench File info form for this candidate report. Strategy conversion refuses
 unsupported native inputs and directs users to Save export rather than dropping
 the flag or reducing the result.
 
-These proposed checks supplement actual native transport tests; renderer mocks
-alone do not establish CLI/MCP/Workbench parity. Full qualification and manual
-acceptance remain pending in the [implementation ledger](research/implementation-v190.md).
+Per-phase checks and actual native transport tests passed as recorded in the
+[implementation ledger](research/implementation-v190.md). Renderer mocks alone
+do not establish parity. Broader P14 qualification and manual acceptance of the
+final test installer remain pending.
+
+## Separate P11b retained profiles
+
+P11b's [versioned retained profiles](extraction-policy.md#explicit-versioned-retained-profiles)
+adds explicit Lean/Rich selections while retaining historical profile identity.
+The report carries new selected file identity and configured/published
+retention separately, including legacy fallback and scoped unavailable policy.
+This extends the accepted P11a read contract; it does not reinterpret old levels
+or change legacy level semantics. Full/Terse and reply Lean/Rich remain
+independent controls. Scoped P11b qualification and primary review passed. P11b is accepted for unpublished local development.

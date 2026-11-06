@@ -245,7 +245,8 @@ export class ServiceConsole implements vscode.Disposable {
         if(!common)return;
         const selection=common.operation==='advanced'?await vscode.window.showQuickPick([
             {label:'Vector search',operation:'vectors',description:'Enable or disable semantic indexing for this project'},
-            {label:'Index detail',operation:'detail',description:'Choose evidence detail for the next source pass'},
+            {label:'Index detail',operation:'detail',description:'Choose legacy evidence detail for the next source pass'},
+            {label:'Review Lean or Rich retention',operation:'retained_profile',description:'Explicit file-aware migration; keeps unqualified formats and OCR unchanged'},
             {label:'Vector eligibility',operation:'vector_selection',description:'Set bounded inclusion/exclusion policy JSON'},
             {label:'Add source root',operation:'add_root',description:'Register an additional source directory under an alias'},
             {label:'Remove source root',operation:'remove_root',description:'Remove a saved alias; source files are preserved'},
@@ -266,11 +267,15 @@ export class ServiceConsole implements vscode.Disposable {
             const enabled=await vscode.window.showQuickPick([{label:'Enable semantic search',description:'Prepare the offline model, then index sources and build vectors',value:true},{label:'Turn off semantic search',description:'Use lexical evidence; sources and saved settings are retained',value:false}],{title:'AIRK vector search'});
             return enabled?{operation,enabled:enabled.value}:undefined;
         }
+        if(operation==='retained_profile'){
+            const choice=await vscode.window.showQuickPick([{label:'Lean',target:'lean',description:'Retain qualified Rust, manifest, Markdown and DOCX evidence'},{label:'Rich',target:'rich',description:'Retain Lean evidence plus supported structure and continuity'}],{title:'AIRK: review retained evidence migration',placeHolder:'Source publication changes separately; existing pause, updates and semantic settings are preserved'});
+            return choice?{operation,target:choice.target}:undefined;
+        }
         if(operation==='detail'){
             const level=await vscode.window.showQuickPick([
                 {label:'Agent Lean',level:'agent_lean',description:'Selected code and document facts; default for new collections'},
                 {label:'Search Only',level:'essential',description:'Text and citations; omits rich structured facts'},
-                {label:'Rich Structure',level:'balanced',description:'Broader supported structure and declaration continuity; more retained data'},
+                {label:'Rich Structure (legacy balanced)',level:'balanced',description:'Broader supported structure and declaration continuity; more retained data'},
                 {label:'Detailed',level:'detailed',description:'Advanced supported evidence and document-unit continuity; highest detail'},
             ],{title:'AIRK evidence detail',placeHolder:'Choose for your purpose and source formats; vectors are configured separately'});
             return level?{operation,level:level.level}:undefined;

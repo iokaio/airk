@@ -86,6 +86,10 @@ pub struct InspectionSnapshot {
     pub vectors_enabled: Option<bool>,
     #[serde(default)]
     pub index_detail: Option<crate::extraction::IndexDetail>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub configured_retained_profile: Option<crate::retention::RetainedProfile>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub published_retained_profile: Option<crate::retention::RetainedProfile>,
     pub semantic: Option<SemanticSummary>,
     pub discovery: Option<DiscoverySummary>,
     pub failure: Option<InspectionFailure>,

@@ -195,6 +195,67 @@ pub struct SplitBuildPermit {
     retry_predecessor: Option<airk_core::catalog_split::SplitJobRef>,
 }
 impl SplitBuildPermit {
+    pub(super) fn retained_policy_already_installed(
+        &self,
+        store: &FileStore,
+        logical: &crate::service::registry::catalog::setup::storage::SetupDirectory,
+        slot: &crate::service::registry::catalog::setup::storage::SetupDirectory,
+        quota: &Quota,
+    ) -> Result<bool> {
+        self.validate_pinned_store(store, logical)?;
+        let funding = quota
+            .funding_use()
+            .context("installed retained policy requires exact funding")?;
+        self.validate_funding_use(funding)?;
+        quota.require_store_funding(store)?;
+        ensure!(
+            self.purpose == SplitJobPurpose::DestinationBuild,
+            "only exact DestinationBuild can observe installed initial retention"
+        );
+        let owner: Owner = super::retention_barrier::read_json(
+            logical,
+            "service-owner.json",
+            MAX_METADATA as u64,
+        )?;
+        if owner.required_extraction_contract
+            != Some(super::RequiredExtractionContract::try_from(3)?)
+        {
+            return Ok(false);
+        }
+        let pointer = owner
+            .required_split
+            .as_ref()
+            .context("installed retained capability has no split owner")?;
+        let bytes = logical.read_file(
+            std::ffi::OsStr::new(&filename(pointer.digest)),
+            MAX_SPLIT_STATE as u64,
+        )?;
+        ensure!(
+            framed_digest(b"airk/stable-split-state/1", &[&bytes]) == pointer.digest,
+            "installed retained split capsule changed"
+        );
+        let capsule: Capsule = serde_json::from_slice(&bytes)?;
+        capsule.snapshot.validate()?;
+        ensure!(
+            capsule.schema == 1
+                && serde_json::to_vec(&capsule)? == bytes
+                && capsule.snapshot.receipt.revision == self.revision
+                && capsule.snapshot.receipt.operation_id == self.operation
+                && capsule.snapshot.receipt.request_digest == self.request,
+            "installed retained split phase changed"
+        );
+        let Some(reference) = capsule.snapshot.request.extraction_policy.as_ref() else {
+            return Ok(false);
+        };
+        let Some(body) =
+            crate::extraction_policy::extraction_policy_bytes_at(slot, &self.registration.root)?
+        else {
+            return Ok(false);
+        };
+        reference.validate_body(&body)?;
+        Ok(true)
+    }
+
     pub(crate) fn claimed(
         state: &NativeSplitState,
         work: &airk_core::catalog_split::SplitJobRef,

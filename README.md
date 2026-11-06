@@ -1,5 +1,12 @@
 # AIRK: Local Search for Coding Agents
 
+P11b's unpublished **1.8.8 working build** adds explicitly reviewed Lean/Rich
+retained profiles. Legacy indexing levels keep their existing meanings and
+defaults; reply projection remains independent. Scoped Windows native/resource,
+release-runtime and focused Mac ARM checks passed, with the limits in the
+implementation ledger. P11b is accepted for unpublished local development. P11a remains accepted for local development.
+P12–P14 and deleted-source recovery remain unfinished.
+
 P11a’s [per-file profile family reporting](docs/profile-family-reporting.md) adds an explicit opt-in to File info. It keeps applied file-profile identity separate from collection policy, preserves scoped unknowns and retains complete native metadata through Workbench details and exports. P10 is accepted for local development. P11a qualification has passed: focused native, Mac ARM, Workbench and actual CLI/console/MCP checks, followed by the required final gates. P11a has passed its local phase checks and is accepted for unpublished local development. The working version remains **1.8.8**, unpublished.
 
 The unpublished **1.8.8 P10 working build** implements [reviewed index splitting](docs/index-splitting.md): independent destination storage, inherited source restrictions, sealed build, reviewed Project cutover and exact recovery through cleanup and funding acknowledgment. Frozen Windows qualification passed all **22 gates**, including the full workspace and actual CLI/MCP process checks; focused Mac ARM batches also passed and cleaned their Cargo targets. **P10 has passed its local phase checks; the working build remains unpublished.** See the [exact evidence and platform/resource limits](docs/research/implementation-v190.md#p10--local-phase-checkpoint-5-november-2026).

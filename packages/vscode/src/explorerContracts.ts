@@ -373,7 +373,7 @@ export interface ManagedProject {
     readonly lifecycle: string;
     readonly requests: readonly FactRow[];
     readonly events: readonly string[];
-    readonly configuration: { readonly detail?: string; readonly state?: string; readonly pending: boolean; readonly failure?: string; readonly vectorsEnabled?: boolean; readonly requestedVectors?: boolean; readonly requestedDetail?: string };
+    readonly configuration: { readonly detail?: string; readonly configuredRetention?: string; readonly publishedRetention?: string; readonly state?: string; readonly pending: boolean; readonly failure?: string; readonly vectorsEnabled?: boolean; readonly requestedVectors?: boolean; readonly requestedDetail?: string };
     readonly storage: {
         readonly root?: string;
         readonly observedAt?: number;

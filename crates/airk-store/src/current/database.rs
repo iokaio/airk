@@ -46,6 +46,32 @@ struct Owner {
     capacity: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     query_projection_version: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    required_extraction_contract: Option<crate::service::collection::RequiredExtractionContract>,
+}
+
+/// Called only while CurrentWriter owns the matching writer and exclusive Gate.
+/// Observe both actual capability headers; never create/upgrade ownership here.
+pub(super) fn require_retained_contract(
+    store: &crate::FileStore,
+    scope: &CurrentScope,
+) -> Result<()> {
+    let owner = read_owner(store.directory())?;
+    ensure!(
+        owner.scope == *scope,
+        "foreign retained-profile current owner"
+    );
+    ensure!(
+        store.service_incarnation()? == Some(scope.incarnation),
+        "retained-profile slot identity differs"
+    );
+    let stable = crate::service::collection::required_extraction_contract_for_scope(store, scope)?;
+    ensure!(
+        stable.map(u32::from) == Some(3)
+            && owner.required_extraction_contract.map(u32::from) == Some(3),
+        "selected retention requires native stable and current contract3 capabilities"
+    );
+    Ok(())
 }
 
 pub(crate) fn check_owner(directory: &Path, scope: &CurrentScope) -> Result<u64> {
@@ -171,6 +197,35 @@ pub(super) fn owned_scope_at(
     ))
 }
 
+/// Read the actual retained owner HANDLE; caller holds the exact writer/Gate.
+pub(super) fn extraction_contract_bytes(
+    directory: &Path,
+    file: &mut std::fs::File,
+    root: &str,
+    collection: &str,
+    contract: u32,
+) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    file.take(65_537).read_to_end(&mut bytes)?;
+    ensure!(
+        bytes.len() <= 65_536,
+        "current ownership header exceeds bound"
+    );
+    let mut owner = validate_owned_owner(directory, parse_owner(&bytes)?)?;
+    ensure!(
+        owner.scope.root == root && owner.scope.collection == collection,
+        "retained contract current scope differs from stable owner"
+    );
+    owner.required_extraction_contract =
+        Some(crate::service::collection::RequiredExtractionContract::try_from(contract)?);
+    let bytes = serde_json::to_vec(&owner)?;
+    ensure!(
+        bytes.len() <= 65_536,
+        "current capability header exceeds bound"
+    );
+    Ok(bytes)
+}
+
 pub(crate) fn create_owner(directory: &Path, scope: &CurrentScope, capacity: u64) -> Result<()> {
     if let Some(incarnation) = crate::FileStore::new(directory).service_incarnation()? {
         ensure!(
@@ -191,6 +246,10 @@ pub(crate) fn create_owner(directory: &Path, scope: &CurrentScope, capacity: u64
         scope: scope.clone(),
         capacity,
         query_projection_version: Some(airk_core::storage_format::NATIVE_QUERY_PROJECTION_VERSION),
+        required_extraction_contract:
+            crate::service::collection::required_extraction_contract_for_store(
+                &crate::FileStore::new(directory),
+            )?,
     })?;
     ensure!(
         bytes.len() <= 65_536,

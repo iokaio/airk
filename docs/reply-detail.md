@@ -98,3 +98,12 @@ a reply; it does not change P2a's projection defaults or legacy evidence encodin
 ## P11a: explicit per-file family metadata
 
 The [family report](profile-family-reporting.md) uses `include_profile_families` on existing FileInfo reads. Default/false retain the old representation and validator. Workbench’s schema-driven File info form offers an explicit choice; complete native report metadata survives structured details, JSON/Markdown copies/exports and session restore. Reporting adds no source reads or profile migration; existing verification remains independent. Focused native, Mac ARM, Workbench and actual CLI/console/MCP parity checks passed. Final qualification gates passed. P11a has passed its local phase checks and is accepted for unpublished local development. P10 is already accepted for local development.
+
+## P11b retained profiles remain independent
+
+The [versioned retained profiles](extraction-policy.md#explicit-versioned-retained-profiles)
+adds a reviewed retained Lean/Rich choice. It does not change `reply_detail`,
+response encoding, model choice or existing legacy indexing-level meanings.
+A Rich reply cannot recreate facts omitted by a Lean retained profile. Report
+configured and published retention separately from the applied per-file profile;
+Scoped P11b native/release qualification, focused Mac checks and primary review passed. P11b is accepted for unpublished local development.

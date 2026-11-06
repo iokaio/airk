@@ -1467,3 +1467,34 @@ test('split journal reconciles retained witness through observed pending refresh
         f.controller.dispose();reopened=new ServiceConsoleController(f.host);await reopened.refresh();assert.deepEqual(record(reopened.catalogPendingDetails()[0].last_known_split_snapshot).receipt,completed.receipt);await reopened.catalogReconcile();assert.equal(reads,4);assert.equal(writes,0);
     }finally{f.controller.dispose();reopened?.dispose();}
 });
+
+
+test('retained migration confirms exact native review and preserves it through a lost reply without new preparation',async()=>{
+    const f=fixture();let preparations=0,confirmations=0;
+    const review={schema:1,expected_publication:`airk-r1:${'11'.repeat(16)}:7:${'22'.repeat(32)}`,expected_applied_policy:'33'.repeat(32),reviewed_configured_policy:'44'.repeat(32),desired_policy:'55'.repeat(32),target:'rich'};
+    const request={incarnation:namespace,settings:'ab'.repeat(32),configuration:{operation:'retained_profile',review}};
+    f.host.configuration=async()=>({operation:'retained_profile',target:'rich'});
+    f.host.runtime.prepareConfiguration=async(_binding,selected,draft)=>{preparations++;assert.equal(selected,project);assert.deepEqual(draft,{operation:'retained_profile',target:'rich'});return structuredClone(request);};
+    f.host.confirm=async message=>{confirmations++;assert.match(message,/reviewed rich/);assert.ok(message.includes(review.expected_publication));assert.match(message,/Pause, manual updates, watches and semantic settings are preserved/);assert.match(message,/Unqualified formats and OCR/);return true;};
+    try{
+        await f.controller.refresh();f.controller.state.page!.projects[0].inspection={snapshot:{settings_digest:'ab'.repeat(32)}};f.setFail(true);
+        await f.action('configureProject',{project});assert.equal(f.controller.state.pending.length,1);
+        const original=f.sent.find(value=>value&&typeof value==='object'&&'configure_project'in value) as RecordValue;
+        assert.deepEqual(record(original.configure_project).request,request);
+        const saved=[...f.values.values()].map(record).find(value=>record(value.intent).configure_project);
+        assert.deepEqual(record(record(saved!.intent).configure_project).request,request);
+        f.setFail(false);await f.action('retryIntent',{id:f.controller.state.pending[0].id});
+        assert.equal(preparations,1);assert.equal(confirmations,1);assert.equal(f.controller.state.pending.length,0);
+        assert.deepEqual(f.sent.filter(value=>value&&typeof value==='object'&&'configure_project'in value),[original,original]);
+    }finally{f.controller.dispose();}
+});
+
+test('retained migration decline or trust loss after native review has no durable dispatch',async()=>{
+    for(const decision of ['decline','lose-trust'] as const){
+        const f=fixture();let prepared=0;
+        f.host.configuration=async()=>({operation:'retained_profile',target:'lean'});
+        f.host.runtime.prepareConfiguration=async()=>{prepared++;return {incarnation:namespace,settings:'ab'.repeat(32),configuration:{operation:'retained_profile',review:{schema:1,expected_publication:`airk-r1:${'11'.repeat(16)}:7:${'22'.repeat(32)}`,expected_applied_policy:'33'.repeat(32),reviewed_configured_policy:'44'.repeat(32),desired_policy:'55'.repeat(32),target:'lean'}}};};
+        f.host.confirm=async()=>{if(decision==='lose-trust')f.setTrusted(false);return decision!=='decline';};
+        try{await f.controller.refresh();f.controller.state.page!.projects[0].inspection={snapshot:{settings_digest:'ab'.repeat(32)}};await f.action('configureProject',{project});assert.equal(prepared,1);assert.equal(f.sent.filter(value=>value&&typeof value==='object'&&'configure_project'in value).length,0);assert.equal(f.controller.state.pending.length,0);}finally{f.controller.dispose();}
+    }
+});

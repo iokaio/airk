@@ -196,7 +196,7 @@ impl Kernel {
             source_policy: self.source_policy_observation()?,
             source_availability: self.service_source_observation(),
             execution: self.execution_status()?,
-            indexing: c.index_detail.into(),
+            indexing: c.index_coverage(),
             freshness: self.changes_freshness(),
             retention: crate::maintenance::RetentionObservation {
                 policy: None,
@@ -623,7 +623,7 @@ impl Kernel {
             minimal: page.minimal,
             page: page.page,
             outline: page.outline,
-            indexing: state.configuration.index_detail.into(),
+            indexing: state.configuration.index_coverage(),
             publication: Some(envelope(read)?),
             generation: read.head().sequence,
             collection: page.collection,

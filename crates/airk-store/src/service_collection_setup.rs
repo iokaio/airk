@@ -17,6 +17,7 @@ pub(super) fn initial_owner(data_root: &Path, root: &str, collection: &str) -> R
         identity_data_root: None,
         required_source_policy: None,
         required_split: None,
+        required_extraction_contract: None,
     })
 }
 

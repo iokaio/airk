@@ -182,7 +182,7 @@ function project(row: RecordValue, state: ServiceConsoleState): { rows: FactRow[
             ? 'Source watching is unavailable: a configured root or directory is missing, unreadable or redirected. Remove a deleted project from Management › Projects.'
             : watch.failure ?? watch.backend],
             ['Pending source changes', typeof watch.requested_revision === 'number' && typeof watch.completed_revision === 'number' ? Math.max(0, watch.requested_revision - watch.completed_revision) : undefined],
-            ['Last inspected revision', snapshot.publication], ['Source availability (cached)', snapshot.source_state], ['Discovery (cached)', discovery.state],
+            ['Configured retained profile',snapshot.configured_retained_profile],['Published retained profile',snapshot.published_retained_profile],['Legacy detail / fallback',snapshot.index_detail],['Last inspected revision', snapshot.publication], ['Source availability (cached)', snapshot.source_state], ['Discovery (cached)', discovery.state],
             ['Indexed files (cached)', snapshot.indexed_files], ['Semantic coverage (cached)', semantic.state], ['Completed / selected semantic artifacts',
                 semantic.selected_artifacts === undefined ? undefined : `${scalar(semantic.completed_artifacts)} / ${scalar(semantic.selected_artifacts)}`],
             ['Inspection failure (cached)', snapshot.failure], ['Last configuration job', configuration.id], ['Configuration state (cached)', configuration.state],
@@ -209,7 +209,7 @@ function project(row: RecordValue, state: ServiceConsoleState): { rows: FactRow[
                 ['Job result', obj(job.outcome).code ?? obj(job.outcome).state], ['Observed publication', snapshot.publication]]),
             events: state.events.filter(event => event.project === binding).slice(-16).reverse().map(event =>
                 `${scalar(event.kind)} · ${scalar(event.job_kind)}${event.code ? ` · ${scalar(event.code)}` : ''} · ${typeof event.observed_unix_ms === 'number' ? new Date(event.observed_unix_ms).toLocaleString() : 'time not observed'}`),
-            configuration: { detail: typeof snapshot.index_detail === 'string' ? snapshot.index_detail : undefined, state: typeof configuration.state === 'string' ? configuration.state : undefined,
+            configuration: { detail: typeof snapshot.index_detail === 'string' ? snapshot.index_detail : undefined, configuredRetention:typeof snapshot.configured_retained_profile==='string'?snapshot.configured_retained_profile:undefined,publishedRetention:typeof snapshot.published_retained_profile==='string'?snapshot.published_retained_profile:undefined, state: typeof configuration.state === 'string' ? configuration.state : undefined,
                 requestedVectors:typeof requested.vectors_enabled==='boolean'?requested.vectors_enabled:undefined,
                 requestedDetail:typeof requested.detail==='string'?requested.detail:undefined,
                 pending: configuration.state === 'pending' || configuration.state === 'running',

@@ -57,6 +57,9 @@ pub enum NativeRead {
         cursor: Option<String>,
         max_bytes: usize,
     },
+    RetentionMigrationPreview {
+        target: crate::retention::RetainedProfile,
+    },
     Settings {
         view: SettingsView,
         cursor: Option<String>,

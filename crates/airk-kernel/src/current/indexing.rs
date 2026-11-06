@@ -401,11 +401,12 @@ impl Kernel {
             .map(|objects| self.open_configured_model(objects))
             .transpose()?;
         let configuration = CollectionConfiguration {
+            retained_profile: policy.retained_profile,
             source_policy_digest: self.source_policy_digest()?,
             roots: self.configured_roots()?,
             extractor_version: airk_core::EXTRACTOR_VERSION.into(),
             extraction_policy_digest: crate::extraction::policy_digest(&policy)?,
-            index_detail: policy.detail.unwrap_or_default(),
+            index_detail: policy.legacy_detail(),
             vector_selection: self.vector_selection()?,
             model: objects,
         };
@@ -722,11 +723,12 @@ impl Kernel {
             .context(Stage("open_model"))?;
         let model_load_us = u64::try_from(model_started.elapsed().as_micros()).unwrap_or(u64::MAX);
         let configuration = CollectionConfiguration {
+            retained_profile: policy.retained_profile,
             source_policy_digest: self.source_policy_digest()?,
             roots: roots.clone(),
             extractor_version: airk_core::EXTRACTOR_VERSION.into(),
             extraction_policy_digest: crate::extraction::policy_digest(&policy)?,
-            index_detail: policy.detail.unwrap_or_default(),
+            index_detail: policy.legacy_detail(),
             vector_selection: selection.clone(),
             model: objects.clone(),
         };

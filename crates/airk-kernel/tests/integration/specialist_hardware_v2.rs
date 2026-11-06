@@ -58,6 +58,8 @@ fn qualify(path: &str, moved: &str, source: &str, expected: &str) -> Result<()> 
         moved
     );
     kernel.configure_extraction_policy(ExtractionPolicy {
+        retained_profile: None,
+        legacy_fallback_detail: None,
         detail: None,
         version: 1,
         rules: vec![SelectionRule {
@@ -130,6 +132,8 @@ fn ambiguous_v_suffix_needs_visible_evidence_or_explicit_override() -> Result<()
             .any(|fact| fact.name == "ledger")
     );
     kernel.configure_extraction_policy(ExtractionPolicy {
+        retained_profile: None,
+        legacy_fallback_detail: None,
         detail: None,
         version: 1,
         rules: vec![SelectionRule {

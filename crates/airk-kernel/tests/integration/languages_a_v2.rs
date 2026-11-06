@@ -128,6 +128,8 @@ fn qualify(path: &str, moved: &str, source: &str, name: &str) -> Result<()> {
         );
     }
     kernel.configure_extraction_policy(ExtractionPolicy {
+        retained_profile: None,
+        legacy_fallback_detail: None,
         detail: None,
         version: 1,
         rules: vec![SelectionRule {

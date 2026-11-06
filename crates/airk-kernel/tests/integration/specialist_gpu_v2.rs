@@ -58,6 +58,8 @@ fn qualify(path: &str, moved: &str, source: &str, expected: &str) -> Result<()> 
         moved
     );
     kernel.configure_extraction_policy(ExtractionPolicy {
+        retained_profile: None,
+        legacy_fallback_detail: None,
         detail: None,
         version: 1,
         rules: vec![SelectionRule {
@@ -123,6 +125,8 @@ fn stage_and_explicit_isa_profile_changes_are_local() -> Result<()> {
         root.path().join("original.frag"),
     )?;
     kernel.configure_extraction_policy(ExtractionPolicy {
+        retained_profile: None,
+        legacy_fallback_detail: None,
         detail: None,
         version: 1,
         rules: vec![SelectionRule {

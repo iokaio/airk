@@ -20,6 +20,8 @@ fn empty(root: &Path) -> Result<Snapshot> {
 
 fn policy(detail: IndexDetail) -> ExtractionPolicy {
     ExtractionPolicy {
+        retained_profile: None,
+        legacy_fallback_detail: None,
         version: 3,
         detail: Some(detail),
         rules: vec![],

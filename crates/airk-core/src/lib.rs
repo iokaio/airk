@@ -38,6 +38,7 @@ pub mod publication;
 pub mod readiness;
 pub mod references;
 pub mod reply;
+pub mod retention;
 pub mod scoped_reads;
 pub mod search_execution;
 pub mod search_filters;

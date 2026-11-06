@@ -7,6 +7,7 @@ use airk_store::current::postings::Lookup;
 
 fn configuration() -> airk_store::current::collection::CollectionConfiguration {
     airk_store::current::collection::CollectionConfiguration {
+        retained_profile: None,
         source_policy_digest: None,
         roots: Default::default(),
         extractor_version: "current-update-test/1".into(),

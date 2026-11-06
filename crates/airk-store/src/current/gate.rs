@@ -151,6 +151,78 @@ impl Gate {
         })
     }
 
+    /// One logical collection writer excludes all incarnation writers. Retain
+    /// that real advisory HANDLE; do not fabricate per-slot WriterLock paths.
+    pub(crate) fn exclusive_pinned_slot(
+        owning_store: &FileStore,
+        writer: &WriterLock,
+        target: &FileStore,
+        logical: &crate::service::registry::catalog::setup::storage::SetupDirectory,
+    ) -> Result<Self> {
+        use crate::service::registry::catalog::setup::storage::{
+            SetupDirectory, SetupFileMode, file_identity,
+        };
+        use std::ffi::OsStr;
+        check_writer(owning_store, writer)?;
+        let owner = owning_store.managed_path()?;
+        let selected = target.managed_path()?;
+        ensure!(
+            owner.namespace == "collections-1.4"
+                && owner.logical == selected.logical
+                && owner.root == selected.root
+                && owner.collection == selected.collection,
+            "foreign collection writer for retained slot"
+        );
+        let namespace = SetupDirectory::open_canonical(
+            owner.logical.parent().context("native namespace missing")?,
+        )?;
+        ensure!(
+            namespace
+                .open_dir(OsStr::new(owner.collection))?
+                .identity()?
+                == logical.identity()?,
+            "logical retained owner directory changed"
+        );
+        let advisory = namespace
+            .open_dir(OsStr::new(".writer-locks"))?
+            .open_file(OsStr::new(owner.collection), SetupFileMode::ReadWrite)?;
+        ensure!(
+            file_identity(&advisory)? == file_identity(&writer._file)?,
+            "retained writer advisory object changed"
+        );
+        let gates = logical.create_dir(OsStr::new(".current-gates"))?;
+        let slot = selected
+            .slot
+            .context("retained slot requires native incarnation")?;
+        let file = match gates.open_file(OsStr::new(slot), SetupFileMode::ReadWrite) {
+            Ok(file) => file,
+            Err(error)
+                if error
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound) =>
+            {
+                match gates.open_file(OsStr::new(slot), SetupFileMode::CreateNew) {
+                    Ok(file) => file,
+                    Err(error)
+                        if error
+                            .downcast_ref::<std::io::Error>()
+                            .is_some_and(|e| e.kind() == std::io::ErrorKind::AlreadyExists) =>
+                    {
+                        gates.open_file(OsStr::new(slot), SetupFileMode::ReadWrite)?
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            Err(error) => return Err(error),
+        };
+        acquired(file.try_lock(), CurrentGateContention::Readers)?;
+        Ok(Self {
+            file,
+            directory: target.directory().into(),
+            _lifecycle: None,
+        })
+    }
+
     pub(crate) fn exclusive(store: &FileStore, writer: &WriterLock) -> Result<Self> {
         let directory = check_writer(store, writer)?;
         let file = open(store)?;

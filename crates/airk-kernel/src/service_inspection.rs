@@ -94,6 +94,8 @@ impl Kernel {
         );
         crate::service_execution::progress_verified(1);
         let mut snapshot = InspectionSnapshot {
+            configured_retained_profile: None,
+            published_retained_profile: None,
             project,
             incarnation,
             publication: None,
@@ -130,10 +132,11 @@ impl Kernel {
             snapshot.indexed_files = Some(status.files.try_into()?);
             snapshot.indexed_vectors = Some(status.indexed_vectors.try_into()?);
             snapshot.vectors_enabled = Some(status.vectors_enabled);
-            snapshot.index_detail = selected
-                .extraction_policy()
-                .ok()
-                .map(|policy| policy.configured_detail);
+            if let Ok(policy) = selected.extraction_policy() {
+                snapshot.index_detail = Some(policy.configured_detail);
+                snapshot.configured_retained_profile = policy.configured_retained_profile;
+                snapshot.published_retained_profile = policy.published_retained_profile;
+            }
             snapshot.semantic = Some(SemanticSummary {
                 state: status.semantic_readiness.state,
                 selected_artifacts: status.semantic_readiness.selected_artifacts,

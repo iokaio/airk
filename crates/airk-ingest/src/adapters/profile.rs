@@ -33,6 +33,10 @@ pub struct SelectionRule {
 #[serde(deny_unknown_fields)]
 pub struct ExtractionPolicy {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retained_profile: Option<airk_core::retention::RetainedProfile>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub legacy_fallback_detail: Option<airk_core::extraction::IndexDetail>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<airk_core::extraction::IndexDetail>,
     pub version: u32,
     pub rules: Vec<SelectionRule>,
@@ -62,6 +66,11 @@ pub fn validate_relative_path(path: &str) -> anyhow::Result<()> {
 }
 
 impl ExtractionPolicy {
+    pub fn legacy_detail(&self) -> airk_core::extraction::IndexDetail {
+        self.legacy_fallback_detail
+            .or(self.detail)
+            .unwrap_or_default()
+    }
     pub fn parse(bytes: &[u8], registry: &AdapterRegistry) -> anyhow::Result<Self> {
         anyhow::ensure!(bytes.len() <= 131_072, "extraction policy exceeds 128 KiB");
         let policy: Self = serde_json::from_slice(bytes)?;
@@ -71,8 +80,13 @@ impl ExtractionPolicy {
 
     pub fn validate(&self, registry: &AdapterRegistry) -> anyhow::Result<()> {
         anyhow::ensure!(
-            matches!(self.version, 1..=3)
+            matches!(self.version, 1..=4)
                 && (self.detail.is_none() || self.version == 3)
+                && (if self.version == 4 {
+                    self.retained_profile.is_some() && self.legacy_fallback_detail.is_some()
+                } else {
+                    self.retained_profile.is_none() && self.legacy_fallback_detail.is_none()
+                })
                 && self.rules.len() <= 256,
             "unsupported or oversized extraction policy"
         );
@@ -335,6 +349,8 @@ mod tests {
     -> anyhow::Result<()> {
         let registry = AdapterRegistry::baseline();
         let mut policy = ExtractionPolicy {
+            retained_profile: None,
+            legacy_fallback_detail: None,
             detail: None,
             version: 2,
             rules: vec![SelectionRule {
@@ -405,6 +421,8 @@ mod tests {
     -> anyhow::Result<()> {
         let registry = AdapterRegistry::baseline();
         let mut policy = ExtractionPolicy {
+            retained_profile: None,
+            legacy_fallback_detail: None,
             detail: None,
             version: 1,
             rules: vec![],
@@ -438,6 +456,8 @@ mod tests {
     fn empty_scope_selects_root_headers_without_crossing_other_scopes() -> anyhow::Result<()> {
         let registry = AdapterRegistry::baseline();
         let policy = ExtractionPolicy {
+            retained_profile: None,
+            legacy_fallback_detail: None,
             detail: None,
             version: 1,
             rules: vec![
@@ -475,6 +495,8 @@ mod tests {
     fn conflicts_traversal_and_case_are_explicit() -> anyhow::Result<()> {
         let registry = AdapterRegistry::baseline();
         let mut policy = ExtractionPolicy {
+            retained_profile: None,
+            legacy_fallback_detail: None,
             detail: None,
             version: 1,
             rules: vec![],
@@ -498,6 +520,8 @@ mod tests {
     fn exact_and_longest_scope_win() -> anyhow::Result<()> {
         let registry = AdapterRegistry::baseline();
         let policy = ExtractionPolicy {
+            retained_profile: None,
+            legacy_fallback_detail: None,
             detail: None,
             version: 1,
             rules: vec![
@@ -540,6 +564,34 @@ mod tests {
             policy.select(&registry, "src/other/a.h")?.profile.language,
             "c"
         );
+        Ok(())
+    }
+    #[test]
+    fn historical_policy_bytes_remain_exact_and_new_policy_requires_explicit_fallback()
+    -> anyhow::Result<()> {
+        let registry = AdapterRegistry::baseline();
+        for bytes in [
+            br#"{"version":1,"rules":[]}"#.as_slice(),
+            br#"{"detail":"balanced","version":3,"rules":[]}"#.as_slice(),
+        ] {
+            let policy = ExtractionPolicy::parse(bytes, &registry)?;
+            assert_eq!(serde_json::to_vec(&policy)?, bytes);
+            assert!(policy.retained_profile.is_none());
+            assert!(policy.legacy_fallback_detail.is_none());
+        }
+        let mut new = ExtractionPolicy {
+            retained_profile: Some(airk_core::retention::RetainedProfile::Lean),
+            legacy_fallback_detail: Some(airk_core::extraction::IndexDetail::AgentLean),
+            detail: None,
+            version: 4,
+            rules: vec![],
+        };
+        new.validate(&registry)?;
+        new.legacy_fallback_detail = None;
+        assert!(new.validate(&registry).is_err());
+        new.legacy_fallback_detail = Some(airk_core::extraction::IndexDetail::AgentLean);
+        new.detail = Some(airk_core::extraction::IndexDetail::Detailed);
+        assert!(new.validate(&registry).is_err());
         Ok(())
     }
 }

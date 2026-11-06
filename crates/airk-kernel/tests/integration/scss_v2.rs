@@ -73,6 +73,8 @@ fn scss_original_locations_profile_invalidation_and_rename_reuse() -> Result<()>
     let warm = kernel.index()?;
     assert_eq!((warm.indexed, warm.reused), (0, 2));
     kernel.configure_extraction_policy(ExtractionPolicy {
+        retained_profile: None,
+        legacy_fallback_detail: None,
         detail: None,
         version: 1,
         rules: vec![SelectionRule {
@@ -100,6 +102,8 @@ fn scss_original_locations_profile_invalidation_and_rename_reuse() -> Result<()>
     );
     drop(changed_catalog);
     kernel.configure_extraction_policy(ExtractionPolicy {
+        retained_profile: None,
+        legacy_fallback_detail: None,
         detail: None,
         version: 1,
         rules: vec![],

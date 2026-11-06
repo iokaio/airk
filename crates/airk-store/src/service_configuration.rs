@@ -293,7 +293,16 @@ impl ServiceRegistry {
         ensure!(unrecorded, "configuration result was already recorded");
         write_result(&transaction, job, &bytes)?;
         let work = work(&transaction, job)?.ok_or(JobError::UnknownJob)?;
-        if work.request.configuration.requests_source_pass() {
+        let source_pass = match &work.request.configuration {
+            airk_core::service_configuration::ProjectConfiguration::RetainedProfile { review } => {
+                let observed: airk_core::retention::RetentionMigrationResult =
+                    serde_json::from_value(result.clone())?;
+                observed.validate_for(review)?;
+                observed.source_pass_requested
+            }
+            configuration => configuration.requests_source_pass(),
+        };
+        if source_pass {
             super::background::set(
                 &transaction,
                 lease.binding,
@@ -1117,6 +1126,63 @@ mod tests {
         let before = std::fs::read(&database)?;
         assert!(open(temporary.path(), caller).is_err());
         assert_eq!(std::fs::read(database)?, before);
+        Ok(())
+    }
+    #[test]
+    fn retained_migration_result_noop_avoids_source_queue_and_crossed_result_rolls_back()
+    -> Result<()> {
+        use airk_core::retention::{
+            RetainedProfile, RetentionMigrationResult, RetentionMigrationReview,
+        };
+        for requires_source in [false, true] {
+            let temporary = tempfile::tempdir()?;
+            let caller = Incarnation::from_bytes([1; 16]);
+            let mut registry = open(temporary.path(), caller)?;
+            let selected = project(temporary.path())?;
+            registry.register(&selected)?;
+            let applied = Sha256Digest::from_bytes([5; 32]);
+            let review = RetentionMigrationReview {
+                schema: 1,
+                expected_publication: format!("airk-r1:{}:1:{}", "11".repeat(16), "22".repeat(32))
+                    .parse()?,
+                expected_applied_policy: applied,
+                reviewed_configured_policy: applied,
+                desired_policy: if requires_source {
+                    Sha256Digest::from_bytes([6; 32])
+                } else {
+                    applied
+                },
+                target: RetainedProfile::Lean,
+            };
+            let mut configuration = request(false);
+            configuration.configuration = ProjectConfiguration::RetainedProfile {
+                review: Box::new(review.clone()),
+            };
+            let accepted_key = key(&mut registry, 1)?;
+            let job = registry.enqueue_configuration(
+                selected.binding,
+                caller,
+                &accepted_key,
+                &configuration,
+                Sha256Digest::from_bytes([4; 32]),
+            )?;
+            assert!(!registry.job_runs_while_paused(job.id)?);
+            let mut lease = ProjectLease::acquire(&registry.root, selected.binding)?;
+            registry.admit_worker(&mut lease)?;
+            registry.claim_job_id(&lease, job.id)?.unwrap();
+            let result = RetentionMigrationResult::for_review(&review)?;
+            let mut crossed = result.clone();
+            crossed.source_pass_requested = !crossed.source_pass_requested;
+            assert!(
+                registry
+                    .record_configuration_result(&lease, job.id, &serde_json::to_value(crossed)?)
+                    .is_err()
+            );
+            assert!(registry.configuration_result(job.id)?.is_none());
+            registry.record_configuration_result(&lease, job.id, &serde_json::to_value(result)?)?;
+            let queued:bool=registry.connection.query_row("SELECT COALESCE((SELECT source_pending FROM service_background WHERE project=?1),0)",[selected.binding.to_string()],|row|row.get(0))?;
+            assert_eq!(queued, requires_source);
+        }
         Ok(())
     }
 }

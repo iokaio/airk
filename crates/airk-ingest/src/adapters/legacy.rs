@@ -663,4 +663,23 @@ mod tests {
         );
         Ok(())
     }
+    #[test]
+    fn missing_retained_profile_keeps_legacy_binding_and_cannot_be_relabeled_lean() -> Result<()> {
+        use airk_core::retention::{AppliedRetention, RetainedFamily, RetainedProfile};
+        let bytes = b"pub fn accepted() { observed(); }\n";
+        let artifact = extract("src/lib.rs", bytes)?;
+        assert!(artifact.retained.is_none());
+        let original = serde_json::to_vec(&artifact)?;
+        let profile = legacy_profile(&artifact)?;
+        let identity = profile.identity()?;
+        roundtrip(&artifact, bytes)?;
+        let next = AppliedRetention::bind(&profile, RetainedProfile::Lean, RetainedFamily::Code)?;
+        assert!(
+            convert_native_legacy(&artifact, bytes, &next).is_err(),
+            "migration must re-extract, never relabel hydrated legacy payload"
+        );
+        assert_eq!(serde_json::to_vec(&artifact)?, original);
+        assert_eq!(profile.identity()?, identity);
+        Ok(())
+    }
 }

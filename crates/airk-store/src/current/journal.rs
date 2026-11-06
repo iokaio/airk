@@ -1060,6 +1060,71 @@ impl FileStore {
         quota.reconcile_funding_phase(writer, owner, None)
     }
 
+    pub(crate) fn prepare_extraction_contract(
+        &self,
+        context: &crate::service::collection::retention_barrier::RetentionOwnerContext<'_>,
+        pin: crate::service::registry::catalog::setup::storage::SetupDirectory,
+    ) -> Result<PreparedExtractionContract> {
+        let owning_store = context.owning_store;
+        let writer = context.writer;
+        let quota = context.quota;
+        let logical = context.logical;
+        let root = context.root;
+        let collection = context.collection;
+        let contract = context.contract;
+        crate::maintenance::check_writer(owning_store, writer, quota)?;
+        quota.require_store_funding(self)?;
+        crate::service::collection::validate_split_store_access(self)?;
+        let gate = Gate::exclusive_pinned_slot(owning_store, writer, self, logical)?;
+        let expected = match pin.open_file(
+            std::ffi::OsStr::new(database::OWNER_FILE),
+            crate::service::registry::catalog::setup::storage::SetupFileMode::Read,
+        ) {
+            Ok(file) => Some(file),
+            Err(error)
+                if error
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound) =>
+            {
+                None
+            }
+            Err(error) => return Err(error),
+        };
+        let mut prepared = PreparedExtractionContract {
+            directory: self.directory().to_path_buf(),
+            pin,
+            _gate: gate,
+            expected,
+            temporary: None,
+            _reservation: None,
+            had_current: false,
+        };
+        if let Some(expected) = prepared.expected.as_mut() {
+            let bytes = database::extraction_contract_bytes(
+                self.directory(),
+                expected,
+                root,
+                collection,
+                contract,
+            )?;
+            let reservation = quota.reserve(collection, 2 * 65_536)?;
+            reservation.charge(bytes.len() as u64)?;
+            prepared.temporary = Some(
+                crate::service::collection::retention_barrier::PreparedMarker::new(
+                    &reservation,
+                    &bytes,
+                )?,
+            );
+            prepared._reservation = Some(reservation);
+            prepared.had_current = true;
+        } else {
+            require_absent_current(&prepared.pin)?;
+            require_absent_native_entries(&prepared.pin, &["current-runtime-bootstrap.json"])?;
+        }
+        writer.invalidate_census_before_mutation()?;
+        Ok(prepared)
+    }
+
     pub fn current_write<'a>(
         &self,
         writer: &'a WriterLock,
@@ -1577,6 +1642,7 @@ impl CurrentWriter<'_> {
         let planned_root = {
             let mut plan = map::MapPlan::new(self.connection()?, &self.scope, base.artifact_root)?;
             let mut collection = super::collection::CollectionPlan::load(&plan, &self.scope, None)?;
+            collection.require_supported_retention(&self.store, &self.scope)?;
             collection.update(
                 previous.as_ref().map(|input| &input.artifact),
                 input.map(|input| &input.artifact),
@@ -1623,6 +1689,7 @@ impl CurrentWriter<'_> {
         let mut plan = map::MapPlan::new(self.connection()?, &self.scope, base.artifact_root)?;
         let collection =
             super::collection::CollectionPlan::load(&plan, &self.scope, Some(configuration))?;
+        collection.require_supported_retention(&self.store, &self.scope)?;
         let mut changes = collection
             .finish(&mut plan, &self.scope)?
             .into_iter()
@@ -2004,6 +2071,7 @@ impl CurrentWriter<'_> {
         // change metadata below mutates the plan even when no artifacts exist.
         let mut collection =
             super::collection::CollectionPlan::load(&plan, &self.scope, update.configuration)?;
+        collection.require_supported_retention(&self.store, &self.scope)?;
         let recent_observation = super::recent_events::observe(
             &self.store,
             &self.scope,
@@ -3039,5 +3107,54 @@ impl FileStore {
             "native publication requires explicit owning recovery"
         );
         Ok(head)
+    }
+}
+
+/// Keeps exact current directory/expected owner and exclusive Gate through publish.
+pub(crate) struct PreparedExtractionContract {
+    directory: std::path::PathBuf,
+    pin: crate::service::registry::catalog::setup::storage::SetupDirectory,
+    _gate: Gate,
+    expected: Option<std::fs::File>,
+    temporary: Option<crate::service::collection::retention_barrier::PreparedMarker>,
+    _reservation: Option<crate::quota::Reservation>,
+    had_current: bool,
+}
+impl Drop for PreparedExtractionContract {
+    fn drop(&mut self) {
+        drop(self.temporary.take());
+    }
+}
+impl PreparedExtractionContract {
+    fn require_named_directory(&self) -> Result<()> {
+        ensure!(
+            crate::service::registry::catalog::setup::storage::SetupDirectory::open_canonical(
+                &self.directory
+            )?
+            .identity()?
+                == self.pin.identity()?,
+            "retained slot pathname changed during capability handoff"
+        );
+        Ok(())
+    }
+    pub(crate) fn had_current(&self) -> bool {
+        self.had_current
+    }
+    pub(crate) fn publish(&mut self) -> Result<()> {
+        self.require_named_directory()?;
+        if let Some(temporary) = self.temporary.as_mut() {
+            temporary.publish(
+                &self.pin,
+                database::OWNER_FILE,
+                self.expected
+                    .as_ref()
+                    .context("current owner expectation missing")?,
+            )?;
+        } else {
+            require_absent_current(&self.pin)?;
+            require_absent_native_entries(&self.pin, &["current-runtime-bootstrap.json"])?;
+        }
+        self.require_named_directory()?;
+        Ok(())
     }
 }

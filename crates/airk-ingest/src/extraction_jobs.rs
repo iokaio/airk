@@ -61,14 +61,16 @@ fn prepare(
         // MAX_PAYLOAD_BYTES check, before any completed result can enter the pool.
         return Ok(payload);
     }
-    let extracted = crate::documents::extract_selected(&input.path, &input.bytes, &input.profile)
+    let producer =
+        crate::retention::producer_profile(&input.path, &input.profile).map_err(Fatal)?;
+    let extracted = crate::documents::extract_selected(&input.path, &input.bytes, &producer)
         .map_err(|error| {
-        if error.is::<crate::pdf_worker::CapacityFailure>() {
-            Fatal(error)
-        } else {
-            Skip(error)
-        }
-    })?;
+            if error.is::<crate::pdf_worker::CapacityFailure>() {
+                Fatal(error)
+            } else {
+                Skip(error)
+            }
+        })?;
     let artifact = Artifact {
         path: input.path.clone(),
         content_hash: input.hash.to_string(),
@@ -80,13 +82,27 @@ fn prepare(
         parse_status: extracted.parse_status,
         retained: None,
     };
-    crate::continuity::prepare_native_with_seeds(
-        &artifact,
-        &input.bytes,
-        &input.profile,
-        extracted.semantic_seeds.as_ref(),
-    )
-    .map_err(Fatal)
+    if input.profile.contract_version == airk_core::retention::PROFILE_CONTRACT {
+        let mut payload =
+            crate::adapters::legacy::convert_native_legacy(&artifact, &input.bytes, &producer)
+                .map_err(Fatal)?;
+        crate::continuity::prepare_with_seeds(
+            &mut payload,
+            &input.profile,
+            None,
+            extracted.semantic_seeds.as_ref(),
+        )
+        .map_err(Fatal)?;
+        Ok(payload)
+    } else {
+        crate::continuity::prepare_native_with_seeds(
+            &artifact,
+            &input.bytes,
+            &input.profile,
+            extracted.semantic_seeds.as_ref(),
+        )
+        .map_err(Fatal)
+    }
 }
 
 pub(crate) fn bind(input: &CapturedExtraction, payload: &ExtractionPayload) -> Result<Artifact> {
@@ -303,5 +319,29 @@ where
             .inspect_err(|_| self.failed = true)?
             .context("extraction admission has no pending result")?;
         self.finish(completed, report, observation)
+    }
+}
+
+#[cfg(test)]
+mod retained_profile_tests {
+    use super::*;
+    use airk_core::retention::{AppliedRetention, RetainedProfile};
+    use sha2::{Digest, Sha256};
+    #[test]
+    fn actual_manifest_extraction_preserves_new_lean_core_and_rich_superset() -> Result<()> {
+        let registry = crate::adapters::registry::AdapterRegistry::baseline();
+        for (path,bytes) in [("Cargo.toml",b"[package]\nname = \"selected\"\nversion = \"0.1.0\"\n[workspace]\nmembers = [\"crates/one\"]\n[dependencies]\nserde = \"1\"\n".as_slice()),("package.json",br#"{"name":"selected","version":"1","scripts":{"test":"actual"},"dependencies":{"one":"1"},"workspaces":["pkg/*"]}"#.as_slice())] {
+            let base=registry.effective_profile(path,"project-manifest")?;
+            let mut outputs=Vec::new();
+            for target in [RetainedProfile::Lean,RetainedProfile::Rich] {
+                let crate::retention::Selection::Qualified{retained,..}=crate::retention::select_profile(path,&base,target)? else {anyhow::bail!("manifest not qualified");};
+                let input=CapturedExtraction{path:path.into(),hash:Sha256Digest::from_bytes(Sha256::digest(bytes).into()),bytes:bytes.into(),profile:retained};
+                let output=prepare(&input).map_err(|failure|match failure{ExtractionFailure::Fatal(error)|ExtractionFailure::Skip(error)=>error})?;output.validate()?;
+                assert!(output.facts.iter().any(|fact|fact.kind=="package_identity"));assert!(output.facts.iter().any(|fact|fact.kind=="package_dependency"));assert!(matches!(AppliedRetention::from_profile(&input.profile)?,AppliedRetention::Selected{..}));outputs.push(output);
+            }
+            assert_eq!(serde_json::to_vec(&outputs[0].semantic_projection)?,serde_json::to_vec(&outputs[1].semantic_projection)?);
+            for fact in &outputs[0].facts {assert!(outputs[1].facts.iter().any(|other|other.kind==fact.kind&&other.name==fact.name&&other.location==fact.location));}
+        }
+        Ok(())
     }
 }

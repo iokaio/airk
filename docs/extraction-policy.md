@@ -109,3 +109,54 @@ Selection is recomputed before extraction reuse. Files whose effective profile r
 **AIRK: Show Extraction Policy** displays collection/root/storage and native policy status. **AIRK: Configure Extraction Policy** selects a JSON file, captures a bounded private copy, validates it, and shows the current and proposed state. Saving requires confirmation and sends the same captured bytes even if the selected file changes while the preview is open. Temporary input is removed on completion, cancellation or failure.
 
 After saving, the extension offers **Index now** for that collection. Declining leaves the policy pending until a later successful index. Both controls require workspace trust. They do not rewrite the selected file, workspace settings, agent configuration or tool approvals. See [VS Code extension](vscode-extension.md) for scheduling behavior.
+
+
+## Explicit versioned retained profiles
+
+The **locally accepted P11b working build**, on working version **1.8.8**, introduces Lean and Rich as separate retained
+profiles under extraction-profile contract 3 and policy version 4. Existing
+`essential`, `agent_lean`, `balanced` (Rich Structure, legacy) and `detailed`
+settings retain their existing meanings and defaults. Reply projection remains
+independent. A missing historical profile is unknown; an existing historical
+profile without `index_detail` retains its original Detailed meaning.
+
+On a native owned index with a published baseline, prepare an explicit reviewed
+configuration draft such as `{"operation":"retained_profile","target":"lean"}`
+through the existing native configuration preparation/receipt path. Preparation
+returns the exact publication and configured/applied policy digests for review.
+Workbench offers the same native review through its existing configuration flow. Saving the desired policy
+and publishing the new representation are separate outcomes. Pause, manual
+updates, watches, vector eligibility and model settings are preserved. The current
+publication remains available to the supported runtime if indexing fails or is
+canceled. An interrupted request must be reconciled by its exact saved receipt;
+unknown outcomes never authorize mutation replay. A known failed request requires
+current review before a new request.
+
+The implementation selects the exact current Rust, manifest, Markdown,
+instruction Markdown and DOCX producers. Lean preserves supported package,
+dependency, script, workspace and configuration evidence in manifests; Rich keeps
+that core plus supported additions. Other versions/families keep their recorded
+legacy fallback. Unsupported output is not created by choosing Rich. OCR remains
+an explicit operation with unchanged adapters, dependencies, models and
+provenance. No parser CPU reduction is claimed by the initial full-producer path.
+
+Policy 4 stores the selected `retained_profile` and an explicit
+`legacy_fallback_detail`; its legacy `detail` field is absent. Existing policy
+versions retain their bytes and semantics. Adapter-rule edits may retain an
+already published new profile, while changing the profile requires native review.
+Per-file cache identity includes only effective producer inputs and the selected
+family algorithm, rather than the entire collection policy. A repeated applied
+choice queues no new source pass; restoring the applied choice over a different
+pending desired policy still saves that choice. Previously queued independent
+source work is preserved.
+
+Scoped P11b qualification passed: 52 native cases on the original functional
+source, two current-source resource cases, actual release CLI/MCP migration,
+native clients/fault/replay gates, 746 UI tests and 11 focused Mac ARM tests across
+the recorded initial batch/supplement. Their exact identities, the original Mac
+zero-test command failure and resource limits remain in the
+[ledger](research/implementation-v190.md#p11b--local-phase-checkpoint-6-november-2026).
+P11b is accepted for unpublished local development.
+Migration requires an already published baseline; this does not add a
+first-publication picker for an empty index. No general speedup, default ONNX
+cost, Linux/Intel or broad format qualification is claimed.

@@ -70,3 +70,24 @@ test('actual session save/load preserves opt-in draft and full report without re
         }
     }finally{await fs.rm(directory,{recursive:true,force:true});}
 });
+
+
+test('Selected retained identity survives canonical flat and historical nested full/selected details and exports without legacy alias',()=>{
+    for(const shape of ['flat','historical_nested'] as const){
+    const entry=turn(shape),value=object(report()),applied=object(value.applied_file);
+    delete applied.legacy_detail;delete applied.legacy_detail_was_absent;
+    applied.applied_retention={kind:'selected',profile:'rich',family:'manifest',algorithm:'airk/file-aware-retention/1'};
+    value.configured_collection_policy={state:'known',revision:{retained_profile:'rich',legacy_fallback_detail:'agent_lean',policy_digest:'ab'.repeat(32)}};
+    value.published_collection_policy={state:'known',revision:{retained_profile:'lean',legacy_fallback_detail:'agent_lean',policy_digest:'cd'.repeat(32)}};value.pending_collection_reindex=true;
+    const step=object((entry.envelope!.steps as Record<string,unknown>[])[0]),result=object(step.result);
+    assert.equal(Object.hasOwn(result,'content'),shape==='historical_nested');
+    const content=shape==='flat'?result:object(result.content);content.profile_families=value;
+    const session=newSession('ab'.repeat(32));session.turns=[entry];const original=structuredClone(entry.envelope);
+    assert.deepEqual(discoveryDetails(entry.envelope!)[0].profileFamilies,value);
+    for(const format of ['json','markdown'] as const)for(const selected of [undefined,['record-0']]){
+        const output=renderExport(session,format,entry.id,selected);assert.ok(output.includes('airk/file-aware-retention/1'));assert.ok(output.includes('legacy_fallback_detail'));assert.ok(output.includes('pending_collection_reindex'));assert.ok(output.includes('rich'));assert.ok(output.includes('lean'));
+        if(format==='json'&&selected){const coverage=JSON.parse(output).turns[0].envelope.source_coverage;assert.deepEqual(coverage[0].profile_families,value);}
+    }
+    assert.deepEqual(entry.envelope,original);assert.equal(object(value.applied_file).legacy_detail,undefined);
+    }
+});

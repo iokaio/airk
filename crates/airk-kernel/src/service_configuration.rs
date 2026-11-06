@@ -347,6 +347,9 @@ impl Kernel {
                 result["semantic_setup_requested"] = json!(*enabled);
                 result
             }
+            ProjectConfiguration::RetainedProfile { review } => {
+                serde_json::to_value(self.configure_retained_migration(review)?)?
+            }
             ProjectConfiguration::Detail { level } => {
                 self.configure_index_detail(*level)?;
                 json!({"configured_level":level,"source_pass_requested":true})

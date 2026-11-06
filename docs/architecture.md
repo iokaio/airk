@@ -420,3 +420,18 @@ Native line indexes belong to `airk-store::current::native_range`, under the exi
 `airk-store::current::text_range` owns optional retained display-text pages and ordered original locations. It uses existing resource/journal/retention/quota ownership and the same file projection audit cursor. Its logical certificate derives exact page digests from authoritative retained extraction; separate bounded physical turns read those pages without reparsing source/payload. This representation does not map raw PDF/DOCX offsets into extracted text or confer query authority.
 
 Retained-data audit evidence remains owned by `airk-store::service::collection::integrity::verify`. Only that verifier constructs its opaque physical proof; the existing registry/background owner can persist a bounded dated observation under the same job/lease fence. Serialization produces history, never physical authority. Whole optional Verify, retained declared-data coverage and the later stronger private-consumer profile remain separate contracts. The registry schema-11 row prepares the existing background owner; no additional scheduler or database is introduced and automatic execution is not yet wired.
+
+## P11b retention ownership
+
+The locally accepted P11b implementation keeps the existing crate direction. Core owns the
+versioned retained-profile identities and pure review contract. Ingest selects
+qualified file-family retention from the actual saved producer identity and
+preserves semantic input/provenance before fact filtering; unsupported producers
+retain explicit legacy fallback. Kernel and Store retain source/profile cache
+identity, configured/applied separation and guarded publication. Native Configure
+owns exact reviewed migration admission and the dual-owner compatibility barrier;
+CLI dispatches its existing job/receipt flow. Workbench displays and confirms the
+full native review. Consumer tests alone do not qualify publication, predecessor
+readers, split inheritance or native recovery. Those boundaries now have the
+separate scoped native/release and focused Mac evidence in the ledger; broader
+P14 qualification remains pending. P11b is accepted for unpublished local development; publication remains separate.

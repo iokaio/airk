@@ -21,6 +21,9 @@ use std::{
 const MAX_METADATA: usize = 16384;
 const MAX_RETIRED: usize = 8;
 
+#[path = "service_collection_retention.rs"]
+pub(crate) mod retention_barrier;
+
 #[path = "service_collection_setup.rs"]
 mod setup;
 pub(crate) use setup::initial_metadata as initial_setup_metadata;
@@ -35,6 +38,9 @@ mod purge;
 mod split;
 pub(crate) use split::{NativeTerminalPublication, TerminalSlot, initial_split_seal};
 pub use split::{SplitBuildPermit, validate_split_store_access};
+#[path = "service_collection_retention_inheritance.rs"]
+mod retention_inheritance;
+pub use retention_inheritance::{CapturedSplitExtractionPolicy, SavedSplitExtractionPolicy};
 
 #[derive(Clone, Copy, Debug)]
 pub struct SelectionContention;
@@ -74,6 +80,73 @@ fn retry_manifest_lock(
         }
     }
 }
+/// Required capabilities use an exact numeric wire value. Unsupported values
+/// refuse even metadata-only reopening; absence preserves historical bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "u32", into = "u32")]
+pub(crate) struct RequiredExtractionContract(u32);
+impl TryFrom<u32> for RequiredExtractionContract {
+    type Error = anyhow::Error;
+    fn try_from(value: u32) -> Result<Self> {
+        ensure!(value == 3, "unsupported required extraction contract");
+        Ok(Self(value))
+    }
+}
+impl From<RequiredExtractionContract> for u32 {
+    fn from(value: RequiredExtractionContract) -> Self {
+        value.0
+    }
+}
+
+/// Native stable owner capability, reread when constructing every new slot owner.
+pub(crate) fn required_extraction_contract_for_store(
+    store: &FileStore,
+) -> Result<Option<RequiredExtractionContract>> {
+    let Ok(managed) = store.managed_path() else {
+        return Ok(None);
+    };
+    if managed.namespace != "collections-1.4" || managed.slot.is_none() {
+        return Ok(None);
+    }
+    let pin = crate::service::registry::catalog::setup::storage::SetupDirectory::open_canonical(
+        managed.logical,
+    )?;
+    let owner: Owner =
+        retention_barrier::read_json(&pin, "service-owner.json", MAX_METADATA as u64)?;
+    ensure!(
+        owner.version == 140
+            && Path::new(&owner.data_root) == managed.root
+            && owner.collection == managed.collection,
+        "foreign extraction capability owner"
+    );
+    Ok(owner.required_extraction_contract)
+}
+pub(crate) fn required_extraction_contract_for_scope(
+    store: &FileStore,
+    scope: &crate::current::CurrentScope,
+) -> Result<Option<RequiredExtractionContract>> {
+    let managed = store.managed_path()?;
+    ensure!(
+        managed.namespace == "collections-1.4" && managed.slot.is_some(),
+        "retained contract requires native service incarnation"
+    );
+    let pin = crate::service::registry::catalog::setup::storage::SetupDirectory::open_canonical(
+        managed.logical,
+    )?;
+    let owner: Owner =
+        retention_barrier::read_json(&pin, "service-owner.json", MAX_METADATA as u64)?;
+    ensure!(
+        owner.version == 140
+            && Path::new(&owner.data_root) == managed.root
+            && owner.collection == managed.collection
+            && owner.root == scope.root
+            && owner.collection == scope.collection
+            && store.service_incarnation()? == Some(scope.incarnation),
+        "foreign scoped extraction capability owner"
+    );
+    Ok(owner.required_extraction_contract)
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Owner {
@@ -89,12 +162,15 @@ struct Owner {
     required_source_policy: Option<airk_core::index_catalog::PolicyReference>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     required_split: Option<split::SplitOwnerPointer>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    required_extraction_contract: Option<RequiredExtractionContract>,
 }
 
 fn owner_digest(owner: &Owner) -> Result<Sha256Digest> {
     let mut identity = owner.clone();
     identity.required_source_policy = None;
     identity.required_split = None;
+    identity.required_extraction_contract = None;
     if let Some(original) = identity.identity_data_root.take() {
         identity.data_root = original;
     }
@@ -462,6 +538,17 @@ impl Collection {
             Ok(quota)
         }
     }
+    /// Native reviewed migration barrier; excludes every recoverable slot reader.
+    pub fn require_extraction_contract(
+        &self,
+        store: &FileStore,
+        writer: &crate::WriterLock,
+        quota: &Quota,
+        contract: u32,
+    ) -> Result<()> {
+        retention_barrier::install(self, store, writer, quota, contract, || Ok(()))
+    }
+
     /// Reference observed when this stable collection owner was opened.
     pub fn required_source_policy(&self) -> Option<airk_core::index_catalog::PolicyReference> {
         self.owner.required_source_policy.clone()

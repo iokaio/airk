@@ -20,6 +20,7 @@ pub mod continuity;
 mod detail;
 mod extraction_jobs;
 mod extraction_pool;
+pub mod retention;
 pub use extraction_pool::ExtractionExecution;
 pub mod header_context;
 mod host_components;
@@ -439,6 +440,8 @@ fn scan_streaming_configured(
     mut emit: impl FnMut(&Artifact, &[u8]) -> Result<Artifact>,
 ) -> Result<(Snapshot, IndexReport)> {
     let policy = adapters::profile::ExtractionPolicy {
+        retained_profile: None,
+        legacy_fallback_detail: None,
         detail: None,
         version: 1,
         rules: vec![],
@@ -930,7 +933,7 @@ fn scan_observed_profiled(
                     None => adapters::legacy::legacy_profile(old)?,
                 };
             }
-            match policy.detail.unwrap_or_default() {
+            match policy.legacy_detail() {
                 airk_core::extraction::IndexDetail::Detailed => {
                     profile.options.remove("index_detail");
                 }
@@ -939,6 +942,12 @@ fn scan_observed_profiled(
                         .options
                         .insert("index_detail".into(), detail.as_str().into());
                 }
+            }
+            if let Some(target) = policy.retained_profile {
+                profile = match retention::select_profile(&path, &profile, target)? {
+                    retention::Selection::Qualified { retained, .. }
+                    | retention::Selection::LegacyFallback { retained, .. } => retained,
+                };
             }
             profile.identity()?;
             if !selection.ambiguity.is_empty() {
@@ -1680,6 +1689,8 @@ mod scan_budget_tests {
         let (previous, _) = scan(root.path(), data.path(), &empty)?;
         assert_eq!(previous.artifacts["header.h"].language, "c");
         let policy = ExtractionPolicy {
+            retained_profile: None,
+            legacy_fallback_detail: None,
             detail: None,
             version: 1,
             rules: vec![SelectionRule {
@@ -1791,6 +1802,8 @@ mod scan_budget_tests {
             .artifacts
             .insert(artifact.path.clone(), artifact.clone());
         let policy = adapters::profile::ExtractionPolicy {
+            retained_profile: None,
+            legacy_fallback_detail: None,
             detail: None,
             version: 1,
             rules: vec![],

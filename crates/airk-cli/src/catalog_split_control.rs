@@ -88,11 +88,32 @@ pub(crate) fn execute(
                 );
                 // No destination setup, quota admission, source read or job is
                 // attempted before the exact Accepted intent is durable.
-                match registry.catalog_reserve_split(
-                    &draft.request,
-                    &draft.before_policy,
-                    &draft.plan,
-                ) {
+                let admitted = (|| -> Result<_> {
+                    if draft.request.extraction_policy.is_some() {
+                        let original = &draft.request.original_registration;
+                        let collection = Collection::existing(
+                            Path::new(&original.data_root),
+                            &original.root,
+                            &original.collection,
+                        )?;
+                        let selected = collection.select()?;
+                        let captured = collection
+                            .capture_split_extraction_policy(&selected.store, &draft.request)?;
+                        registry.catalog_reserve_split_with_extraction(
+                            &draft.request,
+                            &draft.before_policy,
+                            &draft.plan,
+                            &captured,
+                        )
+                    } else {
+                        registry.catalog_reserve_split(
+                            &draft.request,
+                            &draft.before_policy,
+                            &draft.plan,
+                        )
+                    }
+                })();
+                match admitted {
                     Ok(snapshot) => ControlResponse::CatalogSplitAccepted {
                         snapshot: Box::new(snapshot),
                     },
@@ -213,6 +234,35 @@ fn draft_native(
         &original.collection,
     )?
     .select()?;
+    let extraction_policy = selected
+        .store
+        .extraction_policy_bytes(&original.root)?
+        .as_deref()
+        .map(airk_kernel::Kernel::split_retained_policy_reference)
+        .transpose()?
+        .flatten();
+    if let Some(scope) = selected
+        .store
+        .current_scope(&original.root, &original.collection)?
+    {
+        let read = selected.store.current_read(&scope)?;
+        let applied = read
+            .collection_state()?
+            .context("split applied configuration missing")?
+            .configuration;
+        match &extraction_policy {
+            Some(reference) => ensure!(
+                applied.extraction_policy_digest == reference.configured_policy_digest
+                    && applied.retained_profile == Some(reference.retained_profile)
+                    && applied.index_detail == reference.legacy_fallback_detail,
+                "split waits for exact configured retained profile publication"
+            ),
+            None => ensure!(
+                applied.retained_profile.is_none(),
+                "split waits for pending retained profile change"
+            ),
+        }
+    }
     let settings = inspect_settings_digest(&selected.store, &original.root)?;
     let incarnation = selected
         .store
@@ -307,8 +357,13 @@ fn draft_native(
     let destination_quota =
         Quota::review_service_funding_policy(Path::new(&destination.data_root))?;
     let request = SplitRequest {
+        extraction_policy: extraction_policy.clone(),
         schema: 1,
-        required_policy_contract: SPLIT_CONTRACT,
+        required_policy_contract: if extraction_policy.is_some() {
+            3
+        } else {
+            SPLIT_CONTRACT
+        },
         caller,
         key: selection.key.clone(),
         expected_catalog_revision: selection.expected_catalog_revision,
@@ -365,6 +420,7 @@ fn draft_native(
         destination_storage_action: review.storage_action(),
         control_inputs: serde_json::json!({
             "schema":1,"behavior":"protected native capture enforces permanent policy at use",
+            "destination_retention_basis":if extraction_policy.is_some(){"inherited exact reviewed policy4"}else{"legacy destination Agent Lean default"},
             "rules":["nested ignore ancestry","extractor configuration","tokenizer and custom model assets","preparation and import inputs"],
             "filesystem_review":review.review_digest()?.to_string(),
             "funding_budgets":funding.budgets

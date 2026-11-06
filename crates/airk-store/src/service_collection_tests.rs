@@ -108,7 +108,7 @@ fn selection_waits_for_short_metadata_handoffs_and_marks_only_real_lock_contenti
     Ok(())
 }
 
-fn initialize(store: &FileStore, root: &str, slot: Incarnation) -> Result<CurrentToken> {
+pub(super) fn initialize(store: &FileStore, root: &str, slot: Incarnation) -> Result<CurrentToken> {
     let scope = CurrentScope {
         root: root.into(),
         collection: "fixture".into(),
@@ -284,7 +284,7 @@ fn installed_data_root_rename_preserves_publication_settings_pause_and_receipts(
     );
     Ok(())
 }
-struct ChildGuard(Child);
+pub(super) struct ChildGuard(pub(super) Child);
 #[test]
 fn full_removal_preserves_sources_refuses_unknown_files_and_aliases_and_resumes_after_restart()
 -> Result<()> {
@@ -1595,6 +1595,8 @@ fn approved_physical_repair_claim_and_success_require_actual_guard_and_component
         indexed_vectors: Some(0),
         vectors_enabled: Some(false),
         index_detail: None,
+        configured_retained_profile: None,
+        published_retained_profile: None,
         semantic: None,
         discovery: None,
         failure: None,
@@ -2279,6 +2281,7 @@ fn publish_projection_fixture_with_native_mode(
     )?
     .seal()?;
     let configuration = collection::CollectionConfiguration {
+        retained_profile: None,
         roots: Default::default(),
         extractor_version: "projection-test/1".into(),
         extraction_policy_digest: Sha256Digest::from_bytes([67; 32]),
@@ -4899,5 +4902,176 @@ fn permanent_policy_survives_owned_purge_and_corruption_never_authorizes_deletio
     );
     assert_eq!(fs::read(&path)?, valid);
     assert_eq!(fs::read(&source)?, b"original policy source");
+    Ok(())
+}
+
+/// Model the actual predecessor's current owner parser, not a fake artifact/profile.
+/// Its cached FileStore still rereads this header after acquiring a shared Gate.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct PreRetentionCurrentOwner {
+    version: u32,
+    scope: CurrentScope,
+    capacity: u64,
+    #[serde(default)]
+    query_projection_version: Option<u32>,
+}
+
+#[test]
+fn retention_barrier_excludes_actual_readers_and_preserves_publication_and_source() -> Result<()> {
+    let temporary = tempfile::tempdir()?;
+    let base = temporary.path().canonicalize()?;
+    let data = base.join("data");
+    let source = base.join("source");
+    fs::create_dir(&data)?;
+    fs::create_dir(&source)?;
+    fs::write(source.join("original.rs"), b"fn original() {}")?;
+    let root = source.to_str().context("non-UTF-8 fixture source")?;
+    let slot = Incarnation::from_bytes([62; 16]);
+    let collection = Collection::initialize(&data, root, "fixture", slot)?;
+    let store = collection.selected_store()?;
+    let token = initialize(&store, root, slot)?;
+    let scope = store
+        .current_scope(root, "fixture")?
+        .context("missing current")?;
+    let quota = Quota::open_service(&data)?;
+    let prior_owner = fs::read(collection.directory.join("service-owner.json"))?;
+    let prior_current = fs::read(store.directory().join("current-owner.json"))?;
+    serde_json::from_slice::<PreRetentionCurrentOwner>(&prior_current)?;
+    let read = store.current_read(&scope)?;
+    let writer = store.lock()?;
+    let error = collection
+        .require_extraction_contract(&store, &writer, &quota, 3)
+        .expect_err("active actual current reader must defer capability activation");
+    assert!(
+        error
+            .downcast_ref::<crate::current::CurrentGateContention>()
+            .is_some()
+    );
+    assert_eq!(
+        fs::read(collection.directory.join("service-owner.json"))?,
+        prior_owner
+    );
+    assert_eq!(
+        fs::read(store.directory().join("current-owner.json"))?,
+        prior_current
+    );
+    drop(read);
+    collection.require_extraction_contract(&store, &writer, &quota, 3)?;
+    collection.require_extraction_contract(&store, &writer, &quota, 3)?;
+    assert!(
+        collection
+            .require_extraction_contract(&store, &writer, &quota, 4)
+            .is_err()
+    );
+    drop(writer);
+    let current = fs::read(store.directory().join("current-owner.json"))?;
+    assert!(serde_json::from_slice::<PreRetentionCurrentOwner>(&current).is_err());
+    let stable: serde_json::Value =
+        serde_json::from_slice(&fs::read(collection.directory.join("service-owner.json"))?)?;
+    assert_eq!(stable["required_extraction_contract"], 3);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&current)?["required_extraction_contract"],
+        3
+    );
+    let reopened = Collection::existing(&data, root, "fixture")?;
+    assert_eq!(reopened.binding, collection.binding);
+    assert_eq!(store.current_read(&scope)?.token()?, token);
+    assert_eq!(fs::read(source.join("original.rs"))?, b"fn original() {}");
+    // A new replacement slot created through an already cached Collection must
+    // inherit the current stable barrier rather than the cached owner clone.
+    let next_slot = Incarnation::from_bytes([63; 16]);
+    let next = FileStore::new(collection.slot(next_slot));
+    initialize(&next, root, next_slot)?;
+    let next_owner: serde_json::Value =
+        serde_json::from_slice(&fs::read(next.directory().join("current-owner.json"))?)?;
+    assert_eq!(next_owner["required_extraction_contract"], 3);
+    let writer = next.lock()?;
+    assert!(
+        collection
+            .require_extraction_contract(&next, &writer, &quota, 3)
+            .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn selected_collection_publication_requires_actual_both_owner_capabilities() -> Result<()> {
+    use crate::current::collection::CollectionConfiguration;
+    use airk_core::{extraction::IndexDetail, retention::RetainedProfile};
+    let temporary = tempfile::tempdir()?;
+    let base = temporary.path().canonicalize()?;
+    let source = base.join("source");
+    let data = base.join("data");
+    fs::create_dir(&source)?;
+    fs::create_dir(&data)?;
+    fs::write(source.join("kept.rs"), b"fn kept() {}")?;
+    let root = source.to_str().context("source UTF8")?;
+    let slot = Incarnation::from_bytes([65; 16]);
+    let collection = Collection::initialize(&data, root, "fixture", slot)?;
+    let store = collection.selected_store()?;
+    let token = initialize(&store, root, slot)?;
+    let scope = store
+        .current_scope(root, "fixture")?
+        .context("current scope")?;
+    let quota = Quota::open_service(&data)?;
+    let configuration = CollectionConfiguration {
+        retained_profile: Some(RetainedProfile::Lean),
+        source_policy_digest: None,
+        roots: Default::default(),
+        extractor_version: "fixture/1".into(),
+        extraction_policy_digest: Sha256Digest::from_bytes([66; 32]),
+        index_detail: IndexDetail::AgentLean,
+        vector_selection: Default::default(),
+        model: None,
+    };
+    let writer = store.lock()?;
+    {
+        let mut current = store.current_write(&writer, &quota, &scope, 8 << 20)?;
+        assert!(
+            current
+                .initialize_collection(&token, &configuration)
+                .is_err(),
+            "Kernel bypass without native capabilities published selected configuration"
+        );
+        assert_eq!(current.head()?.token()?, token);
+    }
+    collection.require_extraction_contract(&store, &writer, &quota, 3)?;
+    let current_path = store.directory().join("current-owner.json");
+    let exact = fs::read(&current_path)?;
+    // Model an interrupted stable-first handoff, without claiming private bytes
+    // confer authority: lower capability absence must still refuse publication.
+    let lower =
+        String::from_utf8(exact.clone())?.replace(",\"required_extraction_contract\":3", "");
+    assert_ne!(lower.as_bytes(), exact.as_slice());
+    {
+        // Open before removing the lower marker: publication must inspect actual
+        // headers again instead of trusting a cached admitted writer.
+        let mut current = store.current_write(&writer, &quota, &scope, 8 << 20)?;
+        fs::write(&current_path, lower.as_bytes())?;
+        assert!(
+            current
+                .initialize_collection(&token, &configuration)
+                .is_err()
+        );
+        assert_eq!(current.head()?.token()?, token);
+        fs::write(&current_path, &exact)?;
+    }
+    let committed = {
+        let mut current = store.current_write(&writer, &quota, &scope, 8 << 20)?;
+        current.initialize_collection(&token, &configuration)?
+    };
+    drop(writer);
+    let read = store.current_read(&scope)?;
+    assert_eq!(read.token()?, committed.token);
+    assert_eq!(
+        read.collection_state()?
+            .unwrap()
+            .configuration
+            .retained_profile,
+        Some(RetainedProfile::Lean)
+    );
+    assert_eq!(fs::read(source.join("kept.rs"))?, b"fn kept() {}");
     Ok(())
 }

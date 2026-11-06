@@ -449,7 +449,7 @@ async fn fresh_grant(f: &mut Fixture, snapshot: &SplitSnapshot, nonce: u8) -> Re
 }
 
 #[cfg(feature = "embedding-worker")]
-async fn pause_quiescent_original(f: &Fixture, index: usize) -> Result<()> {
+pub(super) async fn pause_quiescent_original(f: &Fixture, index: usize) -> Result<()> {
     let project = f.registrations[index].binding;
     let sql = Connection::open_with_flags(
         f.control.join("service-1.4.sqlite3"),

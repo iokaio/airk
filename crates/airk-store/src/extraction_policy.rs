@@ -90,7 +90,8 @@ impl FileStore {
         writer.invalidate_census_before_mutation()?;
         let reservation = quota.reserve(collection, bytes.len() as u64)?;
         reservation.charge(bytes.len() as u64)?;
-        let mut temporary = tempfile::NamedTempFile::new_in(&directory)?;
+        // Exact reservation staging remains discoverable after abrupt worker death.
+        let mut temporary = tempfile::NamedTempFile::new_in(reservation.staging_directory()?)?;
         temporary.write_all(&bytes)?;
         temporary.as_file().sync_all()?;
         temporary.persist(directory.join("extraction-policy.json"))?;
@@ -98,4 +99,37 @@ impl FileStore {
         fs::File::open(&directory)?.sync_all()?;
         Ok(())
     }
+}
+
+/// Opaque existing metadata through the retained native directory. No source
+/// capture, producer execution or ingestion interpretation belongs to Store.
+pub(crate) fn extraction_policy_bytes_at(
+    pin: &crate::service::registry::catalog::setup::storage::SetupDirectory,
+    owner_root: &str,
+) -> Result<Option<Vec<u8>>> {
+    let bytes = match pin.read_file(
+        std::ffi::OsStr::new("extraction-policy.json"),
+        MAX_BYTES as u64,
+    ) {
+        Ok(bytes) => bytes,
+        Err(error)
+            if error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound) =>
+        {
+            return Ok(None);
+        }
+        Err(error) => return Err(error),
+    };
+    let policy: StoredPolicy = serde_json::from_slice(&bytes)?;
+    ensure!(
+        policy.version == 1 && policy.owner_root == owner_root,
+        "foreign pinned extraction policy"
+    );
+    let bytes = serde_json::to_vec(&policy.policy)?;
+    ensure!(
+        bytes.len() <= 131_072,
+        "pinned extraction policy exceeds bound"
+    );
+    Ok(Some(bytes))
 }

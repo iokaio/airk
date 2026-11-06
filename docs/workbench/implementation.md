@@ -155,3 +155,15 @@ The [CLI, MCP and Workbench parity audit](../read-interface-parity.md) maps all 
 ## P11a: explicit per-file family metadata
 
 The [family report](../profile-family-reporting.md) uses `include_profile_families` on existing FileInfo reads. Default/false retain the old representation and validator. Workbench’s schema-driven File info form offers an explicit choice; complete native report metadata survives structured details, JSON/Markdown copies/exports and session restore. Reporting adds no source reads or profile migration; existing verification remains independent. Focused native, Mac ARM, Workbench and actual CLI/console/MCP parity checks passed. Final qualification gates passed. P11a has passed its local phase checks and is accepted for unpublished local development. P10 is already accepted for local development.
+
+## P11b: reviewed retained-profile migration
+
+The existing configuration flow offers **Review Lean or Rich retention**, obtains
+the complete native review and confirms its publication/settings/policy identity
+before mutation. Configured and published retention remain separate observations;
+legacy levels are not new Lean/Rich aliases. A lost reply keeps the exact saved
+request/receipt lookup and does not automatically prepare or replay another
+mutation. Decline or trust loss prevents dispatch. Focused compile and 83 owning
+UI tests passed, followed by the full UI run: 746 passed, zero failed, 19 skipped.
+Flat/historical opaque report exports remain covered. Scoped native/resource,
+actual release CLI/MCP and focused Mac checks passed separately. P11b primary review passed; it is accepted for unpublished local development.

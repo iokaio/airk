@@ -616,6 +616,8 @@ fn positive_partition_declared_header_configuration_is_bounded_and_deny_authorit
         )?;
         kernel.configure_vectors(false)?;
         kernel.configure_extraction_policy(ExtractionPolicy {
+            retained_profile: None,
+            legacy_fallback_detail: None,
             version: 2,
             detail: None,
             rules: vec![SelectionRule {

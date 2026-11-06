@@ -285,14 +285,24 @@ impl SetupDirectory {
         target: &OsStr,
         expected: &File,
     ) -> Result<()> {
+        self.replace_file_to(name, owned, self, target, expected)
+    }
+    pub(crate) fn replace_file_to(
+        &self,
+        name: &OsStr,
+        owned: &File,
+        destination: &Self,
+        target: &OsStr,
+        expected: &File,
+    ) -> Result<()> {
         let source = self.open_file(name, SetupFileMode::Read)?;
-        let destination = self.open_file(target, SetupFileMode::Read)?;
+        let current = destination.open_file(target, SetupFileMode::Read)?;
         ensure!(
             native_file_identity(&source)? == native_file_identity(owned)?
-                && native_file_identity(&destination)? == native_file_identity(expected)?,
+                && native_file_identity(&current)? == native_file_identity(expected)?,
             "native metadata replacement identity changed"
         );
-        self.publish_named(name, owned, self, target, true, || {})
+        self.publish_named(name, owned, destination, target, true, || {})
     }
     fn publish_named(
         &self,

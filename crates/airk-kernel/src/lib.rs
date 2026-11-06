@@ -816,7 +816,7 @@ impl Kernel {
             .collection_state()?
             .context("current configuration missing")?;
         Ok(airk_core::RelationshipsResponse {
-            indexing: configuration.configuration.index_detail.into(),
+            indexing: configuration.configuration.index_coverage(),
             publication: Some(current::runtime::envelope(&read)?),
             generation: read.head().sequence,
             collection: self.collection.clone(),

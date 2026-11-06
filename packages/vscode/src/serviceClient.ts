@@ -117,7 +117,7 @@ export function validateConfigurationRequest(input:unknown):ProjectConfiguration
     if(!['configuration,incarnation,settings','configuration,incarnation,prepare,settings'].includes(Object.keys(value).sort().join(','))||Buffer.byteLength(JSON.stringify(value))>16384)throw new ServiceError('invalid_project_configuration');
     if(value.prepare!==undefined&&(typeof value.prepare!=='boolean'||value.prepare&&!['vectors','detail'].includes(String(operation))))throw new ServiceError('invalid_project_configuration');
     identifier(value.incarnation,16);identifier(value.settings,32);
-    const names:Record<string,string[]>={unregister:[],prepare_derived_cleanup:[],delete_derived:['preview'],bundled_model:[],vectors:['enabled'],detail:['level'],vector_selection:['policy'],
+    const names:Record<string,string[]>={unregister:[],prepare_derived_cleanup:[],delete_derived:['preview'],bundled_model:[],vectors:['enabled'],detail:['level'],retained_profile:['review'],vector_selection:['policy'],
         add_root:['alias','path'],remove_root:['alias'],install_model:['directory','manifest_sha256'],usage:['mode'],
         clear_usage:[],reset_scan_limits:[],usage_feedback:['request_id','usefulness'],import_usage:['input'],extraction_policy:['input'],scan_limits:['input'],quota_policy:['input','expected_policy_digest'],
         calibrate:['tokenizer','baseline','returned','generation','content_kind','record']};
@@ -125,6 +125,11 @@ export function validateConfigurationRequest(input:unknown):ProjectConfiguration
     const filePath=(input:unknown)=>{if(typeof input!=='string'||!path.isAbsolute(input)||input.length>4096||/[\u0000-\u001f\u007f]/.test(input))throw new ServiceError('invalid_configuration_path');};
     if(operation==='vectors'&&typeof configuration.enabled!=='boolean')throw new ServiceError('invalid_project_configuration');
     if(operation==='detail'&&!['essential','agent_lean','balanced','detailed'].includes(String(configuration.level)))throw new ServiceError('invalid_project_configuration');
+    if(operation==='retained_profile'){
+        const review=record(configuration.review);
+        if(Object.keys(review).sort().join(',')!=='desired_policy,expected_applied_policy,expected_publication,reviewed_configured_policy,schema,target'||review.schema!==1||!['lean','rich'].includes(String(review.target))||typeof review.expected_publication!=='string'||review.expected_publication.length>126||!/^airk-r1:[a-f0-9]{32}:(?:0|[1-9][0-9]*):[a-f0-9]{64}$/.test(review.expected_publication))throw new ServiceError('invalid_retained_migration_review');
+        for(const field of ['desired_policy','expected_applied_policy','reviewed_configured_policy'])identifier(review[field],32);
+    }
     if(operation==='delete_derived')identifier(configuration.preview,32);
     if(operation==='usage'&&!['disabled','aggregates_only','diagnostic_events'].includes(String(configuration.mode)))throw new ServiceError('invalid_project_configuration');
     if(operation==='usage_feedback'){

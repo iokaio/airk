@@ -29,20 +29,24 @@ impl Kernel {
                 let policy = match self.store.extraction_policy_bytes(&self.root_id())? {
                     Some(bytes) => crate::extraction::ExtractionPolicy::parse(&bytes, &registry)?,
                     None => crate::extraction::ExtractionPolicy {
+                        retained_profile: None,
+                        legacy_fallback_detail: None,
                         version: 3,
                         detail: Some(configuration.index_detail),
                         rules: vec![],
                     },
                 };
                 (
-                    CollectionPolicyObservation::from(CollectionPolicyRevision {
-                        detail: policy.detail.unwrap_or_default(),
-                        policy_digest: crate::extraction::policy_digest(&policy)?,
-                    }),
-                    CollectionPolicyObservation::from(CollectionPolicyRevision {
-                        detail: configuration.index_detail,
-                        policy_digest: configuration.extraction_policy_digest,
-                    }),
+                    CollectionPolicyObservation::from(CollectionPolicyRevision::from_selection(
+                        policy.retained_profile,
+                        policy.legacy_detail(),
+                        crate::extraction::policy_digest(&policy)?,
+                    )),
+                    CollectionPolicyObservation::from(CollectionPolicyRevision::from_selection(
+                        configuration.retained_profile,
+                        configuration.index_detail,
+                        configuration.extraction_policy_digest,
+                    )),
                 )
             }
             Err(error) if error.is::<airk_core::scoped_reads::ScopeReadRefused>() => {
@@ -151,7 +155,10 @@ mod tests {
             let info = kernel.file_info_with_profile_families(path, true)?;
             let report = info.profile_families.context("opt-in report absent")?;
             assert_eq!(report.file.publication, publication);
-            assert_eq!(report.applied_file.legacy_detail, IndexDetail::AgentLean);
+            assert_eq!(
+                report.applied_file.legacy_detail,
+                Some(IndexDetail::AgentLean)
+            );
             assert_eq!(
                 report
                     .configured_collection_policy
@@ -162,7 +169,7 @@ mod tests {
             );
             assert_eq!(
                 report.configured_collection_policy.known().unwrap().detail,
-                IndexDetail::Detailed
+                Some(IndexDetail::Detailed)
             );
             assert_eq!(report.pending_collection_reindex, Some(true));
             assert_eq!(report.families.len(), 18);
@@ -222,6 +229,14 @@ mod tests {
     #[test]
     fn authorized_partial_scope_report_skips_private_policy_bytes_and_keeps_file_identity()
     -> Result<()> {
+        partial_scope_report(None)
+    }
+    #[test]
+    fn selected_partial_scope_report_keeps_profile3_without_private_policy_authority() -> Result<()>
+    {
+        partial_scope_report(Some(airk_core::retention::RetainedProfile::Lean))
+    }
+    fn partial_scope_report(target: Option<airk_core::retention::RetainedProfile>) -> Result<()> {
         use airk_core::{
             grant_provenance::GrantProvenance,
             identity::{Incarnation, Sha256Digest},
@@ -238,6 +253,11 @@ mod tests {
         let kernel = Kernel::open_service_collection(&root, Some(data), "scoped-families")?;
         kernel.configure_vectors(false)?;
         kernel.index_service_sources()?;
+        if let Some(target) = target {
+            let review = kernel.preview_retained_migration(target)?;
+            kernel.configure_retained_migration(&review)?;
+            kernel.index_service_sources()?;
+        }
         let read = kernel.current_reader()?;
         let token = crate::current::runtime::revision(read.token()?);
         let artifact = read
@@ -332,6 +352,13 @@ mod tests {
         assert_eq!(report.published_collection_policy, unavailable);
         assert_eq!(report.pending_collection_reindex, None);
         assert_eq!(report.applied_file.effective_profile_digest, expected);
+        if let Some(target) = target {
+            assert!(
+                matches!(&report.applied_file.applied_retention,Some(airk_core::retention::AppliedRetention::Selected{profile,..}) if *profile==target)
+            );
+            assert!(report.applied_file.legacy_detail.is_none());
+        }
+
         assert_eq!(report.file.publication, token);
         assert_eq!(report.file.source_hash, hash);
         assert_eq!(report.file.path, "public/one.rs");
@@ -351,6 +378,112 @@ mod tests {
             .err()
             .context("outside-grant file was reported")?;
         assert!(error.is::<ScopeReadRefused>());
+        Ok(())
+    }
+    #[test]
+    fn selected_file_report_keeps_actual_identity_and_private_policy_separate_without_source_io()
+    -> Result<()> {
+        use airk_core::retention::{AppliedRetention, RetainedFamily, RetainedProfile};
+        let temporary = tempfile::tempdir()?;
+        let base = temporary.path().canonicalize()?;
+        let root = base.join("source");
+        let data = base.join("data");
+        std::fs::create_dir(&root)?;
+        std::fs::write(root.join("Cargo.toml"),b"[package]\nname=\"profile-families\"\nversion=\"0.1.0\"\n[dependencies]\nserde=\"1\"\n")?;
+        let kernel = Kernel::open_service_collection(&root, Some(data), "selected-families")?;
+        kernel.configure_vectors(false)?;
+        kernel.index_service_sources()?;
+        let review = kernel.preview_retained_migration(RetainedProfile::Lean)?;
+        kernel.configure_retained_migration(&review)?;
+        kernel.index_service_sources()?;
+        let actual = kernel
+            .file_info_with_profile_families("Cargo.toml", true)?
+            .profile_families
+            .context("selected report missing")?;
+        assert!(matches!(
+            &actual.applied_file.applied_retention,
+            Some(AppliedRetention::Selected {
+                profile: RetainedProfile::Lean,
+                family: RetainedFamily::Manifest,
+                ..
+            })
+        ));
+        assert!(actual.applied_file.legacy_detail.is_none());
+        assert!(actual.applied_file.legacy_detail_was_absent.is_none());
+        assert_eq!(
+            actual
+                .published_collection_policy
+                .known()
+                .unwrap()
+                .retained_profile,
+            Some(RetainedProfile::Lean)
+        );
+        assert_eq!(actual.pending_collection_reindex, Some(false));
+        assert_eq!(
+            actual
+                .families
+                .iter()
+                .find(|r| r.family == Family::ManifestPackagesDependencies)
+                .unwrap()
+                .retention,
+            profile_families::Retention::Retained
+        );
+        let rich = kernel.preview_retained_migration(RetainedProfile::Rich)?;
+        kernel.configure_retained_migration(&rich)?;
+        let changed = kernel.file_info_conditional_with_profile_families(
+            "Cargo.toml",
+            &Default::default(),
+            true,
+        )?;
+        let report = changed
+            .content
+            .as_ref()
+            .unwrap()
+            .profile_families
+            .as_ref()
+            .unwrap();
+        assert_eq!(report.applied_file, actual.applied_file);
+        assert_eq!(
+            report
+                .configured_collection_policy
+                .known()
+                .unwrap()
+                .retained_profile,
+            Some(RetainedProfile::Rich)
+        );
+        assert_eq!(
+            report
+                .published_collection_policy
+                .known()
+                .unwrap()
+                .retained_profile,
+            Some(RetainedProfile::Lean)
+        );
+        assert_eq!(report.pending_collection_reindex, Some(true));
+        std::fs::rename(&root, base.join("unavailable-originals"))?;
+        let quota = kernel.collection_quota()?;
+        let before = quota.status()?;
+        let repeated = kernel.file_info_conditional_with_profile_families(
+            "Cargo.toml",
+            &EvidenceReadOptions {
+                if_evidence: changed.read.validator,
+                ..Default::default()
+            },
+            true,
+        )?;
+        assert_eq!(repeated.read.status, EvidenceReadStatus::NotModified);
+        let missing = kernel.file_info_conditional_with_profile_families(
+            "Cargo.toml",
+            &Default::default(),
+            true,
+        )?;
+        assert_eq!(
+            serde_json::to_value(missing.content)?,
+            serde_json::to_value(changed.content)?
+        );
+        let after = quota.status()?;
+        assert_eq!(after.used_bytes, before.used_bytes);
+        assert_eq!(after.reserved_bytes, before.reserved_bytes);
         Ok(())
     }
 }

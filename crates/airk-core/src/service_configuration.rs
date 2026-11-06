@@ -39,6 +39,9 @@ pub enum ProjectConfiguration {
     Detail {
         level: IndexDetail,
     },
+    RetainedProfile {
+        review: Box<crate::retention::RetentionMigrationReview>,
+    },
     VectorSelection {
         policy: VectorSelectionPolicy,
     },
@@ -127,6 +130,7 @@ impl ProjectConfiguration {
             | Self::QuotaPolicy { input, .. } => input.validate()?,
             Self::UsageFeedback { request_id, .. } => crate::usage::validate_hex(request_id, 16)?,
             Self::VectorSelection { policy } => policy.validate()?,
+            Self::RetainedProfile { review } => review.validate()?,
             Self::AddRoot {
                 alias: name,
                 path: value,
@@ -214,6 +218,9 @@ impl ProjectConfiguration {
             )
     }
     pub fn requests_source_pass(&self) -> bool {
+        if let Self::RetainedProfile { review } = self {
+            return review.requires_publication();
+        }
         matches!(
             self,
             Self::BundledModel

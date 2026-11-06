@@ -80,6 +80,8 @@ pub struct Extracted {
 pub fn extract(path: &str, bytes: &[u8]) -> Result<Extracted> {
     let registry = crate::adapters::registry::AdapterRegistry::baseline();
     let policy = crate::adapters::profile::ExtractionPolicy {
+        retained_profile: None,
+        legacy_fallback_detail: None,
         detail: None,
         version: 1,
         rules: vec![],
@@ -511,6 +513,8 @@ mod selected_tests {
         let text = "  # Café `API`\r\n\r\n### Requirements 2026-10-13\r\n\r\nREQ-1: The system must use 200 ms.\r\n\r\n## Sibling\r\n\r\n| ID | Value |\r\n|---|---|\r\n| X | 10 MiB |\r\n\r\n```text\r\n# Hidden\r\n```\r\n\r\nTail 界.\r\n";
         for path in ["a.md", "a.txt", "AGENTS.md"] {
             let base = crate::adapters::profile::ExtractionPolicy {
+                retained_profile: None,
+                legacy_fallback_detail: None,
                 version: 3,
                 detail: None,
                 rules: vec![],

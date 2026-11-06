@@ -88,6 +88,7 @@ pub(in crate::service::registry::catalog) fn fixture() -> Result<(
         target.clone(),
     )?;
     let request = SplitRequest {
+        extraction_policy: None,
         schema: 1,
         required_policy_contract: SPLIT_CONTRACT,
         caller,

@@ -118,7 +118,21 @@ mod tests {
     #[test]
     fn claimed_paid_build_creates_independent_sealed_evidence_without_changing_original()
     -> Result<()> {
-        let mut fixture = crate::catalog_split_control::tests::native_fixture(true)?;
+        run_paid_build_and_cancel(crate::catalog_split_control::tests::native_fixture(true)?)
+    }
+    #[test]
+    fn claimed_paid_inherited_retention_build_and_cancel_preserves_source_and_two_root_accounting()
+    -> Result<()> {
+        run_paid_build_and_cancel(
+            crate::catalog_split_control::tests::native_fixture_with_retention(
+                true,
+                Some(airk_core::retention::RetainedProfile::Lean),
+            )?,
+        )
+    }
+    fn run_paid_build_and_cancel(
+        mut fixture: crate::catalog_split_control::tests::NativeSplitFixture,
+    ) -> Result<()> {
         let accepted = fixture
             .snapshot
             .take()
@@ -193,6 +207,52 @@ mod tests {
         assert_eq!(result.selected_sources, 1);
         assert_eq!(result.policy_digest, building.plan.destination.identity()?);
         assert_ne!(result.publication, Some(before));
+        if let Some(reference) = &building.request.extraction_policy {
+            let claimed = fixture
+                .registry
+                .claimed_split_work(&lease, job, fixture.engine)?;
+            let funding =
+                crate::catalog_split_control::prepare_claimed_funding(&fixture.registry, &claimed)?
+                    .context("inherited paid phase absent")?;
+            let collection = airk_store::service::collection::Collection::existing(
+                Path::new(&registration.data_root),
+                &registration.root,
+                &registration.collection,
+            )?;
+            let store = collection
+                .select_for_diagnostics()?
+                .with_split_access(claimed.permit)?
+                .with_operation_funding(funding)?;
+            let scope = store
+                .current_scope(&registration.root, &registration.collection)?
+                .context("inherited current absent")?;
+            let read = store.current_read(&scope)?;
+            let applied = read
+                .collection_state()?
+                .context("inherited applied metadata absent")?
+                .configuration;
+            assert_eq!(applied.retained_profile, Some(reference.retained_profile));
+            assert_eq!(
+                applied.extraction_policy_digest,
+                reference.configured_policy_digest
+            );
+            let artifact = read
+                .artifact("docs/selected.md")?
+                .context("selected inherited artifact absent")?;
+            let profile = artifact
+                .retained
+                .as_ref()
+                .and_then(|retained| retained.profile.as_ref())
+                .context("selected inherited profile absent")?;
+            assert!(
+                matches!(airk_core::retention::AppliedRetention::from_profile(profile)?,airk_core::retention::AppliedRetention::Selected{profile:target,family:airk_core::retention::RetainedFamily::Markdown,..} if target==reference.retained_profile)
+            );
+            assert!(read.artifact("remainder.md")?.is_none());
+            let body = store
+                .extraction_policy_bytes(&registration.root)?
+                .context("inherited private body absent")?;
+            reference.validate_body(&body)?;
+        }
         fixture.registry.complete_job(&lease, job, outcome)?;
         let validated = fixture.registry.catalog_complete_split_job(
             building.receipt.operation_id,

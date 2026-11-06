@@ -32,7 +32,21 @@ fn page(registry: &mut ServiceRegistry, kind: CatalogKind) -> Result<Vec<Catalog
 #[test]
 fn real_empty_native_owner_completes_witness_fence_remainder_membership_and_funding_ack()
 -> Result<()> {
-    let mut fixture = crate::catalog_split_control::tests::native_fixture(false)?;
+    run_empty_native_split(crate::catalog_split_control::tests::native_fixture(false)?)
+}
+#[test]
+fn real_empty_native_owner_completes_inherited_rich_fence_membership_and_two_root_ack() -> Result<()>
+{
+    run_empty_native_split(
+        crate::catalog_split_control::tests::native_fixture_with_retention(
+            false,
+            Some(airk_core::retention::RetainedProfile::Rich),
+        )?,
+    )
+}
+fn run_empty_native_split(
+    mut fixture: crate::catalog_split_control::tests::NativeSplitFixture,
+) -> Result<()> {
     ensure!(
         !fixture.selection.projects.is_empty(),
         "native import needs affected Project census"
@@ -484,6 +498,52 @@ fn real_empty_native_owner_completes_witness_fence_remainder_membership_and_fund
         Kernel::open_existing_service_observer(&complete.request.destination_registration)?;
     original.require_unrestricted_read()?;
     destination.require_unrestricted_read()?;
+    if let Some(reference) = &complete.request.extraction_policy {
+        for (registration, path) in [
+            (&fixture.original, "remainder.md"),
+            (
+                &complete.request.destination_registration,
+                "docs/selected.md",
+            ),
+        ] {
+            let collection = airk_store::service::collection::Collection::existing(
+                Path::new(&registration.data_root),
+                &registration.root,
+                &registration.collection,
+            )?;
+            let selected = collection.select()?;
+            let scope = selected
+                .store
+                .current_scope(&registration.root, &registration.collection)?
+                .context("inherited final scope missing")?;
+            let read = selected.store.current_read(&scope)?;
+            let config = read
+                .collection_state()?
+                .context("inherited final config missing")?
+                .configuration;
+            assert_eq!(config.retained_profile, Some(reference.retained_profile));
+            assert_eq!(
+                config.extraction_policy_digest,
+                reference.configured_policy_digest
+            );
+            let artifact = read
+                .artifact(path)?
+                .context("inherited final artifact missing")?;
+            let profile = artifact
+                .retained
+                .as_ref()
+                .and_then(|retained| retained.profile.as_ref())
+                .context("inherited final profile missing")?;
+            assert!(
+                matches!(airk_core::retention::AppliedRetention::from_profile(profile)?,airk_core::retention::AppliedRetention::Selected{profile:target,family:airk_core::retention::RetainedFamily::Markdown,..} if target==reference.retained_profile)
+            );
+            let body = selected
+                .store
+                .extraction_policy_bytes(&registration.root)?
+                .context("inherited final policy missing")?;
+            reference.validate_body(&body)?;
+        }
+    }
     let remainder_files = original.list_files("", 32, MAX_PAGE_BYTES)?;
     let destination_files = destination.list_files("", 32, MAX_PAGE_BYTES)?;
     ensure!(

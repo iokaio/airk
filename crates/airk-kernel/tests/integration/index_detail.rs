@@ -6,6 +6,54 @@ use airk_store::FileStore;
 use anyhow::Result;
 use std::fs;
 
+fn write_retention_observations(
+    name: &str,
+    observations: &[serde_json::Value],
+    limits: &str,
+) -> Result<()> {
+    let Some(directory) = std::env::var_os("AIRK_P11B_RESOURCE_OUTPUT_DIR") else {
+        return Ok(());
+    };
+    let directory = std::path::PathBuf::from(directory);
+    anyhow::ensure!(
+        directory.is_absolute()
+            && fs::symlink_metadata(&directory)?.is_dir()
+            && !fs::symlink_metadata(&directory)?.file_type().is_symlink(),
+        "explicit existing owned report directory required"
+    );
+    let bytes = serde_json::to_vec_pretty(
+        &serde_json::json!({"schema":"airk.p11b.retention-observations/1","observations":observations,"limits":limits}),
+    )?;
+    anyhow::ensure!(
+        bytes.len() <= 1 << 20,
+        "bounded retention observations exceeded1MiB"
+    );
+    use std::io::Write;
+    let mut file = fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(directory.join(name))?;
+    file.write_all(&bytes)?;
+    file.write_all(b"\n")?;
+    file.sync_all()?;
+    Ok(())
+}
+
+fn record_kernel_retention(
+    observations: &mut Vec<serde_json::Value>,
+    phase: &str,
+    started: std::time::Instant,
+    data: &std::path::Path,
+    report: Option<&airk_ingest::IndexReport>,
+) -> Result<()> {
+    if std::env::var_os("AIRK_P11B_RESOURCE_OUTPUT_DIR").is_some() {
+        let wall_us = started.elapsed().as_micros();
+        let quota = airk_store::quota::Quota::open_service(data)?.status()?;
+        observations.push(serde_json::json!({"phase":phase,"wall_us":wall_us,"quota":quota,"index_report":report}));
+    }
+    Ok(())
+}
+
 fn facts() -> FactQuery {
     FactQuery {
         path_prefix: String::new(),
@@ -179,5 +227,281 @@ fn current_fact_reads_hold_publication_gate_until_request_release() -> Result<()
     kernel.index()?;
     assert_eq!(kernel.facts(&facts())?.facts[0].name, "after_publication");
     assert_eq!(kernel.maintain_current()?.removed_files, 0);
+    Ok(())
+}
+
+#[test]
+fn explicit_native_retention_migration_keeps_old_publication_then_reuses_only_equal_effective_files()
+-> Result<()> {
+    use airk_core::retention::RetainedProfile;
+    let mut observations = Vec::new();
+    let root = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    let files = [
+        ("sample.rs", "pub fn retained() { called(); }\n"),
+        (
+            "Cargo.toml",
+            "[package]\nname = \"retained\"\nversion = \"0.1.0\"\n[dependencies]\nserde = \"1\"\n",
+        ),
+        (
+            "notes.md",
+            "# Requirements\n\nThe system must retain 200 ms and its date 2026-11-05.\n",
+        ),
+        ("fallback.txt", "The old text evidence stays unchanged.\n"),
+    ];
+    for (path, text) in files {
+        fs::write(root.path().join(path), text)?;
+    }
+    let kernel =
+        Kernel::open_service_collection(root.path(), Some(data.path().into()), "retained")?;
+    kernel.configure_vectors(false)?;
+    record_kernel_retention(
+        &mut observations,
+        "owned_before_cold",
+        std::time::Instant::now(),
+        data.path(),
+        None,
+    )?;
+    let phase_started = std::time::Instant::now();
+    let cold = kernel.index()?;
+    record_kernel_retention(
+        &mut observations,
+        "legacy_cold",
+        phase_started,
+        data.path(),
+        Some(&cold),
+    )?;
+    let registration = airk_core::service::ProjectRegistration::new(
+        root.path().canonicalize()?.to_string_lossy().into_owned(),
+        data.path().canonicalize()?.to_string_lossy().into_owned(),
+        "retained".into(),
+    )?;
+    let collection = airk_store::service::collection::Collection::existing(
+        data.path(),
+        &registration.root,
+        "retained",
+    )?;
+    let store = collection.selected_store()?;
+    let before = store.current_test_catalog()?.unwrap();
+    let token = before.token;
+    let fallback_id = before.inventory.as_ref().unwrap().files["fallback.txt"]
+        .state
+        .profile_id;
+    drop(before);
+    let phase_started = std::time::Instant::now();
+    let review = kernel.preview_retained_migration(RetainedProfile::Lean)?;
+    let configured = kernel.configure_retained_migration(&review)?;
+    assert!(configured.source_pass_requested);
+    let pending = kernel.extraction_policy()?;
+    assert_eq!(
+        pending.configured_retained_profile,
+        Some(RetainedProfile::Lean)
+    );
+    assert_eq!(pending.published_retained_profile, None);
+    assert!(pending.pending_reindex);
+    assert_eq!(pending.publication, Some(token));
+    let migrated = kernel.index()?;
+    record_kernel_retention(
+        &mut observations,
+        "lean_migration",
+        phase_started,
+        data.path(),
+        Some(&migrated),
+    )?;
+    assert_eq!(migrated.indexed, 3);
+    assert_eq!(migrated.reused, 1);
+    let status = kernel.extraction_policy()?;
+    assert_eq!(
+        status.published_retained_profile,
+        Some(RetainedProfile::Lean)
+    );
+    assert!(!status.pending_reindex);
+    let after = store.current_test_catalog()?.unwrap();
+    assert_eq!(
+        after.inventory.as_ref().unwrap().files["fallback.txt"]
+            .state
+            .profile_id,
+        fallback_id
+    );
+    let applied_refs = after
+        .snapshot
+        .artifacts
+        .iter()
+        .map(|(path, artifact)| (path.clone(), artifact.retained.clone()))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    drop(after);
+    let retained_facts = kernel.facts(&facts())?;
+    assert!(
+        retained_facts
+            .facts
+            .iter()
+            .any(|fact| fact.kind == "package_dependency")
+    );
+    assert_eq!(
+        retained_facts.indexing.retained_profile,
+        Some(RetainedProfile::Lean)
+    );
+    let pending_rich = kernel.preview_retained_migration(RetainedProfile::Rich)?;
+    assert!(
+        kernel
+            .configure_retained_migration(&pending_rich)?
+            .source_pass_requested
+    );
+    let pending_choice = kernel.extraction_policy()?;
+    assert_eq!(
+        pending_choice.configured_retained_profile,
+        Some(RetainedProfile::Rich)
+    );
+    assert_eq!(
+        pending_choice.published_retained_profile,
+        Some(RetainedProfile::Lean)
+    );
+    // A real failed source pass must preserve the earlier selected publication,
+    // while the saved desired policy remains independently observable/reversible.
+    let quota = airk_store::quota::Quota::open_service(data.path())?;
+    let ordinary = quota.policy()?;
+    let observed = quota.status()?;
+    let mut full = ordinary.clone();
+    full.root_bytes = observed.used_bytes + observed.reserved_bytes;
+    quota.configure(full)?;
+    let phase_started = std::time::Instant::now();
+    let failed = kernel.index();
+    quota.configure(ordinary)?;
+    record_kernel_retention(
+        &mut observations,
+        "rich_quota_refused",
+        phase_started,
+        data.path(),
+        failed.as_ref().ok(),
+    )?;
+    assert!(
+        failed.is_err(),
+        "Rich source publication unexpectedly bypassed full native quota"
+    );
+    let preserved = store.current_test_catalog()?.unwrap();
+    assert_eq!(Some(preserved.token), pending_choice.publication);
+    for (path, expected) in &applied_refs {
+        assert_eq!(
+            &preserved.snapshot.artifacts[path].retained, expected,
+            "failed migration altered retained publication"
+        );
+    }
+    drop(preserved);
+    let restore_lean = kernel.preview_retained_migration(RetainedProfile::Lean)?;
+    assert!(
+        !kernel
+            .configure_retained_migration(&restore_lean)?
+            .source_pass_requested
+    );
+    let restored = kernel.extraction_policy()?;
+    assert_eq!(
+        restored.configured_retained_profile,
+        Some(RetainedProfile::Lean)
+    );
+    assert_eq!(
+        restored.published_retained_profile,
+        Some(RetainedProfile::Lean)
+    );
+    assert!(
+        !restored.pending_reindex,
+        "no-op publication choice left another pending desired policy saved"
+    );
+    let phase_started = std::time::Instant::now();
+    let noop = kernel.preview_retained_migration(RetainedProfile::Lean)?;
+    assert!(
+        !kernel
+            .configure_retained_migration(&noop)?
+            .source_pass_requested
+    );
+    let unchanged = kernel.index()?;
+    record_kernel_retention(
+        &mut observations,
+        "lean_noop",
+        phase_started,
+        data.path(),
+        Some(&unchanged),
+    )?;
+    assert_eq!(unchanged.indexed, 0);
+    assert_eq!(unchanged.reused, 4);
+    let unchanged_snapshot = store.current_test_catalog()?.unwrap();
+    for (path, expected) in &applied_refs {
+        assert_eq!(
+            &unchanged_snapshot.snapshot.artifacts[path].retained, expected,
+            "no-op changed retained payload/profile/facts/semantic projection object"
+        );
+    }
+    drop(unchanged_snapshot);
+    let phase_started = std::time::Instant::now();
+    let mut rules = kernel.extraction_policy()?.policy;
+    rules
+        .rules
+        .push(airk_ingest::adapters::profile::SelectionRule {
+            selector: airk_ingest::adapters::profile::RuleMatch::Exact {
+                path: "notes.md".into(),
+            },
+            case_sensitive: true,
+            adapter_id: "text".into(),
+        });
+    kernel.configure_extraction_policy(rules)?;
+    let overridden = kernel.index()?;
+    record_kernel_retention(
+        &mut observations,
+        "lean_one_rule_override",
+        phase_started,
+        data.path(),
+        Some(&overridden),
+    )?;
+    assert_eq!(overridden.indexed, 1);
+    assert_eq!(overridden.reused, 3);
+    let overridden_snapshot = store.current_test_catalog()?.unwrap();
+    for path in ["sample.rs", "Cargo.toml", "fallback.txt"] {
+        assert_eq!(
+            &overridden_snapshot.snapshot.artifacts[path].retained, &applied_refs[path],
+            "unrelated policy rule invalidated retained evidence"
+        );
+    }
+    let before_edit_refs = overridden_snapshot
+        .snapshot
+        .artifacts
+        .iter()
+        .map(|(path, artifact)| (path.clone(), artifact.retained.clone()))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    drop(overridden_snapshot);
+    let phase_started = std::time::Instant::now();
+    fs::write(
+        root.path().join("sample.rs"),
+        "pub fn changed() { called(); }\n",
+    )?;
+    let edited = kernel.index()?;
+    record_kernel_retention(
+        &mut observations,
+        "lean_one_source_edit",
+        phase_started,
+        data.path(),
+        Some(&edited),
+    )?;
+    assert_eq!(edited.indexed, 1);
+    assert_eq!(edited.reused, 3);
+    let edited_snapshot = store.current_test_catalog()?.unwrap();
+    for path in ["notes.md", "Cargo.toml", "fallback.txt"] {
+        assert_eq!(
+            &edited_snapshot.snapshot.artifacts[path].retained, &before_edit_refs[path],
+            "one source edit invalidated unrelated payload/profile/projection"
+        );
+    }
+    drop(edited_snapshot);
+    assert!(!kernel.status()?.vectors_enabled);
+    assert!(
+        kernel.configure_retained_migration(&review).is_err(),
+        "old publication review must not become fresh retry authority"
+    );
+    for (path, text) in files.into_iter().filter(|(path, _)| *path != "sample.rs") {
+        assert_eq!(fs::read_to_string(root.path().join(path))?, text);
+    }
+    write_retention_observations(
+        "kernel-retention.json",
+        &observations,
+        "Wall time covers the named existing action, excluding quota observation. Quota is logical used/reserved including retained publication history; not allocated physical bytes, peak RSS, CPU or a pruned-format comparison. Vectors are disabled in this fixture; model cost is observed separately by actual helper.",
+    )?;
     Ok(())
 }

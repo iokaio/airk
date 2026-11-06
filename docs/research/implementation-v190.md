@@ -9,14 +9,15 @@ The maintainer authorized sequential implementation and signed phase commits.
 Progress below is observed local evidence; it does not establish publication or
 cross-platform qualification.
 
-**Current checkpoint, 6 November 2026:** P9 and P10 are accepted for unpublished
-local development; P10 is committed as `c2584cb`. P11a reporting is implemented
-with focused native, Mac ARM, Workbench and actual native/CLI/console/MCP parity
-checks passed. Its final qualification gates and primary review passed; P11a is accepted for
-unpublished local development. The remaining P11b–P14/deleted-source work remain pending. Current test source
-`97956846…` and the reused runtime's original compiled source `33e6df13…` are
-separate identities. Earlier dated pending/failure records retain their original
-status and are not relabeled as current evidence.
+**Current checkpoint, 6 November 2026:** P9, P10 and P11a are accepted for
+unpublished local development; P11a is committed as `f2bf2d2`. P11b scoped local
+qualification and primary review passed; P11b is accepted for unpublished
+local development. Current native source is `8c4fc38e…` / 954
+inputs. The original functional/Mac source `e3827769…` remains separately
+identified, with 952 unchanged native inputs and only two resource-test changes.
+P12–P14, deleted-source recovery and the final local test installer remain
+unfinished. Earlier checkpoints retain their original source and payload
+identities, failures and platform limits; they are not relabeled.
 
 ## Entry identity and boundaries
 
@@ -4796,3 +4797,71 @@ process receipts. No new Mac full workspace or cross-platform claim is inferred.
 P11a qualification and primary review passed. P11a is accepted for unpublished local development. P11b–P14, deleted-source recovery and final
 local test installer remain unfinished. No push, publication, normal installation
 or completion of the full plan is claimed.
+
+
+### P11b — local phase checkpoint, 6 November 2026
+
+P11a is accepted at `f2bf2d219eda7096986565fcbc57f7ef9b1c5c7a`.
+P11b is accepted for unpublished local development; working version **1.8.8** remains unpublished.
+No P12 implementation or documentation is enabled by this checkpoint.
+
+Functional source **`e38277697881592edaea8b50311cfea628f6ce70c643c1a0bc0bfcf95c5d2ef1` / 954 inputs**
+passed its scoped formatting/Clippy and exact **52-case** native selection,
+including migration, barriers/interruption, quota, reuse and inherited split
+behavior. Current source
+**`8c4fc38e85435cb5df60f3dfa618e348706b02465989518e953ed1b76ec0c773` / 954 inputs**
+adds only two optional external resource-test hooks; all **952 other native
+inputs and production bytes are unchanged**. Current formatting/Clippy and both
+modified resource cases passed. Earlier 52-case and Mac receipts retain `e382…`;
+they are not relabeled as new `8c4…` executions.
+
+The fresh release pair was built from `8c4…` with incremental compilation off
+in 802.1 s. `p11b-final-qualification-r1.json` passed all **11 scoped stages**:
+one actual retained-migration CLI/MCP release case, 16-file/model native clients,
+six publication faults, unchanged Off/Report frozen replays, all **84 latency
+gates** with explicit preceding **P11a R3** reports and unchanged archive/control,
+repository/license checks, fresh dependency audit, Python tests and whitespace.
+The sole release build was adopted by exact successful receipt/source/full seal;
+no duplicate build was run. Full UI compilation/bundles passed and the full run
+reports **746 passed / zero failed / 19 skipped (765 total)**. Flat canonical and
+historical nested reports remain covered through host/session/full/selected
+exports; UI fixtures do not substitute for actual native transport evidence.
+
+Mac ARM retained the same `e382…` source. Initial batch
+`p11-native-p11b-20261106-r1` passed its first six steps / **eight tests**, then
+correctly failed a wrong `--bin` selection that matched zero tests (actual Cargo
+exit0, effective validation failure). The initial failure is preserved. Corrected
+`p11-native-p11b-20261106-r2-supplement` passed the three intended CLI tests:
+**11 passed tests across the two recorded selections**. No product fix or retry
+of failed product behavior was involved. The combined
+`p11b-neo-combined-verification-r1.json` binds nine passing commands / 11 tests,
+while retaining the failed initial command. Both collected owners report
+`cargo clean` exit 0, target absent and reports preserved. This is focused ARM
+macOS evidence, not full Mac workspace, Linux/Intel, editor or default ONNX
+qualification.
+
+`p11b-resource-observed-r1/verification.json` records two actual development-build
+cases with seven Kernel phases and four tiny-wordvector-helper phases. With
+vectors disabled, the four-file Kernel fixture observed indexed/reused counts
+of **4/0** for legacy cold, **3/1** for Lean migration, **0/4** for Lean no-op,
+and **1/3** for either a one-rule override or one-source edit. The refused Rich
+quota pass preserved the Lean publication and logical used bytes. Logical used
+bytes were 200,425 after cold indexing; 233,242 after Lean migration, refusal
+and no-op; 233,327 after the rule override; 233,314 after one edit. These include
+retained history and are not pruned-format or physical-disk comparisons.
+
+The helper fixture recorded four embedding inputs and four cache misses at
+baseline, unchanged through Lean, Rich and Rich no-op. Cumulative reused inputs
+were **0 → 4 → 8 → 8**; the four graph records / 816 vector bytes were preserved.
+Cumulative model-load microseconds were **16,207 → 31,546 → 47,077 → 47,077**:
+model-loading work grew during migrations, so this is not zero model-load work.
+Phase wall/counter data remain in the receipt. One tiny development fixture has
+no matched performance baseline; no speedup, total CPU, service peak RSS,
+physical peak footprint or default ONNX-forward claim follows from it.
+
+The scoped final queue intentionally does not repeat the broad workspace or the
+three local runtime smoke suites. P14 retains cumulative workspace, four routine
+excluded campaigns, doctests and installed/platform matrix requirements. P11b
+qualification and primary review passed; it is accepted for unpublished local development. P12–P14, deleted-source
+recovery and the final local test installer remain unfinished. No push,
+publication, normal installation or complete-plan claim is made.

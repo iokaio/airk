@@ -176,3 +176,13 @@ test('pre-fence retained witness refresh accepts completed current job across sk
     const crossedSource=structuredClone(refreshed);catalogObject(catalogObject(crossedSource.receipt).remainder_witness).before_policy_digest='ff'.repeat(32);assert.throws(()=>validateSplitContinuity(before,crossedSource),/witness/);
     const afterFence=splitAtStage(before,'original_fenced',5);catalogObject(afterFence.receipt).remainder_witness=structuredClone(receipt.remainder_witness);const illegal=splitAtStage(refreshed,'original_fenced',6);catalogObject(illegal.receipt).remainder_witness=structuredClone(next.remainder_witness);assert.throws(()=>validateSplitContinuity(afterFence,illegal),/proof/);
 });
+
+test('split retains compact native policy inheritance and refuses contract/body-budget/selection mismatches',()=>{
+    const f=splitFixture(),snapshot=structuredClone(f.snapshot),request=catalogObject(snapshot.request);
+    request.required_policy_contract=3;request.extraction_policy={schema:1,policy_body_digest:'c1'.repeat(32),configured_policy_digest:'c2'.repeat(32),encoded_bytes:131072,retained_profile:'lean',legacy_fallback_detail:'agent_lean',required_extraction_contract:3};
+    validateSplitSnapshot(snapshot);assert.ok(splitExport(snapshot,true).includes('configured_policy_digest'));
+    const old=structuredClone(snapshot);catalogObject(old.request).required_policy_contract=2;assert.throws(()=>validateSplitSnapshot(old),/contract/);
+    const oversized=structuredClone(snapshot);catalogObject(catalogObject(oversized.request).extraction_policy).encoded_bytes=131073;assert.throws(()=>validateSplitSnapshot(oversized),/reference/);
+    const aliased=structuredClone(snapshot);catalogObject(catalogObject(aliased.request).extraction_policy).retained_profile='balanced';assert.throws(()=>validateSplitSnapshot(aliased),/reference/);
+    const changed=structuredClone(snapshot);catalogObject(catalogObject(changed.request).extraction_policy).policy_body_digest='c3'.repeat(32);assert.throws(()=>validateSplitContinuity(snapshot,changed),/identity/);
+});

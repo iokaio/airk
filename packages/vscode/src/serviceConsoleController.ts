@@ -1167,6 +1167,11 @@ export class ServiceConsoleController {
                 }
                 this.authorized();
                 const request=await this.host.runtime.prepareConfiguration(this.binding,project,draft);this.authorized();
+                if(request.configuration.operation==='retained_profile'){
+                    const review=record(request.configuration.review);
+                    if(!await this.host.confirm(`Apply the reviewed ${String(review.target)} retained evidence profile to this index? The current publication stays available until a successful source pass. Qualified current Rust, manifest, Markdown and DOCX producers use this profile. Unqualified formats and OCR keep their legacy evidence. Pause, manual updates, watches and semantic settings are preserved. Reviewed publication: ${String(review.expected_publication)}.`))return;
+                    this.authorized();
+                }
                 if(request.configuration.operation==='unregister'){
                     const registration=record(record(row.project).registration);
                     if(!await this.host.confirm(`Unregister ${String(registration.collection)} from AIRK on ${this.host.authority}? Source: ${String(registration.root)}. Data: ${String(registration.data_root)}. This stops automatic work and new connections for this project; its owned worker will drain and existing clients may disconnect. Removal deletes its AIRK index data and saved settings. Source files are untouched. Only minimal removal history remains.`))return;

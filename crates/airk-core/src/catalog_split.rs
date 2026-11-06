@@ -76,6 +76,8 @@ impl SplitCapacityReview {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SplitRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extraction_policy: Option<crate::retention::SplitExtractionPolicyReference>,
     pub schema: u32,
     pub required_policy_contract: u32,
     pub caller: Incarnation,
@@ -106,12 +108,21 @@ pub struct SplitRequest {
 impl SplitRequest {
     pub fn validate(&self) -> Result<()> {
         ensure!(
-            self.schema == 1 && self.required_policy_contract == SPLIT_CONTRACT,
+            self.schema == 1
+                && self.required_policy_contract
+                    == if self.extraction_policy.is_some() {
+                        3
+                    } else {
+                        SPLIT_CONTRACT
+                    },
             "unsupported split contract"
         );
         self.original_registration.validate()?;
         self.destination_registration.validate()?;
         self.source_configuration.validate()?;
+        if let Some(reference) = &self.extraction_policy {
+            reference.validate()?;
+        }
         label(&self.destination_name)?;
         atoms(&self.selectors)?;
         ensure!(

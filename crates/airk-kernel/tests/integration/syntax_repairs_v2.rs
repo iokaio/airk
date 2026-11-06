@@ -27,6 +27,8 @@ fn qualify(
     kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     if let Some(adapter) = profile {
         kernel.configure_extraction_policy(ExtractionPolicy {
+            retained_profile: None,
+            legacy_fallback_detail: None,
             detail: None,
             version: 1,
             rules: vec![SelectionRule {
@@ -116,6 +118,8 @@ fn qualify(
             .payload_digest
     );
     kernel.configure_extraction_policy(ExtractionPolicy {
+        retained_profile: None,
+        legacy_fallback_detail: None,
         detail: None,
         version: 1,
         rules: vec![SelectionRule {

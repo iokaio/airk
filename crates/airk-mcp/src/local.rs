@@ -337,6 +337,9 @@ impl LocalTools {
                                 max_bytes,
                             )?)?)
                         }
+                        NativeRead::RetentionMigrationPreview { target } => Ok(
+                            serde_json::to_value(kernel.preview_retained_migration(target)?)?,
+                        ),
                         NativeRead::Settings {
                             view,
                             cursor,

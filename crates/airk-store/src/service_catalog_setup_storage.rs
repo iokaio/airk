@@ -870,28 +870,40 @@ impl SetupDirectory {
         target: &OsStr,
         expected: &File,
     ) -> Result<()> {
+        self.replace_file_to(name, owned, self, target, expected)
+    }
+    /// Expected-object check under owning exclusion plus descriptor-relative
+    /// rename. Unix does not supply atomic compare-and-replace-by-inode.
+    pub(crate) fn replace_file_to(
+        &self,
+        name: &OsStr,
+        owned: &File,
+        destination: &Self,
+        target: &OsStr,
+        expected: &File,
+    ) -> Result<()> {
         let source = self.open_file(name, SetupFileMode::Read)?;
-        let destination = self.open_file(target, SetupFileMode::Read)?;
+        let current = destination.open_file(target, SetupFileMode::Read)?;
         ensure!(
             file_identity(&source)? == file_identity(owned)?
-                && file_identity(&destination)? == file_identity(expected)?,
+                && file_identity(&current)? == file_identity(expected)?,
             "native metadata replacement identity changed"
         );
         let name = component(name)?;
         let target = component(target)?;
-        // SAFETY: one retained native directory and two bounded child names;
-        // renameat atomically replaces the owned metadata name without paths.
+        // SAFETY: two retained directories and validated single-component names.
         ensure!(
             unsafe {
                 libc::renameat(
                     self.as_raw_fd(),
                     name.as_ptr(),
-                    self.as_raw_fd(),
+                    destination.as_raw_fd(),
                     target.as_ptr(),
                 )
             } == 0,
             std::io::Error::last_os_error()
         );
+        destination.sync()?;
         self.sync()
     }
     pub(crate) fn sync(&self) -> Result<()> {

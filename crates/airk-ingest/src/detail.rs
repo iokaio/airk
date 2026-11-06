@@ -7,8 +7,32 @@ use anyhow::{Context, Result, ensure};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) fn select(payload: &mut ExtractionPayload, detail: IndexDetail) -> Result<()> {
-    payload.facts.retain(|fact| detail.retains_fact(&fact.kind));
-    if detail == IndexDetail::AgentLean {
+    select_with(
+        payload,
+        |kind| detail.retains_fact(kind),
+        detail == IndexDetail::AgentLean,
+    )
+}
+
+pub(crate) fn select_retained(
+    payload: &mut ExtractionPayload,
+    profile: airk_core::retention::RetainedProfile,
+    family: airk_core::retention::RetainedFamily,
+) -> Result<()> {
+    select_with(
+        payload,
+        |kind| profile.retains_fact(family, kind),
+        profile == airk_core::retention::RetainedProfile::Lean,
+    )
+}
+
+fn select_with(
+    payload: &mut ExtractionPayload,
+    retain: impl Fn(&str) -> bool,
+    omit_fingerprints: bool,
+) -> Result<()> {
+    payload.facts.retain(|fact| retain(&fact.kind));
+    if omit_fingerprints {
         for fact in &mut payload.facts {
             if let Some(code) = &mut fact.code {
                 code.fingerprints = None;

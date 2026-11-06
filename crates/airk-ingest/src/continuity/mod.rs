@@ -27,14 +27,20 @@ pub(crate) fn prepare_with_seeds(
     seeds: Option<&crate::semantic_projection::SemanticSeeds>,
 ) -> anyhow::Result<()> {
     use airk_core::continuity::*;
-    use airk_core::extraction::IndexDetail;
-    let detail = IndexDetail::from_profile(profile)?;
+    let retention = airk_core::retention::AppliedRetention::from_profile(profile)?;
     payload.semantic_projection = match seeds {
         Some(seeds) => crate::semantic_projection::capture_with_seeds(payload, seeds)?,
         None => crate::semantic_projection::capture(payload)?,
     };
-    crate::detail::select(payload, detail)?;
-    if !detail.tracks_continuity() {
+    match &retention {
+        airk_core::retention::AppliedRetention::Legacy { detail, .. } => {
+            crate::detail::select(payload, *detail)?
+        }
+        airk_core::retention::AppliedRetention::Selected { .. } => {
+            crate::retention::select_payload(payload, profile)?
+        }
+    }
+    if !retention.tracks_code_continuity() && !retention.tracks_document_continuity() {
         for family in [ContinuityFamily::Code, ContinuityFamily::Documents] {
             payload.continuity_coverage.insert(
                 family,
@@ -63,7 +69,7 @@ pub(crate) fn prepare_with_seeds(
     }
     let mut budget = ContinuityBudget::default();
     let code = code::describe(payload, profile, &mut budget)?;
-    let documents = if detail == IndexDetail::Detailed {
+    let documents = if retention.tracks_document_continuity() {
         documents::describe_with_prose_text(payload, profile, &mut budget, prose_text)?
     } else {
         ContinuityDraft::default()

@@ -28,6 +28,9 @@ impl Kernel {
             _ => anyhow::bail!("split current execution purpose is unsupported"),
         };
         let selected = self.with_expected_source_policy(Some(policy.clone()))?;
+        if work.job.purpose == SplitJobPurpose::DestinationBuild {
+            selected.install_split_retained_policy(work)?;
+        }
         let mut application = selected.apply_source_policy(policy, policy_operation)?;
         if work.job.purpose == SplitJobPurpose::OriginalCleanup {
             // Each native turn deletes at most 4096 owned files. Keep the job

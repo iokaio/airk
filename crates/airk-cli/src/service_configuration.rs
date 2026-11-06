@@ -25,6 +25,9 @@ pub enum Draft {
     Detail {
         level: IndexDetail,
     },
+    RetainedProfile {
+        target: airk_core::retention::RetainedProfile,
+    },
     VectorSelection {
         policy: VectorSelectionPolicy,
     },
@@ -155,7 +158,8 @@ impl Draft {
                 request_id,
                 usefulness,
             },
-            Self::InstallModel { .. }
+            Self::RetainedProfile { .. }
+            | Self::InstallModel { .. }
             | Self::ImportUsage { .. }
             | Self::ExtractionPolicy { .. }
             | Self::ScanLimits { .. }
@@ -199,6 +203,22 @@ pub async fn prepare(
         "configuration inspection belongs to another project"
     );
     let configuration = match draft {
+        Draft::RetainedProfile { target } => {
+            let native = crate::service_runtime::administrative_read(
+                runtime,
+                project,
+                airk_core::native_reads::NativeRead::RetentionMigrationPreview { target },
+                airk_core::usage::ClientFamily::Unknown,
+            )
+            .await?;
+            let review: airk_core::retention::RetentionMigrationReview =
+                serde_json::from_value(native)?;
+            review.validate()?;
+            ensure!(review.target == target, "crossed retained migration target");
+            ProjectConfiguration::RetainedProfile {
+                review: Box::new(review),
+            }
+        }
         Draft::InstallModel { directory } => {
             // Preserve the user's original path until the native policy guard
             // has checked both its spelling and resolved source location.

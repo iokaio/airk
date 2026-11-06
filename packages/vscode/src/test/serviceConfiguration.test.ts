@@ -19,3 +19,13 @@ test('service discovery ignores workspace executable, approval and lifecycle ove
         assert.deepEqual(serviceRuntimeOptions(),{channel:'stable'});
     }finally{loader._load=original;delete require.cache[require.resolve('../serviceConsole')];}
 });
+
+test('retained migration forwards the complete native review without legacy aliases or deferred preparation',async()=>{
+    const {validateConfigurationRequest}=await import('../serviceClient');
+    const review={schema:1,expected_publication:`airk-r1:${'11'.repeat(16)}:7:${'22'.repeat(32)}`,expected_applied_policy:'33'.repeat(32),reviewed_configured_policy:'44'.repeat(32),desired_policy:'55'.repeat(32),target:'lean'};
+    const request={incarnation:'66'.repeat(16),settings:'77'.repeat(32),configuration:{operation:'retained_profile',review}};
+    assert.deepEqual(validateConfigurationRequest(request),request);
+    assert.throws(()=>validateConfigurationRequest({...request,prepare:true}),/configuration/);
+    assert.throws(()=>validateConfigurationRequest({...request,configuration:{...request.configuration,review:{...review,target:'agent_lean'}}}),/migration/);
+    assert.throws(()=>validateConfigurationRequest({...request,configuration:{...request.configuration,review:{...review,desired_policy:'crossed'}}}),/identity|identifier|hex/);
+});

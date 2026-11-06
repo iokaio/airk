@@ -207,3 +207,37 @@ fn missing_owner_identity_fails_instead_of_erasing_the_reference() {
         .retain(|node| node.id != LocalSyntaxId(90));
     assert!(select(&mut payload, IndexDetail::Balanced).is_err());
 }
+
+#[test]
+fn file_aware_manifest_core_preserves_fact_graph_and_rich_superset_without_changing_semantics()
+-> Result<()> {
+    use airk_core::retention::{RetainedFamily, RetainedProfile};
+    let mut original = fixture();
+    original.facts[0].kind = "package_identity".into();
+    original.facts[1].kind = "package_dependency".into();
+    original.facts[2].kind = "workspace_configuration".into();
+    original.facts[2].owner = Some(90);
+    let before_text = original.text.clone();
+    let before_projection = serde_json::to_vec(&original.semantic_projection)?;
+    let mut lean = original.clone();
+    select_retained(&mut lean, RetainedProfile::Lean, RetainedFamily::Manifest)?;
+    let mut rich = original.clone();
+    select_retained(&mut rich, RetainedProfile::Rich, RetainedFamily::Manifest)?;
+    assert_eq!(lean.facts.len(), 3);
+    assert_eq!(lean.facts[2].owner, Some(1));
+    assert_eq!(lean.relationships.len(), 2);
+    for fact in &lean.facts {
+        assert!(rich.facts.iter().any(|other| other.kind == fact.kind
+            && other.name == fact.name
+            && other.location == fact.location));
+    }
+    assert_eq!(lean.text, before_text);
+    assert_eq!(
+        serde_json::to_vec(&lean.semantic_projection)?,
+        before_projection
+    );
+    let mut historical = original;
+    select(&mut historical, IndexDetail::AgentLean)?;
+    assert!(historical.facts.is_empty());
+    Ok(())
+}

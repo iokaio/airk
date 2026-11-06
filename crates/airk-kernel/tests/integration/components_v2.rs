@@ -87,6 +87,8 @@ fn qualify(path: &str, moved: &str, source: &str, expected_marker: &str) -> Resu
             .all(|fact| fact.citation.path == moved)
     );
     kernel.configure_extraction_policy(ExtractionPolicy {
+        retained_profile: None,
+        legacy_fallback_detail: None,
         detail: None,
         version: 1,
         rules: vec![SelectionRule {

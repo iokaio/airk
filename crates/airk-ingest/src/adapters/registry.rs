@@ -717,6 +717,10 @@ impl AdapterRegistry {
         profile: &ExtractionProfile,
     ) -> anyhow::Result<()> {
         profile.identity()?;
+        if profile.contract_version == airk_core::retention::PROFILE_CONTRACT {
+            crate::retention::producer_profile(path, profile)?;
+            return Ok(());
+        }
         airk_core::extraction::IndexDetail::from_profile(profile)?;
         let mut checked = profile.clone();
         checked.options.remove("index_detail");
@@ -1246,6 +1250,39 @@ mod effective_capability_report_tests {
         retained
             .options
             .insert("index_detail".into(), "agent_lean".into());
+        assert_eq!(
+            registry.effective_capabilities(path, &retained),
+            registry.effective_capabilities(path, &base)
+        );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod selected_effective_capability_report_tests {
+    use super::*;
+    #[test]
+    fn metadata_support_requires_complete_known_producer_and_never_opens_source()
+    -> anyhow::Result<()> {
+        let registry = AdapterRegistry::baseline();
+        let path = "missing/deleted.rs";
+        let base = registry.effective_profile(path, "rust")?;
+        assert!(registry.effective_capabilities(path, &base).is_some());
+        let mut changed = base.clone();
+        changed.mapping_version += 1;
+        assert!(registry.effective_capabilities(path, &changed).is_none());
+        changed = base.clone();
+        changed.grammar_identity = Some("different-observed-grammar".into());
+        assert!(registry.effective_capabilities(path, &changed).is_none());
+        let crate::retention::Selection::Qualified { retained, .. } =
+            crate::retention::select_profile(
+                path,
+                &base,
+                airk_core::retention::RetainedProfile::Rich,
+            )?
+        else {
+            anyhow::bail!("current Rust not qualified");
+        };
         assert_eq!(
             registry.effective_capabilities(path, &retained),
             registry.effective_capabilities(path, &base)

@@ -32,6 +32,12 @@ fn response(
 /// fixture. The original publication/settings/incarnation come from real Kernel
 /// indexing; no claimed publication or job result is fabricated here.
 pub(crate) fn native_fixture(prepared: bool) -> Result<NativeSplitFixture> {
+    native_fixture_with_retention(prepared, None)
+}
+pub(crate) fn native_fixture_with_retention(
+    prepared: bool,
+    target: Option<airk_core::retention::RetainedProfile>,
+) -> Result<NativeSplitFixture> {
     let temporary = tempfile::tempdir()?;
     let base = temporary.path().canonicalize()?;
     let root = base.join("source");
@@ -54,6 +60,11 @@ pub(crate) fn native_fixture(prepared: bool) -> Result<NativeSplitFixture> {
     )?;
     kernel.configure_vectors(false)?;
     kernel.index()?;
+    if let Some(target) = target {
+        let review = kernel.preview_retained_migration(target)?;
+        kernel.configure_retained_migration(&review)?;
+        kernel.index()?;
+    }
     drop(kernel);
     let mut registry = ServiceRegistry::open(&control, namespace)?;
     registry.register(&original)?;
@@ -412,5 +423,124 @@ fn lost_recovery_reply_reconciles_exact_key_without_resubmitting_after_status_ad
         fs::read(Path::new(&fixture.original.root).join("remainder.md"))?,
         b"original positive remainder\n"
     );
+    Ok(())
+}
+
+#[test]
+fn native_split_inheritance_is_compact_exact_and_saved_before_any_build() -> Result<()> {
+    let mut fixture = native_fixture(false)?;
+    let kernel = airk_kernel::Kernel::open_service_collection(
+        &fixture.original.root,
+        Some(PathBuf::from(&fixture.original.data_root)),
+        &fixture.original.collection,
+    )?;
+    let review = kernel.preview_retained_migration(airk_core::retention::RetainedProfile::Lean)?;
+    kernel.configure_retained_migration(&review)?;
+    kernel.index()?;
+    drop(kernel);
+    let ControlResponse::CatalogSplitDraft { draft } = response(
+        &mut fixture.registry,
+        &fixture.control,
+        ControlMethod::CatalogSplitDraft {
+            selection: Box::new(fixture.selection.clone()),
+        },
+    )?
+    else {
+        anyhow::bail!("missing inherited draft");
+    };
+    let reference = draft
+        .request
+        .extraction_policy
+        .as_ref()
+        .context("native draft dropped inherited profile")?;
+    assert_eq!(draft.request.required_policy_contract, 3);
+    assert_eq!(
+        reference.retained_profile,
+        airk_core::retention::RetainedProfile::Lean
+    );
+    assert!(serde_json::to_vec(&draft)?.len() <= airk_core::catalog_management::MAX_PAGE_BYTES);
+    let collection = Collection::existing(
+        Path::new(&fixture.original.data_root),
+        &fixture.original.root,
+        &fixture.original.collection,
+    )?;
+    let selected = collection.select()?;
+    let captured = collection.capture_split_extraction_policy(&selected.store, &draft.request)?;
+    drop(selected);
+    let mut other = fixture.selection.clone();
+    other.key.nonce = Incarnation::from_bytes([111; 16]);
+    let ControlResponse::CatalogSplitDraft { draft: crossed } = response(
+        &mut fixture.registry,
+        &fixture.control,
+        ControlMethod::CatalogSplitDraft {
+            selection: Box::new(other),
+        },
+    )?
+    else {
+        anyhow::bail!("missing second exact draft");
+    };
+    assert!(
+        fixture
+            .registry
+            .catalog_reserve_split_with_extraction(
+                &crossed.request,
+                &crossed.before_policy,
+                &crossed.plan,
+                &captured
+            )
+            .is_err(),
+        "capture from another native request admitted effects"
+    );
+    assert_eq!(
+        fixture.registry.catalog_state()?.unwrap().policy_contract,
+        0
+    );
+    let ControlResponse::CatalogSplitAccepted { snapshot } = response(
+        &mut fixture.registry,
+        &fixture.control,
+        ControlMethod::CatalogSplitApply {
+            draft: draft.clone(),
+        },
+    )?
+    else {
+        anyhow::bail!("inherited apply absent");
+    };
+    assert_eq!(snapshot.request.extraction_policy, Some(reference.clone()));
+    assert!(snapshot.receipt.jobs.is_empty());
+    assert!(snapshot.receipt.destination_storage.is_none());
+    assert!(snapshot.receipt.capacity_receipt.is_none());
+    assert_eq!(
+        fixture.registry.catalog_state()?.unwrap().policy_contract,
+        3
+    );
+    let db = rusqlite::Connection::open_with_flags(
+        fixture.control.join("service-1.4.sqlite3"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )?;
+    let body: Vec<u8> = db.query_row(
+        "SELECT body FROM index_split_extraction_policies WHERE operation_id=?1",
+        [snapshot.receipt.operation_id.to_string()],
+        |row| row.get(0),
+    )?;
+    reference.validate_body(&body)?;
+    drop(db);
+    let public = serde_json::to_value(&snapshot)?;
+    assert!(public.pointer("/request/extraction_policy/body").is_none());
+    assert!(public.pointer("/request/extraction_policy/rules").is_none());
+    fixture.registry = ServiceRegistry::open_saved(&fixture.control)?;
+    let saved = fixture
+        .registry
+        .catalog_split_status(snapshot.receipt.operation_id)?
+        .unwrap();
+    assert_eq!(saved.request, snapshot.request);
+    let ControlResponse::CatalogSplitAccepted { snapshot: replayed } = response(
+        &mut fixture.registry,
+        &fixture.control,
+        ControlMethod::CatalogSplitApply { draft },
+    )?
+    else {
+        anyhow::bail!("exact inherited receipt replay absent");
+    };
+    assert_eq!(*replayed, saved);
     Ok(())
 }

@@ -79,14 +79,37 @@ pub enum IndexDetail {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct IndexCoverage {
+    /// Historical level, or unchanged legacy fallback for unqualified file families.
     pub level: IndexDetail,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retained_profile: Option<crate::retention::RetainedProfile>,
     pub note: String,
 }
 impl From<IndexDetail> for IndexCoverage {
     fn from(level: IndexDetail) -> Self {
         Self {
             level,
+            retained_profile: None,
             note: level.coverage().into(),
+        }
+    }
+}
+impl IndexCoverage {
+    pub fn with_retained_profile(
+        legacy_fallback: IndexDetail,
+        selection: Option<crate::retention::RetainedProfile>,
+    ) -> Self {
+        let Some(target) = selection else {
+            return legacy_fallback.into();
+        };
+        Self {
+            level: legacy_fallback,
+            retained_profile: Some(target),
+            note: format!(
+                "Versioned {} retention for qualified file families; unqualified files retain legacy {}. Retention is independent of reply projection and semantic inputs. Supported adapter output remains authoritative.",
+                target.as_str(),
+                legacy_fallback.as_str()
+            ),
         }
     }
 }
@@ -105,6 +128,13 @@ impl IndexDetail {
         }
     }
     pub fn from_profile(profile: &ExtractionProfile) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            matches!(profile.contract_version, 1 | 2)
+                && ["retained_profile", "retained_family", "retention_algorithm"]
+                    .iter()
+                    .all(|key| !profile.options.contains_key(*key)),
+            "new retained profile requires explicit retention-aware consumer"
+        );
         match profile.options.get("index_detail").map(String::as_str) {
             None | Some("detailed") => Ok(Self::Detailed),
             Some("essential") => Ok(Self::Essential),
@@ -167,7 +197,7 @@ impl IndexDetail {
         match self {
             Self::Essential => "Search Only",
             Self::AgentLean => "Agent Lean",
-            Self::Balanced => "Rich Structure",
+            Self::Balanced => "Rich Structure (legacy balanced)",
             Self::Detailed => "Detailed",
         }
     }
@@ -207,9 +237,13 @@ pub struct ExtractionProfile {
 impl ExtractionProfile {
     pub fn identity(&self) -> anyhow::Result<crate::identity::Sha256Digest> {
         anyhow::ensure!(
-            matches!(self.contract_version, 1 | EXTRACTION_CONTRACT_VERSION),
+            matches!(
+                self.contract_version,
+                1 | EXTRACTION_CONTRACT_VERSION | crate::retention::PROFILE_CONTRACT
+            ),
             "unsupported profile contract"
         );
+        crate::retention::AppliedRetention::from_profile(self)?;
         let bytes = serde_json::to_vec(self)?;
         anyhow::ensure!(
             bytes.len() <= 131_072,

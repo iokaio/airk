@@ -237,7 +237,7 @@ export function ProjectsScreen(props: ScreenProps) {
 function ProjectSettings({ entry, view, actions }: { entry: ManagedProject; view: ManagementView; actions: ReturnType<typeof useActions> }) {
     const project = entry.summary.project, enabled = view.enabled.projectActions && !entry.configuration.pending && actions.busy === undefined;
     const semantic = entry.configuration.requestedVectors ?? entry.configuration.vectorsEnabled;
-    const detailNames: Record<string,string> = { agent_lean: 'Agent Lean', essential: 'Search Only', balanced: 'Rich Structure', detailed: 'Detailed' };
+    const detailNames: Record<string,string> = { agent_lean: 'Agent Lean', essential: 'Search Only', balanced: 'Rich Structure (legacy balanced)', detailed: 'Detailed' };
     return <section class="card project-settings"><h3>Index settings</h3>
         <label>Search mode <select aria-label="Search mode" value={semantic === undefined ? 'unknown' : semantic ? 'semantic' : 'text'} disabled={!enabled}
             onChange={event => void actions.act((event.target as HTMLSelectElement).value === 'semantic' ? 'enableSemantic' : 'disableSemantic', { project })}>
@@ -252,7 +252,8 @@ function ProjectSettings({ entry, view, actions }: { entry: ManagedProject; view
             {entry.summary.watching === undefined && <option value="unknown" disabled>Not checked</option>}<option value="automatic">Automatic</option><option value="manual">Manual</option></select></label>
         <p class="muted">Automatic watches saved files even after VS Code closes. Pause temporarily stops work and preserves this preference.</p>
         <div class="inline-form"><span>Evidence detail: {detailNames[entry.configuration.detail ?? ''] ?? entry.configuration.detail ?? 'not checked'}</span><Act actions={actions} action="configureDetail" fields={{ project }} enabled={enabled} ghost>Change detail…</Act></div>
-        <p class="muted">Evidence detail controls supported source structure, independently of semantic search.</p>
+        {(entry.configuration.configuredRetention||entry.configuration.publishedRetention)&&<p role="status">Configured retained profile: {entry.configuration.configuredRetention??'legacy'}. Published retained profile: {entry.configuration.publishedRetention??'legacy'}. Unqualified files keep the legacy fallback shown above.</p>}
+        <p class="muted">Evidence retention controls supported source structure, independently of replies and semantic search. Review a new Lean or Rich profile in Advanced settings.</p>
         {entry.configuration.pending && <p role="status">Settings change {entry.configuration.state}. Current work finishes first; its outcome appears in Recent activity.</p>}
     </section>;
 }

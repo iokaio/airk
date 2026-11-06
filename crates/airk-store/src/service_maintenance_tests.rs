@@ -211,6 +211,8 @@ fn snapshot(project: ProjectBinding) -> InspectionSnapshot {
         indexed_vectors: Some(0),
         vectors_enabled: Some(false),
         index_detail: None,
+        configured_retained_profile: None,
+        published_retained_profile: None,
         semantic: None,
         discovery: None,
         failure: None,

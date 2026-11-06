@@ -28,6 +28,8 @@ fn run(
         roots,
         limits,
         &ExtractionPolicy {
+            retained_profile: None,
+            legacy_fallback_detail: None,
             detail: None,
             version: 1,
             rules: vec![],
@@ -199,6 +201,8 @@ fn copy_reuses_before_parsing_but_changes_inventory_and_full_scan_bypasses_looku
     let bytes = b"pub fn original_publication_fixture() -> u32 { 42 }\n";
     fs::write(root.path().join("one.rs"), bytes)?;
     let policy = ExtractionPolicy {
+        retained_profile: None,
+        legacy_fallback_detail: None,
         detail: None,
         version: 1,
         rules: vec![],

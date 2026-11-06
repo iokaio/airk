@@ -465,6 +465,8 @@ mod tests {
     fn extract(path: &str, text: &str, detail: IndexDetail) -> Result<ExtractionPayload> {
         let registry = crate::adapters::registry::AdapterRegistry::baseline();
         let policy = crate::adapters::profile::ExtractionPolicy {
+            retained_profile: None,
+            legacy_fallback_detail: None,
             version: 3,
             detail: Some(detail),
             rules: vec![],
