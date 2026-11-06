@@ -13,6 +13,7 @@ use std::sync::OnceLock;
 
 pub(super) const SCHEMA: &str = include_str!("service_catalog_schema.sql");
 const AUTHORITY_V1_SCHEMA: &str = include_str!("service_catalog_authority_v1.sql");
+const SPLIT_V2_SCHEMA: &str = include_str!("service_catalog_split_v2.sql");
 const POLICY_V1_SCHEMA: &str = include_str!("service_catalog_policy_v1.sql");
 const LEGACY_SCHEMA: &str = include_str!("service_registry_schema11.sql");
 const MAX_SCHEMA_OBJECTS: usize = 512;
@@ -21,7 +22,7 @@ const MAX_OBJECT_SQL: usize = 16384;
 // P6 and P9 must explicitly advance their own required contracts. Older schema-12
 // readers must refuse them rather than silently ignore grants or source policy.
 pub const SUPPORTED_AUTHORITY_CONTRACT: u32 = 1;
-pub const SUPPORTED_POLICY_CONTRACT: u32 = 1;
+pub const SUPPORTED_POLICY_CONTRACT: u32 = 2;
 
 #[derive(Clone, Copy, Debug)]
 pub struct AdmissionPending;
@@ -55,6 +56,9 @@ pub mod source_change;
 
 #[path = "service_catalog_policy.rs"]
 pub mod policy;
+
+#[path = "service_catalog_split.rs"]
+pub mod split;
 
 #[path = "service_catalog_operations.rs"]
 pub mod operations;
@@ -219,19 +223,25 @@ pub enum CatalogLayout {
     Schema12Authority0,
     Schema12Authority1,
     Schema12Authority1Policy1,
+    Schema12Authority1Policy2,
 }
 
 fn expected_layout(layout: CatalogLayout) -> Result<&'static Vec<SchemaObject>> {
     static AUTHORITY_V1: OnceLock<Result<Vec<SchemaObject>, String>> = OnceLock::new();
     static POLICY_V1: OnceLock<Result<Vec<SchemaObject>, String>> = OnceLock::new();
+    static SPLIT_V2: OnceLock<Result<Vec<SchemaObject>, String>> = OnceLock::new();
     match layout {
         CatalogLayout::Schema11 => expected(11),
         CatalogLayout::Schema12Authority0 => expected(12),
-        CatalogLayout::Schema12Authority1 | CatalogLayout::Schema12Authority1Policy1 => {
+        CatalogLayout::Schema12Authority1
+        | CatalogLayout::Schema12Authority1Policy1
+        | CatalogLayout::Schema12Authority1Policy2 => {
             (if layout == CatalogLayout::Schema12Authority1 {
                 &AUTHORITY_V1
-            } else {
+            } else if layout == CatalogLayout::Schema12Authority1Policy1 {
                 &POLICY_V1
+            } else {
+                &SPLIT_V2
             })
             .get_or_init(|| {
                 (|| -> Result<_> {
@@ -243,8 +253,11 @@ fn expected_layout(layout: CatalogLayout) -> Result<&'static Vec<SchemaObject>> 
                     // Exactly the DDL used by owned promotion; no alternative
                     // permissive schema or hand-maintained object roster.
                     connection.execute_batch(AUTHORITY_V1_SCHEMA)?;
-                    if layout == CatalogLayout::Schema12Authority1Policy1 {
+                    if layout != CatalogLayout::Schema12Authority1 {
                         connection.execute_batch(POLICY_V1_SCHEMA)?;
+                    }
+                    if layout == CatalogLayout::Schema12Authority1Policy2 {
+                        connection.execute_batch(SPLIT_V2_SCHEMA)?;
                     }
                     schema_objects(&connection)
                 })()
@@ -265,6 +278,8 @@ fn physical_catalog_layout(objects: &[SchemaObject]) -> Result<CatalogLayout> {
         Ok(CatalogLayout::Schema12Authority1)
     } else if objects == expected_layout(CatalogLayout::Schema12Authority1Policy1)?.as_slice() {
         Ok(CatalogLayout::Schema12Authority1Policy1)
+    } else if objects == expected_layout(CatalogLayout::Schema12Authority1Policy2)?.as_slice() {
+        Ok(CatalogLayout::Schema12Authority1Policy2)
     } else {
         anyhow::bail!("unsupported registry table, index, foreign-key or trigger shape")
     }
@@ -290,6 +305,7 @@ pub(super) fn validate_catalog_layout(connection: &Connection) -> Result<Catalog
             (CatalogLayout::Schema12Authority0, 0, 0)
                 | (CatalogLayout::Schema12Authority1, 1, 0)
                 | (CatalogLayout::Schema12Authority1Policy1, 1, 1)
+                | (CatalogLayout::Schema12Authority1Policy2, 1, 2)
         ),
         "index authority marker does not match the compiled registry layout"
     );
@@ -311,7 +327,7 @@ pub(super) fn apply_policy_v1_layout(connection: &Connection) -> Result<()> {
                 [],
             )?;
         }
-        CatalogLayout::Schema12Authority1Policy1 => {}
+        CatalogLayout::Schema12Authority1Policy1 | CatalogLayout::Schema12Authority1Policy2 => {}
         _ => anyhow::bail!("policy installation requires qualified authority 1"),
     }
     validate_catalog_layout(connection)?;
@@ -321,6 +337,27 @@ pub(super) fn apply_policy_v1_layout(connection: &Connection) -> Result<()> {
 /// Pure DDL stage for an already owned/backed-up promotion transaction. This
 /// performs no admission, snapshot sealing, metadata-marker update or activation.
 /// The caller must seal and set authority 1 atomically before committing.
+/// Install split semantics only inside an explicitly accepted native transaction.
+pub(super) fn apply_split_v2_layout(connection: &Connection) -> Result<()> {
+    ensure!(
+        !connection.is_autocommit(),
+        "split layout requires explicit transaction"
+    );
+    apply_policy_v1_layout(connection)?;
+    if validate_catalog_layout(connection)? == CatalogLayout::Schema12Authority1Policy1 {
+        connection.execute_batch(SPLIT_V2_SCHEMA)?;
+        connection.execute(
+            "UPDATE index_catalog_meta SET policy_contract=2,accepted_new_writes=1 WHERE id=1",
+            [],
+        )?;
+    }
+    ensure!(
+        validate_catalog_layout(connection)? == CatalogLayout::Schema12Authority1Policy2,
+        "split capability layout differs"
+    );
+    Ok(())
+}
+
 pub(super) fn apply_authority_v1_layout(connection: &Connection) -> Result<()> {
     ensure!(
         !connection.is_autocommit(),

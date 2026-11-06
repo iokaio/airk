@@ -499,6 +499,9 @@ pub fn remove(control: &Path, target: &Target, approval: Sha256Digest) -> Result
     }
     let quota = Quota::for_store(&store)?;
     let grants = quota.current_grants(&writer)?;
+    for grant in &grants {
+        grant.require_release_authority()?;
+    }
     ensure!(
         grants
             .iter()

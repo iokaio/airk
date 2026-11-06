@@ -159,6 +159,11 @@ impl ProjectLease {
             derived: false,
         })
     }
+    pub(crate) fn duplicate_split_pin(&self) -> Result<File> {
+        let pin = self._file.0.try_clone()?;
+        self._file.1.store(true, Ordering::Relaxed);
+        Ok(pin)
+    }
     pub fn identity(&self) -> (airk_core::service::ProjectBinding, Option<u64>) {
         (self.binding, self.epoch)
     }

@@ -478,6 +478,7 @@ impl FileStore {
         scope: &CurrentScope,
         writer_active: Option<Arc<std::sync::atomic::AtomicBool>>,
     ) -> Result<Arc<CurrentRead>> {
+        crate::service::collection::validate_split_store_access(self)?;
         scope.validate()?;
         ensure!(
             self.collection_id()? == scope.collection,

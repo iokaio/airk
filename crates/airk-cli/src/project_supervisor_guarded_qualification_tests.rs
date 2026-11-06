@@ -160,9 +160,22 @@ impl NativeOwner {
 struct NativeControl {
     owner: Rc<RefCell<NativeOwner>>,
     gate: NativeCatalogAdmission,
+    source: Option<crate::source_supervisor::SourceWake>,
 }
 
 impl CatalogControl for NativeControl {
+    fn fence_source_policy(&self, project: ProjectBinding, operation: Incarnation) -> Result<()> {
+        self.source
+            .as_ref()
+            .context("native fixture source owner absent")?
+            .fence_policy(project, operation)
+    }
+    fn release_source_policy(&self, project: ProjectBinding, operation: Incarnation) -> Result<()> {
+        self.source
+            .as_ref()
+            .context("native fixture source owner absent")?
+            .release_policy(project, operation)
+    }
     fn uses_gate(&self, gate: &NativeCatalogAdmission) -> bool {
         self.gate.same_instance(gate)
     }
@@ -698,7 +711,11 @@ impl NativeFixture {
             ),
             "actual native controller failed to attach"
         );
-        let control = NativeControl { owner, gate };
+        let control = NativeControl {
+            owner,
+            gate,
+            source: None,
+        };
         let mut fixture = Self {
             gate: latch,
             control,
@@ -1043,3 +1060,6 @@ async fn require_semantic_ready(stream: &mut local_ipc::Stream) -> Result<()> {
     );
     Ok(())
 }
+
+#[path = "project_supervisor_split_tests.rs"]
+mod split_tests;

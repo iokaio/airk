@@ -257,6 +257,13 @@ impl Kernel {
         request: &ConfigurationRequest,
     ) -> Result<()> {
         request.validate()?;
+        ensure!(
+            !matches!(
+                request.configuration,
+                ProjectConfiguration::SplitWork { .. }
+            ),
+            "split work requires its exact native operation owner"
+        );
         let observed = self.inspect_service(project)?;
         ensure!(
             observed.incarnation == request.incarnation
@@ -312,6 +319,9 @@ impl Kernel {
             _ => (),
         }
         let result = match &request.configuration {
+            ProjectConfiguration::SplitWork { .. } => {
+                anyhow::bail!("split work requires its exact native operation owner")
+            }
             ProjectConfiguration::ApplySourcePolicy {
                 policy,
                 operation_id,

@@ -666,11 +666,28 @@ pub async fn run() -> Result<()> {
         &lease,
         &std::env::current_exe()?,
     )?;
-    let kernel = Kernel::open_service_collection_for_diagnostics(
-        Path::new(&registration.root),
-        Some((&registration.data_root).into()),
-        &registration.collection,
-    )?
+    // A staged participant starts as an unprivileged metadata observer. Only
+    // its actually claimed native job can attach a private split permit later.
+    let split_observer = registry
+        .catalog_active_split_for_binding(init.project)?
+        .map(|_| Kernel::open_existing_service_observer(&registration))
+        .transpose()?;
+    // Evidence activation does not release the participant's prepaid writer
+    // allocation. Generic startup work must wait for the same native barrier
+    // used by job admission, including a terminal receipt awaiting settlement.
+    let split_write_fenced = registry.catalog_split_write_fenced(init.project)?
+        || split_observer
+            .as_ref()
+            .is_some_and(|observer| observer.require_unrestricted_read().is_err());
+    let kernel = if split_write_fenced {
+        split_observer.context("staged participant observer missing")?
+    } else {
+        Kernel::open_service_collection_for_diagnostics(
+            Path::new(&registration.root),
+            Some((&registration.data_root).into()),
+            &registration.collection,
+        )?
+    }
     .with_expected_source_policy(if scopes_required {
         registry
             .catalog_index_for_binding(init.project)?
@@ -680,15 +697,26 @@ pub async fn run() -> Result<()> {
     } else {
         None
     })?
-    .with_service_freshness(identity)?
-    .with_service_models(&init.runtime, crate::bundled_assets::default_plan()?)?;
+    .with_service_freshness(identity)?;
+    // Bind immutable bundled model descriptors only. This creates no model,
+    // reserves no quota and grants no staged evidence access. Keeping this
+    // metadata on the ordinary Kernel also supports reads after activation.
+    let kernel =
+        kernel.with_service_models(&init.runtime, crate::bundled_assets::default_plan()?)?;
     airk_kernel::service_execution::install(Path::new(&registration.data_root), identity)?;
-    let receipt = kernel.service_rebuild_receipt()?;
+    let receipt = if split_write_fenced {
+        None
+    } else {
+        kernel.service_rebuild_receipt()?
+    };
     registry.recover_jobs_with_rebuild_receipt(&lease, receipt.as_ref())?;
-    source_configuration::recover(&kernel, &mut registry, &lease, init.engine)?;
+    if !split_write_fenced {
+        source_configuration::recover(&kernel, &mut registry, &lease, init.engine)?;
+    }
     // A crash after the accepted Configure result settles but before catalog
     // bookkeeping must not require replaying a policy change or clearing its deny.
-    if scopes_required
+    if !split_write_fenced
+        && scopes_required
         && let Some(index) = registry.catalog_index_for_binding(init.project)?
         && let Some(snapshot) = registry.catalog_policy_status(index.id)?
         && snapshot
@@ -701,21 +729,28 @@ pub async fn run() -> Result<()> {
     }
     // Only an actually opened retained index can become an automatic audit
     // candidate. A fresh/unprepared registration remains ordinary setup work.
-    let initial_integrity_failure = observe_native_integrity(
-        &kernel,
-        &mut registry,
-        lease.clone(),
-        &storage,
-        identity,
-        None,
-    )
-    .err()
-    .map(|error| integrity_observation_code(&error).to_owned());
-    record_watch_roots(&kernel, &mut registry, &lease);
-    let _ = reconcile_semantic_setup(&kernel, &mut registry, &lease, init.engine);
+    let initial_integrity_failure = if split_write_fenced {
+        None
+    } else {
+        observe_native_integrity(
+            &kernel,
+            &mut registry,
+            lease.clone(),
+            &storage,
+            identity,
+            None,
+        )
+        .err()
+        .map(|error| integrity_observation_code(&error).to_owned())
+    };
+    if !split_write_fenced {
+        record_watch_roots(&kernel, &mut registry, &lease);
+        let _ = reconcile_semantic_setup(&kernel, &mut registry, &lease, init.engine);
+    }
     // Recovery is durable desired work, admitted by the service rather than an
     // unaccounted startup replay. Failed recovery leaves the owner reachable.
-    if kernel.service_recovery_required().unwrap_or(false)
+    if !split_write_fenced
+        && kernel.service_recovery_required().unwrap_or(false)
         && !registry.source_failure_blocked(init.project)?
     {
         registry.enqueue_internal(
@@ -725,12 +760,17 @@ pub async fn run() -> Result<()> {
             airk_kernel::service_broker::new_instance_id()?,
         )?;
     }
-    let pending_retirements = kernel.pending_service_retirements()?;
+    let pending_retirements = if split_write_fenced {
+        0
+    } else {
+        kernel.pending_service_retirements()?
+    };
     let previous_maintenance = registry.maintenance_observation(init.project)?;
-    if pending_retirements > 0
-        || previous_maintenance
-            .as_ref()
-            .is_none_or(|value| !value.objects_checked)
+    if !split_write_fenced
+        && (pending_retirements > 0
+            || previous_maintenance
+                .as_ref()
+                .is_none_or(|value| !value.objects_checked))
     {
         registry.record_maintenance(
             &lease,
@@ -834,6 +874,15 @@ pub async fn run() -> Result<()> {
                 "cleanup requires a distinct inactive owner"
             );
             if let Some(job) = registry.claim_job_id(&job_lease, allowance.job)? {
+                let split_job = registry
+                    .catalog_active_split_for_binding(identity.project)?
+                    .is_some_and(|snapshot| {
+                        snapshot
+                            .receipt
+                            .jobs
+                            .iter()
+                            .any(|reference| reference.job == job.id)
+                    });
                 let mut automatic_settled = false;
                 let mut verify_admission = None;
                 let mut completed_maintenance = None;
@@ -863,6 +912,12 @@ pub async fn run() -> Result<()> {
                                 work.engine == init.engine,
                                 airk_kernel::service_configuration::ConfigurationChanged
                             );
+                            if split_job {
+                                return crate::project_worker_split::execute(
+                                    &kernel, &mut registry, &job_lease,
+                                    job.id, init.engine, &init.runtime,
+                                );
+                            }
                             if let Some(source_work) = registry.catalog_source_work(&job_lease, job.id)? {
                                 let airk_core::catalog_management::CatalogOperation::BeginIndexSourceChange { plan, .. } = &source_work.begin.operation else {
                                     anyhow::bail!("source work lacks its accepted plan");
@@ -1468,24 +1523,30 @@ pub async fn run() -> Result<()> {
                         {
                             registry.catalog_record_policy_job(policy.index_id, operation_id)?;
                         }
-                        let _ = reconcile_semantic_setup(
-                            &kernel,
-                            &mut registry,
-                            &job_lease,
-                            init.engine,
-                        );
+                        if !split_job {
+                            let _ = reconcile_semantic_setup(
+                                &kernel,
+                                &mut registry,
+                                &job_lease,
+                                init.engine,
+                            );
+                        }
                     }
                 }
-                let integrity_failure = observe_native_integrity(
-                    &kernel,
-                    &mut registry,
-                    job_lease.clone(),
-                    &job_storage,
-                    identity,
-                    verify_admission,
-                )
-                .err()
-                .map(|error| integrity_observation_code(&error).to_owned());
+                let integrity_failure = if split_job {
+                    last_integrity_failure.clone()
+                } else {
+                    observe_native_integrity(
+                        &kernel,
+                        &mut registry,
+                        job_lease.clone(),
+                        &job_storage,
+                        identity,
+                        verify_admission,
+                    )
+                    .err()
+                    .map(|error| integrity_observation_code(&error).to_owned())
+                };
                 if integrity_failure != last_integrity_failure {
                     job_status
                         .lock()

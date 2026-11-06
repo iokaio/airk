@@ -135,7 +135,8 @@ fn control_entries(control: &SetupDirectory) -> Result<()> {
                     "ledger.lock",
                     "policy.json",
                     "reservations",
-                    "current-grants"
+                    "current-grants",
+                    "split-allocations"
                 ]
                 .iter()
                 .any(|allowed| name == *allowed),
@@ -156,7 +157,12 @@ fn policy(control: &SetupDirectory) -> Result<QuotaPolicy> {
     Ok(policy)
 }
 
-fn outstanding(control: &SetupDirectory, reservations: &SetupDirectory) -> Result<Vec<LiveRecord>> {
+fn outstanding(
+    control: &SetupDirectory,
+    reservations: &SetupDirectory,
+    root: &SetupDirectory,
+    logical_root: &Path,
+) -> Result<Vec<LiveRecord>> {
     let mut records = Vec::new();
     for (visited, entry) in reservations.entries()?.enumerate() {
         ensure!(
@@ -214,6 +220,7 @@ fn outstanding(control: &SetupDirectory, reservations: &SetupDirectory) -> Resul
             );
         }
     }
+    records.extend(funding::pinned_records(control, root, logical_root)?);
     ensure!(
         records.len() <= MAX_RESERVATIONS,
         "quota reservation count exhausted"
@@ -416,7 +423,7 @@ impl SetupMetadataAllowance {
             Err(error) if missing(&error) => None,
             Err(error) => return Err(error),
         };
-        let records = outstanding(&control, &reservations)?;
+        let records = outstanding(&control, &reservations, root, logical_root)?;
         ensure!(
             records
                 .len()

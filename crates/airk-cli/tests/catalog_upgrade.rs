@@ -22,7 +22,19 @@ use std::{
     time::{Duration, Instant},
 };
 
-fn fixture() -> Result<tempfile::TempDir> {
+// TempDir owns cleanup; only a newly created child is a native control root.
+// Do not repair permissions on existing caller/shared/user directories.
+struct PrivateFixture {
+    _owner: tempfile::TempDir,
+    control: PathBuf,
+}
+impl PrivateFixture {
+    fn path(&self) -> &Path {
+        &self.control
+    }
+}
+
+fn fixture() -> Result<PrivateFixture> {
     let root = private_fixture()?;
     seed_registration(
         root.path(),
@@ -35,12 +47,22 @@ fn fixture() -> Result<tempfile::TempDir> {
     )?;
     Ok(root)
 }
-fn private_fixture() -> Result<tempfile::TempDir> {
-    Ok(match std::env::var_os("AIRK_PRIVATE_CENSUS_BASE") {
+fn private_fixture() -> Result<PrivateFixture> {
+    let owner = match std::env::var_os("AIRK_PRIVATE_CENSUS_BASE") {
         Some(base) => tempfile::Builder::new()
             .prefix("airk-catalog-upgrade-")
             .tempdir_in(base)?,
         None => tempfile::tempdir()?,
+    };
+    let control = owner.path().join("native-control");
+    ensure!(
+        !control.exists(),
+        "native fixture control child already exists"
+    );
+    airk_cli::local_ipc::prepare_root(&control)?;
+    Ok(PrivateFixture {
+        _owner: owner,
+        control,
     })
 }
 fn seed_registration(root: &Path, source: String, data: String) -> Result<()> {
@@ -114,7 +136,8 @@ fn activated_format_serves_actual_control_and_post_start_writes_refuse_restore()
     let control = owner.path().join("control");
     let source = owner.path().join("source");
     let data = owner.path().join("data");
-    for path in [&control, &source, &data] {
+    airk_cli::local_ipc::prepare_root(&control)?;
+    for path in [&source, &data] {
         fs::create_dir(path)?;
     }
     let source = source.canonicalize()?;
@@ -406,6 +429,10 @@ fn actual_candidate_probe_preserves_the_complete_observation_and_refuses_a_cross
     let binary = candidate();
     for crossed in [false, true] {
         let root = fixture()?;
+        // Validate the same existing native owner boundary as serve before
+        // testing upgrade/payload refusal; an ACL setup error must not mask it.
+        airk_cli::local_ipc::prepare_root(root.path())
+            .context("catalog fixture must satisfy native owner-only control admission")?;
         let owner = CatalogUpgrade::acquire(root.path())?;
         let identity = if crossed {
             Sha256Digest::from_bytes([3; 32])
@@ -689,9 +716,13 @@ fn exercise_native_catalog_transports(
     };
     equal(direct(page.clone())?, cli(&page)?)?;
     equal(direct(page.clone())?, console(page.clone())?)?;
-    let ControlResponse::CatalogPage { page } = direct(page)? else {
+    let ControlResponse::CatalogPage { page, capabilities } = direct(page)? else {
         anyhow::bail!("catalog page unavailable")
     };
+    ensure!(
+        capabilities == airk_store::service::registry::catalog::capabilities(),
+        "catalog transport lost native capabilities"
+    );
     let ControlResponse::RequestEpoch { namespace, epoch } = direct(ControlMethod::RequestEpoch)?
     else {
         anyhow::bail!("catalog epoch unavailable")
@@ -756,13 +787,20 @@ fn exercise_native_catalog_transports(
             && observation.is_none(),
         "changed preview lost original native request identity"
     );
-    let ControlResponse::CatalogDetail { detail } = direct(ControlMethod::CatalogDetail {
+    let ControlResponse::CatalogDetail {
+        detail,
+        capabilities,
+    } = direct(ControlMethod::CatalogDetail {
         entity: CatalogEntity::Project { id },
         expected_catalog_revision: Some(request.expected_catalog_revision),
     })?
     else {
         anyhow::bail!("failed preview changed the native catalog clock")
     };
+    ensure!(
+        capabilities == airk_store::service::registry::catalog::capabilities(),
+        "catalog detail lost native capabilities"
+    );
     ensure!(
         detail.namespace == namespace
             && detail.revision == request.expected_catalog_revision
@@ -902,7 +940,8 @@ fn exercise_native_catalog_transports(
                 expected_catalog_revision: Some(revision)
             })?,
             ControlResponse::CatalogDetail {
-                detail: CatalogDetail { item: Some(_), .. }
+                detail: CatalogDetail { item: Some(_), .. },
+                ..
             }
         ),
         "refused deletion changed catalog"

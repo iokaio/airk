@@ -1,5 +1,39 @@
 # Architecture
 
+P10's **1.8.8 working build** adds reviewed [index splitting](index-splitting.md).
+Its frozen Windows qualification passed all 22 gates, including actual process,
+CLI/MCP and full workspace checks. Focused Mac ARM batches passed with Cargo
+cleanup. [Exact evidence and limits](research/implementation-v190.md#p10--local-phase-checkpoint-5-november-2026)
+remain separate from accepted P9 history. P10 has passed its local phase checks;
+the working build remains unpublished.
+
+Core owns the partition algebra, explicit source/Project/capacity choices, native
+request and receipt lineage, and terminal finalization envelope. Store owns the
+durable Accepted operation, independent collection identities, required staged
+seals, lease-bound worker permits, exact result admission and quota allocations.
+A child writer adopts its operation's paid context; ordinary collection opens do
+not acquire a permit or funding merely from a backing path. Current metadata and
+funded writer reconciliation remain with their existing Store owners.
+
+CLI owns the canonical administrative controls, metadata advancement, child-worker
+dispatch and native revoke/drain fence. Kernel executes the exact claimed build,
+source-policy removal, cleanup or read-only remainder-witness job. A worker verifies
+the saved source hash; the fence owner rechecks the retained publication/hash after
+drainage. The metadata actor does not scan or hash source documents. Ingest owns
+bounded positive-selection discovery and qualified ancestor control dependencies;
+permanent denies remain authoritative without widening document/model eligibility.
+
+The destination is sealed during build; the original preserves its prior admission
+until the exact restrictive fence. Membership activation changes no saved defaults
+and issues no grant. Physical cleanup, terminal owner publication and per-root
+funding acknowledgments are separate from logical completion. The active write
+barrier remains during finalization `acknowledging`; an explicit Resume binds its
+current envelope revision and cannot erase a later attention latch through replay
+of an earlier acknowledgment. Workbench preserves complete native drafts, snapshots
+and historical receipts in review, bounded journaling and JSON/Markdown exports.
+Evidence MCP stays read-only and grant-scoped; these administrative native RPCs do
+not broaden its public evidence tool catalog.
+
 P9's working build keeps reviewed source-policy contracts in Core,
 durable admission and policy capsules in Store, discovery/name checks in Ingest,
 and enforcement/removal publication in Kernel. CLI owns native worker/watch

@@ -5,6 +5,27 @@ Local Windows and focused Mac ARM qualification passed; measured coverage and
 remaining platform/release limits are tracked in the
 [implementation ledger](research/implementation-v190.md).
 
+The [P10 splitting workflow](index-splitting.md) reuses these accepted
+P9 enforcement and cleanup owners. Frozen Windows qualification passed all 22
+gates, with focused Mac ARM checks and Cargo cleanup recorded separately in the
+[dated evidence](research/implementation-v190.md#p10--local-phase-checkpoint-5-november-2026).
+P10 has passed its local phase checks; the working build remains unpublished. P9's earlier qualification is not relabeled as P10 evidence.
+
+A split preserves the original policy's positive includes and permanent denies,
+then partitions eligible paths into an independent destination and the restrictive
+original remainder. Exact files remain exact; subtrees constrain future eligible
+descendants. Destination source IDs are mapped natively and Project effects are
+reviewed as a complete census. Qualified ancestor ignore controls can be needed
+outside the document partition, but denies and protected capture bounds still win;
+this does not admit sibling documents or arbitrary model inputs.
+
+Before the original fence, cancellation preserves the original policy and requires
+owned destination cleanup and funding acknowledgment. After the fence, recovery
+must complete the restriction rather than restore transferred evidence. A logical
+terminal receipt with unfinished physical/funding finalization remains incomplete;
+current finalization attention is separate from a historical recovery acknowledgment.
+Sources are read-only throughout. Evidence MCP cannot apply, cancel or resume a split.
+
 Permanent exclusions belong to an index. In **Explorer → Indexing → Index detail
 → Sources**, select the native source-root identity, an exact file or a directory
 subtree, and review the complete native operation before applying it. A subtree

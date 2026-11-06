@@ -90,7 +90,8 @@ fn read_snapshot(
     ensure!(
         state.activated
             && state.authority_contract == 1
-            && state.policy_contract <= 1
+            && state.policy_contract
+                <= airk_store::service::registry::catalog::SUPPORTED_POLICY_CONTRACT
             && state.namespace == session.namespace
             && state.revision >= session.expected_catalog_revision,
         ScopeReadRefused

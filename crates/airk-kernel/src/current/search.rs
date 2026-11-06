@@ -323,8 +323,9 @@ pub(crate) fn search_current_read_with_filters(
                     return Err(error.context(SearchUnavailable {
                         requested_mode,
                         publication: Some(super::runtime::envelope(&read)?),
-                        semantic_readiness: (!read.restricts_paths()).then_some(semantic_readiness),
-                        discovery_readiness: (!read.restricts_paths())
+                        semantic_readiness: (!read.selected_scope_restricts_paths())
+                            .then_some(semantic_readiness),
+                        discovery_readiness: (!read.selected_scope_restricts_paths())
                             .then_some(discovery_readiness),
                     }));
                 }

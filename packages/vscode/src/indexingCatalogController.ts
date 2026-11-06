@@ -2,8 +2,14 @@
 import { CatalogKind, CatalogObject, CatalogReview, CatalogView, IndexSetupReview, WindowContextDescriptor, catalogBound, catalogHex, catalogId, catalogItems, catalogObject, catalogRevision, catalogWindowAssociation, CATALOG_PAGE_BYTES, validateCatalogOperation, validateGrantSelection, validateNativeHostContext, validateWindowContext, validateIndexSetupSelection, validateSourceMutationSelection, sourceChangeObservation } from './indexingCatalog';
 import { randomUUID } from 'node:crypto';
 import { canReviewPolicyUnblock, CatalogRetirementReview } from './indexingCatalog';
+import { SplitReview, hasSplitCapability, validateSplitSelection, validateSplitSnapshot, validateSplitSourceState } from './indexingSplit';
 
 export interface CatalogControl {
+    catalogSplitDraft?(index:string,selection:CatalogObject,revision:number):Promise<SplitReview>;
+    catalogSplitSourceState?(index:string,revision:number):Promise<CatalogObject>;
+    catalogSplitApply?(review:SplitReview,valid:()=>boolean):Promise<CatalogObject>;
+    catalogSplitStatus?(operation:string):Promise<CatalogObject>;
+    catalogSplitRecover?(observation:CatalogObject,action:'resume'|'cancel',valid:()=>boolean):Promise<CatalogObject>;
     catalogRead(method: CatalogObject): Promise<CatalogObject>;
     catalogPrepare(operation: CatalogObject, revision: number): Promise<CatalogReview>;
     catalogApply(review: CatalogReview, valid: () => boolean): Promise<CatalogObject>;
@@ -28,6 +34,8 @@ export interface CatalogHost { control?: CatalogControl; identity(): string; aut
 /** Window memory only; the shared native console owns durable intents and transport. No polling or source scanning. */
 export class IndexingCatalogController {
     private owner?: string;
+    private splitPreparedSequence?:number;
+    private splitObservedSequence?:number;
     private sequence = 0;
     private view: CatalogView = { generation: 0, busy: false };
     private pageRequest?: CatalogObject;
@@ -37,7 +45,7 @@ export class IndexingCatalogController {
     constructor(private readonly host: CatalogHost) {}
     snapshot(): CatalogView {
         this.sync();
-        return this.host.authorized() ? { ...this.view, canReadPolicy:!!this.host.control?.catalogPolicyStatus,canResumePolicy:!!this.host.control?.catalogPolicyResume,canReviewRetirement:!!this.host.control?.catalogRetirementReview&&!!this.host.control?.catalogStopTracking,windowDescriptor:this.descriptor(),canReadWindowContext:this.host.canReadWindowContext?.(),canReviewGrant:!!this.host.control?.catalogGrantDraft,canUseGrant:!!this.host.useGrant,canReviewSource:!!this.host.control?.catalogSourceDraft,canReadPendingSource:!!this.host.control?.catalogPendingSource,canReviewSetup:!!this.host.control?.catalogIndexSetupDraft&&!!this.host.control?.catalogIndexSetupApply,pending: this.host.control?.catalogPending() ?? [],pendingDetails:this.host.control?.catalogPendingDetails?.() } : { generation: this.view.generation, busy: false, error: 'Workspace trust or client authority is unavailable.' };
+        return this.host.authorized() ? { ...this.view, canReviewSplit:hasSplitCapability(this.view.capabilities)&&!!this.host.control?.catalogSplitDraft&&!!this.host.control?.catalogSplitApply&&!!this.host.control?.catalogSplitSourceState, canReadPolicy:!!this.host.control?.catalogPolicyStatus,canResumePolicy:!!this.host.control?.catalogPolicyResume,canReviewRetirement:!!this.host.control?.catalogRetirementReview&&!!this.host.control?.catalogStopTracking,windowDescriptor:this.descriptor(),canReadWindowContext:this.host.canReadWindowContext?.(),canReviewGrant:!!this.host.control?.catalogGrantDraft,canUseGrant:!!this.host.useGrant,canReviewSource:!!this.host.control?.catalogSourceDraft,canReadPendingSource:!!this.host.control?.catalogPendingSource,canReviewSetup:!!this.host.control?.catalogIndexSetupDraft&&!!this.host.control?.catalogIndexSetupApply,pending: this.host.control?.catalogPending() ?? [],pendingDetails:this.host.control?.catalogPendingDetails?.() } : { generation: this.view.generation, busy: false, error: 'Workspace trust or client authority is unavailable.' };
     }
     /** Complete native read, retained with the same owner fence as catalog data. */
     async recommendations(read:()=>Promise<CatalogObject>):Promise<CatalogView>{
@@ -88,7 +96,7 @@ export class IndexingCatalogController {
         if (this.view.namespace && namespace !== this.view.namespace) { this.invalidate(); throw new Error('catalog_namespace_changed_refresh'); }
         if (expected !== undefined && revision !== expected) { this.invalidate(); throw new Error('catalog_revision_changed_refresh'); }
         catalogItems(response, field);
-        this.view = { ...this.view, namespace, revision };
+        this.view = { ...this.view, namespace, revision,...(response.capabilities&&typeof response.capabilities==='object'?{capabilities:catalogObject(response.capabilities)}:{}) };
     }
     page(kind: CatalogKind, next = false, index?: string, project?: string): Promise<CatalogView> {
         return this.run(async (control, current) => {
@@ -328,6 +336,60 @@ export class IndexingCatalogController {
         return this.run(async (control, current) => {
             const results = await control.catalogReconcile(); current();
             this.view = { ...this.view, review: undefined, outcome: { receipts: results }, generation: this.view.generation + 1 };
+        });
+    }
+    splitOpen(index:string,generation:number):Promise<CatalogView>{
+        return this.run(async(control,current)=>{
+            if(generation!==this.view.generation||!hasSplitCapability(this.view.capabilities)||!this.view.revision)throw new Error('split_capability_or_review_stale');
+            const advice=this.view.recommendations;
+            if(!advice||advice.schema!=='airk.recommendations/1'||!Array.isArray(catalogObject(advice.selected).index_ids)||!(catalogObject(advice.selected).index_ids as unknown[]).includes(index))throw new Error('select_an_advised_index_for_split_review');
+            catalogId(index,'idx_');const response=await control.catalogRead({catalog_detail:{entity:{kind:'index',id:index},expected_catalog_revision:this.view.revision}});current();this.accept(response,'detail',this.view.revision);
+            const item=catalogItems(response,'detail')[0];if(item?.kind!=='index'||item.value.id!==index)throw new Error('crossed_split_index');
+            this.view={...this.view,detail:response,splitFormOpen:true,splitReview:undefined,review:undefined,setupReview:undefined,generation:this.view.generation+1};
+        });
+    }
+    splitDraft(selection:CatalogObject,generation:number):Promise<CatalogView>{
+        return this.run(async(control,current)=>{
+            const item=catalogItems(this.view.detail,'detail')[0];
+            if(generation!==this.view.generation||!this.view.revision||!this.view.namespace||!hasSplitCapability(this.view.capabilities)||item?.kind!=='index'||item.value.tombstone!==false||!control.catalogSplitDraft||!this.view.splitSourceState)throw new Error('inspect_capable_current_index_before_split_review');
+            validateSplitSourceState(this.view.splitSourceState,String(item.value.id),this.view.revision);
+            if(control.catalogPending().length)throw new Error('catalog_outcome_unconfirmed_reconcile_first');
+            const review=await control.catalogSplitDraft(String(item.value.id),validateSplitSelection(selection),this.view.revision);current();const request=catalogObject(review.draft.request);
+            if(request.original_index!==item.value.id||request.expected_catalog_revision!==this.view.revision||catalogObject(request.key).namespace!==this.view.namespace)throw new Error('crossed_split_review');
+            this.splitPreparedSequence=this.sequence;
+            this.view={...this.view,splitReview:review,submittedSplitReview:undefined,outcome:undefined,review:undefined,setupReview:undefined};
+        });
+    }
+    splitSourceRead(generation:number):Promise<CatalogView>{
+        return this.run(async(control,current)=>{
+            const item=catalogItems(this.view.detail,'detail')[0];
+            if(generation!==this.view.generation||!this.view.revision||!this.view.namespace||!hasSplitCapability(this.view.capabilities)||item?.kind!=='index'||!control.catalogSplitSourceState)throw new Error('inspect_current_index_before_split_source_state');
+            const response=await control.catalogSplitSourceState(String(item.value.id),this.view.revision);current();validateSplitSourceState(response,String(item.value.id),this.view.revision);
+            this.view={...this.view,splitSourceState:response,splitReview:undefined,capabilities:catalogObject(response.capabilities),generation:this.view.generation+1};
+        });
+    }
+    splitApply(generation:number):Promise<CatalogView>{
+        return this.run(async(control,current)=>{
+            const review=this.view.splitReview;if(!review||this.splitPreparedSequence!==this.sequence-1||generation!==this.view.generation||!hasSplitCapability(this.view.capabilities)||!control.catalogSplitApply)throw new Error('stale_split_review');
+            this.view={...this.view,splitReview:undefined,submittedSplitReview:review};
+            const response=await control.catalogSplitApply(review,()=>{try{current();return generation===this.view.generation;}catch{return false;}});current();
+            this.view={...this.view,outcome:response,generation:this.view.generation+1};
+        });
+    }
+    splitRead(operation:string,generation:number):Promise<CatalogView>{
+        return this.run(async(control,current)=>{
+            if(generation!==this.view.generation||!this.view.namespace||!hasSplitCapability(this.view.capabilities)||!control.catalogSplitStatus)throw new Error('split_status_unavailable');catalogHex(operation);
+            const response=await control.catalogSplitStatus(operation);current();if(response.operation_id!==operation)throw new Error('crossed_split_status');if(response.snapshot!==null)validateSplitSnapshot(response.snapshot);
+            this.splitObservedSequence=this.sequence;
+            this.view={...this.view,splitStatus:response,reviewedSplitStatus:undefined,splitReview:undefined,generation:this.view.generation+1};
+        });
+    }
+    splitRecover(action:'resume'|'cancel',generation:number):Promise<CatalogView>{
+        return this.run(async(control,current)=>{
+            const observation=this.view.splitStatus;if(!observation||this.splitObservedSequence!==this.sequence-1||observation.snapshot===null||generation!==this.view.generation||!hasSplitCapability(this.view.capabilities)||!control.catalogSplitRecover)throw new Error('read_current_split_status_before_recovery');
+            this.view={...this.view,splitStatus:undefined,reviewedSplitStatus:observation};
+            const response=await control.catalogSplitRecover(observation,action,()=>{try{current();return generation===this.view.generation;}catch{return false;}});current();
+            this.view={...this.view,outcome:response,generation:this.view.generation+1};
         });
     }
 }

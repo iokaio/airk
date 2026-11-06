@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /** Administrative metadata only. These IDs and preferences confer no evidence access. */
 export type CatalogObject = Record<string, unknown>;
+export interface SplitReview { response:CatalogObject; draft:CatalogObject; selection:CatalogObject }
 export type CatalogKind = 'projects' | 'indexes' | 'memberships' | 'contexts' | 'grants' | 'sources';
 export interface CatalogKey { namespace: string; epoch: number; nonce: string }
 export interface CatalogRequest { caller: string; key: CatalogKey; expected_catalog_revision: number; operation: CatalogObject }
@@ -24,6 +25,9 @@ export interface NativeHostContextDescriptor extends CatalogObject {
     schema: 1; namespace: string; host: string; key: string; catalog_revision: number; context: CatalogObject | null;
 }
 export interface CatalogView {
+    capabilities?:CatalogObject;
+    canReviewSplit?:boolean; splitFormOpen?:boolean; splitReview?:SplitReview; submittedSplitReview?:SplitReview; splitSourceState?:CatalogObject;
+    splitStatus?:CatalogObject; reviewedSplitStatus?:CatalogObject;
     recommendations?: CatalogObject;
     generation: number; busy: boolean; error?: string; namespace?: string; revision?: number;
     page?: CatalogObject; detail?: CatalogObject; sources?: CatalogObject; memberships?: CatalogObject;
@@ -293,7 +297,7 @@ export function catalogItems(response?: CatalogObject, field = 'page'): { kind: 
     });
 }
 /** Complete native responses, including unknown future fields, are retained in copies and exports. */
-export function catalogExport(view: CatalogView): string { return JSON.stringify(view, null, 2); }
+export function catalogExport(view: CatalogView, markdown=false): string { const json=JSON.stringify(view, null, 2);return markdown?`# AIRK Indexing observations\n\nRetained native pages, exact submitted reviews and historical acknowledgments are dated separately from current status. This export contains only retained pages.\n\n\`\`\`json\n${json.replace(/`/g,'\\u0060')}\n\`\`\`\n`:json; }
 
 function setupPath(input: unknown): string {
     if(typeof input!=='string'||!input||new TextEncoder().encode(input).length>4096||/[\u0000-\u001f\u007f-\u009f]/.test(input))throw new Error('invalid_setup_path');

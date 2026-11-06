@@ -549,6 +549,7 @@ impl ServiceRegistry {
         prepared_digest: Sha256Digest,
     ) -> Result<FencedReceipt> {
         request.validate()?;
+        self.catalog_split_seal_pending_original(request)?;
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;

@@ -47,6 +47,45 @@ pub fn restricts(policy: &SourcePolicy) -> bool {
     !policy.denies.is_empty() || policy.positive_includes.is_some()
 }
 
+/// Static dependency contract, not an observation of files or captured bytes.
+/// Reporting this descriptor performs no filesystem or corpus work.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct ControlDependencies {
+    pub version: u32,
+    pub basis: &'static str,
+    pub positive_selection: &'static str,
+    pub permanent_denies: &'static str,
+    pub does_not_expand_document_eligibility: bool,
+    pub ignore_names: &'static [&'static str],
+    pub global_configuration: &'static str,
+    pub ignore_file_bytes: usize,
+    pub ignore_snapshot_bytes: usize,
+    pub ignore_cached_directories: usize,
+    pub declared_header_configurations: &'static str,
+    pub header_configuration_files: usize,
+    pub header_configuration_file_bytes: usize,
+    pub capture: &'static str,
+}
+
+pub fn control_dependencies() -> ControlDependencies {
+    ControlDependencies {
+        version: 1,
+        basis: "metadata_only",
+        positive_selection: "Qualified ignore controls in admitted directories and their ancestors, bounded global ignore configuration, and explicitly declared header configurations may be dependencies outside positive document selection.",
+        permanent_denies: "authoritative_for_every_control_dependency",
+        does_not_expand_document_eligibility: true,
+        ignore_names: &[".airkignore", ".ignore", ".gitignore", ".git/info/exclude"],
+        global_configuration: "Bounded Git global/system configuration and its selected excludes file; ambiguous, redirected or unsupported controls refuse.",
+        ignore_file_bytes: crate::policy_ignore::MAX_FILE_BYTES,
+        ignore_snapshot_bytes: crate::policy_ignore::MAX_CONTROL_BYTES,
+        ignore_cached_directories: crate::policy_ignore::MAX_DIRECTORIES,
+        declared_header_configurations: "Only explicitly declared exact configuration paths; existing discovery/source byte budgets still apply; no sibling asset or model directory admission.",
+        header_configuration_files: crate::header_context::MAX_CONFIGURATIONS,
+        header_configuration_file_bytes: crate::header_context::MAX_CONFIGURATION_BYTES,
+        capture: "protected_no_follow_with_native_name_qualification",
+    }
+}
+
 /// Metadata-only platform case-mode proof. Does not open source file contents.
 pub fn qualify(policy: &SourcePolicy, root: &str, path: &str, directory: bool) -> Result<()> {
     if restricts(policy) {
@@ -63,6 +102,9 @@ pub fn qualify_discovery_directory(policy: &SourcePolicy, root: &str, path: &str
     if !restricts(policy) {
         return Ok(());
     }
+    if !allows_checked(policy, root, path, true)? {
+        return Err(NativeNameBoundaryUnavailable::new("excluded_control_directory").into());
+    }
     for control in [
         ".airkignore",
         ".gitignore",
@@ -75,7 +117,7 @@ pub fn qualify_discovery_directory(policy: &SourcePolicy, root: &str, path: &str
         } else {
             format!("{path}/{control}")
         };
-        if !allows_checked(policy, root, &relative, false)? {
+        if !allows_for_purpose(policy, root, &relative, false, false)? {
             return Err(NativeNameBoundaryUnavailable::new("excluded_ignore_control").into());
         }
     }
@@ -152,6 +194,23 @@ pub fn allows_absolute_input_checked(
     policy: &SourcePolicy,
     path: &std::path::Path,
 ) -> Result<bool> {
+    allows_absolute_for_purpose(policy, path, true)
+}
+
+/// Only the protected ignore reader may use this for its already selected
+/// control dependency. This is not administrative or document input authority.
+pub(crate) fn allows_absolute_control_input_checked(
+    policy: &SourcePolicy,
+    path: &std::path::Path,
+) -> Result<bool> {
+    allows_absolute_for_purpose(policy, path, false)
+}
+
+fn allows_absolute_for_purpose(
+    policy: &SourcePolicy,
+    path: &std::path::Path,
+    positive_selection: bool,
+) -> Result<bool> {
     let Some(path) = path.to_str() else {
         return Ok(false);
     };
@@ -166,8 +225,17 @@ pub fn allows_absolute_input_checked(
         let prefix = native_components(&root.canonical_path);
         if denied_prefix(&candidate, &prefix)? {
             let relative = candidate[prefix.len()..].join("/");
-            if !allows_checked(policy, &root.canonical_path, &relative, false)? {
+            if !allows_for_purpose(
+                policy,
+                &root.canonical_path,
+                &relative,
+                false,
+                positive_selection,
+            )? {
                 return Ok(false);
+            }
+            if !positive_selection {
+                qualify(policy, &root.canonical_path, &relative, false)?;
             }
         }
     }
@@ -193,6 +261,36 @@ pub fn allows_directory_input_checked(
         .any(|part| matches!(part.as_str(), "." | ".."))
     {
         return Ok(false);
+    }
+    if let Some(includes) = &policy.positive_includes {
+        for root in &policy.roots {
+            let source = native_components(&root.canonical_path);
+            if !denied_prefix(&candidate, &source)? && !denied_prefix(&source, &candidate)? {
+                continue;
+            }
+            // A directory input can enumerate arbitrary declared sibling assets.
+            // A selected descendant or exact manifest cannot authorize that tree.
+            let mut covered = false;
+            for rule in includes
+                .iter()
+                .filter(|rule| rule.source_root_id == root.id && rule.kind == PathScope::Subtree)
+            {
+                let mut allowed = source.clone();
+                allowed.extend(
+                    rule.path
+                        .split('/')
+                        .filter(|part| !part.is_empty())
+                        .map(str::to_owned),
+                );
+                if denied_prefix(&candidate, &allowed)? {
+                    covered = true;
+                    break;
+                }
+            }
+            if !covered {
+                return Ok(false);
+            }
+        }
     }
     for rule in &policy.denies {
         let Some(root) = policy
@@ -228,6 +326,16 @@ pub fn allows_checked(
     path: &str,
     directory: bool,
 ) -> Result<bool> {
+    allows_for_purpose(policy, root, path, directory, true)
+}
+
+fn allows_for_purpose(
+    policy: &SourcePolicy,
+    root: &str,
+    path: &str,
+    directory: bool,
+    positive_selection: bool,
+) -> Result<bool> {
     if !native_relative_path(path, directory)
         || airk_core::source_policy::validate_root_path(root).is_err()
     {
@@ -240,14 +348,15 @@ pub fn allows_checked(
     }) else {
         return Ok(false);
     };
-    let included = policy.positive_includes.as_ref().is_none_or(|rules| {
-        rules.iter().any(|rule| {
-            rule.source_root_id == source.id
-                && (same(path, &rule.path)
-                    || rule.kind == PathScope::Subtree && beneath(path, &rule.path)
-                    || directory && beneath(&rule.path, path))
-        })
-    });
+    let included = !positive_selection
+        || policy.positive_includes.as_ref().is_none_or(|rules| {
+            rules.iter().any(|rule| {
+                rule.source_root_id == source.id
+                    && (same(path, &rule.path)
+                        || rule.kind == PathScope::Subtree && beneath(path, &rule.path)
+                        || directory && beneath(&rule.path, path))
+            })
+        });
     let mut candidate = native_root;
     candidate.extend(
         path.split('/')
@@ -520,6 +629,85 @@ mod tests {
         assert!(!denied_prefix(
             &["allowed".into(), "caf\u{e9}".into()],
             &["private".into(), "cafe".into()]
+        )?);
+        Ok(())
+    }
+
+    #[test]
+    fn directory_inputs_require_complete_positive_subtrees_not_exact_assets() -> Result<()> {
+        use airk_core::index_catalog::ScopeAtom;
+        let root = SourceRootId::from_identity(Incarnation::from_bytes([1; 16]));
+        let mut policy = SourcePolicy {
+            schema: POLICY_SCHEMA.into(),
+            index_id: IndexId::from_identity(Incarnation::from_bytes([2; 16])),
+            owner_binding: Sha256Digest::from_bytes([3; 32]),
+            namespace: "collections-1.4".into(),
+            collection: "fixture".into(),
+            epoch: CatalogRevision::INITIAL,
+            roots: vec![SourceRoot {
+                id: root,
+                canonical_path: "/fixture".into(),
+                aliases: vec![],
+                owner: true,
+            }],
+            positive_includes: Some(vec![ScopeAtom {
+                source_root_id: root,
+                kind: PathScope::Exact,
+                path: "model/manifest.json".into(),
+            }]),
+            denies: vec![],
+        };
+        assert!(allows_absolute_input_checked(
+            &policy,
+            std::path::Path::new("/fixture/model/manifest.json")
+        )?);
+        assert!(!allows_absolute_input_checked(
+            &policy,
+            std::path::Path::new("/fixture/model/unselected.bin")
+        )?);
+        for path in ["/fixture", "/fixture/model", "/", "/fixture/unselected"] {
+            assert!(
+                !allows_directory_input_checked(&policy, std::path::Path::new(path))?,
+                "{path}"
+            );
+        }
+        policy.positive_includes.as_mut().unwrap()[0] = ScopeAtom {
+            source_root_id: root,
+            kind: PathScope::Subtree,
+            path: "model".into(),
+        };
+        assert!(allows_directory_input_checked(
+            &policy,
+            std::path::Path::new("/fixture/model")
+        )?);
+        assert!(allows_directory_input_checked(
+            &policy,
+            std::path::Path::new("/fixture/model/nested")
+        )?);
+        assert!(!allows_directory_input_checked(
+            &policy,
+            std::path::Path::new("/fixture")
+        )?);
+        policy.denies.push(DenyRule {
+            source_root_id: root,
+            kind: PathScope::Exact,
+            path: "model/secret.bin".into(),
+            rule_id: DenyId::from_identity(Incarnation::from_bytes([4; 16])),
+            reason: DenyReason::Trim,
+            created_epoch: policy.epoch,
+            inherited_from: None,
+        });
+        assert!(!allows_directory_input_checked(
+            &policy,
+            std::path::Path::new("/fixture/model")
+        )?);
+        assert!(allows_directory_input_checked(
+            &policy,
+            std::path::Path::new("/fixture/model/nested")
+        )?);
+        assert!(allows_directory_input_checked(
+            &policy,
+            std::path::Path::new("/outside/model")
         )?);
         Ok(())
     }

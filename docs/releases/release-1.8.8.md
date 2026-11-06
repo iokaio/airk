@@ -1,10 +1,21 @@
 # AIRK 1.8.8 manual-test working build
 
+P10's [reviewed split workflow](../index-splitting.md) adds independent
+partitions, sealed build, complete Project review and exact recovery through
+physical cleanup and final funding acknowledgment. Frozen Windows qualification
+passed all **22 gates** on `c713b469…` / 945 native inputs, including **2,565 passed /
+0 failed / 49 ignored** workspace tests, actual CLI/MCP process checks and all 84
+unchanged latency gates. Focused Mac ARM batches passed with mandatory Cargo
+cleanup; their distinct source identities and coverage remain in the
+[dated ledger](../research/implementation-v190.md#p10--local-phase-checkpoint-5-november-2026).
+**P10 has passed its local phase checks; the working build remains unpublished.** Resource samples do not establish total CPU or true physical peaks.
+P11–P14 remain unaccepted.
+
 P9 adds [permanent source exclusions](../source-policy.md)
 through reviewed native management. Native policy fences precede removal;
 logical removal and physical reclamation have separate resumable observations.
 Windows workspace/runtime and focused Mac ARM checks passed with the limits in
-the [ledger](../research/implementation-v190.md). P10–P14 acceptance remains pending;
+the [ledger](../research/implementation-v190.md). P11–P14 acceptance remains pending;
 this working build is unpublished.
 
 Contributor iteration now has a [scoped, timed Clippy command](../../CONTRIBUTING.md#local-rust-iteration)
@@ -16,7 +27,7 @@ P8 adds [Recommendations and copied agent scope instructions](../recommendations
 through the canonical native `query_scope` read, CLI/MCP aliases and Workbench
 plans/forms. Indexing renders available/selected/omitted scope, explicit temporary
 selection and separately reviewed defaults. Missing observations remain unknown;
-split actions remain pending P10; permanent exclusions use reviewed P9 management. [Validation and limits](../research/implementation-v190.md#p8--recommendations-and-harness-guidance)
+capability-qualified split review is implemented in P10; permanent exclusions use accepted P9 management. [Validation and limits](../research/implementation-v190.md#p8--recommendations-and-harness-guidance)
 are recorded separately from release qualification. The working version remains 1.8.8.
 
 P7 implements [combined Project reads](../combined-reads.md) across native, CLI, MCP and Workbench, including plans, sessions, verification and exports. Windows release and Apple Silicon debug native checks passed, along with all 84 unchanged legacy latency gates and 120 Windows fan-out trials. [Evidence and platform limits](../research/implementation-v190.md#p7--combined-retrieval-and-consumers). Working version **1.8.8** remains unpublished.
@@ -49,7 +60,9 @@ P5's foundation passed local isolated qualification: normalized catalog metadata
 backup/migration/import/recovery, candidate-process handoff and a gated installer
 coordinator. P6f's working candidate activates only qualified authority-1 catalogs
 with reviewed Indexing/setup/grant consumers. P7 adds combined reads and P8 adds
-Recommendations; trim qualification and split implementation remain pending P9/P10. See the [storage boundary](../storage-formats.md#development-catalog-boundary).
+Recommendations. P9 permanent exclusions are accepted for this local development
+phase; P10 splitting is implemented only as the unaccepted candidate described
+above. Earlier dated receipts retain their original scope. See the [storage boundary](../storage-formats.md#development-catalog-boundary).
 
 Complete implementation and local gates, then manually test the identified 1.8.8
 native pair and VSIX before the CI/release handoff. Use explicit isolated testing

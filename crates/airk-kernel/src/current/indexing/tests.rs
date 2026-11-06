@@ -1139,6 +1139,7 @@ fn many_progressive_publications_do_not_spend_the_capture_reservation() -> Resul
     let mut progressive = ProgressiveBase {
         kernel: &kernel,
         failure_reservation: &failure,
+        capture_reservation: &capture,
         quota: &quota,
         writer: &writer,
         scope: &scope,
@@ -1245,11 +1246,13 @@ fn progressive_flush_preserves_the_next_captured_input() -> Result<()> {
         let writer = kernel.store.lock()?;
         let captured_objects = writer.capture_objects();
         let reservation = quota.reserve(kernel.collection(), 16 << 20)?;
+        let failure = quota.reserve(kernel.collection(), 2 << 20)?;
         let selection = kernel.vector_selection()?;
         let mut stats = EmbeddingCacheStats::default();
         let mut progressive = ProgressiveBase {
             kernel: &kernel,
-            failure_reservation: &reservation,
+            failure_reservation: &failure,
+            capture_reservation: &reservation,
             quota: &quota,
             writer: &writer,
             scope: &scope,

@@ -45,7 +45,7 @@ def verify_embedded_models(staging, operating_system):
 
 def cargo_binary(name, profile, features):
     command = ["cargo", "build", "--locked", "-p", "airk-cli", "--bin", name,
-               "--no-default-features", "--message-format=json-render-diagnostics"]
+               "--no-default-features", "--message-format=json-render-diagnostics", "--timings"]
     if profile == "release":
         command.append("--release")
     if features:

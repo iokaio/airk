@@ -16,6 +16,7 @@ pub(crate) struct Metadata {
     pub(crate) roots: Vec<u8>,
     pub(crate) slot: String,
     pub(crate) configuration: Sha256Digest,
+    pub(crate) split_capsule: Option<(String, Vec<u8>)>,
 }
 impl Metadata {
     #[cfg(any(unix, windows))]
@@ -61,9 +62,40 @@ impl Metadata {
             roots,
             slot: slot.to_string(),
             configuration,
+            split_capsule: None,
         };
         metadata.encoded_bytes()?;
         Ok(metadata)
+    }
+    pub(crate) fn new_split(
+        control: &Path,
+        receipt: &IndexSetupReceipt,
+        state: &crate::service::registry::catalog::split::NativeSplitState,
+    ) -> Result<Self> {
+        let mut metadata = Self::new(control, receipt)?;
+        let request = &state.snapshot().request;
+        anyhow::ensure!(
+            receipt.operation_id == request.operation_id()?
+                && receipt.request.registration == request.destination_registration,
+            "split setup format context differs from native intent"
+        );
+        metadata.split_capsule = Some(crate::service::collection::initial_split_seal(
+            &mut metadata.files,
+            state,
+        )?);
+        metadata.encoded_bytes()?;
+        Ok(metadata)
+    }
+    pub(crate) fn collection_files(&self) -> Vec<(&str, &[u8])> {
+        self.files
+            .iter()
+            .map(|(name, bytes)| (*name, bytes.as_slice()))
+            .chain(
+                self.split_capsule
+                    .iter()
+                    .map(|(name, bytes)| (name.as_str(), bytes.as_slice())),
+            )
+            .collect()
     }
     pub(crate) fn digest(&self, request: &IndexSetupRequest) -> Result<Sha256Digest> {
         Ok(framed_digest(
@@ -80,8 +112,8 @@ impl Metadata {
         ))
     }
     pub(crate) fn collection_bytes(&self) -> Result<u64> {
-        self.files
-            .iter()
+        self.collection_files()
+            .into_iter()
             .map(|(_, bytes)| bytes.len() as u64)
             .try_fold(self.roots.len() as u64, |total, bytes| {
                 total

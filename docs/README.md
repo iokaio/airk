@@ -5,6 +5,14 @@ native enforcement, removal and separate cleanup observations. Windows workspace
 runtime and focused Mac ARM checks passed; qualification and pending-phase limits
 are in the [implementation ledger](research/implementation-v190.md).
 
+[Reviewed index splitting](index-splitting.md) describes P10 in the
+unpublished 1.8.8 working build: independent partitions, sealed build, reviewed
+Project cutover and exact recovery through physical cleanup and funding
+acknowledgments. Frozen Windows qualification passed all **22 gates**, including
+2,565 workspace tests and actual CLI/MCP process checks. Focused Mac ARM batches
+passed with Cargo cleanup. [Exact evidence and limits](research/implementation-v190.md#p10--local-phase-checkpoint-5-november-2026)
+retain source identities, prior failures and resource/platform coverage. P10 has passed its local phase checks; the working build remains unpublished.
+
 [Recommendations and agent query scope](recommendations.md) explains P8's bounded
 metadata-only advice, temporary selections, reviewed defaults and copied harness
 instructions in the unpublished 1.8.8 working build.

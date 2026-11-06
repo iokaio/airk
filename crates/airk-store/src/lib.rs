@@ -45,6 +45,8 @@ pub struct FileStore {
     directory: PathBuf,
     shared_model_runtime: Option<PathBuf>,
     shared_model_default: Option<airk_core::model_objects::ModelObjectSet>,
+    pub(crate) funding: Option<quota::funding::FundingUse>,
+    pub(crate) split_access: Option<service::collection::SplitBuildPermit>,
 }
 
 /// Small metadata pin for disk retrieval, committed with the corresponding revision.
@@ -115,7 +117,26 @@ impl FileStore {
             directory: directory.into(),
             shared_model_runtime: None,
             shared_model_default: None,
+            funding: None,
+            split_access: None,
         }
+    }
+    pub fn with_split_access(
+        mut self,
+        permit: service::collection::SplitBuildPermit,
+    ) -> Result<Self> {
+        permit.validate_store(&self)?;
+        self.split_access = Some(permit);
+        Ok(self)
+    }
+    pub fn with_operation_funding(mut self, funding: quota::funding::FundingUse) -> Result<Self> {
+        self.split_access
+            .as_ref()
+            .context("operation funding requires its native split job permit")?
+            .validate_funding_use(&funding)?;
+        quota::Quota::for_store(&self)?.validate_funding_store(&funding, &self)?;
+        self.funding = Some(funding);
+        Ok(self)
     }
     pub fn with_service_models(
         mut self,

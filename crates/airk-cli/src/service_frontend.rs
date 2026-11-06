@@ -317,7 +317,7 @@ pub async fn resolve_scoped(
         },
     )
     .await?;
-    let ControlResponse::CatalogDetail { detail } = response else {
+    let ControlResponse::CatalogDetail { detail, .. } = response else {
         anyhow::bail!("selected catalog index is unavailable; review Indexing before reconnecting");
     };
     anyhow::ensure!(

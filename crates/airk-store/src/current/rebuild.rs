@@ -130,6 +130,9 @@ impl FileStore {
             }
         }
         let grants = quota.current_grants(writer)?;
+        for grant in &grants {
+            grant.require_release_authority()?;
+        }
         ensure!(
             grants
                 .iter()

@@ -11,6 +11,8 @@ pub mod catalog_policy;
 pub mod catalog_setup;
 pub mod catalog_source_change;
 pub mod catalog_source_draft;
+pub mod catalog_split;
+pub mod catalog_split_draft;
 pub mod changes;
 pub mod code;
 pub mod combined_reads;

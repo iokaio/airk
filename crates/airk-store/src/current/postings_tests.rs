@@ -2,6 +2,251 @@
 use super::*;
 use crate::current::postings::Lookup;
 
+fn checked_lookup_fixture() -> Result<(Fixture, Vec<String>)> {
+    // Keep three actual artifacts in one shard so a check only between shards
+    // cannot satisfy the per-candidate cancellation regression.
+    let mut buckets = std::collections::BTreeMap::<u8, Vec<String>>::new();
+    let mut paths = None;
+    for n in 0..1024 {
+        let path = format!("checkpoint-{n}.txt");
+        let shard =
+            airk_core::identity::framed_digest(b"current-posting-path/1", &[path.as_bytes()])
+                .as_bytes()[0];
+        let bucket = buckets.entry(shard).or_default();
+        bucket.push(path);
+        if bucket.len() == 3 {
+            paths = Some(bucket.clone());
+            break;
+        }
+    }
+    let paths = paths.context("three fixture paths in one posting shard")?;
+    let fixture = Fixture::new()?;
+    let inputs = paths
+        .iter()
+        .map(|path| {
+            retained_input_with_facts(&fixture, path, "body", vec![fact("Budget", "heading")])
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    let mut token = fixture.head.token()?;
+    for input in &inputs {
+        token = current
+            .commit_artifact(&token, &input.artifact.path, Some(input))?
+            .token;
+    }
+    drop(current);
+    drop(writer);
+    Ok((fixture, paths))
+}
+
+fn lookup_interrupted() -> anyhow::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::Interrupted,
+        "posting checkpoint stopped",
+    )
+    .into()
+}
+
+#[test]
+fn checked_path_lookup_stops_rejected_candidates_and_preserves_scope() -> Result<()> {
+    let (fixture, paths) = checked_lookup_fixture()?;
+    let read = fixture.store.current_read(&fixture.scope)?;
+    let token = read.token()?;
+    let selected = std::cell::Cell::new(0usize);
+    let stopped = read
+        .lookup_paths_filtered_checked(
+            Lookup::Files,
+            "",
+            None,
+            1,
+            |_| {
+                selected.set(selected.get() + 1);
+                Ok(false)
+            },
+            || {
+                if selected.get() > 0 {
+                    Err(lookup_interrupted())
+                } else {
+                    Ok(())
+                }
+            },
+        )
+        .err()
+        .context("rejected candidates bypassed checkpoint")?;
+    assert_eq!(
+        stopped
+            .downcast_ref::<std::io::Error>()
+            .map(std::io::Error::kind),
+        Some(std::io::ErrorKind::Interrupted)
+    );
+    assert_eq!(
+        selected.get(),
+        1,
+        "must stop inside the shard before visiting its remaining candidates"
+    );
+    assert_eq!(read.token()?, token);
+    let ordinary = read.lookup_paths_filtered(Lookup::Files, "", None, 1, |_| Ok(true))?;
+    let checked =
+        read.lookup_paths_filtered_checked(Lookup::Files, "", None, 1, |_| Ok(true), || Ok(()))?;
+    assert_eq!(checked.paths, ordinary.paths);
+    assert_eq!(checked.next_after, ordinary.next_after);
+    read.attach_read_scope(std::sync::Arc::new(
+        airk_core::scoped_reads::CompiledReadScope {
+            fingerprint: Sha256Digest::from_bytes([93; 32]),
+            atoms: vec![airk_core::scoped_reads::CompiledPathAtom {
+                kind: airk_core::index_catalog::PathScope::Exact,
+                path: paths[0].clone(),
+            }],
+            source_atoms: vec![],
+            external_aliases: vec![],
+        },
+    ))?;
+    let mut observed = Vec::new();
+    let page = read.lookup_paths_filtered_checked(
+        Lookup::Files,
+        "",
+        None,
+        1,
+        |path| {
+            observed.push(path.to_owned());
+            Ok(false)
+        },
+        || Ok(()),
+    )?;
+    assert!(page.paths.is_empty());
+    assert_eq!(
+        observed,
+        [paths[0].clone()],
+        "selection must not observe paths outside existing authority"
+    );
+    let excluded = fixture.store.current_read(&fixture.scope)?;
+    excluded.attach_read_scope(std::sync::Arc::new(
+        airk_core::scoped_reads::CompiledReadScope {
+            fingerprint: Sha256Digest::from_bytes([94; 32]),
+            atoms: vec![airk_core::scoped_reads::CompiledPathAtom {
+                kind: airk_core::index_catalog::PathScope::Exact,
+                path: "unselected.txt".into(),
+            }],
+            source_atoms: vec![],
+            external_aliases: vec![],
+        },
+    ))?;
+    let checks = std::cell::Cell::new(0usize);
+    let selected = std::cell::Cell::new(0usize);
+    // A shard-only check would run at most 256 times and return false absence.
+    // Scope-rejected candidates must also participate in cooperative work checks.
+    let rejected_checkpoint = usize::from(u8::MAX) + 2;
+    let error = excluded
+        .lookup_paths_filtered_checked(
+            Lookup::Files,
+            "",
+            None,
+            1,
+            |_| {
+                selected.set(selected.get() + 1);
+                Ok(false)
+            },
+            || {
+                checks.set(checks.get() + 1);
+                if checks.get() == rejected_checkpoint {
+                    Err(lookup_interrupted())
+                } else {
+                    Ok(())
+                }
+            },
+        )
+        .err()
+        .context("scope-rejected lookup bypassed work checkpoint")?;
+    assert_eq!(
+        error
+            .downcast_ref::<std::io::Error>()
+            .map(std::io::Error::kind),
+        Some(std::io::ErrorKind::Interrupted)
+    );
+    assert_eq!(selected.get(), 0);
+    assert_eq!(checks.get(), rejected_checkpoint);
+    Ok(())
+}
+
+#[test]
+fn checked_path_lookup_checks_empty_and_final_validation() -> Result<()> {
+    let empty = Fixture::new()?;
+    let read = empty.store.current_read(&empty.scope)?;
+    let selected = std::cell::Cell::new(0usize);
+    let error = read
+        .lookup_paths_filtered_checked(
+            Lookup::Files,
+            "",
+            None,
+            1,
+            |_| {
+                selected.set(selected.get() + 1);
+                Ok(true)
+            },
+            || Err(lookup_interrupted()),
+        )
+        .err()
+        .context("already canceled empty lookup reported absence")?;
+    assert_eq!(
+        error
+            .downcast_ref::<std::io::Error>()
+            .map(std::io::Error::kind),
+        Some(std::io::ErrorKind::Interrupted)
+    );
+    assert_eq!(selected.get(), 0);
+    assert!(
+        read.lookup_paths(Lookup::Files, "", None, 1)?
+            .paths
+            .is_empty()
+    );
+    drop(read);
+    let (fixture, paths) = checked_lookup_fixture()?;
+    let read = fixture.store.current_read(&fixture.scope)?;
+    let selected = std::cell::Cell::new(0usize);
+    let checks = std::cell::Cell::new(0usize);
+    // The format authenticates all 256 shards and all three paths before
+    // validating returned artifacts. Cancellation must still propagate there.
+    let first_validation = usize::from(u8::MAX) + 1 + paths.len() + 1;
+    let error = read
+        .lookup_paths_filtered_checked(
+            Lookup::Files,
+            "",
+            None,
+            3,
+            |_| {
+                selected.set(selected.get() + 1);
+                Ok(true)
+            },
+            || {
+                checks.set(checks.get() + 1);
+                if checks.get() == first_validation {
+                    Err(lookup_interrupted())
+                } else {
+                    Ok(())
+                }
+            },
+        )
+        .err()
+        .context("final artifact validation ignored cancellation")?;
+    assert_eq!(
+        error
+            .downcast_ref::<std::io::Error>()
+            .map(std::io::Error::kind),
+        Some(std::io::ErrorKind::Interrupted)
+    );
+    assert_eq!(selected.get(), paths.len());
+    assert_eq!(checks.get(), first_validation);
+    assert_eq!(
+        read.lookup_paths(Lookup::Files, "", None, 8)?.paths.len(),
+        paths.len()
+    );
+    Ok(())
+}
+
 fn fact(name: &str, kind: &str) -> airk_core::extraction::LocalFact {
     airk_core::extraction::LocalFact {
         id: 0,
@@ -688,6 +933,21 @@ fn catalog_postings_follow_replacement_deletion_and_exact_case() -> Result<()> {
             .paths,
         ["src/b.txt"]
     );
+    let selected =
+        read.lookup_paths_filtered(Lookup::Files, "", None, 1, |path| Ok(path == "src/b.txt"))?;
+    assert_eq!(selected.paths, ["src/b.txt"]);
+    assert!(selected.next_after.is_none());
+    assert!(
+        read.lookup_paths_filtered(Lookup::Files, "", None, 1, |_| Ok(false))?
+            .paths
+            .is_empty()
+    );
+    assert!(
+        read.lookup_paths_filtered(Lookup::Files, "", None, 1, |_| anyhow::bail!(
+            "candidate projection refused"
+        ))
+        .is_err()
+    );
     let page = read.lookup_paths(Lookup::Files, "", None, 1)?;
     assert_eq!(page.paths, ["src/a.txt"]);
     assert_eq!(page.next_after.as_deref(), Some("src/a.txt"));
@@ -698,6 +958,31 @@ fn catalog_postings_follow_replacement_deletion_and_exact_case() -> Result<()> {
     assert!(
         read.lookup_paths(Lookup::Files, "", Some("../x"), 1)
             .is_err()
+    );
+    read.attach_read_scope(std::sync::Arc::new(
+        airk_core::scoped_reads::CompiledReadScope {
+            fingerprint: airk_core::identity::Sha256Digest::from_bytes([90; 32]),
+            atoms: vec![airk_core::scoped_reads::CompiledPathAtom {
+                kind: airk_core::index_catalog::PathScope::Exact,
+                path: "src/a.txt".into(),
+            }],
+            source_atoms: vec![],
+            external_aliases: vec![],
+        },
+    ))?;
+    let mut examined = Vec::new();
+    assert!(
+        read.lookup_paths_filtered(Lookup::Files, "", None, 1, |path| {
+            examined.push(path.to_owned());
+            Ok(path == "src/b.txt")
+        })?
+        .paths
+        .is_empty()
+    );
+    assert_eq!(
+        examined,
+        ["src/a.txt"],
+        "existing read scope must run before candidate selection"
     );
     drop(read);
     let writer = fixture.store.lock()?;

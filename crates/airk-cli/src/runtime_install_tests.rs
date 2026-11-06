@@ -131,6 +131,8 @@ fn catalog_activation_checks_formats_instead_of_trusting_equal_application_versi
         serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"index_catalog":policy_zero});
     assert!(require_catalog_capabilities(&state, &earlier_same_version_policy).is_err());
     state.policy_contract = 2;
+    require_catalog_capabilities(&state, &current)?;
+    state.policy_contract = airk_store::service::registry::catalog::SUPPORTED_POLICY_CONTRACT + 1;
     assert!(require_catalog_capabilities(&state, &current).is_err());
     state.policy_contract = 0;
     state.schema = 13;

@@ -77,7 +77,7 @@ impl Collection {
         } else {
             None
         };
-        let source = FileStore::new(self.slot(manifest.active));
+        let source = self.context_store(self.slot(manifest.active))?;
         let settings = settings_digest(&source, &self.owner.root)?;
         let (namespace, request_epoch) =
             ServiceRegistry::open_saved(&lease.root)?.saved_request_epoch()?;
@@ -107,7 +107,7 @@ impl Collection {
         }
         let scope = self.cleanup_scope(lease)?;
         let saved = settings(
-            &FileStore::new(self.slot(scope.manifest.active)),
+            &self.context_store(self.slot(scope.manifest.active))?,
             &self.owner.root,
         )?;
         let mut targets = std::collections::BTreeSet::from([scope.manifest.active]);
@@ -266,7 +266,7 @@ impl Collection {
                 });
             }
             let saved = settings(
-                &FileStore::new(self.slot(scope.manifest.active)),
+                &self.context_store(self.slot(scope.manifest.active))?,
                 &self.owner.root,
             )?;
             let preview = DerivedCleanupPreview {
@@ -354,7 +354,7 @@ impl Collection {
                     self.recover_abandoned_replacement_locked()?;
                     return self.cleanup_report(&intent);
                 }
-                let source = FileStore::new(self.slot(manifest.active));
+                let source = self.context_store(self.slot(manifest.active))?;
                 ensure!(
                     settings_digest(&source, &self.owner.root)? == intent.scope.settings,
                     "cleanup saved settings changed"
@@ -374,7 +374,7 @@ impl Collection {
                     "unexpected cleanup settings backup entry"
                 );
                 let saved = settings(&source, &self.owner.root)?;
-                let quota = Quota::open_service(Path::new(&self.owner.data_root))?;
+                let quota = self.context_quota()?;
                 let reservation = quota.reserve(&self.owner.collection, 1 << 20)?;
                 for (name, bytes) in &saved {
                     let path = destination.join(name);
@@ -391,7 +391,7 @@ impl Collection {
                     file.sync_all()?;
                 }
                 ensure!(
-                    settings_digest(&FileStore::new(&destination), &self.owner.root)?
+                    settings_digest(&self.context_store(destination.clone())?, &self.owner.root)?
                         == intent.scope.settings,
                     "cleanup settings backup incomplete"
                 );

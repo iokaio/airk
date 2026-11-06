@@ -420,6 +420,35 @@ impl CurrentRead {
         after: Option<&str>,
         limit: usize,
     ) -> Result<PathPage> {
+        self.lookup_paths_filtered(lookup, prefix, after, limit, |_| Ok(true))
+    }
+    /// Additional immutable candidate selection, after existing read/policy
+    /// authority and before bounded pagination. Predicate errors refuse the
+    /// lookup; they never establish an empty result. The predicate must not
+    /// reenter this reader or read live sources.
+    pub fn lookup_paths_filtered(
+        &self,
+        lookup: Lookup<'_>,
+        prefix: &str,
+        after: Option<&str>,
+        limit: usize,
+        select: impl FnMut(&str) -> Result<bool>,
+    ) -> Result<PathPage> {
+        self.lookup_paths_filtered_checked(lookup, prefix, after, limit, select, || Ok(()))
+    }
+    /// Cooperative work checks run before every shard, candidate and final
+    /// artifact validation, including candidates rejected by scope or selection.
+    /// The checkpoint receives no indexed data and errors refuse the whole lookup.
+    /// Selection still runs only after existing read/policy authority.
+    pub fn lookup_paths_filtered_checked(
+        &self,
+        lookup: Lookup<'_>,
+        prefix: &str,
+        after: Option<&str>,
+        limit: usize,
+        mut select: impl FnMut(&str) -> Result<bool>,
+        mut checkpoint: impl FnMut() -> Result<()>,
+    ) -> Result<PathPage> {
         ensure!(
             prefix.len() <= 8192
                 && after.is_none_or(valid_current_path)
@@ -430,6 +459,7 @@ impl CurrentRead {
         let mut candidates = BTreeSet::new();
         let mut bytes = 0usize;
         for shard in 0..=u8::MAX {
+            checkpoint()?;
             let Some(encoded) =
                 self.map_get(map::MapDomain::Posting, &identity(selector, shard))?
             else {
@@ -437,9 +467,11 @@ impl CurrentRead {
             };
             let posting = Posting::decode(&encoded, selector, shard)?;
             for path in posting.paths {
+                checkpoint()?;
                 if self.accepts_path(&path)
                     && path.starts_with(prefix)
                     && after.is_none_or(|after| path.as_str() > after)
+                    && select(&path)?
                 {
                     bytes = bytes
                         .checked_add(path.len())
@@ -460,6 +492,7 @@ impl CurrentRead {
             candidates.pop_last();
         }
         for path in &candidates {
+            checkpoint()?;
             ensure!(
                 self.artifact(path)?.is_some(),
                 "current posting references absent artifact"

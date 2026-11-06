@@ -21,6 +21,12 @@ pub enum PolicyChange {
     Unblock {
         rule_id: DenyId,
     },
+    /// Native-only successor resolved from an admitted split journal. Generic
+    /// pure changes and ordinary source drafts cannot manufacture this policy.
+    SplitRemainder {
+        split_operation: crate::identity::Incarnation,
+        expected_split_receipt: Sha256Digest,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -120,6 +126,9 @@ impl SourcePolicy {
                     created_epoch: after.epoch,
                     inherited_from: None,
                 });
+            }
+            PolicyChange::SplitRemainder { .. } => {
+                anyhow::bail!("split remainder requires its exact admitted native journal");
             }
             PolicyChange::Unblock { rule_id } => {
                 let position = self

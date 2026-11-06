@@ -14,6 +14,11 @@ use std::{
     io::{Read, Write},
     path::Path,
 };
+#[path = "service_catalog_setup_storage_split.rs"]
+mod split;
+#[cfg(test)]
+pub(in crate::service::registry::catalog) use split::prepare_split_test_storage;
+pub use split::{PreparedSplitStorage, prepare_split_storage};
 
 #[cfg(unix)]
 use std::{
@@ -94,6 +99,8 @@ pub struct PreparedStorage {
     slot: SetupDirectory,
     sources: Vec<SetupDirectory>,
     configuration: Sha256Digest,
+    split: Option<crate::service::registry::catalog::split::NativeSplitState>,
+    split_seal: Option<crate::service::registry::catalog::split::NativeSplitState>,
     _project: ProjectLease,
     _claim: File,
     _writer: File,
@@ -103,6 +110,10 @@ pub struct PreparedStorage {
 }
 impl PreparedStorage {
     pub fn record(self, registry: &mut ServiceRegistry) -> Result<IndexSetupReceipt> {
+        ensure!(
+            self.split.is_none(),
+            "split preparation cannot complete ordinary index setup"
+        );
         ensure!(
             registry.root.canonicalize()? == self.control,
             "foreign setup registry owner"
@@ -184,7 +195,10 @@ impl PreparedStorage {
                 == self.slot.identity()?,
             "native setup selected incarnation changed"
         );
-        let format = Metadata::new(&self.control, &self.receipt)?;
+        let format = match &self.split_seal {
+            Some(state) => Metadata::new_split(&self.control, &self.receipt, state)?,
+            None => Metadata::new(&self.control, &self.receipt)?,
+        };
         validate_collection(&self.collection, &format, true)
     }
 }
@@ -206,21 +220,46 @@ fn prepare_with_hook(
     pins: NativeSetupPins,
     before_effects: impl FnOnce(),
 ) -> Result<PreparedStorage> {
+    prepare_authorized(registry, control, receipt, pins, None, before_effects)
+}
+fn prepare_authorized(
+    registry: &ServiceRegistry,
+    control: &Path,
+    receipt: &IndexSetupReceipt,
+    pins: NativeSetupPins,
+    split: Option<&crate::service::registry::catalog::split::NativeSplitState>,
+    before_effects: impl FnOnce(),
+) -> Result<PreparedStorage> {
     receipt.validate()?;
     let control = control.canonicalize()?;
     ensure!(
         registry.root.canonicalize()? == control,
         "foreign native setup registry"
     );
-    let saved = registry
-        .index_setup_receipt(receipt.request.caller, &receipt.request.key)?
-        .context("native setup requires its saved reservation")?;
-    ensure!(
-        saved == *receipt && receipt.stage != SetupStage::Ready,
-        "native setup reservation changed or is already ready"
-    );
+    if let Some(state) = split {
+        let current = registry.catalog_split_state(state.snapshot().receipt.operation_id)?;
+        ensure!(
+            current.snapshot() == state.snapshot(),
+            "native split setup reservation changed"
+        );
+        crate::service::registry::catalog::split::require_destination_registration(
+            &registry.connection,
+            &receipt.request.registration,
+            state,
+        )?;
+    } else {
+        let saved = registry
+            .index_setup_receipt(receipt.request.caller, &receipt.request.key)?
+            .context("native setup requires its saved reservation")?;
+        ensure!(
+            saved == *receipt && receipt.stage != SetupStage::Ready,
+            "native setup reservation changed or is already ready"
+        );
+    }
     super::no_pending_fence(&registry.connection)?;
-    super::reserved_sources(&registry.connection, receipt)?;
+    if split.is_none() {
+        super::reserved_sources(&registry.connection, receipt)?;
+    }
     let request = &receipt.request;
     let project = ProjectLease::acquire(&control, request.registration.binding)?;
     #[cfg(windows)]
@@ -240,7 +279,13 @@ fn prepare_with_hook(
     for (pin, source) in sources.iter().zip(&request.sources) {
         check_named_pin(pin, Path::new(&source.canonical_path))?;
     }
-    let metadata = Metadata::new(&control, receipt)?;
+    let split_seal = split
+        .map(|state| split::initial_seal_state(registry, state))
+        .transpose()?;
+    let metadata = match &split_seal {
+        Some(state) => Metadata::new_split(&control, receipt, state)?,
+        None => Metadata::new(&control, receipt)?,
+    };
     parent.require_growth(metadata.encoded_bytes()?)?;
     let stage_name = OsString::from(format!(".airk-setup-{}.part", receipt.operation_id));
     let missing_root = pins.data.is_none();
@@ -364,6 +409,8 @@ fn prepare_with_hook(
         slot,
         sources,
         configuration: metadata.configuration,
+        split: split.cloned(),
+        split_seal,
         _project: project,
         _claim: claim,
         _writer: writer,
@@ -509,6 +556,10 @@ fn validate_claim_shape(root: &SetupDirectory, metadata: &Metadata) -> Result<()
     Ok(())
 }
 fn write_collection(directory: &SetupDirectory, metadata: &Metadata) -> Result<()> {
+    // The capability's complete immutable capsule precedes its owner pointer.
+    if let Some((name, bytes)) = &metadata.split_capsule {
+        write_exact(directory, name, bytes)?;
+    }
     for (name, bytes) in &metadata.files {
         write_exact(directory, name, bytes)?;
     }
@@ -524,7 +575,10 @@ fn validate_collection(
     complete: bool,
 ) -> Result<()> {
     for (number, name) in directory.entries()?.enumerate() {
-        ensure!(number < 12, "unknown initial collection metadata");
+        ensure!(
+            number < metadata.collection_files().len() * 2 + 4,
+            "unknown initial collection metadata"
+        );
         let name = name?;
         if name == "incarnations" {
             let incarnations = directory.open_dir(&name)?;
@@ -559,21 +613,13 @@ fn validate_collection(
                 );
             }
         } else {
-            validate_one_file(
-                directory,
-                &name,
-                &metadata
-                    .files
-                    .iter()
-                    .map(|(n, b)| (*n, b.as_slice()))
-                    .collect::<Vec<_>>(),
-            )?;
+            validate_one_file(directory, &name, &metadata.collection_files())?;
         }
     }
     if complete {
-        for (name, bytes) in &metadata.files {
+        for (name, bytes) in metadata.collection_files() {
             ensure!(
-                directory.read_file(OsStr::new(name), bytes.len() as u64)? == *bytes,
+                directory.read_file(OsStr::new(name), bytes.len() as u64)? == bytes,
                 "initial collection metadata changed"
             );
         }
@@ -812,6 +858,40 @@ impl SetupDirectory {
             { anyhow::bail!("native setup requires an atomic no-replacement directory rename") };
         ensure!(result == 0, std::io::Error::last_os_error());
         destination.sync()?;
+        self.sync()
+    }
+    /// Atomic name replacement under the native owner's writer/manifest lock.
+    /// Both leaves are checked as exact regular objects in this held directory;
+    /// Unix does not provide a compare-and-replace-by-inode primitive.
+    pub(crate) fn replace_file(
+        &self,
+        name: &OsStr,
+        owned: &File,
+        target: &OsStr,
+        expected: &File,
+    ) -> Result<()> {
+        let source = self.open_file(name, SetupFileMode::Read)?;
+        let destination = self.open_file(target, SetupFileMode::Read)?;
+        ensure!(
+            file_identity(&source)? == file_identity(owned)?
+                && file_identity(&destination)? == file_identity(expected)?,
+            "native metadata replacement identity changed"
+        );
+        let name = component(name)?;
+        let target = component(target)?;
+        // SAFETY: one retained native directory and two bounded child names;
+        // renameat atomically replaces the owned metadata name without paths.
+        ensure!(
+            unsafe {
+                libc::renameat(
+                    self.as_raw_fd(),
+                    name.as_ptr(),
+                    self.as_raw_fd(),
+                    target.as_ptr(),
+                )
+            } == 0,
+            std::io::Error::last_os_error()
+        );
         self.sync()
     }
     pub(crate) fn sync(&self) -> Result<()> {

@@ -176,6 +176,9 @@ pub(in crate::service::registry) fn require_registration_admission(
     registration: &ProjectRegistration,
     admission: super::super::RegistrationAdmission<'_>,
 ) -> Result<()> {
+    if let super::super::RegistrationAdmission::Split(state) = admission {
+        return super::split::require_destination_registration(db, registration, state);
+    }
     if let super::super::RegistrationAdmission::Reserved(receipt) = admission {
         let state = catalog(db)?;
         let stored = saved(db, receipt.request.caller, &receipt.request.key)?;

@@ -214,7 +214,10 @@ pub fn shared_mode(root: &Path) -> Result<bool> {
         None => Ok(false),
         Some(state) if state.authority_contract == 0 && state.policy_contract == 0 => Ok(false),
         Some(state)
-            if state.authority_contract == 1 && state.policy_contract <= 1 && state.activated =>
+            if state.authority_contract == 1
+                && state.policy_contract
+                    <= airk_store::service::registry::catalog::SUPPORTED_POLICY_CONTRACT
+                && state.activated =>
         {
             Ok(true)
         }

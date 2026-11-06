@@ -55,6 +55,16 @@ pub enum ProjectConfiguration {
         policy: Box<crate::source_policy::SourcePolicy>,
         operation_id: Incarnation,
     },
+    /// Exact saved split work admitted by the native split owner. Public
+    /// configuration enqueue cannot create this authority. Large reviewed
+    /// plans remain in the registry rather than entering the job payload.
+    SplitWork {
+        operation_id: Incarnation,
+        request_digest: Sha256Digest,
+        expected_receipt_digest: Sha256Digest,
+        purpose: crate::catalog_split::SplitJobPurpose,
+        require_semantic_ready: bool,
+    },
     InstallModel {
         directory: String,
         manifest_sha256: Sha256Digest,
@@ -126,6 +136,15 @@ impl ProjectConfiguration {
             }
             Self::RemoveRoot { alias: name } => alias(name)?,
             Self::ApplySourcePolicy { policy, .. } => policy.validate()?,
+            Self::SplitWork {
+                purpose,
+                require_semantic_ready,
+                ..
+            } => ensure!(
+                !require_semantic_ready
+                    || *purpose == crate::catalog_split::SplitJobPurpose::DestinationBuild,
+                "only split destination build can require semantic readiness"
+            ),
             Self::InstallModel { directory, .. } => path(directory)?,
             Self::Calibrate {
                 tokenizer,
@@ -165,6 +184,11 @@ impl ProjectConfiguration {
                 | Self::Vectors { enabled: true }
                 | Self::InstallModel { .. }
                 | Self::Calibrate { .. }
+                | Self::SplitWork {
+                    purpose: crate::catalog_split::SplitJobPurpose::DestinationBuild,
+                    require_semantic_ready: true,
+                    ..
+                }
         )
     }
     pub fn is_derived_cleanup(&self) -> bool {
@@ -172,6 +196,22 @@ impl ProjectConfiguration {
             self,
             Self::PrepareDerivedCleanup | Self::DeleteDerived { .. }
         )
+    }
+    /// Classifies already-admitted work for pause controls. This grants no
+    /// admission, native ownership, phase transition, funding or source access.
+    pub fn runs_while_paused(&self) -> bool {
+        self.is_derived_cleanup()
+            || matches!(
+                self,
+                Self::Unregister
+                    | Self::ApplySourcePolicy { .. }
+                    | Self::SplitWork {
+                        purpose: crate::catalog_split::SplitJobPurpose::OriginalWitness
+                            | crate::catalog_split::SplitJobPurpose::DestinationCleanup
+                            | crate::catalog_split::SplitJobPurpose::OriginalCleanup,
+                        ..
+                    }
+            )
     }
     pub fn requests_source_pass(&self) -> bool {
         matches!(

@@ -10,6 +10,7 @@ use std::{
 
 pub(crate) struct Gate {
     file: File,
+    directory: PathBuf,
     _lifecycle: Option<Arc<File>>,
 }
 
@@ -86,6 +87,13 @@ pub(crate) fn check_writer(store: &FileStore, writer: &WriterLock) -> Result<Pat
 }
 
 impl Gate {
+    pub(crate) fn require_store(&self, store: &FileStore) -> Result<()> {
+        ensure!(
+            self.directory == store.directory().canonicalize()?,
+            "foreign current-store gate"
+        );
+        Ok(())
+    }
     /// Convert this writer's object-protection lease into reclamation exclusion.
     /// If a reader is present, restore shared protection and defer cleanup.
     pub(crate) fn try_exclusive(&self) -> Result<bool> {
@@ -128,6 +136,7 @@ impl Gate {
         acquired(file.try_lock_shared(), CurrentGateContention::Applying)?;
         Ok(Self {
             file,
+            directory: store.directory().canonicalize()?,
             _lifecycle: Some(lifecycle),
         })
     }
@@ -137,16 +146,18 @@ impl Gate {
         acquired(file.try_lock_shared(), CurrentGateContention::Applying)?;
         Ok(Self {
             file,
+            directory: store.directory().canonicalize()?,
             _lifecycle: lifecycle,
         })
     }
 
     pub(crate) fn exclusive(store: &FileStore, writer: &WriterLock) -> Result<Self> {
-        check_writer(store, writer)?;
+        let directory = check_writer(store, writer)?;
         let file = open(store)?;
         acquired(file.try_lock(), CurrentGateContention::Readers)?;
         Ok(Self {
             file,
+            directory,
             _lifecycle: None,
         })
     }

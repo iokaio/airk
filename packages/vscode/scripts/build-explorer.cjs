@@ -9,7 +9,7 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 // Pure contract modules shared by the host, the webview and the Assistance server.
-const CONTRACTS = ['src/explorerContracts.ts', 'src/explorerRoutes.ts', 'src/explorerFeatures.ts', 'src/explorerErrors.ts', 'src/explorerStatus.ts', 'src/explorerStrategies.ts', 'src/explorerDrafts.ts', 'src/indexingCatalog.ts', 'src/catalogSession.ts', 'src/publications.ts'];
+const CONTRACTS = ['src/explorerContracts.ts', 'src/explorerRoutes.ts', 'src/explorerFeatures.ts', 'src/explorerErrors.ts', 'src/explorerStatus.ts', 'src/explorerStrategies.ts', 'src/explorerDrafts.ts', 'src/indexingCatalog.ts', 'src/indexingSplit.ts', 'src/catalogSession.ts', 'src/publications.ts'];
 
 function preactBanner() {
     const manifest = JSON.parse(read('package.json'));
@@ -158,7 +158,7 @@ async function build() {
         'src/native.ts', 'src/nativeGate.ts', 'src/cliInstall.ts', 'src/cliRemove.ts', 'src/serviceClient.ts', 'src/mcpStdioSession.ts', 'src/model.ts', 'src/explorerContracts.ts', 'src/explorerRoutes.ts',
         // Shared inert validators and selector DTOs have only pure contract imports and no startup work;
         // neither the Indexing controller nor any browser/UI module belongs in the standalone worker.
-        'src/indexingCatalog.ts', 'src/catalogSession.ts',
+        'src/indexingCatalog.ts', 'src/indexingSplit.ts', 'src/catalogSession.ts',
         'src/agentMigration.ts', 'src/unifiedAgentConfig.ts', 'src/explorerAssistanceLaunch.ts', 'src/agentConfig.ts',
         'src/explorerStrategies.ts', 'src/explorerFeatures.ts', 'src/explorerDrafts.ts', 'src/explorerAssistanceHost.ts', 'src/privateDirectory.ts',
         /^node_modules\/jsonc-parser\//]);

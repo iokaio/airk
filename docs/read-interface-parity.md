@@ -90,6 +90,17 @@ Audit dated November 1, 2026, for the 1.8.7 candidate. Equivalent read requests 
 
 The kernel validates plan scope, revision, bindings, fan-out and budgets. The MCP adapter supplies a callback that invokes its canonical handlers inside the already admitted blocking lifetime. Inner reads use the refreshed outer kernel, one outer usage record and its execution permit. They cannot recursively invoke parse, management or transport operations. All 17 operations retain the MCP presentation, including `items` fact records, provenance/readiness and complete capabilities/help. Failed reads retain their complete native receipt under the same byte budgets.
 
+The combined native/CLI/MCP parity fixture authenticates each complete raw
+delivery digest and materializes its canonical member data before comparison.
+Separate requests may report different remaining verification windows after
+metadata I/O and sub-millisecond clock truncation. Only each known member
+`source_verification.limits.deadline_ms` and `effective_deadline_ms` are treated
+as elapsed timing observations after validating `effective <= deadline <=` that
+member's admitted `allocation.verification_deadline_ms`, its member identity and
+source/byte bounds. The admitted verification allocation, source outcomes,
+counts, hashes, limits hit, fixed budgets, quota observations and raw receipts
+remain literal; no production deadline or source-check budget is increased.
+
 The frontend and one-shot CLI share response observation code. Direct status/diagnostics and completed plan steps report configured `query_concurrency`, reusing the policy observation made for admission. Unified project selection and diagnostics editor observations are also retained inside plan steps. Fresh inner status reads identify their own observation time, zero cache age and `cached: false`; separately cached direct status calls report their actual captured time and age. These values need not match between separate requests.
 
 Scope selection remains interface-specific: unified MCP's `project` is a connection-configured selector, while CLI root/data/collection options select a native registration. The unified endpoint adds its configured project identity and optional Explorer diagnostic observation to both direct and nested results. Headless native CLI calls do not fabricate an attached editor or a connection allowlist. Compare the same underlying collection and native arguments, retain those additional observations when present, and distinguish them from indexed evidence. Native usage accounting measures the worker response before frontend-only metadata is added.

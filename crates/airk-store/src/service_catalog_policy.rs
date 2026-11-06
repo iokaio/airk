@@ -38,6 +38,7 @@ pub(super) fn impact(db: &Connection, request: &CatalogRequest) -> Result<Option
     };
     let roots = source_roots(db, *id)?;
     let selector = match change {
+        PolicyChange::SplitRemainder { .. } => return Ok(None),
         PolicyChange::Trim { selector, .. } => selector.clone(),
         PolicyChange::Unblock { rule_id } => snapshot(db, *id)?
             .context("unblock policy unavailable")?
@@ -104,7 +105,7 @@ pub(super) fn impact(db: &Connection, request: &CatalogRequest) -> Result<Option
     }))
 }
 
-fn source_roots(db: &Connection, index: IndexId) -> Result<Vec<SourceRoot>> {
+pub(super) fn source_roots(db: &Connection, index: IndexId) -> Result<Vec<SourceRoot>> {
     let mut statement = db.prepare("SELECT id,canonical_path,owner FROM index_sources WHERE index_id=?1 AND enabled=1 ORDER BY id LIMIT 18")?;
     let rows = statement
         .query_map([index.to_string()], |row| {
@@ -134,7 +135,7 @@ pub(super) fn snapshot(db: &Connection, id: IndexId) -> Result<Option<PolicySnap
         return Ok(None);
     };
     ensure!(
-        super::state(db)?.policy_contract == 1,
+        super::state(db)?.policy_contract >= 1,
         "source policy contract is unavailable"
     );
     let bytes: Vec<u8> = db.query_row(
@@ -178,7 +179,7 @@ pub(super) fn snapshot(db: &Connection, id: IndexId) -> Result<Option<PolicySnap
     Ok(Some(snapshot))
 }
 
-fn write_snapshot(db: &Connection, value: &PolicySnapshot) -> Result<()> {
+pub(super) fn write_snapshot(db: &Connection, value: &PolicySnapshot) -> Result<()> {
     value.validate()?;
     encoded_size(value, MAX_POLICY_BYTES)?;
     let payload = serde_json::to_vec(value)?;
@@ -207,7 +208,11 @@ fn write_snapshot(db: &Connection, value: &PolicySnapshot) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn mutate(db: &Connection, request: &CatalogRequest) -> Result<()> {
+pub(super) fn mutate(
+    db: &Connection,
+    request: &CatalogRequest,
+    context: super::operations::MutationContext,
+) -> Result<()> {
     let CatalogOperation::ChangeIndexPolicy {
         id,
         expected_source_revision,
@@ -220,6 +225,7 @@ pub(super) fn mutate(db: &Connection, request: &CatalogRequest) -> Result<()> {
     else {
         anyhow::bail!("source policy operation required");
     };
+    super::split::require_policy_change(db, *id, change)?;
     let index = index_record(db, *id)?;
     ensure!(
         !index.tombstone
@@ -243,7 +249,13 @@ pub(super) fn mutate(db: &Connection, request: &CatalogRequest) -> Result<()> {
         }
         .into());
     }
-    let after = if let Some(current) = snapshot(db, *id)? {
+    let after = if let PolicyChange::SplitRemainder {
+        split_operation,
+        expected_split_receipt,
+    } = change
+    {
+        super::split::reviewed_remainder(db, *id, *split_operation, *expected_split_receipt)?
+    } else if let Some(current) = snapshot(db, *id)? {
         if current.application.is_none() {
             // A terminal removal failure keeps its deny active. Only a newly
             // reviewed exact Unblock may supersede that failed operation; a new
@@ -311,6 +323,23 @@ pub(super) fn mutate(db: &Connection, request: &CatalogRequest) -> Result<()> {
     };
     let digest = value.policy.identity()?;
     write_snapshot(db, &value)?;
+    // The preview savepoint projects the same policy/job/index transition, but
+    // cannot claim OriginalFenced before the native coordinator performs it.
+    // Actual commits still require the exact durable drain/fence and owner seal.
+    if context == super::operations::MutationContext::Commit
+        && let PolicyChange::SplitRemainder {
+            split_operation,
+            expected_split_receipt,
+        } = change
+    {
+        super::split::record_original_fence(
+            db,
+            request,
+            *split_operation,
+            *expected_split_receipt,
+            job,
+        )?;
+    }
     ensure!(db.execute("UPDATE index_definitions SET policy_epoch=?1,policy_digest=?2 WHERE id=?3 AND source_revision=?4 AND policy_epoch=?5",
         params![i64::try_from(value.policy.epoch.get())?,digest.to_string(),id.to_string(),i64::try_from(expected_source_revision.get())?,i64::try_from(*expected_policy_epoch)?])? == 1,
         "source policy review changed");
@@ -509,7 +538,7 @@ impl ServiceRegistry {
         if super::state(&self.connection)?.policy_contract == 0 {
             return Ok(Vec::new());
         }
-        let mut statement=self.connection.prepare("SELECT p.index_id,json_extract(p.payload,'$.operation_id') FROM index_source_policies p JOIN service_jobs j ON j.id=json_extract(p.payload,'$.job') WHERE j.state='succeeded' AND (json_extract(p.payload,'$.application_job') IS NULL OR json_extract(p.payload,'$.application_job')<>json_extract(p.payload,'$.job')) ORDER BY p.index_id LIMIT ?1")?;
+        let mut statement=self.connection.prepare("SELECT p.index_id,json_extract(p.payload,'$.operation_id') FROM index_source_policies p JOIN service_jobs j ON j.id=json_extract(p.payload,'$.job') WHERE j.state='succeeded' AND EXISTS(SELECT 1 FROM service_configuration c WHERE c.job=j.id AND json_extract(c.payload,'$.request.configuration.operation')='apply_source_policy') AND (json_extract(p.payload,'$.application_job') IS NULL OR json_extract(p.payload,'$.application_job')<>json_extract(p.payload,'$.job')) ORDER BY p.index_id LIMIT ?1")?;
         let selected = statement
             .query_map([i64::try_from(limit)?], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
@@ -533,94 +562,9 @@ impl ServiceRegistry {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        super::validate_existing(&tx)?;
-        let mut current = snapshot(&tx, id)?.context("source policy unavailable")?;
-        ensure!(
-            current.operation_id == operation_id,
-            "source policy operation changed"
-        );
-        let accepted:Option<String>=tx.query_row("SELECT job FROM service_requests WHERE namespace=?1 AND epoch=?2 AND nonce=?3 AND caller=?4", params![key.namespace.to_string(),i64::try_from(key.epoch)?,key.nonce.to_string(),caller.to_string()],|row|row.get(0)).optional()?;
-        if let Some(accepted) = accepted {
-            let retry_origin:Option<String>=tx.query_row("SELECT source_job FROM service_retry_requests WHERE namespace=?1 AND epoch=?2 AND nonce=?3 AND caller=?4",params![key.namespace.to_string(),i64::try_from(key.epoch)?,key.nonce.to_string(),caller.to_string()],|row|row.get(0)).optional()?;
-            ensure!(
-                retry_origin.is_some(),
-                "policy retry key belongs to a different native action"
-            );
-            let work = super::super::configuration::work(&tx, accepted.parse()?)?
-                .context("policy retry key belongs to another operation")?;
-            ensure!(
-                matches!(work.request.configuration,ProjectConfiguration::ApplySourcePolicy {ref policy,operation_id:accepted_operation} if accepted_operation==operation_id && policy.as_ref()==&current.policy),
-                "policy retry key conflict"
-            );
-            return Ok(current);
-        }
-        ensure!(
-            !index_record(&tx, id)?.tombstone,
-            "retired index cannot admit source policy cleanup work"
-        );
-        let (namespace, epoch): (String, i64) = tx.query_row(
-            "SELECT incarnation,request_epoch FROM service_meta WHERE id=1",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
-        ensure!(
-            namespace == key.namespace.to_string() && u64::try_from(epoch)? == key.epoch,
-            "policy retry request key expired"
-        );
-        let cleanup_pending = current
-            .application
-            .as_ref()
-            .is_some_and(|application| application.physical_cleanup_pending);
-        ensure!(
-            current.application.is_none() || cleanup_pending,
-            "source policy operation already completed"
-        );
-        let previous = super::super::jobs::record(&tx, current.job)?;
-        ensure!(
-            matches!(previous.state, JobState::Failed | JobState::Canceled)
-                || cleanup_pending && previous.state == JobState::Succeeded,
-            "source policy job is not retryable"
-        );
-        ensure!(
-            require_claim(&tx, current.job)?,
-            "source policy retry authority unavailable"
-        );
-        let busy:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM service_jobs WHERE project=?1 AND state IN('pending','running'))",[previous.project.to_string()],|row|row.get(0))?;
-        ensure!(
-            !busy,
-            "source policy retry waits for accepted work to settle"
-        );
-        let work = super::super::configuration::work(&tx, current.job)?
-            .context("accepted source policy configuration unavailable")?;
-        ensure!(
-            matches!(work.request.configuration,ProjectConfiguration::ApplySourcePolicy {ref policy,operation_id:accepted_operation} if accepted_operation==operation_id && policy.as_ref()==&current.policy),
-            "source policy retry lineage changed"
-        );
-        super::super::jobs::require_request_capacity(&tx)?;
-        let job = super::super::jobs::insert_new_job(
-            &tx,
-            previous.project,
-            caller,
-            key,
-            JobKind::Configure,
-            Some(&work),
-        )?;
-        super::super::jobs::insert_request_receipt(&tx, caller, key, job)?;
-        tx.execute(
-            "INSERT INTO service_retry_requests VALUES(?1,?2,?3,?4,?5)",
-            params![
-                key.namespace.to_string(),
-                epoch,
-                key.nonce.to_string(),
-                caller.to_string(),
-                current.job.to_string()
-            ],
-        )?;
-        current.job = job;
-        current.last_error = None;
-        write_snapshot(&tx, &current)?;
+        let value = resume_policy_job_in(&tx, id, operation_id, caller, key)?;
         tx.commit()?;
-        Ok(current)
+        Ok(value)
     }
     pub fn catalog_policy_status(&self, id: IndexId) -> Result<Option<PolicySnapshot>> {
         let read = self.connection.unchecked_transaction()?;
@@ -689,4 +633,100 @@ impl ServiceRegistry {
         tx.commit()?;
         Ok(current)
     }
+}
+
+pub(super) fn resume_policy_job_in(
+    db: &Connection,
+    id: IndexId,
+    operation_id: Incarnation,
+    caller: Incarnation,
+    key: &RequestKey,
+) -> Result<PolicySnapshot> {
+    super::validate_existing(db)?;
+    let mut current = snapshot(db, id)?.context("source policy unavailable")?;
+    ensure!(
+        current.operation_id == operation_id,
+        "source policy operation changed"
+    );
+    let accepted:Option<String>=db.query_row("SELECT job FROM service_requests WHERE namespace=?1 AND epoch=?2 AND nonce=?3 AND caller=?4", params![key.namespace.to_string(),i64::try_from(key.epoch)?,key.nonce.to_string(),caller.to_string()],|row|row.get(0)).optional()?;
+    if let Some(accepted) = accepted {
+        let retry_origin:Option<String>=db.query_row("SELECT source_job FROM service_retry_requests WHERE namespace=?1 AND epoch=?2 AND nonce=?3 AND caller=?4",params![key.namespace.to_string(),i64::try_from(key.epoch)?,key.nonce.to_string(),caller.to_string()],|row|row.get(0)).optional()?;
+        ensure!(
+            retry_origin.is_some(),
+            "policy retry key belongs to a different native action"
+        );
+        let work = super::super::configuration::work(db, accepted.parse()?)?
+            .context("policy retry key belongs to another operation")?;
+        ensure!(
+            matches!(work.request.configuration,ProjectConfiguration::ApplySourcePolicy {ref policy,operation_id:accepted_operation} if accepted_operation==operation_id && policy.as_ref()==&current.policy),
+            "policy retry key conflict"
+        );
+        return Ok(current);
+    }
+    ensure!(
+        !index_record(db, id)?.tombstone,
+        "retired index cannot admit source policy cleanup work"
+    );
+    let (namespace, epoch): (String, i64) = db.query_row(
+        "SELECT incarnation,request_epoch FROM service_meta WHERE id=1",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    ensure!(
+        namespace == key.namespace.to_string() && u64::try_from(epoch)? == key.epoch,
+        "policy retry request key expired"
+    );
+    let cleanup_pending = current
+        .application
+        .as_ref()
+        .is_some_and(|application| application.physical_cleanup_pending);
+    ensure!(
+        current.application.is_none() || cleanup_pending,
+        "source policy operation already completed"
+    );
+    let previous = super::super::jobs::record(db, current.job)?;
+    ensure!(
+        matches!(previous.state, JobState::Failed | JobState::Canceled)
+            || cleanup_pending && previous.state == JobState::Succeeded,
+        "source policy job is not retryable"
+    );
+    ensure!(
+        require_claim(db, current.job)?,
+        "source policy retry authority unavailable"
+    );
+    let busy:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM service_jobs WHERE project=?1 AND state IN('pending','running'))",[previous.project.to_string()],|row|row.get(0))?;
+    ensure!(
+        !busy,
+        "source policy retry waits for accepted work to settle"
+    );
+    let work = super::super::configuration::work(db, current.job)?
+        .context("accepted source policy configuration unavailable")?;
+    ensure!(
+        matches!(work.request.configuration,ProjectConfiguration::ApplySourcePolicy {ref policy,operation_id:accepted_operation} if accepted_operation==operation_id && policy.as_ref()==&current.policy),
+        "source policy retry lineage changed"
+    );
+    super::super::jobs::require_request_capacity(db)?;
+    let job = super::super::jobs::insert_new_job(
+        db,
+        previous.project,
+        caller,
+        key,
+        JobKind::Configure,
+        Some(&work),
+    )?;
+    super::super::jobs::insert_request_receipt(db, caller, key, job)?;
+    db.execute(
+        "INSERT INTO service_retry_requests VALUES(?1,?2,?3,?4,?5)",
+        params![
+            key.namespace.to_string(),
+            epoch,
+            key.nonce.to_string(),
+            caller.to_string(),
+            current.job.to_string()
+        ],
+    )?;
+    current.job = job;
+    current.last_error = None;
+    write_snapshot(db, &current)?;
+    Ok(current)
 }

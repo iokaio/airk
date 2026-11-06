@@ -89,11 +89,18 @@ pub struct Kernel {
     service_collection: Option<airk_store::service::collection::Collection>,
     service_selection: Option<Arc<airk_store::service::collection::Selection>>,
     service_freshness: Option<Arc<service_freshness::Cache>>,
+    split_authority: Option<SplitKernelAuthority>,
     native_owner: Arc<
         std::sync::Mutex<
             Option<airk_store::service::collection::integrity::native_owner::NativeOwnerSession>,
         >,
     >,
+}
+
+#[derive(Clone)]
+struct SplitKernelAuthority {
+    permit: airk_store::service::collection::SplitBuildPermit,
+    funding: Option<airk_store::quota::funding::FundingUse>,
 }
 
 type ProgressObserver = Arc<dyn Fn(&airk_core::readiness::IndexProgress) + Send + Sync>;
@@ -313,7 +320,18 @@ impl Kernel {
                 )
                 .context("source unavailable and no matching retained service collection exists")?
             };
-            if source_available {
+            let sealed = matches!(
+                collection.split_evidence_constraint()?,
+                Some(
+                    airk_core::catalog_split::SplitEvidenceConstraint::SealedDestination
+                        | airk_core::catalog_split::SplitEvidenceConstraint::SealedCutover
+                )
+            );
+            ensure!(
+                !recover || !sealed,
+                "split recovery requires its exact native job owner"
+            );
+            if source_available && !sealed {
                 collection.recover_abandoned_replacement()?;
             }
             Some(collection)
@@ -321,7 +339,11 @@ impl Kernel {
             None
         };
         let store = if let Some(collection) = &service_collection {
-            collection.selected_store()?
+            if recover {
+                collection.selected_store()?
+            } else {
+                collection.select_for_diagnostics()?
+            }
         } else {
             FileStore::new(directory.join("collections-1.2").join(collection))
         };
@@ -341,6 +363,7 @@ impl Kernel {
             service_collection,
             service_selection: None,
             service_freshness: None,
+            split_authority: None,
             native_owner: Arc::new(std::sync::Mutex::new(None)),
         };
         if recover {
@@ -367,6 +390,67 @@ impl Kernel {
         }
         kernel.observe_retained_source_policy()?;
         Ok(kernel)
+    }
+
+    /// Read existing native metadata without creation, bootstrap recovery,
+    /// replacement cleanup or model initialization. This grants no staged read
+    /// authority; it is also the base for exact native job admission.
+    pub fn open_existing_service_observer(
+        registration: &airk_core::service::ProjectRegistration,
+    ) -> Result<Self> {
+        service_projects::validate_retained(registration)?;
+        let collection = airk_store::service::collection::Collection::existing(
+            Path::new(&registration.data_root),
+            &registration.root,
+            &registration.collection,
+        )?;
+        let store = collection.select_for_diagnostics()?;
+        let kernel = Self {
+            source_policy: source_policy::PolicyRuntime::shared_load(
+                Path::new(&registration.data_root)
+                    .join("collections-1.4")
+                    .join(&registration.collection),
+            )?,
+            read_scope: None,
+            verification_cancellation: None,
+            progress: None,
+            root: PathBuf::from(&registration.root),
+            collection: registration.collection.clone(),
+            data_root: PathBuf::from(&registration.data_root),
+            store,
+            service_collection: Some(collection),
+            service_selection: None,
+            service_freshness: None,
+            split_authority: None,
+            native_owner: Arc::new(std::sync::Mutex::new(None)),
+        };
+        kernel.observe_retained_source_policy()?;
+        Ok(kernel)
+    }
+
+    /// A native job gets its own store context. The ordinary worker Kernel
+    /// retains no permit, and no serde or boolean can construct this authority.
+    pub fn with_split_job_access(
+        &self,
+        permit: airk_store::service::collection::SplitBuildPermit,
+        funding: Option<airk_store::quota::funding::FundingUse>,
+    ) -> Result<Self> {
+        let mut selected = self.clone();
+        let collection = self
+            .service_collection
+            .as_ref()
+            .context("split job requires a native collection")?
+            .clone()
+            .with_split_access(permit.clone())?;
+        selected.service_collection = Some(match &funding {
+            Some(owner) => collection.with_operation_funding(owner.clone())?,
+            None => collection,
+        });
+        selected.split_authority = Some(SplitKernelAuthority { permit, funding });
+        selected.store = selected.inherit_shared_models(self.store.clone())?;
+        selected.service_selection = None;
+        selected.native_owner = Arc::new(std::sync::Mutex::new(None));
+        Ok(selected)
     }
 
     fn root_id(&self) -> String {
@@ -556,12 +640,22 @@ impl Kernel {
         let quota = self.collection_quota()?;
         // The reservation includes temporary and retained bytes together. Each
         // provider charges before writes; exhausting it leaves the active pin intact.
+        let free = self.reservation_headroom(&quota)?;
+        quota.reserve_available(&self.collection, (free / 2).min(maximum))
+    }
+
+    fn reservation_headroom(&self, quota: &airk_store::quota::Quota) -> Result<u64> {
+        // The exact prepaid ledger is authoritative even at zero ordinary root
+        // headroom. Avoid an unrelated root inventory for each funded batch.
+        if let Some(free) = quota.operation_growth_headroom(&self.collection)? {
+            return Ok(free);
+        }
         let status = quota.status()?;
         let root_free = status
             .root_limit_bytes
             .saturating_sub(status.used_bytes)
             .saturating_sub(status.reserved_bytes);
-        let free = status
+        Ok(status
             .collections
             .get(&self.collection)
             .map_or(root_free, |c| {
@@ -569,8 +663,7 @@ impl Kernel {
                     .saturating_sub(c.used_bytes)
                     .saturating_sub(c.reserved_bytes)
             })
-            .min(root_free);
-        quota.reserve_available(&self.collection, (free / 2).min(maximum))
+            .min(root_free))
     }
 
     pub fn read_file(
@@ -1158,3 +1251,8 @@ impl Kernel {
         Ok(())
     }
 }
+
+#[path = "split.rs"]
+pub mod split;
+mod split_execution;
+pub use split::SplitWitnessLimits;

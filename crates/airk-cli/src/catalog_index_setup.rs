@@ -108,6 +108,107 @@ pub(crate) fn review(control: &Path, request: &IndexSetupRequest) -> Result<Nati
     review_filesystem(control, request, previous.is_some())
 }
 
+/// Split review pins the same physical inputs, while its distinct native intent
+/// owns preparation and keeps all destination evidence sealed.
+pub(crate) fn review_split(
+    control: &Path,
+    request: &airk_core::catalog_split::SplitRequest,
+) -> Result<NativeSetupReview> {
+    crate::runtime_install::validate_control_root(control)?;
+    request.validate()?;
+    let context = split_format_request(request)?;
+    let mut review = review_filesystem(control.canonicalize()?, &context, false)?;
+    let collection = Path::new(&context.registration.data_root)
+        .join("collections-1.4")
+        .join(&context.registration.collection);
+    match fs::symlink_metadata(&collection) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+        Ok(_) => anyhow::bail!("split destination collection must be fresh independent storage"),
+    }
+    review.metadata_plan = framed_digest(
+        b"airk/split-native-setup-review/1",
+        &[
+            review.metadata_plan.as_bytes(),
+            request.identity()?.as_bytes(),
+        ],
+    );
+    Ok(review)
+}
+fn split_format_request(
+    request: &airk_core::catalog_split::SplitRequest,
+) -> Result<IndexSetupRequest> {
+    Ok(IndexSetupRequest {
+        caller: request.caller,
+        key: request.key.clone(),
+        expected_catalog_revision: request.expected_catalog_revision,
+        name: request.destination_name.clone(),
+        registration: request.destination_registration.clone(),
+        sources: airk_core::catalog_setup::canonical_setup_sources(
+            &request
+                .source_configuration
+                .aliases
+                .iter()
+                .map(|(alias, path)| airk_core::catalog_setup::SetupSource {
+                    canonical_path: path.clone(),
+                    aliases: vec![alias.clone()],
+                    owner: false,
+                })
+                .chain(std::iter::once(airk_core::catalog_setup::SetupSource {
+                    canonical_path: request.original_registration.root.clone(),
+                    aliases: vec![],
+                    owner: true,
+                }))
+                .collect::<Vec<_>>(),
+        )?,
+        setup_watch: false,
+    })
+}
+pub(crate) fn prepare_split(
+    registry: &ServiceRegistry,
+    control: &Path,
+    state: &airk_store::service::registry::catalog::split::NativeSplitState,
+) -> Result<airk_store::service::registry::catalog::setup::storage::PreparedSplitStorage> {
+    let context = split_format_request(&state.snapshot().request)?;
+    // Exact accepted partial state may now exist; revalidate its owned prefix,
+    // preserving the original parent/source directory objects through Store CAS.
+    let review = review_filesystem(control.canonicalize()?, &context, true)?;
+    review.review_digest()?;
+    let pins = split_pins(review);
+    airk_store::service::registry::catalog::setup::storage::prepare_split_storage(
+        registry, control, state, pins,
+    )
+}
+fn split_pins(
+    review: NativeSetupReview,
+) -> airk_store::service::registry::catalog::setup::storage::NativeSetupPins {
+    #[cfg(unix)]
+    {
+        airk_store::service::registry::catalog::setup::storage::NativeSetupPins::from_native_review(
+            review.parent.file,
+            review.existing_data.map(|pin| pin.file),
+            review.sources.into_iter().map(|pin| pin.file).collect(),
+        )
+    }
+    #[cfg(windows)]
+    {
+        let mut ancestors = review.parent._ancestors;
+        let data = review.existing_data.map(|pin| {
+            ancestors.extend(pin._ancestors);
+            pin.file
+        });
+        let sources = review
+            .sources
+            .into_iter()
+            .map(|pin| {
+                ancestors.extend(pin._ancestors);
+                pin.file
+            })
+            .collect();
+        airk_store::service::registry::catalog::setup::storage::NativeSetupPins::from_native_review_with_ancestors(review.parent.file,data,sources,ancestors)
+    }
+}
+
 fn review_filesystem(
     control: PathBuf,
     request: &IndexSetupRequest,

@@ -25,7 +25,7 @@ MODULES = ("extension.js", "extensionUninstall.js", "uninstallHook.js", "diagnos
            "mcpStdioSession.js", "explorerSidebar.js", "explorerStatus.js", "explorerController.js", "explorerControl.js",
            "explorerContracts.js", "explorerErrors.js", "explorerEvidence.js", "explorerFeatures.js", "explorerPanel.js",
            "explorerRoutes.js", "explorerSearch.js", "explorerSource.js", "explorerWorkspaceIO.js",
-           "explorerFacts.js", "explorerInspect.js", "explorerManagement.js", "indexingCatalog.js", "indexingCatalogController.js", "catalogSession.js", "scopeSelection.js",
+           "explorerFacts.js", "explorerInspect.js", "explorerManagement.js", "indexingCatalog.js", "indexingSplit.js", "indexingCatalogController.js", "catalogSession.js", "scopeSelection.js",
            "explorerCommands.js", "explorerAssistanceHost.js", "explorerAssistanceLaunch.js",
            "explorerStrategies.js", "explorerStrategyRunner.js",
            "explorerDrafts.js", "explorerSuggestions.js", "explorerReview.js", "explorerHandoffs.js", "explorerPlanFiles.js",

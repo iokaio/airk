@@ -60,7 +60,15 @@ pub(super) fn require_request_capacity(connection: &Connection) -> Result<()> {
 // Unregister changes registration metadata only. It must not require resuming
 // source work to remove a paused project. Reviewed retained-only source policy
 // removal also runs while paused; it never captures or indexes source bytes.
-const RUN_WHILE_PAUSED: &str = "(j.kind IN('inspect','plan_inspect') OR (j.kind='configure' AND EXISTS(SELECT 1 FROM service_configuration c WHERE c.job=j.id AND json_extract(CAST(c.payload AS TEXT),'$.request.configuration.operation') IN('unregister','prepare_derived_cleanup','delete_derived','apply_source_policy'))))";
+const RUN_WHILE_PAUSED: &str = "(j.kind IN('inspect','plan_inspect') OR (j.kind='configure' AND EXISTS(SELECT 1 FROM service_configuration c WHERE c.job=j.id AND (json_extract(CAST(c.payload AS TEXT),'$.request.configuration.operation') IN('unregister','prepare_derived_cleanup','delete_derived','apply_source_policy') OR (json_extract(CAST(c.payload AS TEXT),'$.request.configuration.operation')='split_work' AND json_extract(CAST(c.payload AS TEXT),'$.request.configuration.purpose') IN('destination_cleanup','original_cleanup','original_witness'))))))";
+
+fn runs_while_paused(
+    kind: JobKind,
+    configuration: Option<&airk_core::service_configuration::ProjectConfiguration>,
+) -> bool {
+    matches!(kind, JobKind::Inspect | JobKind::PlanInspect)
+        || kind == JobKind::Configure && configuration.is_some_and(|work| work.runs_while_paused())
+}
 
 pub(super) const SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS service_jobs(
@@ -92,10 +100,11 @@ const MAX_REQUESTS: i64 = 4096;
 
 fn job_eligibility(connection: &Connection) -> Result<String> {
     Ok(format!(
-        "({}) AND {} AND {}",
+        "({}) AND {} AND {} AND {}",
         super::maintenance::ELIGIBLE,
         super::recovery::ELIGIBLE,
-        super::catalog::policy::job_eligibility(connection)?
+        super::catalog::policy::job_eligibility(connection)?,
+        super::catalog::split::job_eligibility(connection)?
     ))
 }
 
@@ -247,14 +256,17 @@ impl ServiceRegistry {
     }
     pub fn job_runs_while_paused(&self, id: Sha256Digest) -> Result<bool> {
         let job = record(&self.connection, id)?;
-        Ok(matches!(job.kind, JobKind::Inspect | JobKind::PlanInspect)
-            || job.kind == JobKind::Configure
-                && super::configuration::work(&self.connection, id)?.is_some_and(|work| {
-                    work.request.configuration.is_derived_cleanup()
-                        || matches!(work.request.configuration, airk_core::service_configuration::ProjectConfiguration::ApplySourcePolicy { .. })
-                        || work.request.configuration
-                            == airk_core::service_configuration::ProjectConfiguration::Unregister
-                }))
+        let configuration = if job.kind == JobKind::Configure {
+            super::configuration::work(&self.connection, id)?
+        } else {
+            None
+        };
+        Ok(runs_while_paused(
+            job.kind,
+            configuration
+                .as_ref()
+                .map(|work| &work.request.configuration),
+        ))
     }
     /// Fair oldest-pending order, bounded independently of the number of saved projects.
     pub fn pending_projects(&self, limit: usize) -> Result<Vec<ProjectBinding>> {
@@ -478,6 +490,13 @@ impl ServiceRegistry {
             matches!(original.state, JobState::Failed | JobState::Canceled),
             JobError::NotRetryable
         );
+        ensure!(
+            !self.configuration_work(id)?.is_some_and(|work| matches!(
+                work.request.configuration,
+                airk_core::service_configuration::ProjectConfiguration::SplitWork { .. }
+            )),
+            "split work requires exact saved-operation recovery"
+        );
         self.enqueue_impl(
             original.project,
             caller,
@@ -499,6 +518,13 @@ impl ServiceRegistry {
         request: &airk_core::service_configuration::ConfigurationRequest,
         engine: Sha256Digest,
     ) -> Result<JobRecord> {
+        ensure!(
+            !matches!(
+                request.configuration,
+                airk_core::service_configuration::ProjectConfiguration::SplitWork { .. }
+            ),
+            "split work requires its exact admitted lifecycle"
+        );
         request.validate()?;
         let request: airk_core::service_configuration::ConfigurationRequest =
             serde_json::from_slice(&serde_json::to_vec(request)?)?;
@@ -1596,36 +1622,7 @@ impl ServiceRegistry {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let current = record(&transaction, id)?;
-        super::background::audit::automatic::canceled(&transaction, id)?;
-        if current.kind == JobKind::Maintain
-            && matches!(current.state, JobState::Pending | JobState::Running)
-        {
-            transaction.execute(
-                "UPDATE service_maintenance SET retries=7 WHERE project=?1",
-                [current.project.to_string()],
-            )?;
-        }
-        if matches!(current.state, JobState::Pending | JobState::Running) {
-            super::watch::block_source_retry(&transaction, id)?;
-        }
-        match current.state {
-            JobState::Pending => {
-                transaction.execute(
-                    "UPDATE service_jobs SET state='canceled',outcome=?1 WHERE id=?2",
-                    params![serde_json::to_vec(&JobOutcome::Canceled)?, id.to_string()],
-                )?;
-            }
-            JobState::Running => {
-                transaction.execute(
-                    "INSERT OR IGNORE INTO service_job_cancellation(job) VALUES(?1)",
-                    [id.to_string()],
-                )?;
-            }
-            _ => {}
-        }
-        let result = record(&transaction, id)?;
-        super::maintenance::job_completed(&transaction, id, super::maintenance::clock_ms()?, None)?;
+        let result = request_cancellation_in(&transaction, id)?;
         transaction.commit()?;
         Ok(result)
     }
@@ -1667,10 +1664,168 @@ impl ServiceRegistry {
     }
 }
 
+pub(super) fn request_cancellation_in(
+    connection: &Connection,
+    id: Sha256Digest,
+) -> Result<JobRecord> {
+    let current = record(connection, id)?;
+    super::background::audit::automatic::canceled(connection, id)?;
+    if current.kind == JobKind::Maintain
+        && matches!(current.state, JobState::Pending | JobState::Running)
+    {
+        connection.execute(
+            "UPDATE service_maintenance SET retries=7 WHERE project=?1",
+            [current.project.to_string()],
+        )?;
+    }
+    if matches!(current.state, JobState::Pending | JobState::Running) {
+        super::watch::block_source_retry(connection, id)?;
+    }
+    match current.state {
+        JobState::Pending => {
+            connection.execute(
+                "UPDATE service_jobs SET state='canceled',outcome=?1 WHERE id=?2",
+                params![serde_json::to_vec(&JobOutcome::Canceled)?, id.to_string()],
+            )?;
+        }
+        JobState::Running => {
+            connection.execute(
+                "INSERT OR IGNORE INTO service_job_cancellation(job) VALUES(?1)",
+                [id.to_string()],
+            )?;
+        }
+        _ => {}
+    }
+    let result = record(connection, id)?;
+    super::maintenance::job_completed(connection, id, super::maintenance::clock_ms()?, None)?;
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use airk_core::service::ProjectRegistration;
+
+    #[test]
+    fn paused_native_control_matches_exact_sql_classification_for_all_split_purposes() -> Result<()>
+    {
+        use airk_core::{
+            catalog_split::SplitJobPurpose, service_configuration::ProjectConfiguration as C,
+        };
+        let db = Connection::open_in_memory()?;
+        let sql = format!(
+            "WITH j(id,kind) AS (VALUES('classification',?1)), service_configuration(job,payload) AS (VALUES('classification',?2)) SELECT {RUN_WHILE_PAUSED} FROM j"
+        );
+        let classify = |kind: JobKind, configuration: Option<&C>, expected: bool| -> Result<()> {
+            // JSON is the actual saved-work shape, but no real job/registration,
+            // admitted claim, policy mutation, source or funding is manufactured.
+            let payload = configuration
+                .map(|configuration| {
+                    serde_json::to_string(
+                        &serde_json::json!({"request":{"configuration":configuration}}),
+                    )
+                })
+                .transpose()?;
+            let database: bool =
+                db.query_row(&sql, params![kind.code(), payload], |row| row.get(0))?;
+            assert_eq!(
+                database, expected,
+                "SQL: kind={kind:?},configuration={configuration:?}"
+            );
+            assert_eq!(
+                runs_while_paused(kind, configuration),
+                database,
+                "native control diverged from actual SQL pause admission classification"
+            );
+            Ok(())
+        };
+        for kind in [
+            JobKind::Index,
+            JobKind::Reconcile,
+            JobKind::Vectors,
+            JobKind::ModelSetup,
+            JobKind::Rebuild,
+            JobKind::Recover,
+            JobKind::Configure,
+            JobKind::Maintain,
+            JobKind::Inspect,
+            JobKind::PlanInspect,
+            JobKind::Repair,
+            JobKind::Verify,
+        ] {
+            classify(
+                kind,
+                None,
+                matches!(kind, JobKind::Inspect | JobKind::PlanInspect),
+            )?;
+        }
+        let digest = Sha256Digest::from_bytes([1; 32]);
+        for configuration in [
+            C::Unregister,
+            C::PrepareDerivedCleanup,
+            C::DeleteDerived { preview: digest },
+        ] {
+            classify(JobKind::Configure, Some(&configuration), true)?;
+        }
+        let policy: C = serde_json::from_value(serde_json::json!({
+            "operation":"apply_source_policy","operation_id":Incarnation::from_bytes([2;16]),
+            "policy":{"schema":"airk.source-policy/1","index_id":airk_core::index_catalog::IndexId::from_identity(Incarnation::from_bytes([3;16])),
+                "owner_binding":digest,"namespace":"collections-1.4","collection":"classification","epoch":1,
+                "roots":[],"positive_includes":null,"denies":[]}}))?;
+        classify(JobKind::Configure, Some(&policy), true)?;
+        for purpose in [
+            SplitJobPurpose::DestinationBuild,
+            SplitJobPurpose::OriginalWitness,
+            SplitJobPurpose::OriginalRemoval,
+            SplitJobPurpose::DestinationCleanup,
+            SplitJobPurpose::OriginalCleanup,
+        ] {
+            let configuration = C::SplitWork {
+                operation_id: Incarnation::from_bytes([4; 16]),
+                request_digest: digest,
+                expected_receipt_digest: digest,
+                purpose,
+                require_semantic_ready: false,
+            };
+            classify(
+                JobKind::Configure,
+                Some(&configuration),
+                matches!(
+                    purpose,
+                    SplitJobPurpose::OriginalWitness
+                        | SplitJobPurpose::DestinationCleanup
+                        | SplitJobPurpose::OriginalCleanup
+                ),
+            )?;
+        }
+        classify(
+            JobKind::Configure,
+            Some(&C::SplitWork {
+                operation_id: Incarnation::from_bytes([4; 16]),
+                request_digest: digest,
+                expected_receipt_digest: digest,
+                purpose: SplitJobPurpose::DestinationBuild,
+                require_semantic_ready: true,
+            }),
+            false,
+        )?;
+        for configuration in [
+            C::Vectors { enabled: true },
+            C::Vectors { enabled: false },
+            C::Detail {
+                level: airk_core::extraction::IndexDetail::Detailed,
+            },
+            C::BundledModel,
+            C::RemoveRoot {
+                alias: "classification".into(),
+            },
+            C::ResetScanLimits,
+            C::ClearUsage,
+        ] {
+            classify(JobKind::Configure, Some(&configuration), false)?;
+        }
+        Ok(())
+    }
 
     #[test]
     fn full_queue_rotation_protects_the_failure_named_by_a_new_retry() -> Result<()> {

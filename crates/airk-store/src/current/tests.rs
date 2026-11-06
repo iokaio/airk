@@ -30,6 +30,49 @@ mod service_publication_tests;
 
 const CAPACITY: u64 = 8 * 1024 * 1024;
 
+#[test]
+fn disposed_current_owner_is_read_under_exact_existing_exclusion_without_relocking() -> Result<()> {
+    let fixture = Fixture::empty_namespace("collections-1.4")?;
+    let writer = fixture.store.lock()?;
+    fixture
+        .store
+        .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?
+        .initialize(fixture.head.clone())?;
+    let gate = fixture.store.current_deletion_gate(&writer)?;
+    assert!(
+        fixture.store.current_owned_scope().is_err(),
+        "the exclusive gate must remain held"
+    );
+    assert_eq!(
+        fixture.store.current_owned_scope_under_gate(&gate)?,
+        Some(fixture.scope.clone())
+    );
+    // Match physical disposal: payloads are gone while the validated ownership
+    // header remains until exact child-grant reconciliation can complete.
+    for name in [
+        "current.sqlite3",
+        "current.sqlite3-journal",
+        "current.sqlite3-wal",
+        "current.sqlite3-shm",
+    ] {
+        let path = fixture.store.directory().join(name);
+        if path.try_exists()? {
+            fs::remove_file(path)?;
+        }
+    }
+    assert_eq!(
+        fixture.store.current_owned_scope_under_gate(&gate)?,
+        Some(fixture.scope.clone())
+    );
+    let foreign = Fixture::empty_namespace("collections-1.4")?;
+    assert!(foreign.store.current_owned_scope_under_gate(&gate).is_err());
+    let owner = fixture.store.directory().join(database::OWNER_FILE);
+    fs::write(&owner, b"malformed ownership")?;
+    assert!(fixture.store.current_owned_scope_under_gate(&gate).is_err());
+    assert_eq!(fs::read(owner)?, b"malformed ownership");
+    Ok(())
+}
+
 struct Fixture {
     directory: tempfile::TempDir,
     store: FileStore,

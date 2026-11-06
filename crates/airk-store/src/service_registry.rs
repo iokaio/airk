@@ -254,6 +254,7 @@ pub fn retained_namespace(root: &Path) -> Result<Incarnation> {
 enum RegistrationAdmission<'a> {
     Legacy,
     Reserved(&'a catalog::setup::IndexSetupReceipt),
+    Split(&'a catalog::split::NativeSplitState),
 }
 
 fn register_project_in(

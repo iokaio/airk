@@ -16,6 +16,7 @@ pub(super) fn initial_owner(data_root: &Path, root: &str, collection: &str) -> R
         collection: collection.into(),
         identity_data_root: None,
         required_source_policy: None,
+        required_split: None,
     })
 }
 

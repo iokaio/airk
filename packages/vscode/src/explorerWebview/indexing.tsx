@@ -3,6 +3,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { CatalogObject, CatalogScopeAtom, CatalogView, catalogExport, catalogItems, catalogMembershipDraft, catalogObject, catalogReviewPreview, catalogWindowAssociation, sourceChangeObservation, validateCatalogScope } from '../indexingCatalog';
 import type { ScreenProps } from './workspaces';
 import { request } from './api';
+import { IndexSplitPanel } from './indexingSplit';
 import { canReviewPolicyUnblock, policyStatusLabels, validatePolicyImpact } from '../indexingCatalog';
 
 /** Native metadata is rendered as escaped Preact text; complete replies stay available in details/export. */
@@ -18,7 +19,7 @@ export function IndexingScreen(props: ScreenProps) {
     const [setupName,setSetupName]=useState(''),[setupPrimary,setSetupPrimary]=useState(''),[setupData,setSetupData]=useState(''),[setupCollection,setSetupCollection]=useState(''),[setupWatch,setSetupWatch]=useState(false);
     const [setupRoots,setSetupRoots]=useState<{alias:string;path:string}[]>([]);
     const [useIndex,setUseIndex]=useState(''),[useProjects,setUseProjects]=useState('');
-    const actionLabels:Record<string,string>={keep_layout:'Keep this layout',review_reuse:'Review reuse',use_query_scope:'Choose a query scope',split_pending:'Split unavailable until P10',removal_pending:'Review permanent exclusions in Sources',manual_selection:'Choose manually while observations are unknown'};
+    const actionLabels:Record<string,string>={keep_layout:'Keep this layout',review_reuse:'Review reuse',use_query_scope:'Choose a query scope',review_split:'Review an independent split',split_pending:'Split unavailable on this connection',removal_pending:'Review permanent exclusions in Sources',manual_selection:'Choose manually while observations are unknown'};
     const [adviceProjects,setAdviceProjects]=useState(''),[adviceIndexes,setAdviceIndexes]=useState(''),[situation,setSituation]=useState('keep');
     const [sourceAlias,setSourceAlias]=useState(''),[sourcePath,setSourcePath]=useState(''),[removeAlias,setRemoveAlias]=useState(''),[beginOperation,setBeginOperation]=useState('');
     const [policyRoot,setPolicyRoot]=useState(''),[policyKind,setPolicyKind]=useState<'exact'|'subtree'>('exact'),[policyPath,setPolicyPath]=useState(''),[unblockRule,setUnblockRule]=useState('');
@@ -66,7 +67,7 @@ export function IndexingScreen(props: ScreenProps) {
                 <p>Available to this connection: {Array.isArray(view.recommendations.available)?view.recommendations.available.length:0} unique indexes. Selected for this query: {Array.isArray(catalogObject(view.recommendations.selected).index_ids)?(catalogObject(view.recommendations.selected).index_ids as unknown[]).length:0}.</p>
                 <p>Omitted indexes: {JSON.stringify(view.recommendations.omitted_index_ids)}. Observation: {String(catalogObject(view.recommendations.observation).source)} at {new Date(Number(view.recommendations.observed_unix_ms)).toLocaleString()}. Connection scope only; machine library coverage is incomplete.</p>
                 <details><summary>Available indexes, Project names, selected source and prefix boundaries</summary><pre>{JSON.stringify({available:view.recommendations.available,projects:view.recommendations.projects,source_boundaries:view.recommendations.source_boundaries,selected_scope:view.recommendations.selected_scope},null,2)}</pre></details>
-                {Array.isArray(view.recommendations.cards)&&view.recommendations.cards.map((item,at)=>{const card=catalogObject(item);return <article key={at}><h3>{actionLabels[String(card.action)]??String(card.action)}</h3><p>{String(card.reason)}</p><p>{String(card.expected_benefit)}</p><p>{String(card.tradeoff)}</p></article>;})}
+                {Array.isArray(view.recommendations.cards)&&view.recommendations.cards.map((item,at)=>{const card=catalogObject(item);return <article key={at}><h3>{actionLabels[String(card.action)]??String(card.action)}</h3><p>{String(card.reason)}</p><p>{String(card.expected_benefit)}</p><p>{String(card.tradeoff)}</p>{card.action==='review_split'&&view.canReviewSplit&&Array.isArray(adviceSelection?.index_ids)&&adviceSelection.index_ids.map(id=><button key={String(id)} disabled={disabled} onClick={()=>void run(()=>request('indexing.split.open',{index:String(id),generation:view.generation}))}>Open split review for {String(id)}</button>)}</article>;})}
                 <button disabled={disabled} onClick={()=>void run(()=>request('indexing.recommendations.use',{}))}>Use this query scope</button>
                 <button disabled={disabled} onClick={()=>void run(()=>request('indexing.recommendations.copy',{}))}>Copy agent scope instructions</button>
                 <p>Use this query scope prefills a temporary Workbench form. Review it before running. It does not change an agent connection or replace saved session choices automatically.</p>
@@ -216,6 +217,7 @@ export function IndexingScreen(props: ScreenProps) {
         </>}
         {(error||view.error)&&<p class="notice" role="alert">{error||view.error}</p>}
         {view.busy&&<p role="status">Waiting for native catalog response…</p>}
+        <IndexSplitPanel view={view} index={selectedIndex} disabled={disabled} run={run}/>
         <article class="card"><h2>Source-change outcome</h2><p>Read the recorded native operation explicitly. Job history and metadata completion are separate; resolving metadata never rewrites a failed job as successful.</p>
             {view.sourceObservation?.status==='catalog_pending_source_change'&&view.sourceObservation.observation===null&&<p>No current source-change observation was returned for this index. This does not establish readiness or settle another request.</p>}
             <form onSubmit={event=>{event.preventDefault();void run(()=>request('indexing.source.read',{begin:beginOperation,generation:view.generation}));}}><label>Native begin operation ID<input required pattern="[0-9a-f]{32}" value={beginOperation} onInput={event=>setBeginOperation(event.currentTarget.value)} /></label><button disabled={disabled||!view.namespace}>Read native source-change observation</button></form>
@@ -252,7 +254,7 @@ export function IndexingScreen(props: ScreenProps) {
             {view.submittedReview?.request.operation.operation==='change_index_policy'&&view.outcome.status==='catalog_applied'&&<p>The reviewed policy change was accepted. Read permanent exclusions and cleanup status for the recorded removal publication and physical cleanup outcome.</p>}
             <pre>{JSON.stringify(view.outcome,null,2)}</pre></article>}
         <article class="card"><h2>Complete catalog details</h2><p>Includes the complete retained native page, detail, window association, Sources, memberships, preview and outcome. Each page replaces the previously displayed page; exports describe only retained pages.</p>
-            <button disabled={disabled} onClick={()=>void run(()=>request('indexing.export',{format:'copy'}))}>Copy complete JSON</button><button disabled={disabled} onClick={()=>void run(()=>request('indexing.export',{format:'json'}))}>Export JSON…</button>
+            <button disabled={disabled} onClick={()=>void run(()=>request('indexing.export',{format:'copy'}))}>Copy complete JSON</button><button disabled={disabled} onClick={()=>void run(()=>request('indexing.export',{format:'json'}))}>Export JSON…</button><button disabled={disabled} onClick={()=>void run(()=>request('indexing.export',{format:'copy_markdown'}))}>Copy complete Markdown</button><button disabled={disabled} onClick={()=>void run(()=>request('indexing.export',{format:'markdown'}))}>Export Markdown…</button>
             <details><summary>Complete response</summary><pre>{catalogExport(view as CatalogView)}</pre></details>
         </article>
     </section>;

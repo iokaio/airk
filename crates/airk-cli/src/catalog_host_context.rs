@@ -36,7 +36,8 @@ pub(crate) fn legacy_binding(
     if let Some(state) = &state {
         ensure!(
             state.namespace == namespace
-                && state.policy_contract <= 1
+                && state.policy_contract
+                    <= airk_store::service::registry::catalog::SUPPORTED_POLICY_CONTRACT
                 && state.authority_contract <= 1
                 && (state.authority_contract == 1 || state.policy_contract == 0),
             "unsupported legacy eligibility contract"

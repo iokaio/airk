@@ -70,6 +70,7 @@ fn inventory_limit_preserves_count_and_fixed_diagnostic_code() -> Result<()> {
 pub(crate) const PREPARED_PUBLICATION_MAX: u64 = 4096;
 const PREPARED_PUBLICATION: &str = "prepared-publication.json";
 mod current;
+pub mod funding;
 #[cfg(any(unix, windows))]
 pub(crate) mod setup;
 pub use current::{CurrentGrant, CurrentGrantScope};
@@ -171,6 +172,7 @@ pub struct QuotaStatus {
 pub struct Quota {
     root: PathBuf,
     namespace: Namespace,
+    funding: Option<funding::FundingUse>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -585,6 +587,7 @@ impl Quota {
         let quota = Self {
             root,
             namespace: Namespace::Service,
+            funding: None,
         };
         let deadline = Some(Instant::now() + Duration::from_millis(50));
         let _lock = quota.lock_before(deadline)?;
@@ -615,14 +618,18 @@ impl Quota {
     }
     pub fn for_store(store: &crate::FileStore) -> Result<Self> {
         let managed = store.managed_path()?;
-        Self::open_namespace(
+        let quota = Self::open_namespace(
             managed.root,
             match managed.namespace {
                 "collections-1.4" => Namespace::Service,
                 "collections-1.2" => Namespace::Legacy,
                 _ => anyhow::bail!("unsupported quota namespace"),
             },
-        )
+        )?;
+        match &store.funding {
+            Some(funding) => quota.with_funding(funding.clone()),
+            None => Ok(quota),
+        }
     }
     pub(crate) fn collection_namespace(&self) -> &'static str {
         self.namespace.collections()
@@ -639,7 +646,11 @@ impl Quota {
             "non-UTF-8 quota root is unsupported"
         );
         ensure!(root.is_dir(), "quota root is not a directory");
-        let quota = Self { root, namespace };
+        let quota = Self {
+            root,
+            namespace,
+            funding: None,
+        };
         quota.control()?;
         Ok(quota)
     }
@@ -703,7 +714,8 @@ impl Quota {
                         "ledger.lock",
                         "policy.json",
                         "reservations",
-                        "current-grants"
+                        "current-grants",
+                        "split-allocations"
                     ]
                     .iter()
                     .any(|allowed| name == *allowed),
@@ -791,6 +803,10 @@ impl Quota {
         additional_root_bytes: u64,
         copies: &BTreeMap<String, u64>,
     ) -> Result<()> {
+        ensure!(
+            !funding::has_allocations(self)?,
+            "operation funding must settle and be acknowledged before quota root relocation"
+        );
         let policy = self.read_policy()?;
         let records = self.live_records()?;
         ensure!(
@@ -822,6 +838,10 @@ impl Quota {
         additional_root_bytes: u64,
         copies: &BTreeMap<String, u64>,
     ) -> Result<()> {
+        ensure!(
+            !funding::has_allocations(self)?,
+            "operation funding must settle and be acknowledged before quota root relocation"
+        );
         ensure!(
             self.namespace == Namespace::Service,
             "service rename requires service quota"
@@ -882,6 +902,9 @@ impl Quota {
             crate::validate_collection(collection)?;
         }
         ensure!(bytes > 0, "quota reservation must be positive");
+        if let Some(funding) = &self.funding {
+            return funding::reserve(self, funding, collection, bytes, available, deadline);
+        }
         let _lock = self.lock_before(deadline)?;
         let policy = self.read_policy()?;
         let records = if deadline.is_some() {
@@ -948,6 +971,7 @@ impl Quota {
             limit: bytes,
             charged: AtomicU64::new(0),
             best_effort: deadline.is_some(),
+            funded: None,
             _lifecycle: _lock.lifecycle.clone(),
         })))
     }
@@ -979,6 +1003,7 @@ impl Quota {
             records.push(LiveRecord { record });
         }
         records.extend(current::records(self, false, deadline)?);
+        records.extend(funding::records(self, deadline)?);
         ensure!(
             records.len() <= MAX_RESERVATIONS,
             "quota reservation count exhausted"
@@ -1067,6 +1092,7 @@ impl Quota {
             }
         }
         live.extend(current::records(self, true, None)?);
+        live.extend(funding::records(self, None)?);
         ensure!(
             live.len() <= MAX_RESERVATIONS,
             "quota reservation count exhausted"
@@ -1211,6 +1237,7 @@ struct ReservationInner {
     limit: u64,
     charged: AtomicU64,
     best_effort: bool,
+    funded: Option<funding::FundedChildRef>,
     _lifecycle: Arc<File>,
 }
 #[derive(Clone)]
@@ -1244,6 +1271,11 @@ impl Reservation {
     /// are never refunded; failed writes cannot accidentally create extra credit.
     pub fn charge(&self, bytes: u64) -> Result<()> {
         crate::capacity::require_growth(&self.0.quota.root, bytes)?;
+        if let Some(funded) = &self.0.funded {
+            let charged = funding::charge(&self.0.quota, funded, bytes)?;
+            self.0.charged.store(charged, Ordering::Release);
+            return Ok(());
+        }
         self.0
             .charged
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |prior| {
@@ -1633,6 +1665,12 @@ fn recover_prepared_publication(stage: &Path) -> Result<()> {
 }
 impl Drop for ReservationInner {
     fn drop(&mut self) {
+        if let Some(funded) = &self.funded {
+            // Closing a process handle does not settle an accepted split phase.
+            // Its durable allowance and staging stay owned until native recovery.
+            let _ = funding::close_reservation(&self.quota, funded);
+            return;
+        }
         let deadline = self
             .best_effort
             .then(|| Instant::now() + Duration::from_millis(10));

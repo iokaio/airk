@@ -143,7 +143,7 @@ impl ServiceRegistry {
         ensure!((1..=32).contains(&limit), "invalid watch roster page limit");
         let mut statement = self
             .connection
-            .prepare("SELECT binding FROM projects WHERE binding>?1 AND registered=1 ORDER BY binding LIMIT ?2")?;
+            .prepare(&format!("SELECT binding FROM projects WHERE binding>?1 AND registered=1 AND {} ORDER BY binding LIMIT ?2",super::catalog::split::watch_eligibility(&self.connection)?))?;
         let ids = statement
             .query_map(
                 params![

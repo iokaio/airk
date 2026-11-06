@@ -1202,21 +1202,81 @@ fn capture_header_inputs(
     if wanted.is_empty() {
         return Ok((captured, bytes_by_path));
     }
-    for (prefix, root) in sources {
-        if source_policy.is_some_and(|policy| {
-            root.to_str()
-                .is_none_or(|root| !permanent_policy::allows(policy, root, "", true))
-        }) {
-            continue;
+    if let Some(source_policy) = source_policy {
+        let mut any_documents = false;
+        for (_, root) in sources {
+            any_documents |= permanent_policy::allows_checked(
+                source_policy,
+                root.to_str().context("non-UTF-8 configuration root")?,
+                "",
+                true,
+            )?;
         }
-        let selected = wanted
+        if !any_documents {
+            return Ok((captured, bytes_by_path));
+        }
+    }
+    // Explicitly declared configuration paths are bounded extraction inputs,
+    // independent of which documents this partition indexes. Retain every deny
+    // and native boundary check; only the exact paths below can reach capture.
+    let dependency_policy = source_policy.map(|policy| {
+        let mut dependency = policy.clone();
+        if policy.positive_includes.is_some() {
+            let mut exact = std::collections::BTreeSet::new();
+            for root in &policy.roots {
+                for path in &wanted {
+                    let relative = if root.owner && !path.starts_with('@') {
+                        Some(*path)
+                    } else {
+                        root.aliases
+                            .iter()
+                            .find_map(|alias| path.strip_prefix(&format!("@{alias}/")))
+                    };
+                    if let Some(relative) = relative {
+                        exact.insert(airk_core::index_catalog::ScopeAtom {
+                            source_root_id: root.id,
+                            kind: airk_core::index_catalog::PathScope::Exact,
+                            path: relative.into(),
+                        });
+                    }
+                }
+            }
+            dependency.positive_includes = Some(exact.into_iter().collect());
+        }
+        dependency
+    });
+    for (prefix, root) in sources {
+        let selected: Vec<String> = wanted
             .iter()
-            .filter_map(|path| path.strip_prefix(prefix))
+            .filter_map(|path| {
+                if prefix.is_empty() && path.starts_with('@') {
+                    None
+                } else {
+                    path.strip_prefix(prefix)
+                }
+            })
             .map(str::to_owned)
             .collect();
-        for entry in
-            discovery_selected_with_policy(root, data_dir, Some(selected), source_policy.cloned())
-        {
+        if selected.is_empty() {
+            continue;
+        }
+        if let Some(dependency) = &dependency_policy {
+            let native_root = root.to_str().context("non-UTF-8 configuration root")?;
+            for relative in &selected {
+                ensure!(
+                    permanent_policy::allows_checked(dependency, native_root, relative, false)?,
+                    native_name_boundary::NativeNameBoundaryUnavailable::new(
+                        "excluded_configuration_dependency"
+                    )
+                );
+            }
+        }
+        for entry in discovery_selected_with_policy(
+            root,
+            data_dir,
+            Some(selected),
+            dependency_policy.clone(),
+        ) {
             ensure!(
                 usage.charged_entries() < limits.discovery_entries,
                 "header configuration discovery budget exhausted; previous generation retained"
@@ -1351,6 +1411,18 @@ fn discovery_selected_with_policy(
             rank(left).cmp(&rank(right)).then_with(|| left.cmp(right))
         })
         .filter_entry(move |entry| {
+            // A bounded exact-input walk needs no policy probes or controls for
+            // unrelated siblings. Hard exclusions and selected ancestry are
+            // independent rejection proofs before native policy qualification.
+            if entry.depth() != 0
+                && (excluded(&entry.file_name().to_string_lossy())
+                    || entry.path().starts_with(&data_dir)
+                    || selected.as_ref().is_some_and(|paths| {
+                        !paths.iter().any(|path| path.starts_with(entry.path()))
+                    }))
+            {
+                return false;
+            }
             if let Some(policy) = &policy {
                 let invalid = |reason: &'static str| {
                     *filter_failure

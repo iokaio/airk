@@ -248,6 +248,25 @@ impl ServiceRegistry {
         job: Sha256Digest,
         result: &serde_json::Value,
     ) -> Result<()> {
+        self.record_configuration_result_inner(lease, job, result, false)
+    }
+    pub(crate) fn record_configuration_result_inner(
+        &mut self,
+        lease: &crate::service::ProjectLease,
+        job: Sha256Digest,
+        result: &serde_json::Value,
+        native_split: bool,
+    ) -> Result<()> {
+        let split = self.configuration_work(job)?.is_some_and(|work| {
+            matches!(
+                work.request.configuration,
+                airk_core::service_configuration::ProjectConfiguration::SplitWork { .. }
+            )
+        });
+        ensure!(
+            split == native_split,
+            "split configuration results require their native collection proof"
+        );
         let bytes = serde_json::to_vec(result)?;
         ensure!(
             bytes.len() <= MAX_CONFIGURATION_BYTES,

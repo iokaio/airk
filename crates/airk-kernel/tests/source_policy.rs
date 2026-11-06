@@ -480,6 +480,258 @@ fn policy(kernel: &Kernel, path: &str, kind: PathScope) -> Result<SourcePolicy> 
     Ok(value)
 }
 
+#[test]
+fn positive_partition_build_coverage_and_verification_use_controls_without_indexing_siblings()
+-> Result<()> {
+    use airk_core::index_catalog::ScopeAtom;
+    for kind in [PathScope::Subtree, PathScope::Exact] {
+        let owned = owner()?;
+        let source = owned.path().join("source");
+        fs::create_dir_all(source.join("docs"))?;
+        fs::create_dir_all(source.join("private"))?;
+        let original = [
+            (".airkignore", "docs/skip.md\n"),
+            ("docs/keep.md", "A selected partition requirement.\n"),
+            ("docs/skip.md", "Ignored selected subtree document.\n"),
+            ("outside.md", "Unselected sibling document.\n"),
+            ("private/secret.md", "Denied document remains unchanged.\n"),
+        ];
+        for (path, bytes) in original {
+            fs::write(source.join(path), bytes)?;
+        }
+        fs::write(owned.path().join(".ignore"), "*.ancestor-skip\n")?;
+        fs::write(
+            source.join("docs/omitted.ancestor-skip"),
+            "Parent controls stay effective.\n",
+        )?;
+        let kernel = Kernel::open_service_collection(
+            &canonical(&source)?,
+            Some(owned.path().join("data")),
+            "partition",
+        )?;
+        kernel.configure_vectors(false)?;
+        let mut selected = policy(&kernel, "private", PathScope::Subtree)?;
+        selected.positive_includes = Some(vec![ScopeAtom {
+            source_root_id: selected.roots[0].id,
+            kind,
+            path: if kind == PathScope::Exact {
+                "docs/keep.md"
+            } else {
+                "docs"
+            }
+            .into(),
+        }]);
+        let bound = kernel.with_expected_source_policy(Some(selected.clone()))?;
+        assert!(
+            bound
+                .apply_source_policy(&selected, Incarnation::from_bytes([101; 16]))?
+                .no_index
+        );
+        bound.index()?;
+        assert_eq!(
+            bound.list_files("", 100, 65536)?.paths,
+            vec!["docs/keep.md"]
+        );
+        let coverage = bound.coverage_with_limits(
+            true,
+            airk_ingest::inventory::InventoryLimits {
+                read_bytes: 128,
+                ..Default::default()
+            },
+        )?;
+        assert!(coverage.scan_complete && !coverage.budget_exhausted);
+        assert_eq!((coverage.eligible, coverage.current), (1, 1));
+        let evidence = serde_json::to_value(
+            bound.file_info_conditional("docs/keep.md", &EvidenceReadOptions::default())?,
+        )?;
+        let verified = bound.verify_returned_sources(
+            &evidence,
+            airk_core::verification::VerificationBudget {
+                mode: airk_core::verification::VerificationMode::Report,
+                max_sources: 4,
+                max_bytes: 65536,
+                deadline_ms: 2000,
+            },
+        )?;
+        assert_eq!(verified.counts.matched_sources, 1);
+        assert_eq!(verified.counts.bytes_read, original[1].1.len() as u64);
+        let status = bound.source_policy_observation()?.unwrap();
+        assert_eq!(
+            status["control_dependencies"],
+            serde_json::to_value(airk_ingest::permanent_policy::control_dependencies())?
+        );
+        assert!(bound.file_info("outside.md").is_err());
+        assert!(
+            airk_ingest::read_selected_source_with_policy(
+                &source,
+                bound.data_dir(),
+                "outside.md",
+                Some(&selected)
+            )
+            .is_err()
+        );
+        fs::write(source.join("docs/new.md"), "Future subtree source.\n")?;
+        bound.index()?;
+        assert_eq!(
+            bound
+                .list_files("", 100, 65536)?
+                .paths
+                .iter()
+                .any(|path| path == "docs/new.md"),
+            kind == PathScope::Subtree
+        );
+        for (path, bytes) in original {
+            assert_eq!(fs::read(source.join(path))?, bytes.as_bytes());
+        }
+        assert_eq!(
+            fs::read_to_string(owned.path().join(".ignore"))?,
+            "*.ancestor-skip\n"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn positive_partition_declared_header_configuration_is_bounded_and_deny_authoritative() -> Result<()>
+{
+    use airk_core::index_catalog::ScopeAtom;
+    use airk_ingest::adapters::profile::{ExtractionPolicy, RuleMatch, SelectionRule};
+    for denied_configuration in [false, true] {
+        let owned = owner()?;
+        let source = owned.path().join("source");
+        fs::create_dir_all(source.join("include"))?;
+        let header = "class SelectedHeader { public: int value(); };\n";
+        let configuration = r#"[{"file":"include/app.h","arguments":["clang++","-x","c++"]}]"#;
+        fs::write(source.join("include/app.h"), header)?;
+        fs::write(source.join("compile_commands.json"), configuration)?;
+        fs::create_dir(source.join("unselected"))?;
+        fs::write(
+            source.join("unselected/data.json"),
+            "not a declared control\n",
+        )?;
+        let kernel = Kernel::open_service_collection(
+            &canonical(&source)?,
+            Some(owned.path().join("data")),
+            "headers",
+        )?;
+        kernel.configure_vectors(false)?;
+        kernel.configure_extraction_policy(ExtractionPolicy {
+            version: 2,
+            detail: None,
+            rules: vec![SelectionRule {
+                selector: RuleMatch::HeaderContext {
+                    prefix: "include".into(),
+                    configuration: "compile_commands.json".into(),
+                },
+                case_sensitive: true,
+                adapter_id: "cpp".into(),
+            }],
+        })?;
+        let mut selected = policy(
+            &kernel,
+            if denied_configuration {
+                "compile_commands.json"
+            } else {
+                "unselected/.ignore"
+            },
+            PathScope::Exact,
+        )?;
+        selected.positive_includes = Some(vec![ScopeAtom {
+            source_root_id: selected.roots[0].id,
+            kind: PathScope::Exact,
+            path: "include/app.h".into(),
+        }]);
+        let bound = kernel.with_expected_source_policy(Some(selected.clone()))?;
+        bound.apply_source_policy(&selected, Incarnation::from_bytes([102; 16]))?;
+        if denied_configuration {
+            let error = bound.index().unwrap_err();
+            assert!(
+                format!("{error:#}").contains("excluded_configuration_dependency"),
+                "{error:#}"
+            );
+        } else {
+            bound.index()?;
+            assert_eq!(
+                bound.list_files("", 100, 65536)?.paths,
+                vec!["include/app.h"]
+            );
+            assert_eq!(bound.file_info("include/app.h")?.language, "cpp");
+            assert!(
+                !airk_ingest::permanent_policy::allows_absolute_input_checked(
+                    &selected,
+                    &source.join("compile_commands.json")
+                )?
+            );
+            assert!(
+                !airk_ingest::permanent_policy::allows_directory_input_checked(&selected, &source)?
+            );
+        }
+        assert_eq!(fs::read_to_string(source.join("include/app.h"))?, header);
+        assert_eq!(
+            fs::read_to_string(source.join("compile_commands.json"))?,
+            configuration
+        );
+        assert_eq!(
+            fs::read_to_string(source.join("unselected/data.json"))?,
+            "not a declared control\n"
+        );
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn positive_partition_redirected_control_refuses_build_coverage_and_verification() -> Result<()> {
+    use airk_core::index_catalog::ScopeAtom;
+    let (owned, kernel) = coverage_fixture()?;
+    let source = owned.path().join("source");
+    let mut selected = policy(&kernel, "private", PathScope::Subtree)?;
+    selected.positive_includes = Some(vec![ScopeAtom {
+        source_root_id: selected.roots[0].id,
+        kind: PathScope::Exact,
+        path: "public.md".into(),
+    }]);
+    let bound = kernel.with_expected_source_policy(Some(selected.clone()))?;
+    bound.apply_source_policy(&selected, Incarnation::from_bytes([103; 16]))?;
+    bound.index()?;
+    let evidence = serde_json::to_value(
+        bound.file_info_conditional("public.md", &EvidenceReadOptions::default())?,
+    )?;
+    let original = fs::read(source.join("public.md"))?;
+    fs::write(source.join("unselected-rules"), "public.md\n")?;
+    std::os::unix::fs::symlink("unselected-rules", source.join(".airkignore"))?;
+    for error in [
+        bound.index().unwrap_err(),
+        bound.coverage(true).unwrap_err(),
+    ] {
+        assert!(
+            format!("{error:#}").contains("aliased_ignore_control"),
+            "{error:#}"
+        );
+    }
+    let verified = bound.verify_returned_sources(
+        &evidence,
+        airk_core::verification::VerificationBudget {
+            mode: airk_core::verification::VerificationMode::Report,
+            max_sources: 4,
+            max_bytes: 65536,
+            deadline_ms: 2000,
+        },
+    )?;
+    assert_eq!(verified.counts.bytes_read, 0);
+    assert_eq!(
+        verified.sources[0].state,
+        airk_core::verification::SourceCheckState::Unsupported
+    );
+    assert_eq!(bound.list_files("", 100, 65536)?.paths, vec!["public.md"]);
+    assert_eq!(fs::read(source.join("public.md"))?, original);
+    assert_eq!(
+        fs::read_to_string(source.join("unselected-rules"))?,
+        "public.md\n"
+    );
+    Ok(())
+}
+
 fn assert_no_private(value: &impl Serialize) -> Result<()> {
     let encoded = serde_json::to_string(value)?;
     for forbidden in ["private/", "HiddenOnly", "SecretContract"] {
@@ -1006,6 +1258,73 @@ fn permanent_trim_policy_binding_is_index_local_and_refuses_foreign_roots() -> R
     assert_eq!(
         fs::read(root.join("secret.md"))?,
         b"HiddenOnly source shared by independent indexes.\n"
+    );
+    Ok(())
+}
+
+#[test]
+fn service_policy_cleanup_releases_only_its_own_pin_and_preserves_actual_error_reports()
+-> Result<()> {
+    let owned = owner()?;
+    let base = owned.path().canonicalize()?;
+    let root = base.join("source");
+    let data = base.join("data");
+    fs::create_dir_all(&root)?;
+    fs::write(
+        root.join("private.md"),
+        b"private source remains unchanged\n",
+    )?;
+    fs::write(root.join("public.md"), b"healthy public evidence\n")?;
+    let kernel = Kernel::open_service_collection(&root, Some(data.clone()), "default")?;
+    kernel.configure_vectors(false)?;
+    kernel.index_service_sources()?;
+    let collection = airk_store::service::collection::Collection::existing(
+        &data,
+        &canonical(&root)?,
+        "default",
+    )?;
+    let external = collection.select()?;
+    let objects = external.store.directory().join("objects/sources");
+    let orphan = objects.join("0".repeat(64));
+    fs::write(&orphan, b"owned abandoned capture")?;
+    let policy = policy(&kernel, "private.md", PathScope::Exact)?;
+    let operation = Incarnation::from_bytes([103; 16]);
+    let pending = kernel.apply_source_policy(&policy, operation)?;
+    assert!(pending.physical_cleanup_pending);
+    assert!(
+        pending.cleanup_error.is_none(),
+        "a genuine external pin defers cleanup without an I/O error"
+    );
+    assert!(orphan.exists());
+    drop(external);
+    // An actual malformed owned-object entry must be reported, rather than
+    // being hidden forever behind the cleanup call's own selection lease.
+    let malformed = objects.join("nonregular-derived-object");
+    fs::create_dir(&malformed)?;
+    let failed = kernel.apply_source_policy(&policy, operation)?;
+    assert!(failed.physical_cleanup_pending);
+    assert!(
+        failed
+            .cleanup_error
+            .as_deref()
+            .is_some_and(|error| error.contains("nonregular current object"))
+    );
+    assert_eq!(kernel.source_policy_status()?, Some(failed));
+    assert!(malformed.is_dir());
+    fs::remove_dir(malformed)?;
+    let complete = kernel.apply_source_policy(&policy, operation)?;
+    assert!(!complete.physical_cleanup_pending);
+    assert!(complete.cleanup_error.is_none());
+    assert_eq!(kernel.source_policy_status()?, Some(complete));
+    assert!(!orphan.exists());
+    assert_eq!(
+        fs::read(root.join("private.md"))?,
+        b"private source remains unchanged\n"
+    );
+    assert!(
+        kernel.read_file("public.md", 1, 1, 4096)?.hits[0]
+            .text
+            .contains("healthy public evidence")
     );
     Ok(())
 }

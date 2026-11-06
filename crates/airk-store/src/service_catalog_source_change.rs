@@ -644,6 +644,9 @@ pub(in crate::service::registry) fn require_claim(
     if !live(db)? {
         return Ok(());
     }
+    if super::split::require_claim(db, job)? {
+        return Ok(());
+    }
     if super::policy::require_claim(db, job)? {
         return Ok(());
     }
@@ -690,6 +693,7 @@ pub(in crate::service::registry) fn validate_configuration_result(
     if !live(db)? {
         return Ok(());
     }
+    super::split::validate_result(db, job, result)?;
     super::policy::validate_result(db, job, result)?;
     let Some(work) = super::super::configuration::work(db, job)? else {
         return Ok(());
@@ -726,7 +730,7 @@ pub(in crate::service::registry) fn pinned_jobs(db: &Connection) -> Result<BTree
     if !live(db)? {
         return Ok(jobs);
     }
-    if super::state(db)?.policy_contract == 1 {
+    if super::state(db)?.policy_contract >= 1 {
         let mut statement = db.prepare(
             "SELECT json_extract(payload,'$.job') FROM index_source_policies LIMIT 1025",
         )?;
@@ -734,6 +738,19 @@ pub(in crate::service::registry) fn pinned_jobs(db: &Connection) -> Result<BTree
             .query_map([], |row| row.get::<_, String>(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         ensure!(rows.len() <= 1024, "current policy job capacity exceeded");
+        for row in rows {
+            jobs.insert(row.parse()?);
+        }
+    }
+    if super::state(db)?.policy_contract >= 2 {
+        let mut statement = db.prepare("SELECT j.job FROM index_split_jobs j WHERE EXISTS(SELECT 1 FROM index_split_participants p WHERE p.operation_id=j.operation_id AND p.active=1) LIMIT 1025")?;
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        ensure!(
+            rows.len() <= 1024,
+            "active split job receipt capacity exceeded"
+        );
         for row in rows {
             jobs.insert(row.parse()?);
         }
@@ -788,7 +805,7 @@ pub(in crate::service::registry) fn require_ready_registration(
         ready,
         "registration requires ready canonical source authority"
     );
-    if super::state(db)?.policy_contract == 1 {
+    if super::state(db)?.policy_contract >= 1 {
         let id: Option<String> = db
             .query_row(
                 "SELECT id FROM index_definitions WHERE active_registration=?1",

@@ -31,6 +31,10 @@ mod cleanup;
 pub mod integrity;
 #[path = "service_collection_purge.rs"]
 mod purge;
+#[path = "service_collection_split.rs"]
+mod split;
+pub(crate) use split::{NativeTerminalPublication, TerminalSlot, initial_split_seal};
+pub use split::{SplitBuildPermit, validate_split_store_access};
 
 #[derive(Clone, Copy, Debug)]
 pub struct SelectionContention;
@@ -83,11 +87,14 @@ struct Owner {
     /// Required reader capability, deliberately outside immutable ownership.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     required_source_policy: Option<airk_core::index_catalog::PolicyReference>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    required_split: Option<split::SplitOwnerPointer>,
 }
 
 fn owner_digest(owner: &Owner) -> Result<Sha256Digest> {
     let mut identity = owner.clone();
     identity.required_source_policy = None;
+    identity.required_split = None;
     if let Some(original) = identity.identity_data_root.take() {
         identity.data_root = original;
     }
@@ -205,6 +212,8 @@ struct Initial {
 #[derive(Clone)]
 pub struct Collection {
     directory: PathBuf,
+    split_access: Option<SplitBuildPermit>,
+    funding: Option<crate::quota::funding::FundingUse>,
     owner: Owner,
     binding: Sha256Digest,
 }
@@ -376,12 +385,23 @@ struct PreparedMetadata {
     _reservation: crate::quota::Reservation,
 }
 fn prepare<T: Serialize>(collection: &Collection, value: &T) -> Result<PreparedMetadata> {
+    let quota = collection.context_quota()?;
+    prepare_with_quota(collection, value, &quota)
+}
+fn prepare_with_quota<T: Serialize>(
+    collection: &Collection,
+    value: &T,
+    quota: &Quota,
+) -> Result<PreparedMetadata> {
+    ensure!(
+        quota.root() == Path::new(&collection.owner.data_root),
+        "service metadata quota root differs"
+    );
     let bytes = serde_json::to_vec(value)?;
     ensure!(
         bytes.len() <= MAX_METADATA,
         "service collection metadata too large"
     );
-    let quota = Quota::open_service(Path::new(&collection.owner.data_root))?;
     let reservation = quota.reserve(&collection.owner.collection, MAX_METADATA as u64 * 2)?;
     reservation.charge(bytes.len() as u64)?;
     let mut temporary = tempfile::Builder::new()
@@ -400,6 +420,48 @@ fn write<T: Serialize>(collection: &Collection, name: &str, value: &T) -> Result
 }
 
 impl Collection {
+    /// Runtime-only paid operation context; ordinary collection opens never
+    /// infer or adopt an operation merely from its backing directory.
+    pub fn with_operation_funding(
+        mut self,
+        funding: crate::quota::funding::FundingUse,
+    ) -> Result<Self> {
+        let permit = self
+            .split_access
+            .as_ref()
+            .context("collection funding requires its exact claimed split permit")?;
+        permit.validate_funding_use(&funding)?;
+        let store = self
+            .select_for_diagnostics()?
+            .with_split_access(permit.clone())?;
+        Quota::for_store(&store)?.validate_funding_store(&funding, &store)?;
+        self.funding = Some(funding);
+        Ok(self)
+    }
+    fn copy_store_context(&self, mut store: FileStore) -> FileStore {
+        store.split_access = self.split_access.clone();
+        store.funding = self.funding.clone();
+        store
+    }
+    fn context_store(&self, directory: PathBuf) -> Result<FileStore> {
+        let mut store = FileStore::new(directory);
+        if let Some(permit) = &self.split_access {
+            store = store.with_split_access(permit.clone())?;
+        }
+        if let Some(funding) = &self.funding {
+            store = store.with_operation_funding(funding.clone())?;
+        }
+        Ok(store)
+    }
+    fn context_quota(&self) -> Result<Quota> {
+        let quota = Quota::open_service(Path::new(&self.owner.data_root))?;
+        if let Some(funding) = &self.funding {
+            quota.validate_funding_store(funding, &FileStore::new(&self.directory))?;
+            quota.with_funding(funding.clone())
+        } else {
+            Ok(quota)
+        }
+    }
     /// Reference observed when this stable collection owner was opened.
     pub fn required_source_policy(&self) -> Option<airk_core::index_catalog::PolicyReference> {
         self.owner.required_source_policy.clone()
@@ -411,6 +473,19 @@ impl Collection {
         &self,
         policy: &airk_core::source_policy::SourcePolicy,
     ) -> Result<()> {
+        let quota = self.context_quota()?;
+        self.retain_source_policy_with_quota(policy, &quota)
+    }
+    /// Preserve the exact native caller's prepaid metadata allowance.
+    pub fn retain_source_policy_with_quota(
+        &self,
+        policy: &airk_core::source_policy::SourcePolicy,
+        quota: &Quota,
+    ) -> Result<()> {
+        ensure!(
+            quota.root() == Path::new(&self.owner.data_root),
+            "source policy quota root differs"
+        );
         policy.validate()?;
         let registration = airk_core::service::ProjectRegistration::new(
             self.owner.root.clone(),
@@ -449,7 +524,11 @@ impl Collection {
             }
         }
         owner.required_source_policy = Some(reference);
-        write(self, "service-owner.json", &owner)
+        let prepared = prepare_with_quota(self, &owner, quota)?;
+        crate::durability::persist_synced(
+            prepared.temporary,
+            &self.directory.join("service-owner.json"),
+        )
     }
 
     fn sweep_metadata_scratch(&self) -> Result<()> {
@@ -504,7 +583,7 @@ impl Collection {
             let directory = self.slot(retired.slot);
             // Recreate only a receipt-bound empty slot when a crash separated
             // deletion from allowance retirement; never initialize a database.
-            let store = FileStore::new(&directory);
+            let store = self.context_store(directory.clone())?;
             let writer = store.lock()?;
             if directory.try_exists()? {
                 if directory.join("current-owner.json").try_exists()? {
@@ -516,7 +595,7 @@ impl Collection {
                         "retirement ownership differs from receipt"
                     );
                 }
-                let _gate = match Gate::exclusive(&store, &writer) {
+                let gate = match Gate::exclusive(&store, &writer) {
                     Ok(gate) => gate,
                     Err(error)
                         if error
@@ -527,23 +606,43 @@ impl Collection {
                     }
                     Err(error) => return Err(error),
                 };
+                let quota = Quota::for_store(&store)?;
+                let incarnation = retired.incarnation.unwrap_or(retired.slot);
+                for grant in quota.current_grants(&writer)? {
+                    if grant.scope().incarnation == incarnation {
+                        grant.require_release_authority()?;
+                    }
+                }
                 let (files, mut directories) = retirement_inventory(&directory)?;
-                for file in files.iter().take(4096) {
+                for file in files
+                    .iter()
+                    .filter(|file| {
+                        file.file_name()
+                            .is_none_or(|name| name != "current-owner.json")
+                    })
+                    .take(4096)
+                {
                     fs::remove_file(file)?;
                     report.removed_files += 1;
                 }
                 if files.len() > 4096 {
                     return Ok(report);
                 }
+                if self.funding.is_some() {
+                    store.retire_operation_current_grants(&writer, &quota, incarnation, &gate)?;
+                }
+                for grant in quota.current_grants(&writer)? {
+                    if grant.scope().incarnation == incarnation {
+                        grant.release(&writer)?;
+                    }
+                }
+                if directory.join("current-owner.json").try_exists()? {
+                    fs::remove_file(directory.join("current-owner.json"))?;
+                    report.removed_files += 1;
+                }
                 directories.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
                 for directory in directories {
                     fs::remove_dir(directory)?;
-                }
-                let quota = Quota::open_service(Path::new(&self.owner.data_root))?;
-                for grant in quota.current_grants(&writer)? {
-                    if Some(grant.scope().incarnation) == retired.incarnation {
-                        grant.release(&writer)?;
-                    }
                 }
             }
             // The receipt remains until removal is proven, so interrupted cleanup
@@ -585,6 +684,8 @@ impl Collection {
         }
         let owner = setup::initial_owner(&data_root, root, collection)?;
         let mut selected = Self {
+            split_access: None,
+            funding: None,
             binding: owner_digest(&owner)?,
             directory,
             owner,
@@ -680,6 +781,8 @@ impl Collection {
             "foreign service collection binding"
         );
         Ok(Self {
+            split_access: None,
+            funding: None,
             binding: owner_digest(&owner)?,
             owner,
             directory,
@@ -717,19 +820,21 @@ impl Collection {
     /// The OS object lease is acquired while manifest replacement is excluded.
     /// Keep it through the whole request, not in an idle kernel/session cache.
     pub fn select(&self) -> Result<Selection> {
+        self.check_split_access()?;
         // Concurrent readers only exclude manifest replacement, not each other.
         let _lock =
             retry_manifest_lock(|| super::acquire_shared_file(&self.directory, "manifest.lock"))?;
         let manifest = self.manifest()?;
-        let store = FileStore::new(self.slot(manifest.active));
+        let store = self.context_store(self.slot(manifest.active))?;
         let gate = Gate::shared(&store)?;
         Ok(Selection { store, _gate: gate })
     }
     pub(crate) fn select_existing_locked(&self) -> Result<ExistingSelection> {
+        self.check_split_access()?;
         let lock =
             retry_manifest_lock(|| super::acquire_existing_file(&self.directory, "manifest.lock"))?;
         let manifest = self.manifest()?;
-        let store = FileStore::new(self.slot(manifest.active));
+        let store = self.context_store(self.slot(manifest.active))?;
         let gate = Gate::shared_existing(&store)?;
         Ok(ExistingSelection {
             store,
@@ -848,7 +953,8 @@ impl Collection {
 
 impl Replacement {
     pub fn store(&self) -> FileStore {
-        FileStore::new(self.collection.slot(self.intent.slot))
+        self.collection
+            .copy_store_context(FileStore::new(self.collection.slot(self.intent.slot)))
     }
     /// Kernel validation must also verify retained inputs and applied/live source
     /// configuration before this coherent, revision-bound handoff.
@@ -872,7 +978,9 @@ impl Replacement {
             digest(&manifest)? == self.intent.expected,
             "replacement selection plan expired"
         );
-        let old = FileStore::new(self.collection.slot(manifest.active));
+        let old = self
+            .collection
+            .context_store(self.collection.slot(manifest.active))?;
         let old_scope = old.current_scope(
             &self.collection.owner.root,
             &self.collection.owner.collection,
@@ -1049,6 +1157,13 @@ fn settings_id(settings: &[(&str, Vec<u8>)]) -> Sha256Digest {
         parts.push(bytes.as_slice());
     }
     framed_digest(b"service-saved-configuration/1.4", &parts)
+}
+/// Read-only native review uses the already existing writer advisory without
+/// creating or rewriting a writer marker.
+pub fn inspect_settings_digest(source: &FileStore, root: &str) -> Result<Sha256Digest> {
+    validate_split_store_access(source)?;
+    let _writer = source.existing_writer_exclusion()?;
+    Ok(settings_id(&settings(source, root)?))
 }
 pub fn settings_digest(source: &FileStore, root: &str) -> Result<Sha256Digest> {
     let _writer = source.lock()?;

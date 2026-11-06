@@ -433,7 +433,7 @@ pub async fn serve_with_idle(root: &Path, idle_grace: Option<Duration>) -> Resul
                     }
                     1 => {
                         ensure!(
-                            catalog.activated && catalog.policy_contract <= 1,
+                            catalog.activated && catalog.policy_contract <= airk_store::service::registry::catalog::SUPPORTED_POLICY_CONTRACT,
                             "catalog_authority_not_ready"
                         );
                         Some(crate::catalog_admission::NativeCatalogAdmission::new(

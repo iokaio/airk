@@ -246,6 +246,30 @@ impl crate::FileStore {
         );
         Ok(Some(scope))
     }
+    /// Read the bounded native owner through its retained directory while the
+    /// caller's exact gate already excludes requests. Never reacquire that gate.
+    pub(crate) fn current_owned_scope_under_gate(
+        &self,
+        gate: &gate::Gate,
+    ) -> Result<Option<CurrentScope>> {
+        use crate::service::registry::catalog::setup::storage::SetupDirectory;
+        gate.require_store(self)?;
+        let pin = SetupDirectory::open_canonical(self.directory())?;
+        let identity = pin.identity()?;
+        let scope = database::owned_scope_at(self.directory(), &pin)?;
+        if let Some(scope) = &scope {
+            ensure!(
+                self.collection_id()? == scope.collection,
+                "foreign current owner"
+            );
+        }
+        gate.require_store(self)?;
+        ensure!(
+            SetupDirectory::open_canonical(self.directory())?.identity()? == identity,
+            "current owner directory changed"
+        );
+        Ok(scope)
+    }
     pub(crate) fn current_deletion_gate(&self, writer: &crate::WriterLock) -> Result<gate::Gate> {
         gate::Gate::exclusive(self, writer)
     }

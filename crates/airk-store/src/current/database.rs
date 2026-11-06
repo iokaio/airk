@@ -94,6 +94,9 @@ pub(super) fn obsolete_lexical_scope(directory: &Path) -> Result<Option<CurrentS
 
 fn read_owner(directory: &Path) -> Result<Owner> {
     let owner = read_owner_any(directory)?;
+    validate_owned_owner(directory, owner)
+}
+fn validate_owned_owner(directory: &Path, owner: Owner) -> Result<Owner> {
     if let Some(incarnation) = crate::FileStore::new(directory).service_incarnation()? {
         ensure!(
             owner.scope.incarnation == incarnation,
@@ -130,7 +133,10 @@ fn read_owner_any(directory: &Path) -> Result<Owner> {
         bytes.len() <= 65_536,
         "current ownership header exceeds bound"
     );
-    let owner: Owner = serde_json::from_slice(&bytes)?;
+    parse_owner(&bytes)
+}
+fn parse_owner(bytes: &[u8]) -> Result<Owner> {
+    let owner: Owner = serde_json::from_slice(bytes)?;
     validate_capacity(owner.capacity)?;
     ensure!(
         owner.query_projection_version.is_none_or(|version| (1
@@ -144,6 +150,25 @@ fn read_owner_any(directory: &Path) -> Result<Owner> {
         "foreign current ownership header"
     );
     Ok(owner)
+}
+pub(super) fn owned_scope_at(
+    directory: &Path,
+    pin: &crate::service::registry::catalog::setup::storage::SetupDirectory,
+) -> Result<Option<CurrentScope>> {
+    let bytes = match pin.read_file(std::ffi::OsStr::new(OWNER_FILE), 65_536) {
+        Ok(bytes) => bytes,
+        Err(error)
+            if error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
+        {
+            return Ok(None);
+        }
+        Err(error) => return Err(error),
+    };
+    Ok(Some(
+        validate_owned_owner(directory, parse_owner(&bytes)?)?.scope,
+    ))
 }
 
 pub(crate) fn create_owner(directory: &Path, scope: &CurrentScope, capacity: u64) -> Result<()> {

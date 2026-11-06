@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { SplitIntent, SPLIT_JOURNAL_BYTES, splitIntentKey, validateSplitApply, validateSplitRecover, validateSplitRecoveryReceipt, validateSplitSnapshot } from './indexingSplit';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { identifier, MutationIntent, record, RequestKey, ServiceClient, ServiceError, validateMutationIntent, count } from './serviceClient';
@@ -10,10 +11,12 @@ export interface IntentStorage {
     update(key: string, value: unknown): Thenable<void>;
 }
 export interface LifecycleIntent { lifecycle:{caller:string;key:RequestKey;action:'stop'|'restart';expected_instance:string;runtime:string} }
-export type ConsoleIntent=MutationIntent|LifecycleIntent|CatalogApplyIntent|IndexSetupApplyIntent|SourceResolveIntent|PolicyResumeIntent;
-export interface SavedIntent { schema: 1; scope: string; title: string; intent: ConsoleIntent; nativeObservation?:Record<string,unknown>; nativeFenceObservation?:Record<string,unknown>; nativeSetupObservation?:Record<string,unknown>; nativeSourceObservation?:Record<string,unknown>; localDispatchState?:'submitted'|'known_receipt' }
+export type ConsoleIntent=MutationIntent|LifecycleIntent|CatalogApplyIntent|IndexSetupApplyIntent|SourceResolveIntent|PolicyResumeIntent|SplitIntent;
+export interface SavedIntent { schema: 1; scope: string; title: string; intent: ConsoleIntent; nativeObservation?:Record<string,unknown>; nativeFenceObservation?:Record<string,unknown>; nativeSetupObservation?:Record<string,unknown>; nativeSourceObservation?:Record<string,unknown>; localDispatchState?:'submitted'|'known_receipt'; reservedObservationBytes?:number; nativeSplitReceipt?:Record<string,unknown>; nativeSplitSnapshot?:Record<string,unknown> }
 function validate(input:unknown):ConsoleIntent {
     const object=record(input);
+    if('catalog_split_apply' in object)return validateSplitApply(input);
+    if('catalog_split_recover' in object)return validateSplitRecover(input);
     if('catalog_policy_resume' in object)return validatePolicyResumeIntent(input);
     if('catalog_source_change_resolve' in object)return validateSourceResolveIntent(input);
     if('catalog_index_setup_apply' in object)return validateIndexSetupApply(input);
@@ -28,6 +31,7 @@ function validate(input:unknown):ConsoleIntent {
     return input as LifecycleIntent;
 }
 function identity(intent:ConsoleIntent):{namespace:string;id:string}{
+    if('catalog_split_apply' in intent||'catalog_split_recover' in intent){const key=splitIntentKey(intent);return {namespace:key.namespace,id:key.nonce};}
     if('catalog_policy_resume' in intent)return {namespace:intent.catalog_policy_resume.key.namespace,id:intent.catalog_policy_resume.key.nonce};
     if('catalog_source_change_resolve' in intent)return {namespace:intent.namespace,id:intent.catalog_source_change_resolve.begin_operation};
     if('catalog_index_setup_apply' in intent){const key=record(record(intent.catalog_index_setup_apply.draft.request).key);return {namespace:identifier(key.namespace,16),id:identifier(key.nonce,16)};}
@@ -38,6 +42,8 @@ const PREFIX = 'airk.service.intent.1.';
 const LIMIT = 64;
 const MAX_BYTES = 65536;
 const MAX_TOTAL_BYTES = 64 * 32768;
+function splitIntent(value:unknown):boolean {const intent=record(value);return 'catalog_split_apply' in intent||'catalog_split_recover' in intent;}
+function chargedRecordBytes(value:unknown):number {const saved=record(value),bytes=Buffer.byteLength(JSON.stringify(saved));return saved.reservedObservationBytes===SPLIT_JOURNAL_BYTES?Math.max(bytes,SPLIT_JOURNAL_BYTES):bytes;}
 /** Each immutable request has its own storage key: windows never rewrite a shared list. */
 export class IntentJournal {
     readonly scope: string;
@@ -55,9 +61,10 @@ export class IntentJournal {
         // of poisoning the journal or discarding an unknown outcome.
         return keys.filter(key=>key.startsWith(`${PREFIX}${this.scope}.`)).sort().slice(0,LIMIT).map(key=>{
             const value=record(this.storage.get(key));
-            if(Buffer.byteLength(JSON.stringify(value))>MAX_BYTES||value.schema!==1||value.scope!==this.scope
+            if(Buffer.byteLength(JSON.stringify(value))>(splitIntent(value.intent)?SPLIT_JOURNAL_BYTES:MAX_BYTES)||value.schema!==1||value.scope!==this.scope
                 ||typeof value.title!=='string'||value.title.length>160||value.localDispatchState!==undefined&&!['submitted','known_receipt'].includes(String(value.localDispatchState)))throw new ServiceError('local_intent_record_invalid');
             const intent=validate(value.intent);
+            if(splitIntent(intent)?value.reservedObservationBytes!==SPLIT_JOURNAL_BYTES:value.reservedObservationBytes!==undefined)throw new ServiceError('local_intent_terminal_reservation_invalid');
             const requestKey=identity(intent);
             if(requestKey.namespace!==this.namespace)throw new ServiceError('local_intent_scope_mismatch');
             const id=identifier(key.slice(key.lastIndexOf('.')+1),16);
@@ -74,7 +81,7 @@ export class IntentJournal {
         const key=identity(copied);
         const id=identifier(key.id,16);
         if(key.namespace!==this.namespace)throw new ServiceError('local_intent_scope_mismatch');
-        const value:SavedIntent={schema:1,scope:this.scope,title,intent:copied};
+        const value:SavedIntent={schema:1,scope:this.scope,title,intent:copied,...(splitIntent(copied)?{reservedObservationBytes:SPLIT_JOURNAL_BYTES,localDispatchState:'submitted' as const}:{})};
         if('catalog_source_change_resolve' in copied){
             if(!nativeObservation)throw new ServiceError('native_source_begin_observation_required');const observed=sourceChangeObservation(nativeObservation);if(!observed)throw new ServiceError('native_source_begin_observation_required');
             const begin=record(observed.begin),metadata=record(begin.metadata),request=record(begin.request);
@@ -87,7 +94,7 @@ export class IntentJournal {
             value.nativeObservation=structuredClone(nativeObservation);
         }else if(nativeObservation!==undefined)throw new ServiceError('unexpected_local_native_observation');
         return this.serialize(async()=>{
-            if(!title||title.length>160||Buffer.byteLength(JSON.stringify(value))>MAX_BYTES)throw new ServiceError('local_intent_record_oversize');
+            if(!title||title.length>160||Buffer.byteLength(JSON.stringify(value))>(splitIntent(copied)?SPLIT_JOURNAL_BYTES:MAX_BYTES))throw new ServiceError('local_intent_record_oversize');
             this.list();
             const existing=this.storage.get(this.key(id));
             if(existing!==undefined){
@@ -97,8 +104,8 @@ export class IntentJournal {
             }
             const savedKeys=this.storage.keys().filter(key=>key.startsWith(PREFIX));
             if(savedKeys.length>=LIMIT)throw new ServiceError('local_intent_capacity_exceeded');
-            const totalBytes=savedKeys.reduce((sum,key)=>{const saved=this.storage.get(key);return sum+(saved===undefined?0:Buffer.byteLength(JSON.stringify(saved)));},0);
-            if(totalBytes+Buffer.byteLength(JSON.stringify(value))>MAX_TOTAL_BYTES)throw new ServiceError('local_intent_byte_capacity_exceeded');
+            const totalBytes=savedKeys.reduce((sum,key)=>{const saved=this.storage.get(key);return sum+(saved===undefined?0:chargedRecordBytes(saved));},0);
+            if(totalBytes+chargedRecordBytes(value)>MAX_TOTAL_BYTES)throw new ServiceError('local_intent_byte_capacity_exceeded');
             await this.storage.update(this.key(id),value);
             return id;
         });
@@ -107,16 +114,23 @@ export class IntentJournal {
     observeCatalog(id:string,response:Record<string,unknown>):Promise<void>{
         const copied=structuredClone(response);
         return this.serialize(async()=>{
-            const saved=this.list().find(entry=>entry.id===id);if(!saved||!('catalog_apply' in saved.value.intent)&&!('catalog_index_setup_apply' in saved.value.intent)&&!('catalog_source_change_resolve' in saved.value.intent)&&!('catalog_policy_resume' in saved.value.intent))throw new ServiceError('local_catalog_intent_not_found',true);
+            const saved=this.list().find(entry=>entry.id===id);if(!saved||!('catalog_apply' in saved.value.intent)&&!('catalog_index_setup_apply' in saved.value.intent)&&!('catalog_source_change_resolve' in saved.value.intent)&&!('catalog_policy_resume' in saved.value.intent)&&!('catalog_split_apply' in saved.value.intent)&&!('catalog_split_recover' in saved.value.intent))throw new ServiceError('local_catalog_intent_not_found',true);
+            let splitSnapshot:Record<string,unknown>|undefined,splitReceipt:Record<string,unknown>|undefined;
+            if('catalog_split_apply'in saved.value.intent||'catalog_split_recover'in saved.value.intent){
+                const intent=saved.value.intent;
+                if(copied.snapshot!=null){try{const candidate=validateSplitSnapshot(copied.snapshot,'catalog_split_apply'in intent?intent.catalog_split_apply.draft:undefined);if('catalog_split_recover'in intent&&(!isDeepStrictEqual(candidate.request,intent.reviewed.request)||!isDeepStrictEqual(candidate.baseline,intent.reviewed.baseline)||!isDeepStrictEqual(candidate.plan,intent.reviewed.plan)))throw new Error('crossed stored split status');splitSnapshot=candidate;}catch{/* Retain invalid native data for diagnosis without treating it as accepted proof. */}}
+                if('catalog_split_recover'in intent&&copied.receipt!=null){try{splitReceipt=validateSplitRecoveryReceipt(copied.receipt,intent);}catch{/* An invalid acknowledgment cannot replace historical accepted proof. */}}
+            }
+            const knownSplit='catalog_split_apply'in saved.value.intent?splitSnapshot!==undefined:splitReceipt!==undefined&&record(splitReceipt.outcome).outcome!=='unknown';
             const typedFence=['catalog_applied','catalog_receipt','catalog_outcome_unknown'].includes(String(copied.status));
             const priorFence=saved.value.nativeFenceObservation,observed=typedFence?catalogFenceObservation(copied):undefined,prior=priorFence?catalogFenceObservation(priorFence):undefined,observedFence=typedFence&&(copied.fenced_receipt!=null||observed!==undefined);
             const wasApplied=!!priorFence&&(priorFence.fenced_receipt!=null||prior?.state==='applied');
             const isApplied=copied.fenced_receipt!=null||observed?.state==='applied';
             const setup='catalog_index_setup_apply' in saved.value.intent&&indexSetupObservation(copied);
             const source='catalog_source_change_resolve' in saved.value.intent,knownSource=sourceChangeObservation(saved.value.nativeObservation??{})?saved.value.nativeObservation:saved.value.nativeSourceObservation;
-            const value:SavedIntent={...saved.value,nativeObservation:copied,...(observedFence&&(!wasApplied||isApplied)?{nativeFenceObservation:copied}:{}),...(setup?{nativeSetupObservation:copied}:{}),...(source?{nativeSourceObservation:sourceChangeObservation(copied)?undefined:knownSource}:{}),...('catalog_index_setup_apply' in saved.value.intent?{localDispatchState:copied.status==='catalog_index_setup_receipt'&&copied.receipt!=null?'known_receipt' as const:'submitted' as const}:{})},bytes=Buffer.byteLength(JSON.stringify(value));
-            if(bytes>MAX_BYTES)throw new ServiceError('local_intent_record_oversize',true);
-            const total=this.storage.keys().filter(key=>key.startsWith(PREFIX)&&key!==this.key(id)).reduce((sum,key)=>{const item=this.storage.get(key);return sum+(item===undefined?0:Buffer.byteLength(JSON.stringify(item)));},bytes);
+            const value:SavedIntent={...saved.value,nativeObservation:copied,...(splitIntent(saved.value.intent)&&knownSplit?{localDispatchState:'known_receipt' as const}:{}),...(splitSnapshot?{nativeSplitSnapshot:structuredClone(splitSnapshot)}:{}),...(splitReceipt&&record(splitReceipt.outcome).outcome!=='unknown'?{nativeSplitReceipt:structuredClone(splitReceipt)}:{}),...(observedFence&&(!wasApplied||isApplied)?{nativeFenceObservation:copied}:{}),...(setup?{nativeSetupObservation:copied}:{}),...(source?{nativeSourceObservation:sourceChangeObservation(copied)?undefined:knownSource}:{}),...('catalog_index_setup_apply' in saved.value.intent?{localDispatchState:copied.status==='catalog_index_setup_receipt'&&copied.receipt!=null?'known_receipt' as const:'submitted' as const}:{})},bytes=Buffer.byteLength(JSON.stringify(value));
+            if(bytes>(splitIntent(saved.value.intent)?SPLIT_JOURNAL_BYTES:MAX_BYTES))throw new ServiceError('local_intent_record_oversize',true);
+            const total=this.storage.keys().filter(key=>key.startsWith(PREFIX)&&key!==this.key(id)).reduce((sum,key)=>{const item=this.storage.get(key);return sum+(item===undefined?0:chargedRecordBytes(item));},chargedRecordBytes(value));
             if(total>MAX_TOTAL_BYTES)throw new ServiceError('local_intent_byte_capacity_exceeded',true);
             await this.storage.update(this.key(id),value);
         });
@@ -125,20 +139,20 @@ export class IntentJournal {
         return this.serialize(async()=>{
             const saved=this.list().find(entry=>entry.id===id);if(!saved)throw new ServiceError('local_intent_not_found');
             const value:SavedIntent={...saved.value,localDispatchState:'submitted'},bytes=Buffer.byteLength(JSON.stringify(value));
-            if(bytes>MAX_BYTES)throw new ServiceError('local_intent_record_oversize');
-            const total=this.storage.keys().filter(key=>key.startsWith(PREFIX)&&key!==this.key(id)).reduce((sum,key)=>{const item=this.storage.get(key);return sum+(item===undefined?0:Buffer.byteLength(JSON.stringify(item)));},bytes);
+            if(bytes>(splitIntent(saved.value.intent)?SPLIT_JOURNAL_BYTES:MAX_BYTES))throw new ServiceError('local_intent_record_oversize');
+            const total=this.storage.keys().filter(key=>key.startsWith(PREFIX)&&key!==this.key(id)).reduce((sum,key)=>{const item=this.storage.get(key);return sum+(item===undefined?0:chargedRecordBytes(item));},chargedRecordBytes(value));
             if(total>MAX_TOTAL_BYTES)throw new ServiceError('local_intent_byte_capacity_exceeded');await this.storage.update(this.key(id),value);
         });
     }
     async reconcile(client:ServiceClient,onReceipt:(response:Record<string,unknown>)=>Promise<void>,onRemoved?:(project:string)=>Promise<void>,onFailure?:(id:string,error:unknown)=>void):Promise<void>{
-        const candidates=this.list().filter(saved=>!('lifecycle' in saved.value.intent)&&!('plan_create' in saved.value.intent)&&!('catalog_apply' in saved.value.intent)&&!('catalog_index_setup_apply' in saved.value.intent)&&!('catalog_source_change_resolve' in saved.value.intent)&&!('catalog_policy_resume' in saved.value.intent));
+        const candidates=this.list().filter(saved=>!('lifecycle' in saved.value.intent)&&!('plan_create' in saved.value.intent)&&!('catalog_apply' in saved.value.intent)&&!('catalog_index_setup_apply' in saved.value.intent)&&!('catalog_source_change_resolve' in saved.value.intent)&&!('catalog_policy_resume' in saved.value.intent)&&!('catalog_split_apply' in saved.value.intent)&&!('catalog_split_recover' in saved.value.intent));
         const after=this.reconcileAfter??'';
         const batch=[...candidates.filter(saved=>saved.id>after),...candidates.filter(saved=>saved.id<=after)].slice(0,8);
         for(const saved of batch){
             this.reconcileAfter=saved.id;
             try{
                 const intent=saved.value.intent;
-                if('lifecycle' in intent||'plan_create' in intent||'catalog_index_setup_apply' in intent||'catalog_source_change_resolve' in intent||'catalog_policy_resume' in intent)continue;
+                if('lifecycle' in intent||'plan_create' in intent||'catalog_index_setup_apply' in intent||'catalog_source_change_resolve' in intent||'catalog_policy_resume' in intent||'catalog_split_apply' in intent||'catalog_split_recover' in intent)continue;
                 if('catalog_apply' in intent){
                     const request=intent.catalog_apply.request;
                     const result=await client.rpc({catalog_receipt:{caller:request.caller,key:request.key}},'catalog_receipt');
@@ -168,6 +182,7 @@ export class IntentJournal {
         // Errors, including a lost acknowledgement, preserve the immutable record.
         const intent=saved.value.intent;
         // Catalog applies are never replayed from a saved journal entry. Only receipt reads may settle them.
+        if('catalog_split_apply' in intent||'catalog_split_recover' in intent)throw new ServiceError('split_requires_exact_native_receipt_reconciliation');
         if('catalog_apply' in intent)throw new ServiceError('catalog_apply_requires_receipt_reconciliation');
         if('catalog_index_setup_apply' in intent)throw new ServiceError('index_setup_requires_receipt_reconciliation');
         if('catalog_source_change_resolve' in intent)throw new ServiceError('source_resolution_requires_observation');

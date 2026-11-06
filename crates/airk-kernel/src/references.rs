@@ -472,12 +472,12 @@ impl Kernel {
         let mut evidence = SearchResponse {
             execution: None,
             publication: Some(publication),
-            semantic_readiness: if !read.restricts_paths() {
+            semantic_readiness: if !read.selected_scope_restricts_paths() {
                 Some(current::enrichment::readiness(&read, &self.store)?)
             } else {
                 None
             },
-            discovery_readiness: if !read.restricts_paths() {
+            discovery_readiness: if !read.selected_scope_restricts_paths() {
                 Some(current::progress::readiness(&read, &self.store)?)
             } else {
                 None

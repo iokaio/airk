@@ -19,8 +19,9 @@ use windows_sys::{
         Foundation::OBJECT_ATTRIBUTES,
         Storage::FileSystem::{
             FILE_CREATE, FILE_DIRECTORY_FILE, FILE_NON_DIRECTORY_FILE, FILE_OPEN, FILE_OPEN_IF,
-            FILE_OPEN_REPARSE_POINT, FILE_RENAME_INFORMATION, FILE_SYNCHRONOUS_IO_NONALERT,
-            FileFsFullSizeInformation, FileRenameInformation, NtCreateFile, NtFlushBuffersFileEx,
+            FILE_OPEN_REPARSE_POINT, FILE_RENAME_INFORMATION, FILE_RENAME_POSIX_SEMANTICS,
+            FILE_RENAME_REPLACE_IF_EXISTS, FILE_SYNCHRONOUS_IO_NONALERT, FileFsFullSizeInformation,
+            FileRenameInformation, FileRenameInformationEx, NtCreateFile, NtFlushBuffersFileEx,
             NtQueryVolumeInformationFile, NtSetInformationFile,
         },
         System::SystemServices::FILE_FS_FULL_SIZE_INFORMATION,
@@ -275,6 +276,33 @@ impl SetupDirectory {
         target: &OsStr,
         after_source_open: impl FnOnce(),
     ) -> Result<()> {
+        self.publish_named(name, owned, destination, target, false, after_source_open)
+    }
+    pub(crate) fn replace_file(
+        &self,
+        name: &OsStr,
+        owned: &File,
+        target: &OsStr,
+        expected: &File,
+    ) -> Result<()> {
+        let source = self.open_file(name, SetupFileMode::Read)?;
+        let destination = self.open_file(target, SetupFileMode::Read)?;
+        ensure!(
+            native_file_identity(&source)? == native_file_identity(owned)?
+                && native_file_identity(&destination)? == native_file_identity(expected)?,
+            "native metadata replacement identity changed"
+        );
+        self.publish_named(name, owned, self, target, true, || {})
+    }
+    fn publish_named(
+        &self,
+        name: &OsStr,
+        owned: &File,
+        destination: &Self,
+        target: &OsStr,
+        replace: bool,
+        after_source_open: impl FnOnce(),
+    ) -> Result<()> {
         let source = self.relative(name, DELETE | FILE_READ_ATTRIBUTES, FILE_OPEN, 0)?;
         let actual = native_file_identity(&source)?;
         let expected = native_file_identity(owned)?;
@@ -286,6 +314,13 @@ impl SetupDirectory {
             source.metadata()?.is_dir() || (source.metadata()?.is_file() && actual.2 == 1),
             "linked or unsupported setup publication source"
         );
+        // An ancestry pin grants traversal, not publication. Reopen the SAME
+        // retained directory with the access required by native rename instead
+        // of broadening every read-only pin or reopening a mutable pathname.
+        let target_directory = destination.reopen_exact_directory(
+            FILE_TRAVERSE | FILE_READ_ATTRIBUTES | FILE_ADD_FILE,
+            "NtCreateFile empty-name setup publication directory",
+        )?;
         // The rename below uses THIS checked HANDLE, never the source name
         // again. A replacement arriving after this point cannot be published.
         after_source_open();
@@ -299,8 +334,19 @@ impl SetupDirectory {
         // no-replacement and the retained destination are actual native inputs.
         unsafe {
             let info = buffer.as_mut_ptr().cast::<FILE_RENAME_INFORMATION>();
-            (*info).Anonymous.ReplaceIfExists = false;
-            (*info).RootDirectory = destination.file.as_raw_handle().cast();
+            // Keep the expected target HANDLE alive across replacement. Classic
+            // rename refuses an open target even with share-delete; the Ex
+            // class explicitly supports this with POSIX_SEMANTICS. No readonly
+            // override or permission bypass is requested.
+            let information_class = if replace {
+                (*info).Anonymous.Flags =
+                    FILE_RENAME_REPLACE_IF_EXISTS | FILE_RENAME_POSIX_SEMANTICS;
+                FileRenameInformationEx
+            } else {
+                (*info).Anonymous.ReplaceIfExists = false;
+                FileRenameInformation
+            };
+            (*info).RootDirectory = target_directory.as_raw_handle().cast();
             (*info).FileNameLength = (target.len() * 2) as u32;
             std::ptr::copy_nonoverlapping(
                 target.as_ptr(),
@@ -314,9 +360,9 @@ impl SetupDirectory {
                     &mut status,
                     info.cast(),
                     length as u32,
-                    FileRenameInformation,
+                    information_class,
                 ),
-                "NtSetInformationFile no-replace publication",
+                "NtSetInformationFile setup publication",
             )?;
         }
         destination.sync()?;

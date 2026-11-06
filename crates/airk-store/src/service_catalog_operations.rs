@@ -438,10 +438,31 @@ fn put_scopes(db: &Connection, m: &Membership, grant: Option<GrantId>) -> Result
     }
     Ok(())
 }
-fn mutate(db: &Connection, request: &CatalogRequest, runtime: &std::path::Path) -> Result<()> {
+pub(super) fn mutate(
+    db: &Connection,
+    request: &CatalogRequest,
+    runtime: &std::path::Path,
+) -> Result<()> {
+    mutate_with_context(db, request, runtime, MutationContext::Commit)
+}
+
+/// Native implementation context only. Preview always runs inside the owning
+/// savepoint and rolls back; it cannot attest a completed runtime fence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum MutationContext {
+    Commit,
+    Preview,
+}
+
+fn mutate_with_context(
+    db: &Connection,
+    request: &CatalogRequest,
+    runtime: &std::path::Path,
+    context: MutationContext,
+) -> Result<()> {
     let op = &request.operation;
     match op {
-        CatalogOperation::ChangeIndexPolicy { .. } => super::policy::mutate(db,request)?,
+        CatalogOperation::ChangeIndexPolicy { .. } => super::policy::mutate(db,request,context)?,
         CatalogOperation::BeginIndexSourceChange {..}
         | CatalogOperation::CompleteIndexSourceChange {..}
         | CatalogOperation::RetireIndex {..} => super::source_change::mutate(db,request,runtime)?,
@@ -619,7 +640,7 @@ fn preview_reserved(
     // Savepoint rollback makes validation use the exact mutation path.
     db.execute_batch("SAVEPOINT catalog_preview")?;
     let result = (|| {
-        mutate(db, r, runtime)?;
+        mutate_with_context(db, r, runtime, MutationContext::Preview)?;
         let mut after = Vec::new();
         for (k, id) in &targets {
             after.extend(optional_item(db, *k, id)?);

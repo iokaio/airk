@@ -18,6 +18,10 @@ pub const MAX_POLICY_BYTES: usize = 1024 * 1024;
 mod mutation;
 pub use mutation::{PolicyChange, PolicyChangePreview};
 
+#[path = "source_policy_split.rs"]
+mod split;
+pub use split::{SplitDestination, SplitPolicyPlan};
+
 #[cfg(test)]
 #[path = "source_policy_tests.rs"]
 mod tests;

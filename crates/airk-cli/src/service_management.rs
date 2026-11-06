@@ -176,6 +176,37 @@ struct CatalogRuntime {
     policy_completions_pending: bool,
 }
 impl CatalogRuntime {
+    fn advance_split(
+        &mut self,
+        registry: &mut ServiceRegistry,
+        root: &std::path::Path,
+        engine: airk_core::identity::Sha256Digest,
+        operation: Incarnation,
+    ) -> Result<bool> {
+        match crate::catalog_split_control::advance_pending(registry, root, engine, operation)? {
+            crate::catalog_split_control::SplitAdvance::Waiting(snapshot) => {
+                snapshot.validate()?;
+                Ok(false)
+            }
+            crate::catalog_split_control::SplitAdvance::Advanced(snapshot) => {
+                snapshot.validate()?;
+                Ok(true)
+            }
+            crate::catalog_split_control::SplitAdvance::NeedOriginalFence(snapshot) => {
+                self.reconcile(registry)?;
+                // Resume an accepted native fence before constructing another
+                // request. The coordinator retains the original exact key.
+                if self.gate.pending_fence_key()?.is_some() {
+                    return Ok(false);
+                }
+                let (request, preview) =
+                    crate::catalog_source_change_control::split_cutover(registry, root, &snapshot)?;
+                self.coordinator.apply_fenced(registry, &request, preview)?;
+                self.reconcile(registry)?;
+                Ok(true)
+            }
+        }
+    }
     fn initialize(
         mut binding: CatalogBinding,
         registry: &mut ServiceRegistry,
@@ -301,9 +332,13 @@ impl Drop for Management {
 }
 
 fn execute_request(registry: &mut ServiceRegistry, method: ControlMethod) -> ControlResponse {
+    let read_only = request_is_read_only(&method);
+    execute(registry, method).unwrap_or_else(|error| failure_response(error, read_only))
+}
+fn request_is_read_only(method: &ControlMethod) -> bool {
     // A failed observation has no effects to replay. RequestEpoch prunes receipts,
     // and all mutations remain outside this whitelist, even when receipt-keyed.
-    let read_only = matches!(
+    matches!(
         method,
         ControlMethod::CatalogPage { .. }
             | ControlMethod::CatalogDetail { .. }
@@ -317,6 +352,13 @@ fn execute_request(registry: &mut ServiceRegistry, method: ControlMethod) -> Con
             | ControlMethod::CatalogPolicyStatus { .. }
             | ControlMethod::CatalogPolicyResumeReceipt { .. }
             | ControlMethod::CatalogIndexRetirementEvidence { .. }
+            | ControlMethod::CatalogSplitSourceState { .. }
+            | ControlMethod::CatalogSplitDraft { .. }
+            | ControlMethod::CatalogSplitStatus { .. }
+            | ControlMethod::CatalogSplitReceipt { .. }
+            | ControlMethod::CatalogSplitRecoveryReceipt { .. }
+            | ControlMethod::CatalogIndexSetupDraft { .. }
+            | ControlMethod::CatalogIndexSetupReceipt { .. }
             | ControlMethod::CatalogReceipt { .. }
             | ControlMethod::Job { .. }
             | ControlMethod::RequestReceipt { .. }
@@ -331,8 +373,7 @@ fn execute_request(registry: &mut ServiceRegistry, method: ControlMethod) -> Con
             | ControlMethod::Inspection { .. }
             | ControlMethod::Console { .. }
             | ControlMethod::InactiveConsole { .. }
-    );
-    execute(registry, method).unwrap_or_else(|error| failure_response(error, read_only))
+    )
 }
 fn failure_response(error: anyhow::Error, read_only: bool) -> ControlResponse {
     if let Some(unknown) =
@@ -652,12 +693,14 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         },
         ControlMethod::CatalogPage { request } => ControlResponse::CatalogPage {
             page: registry.catalog_page(&request)?,
+            capabilities: airk_store::service::registry::catalog::capabilities(),
         },
         ControlMethod::CatalogDetail {
             entity,
             expected_catalog_revision,
         } => ControlResponse::CatalogDetail {
             detail: registry.catalog_detail(&entity, expected_catalog_revision)?,
+            capabilities: airk_store::service::registry::catalog::capabilities(),
         },
         ControlMethod::CatalogContext {
             host,
@@ -668,6 +711,7 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
                 &airk_core::catalog_management::CatalogEntity::ContextKey { host, key },
                 expected_catalog_revision,
             )?,
+            capabilities: airk_store::service::registry::catalog::capabilities(),
         },
         ControlMethod::CatalogLegacyBinding {
             project,
@@ -962,6 +1006,13 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         | ControlMethod::CatalogSourceChangeResolve { .. }
         | ControlMethod::CatalogIndexSetupApply { .. }
         | ControlMethod::CatalogIndexSetupReceipt { .. }
+        | ControlMethod::CatalogSplitSourceState { .. }
+        | ControlMethod::CatalogSplitDraft { .. }
+        | ControlMethod::CatalogSplitApply { .. }
+        | ControlMethod::CatalogSplitStatus { .. }
+        | ControlMethod::CatalogSplitReceipt { .. }
+        | ControlMethod::CatalogSplitRecover { .. }
+        | ControlMethod::CatalogSplitRecoveryReceipt { .. }
         | ControlMethod::EmbeddingStatus
         | ControlMethod::SourceStatus
         | ControlMethod::Resources
@@ -1187,6 +1238,8 @@ impl Management {
                 let mut metadata_failed = false;
                 let mut missing_work = std::collections::VecDeque::<MissingWork>::new();
                 let mut next_catalog_resume=std::time::Instant::now();
+                let split_engine = crate::runtime_pair::engine_identity();
+                let mut split_cursor = None;
                 loop {
                     if std::time::Instant::now() >= next_tick {
                         let running = registry.as_mut().ok().and_then(|registry| {
@@ -1208,7 +1261,11 @@ impl Management {
                         // Unknown metadata state retains service ownership until a
                         // later bounded turn can establish whether work remains.
                         let fence_pending=catalog.as_ref().is_some_and(|native|native.policy_completions_pending||native.coordinator.has_pending_cleanup()||native.gate.pending_fence_key().map_or(true,|key|key.is_some()));
-                        runnable_plans.store(running.unwrap_or(true)||fence_pending, Ordering::Release);
+                        let pending_splits = registry.as_ref().ok()
+                            .map(|registry| registry.catalog_pending_splits(8));
+                        let split_pending = pending_splits.as_ref()
+                            .is_some_and(|result| result.as_ref().map_or(true, |items| !items.is_empty()));
+                        runnable_plans.store(running.unwrap_or(true)||fence_pending||split_pending, Ordering::Release);
                         next_tick = std::time::Instant::now()
                             + Duration::from_millis(if running.is_some() { 250 } else { 1000 });
                         if std::time::Instant::now()>=next_catalog_resume {
@@ -1221,6 +1278,32 @@ impl Management {
                             };
                             next_catalog_resume=std::time::Instant::now()+Duration::from_millis(if progressed.is_err(){1000}else{250});
                             if matches!(progressed,Ok(Some(_))) {source.changed();}
+                        }
+                        if let (Some(Ok(items)), Ok(engine), Ok(registry), Some(native)) =
+                            (pending_splits, split_engine.as_ref(), registry.as_mut(), catalog.as_mut())
+                        {
+                            let selected = items.iter().find(|snapshot| split_cursor.is_none_or(
+                                |cursor| snapshot.receipt.operation_id > cursor,
+                            )).or_else(|| items.first());
+                            if let Some(snapshot) = selected {
+                                split_cursor = Some(snapshot.receipt.operation_id);
+                                match native.advance_split(registry, &root, *engine, snapshot.receipt.operation_id) {
+                                    Ok(true) => source.changed(),
+                                    Ok(false) => {},
+                                    Err(_) => {
+                                        // Persist attention rather than spin on
+                                        // an unaccepted cutover failure. An
+                                        // already accepted fence retains its
+                                        // existing native resume owner.
+                                        if native.gate.pending_fence_key().is_ok_and(|key| key.is_none()) {
+                                            let _ = registry.catalog_note_split_failure(
+                                                snapshot.receipt.operation_id, snapshot.receipt_digest,
+                                                "split_native_advance_needs_attention",
+                                            );
+                                        }
+                                    },
+                                }
+                            }
                         }
                         if let Some(mut work) = missing_work.pop_front() {
                             if std::time::Instant::now()<work.next_attempt {missing_work.push_back(work);continue;}
@@ -1323,9 +1406,15 @@ impl Management {
                         }
                         method => match registry.as_mut() {
                             Ok(registry) => {
-                                let routed = crate::catalog_index_setup_control::execute(
+                                let routed = crate::catalog_split_control::execute(
                                     registry, &root, &method,
                                 )
+                                .and_then(|split| match split {
+                                    Some(response) => Ok(Some(response)),
+                                    None => crate::catalog_index_setup_control::execute(
+                                        registry, &root, &method,
+                                    ),
+                                })
                                 .and_then(|setup| match setup {
                                     Some(response) => Ok(Some(response)),
                                     None => {
@@ -1337,7 +1426,7 @@ impl Management {
                                     Ok(None) => execute_request(registry, method),
                                     Err(error) => {
                                         let error=match &method {ControlMethod::CatalogApply{request,..}=>crate::catalog_coordinator::CatalogApplyOutcomeUnknown::capture(registry,request,error),_=>error};
-                                        failure_response(error,matches!(&method,ControlMethod::CatalogSourceMutationDraft {..}|ControlMethod::CatalogSourceChangeObservation {..}|ControlMethod::CatalogPendingSourceChange {..}|ControlMethod::CatalogPolicyStatus {..}|ControlMethod::CatalogPolicyResumeReceipt {..}|ControlMethod::CatalogIndexRetirementEvidence {..}))
+                                        failure_response(error, request_is_read_only(&method))
                                     },
                                 };
                                 if !matches!(

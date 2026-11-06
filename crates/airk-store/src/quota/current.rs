@@ -46,6 +46,7 @@ impl DurableRecord {
 pub struct CurrentGrant {
     quota: Quota,
     record: DurableRecord,
+    funded: Option<funding::FundedChildRef>,
 }
 
 impl CurrentGrant {
@@ -62,6 +63,12 @@ impl CurrentGrant {
         validate_writer(&self.quota, writer, &self.record.scope.collection)?;
         ensure!(bytes > 0, "current quota grant must be positive");
         let _lock = self.quota.lock()?;
+        if let Some(funded) = &self.funded {
+            self.require_current()?;
+            funding::resize_current(&self.quota, funded, bytes)?;
+            self.record.bytes = bytes;
+            return Ok(());
+        }
         self.require_current()?;
         if bytes > self.record.bytes {
             admit(
@@ -83,6 +90,10 @@ impl CurrentGrant {
     pub fn release(self, writer: &crate::WriterLock) -> Result<()> {
         validate_writer(&self.quota, writer, &self.record.scope.collection)?;
         let _lock = self.quota.lock()?;
+        if let Some(funded) = &self.funded {
+            self.require_current()?;
+            return funding::release_current(&self.quota, funded);
+        }
         self.require_current()?;
         let directory = self.quota.control_path().join("current-grants");
         fs::remove_file(directory.join(self.record.filename()))?;
@@ -108,6 +119,16 @@ impl CurrentGrant {
             return Ok(self);
         }
         let _lock = self.quota.lock()?;
+        if let Some(funded) = &self.funded {
+            self.require_current()?;
+            funding::rebind_current(&self.quota, funded, &scope)?;
+            self.record
+                .allocation
+                .get_or_insert_with(|| self.record.scope.clone());
+            self.record.scope = scope;
+            self.record.version = 2;
+            return Ok(self);
+        }
         self.require_current()?;
         ensure!(
             !read_records(&self.quota, false, None)?
@@ -125,6 +146,14 @@ impl CurrentGrant {
     }
 
     fn require_current(&self) -> Result<()> {
+        if let Some(funded) = &self.funded {
+            let (scope, _, capacity) = funding::current_state(&self.quota, funded)?;
+            ensure!(
+                scope == self.record.scope && capacity == self.record.bytes,
+                "funded current grant changed"
+            );
+            return Ok(());
+        }
         let path = self
             .quota
             .control_path()
@@ -156,13 +185,14 @@ impl Quota {
         let quota = Self {
             root: managed.root.canonicalize()?,
             namespace: Namespace::Service,
+            funding: None,
         };
         let _lifecycle = super::existing_service_lifecycle_lease(&quota.root)?;
         let control = quota.control_path();
         ensure!(control.is_dir(), "existing quota control directory missing");
         unlinked(&control)?;
         let _ledger = crate::service::acquire_existing_file(&control, "ledger.lock")?;
-        let record = read_record(&control.join("current-grants").join(scope.filename()))?;
+        let record = allowance_record(&quota, scope)?;
         ensure!(
             record.scope == *scope && record.bytes >= minimum,
             "missing or insufficient service WAL recovery allowance"
@@ -176,12 +206,7 @@ impl Quota {
         minimum: u64,
     ) -> Result<u64> {
         let _lock = self.lock()?;
-        let record = read_record(
-            &self
-                .control_path()
-                .join("current-grants")
-                .join(scope.filename()),
-        )?;
+        let record = allowance_record(self, scope)?;
         ensure!(
             record.scope == *scope && record.bytes >= minimum,
             "missing or insufficient service WAL recovery allowance"
@@ -199,6 +224,10 @@ impl Quota {
         validate_writer(self, writer, &scope.collection)?;
         ensure!(bytes > 0, "current quota grant must be positive");
         let _lock = self.lock()?;
+        if let Some(owner) = &self.funding {
+            let reference = funding::reserve_current(self, owner, scope.clone(), bytes)?;
+            return funded_handle(self, reference);
+        }
         let path = self
             .control_path()
             .join("current-grants")
@@ -218,6 +247,7 @@ impl Quota {
         Ok(CurrentGrant {
             quota: self.clone(),
             record,
+            funded: None,
         })
     }
 
@@ -228,6 +258,16 @@ impl Quota {
     ) -> Result<Option<CurrentGrant>> {
         validate_writer(self, writer, &scope.collection)?;
         let _lock = self.lock()?;
+        let funded = funding::find_current(self, scope)?;
+        if let Some(reference) = funded {
+            ensure!(
+                !read_records(self, false, None)?
+                    .iter()
+                    .any(|record| &record.scope == scope),
+                "duplicate standalone and funded current scope"
+            );
+            return Ok(Some(funded_handle(self, reference)?));
+        }
         let path = self
             .control_path()
             .join("current-grants")
@@ -262,6 +302,7 @@ impl Quota {
         Ok(Some(CurrentGrant {
             quota: self.clone(),
             record,
+            funded: None,
         }))
     }
 
@@ -276,18 +317,73 @@ impl Quota {
         let collection = managed.collection;
         validate_writer(self, writer, collection)?;
         let _lock = self.lock()?;
-        Ok(read_records(self, true, None)?
+        let mut grants = read_records(self, true, None)?
             .into_iter()
             .filter(|record| record.scope.collection == collection)
             .map(|record| CurrentGrant {
                 quota: self.clone(),
                 record,
+                funded: None,
             })
-            .collect())
+            .collect::<Vec<_>>();
+        for reference in funding::current_references(self)? {
+            if funding::current_state(self, &reference)?.0.collection == collection {
+                let funded = funded_handle(self, reference)?;
+                ensure!(
+                    !grants.iter().any(|grant| grant.scope() == funded.scope()),
+                    "duplicate current funding scope"
+                );
+                grants.push(funded);
+            }
+        }
+        Ok(grants)
     }
 }
 
-fn validate_writer(quota: &Quota, writer: &crate::WriterLock, collection: &str) -> Result<()> {
+fn funded_handle(quota: &Quota, reference: funding::FundedChildRef) -> Result<CurrentGrant> {
+    let (scope, allocation, bytes) = funding::current_state(quota, &reference)?;
+    Ok(CurrentGrant {
+        quota: quota.clone(),
+        record: DurableRecord {
+            version: 2,
+            scope,
+            bytes,
+            allocation: Some(allocation),
+        },
+        funded: Some(reference),
+    })
+}
+
+fn allowance_record(quota: &Quota, scope: &CurrentGrantScope) -> Result<DurableRecord> {
+    let standalone = read_records(quota, false, None)?
+        .into_iter()
+        .filter(|record| &record.scope == scope)
+        .collect::<Vec<_>>();
+    let funded = funding::find_current(quota, scope)?;
+    ensure!(
+        standalone.len() + usize::from(funded.is_some()) == 1,
+        "current recovery allowance missing or duplicated"
+    );
+    match funded {
+        Some(reference) => Ok(funded_handle(quota, reference)?.record),
+        None => Ok(standalone.into_iter().next().unwrap()),
+    }
+}
+
+impl CurrentGrant {
+    pub(crate) fn require_release_authority(&self) -> Result<()> {
+        if let Some(reference) = &self.funded {
+            funding::require_current_authority(&self.quota, reference)?;
+        }
+        Ok(())
+    }
+}
+
+pub(super) fn validate_writer(
+    quota: &Quota,
+    writer: &crate::WriterLock,
+    collection: &str,
+) -> Result<()> {
     crate::validate_collection(collection)?;
     let directory = writer.path.parent().context("writer directory missing")?;
     let store = crate::FileStore::new(directory);
@@ -308,7 +404,12 @@ fn validate_writer(quota: &Quota, writer: &crate::WriterLock, collection: &str) 
     Ok(())
 }
 
-fn admit(quota: &Quota, collection: &str, additional: u64, new_record: bool) -> Result<()> {
+pub(super) fn admit(
+    quota: &Quota,
+    collection: &str,
+    additional: u64,
+    new_record: bool,
+) -> Result<()> {
     let records = quota.live_records()?;
     ensure!(
         !new_record || records.len() < MAX_RESERVATIONS,

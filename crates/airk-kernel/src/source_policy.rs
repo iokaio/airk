@@ -361,6 +361,10 @@ impl Kernel {
         let report = matching.and_then(|capsule| capsule.application.as_ref());
         let blocked = report.is_none() || airk_ingest::permanent_policy::restricts(policy);
         let mut observation = serde_json::json!({"policy_digest":policy.identity()?,"policy_epoch":policy.epoch,"operation_id":matching.map(|capsule|capsule.operation_id),"blocked":blocked,"removal_pending":report.is_none()});
+        if airk_ingest::permanent_policy::restricts(policy) {
+            observation["control_dependencies"] =
+                serde_json::to_value(airk_ingest::permanent_policy::control_dependencies())?;
+        }
         if self.policy_observation_has_full_scope(policy) {
             observation["application"] = serde_json::to_value(report)?;
         } else {
@@ -381,7 +385,7 @@ impl Kernel {
         self.require_unrestricted_read()?;
         self.validate_source_policy_binding(policy)?;
         crate::service_execution::checkpoint()?;
-        let selected = self.refresh_service_snapshot()?;
+        let mut selected = self.refresh_service_snapshot()?;
         if let Some(scope) = selected.current_scope()? {
             crate::current::recover_current(
                 &selected.store,
@@ -437,7 +441,7 @@ impl Kernel {
             // leaves this process unavailable; registry admission remains denied.
             reservation.charge(airk_core::source_policy::MAX_POLICY_BYTES as u64 + 32768)?;
             if let Some(collection) = &selected.service_collection {
-                collection.retain_source_policy(policy)?;
+                collection.retain_source_policy_with_quota(policy, &quota)?;
                 state.required_policy_digest = Some(policy.identity()?);
             }
             capsule.save(&state.directory)?;
@@ -657,6 +661,11 @@ impl Kernel {
             state.retained_policy_unknown = false;
         }
         drop(writer);
+        // The write phase pinned this slot against replacement. Cleanup below
+        // acquires its own selection+writer before dropping its selection to
+        // upgrade the object gate. Retaining our write-phase pin would prevent
+        // that upgrade forever. Other callers' selections remain untouched.
+        drop(selected.service_selection.take());
         let report = capsule
             .application
             .as_mut()

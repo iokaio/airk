@@ -62,6 +62,13 @@ async fn handle(
         | ControlMethod::CatalogIndexSetupDraft { .. }
         | ControlMethod::CatalogIndexSetupApply { .. }
         | ControlMethod::CatalogIndexSetupReceipt { .. }
+        | ControlMethod::CatalogSplitSourceState { .. }
+        | ControlMethod::CatalogSplitDraft { .. }
+        | ControlMethod::CatalogSplitApply { .. }
+        | ControlMethod::CatalogSplitStatus { .. }
+        | ControlMethod::CatalogSplitReceipt { .. }
+        | ControlMethod::CatalogSplitRecover { .. }
+        | ControlMethod::CatalogSplitRecoveryReceipt { .. }
         | ControlMethod::CatalogPreview { .. }
         | ControlMethod::CatalogApply { .. }
         | ControlMethod::CatalogReceipt { .. }

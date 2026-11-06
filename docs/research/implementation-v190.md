@@ -9,6 +9,13 @@ The maintainer authorized sequential implementation and signed phase commits.
 Progress below is observed local evidence; it does not establish publication or
 cross-platform qualification.
 
+**Current checkpoint, 5 November 2026:** P9 is accepted for the unpublished local
+development phase. P10 frozen Windows qualification passed all 22 gates, with
+focused Mac ARM evidence and Cargo cleanup recorded below. **Primary integration
+and review remain pending; P10 is not yet accepted or published.** P11–P14 and the
+deleted-source follow-up remain unaccepted. Earlier dated pending/failure records
+describe their original checkpoints and are not relabeled as current evidence.
+
 ## Entry identity and boundaries
 
 - Starting commit: `6d00d42eb56d459055383ed64f743332030ba6d3`.
@@ -4500,3 +4507,217 @@ notice and actual predecessor-handler evidence retains its recorded inputs and
 limits. Fresh post-documentation repository/version/whitespace checks and the
 human DCO signed phase commit complete this checkpoint. P10 implementation is
 isolated until that commit; P11–P14 and deleted-source follow-up remain unaccepted.
+
+
+### P10 — isolated candidate and focused Windows evidence, 5 November 2026
+
+**Historical development checkpoint, before the frozen qualification below.**
+P10 implementation is isolated in `artifacts/v190/p10-worktree`; the accepted P9
+root checkpoint and its source/runtime identities above remain unchanged. Working
+version **1.8.8** remains unpublished. **P10 is not accepted.** These observations
+are individual checks of a changing isolated tree, not a frozen source/runtime
+qualification. No P10 source freeze, Neo run, phase commit, publication or normal
+installed-runtime replacement is established by these results.
+
+The [candidate workflow](../index-splitting.md) implements two independent policy
+partitions, inherited permanent denies and positive eligibility, a durable Accepted
+intent before setup/funding/child effects, sealed destination build, full affected
+Project review, read-only original witness and a drained restrictive cutover.
+Store owns exact operation allocations and child-writer funding; ordinary opens
+receive neither permit nor funding from a backing path. CLI owns metadata progress
+and worker/fence dispatch; Kernel/Ingest own bounded source/control enforcement.
+Membership activation creates no evidence grant or saved default. Watching uses the
+reviewed choice and remains subject to the native write/finalization barrier.
+
+Before-fence cancellation requires owned destination cleanup and funding
+settlement; after-fence recovery completes the restriction. Physical cleanup,
+terminal owner publication and actual per-root funding acknowledgments remain
+separate from logical completion. Frozen finalization can remain `acknowledging`
+after the Core receipt becomes terminal. Exact receipt/key recovery preserves
+historical acknowledgments and later current attention independently. No frontend
+or read-only status path automatically replays a mutation. A pending frozen
+finalization refuses Cancel rather than claiming `AlreadyComplete`.
+
+The following Windows receipts were inspected with matching log SHA-256 values.
+Cargo runs used the existing `artifacts/v190/p10-target`, `CARGO_INCREMENTAL=1`,
+locked offline dependencies and `--timings`; durations include command execution
+and any compilation. These are observed timings, not a controlled speedup or
+cross-platform comparison. Every native test row below exited zero with nonzero
+tests. The formatting row ran no tests.
+
+| Exact run label | Selected scope | Observed result | Wall time |
+| --- | --- | --- | --- |
+| `p10-store-split-r3` | Store library `split`, no default features | 21 passed, 0 failed, 0 ignored; 708 filtered out | 45.7 s |
+| `p10-store-filtered-lookup-r1` | Store library `catalog_postings_follow_replacement_deletion_and_exact_case`, no default features | 1 passed; 728 filtered out | 2.8 s |
+| `p10-cleanup-pin-r2` | Kernel `source_policy` target, `service_policy_cleanup_releases_only_its_own_pin_and_preserves_actual_error_reports`, all features | 1 passed; 12 filtered out | 9.4 s |
+| `p10-kernel-policy-full-r1` | Entire Windows Kernel `source_policy` integration target, all features | 13 passed, 0 failed, 0 ignored, 0 filtered out | 22.2 s |
+| `p10-native-happy-cutover-r7` | CLI library `real_empty_native_owner_completes_witness_fence_remainder_membership_and_funding_ack`, all features | 1 passed; 511 filtered out | 43.3 s |
+| `p10-fmt-r2` | Workspace formatting check | Exit 0; empty error log | 6.0 s |
+
+Receipts/logs use those exact labels under ignored `artifacts/v190/`; the native
+happy-path timing report is
+`p10-target/cargo-timings/cargo-timing-20261105T204536623Z-cf3e0779d011bd1b.html`.
+The cleanup-pin case is included in the 13-case integration target; the two rows
+are separate runs, not 14 distinct tests. Unix-only protected-path cases are
+cfg-excluded from that Windows target. The filtered Store result is one posting
+replacement/deletion/case regression, not a full Store suite or all native consumers.
+
+The r7 native-owner case uses production native admission/control and private
+Kernel jobs with an **actually empty worker/helper/client census**. It exercises
+witness refresh, explicit metadata Resume, original fence, independent remainder,
+reviewed membership and both funding acknowledgments, while preserving source
+bytes and grants/defaults. It does **not** qualify live process/provider drainage,
+active client revocation, managed installation or semantic-ready inference. Its
+actual Rust owner is
+`project_supervisor::guarded_qualification_tests::split_tests`; it is a library
+fixture, not an installed-process campaign.
+
+Workbench separately passed host/webview/Assistance compilation, real bundles and
+native catalog checks, followed by **733 passed, 19 conditional skips** in its full
+752-case run. After the individual-receipt limit was aligned to Core's 14 KiB
+budget, compilation/bundling and **133 focused cases** passed without another broad
+suite. The prior full run is not relabeled as the later receipt-boundary input.
+Its complete native snapshot, historical acknowledgment, frozen finalization,
+missing/expired evidence, lost-response/restart, later-latch and no-replay cases
+remain frontend/controller evidence, not native transport or platform acceptance.
+
+**Later development evidence, 5 November 2026:** `p10-abrupt-capture-r3`
+passed the actual abrupt-process funded-capture recovery and unknown-staging
+protection regression. `p10-cli-split-combined-r2` passed six selected CLI cases;
+its one ignored helper is explicitly launched by the crash parent. These checks
+use native source `afa4ffe7…` (944 files), not the later input below.
+
+The actual process/provider test `p10-resource-debug-r6` passed on native source
+`f7d6a19d…` (945 files), using the separately recorded matched debug pair built
+from `0419c791…`. It includes native/CLI/MCP evidence, client drainage, original
+pause preservation, concurrent queries and both final funding acknowledgments.
+The cancellation process case separately passed in `p10-resource-debug-r5`.
+The production pause correction aligns Rust admission with the existing SQL
+classification; `p10-paused-parity-r1` passed the real SQL/Rust job-kind matrix.
+Earlier failed development runs remain recorded; neither debug run qualifies
+the final release pair, all platforms or total resource cost. The observer uses
+canonical resource reads and sampled file lengths; unsampled peaks, physical
+allocation and total CPU remain unknown.
+
+**Historical outstanding work at that checkpoint:** the required Neo batch and its post-test `cargo clean`,
+final frozen release/source/runtime gates and independent combined review remain
+outstanding. No P10
+Neo execution is claimed from the prepared ignored scripts or their local mocked
+owner checks. Full workspace/feature-mode/native CLI/MCP/runtime gates must retain
+their own actual commands and identities; neither the 13-case integration target
+nor this empty-census success substitutes for them. P11–P14 and the deleted-source
+follow-up remain unaccepted, and the implementation plan is not complete.
+
+
+### P10 — frozen qualification passed; integration review pending, 5 November 2026
+
+**Qualification passed; primary integration/review pending. P10 is not yet
+phase-accepted, committed or published.** Version **1.8.8** remains unchanged.
+P11–P14 and the deleted-source follow-up remain unaccepted.
+
+`p10-final-qualification-r6.json` records all **22 Windows gates passed** on exact
+native source **`c713b469d7d4a646a9ceab52aa7ef28ecd2b1af19a787312d2b0b9e843d4321b`
+/ 945 inputs**. Every stage's actual/effective exit is zero; receipt/log hashes
+and before/after source identity agree. The fresh release pair
+`p10-runtime-final-r3` is sealed before/after subsequent stages. It contains the
+scoped metadata correction: full-grant snapshots/coverage/readiness preserve
+source policy and union filtering; narrow, stale and revoked scopes still refuse.
+The exact previously failing permanent-trim native CLI/MCP case passed on that
+new pair before the broader process and workspace runs.
+
+| Frozen R6 scope | Observed result |
+| --- | --- |
+| Formatting; lightweight and workspace all-feature Clippy; required lightweight check; workspace build | Passed |
+| Exact permanent-trim actual native/CLI/MCP regression | 1 passed |
+| Actual split process/resource completion and pre-effect cancellation | 2 passed |
+| Full workspace, all features, offline, `--no-fail-fast -- --test-threads=4` | 2,565 passed, 0 failed, 49 ignored; 1,710.4 s wall |
+| Canonical native/CLI/MCP client checks; publication faults | Passed; six publication-fault cases |
+| Unchanged Off/Report legacy latency comparisons | 84/84 passed; no bound changes |
+| Nine relevance/quality cohorts, three trials; frozen comparisons | Passed |
+| Local CI `SkipBuild`, smoke/clients/install suites | 3/3 passed |
+| Repository checks, notices, fresh live dependency policy audit, Python checks, whitespace | Passed; 446 Python tests |
+
+The source gates/build/test stages used locked offline inputs. Only the fresh
+advisory gate used network access and retained its existing reviewed dispositions;
+this is not a claim of zero advisories. Windows native-boundary fixtures used a
+new owner-only inheritable test base, verified read-only before every gate. No
+existing user/shared directory ACL was repaired or native policy weakened. R4's
+full failed census and the unlaunched R5 preparation remain historical evidence.
+
+**Mac Neo:** the broader `p10-native-20261105-r2` batch passed **16 steps / 66
+tests** on **`a7458f86…` / 945 inputs**. The later scoped metadata correction is
+separately qualified by `p10-native-20261106-r3`: formatting plus the complete
+10-case Kernel scoped-read module in lightweight and all-feature modes, **three
+steps / 20 tests**, on the exact **`c713b469…` / 945-input** source. Both cleanup
+receipts report test exit 0, `cargo clean` exit 0, target absent and source/reports
+preserved; clean logs report **4.3 GiB** and **2.2 GiB** removed respectively. The
+66 earlier tests are not relabeled as tests of the corrected source. No complete
+Mac workspace/runtime/performance, Intel or Linux qualification is claimed.
+
+**Bounded release-pair resource observations:** `p10-resource-final-r6` uses the
+existing three-root source fixture (four files per root, 621 bytes total), four
+query clients and 250 ms sampling.
+Completion retained 8 baseline, 83 during and 8 settled successful samples,
+including **8 successful samples while the same split child was observed
+Running**. One scope refusal remains a failed sample; read-only re-confirmation
+preserved the same independent grant/selection and did not replay that read.
+Sampled RSS reached **181,501,952 bytes**; separate logical file-length highs were
+357,431 original / 309,124 destination / 239,144 unrelated bytes. One exclusive
+destination Index span reports **328,125 microseconds CPU**. Total split CPU,
+true instantaneous physical disk/RSS peaks, allocation/COW overhead and unsampled
+spikes remain unknown. These observations establish neither speedup nor a large
+semantic workload result.
+
+Cancellation retained 8 baseline, 20 during and 8 settled successful samples.
+Its held setup lease kept cancellation at Accepted before any child build;
+contention is explicitly **not applicable for this metadata-only cancellation**,
+not an active-build cancellation result. Full native responses, timings, source
+hashes, cleanup and funding-ack observations remain in the ignored artifacts.
+Installed-editor behavior, semantic-ready split execution, broader workload and
+platform matrices, signing/notarization and publication remain outside this
+qualification. Primary combined review and integration must precede phase
+acceptance; this record does not complete the 1.9.0 plan.
+
+**Subsequent review finding:** the `c713b469…` qualification above remains
+historical evidence. A witness deadline/cancellation checkpoint gap inside the
+bounded posting lookup is being corrected, with new focused regression/gates
+pending. Primary review will record the successor source and evidence before
+phase acceptance; the passed campaign is not relabeled as that correction.
+
+
+### P10 — local phase checkpoint, 5 November 2026
+
+P10 passed its local phase checks for continued development in unpublished
+**1.8.8**. The broad frozen R6 qualification above remains bound to `c713b469…`;
+it is not relabeled as the later source or a published artifact.
+
+Final review found that the remainder witness checked cancellation/deadline only
+around an internal posting scan. The narrow correction adds a no-data checkpoint
+before each shard, decoded candidate and final artifact validation. Existing
+authorization and policy filtering still precede data-bearing selection; errors
+refuse the lookup instead of claiming an empty remainder. Each indivisible map
+read/decode remains bounded by existing value and 4,096-path shard limits.
+
+Successor native source is
+**`fadf30fbd45c92ccca0c384eb10e4802f12d1e7af47d07741c251d140c4e45f5` / 945 inputs**.
+`p10-witness-correction-validation-r1.json` records seven passed Windows stages:
+formatting; all 15 Store posting tests, including two deterministic cancellation
+regressions; all 13 Kernel policy integration cases; the actual native-owner
+cutover/funding-ack case; the actual witness beyond 256 selected-prefix files;
+minimal Store/Kernel Clippy; and workspace/all-target/all-feature Clippy with
+warnings denied. These focused regressions extend the earlier broad campaign;
+the full workspace/latency/runtime suites were not repeated for this callback.
+
+Mac Neo `p10-native-20261106-r4` separately passed formatting and the same 15 Store
+tests plus both native witness/cutover cases: **four steps / 17 tests** on this
+successor source. Collected cleanup proves `cargo clean` exit 0, target absent,
+source/reports preserved and timings retained. Earlier 66/20-pass Neo batches
+retain their own source identities. Independent source/test review and primary
+integration review found no remaining concrete blocker in the reviewed scope.
+
+The frozen release pair remains the earlier `c713b469…` pair; this checkpoint
+does not relabel it as containing the callback correction. The final local test
+installer must be rebuilt from the completed plan. Resource and platform limits
+above still apply. P11–P14, deleted-source recovery, final local test installer
+and contributor PR #60 assessment remain unfinished. No push, publication or
+normal installation is part of this checkpoint.

@@ -689,7 +689,377 @@ struct ComponentChanges<'a> {
     fts: Option<&'a fts::Updates>,
 }
 
+fn require_absent_current(
+    directory: &crate::service::registry::catalog::setup::storage::SetupDirectory,
+) -> Result<()> {
+    require_absent_current_payload(directory)?;
+    require_absent_native_entries(directory, &[database::OWNER_FILE])
+}
+fn require_absent_current_payload(
+    directory: &crate::service::registry::catalog::setup::storage::SetupDirectory,
+) -> Result<()> {
+    require_absent_native_entries(
+        directory,
+        &[
+            "current.sqlite3",
+            "current.sqlite3-journal",
+            "current.sqlite3-wal",
+            "current.sqlite3-shm",
+            BOOTSTRAP_FILE,
+        ],
+    )
+}
+fn require_absent_native_entries(
+    directory: &crate::service::registry::catalog::setup::storage::SetupDirectory,
+    names: &[&str],
+) -> Result<()> {
+    for name in names {
+        match directory.open_entry(std::ffi::OsStr::new(name)) {
+            Ok(_) => anyhow::bail!(
+                "current state exists; recover its native journal before funding settlement"
+            ),
+            Err(error)
+                if error
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) => {}
+            Err(error) => return Err(error).context("cannot prove current state absent"),
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[test]
+fn no_current_proof_refuses_every_partial_native_journal_entry() -> Result<()> {
+    use crate::service::registry::catalog::setup::storage::SetupDirectory;
+    let temporary = tempfile::tempdir()?;
+    let path = temporary.path().canonicalize()?;
+    let pinned = SetupDirectory::open_canonical(&path)?;
+    require_absent_current(&pinned)?;
+    for name in [
+        "current.sqlite3",
+        "current.sqlite3-journal",
+        "current.sqlite3-wal",
+        "current.sqlite3-shm",
+        database::OWNER_FILE,
+        BOOTSTRAP_FILE,
+    ] {
+        fs::write(path.join(name), b"partial initialization")?;
+        assert!(require_absent_current(&pinned).is_err());
+        fs::remove_file(path.join(name))?;
+    }
+    fs::create_dir(path.join("current.sqlite3"))?;
+    assert!(require_absent_current(&pinned).is_err());
+    Ok(())
+}
+
 impl FileStore {
+    /// Only the stable Collection metadata owner calls this after validating an
+    /// actual native split state and installing its saved funding use internally.
+    /// It returns quota proof, never an evidence reader or source bytes.
+    pub(crate) fn reconcile_native_split_metadata(
+        &self,
+        writer: &WriterLock,
+        quota: &Quota,
+    ) -> Result<crate::quota::funding::FundingReceipt> {
+        quota.require_store_funding(self)?;
+        crate::maintenance::check_writer(self, writer, quota)?;
+        ensure!(
+            !writer.has_object_captures(),
+            "live captures retain split metadata funding"
+        );
+        let funding = quota
+            .funding_use()
+            .context("split metadata has no exact saved funding")?;
+        let _gate = Gate::exclusive(self, writer)?;
+        let Some(scope) = self.current_owned_scope_under_gate(&_gate)? else {
+            let pin =
+                crate::service::registry::catalog::setup::storage::SetupDirectory::open_canonical(
+                    self.directory(),
+                )?;
+            require_absent_current(&pin)?;
+            return quota.reconcile_funding_phase(writer, funding, None);
+        };
+        let capacity = database::check_owner(self.directory(), &scope)?;
+        super::wal::validate_files(self.directory(), capacity)?;
+        let wal = self.grant_scope_for_metadata(&scope);
+        quota.verify_current_allowance(&wal, super::wal::total(capacity)?)?;
+        let connection = database::open_reader(&self.directory().join("current.sqlite3"))?;
+        ensure!(
+            state(&connection, &scope)?.0 == TransactionPhase::Ready
+                && pending(&connection, &scope)?.is_none(),
+            "split metadata waits for actual native journal recovery"
+        );
+        drop(connection);
+        let grants = quota.current_grants(writer)?;
+        for grant in &grants {
+            grant.require_release_authority()?;
+        }
+        for grant in grants {
+            if grant.scope().incarnation == scope.incarnation && grant.scope() != &wal {
+                grant.release(writer)?;
+            }
+        }
+        quota.reconcile_funding_phase(writer, funding, Some(&wal))
+    }
+    fn grant_scope_for_metadata(&self, scope: &CurrentScope) -> CurrentGrantScope {
+        CurrentGrantScope {
+            collection: scope.collection.clone(),
+            incarnation: scope.incarnation,
+            transaction: super::wal::id(scope),
+        }
+    }
+
+    /// Close only abandoned ordinary capture handles under this actual claimed
+    /// worker. Bytes/credit remain held until existing native journal/disposal
+    /// reconciliation; an ordinary observer cannot manufacture this authority.
+    pub fn close_abandoned_operation_reservations(
+        &self,
+        writer: &WriterLock,
+        quota: &Quota,
+    ) -> Result<usize> {
+        use crate::service::registry::catalog::setup::storage::SetupDirectory;
+        let permit = self
+            .split_access
+            .as_ref()
+            .context("capture recovery requires its actual claimed split worker")?;
+        let owner_pin = SetupDirectory::open_canonical(self.managed_path()?.logical)?;
+        permit.validate_pinned_store(self, &owner_pin)?;
+        quota.require_store_funding(self)?;
+        crate::maintenance::check_writer(self, writer, quota)?;
+        ensure!(
+            !writer.has_object_captures(),
+            "current writer retains live captures"
+        );
+        let owner = quota
+            .funding_use()
+            .context("capture recovery requires exact funded participant")?;
+        permit.validate_funding_use(owner)?;
+        quota.close_abandoned_funded_reservations(owner)
+    }
+
+    /// A claimed canceled-destination worker takes custody of the old funded
+    /// build without freeing any credit. Existing ordinary children still need
+    /// explicit adoption; their staging is not swept by this transition.
+    pub fn takeover_operation_funding_for_cleanup(
+        &self,
+        writer: &WriterLock,
+        quota: &Quota,
+        expected: &crate::quota::funding::FundingReceipt,
+        phase: crate::quota::funding::FundingPhase,
+    ) -> Result<(Self, crate::quota::funding::FundingReceipt)> {
+        use crate::service::registry::catalog::setup::storage::SetupDirectory;
+        let permit = self
+            .split_access
+            .as_ref()
+            .context("funding takeover requires its claimed cleanup worker")?;
+        let owner_pin = SetupDirectory::open_canonical(self.managed_path()?.logical)?;
+        permit.validate_pinned_store(self, &owner_pin)?;
+        crate::maintenance::check_writer(self, writer, quota)?;
+        ensure!(
+            !writer.has_object_captures(),
+            "prior build still owns object captures"
+        );
+        let _gate = Gate::exclusive(self, writer)?;
+        let (funding, receipt) = quota.takeover_cleanup_funding(self, writer, expected, phase)?;
+        let mut store = self.clone();
+        store.funding = None;
+        Ok((store.with_operation_funding(funding)?, receipt))
+    }
+    /// Exact failed/canceled same-work retry. The claimed permit authenticates
+    /// the terminal saved predecessor; no receipt or wire flag can substitute.
+    pub fn takeover_operation_funding_for_retry(
+        &self,
+        writer: &WriterLock,
+        quota: &Quota,
+        expected: &crate::quota::funding::FundingReceipt,
+        phase: crate::quota::funding::FundingPhase,
+    ) -> Result<(Self, crate::quota::funding::FundingReceipt)> {
+        let permit = self
+            .split_access
+            .as_ref()
+            .context("retry takeover requires its claimed native worker")?;
+        let pin =
+            crate::service::registry::catalog::setup::storage::SetupDirectory::open_canonical(
+                self.managed_path()?.logical,
+            )?;
+        permit.validate_pinned_store(self, &pin)?;
+        crate::maintenance::check_writer(self, writer, quota)?;
+        ensure!(
+            !writer.has_object_captures(),
+            "prior work retains live object captures"
+        );
+        let _gate = Gate::exclusive(self, writer)?;
+        let (funding, receipt) = quota.takeover_retry_funding(self, writer, expected, phase)?;
+        let mut store = self.clone();
+        store.funding = None;
+        Ok((store.with_operation_funding(funding)?, receipt))
+    }
+
+    /// The bounded native purge retains the exact current owner until payload
+    /// absence and child accounting are durable. A crash between deleting the
+    /// database and this checkpoint can repeat the same proof on the next turn.
+    pub(crate) fn reconcile_disposed_operation_funding(
+        &self,
+        writer: &WriterLock,
+        quota: &Quota,
+        _gate: &Gate,
+    ) -> Result<Option<crate::quota::funding::FundingReceipt>> {
+        use crate::service::registry::catalog::setup::storage::SetupDirectory;
+        let permit = self
+            .split_access
+            .as_ref()
+            .context("disposed funding requires its claimed cleanup worker")?;
+        let owner_pin = SetupDirectory::open_canonical(self.managed_path()?.logical)?;
+        permit.validate_pinned_store(self, &owner_pin)?;
+        quota.require_store_funding(self)?;
+        crate::maintenance::check_writer(self, writer, quota)?;
+        ensure!(
+            !writer.has_object_captures(),
+            "live object captures retain disposed funding"
+        );
+        let funding = quota
+            .funding_use()
+            .context("disposed settlement requires exact funding")?;
+        ensure!(
+            funding.phase.purpose == airk_core::catalog_split::SplitJobPurpose::DestinationCleanup,
+            "only canceled destination cleanup can settle disposed current state"
+        );
+        let incarnation = self
+            .service_incarnation()?
+            .context("disposed settlement requires an owned incarnation slot")?;
+        let current_pin = SetupDirectory::open_canonical(self.directory())?;
+        require_absent_current_payload(&current_pin)?;
+        if let Some(scope) = self.current_owned_scope_under_gate(_gate)? {
+            let request = &quota.observe_funding(funding.operation_id)?.request;
+            ensure!(
+                scope.incarnation == incarnation
+                    && scope.collection == request.destination.collection
+                    && scope.root == request.destination.root,
+                "disposed current owner differs from funded destination"
+            );
+        }
+        let grants = quota
+            .current_grants(writer)?
+            .into_iter()
+            .filter(|grant| grant.scope().incarnation == incarnation)
+            .collect::<Vec<_>>();
+        for grant in &grants {
+            grant.require_release_authority()?;
+        }
+        for grant in grants {
+            grant.release(writer)?;
+        }
+        let children = quota.funded_children(funding)?;
+        if children.iter().any(|child| {
+            !child.closed
+                && matches!(
+                    child.kind,
+                    crate::quota::funding::FundingChildKind::Current { .. }
+                )
+        }) {
+            return Ok(None);
+        }
+        quota
+            .reconcile_funding_phase(writer, funding, None)
+            .map(Some)
+    }
+    /// The stable Collection's validated retirement receipt owns this exact
+    /// inactive incarnation. Its active sibling remains live and is checkpointed
+    /// separately; closing this disposed grant never claims the whole phase Ready.
+    pub(crate) fn retire_operation_current_grants(
+        &self,
+        writer: &WriterLock,
+        quota: &Quota,
+        incarnation: airk_core::identity::Incarnation,
+        _gate: &Gate,
+    ) -> Result<()> {
+        crate::service::collection::validate_split_store_access(self)?;
+        quota.require_store_funding(self)?;
+        crate::maintenance::check_writer(self, writer, quota)?;
+        let funding = quota
+            .funding_use()
+            .context("retired funded grants require exact runtime operation context")?;
+        ensure!(
+            funding.phase.purpose != airk_core::catalog_split::SplitJobPurpose::OriginalWitness,
+            "read-only witness cannot retire current state"
+        );
+        ensure!(
+            self.service_incarnation()? == Some(incarnation),
+            "retired grant scope differs from owned slot"
+        );
+        let pin =
+            crate::service::registry::catalog::setup::storage::SetupDirectory::open_canonical(
+                self.directory(),
+            )?;
+        require_absent_current_payload(&pin)?;
+        if let Some(scope) = self.current_owned_scope_under_gate(_gate)? {
+            let receipt = quota.observe_funding(funding.operation_id)?;
+            let registration = if funding.index_id == receipt.request.original_index {
+                &receipt.request.original
+            } else {
+                &receipt.request.destination
+            };
+            ensure!(
+                scope.incarnation == incarnation
+                    && scope.collection == registration.collection
+                    && scope.root == registration.root,
+                "retired native owner differs from funded participant"
+            );
+        }
+        let grants = quota
+            .current_grants(writer)?
+            .into_iter()
+            .filter(|grant| grant.scope().incarnation == incarnation)
+            .collect::<Vec<_>>();
+        for grant in &grants {
+            grant.require_release_authority()?;
+        }
+        for grant in grants {
+            grant.release(writer)?;
+        }
+        Ok(())
+    }
+
+    /// Pre-build cancellation/recovery has no Ready journal to inspect. The
+    /// exact sealed worker proves that all native current state is absent;
+    /// unavailable, malformed, or partially initialized state is not absence.
+    pub fn reconcile_operation_funding_without_current(
+        &self,
+        writer: &WriterLock,
+        quota: &Quota,
+    ) -> Result<crate::quota::funding::FundingReceipt> {
+        use crate::service::registry::catalog::setup::storage::SetupDirectory;
+        let permit = self
+            .split_access
+            .as_ref()
+            .context("no-current settlement requires the native split worker")?;
+        let managed = self.managed_path()?;
+        let owner_pin = SetupDirectory::open_canonical(managed.logical)?;
+        permit.validate_pinned_store(self, &owner_pin)?;
+        quota.require_store_funding(self)?;
+        crate::maintenance::check_writer(self, writer, quota)?;
+        ensure!(
+            !writer.has_object_captures(),
+            "live object captures retain split funding"
+        );
+        let owner = quota
+            .funding_use()
+            .context("no-current settlement requires exact participant funding")?;
+        ensure!(
+            matches!(
+                owner.phase.purpose,
+                airk_core::catalog_split::SplitJobPurpose::DestinationBuild
+                    | airk_core::catalog_split::SplitJobPurpose::DestinationCleanup
+            ),
+            "no-current settlement is limited to destination pre-build recovery"
+        );
+        let _gate = Gate::exclusive(self, writer)?;
+        let current_pin = SetupDirectory::open_canonical(self.directory())?;
+        require_absent_current(&current_pin)?;
+        quota.reconcile_funding_phase(writer, owner, None)
+    }
+
     pub fn current_write<'a>(
         &self,
         writer: &'a WriterLock,
@@ -697,6 +1067,8 @@ impl FileStore {
         scope: &CurrentScope,
         database_capacity_bytes: u64,
     ) -> Result<CurrentWriter<'a>> {
+        crate::service::collection::validate_split_store_access(self)?;
+        quota.require_store_funding(self)?;
         scope.validate()?;
         database::validate_capacity(database_capacity_bytes)?;
         crate::maintenance::check_writer(self, writer, quota)?;
@@ -2528,6 +2900,11 @@ impl CurrentWriter<'_> {
             "pending current transaction still owns recovery capacity"
         );
         let grants = self.quota.current_grants(self.writer)?;
+        // Validate the complete set before releasing any unrelated standalone
+        // allowance. Operation-funded journals need their exact native recovery.
+        for grant in &grants {
+            grant.require_release_authority()?;
+        }
         ensure!(
             grants
                 .iter()
@@ -2551,6 +2928,51 @@ impl CurrentWriter<'_> {
             released += 1;
         }
         Ok(released)
+    }
+
+    /// Native split jobs checkpoint only after capture handles have closed and
+    /// this exact current journal is settled. No database is opened under ledger.
+    pub fn reconcile_operation_funding(&self) -> Result<crate::quota::funding::FundingReceipt> {
+        ensure!(
+            self.phase()? == TransactionPhase::Ready && self.pending()?.is_none(),
+            "pending current transaction retains split funding"
+        );
+        ensure!(
+            !self.writer.has_object_captures(),
+            "live object captures retain split funding"
+        );
+        let owner = self
+            .quota
+            .funding_use()
+            .context("writer has no operation funding")?;
+        let wal = super::wal::enabled(self.store.directory())
+            .then(|| self.grant_scope(super::wal::id(&self.scope)));
+        self.quota
+            .reconcile_funding_phase(self.writer, owner, wal.as_ref())
+    }
+    /// Progressive work may retain its actual capture/failure handles. Their
+    /// complete held credit and leases survive; only closed publication children
+    /// are reconciled, and no live capture is reported as settled or reusable.
+    pub fn reconcile_operation_funding_preserving(
+        &self,
+        preserved: &[&crate::quota::Reservation],
+    ) -> Result<crate::quota::funding::FundingReceipt> {
+        ensure!(
+            self.phase()? == TransactionPhase::Ready && self.pending()?.is_none(),
+            "pending current transaction retains split funding"
+        );
+        ensure!(
+            !preserved.is_empty() || !self.writer.has_object_captures(),
+            "live object captures require their actual funded handles"
+        );
+        let owner = self
+            .quota
+            .funding_use()
+            .context("writer has no operation funding")?;
+        let wal = super::wal::enabled(self.store.directory())
+            .then(|| self.grant_scope(super::wal::id(&self.scope)));
+        self.quota
+            .reconcile_funding_phase_preserving(self.writer, owner, wal.as_ref(), preserved)
     }
 }
 

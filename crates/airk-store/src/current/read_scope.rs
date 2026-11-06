@@ -97,12 +97,18 @@ impl CurrentRead {
         self.source_policy
             .get()
             .is_some_and(|policy| policy.restricts)
-            || self.read_scope.get().is_some()
-                && self
-                    .read_scope_restricts_paths
-                    .get()
-                    .copied()
-                    .unwrap_or(true)
+            || self.selected_scope_restricts_paths()
+    }
+    /// Selected Project coverage of this exact publication, independently of
+    /// permanent source-policy filtering. Read scope attachment computes this
+    /// once from the published root/alias configuration; it grants no path access.
+    pub fn selected_scope_restricts_paths(&self) -> bool {
+        self.read_scope.get().is_some()
+            && self
+                .read_scope_restricts_paths
+                .get()
+                .copied()
+                .unwrap_or(true)
     }
 
     pub fn require_path(&self, path: &str) -> Result<()> {

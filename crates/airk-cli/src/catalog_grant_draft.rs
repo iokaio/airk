@@ -203,7 +203,8 @@ fn validate_fence(
             && state.namespace == host.namespace
             && state.revision == selection.expected_catalog_revision
             && state.authority_contract == 1
-            && state.policy_contract <= 1
+            && state.policy_contract
+                <= airk_store::service::registry::catalog::SUPPORTED_POLICY_CONTRACT
             && capabilities.supports(state.schema, 1, state.policy_contract),
         ScopeReadRefused
     );

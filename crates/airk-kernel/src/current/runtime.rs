@@ -303,7 +303,7 @@ impl Kernel {
         filters: &airk_core::SearchFilters,
         read: Arc<CurrentRead>,
     ) -> Result<SearchResponse> {
-        let disclose_readiness = !read.restricts_paths();
+        let disclose_readiness = !read.selected_scope_restricts_paths();
         if matches!(
             mode,
             super::CurrentSearchMode::Vector | super::CurrentSearchMode::Hybrid

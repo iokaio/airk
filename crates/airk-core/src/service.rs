@@ -19,6 +19,9 @@ pub enum CatalogOutcomeObservation {
     IndexSetup {
         receipt: Box<crate::catalog_setup::IndexSetupReceipt>,
     },
+    IndexSplit {
+        snapshot: Box<crate::catalog_split::SplitSnapshot>,
+    },
 }
 
 /// An explicit selection within a persisted native-reviewed grant. Host/caller
@@ -167,6 +170,31 @@ pub enum ControlMethod {
     /// Explicit native recovery discovery; None is not completion evidence.
     CatalogPendingSourceChange {
         index_id: crate::index_catalog::IndexId,
+    },
+    CatalogSplitDraft {
+        selection: Box<crate::catalog_split_draft::SplitDraftSelection>,
+    },
+    CatalogSplitSourceState {
+        index_id: crate::index_catalog::IndexId,
+        expected_catalog_revision: crate::index_catalog::CatalogRevision,
+    },
+    CatalogSplitApply {
+        draft: Box<crate::catalog_split_draft::SplitDraft>,
+    },
+    CatalogSplitStatus {
+        operation_id: Incarnation,
+    },
+    CatalogSplitReceipt {
+        caller: Incarnation,
+        key: RequestKey,
+    },
+    CatalogSplitRecover {
+        request: Box<crate::catalog_split::SplitRecoveryRequest>,
+    },
+    CatalogSplitRecoveryReceipt {
+        operation_id: Incarnation,
+        caller: Incarnation,
+        key: RequestKey,
     },
     CatalogPolicyStatus {
         index_id: crate::index_catalog::IndexId,
@@ -453,9 +481,11 @@ pub enum ControlResponse {
     },
     CatalogPage {
         page: crate::catalog_management::CatalogPage,
+        capabilities: crate::index_catalog::CatalogCapabilities,
     },
     CatalogDetail {
         detail: crate::catalog_management::CatalogDetail,
+        capabilities: crate::index_catalog::CatalogCapabilities,
     },
     CatalogHostContext {
         descriptor: crate::catalog_host::NativeHostContextDescriptor,
@@ -480,6 +510,38 @@ pub enum ControlResponse {
         index_id: crate::index_catalog::IndexId,
         snapshot: Option<crate::catalog_policy::PolicySnapshot>,
         job: Option<JobRecord>,
+    },
+    CatalogSplitDraft {
+        draft: Box<crate::catalog_split_draft::SplitDraft>,
+    },
+    CatalogSplitSourceState {
+        state: Box<crate::catalog_split::SplitSourceState>,
+        capabilities: crate::index_catalog::CatalogCapabilities,
+    },
+    CatalogSplitAccepted {
+        snapshot: Box<crate::catalog_split::SplitSnapshot>,
+    },
+    CatalogSplitStatus {
+        operation_id: Incarnation,
+        snapshot: Option<Box<crate::catalog_split::SplitSnapshot>>,
+    },
+    CatalogSplitReceipt {
+        caller: Incarnation,
+        key: RequestKey,
+        snapshot: Option<Box<crate::catalog_split::SplitSnapshot>>,
+        expired: bool,
+    },
+    CatalogSplitRecovered {
+        receipt: Box<crate::catalog_split::SplitRecoveryReceipt>,
+        snapshot: Box<crate::catalog_split::SplitSnapshot>,
+    },
+    CatalogSplitRecoveryReceipt {
+        operation_id: Incarnation,
+        caller: Incarnation,
+        key: RequestKey,
+        receipt: Option<Box<crate::catalog_split::SplitRecoveryReceipt>>,
+        snapshot: Option<Box<crate::catalog_split::SplitSnapshot>>,
+        expired: bool,
     },
     CatalogPolicyResumed {
         index_id: crate::index_catalog::IndexId,

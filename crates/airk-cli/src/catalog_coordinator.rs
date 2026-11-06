@@ -76,7 +76,10 @@ pub(crate) fn refresh_catalog_clock(
         .map_err(|e| e.context(CatalogClockPending))?
         .ok_or(CatalogClockPending)?;
     ensure!(
-        state.activated && state.authority_contract == 1 && state.policy_contract <= 1,
+        state.activated
+            && state.authority_contract == 1
+            && state.policy_contract
+                <= airk_store::service::registry::catalog::SUPPORTED_POLICY_CONTRACT,
         CatalogClockPending
     );
     let before = gate.catalog_clock().ok_or(CatalogClockPending)?;
@@ -107,7 +110,8 @@ impl KnownUnprepared {
                 && state.revision == request.expected_catalog_revision
                 && state.activated
                 && state.authority_contract == 1
-                && state.policy_contract <= 1,
+                && state.policy_contract
+                    <= airk_store::service::registry::catalog::SUPPORTED_POLICY_CONTRACT,
             "catalog preparation observation changed"
         );
         Ok(Self {
@@ -473,7 +477,8 @@ impl<C: CatalogControl> CatalogCoordinator<C> {
         ensure!(
             current.activated
                 && current.authority_contract == 1
-                && current.policy_contract <= 1
+                && current.policy_contract
+                    <= airk_store::service::registry::catalog::SUPPORTED_POLICY_CONTRACT
                 && current.namespace == request.key.namespace,
             "native catalog authority contract unavailable"
         );

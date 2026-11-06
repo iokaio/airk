@@ -672,6 +672,9 @@ fn review_request_native(
                 PolicyChange::Unblock { rule_id } => {
                     SourceMutationSelection::UnblockPath { rule_id: *rule_id }
                 }
+                PolicyChange::SplitRemainder { .. } => {
+                    anyhow::bail!("split cutover requires the accepted native split owner")
+                }
             };
             (*id, selection)
         }
@@ -717,6 +720,131 @@ fn review_request_native(
         "actual native source review changed"
     );
     Ok(draft)
+}
+
+/// Build only the cutover already authorized by a durable split review. The
+/// original worker has performed the bounded live-source witness; this metadata
+/// turn does not walk or hash source files.
+pub(crate) fn split_cutover(
+    registry: &mut ServiceRegistry,
+    control: &Path,
+    snapshot: &airk_core::catalog_split::SplitSnapshot,
+) -> Result<(CatalogRequest, Sha256Digest)> {
+    split_cutover_with_engine(
+        registry,
+        control,
+        snapshot,
+        crate::runtime_pair::engine_identity()?,
+    )
+}
+
+// Private unit fixture executes the actual accepted work in this test process.
+// It cannot attest installed image identity or live provider/process drains.
+#[cfg(all(test, feature = "embedding-worker"))]
+pub(crate) fn split_cutover_for_native_fixture(
+    registry: &mut ServiceRegistry,
+    control: &Path,
+    snapshot: &airk_core::catalog_split::SplitSnapshot,
+    engine: Sha256Digest,
+) -> Result<(CatalogRequest, Sha256Digest)> {
+    split_cutover_with_engine(registry, control, snapshot, engine)
+}
+
+fn split_cutover_with_engine(
+    registry: &mut ServiceRegistry,
+    control: &Path,
+    snapshot: &airk_core::catalog_split::SplitSnapshot,
+    engine: Sha256Digest,
+) -> Result<(CatalogRequest, Sha256Digest)> {
+    use airk_core::{catalog_split::SplitStage, identity::framed_digest};
+    snapshot.validate()?;
+    ensure!(
+        snapshot.receipt.stage == SplitStage::DestinationValidated,
+        "split destination has not validated"
+    );
+    let current = registry
+        .catalog_split_status(snapshot.receipt.operation_id)?
+        .context("accepted split disappeared")?;
+    ensure!(current == *snapshot, "split cutover review changed");
+    let registration = &snapshot.request.original_registration;
+    data_scope::check(
+        Path::new(&registration.data_root),
+        control,
+        snapshot.request.key.namespace,
+    )?;
+    let selected = Collection::existing(
+        Path::new(&registration.data_root),
+        &registration.root,
+        &registration.collection,
+    )?
+    .select()?;
+    ensure!(
+        selected.store.service_incarnation()? == Some(snapshot.request.original_incarnation)
+            && airk_store::service::collection::inspect_settings_digest(
+                &selected.store,
+                &registration.root
+            )? == snapshot.request.original_settings_digest,
+        "split original native settings changed"
+    );
+    ensure!(
+        RootConfig::load(selected.store.directory(), &registration.root)?.roots
+            == snapshot.request.source_configuration.aliases,
+        "split original source configuration changed"
+    );
+    let (namespace, epoch) = registry.saved_request_epoch()?;
+    ensure!(
+        namespace == snapshot.request.key.namespace,
+        "split namespace changed"
+    );
+    let nonce = framed_digest(
+        b"airk/native-split-cutover-key/1",
+        &[
+            snapshot.receipt.operation_id.as_bytes(),
+            snapshot.receipt_digest.as_bytes(),
+        ],
+    )
+    .to_string()[..32]
+        .parse()?;
+    let key = airk_core::service::RequestKey {
+        namespace,
+        epoch,
+        nonce,
+    };
+    let operation_id = catalog_operation_id(snapshot.request.caller, &key)?;
+    let state = registry
+        .catalog_state()?
+        .context("split catalog unavailable")?;
+    let persisted = match &snapshot.request.baseline {
+        airk_core::catalog_split::SplitBaseline::Persisted { reference } => Some(reference),
+        airk_core::catalog_split::SplitBaseline::VirtualUnrestricted => None,
+    };
+    let request = CatalogRequest {
+        caller: snapshot.request.caller,
+        key,
+        expected_catalog_revision: state.revision,
+        operation: CatalogOperation::ChangeIndexPolicy {
+            id: snapshot.request.original_index,
+            expected_source_revision: snapshot.request.expected_source_revision,
+            expected_policy_epoch: persisted.map_or(0, |reference| reference.epoch.get()),
+            expected_policy_digest: persisted.map(|reference| reference.digest),
+            change: PolicyChange::SplitRemainder {
+                split_operation: snapshot.receipt.operation_id,
+                expected_split_receipt: snapshot.receipt_digest,
+            },
+            configuration: Box::new(ConfigurationRequest {
+                prepare: false,
+                incarnation: snapshot.request.original_incarnation,
+                settings: snapshot.request.original_settings_digest,
+                configuration: ProjectConfiguration::ApplySourcePolicy {
+                    policy: Box::new(snapshot.plan.remainder.clone()),
+                    operation_id,
+                },
+            }),
+            engine_identity: engine,
+        },
+    };
+    let preview = registry.catalog_preview(&request)?.identity()?;
+    Ok((request, preview))
 }
 
 fn require_missing_with_plain_parent(root: &Path) -> Result<()> {

@@ -211,6 +211,43 @@ fn windows_no_replace_publication_preserves_unknown_destination() -> Result<()> 
     Ok(())
 }
 #[test]
+fn windows_owner_replace_uses_mutation_handle_on_exact_rebound_directory() -> Result<()> {
+    let temporary = tempfile::tempdir()?;
+    let base = temporary.path().canonicalize()?;
+    let root = SetupDirectory::open_canonical(&base)?;
+    let retained = root.create_dir(OsStr::new("selected"))?;
+    // Windows refuses directory rename while descendant files have open
+    // handles. Establish the actual pathname rebound before opening children;
+    // subsequent metadata must still use this original directory descriptor.
+    std::fs::rename(base.join("selected"), base.join("retained"))
+        .context("rebind fixture directory before opening descendant files")?;
+    std::fs::create_dir(base.join("selected"))
+        .context("create foreign rebound fixture directory")?;
+    std::fs::write(base.join("selected/owner"), b"foreign source")
+        .context("write preserved foreign rebound fixture bytes")?;
+    let original = retained.create_file(OsStr::new("owner"), b"previous owner")?;
+    let prepared = retained.create_file(OsStr::new("prepared"), b"next owner")?;
+    retained.replace_file(
+        OsStr::new("prepared"),
+        &prepared,
+        OsStr::new("owner"),
+        &original,
+    )?;
+    assert_eq!(std::fs::read(base.join("retained/owner"))?, b"next owner");
+    assert_eq!(
+        native_file_identity(&retained.open_file(OsStr::new("owner"), SetupFileMode::Read)?)?,
+        native_file_identity(&prepared)?
+    );
+    assert!(!base.join("retained/prepared").exists());
+    assert_eq!(
+        std::fs::read(base.join("selected/owner"))?,
+        b"foreign source"
+    );
+    assert_eq!(std::fs::read_dir(base.join("selected"))?.count(), 1);
+    Ok(())
+}
+
+#[test]
 fn windows_native_handle_capacity_flush_and_inventory_are_actual_and_bounded() -> Result<()> {
     let temporary = tempfile::tempdir()?;
     let base = temporary.path().canonicalize()?;

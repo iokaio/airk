@@ -484,6 +484,12 @@ export class ExplorerController implements vscode.Disposable {
             case 'indexing.source.draft':return this.indexing.sourceDraft(message.change,message.generation);
             case 'indexing.source.read':return this.indexing.sourceRead(message.begin,message.generation);
             case 'indexing.source.pending':return this.indexing.sourcePending(message.generation);
+            case 'indexing.split.open':return this.indexing.splitOpen(message.index,message.generation);
+            case 'indexing.split.sourceRead':return this.indexing.splitSourceRead(message.generation);
+            case 'indexing.split.draft':return this.indexing.splitDraft(message.selection,message.generation);
+            case 'indexing.split.apply':return this.indexing.splitApply(message.generation);
+            case 'indexing.split.read':return this.indexing.splitRead(message.operation,message.generation);
+            case 'indexing.split.recover':return this.indexing.splitRecover(message.action,message.generation);
             case 'indexing.policy.read':return this.indexing.policyRead(message.generation);
             case 'indexing.policy.resume':return this.indexing.policyResume(message.generation);
             case 'indexing.retirement.read':return this.indexing.retirementRead(message.id,message.generation);
@@ -491,9 +497,9 @@ export class ExplorerController implements vscode.Disposable {
             case 'indexing.source.resolve':return this.indexing.sourceResolve(message.generation);
             case 'indexing.export': {
                 this.requireAuthorization();
-                const text=catalogExport(this.indexing.snapshot());
-                if(message.format==='copy'){await vscode.env.clipboard.writeText(text);return {copied:true};}
-                const uri=await vscode.window.showSaveDialog({defaultUri:vscode.Uri.file('airk-indexing.json'),filters:{JSON:['json']}});
+                const markdown=message.format==='copy_markdown'||message.format==='markdown',text=catalogExport(this.indexing.snapshot(),markdown);
+                if(message.format==='copy'||message.format==='copy_markdown'){await vscode.env.clipboard.writeText(text);return {copied:true};}
+                const uri=await vscode.window.showSaveDialog({defaultUri:vscode.Uri.file(markdown?'airk-indexing.md':'airk-indexing.json'),filters:markdown?{Markdown:['md']}:{JSON:['json']}});
                 if(uri){await vscode.workspace.fs.writeFile(uri,new TextEncoder().encode(text));return {saved:true};}return {saved:false};
             }
             case 'instructions.open': {

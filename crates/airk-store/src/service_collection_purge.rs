@@ -9,6 +9,14 @@ impl Collection {
         registration: &ProjectRegistration,
         lease: &ProjectLease,
     ) -> Result<bool> {
+        Self::purge_removed_turn_inner(registration, lease, None, None)
+    }
+    pub(crate) fn purge_removed_turn_inner(
+        registration: &ProjectRegistration,
+        lease: &ProjectLease,
+        split_access: Option<&SplitBuildPermit>,
+        funding: Option<&crate::quota::funding::FundingUse>,
+    ) -> Result<bool> {
         ensure!(
             lease.identity().0 == registration.binding,
             "foreign removal lease"
@@ -53,18 +61,46 @@ impl Collection {
             &registration.root,
             &registration.collection,
         )?;
+        let retained_split = collection.owner.required_split.is_some();
+        if let Some(pointer) = &collection.owner.required_split {
+            super::split::validate_capsule_for_retirement(&directory, pointer, split_access)?;
+        }
+        // A dead funded capture's exact stage remains owned until the native
+        // payload-disposal checkpoint below. Recognize ONLY the admitted ledger
+        // paths; do not classify a prefix as safe or delete staging early.
+        let admitted_staging = if let Some(funding) = funding {
+            let permit =
+                split_access.context("funded staging disposal requires claimed cleanup access")?;
+            let store = FileStore::new(&directory)
+                .with_split_access(permit.clone())?
+                .with_operation_funding(funding.clone())?;
+            Quota::for_store(&store)?.operation_staging_for_disposal(funding)?
+        } else {
+            std::collections::BTreeSet::new()
+        };
         let _usage = crate::usage::deletion_guard(&directory)?;
         collection.sweep_metadata_scratch()?;
         let incarnations = directory.join("incarnations");
         // Prove the complete top-level scope before deleting anything.
         let mut top = Vec::new();
         for (count, entry) in fs::read_dir(&directory)?.enumerate() {
-            ensure!(count < 64, "removal metadata budget exceeded");
+            ensure!(count < 2112, "removal metadata budget exceeded");
             let path = entry?.path();
             let name = path
                 .file_name()
                 .and_then(|name| name.to_str())
                 .context("invalid removal entry")?;
+            if admitted_staging.contains(&path) {
+                ensure!(
+                    plain(&path)?.is_dir(),
+                    "invalid exact funded staging directory"
+                );
+                continue;
+            }
+            if name.starts_with("split-state-") && retained_split {
+                super::split::validate_retained_capsule_file(&path)?;
+                continue;
+            }
             if name == "incarnations" || name == ".current-gates" {
                 ensure!(plain(&path)?.is_dir(), "invalid incarnation root");
                 continue;
@@ -115,7 +151,13 @@ impl Collection {
             // the existing allowlisted inventory, writer lock and request gate.
             let last_slot = slots.len() == 1;
             if let Some((_, path)) = slots.into_iter().next() {
-                let store = FileStore::new(&path);
+                let mut store = FileStore::new(&path);
+                if let Some(permit) = split_access {
+                    store = store.with_split_access(permit.clone())?;
+                }
+                if let Some(funding) = funding {
+                    store = store.with_operation_funding(funding.clone())?;
+                }
                 let writer = store.lock()?;
                 let incarnation = if path.join("current-owner.json").try_exists()? {
                     Some(
@@ -127,7 +169,35 @@ impl Collection {
                 } else {
                     None
                 };
-                let _gate = Gate::exclusive(&store, &writer)?;
+                let gate = Gate::exclusive(&store, &writer)?;
+                let incarnation = if funding.is_some() {
+                    store.service_incarnation()?
+                } else {
+                    incarnation
+                };
+                let quota = Quota::for_store(&store)?;
+                if let Some(funding) = funding {
+                    ensure!(
+                        quota
+                            .funded_children(funding)?
+                            .iter()
+                            .all(|child| child.closed
+                                || !matches!(
+                                    child.kind,
+                                    crate::quota::funding::FundingChildKind::Reservation { .. }
+                                )),
+                        "split cleanup must explicitly adopt/reconcile captured reservations before disposal"
+                    );
+                }
+                // Refuse a crossed/ordinary quota before deleting a journal or
+                // any payload needed to recover an active funded child.
+                for grant in quota.current_grants(&writer)? {
+                    if (funding.is_none() && last_slot)
+                        || Some(grant.scope().incarnation) == incarnation
+                    {
+                        grant.require_release_authority()?;
+                    }
+                }
                 let (files, mut directories) = retirement_inventory(&path)?;
                 let ordinary: Vec<_> = files
                     .iter()
@@ -144,9 +214,13 @@ impl Collection {
                 if files.len() > 4096 {
                     return Ok(false);
                 }
-                let quota = Quota::open_service(Path::new(&registration.data_root))?;
+                if funding.is_some() {
+                    store.reconcile_disposed_operation_funding(&writer, &quota, &gate)?;
+                }
                 for grant in quota.current_grants(&writer)? {
-                    if last_slot || Some(grant.scope().incarnation) == incarnation {
+                    if (funding.is_none() && last_slot)
+                        || Some(grant.scope().incarnation) == incarnation
+                    {
                         grant.release(&writer)?;
                     }
                 }
@@ -162,6 +236,16 @@ impl Collection {
                 return Ok(false);
             }
             fs::remove_dir(&incarnations)?;
+        }
+        // Last-incarnation disposal normally removed these through canonical
+        // journal/quota reconciliation on the prior turn. Never report complete
+        // from a missing incarnation if its actual funded staging still exists.
+        for stage in &admitted_staging {
+            match fs::symlink_metadata(stage) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+                Ok(_) => anyhow::bail!("admitted funded staging awaits native disposal settlement"),
+            }
         }
         let gates = directory.join(".current-gates");
         if gates.try_exists()? {
@@ -189,7 +273,7 @@ impl Collection {
                 .is_some_and(|name| name == "service-owner.json")
         });
         for path in top {
-            if policy.is_some()
+            if (policy.is_some() || retained_split)
                 && path
                     .file_name()
                     .is_some_and(|name| name == "service-owner.json")
@@ -198,7 +282,7 @@ impl Collection {
             }
             fs::remove_file(path)?;
         }
-        if policy.is_none() {
+        if policy.is_none() && !retained_split {
             fs::remove_dir(&directory)?;
         }
         Ok(true)

@@ -133,13 +133,22 @@ impl Kernel {
         Ok(())
     }
     pub(crate) fn inherit_shared_models(&self, store: FileStore) -> Result<FileStore> {
-        match (
+        let store = match (
             self.store.shared_model_runtime(),
             self.store.shared_model_default(),
         ) {
             (Some(runtime), Some(default)) => store.with_service_models(runtime, default.clone()),
             (None, None) => Ok(store),
             _ => anyhow::bail!("incomplete service model binding"),
+        }?;
+        if let Some(authority) = &self.split_authority {
+            let store = store.with_split_access(authority.permit.clone())?;
+            match &authority.funding {
+                Some(funding) => store.with_operation_funding(funding.clone()),
+                None => Ok(store),
+            }
+        } else {
+            Ok(store)
         }
     }
 }

@@ -6,6 +6,7 @@ import { requireNativeExecution } from './nativeGate';
 import { CatalogApplyIntent, CatalogObject, CatalogRequest, CatalogReview, IndexSetupApplyIntent, IndexSetupReview, catalogBound, catalogFenceObservation, catalogHex, catalogObject, catalogRevision, sameCatalogValue, CATALOG_RECEIPT_BYTES, validateCatalogApply, validateGrantSelection, validateNativeGrantDraft, validateNativeHostContext, validateIndexSetupSelection, validateIndexSetupApply, validateNativeIndexSetupDraft, validateIndexSetupReceipt, indexSetupObservation, validateNativeLegacyBinding } from './indexingCatalog';
 import { SourceResolveIntent, PolicyResumeIntent, validatePolicyResumeIntent, validateNativeSourceDraft, validateSourceMutationSelection, validateSourceResolveIntent, sourceChangeObservation, validateNativeRetirementRequest } from './indexingCatalog';
 import { validatePolicyStatus, validateNativePolicyConfiguration } from './indexingCatalog';
+import { SplitApplyIntent, SplitRecoverIntent, SplitReview, SPLIT_RESPONSE_BYTES, validateSplitApply, validateSplitContinuity, validateSplitDraft, validateSplitRecover, validateSplitRecoveryReceipt, validateSplitSelection, validateSplitSnapshot, validateSplitSourceState } from './indexingSplit';
 
 export type RecordValue = Record<string, unknown>;
 export function record(value: unknown): RecordValue {
@@ -198,7 +199,7 @@ export class ServiceClient {
     constructor(readonly transport: ControlTransport) {}
     async rpc(method: unknown, expected?: string): Promise<RecordValue> {
         const name=typeof method==='string'?method:method&&typeof method==='object'?Object.keys(method)[0]:undefined;
-        const readOnly=['health','resources','embedding_status','source_status','workers','worker','console','inactive_console','projects','job','configuration_result','request_receipt','inspection','watch','progress','events','plan','plan_items','maintenance','catalog_page','catalog_detail','catalog_context','catalog_receipt','catalog_host_context','catalog_grant_draft','catalog_index_setup_draft','catalog_index_setup_receipt','catalog_legacy_binding','catalog_source_mutation_draft','catalog_source_change_observation','catalog_pending_source_change','catalog_policy_status','catalog_policy_resume_receipt'].includes(String(name));
+        const readOnly=['health','resources','embedding_status','source_status','workers','worker','console','inactive_console','projects','job','configuration_result','request_receipt','inspection','watch','progress','events','plan','plan_items','maintenance','catalog_page','catalog_detail','catalog_context','catalog_receipt','catalog_host_context','catalog_grant_draft','catalog_index_setup_draft','catalog_index_setup_receipt','catalog_legacy_binding','catalog_source_mutation_draft','catalog_source_change_observation','catalog_pending_source_change','catalog_policy_status','catalog_policy_resume_receipt','catalog_split_draft','catalog_split_source_state','catalog_split_status','catalog_split_receipt','catalog_split_recovery_receipt'].includes(String(name));
         let response = await this.transport.request(method);
         for(let attempt=0;(readOnly||name==='catalog_index_retirement_evidence')&&response.status==='failure'&&response.code==='registry_busy'&&attempt<2;attempt++){
             await new Promise(resolve=>setTimeout(resolve,25*(attempt+1)));
@@ -208,11 +209,11 @@ export class ServiceClient {
             const code = typeof response.code === 'string' && /^[a-z0-9_]{1,128}$/.test(response.code) ? response.code : 'invalid_service_failure';
             // Older catalog handlers can collapse a post-prepare failure into this generic code.
             // Its absence of a receipt does not establish that an accepted apply had no effect.
-            const error = new ServiceError(code, code.endsWith('_outcome_unknown') || code === 'registry_response_unknown_retry_with_key'||['catalog_apply','catalog_index_setup_apply','catalog_source_change_resolve','catalog_policy_resume'].includes(String(name))&&code==='invalid_registry_request',response);
+            const error = new ServiceError(code, code.endsWith('_outcome_unknown') || code === 'registry_response_unknown_retry_with_key'||['catalog_apply','catalog_index_setup_apply','catalog_source_change_resolve','catalog_policy_resume','catalog_split_apply','catalog_split_recover'].includes(String(name))&&code==='invalid_registry_request',response);
             if(code==='invalid_service_failure')error.cause=new Error(`Invalid native failure code: ${String(JSON.stringify(response.code)).slice(0,2048)}`);
             throw error;
         }
-        if (expected && response.status !== expected) { throw new ServiceError('unexpected_service_response', true); }
+        if (expected && response.status !== expected) { throw new ServiceError('unexpected_service_response', true,response); }
         return response;
     }
     async projects(after: string | null = null, revision: number | null = null, limit = 16, inactive = false): Promise<ConsolePage> {
@@ -296,6 +297,55 @@ export class ServiceClient {
         if(!/^idx_[0-9a-f]{32}$/.test(index))throw new ServiceError('invalid_source_policy_index');
         const response=await this.rpc({catalog_policy_status:{index_id:index}},'catalog_policy_status');
         return validatePolicyStatus(response,index);
+    }
+    async catalogSplitDraft(selection:CatalogObject):Promise<SplitReview>{
+        catalogBound(selection,16384);
+        const response=await this.rpc({catalog_split_draft:{selection}},'catalog_split_draft');
+        catalogBound(response,SPLIT_RESPONSE_BYTES);const draft=validateSplitDraft(response.draft,selection);
+        return {response,draft,selection:structuredClone(selection)};
+    }
+    async catalogSplitSourceState(index:string,revision:number):Promise<RecordValue>{
+        if(!/^idx_[0-9a-f]{32}$/.test(index))throw new ServiceError('invalid_split_index');catalogRevision(revision);
+        return validateSplitSourceState(await this.rpc({catalog_split_source_state:{index_id:index,expected_catalog_revision:revision}},'catalog_split_source_state'),index,revision);
+    }
+    async submitSplit(input:SplitApplyIntent):Promise<RecordValue>{
+        const intent=validateSplitApply(structuredClone(input));
+        const response=await this.rpc(intent,'catalog_split_accepted');
+        try{catalogBound(response,SPLIT_RESPONSE_BYTES);validateSplitSnapshot(response.snapshot,intent.catalog_split_apply.draft);return response;}
+        catch(error){const failure=new ServiceError('invalid_native_split_acceptance',true,response);failure.cause=error;throw failure;}
+    }
+    async catalogSplitStatus(operation:string):Promise<RecordValue>{
+        catalogHex(operation);const response=await this.rpc({catalog_split_status:{operation_id:operation}},'catalog_split_status');catalogBound(response,SPLIT_RESPONSE_BYTES);
+        if(response.operation_id!==operation)throw new ServiceError('crossed_split_status',true,response);
+        if(response.snapshot!==null&&catalogObject(validateSplitSnapshot(response.snapshot).receipt).operation_id!==operation)throw new ServiceError('crossed_split_status',true,response);return response;
+    }
+    async catalogSplitReceipt(input:SplitApplyIntent):Promise<RecordValue>{
+        const intent=validateSplitApply(input),request=catalogObject(intent.catalog_split_apply.draft.request);
+        const response=await this.rpc({catalog_split_receipt:{caller:request.caller,key:request.key}},'catalog_split_receipt');catalogBound(response,SPLIT_RESPONSE_BYTES);
+        if(response.caller!==request.caller||!sameCatalogValue(response.key,request.key)||typeof response.expired!=='boolean')throw new ServiceError('crossed_split_receipt',true,response);
+        if(response.snapshot!==null){validateSplitSnapshot(response.snapshot,intent.catalog_split_apply.draft);if(response.expired)throw new ServiceError('crossed_split_receipt',true,response);}return response;
+    }
+    async prepareSplitRecovery(reviewed:CatalogObject,action:'resume'|'cancel'):Promise<SplitRecoverIntent>{
+        validateSplitSnapshot(reviewed);const receipt=catalogObject(reviewed.receipt);
+        return validateSplitRecover({reviewed:structuredClone(reviewed),catalog_split_recover:{request:{caller:this.caller,key:await this.key(),operation_id:receipt.operation_id,request_digest:receipt.request_digest,expected_receipt_digest:reviewed.receipt_digest,...(reviewed.finalization!=null?{expected_finalization_revision:catalogObject(reviewed.finalization).revision}:{}),action}}});
+    }
+    async submitSplitRecovery(input:SplitRecoverIntent):Promise<RecordValue>{
+        const intent=validateSplitRecover(structuredClone(input));
+        let response:RecordValue|undefined;
+        try{response=await this.rpc({catalog_split_recover:intent.catalog_split_recover},'catalog_split_recovered');this.validateSplitRecoveryResponse(response,intent);return response;}
+        catch(error){const failure=new ServiceError(error instanceof ServiceError?error.code:'invalid_native_split_recovery',true,response??(error instanceof ServiceError?error.nativeResponse:undefined));failure.cause=error;throw failure;}
+    }
+    async catalogSplitRecoveryReceipt(input:SplitRecoverIntent):Promise<RecordValue>{
+        const intent=validateSplitRecover(input),request=intent.catalog_split_recover.request;
+        const response=await this.rpc({catalog_split_recovery_receipt:{operation_id:request.operation_id,caller:request.caller,key:request.key}},'catalog_split_recovery_receipt');
+        this.validateSplitRecoveryResponse(response,intent);return response;
+    }
+    private validateSplitRecoveryResponse(response:RecordValue,intent:SplitRecoverIntent):void{
+        catalogBound(response,SPLIT_RESPONSE_BYTES);const request=intent.catalog_split_recover.request;
+        if(response.status==='catalog_split_recovery_receipt'&&(response.operation_id!==request.operation_id||response.caller!==request.caller||!sameCatalogValue(response.key,request.key)||typeof response.expired!=='boolean'))throw new ServiceError('crossed_split_recovery_receipt',true,response);
+        if(response.receipt!==null){validateSplitRecoveryReceipt(response.receipt,intent);if(response.expired===true)throw new ServiceError('crossed_split_recovery_receipt',true,response);}
+        else if(response.status==='catalog_split_recovered')throw new ServiceError('incomplete_split_recovery',true,response);
+        if(response.snapshot!==null){const snapshot=validateSplitSnapshot(response.snapshot);if(!sameCatalogValue(snapshot.request,intent.reviewed.request)||!sameCatalogValue(snapshot.baseline,intent.reviewed.baseline)||!sameCatalogValue(snapshot.plan,intent.reviewed.plan))throw new ServiceError('crossed_split_recovery_status',true,response);validateSplitContinuity(intent.reviewed,snapshot);if(response.receipt!=null){const outcome=catalogObject(catalogObject(response.receipt).outcome);if(outcome.resulting_receipt){const accepted={...intent.reviewed,receipt:outcome.resulting_receipt,receipt_digest:outcome.receipt_digest};validateSplitContinuity(accepted,snapshot);}if(outcome.outcome==='finalization_accepted'){const final=catalogObject(snapshot.finalization);if(Number(final.revision)<Number(outcome.finalization_revision)||final.terminal_receipt_digest!==outcome.terminal_receipt_digest||Number(final.revision)===Number(outcome.finalization_revision)&&final.attention!=null)throw new ServiceError('crossed_split_finalization_status',true,response);if(snapshot.receipt_digest===outcome.terminal_receipt_digest&&!sameCatalogValue(snapshot.receipt,outcome.terminal_receipt))throw new ServiceError('crossed_split_terminal_receipt',true,response);}}}
     }
     async catalogPolicyResumeReceipt(input:PolicyResumeIntent):Promise<RecordValue>{
         const intent=validatePolicyResumeIntent(structuredClone(input)),request=intent.catalog_policy_resume;

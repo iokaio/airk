@@ -72,6 +72,7 @@ struct ProgressiveBase<'a> {
     kernel: &'a Kernel,
     quota: &'a Quota,
     failure_reservation: &'a airk_store::quota::Reservation,
+    capture_reservation: &'a airk_store::quota::Reservation,
     writer: &'a WriterLock,
     scope: &'a CurrentScope,
     configuration: &'a CollectionConfiguration,
@@ -224,6 +225,10 @@ impl ProgressiveBase<'_> {
         .apply_scanned(&changes, semantic, &resources, &Default::default())
         .context("publish progressive base batch")?;
         drop(reservation);
+        self.kernel.checkpoint_split_funding(
+            self.writer,
+            &[self.capture_reservation, self.failure_reservation],
+        )?;
         self.committed += changes.len() as u64;
         self.batch_bytes = 0;
         self.scan_work = next_scan_work;
@@ -328,6 +333,27 @@ struct RuntimeBootstrap {
 }
 
 impl Kernel {
+    fn checkpoint_split_funding(
+        &self,
+        writer: &WriterLock,
+        preserved: &[&airk_store::quota::Reservation],
+    ) -> Result<()> {
+        let quota = self.collection_quota()?;
+        if quota.funding_use().is_none() {
+            return Ok(());
+        }
+        let scope = self
+            .current_scope()?
+            .context("funded checkpoint has no current publication")?;
+        let capacity = self.store.current_database_capacity(&scope)?;
+        let current = self.store.current_write(writer, &quota, &scope, capacity)?;
+        if preserved.is_empty() {
+            current.reconcile_operation_funding()?;
+        } else {
+            current.reconcile_operation_funding_preserving(preserved)?;
+        }
+        Ok(())
+    }
     pub(crate) fn recover_runtime_bootstrap(&self) -> Result<()> {
         let Some(bytes) = self.store.runtime_bootstrap()? else {
             return Ok(());
@@ -390,6 +416,8 @@ impl Kernel {
             model.as_ref().map_or(1, EmbeddingModel::dimensions),
             &reservation,
         )?;
+        drop(reservation);
+        self.checkpoint_split_funding(&writer, &[])?;
         drop(writer);
         self.status()
     }
@@ -670,23 +698,13 @@ impl Kernel {
             .context(Stage("failure_reservation"))?;
         // Do not reserve all remaining capacity: durable SQL growth/replay owns
         // an independent grant while preparation is still alive.
-        let available = quota.status().context(Stage("quota_inventory"))?;
-        let root_free = available
-            .root_limit_bytes
-            .saturating_sub(available.used_bytes)
-            .saturating_sub(available.reserved_bytes);
-        let collection_free = available
-            .collections
-            .get(&self.collection)
-            .map_or(root_free, |c| {
-                c.limit_bytes
-                    .saturating_sub(c.used_bytes)
-                    .saturating_sub(c.reserved_bytes)
-            });
+        let capture_free = self
+            .reservation_headroom(&quota)
+            .context(Stage("quota_inventory"))?;
         let reservation = quota
             .reserve_available(
                 &self.collection,
-                (root_free.min(collection_free) / 2).min(MAX_INDEX_RESERVATION_BYTES),
+                (capture_free / 2).min(MAX_INDEX_RESERVATION_BYTES),
             )
             .context(Stage("capture_reservation"))?;
         let model_started = std::time::Instant::now();
@@ -820,6 +838,7 @@ impl Kernel {
                 kernel: self,
                 quota: &quota,
                 failure_reservation: &failure_reservation,
+                capture_reservation: &reservation,
                 writer: &writer,
                 scope,
                 configuration: &configuration,

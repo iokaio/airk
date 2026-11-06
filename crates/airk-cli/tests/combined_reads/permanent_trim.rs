@@ -12,7 +12,7 @@ use airk_core::{
     service::{JobOutcome, RequestKey},
 };
 
-async fn policy_key(f: &Fixture, nonce: u8) -> Result<RequestKey> {
+pub(super) async fn policy_key(f: &Fixture, nonce: u8) -> Result<RequestKey> {
     let response =
         airk_cli::service_runtime::request(&f.control, ControlMethod::RequestEpoch).await?;
     let ControlResponse::RequestEpoch { namespace, epoch } = response else {
@@ -28,14 +28,14 @@ async fn policy_key(f: &Fixture, nonce: u8) -> Result<RequestKey> {
     })
 }
 
-fn policy_revision(f: &Fixture) -> Result<CatalogRevision> {
+pub(super) fn policy_revision(f: &Fixture) -> Result<CatalogRevision> {
     Ok(ServiceRegistry::open_saved(&f.control)?
         .catalog_state()?
         .context("policy catalog missing")?
         .revision)
 }
 
-async fn policy_rpc_cli(f: &Fixture, method: ControlMethod) -> Result<Value> {
+pub(super) async fn policy_rpc_cli(f: &Fixture, method: ControlMethod) -> Result<Value> {
     let request = tempfile::NamedTempFile::new_in(f.owner.path())?;
     fs::write(request.path(), serde_json::to_vec(&method)?)?;
     let mut command = Command::new(&f.candidate);
@@ -763,6 +763,19 @@ async fn permanent_trim_fences_retained_grants_and_preserves_native_cli_mcp_resu
         let native = backend
             .call(tool.into(), args.as_object().unwrap().clone())
             .await?;
+        if tool == "airk_status" {
+            let status = body(&native)?;
+            let member =
+                airk_core::combined_reads::shared_values::materialize_combined_member_result(
+                    &status,
+                    f.indexes[2],
+                )?;
+            assert_eq!(
+                member["source_policy"]["control_dependencies"],
+                serde_json::to_value(airk_ingest::permanent_policy::control_dependencies())?,
+                "complete native status member: {member}; full reply: {status}"
+            );
+        }
         forbid_trimmed_bytes(&native)?;
         let cli = f.cli(tool, &args).await?;
         forbid_trimmed_bytes(&cli)?;

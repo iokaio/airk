@@ -8,6 +8,7 @@ mod catalog_host_context;
 mod catalog_index_setup;
 mod catalog_index_setup_control;
 mod catalog_source_change_control;
+mod catalog_split_control;
 #[cfg(test)]
 mod catalog_test_fixture;
 pub mod combined_frontend;
@@ -40,6 +41,7 @@ pub mod project_client;
 pub mod project_protocol;
 mod project_supervisor;
 pub mod project_worker;
+mod project_worker_split;
 
 mod service_resource_policy;
 

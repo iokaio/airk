@@ -11,9 +11,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-const MAX_FILE_BYTES: usize = 64 * 1024;
-const MAX_CONTROL_BYTES: usize = 1024 * 1024;
-const MAX_DIRECTORIES: usize = 32768;
+pub(crate) const MAX_FILE_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_CONTROL_BYTES: usize = 1024 * 1024;
+pub(crate) const MAX_DIRECTORIES: usize = 32768;
 
 fn refused(reason: &'static str) -> anyhow::Error {
     NativeNameBoundaryUnavailable::new(reason).into()
@@ -104,7 +104,7 @@ impl ProtectedIgnore {
             );
         }
         ensure!(
-            crate::permanent_policy::allows_absolute_input_checked(&self.policy, &path)?,
+            crate::permanent_policy::allows_absolute_control_input_checked(&self.policy, &path)?,
             refused("excluded_ignore_control")
         );
         let length =
@@ -565,6 +565,82 @@ mod tests {
             .err()
             .expect("oversized control must refuse");
         assert!(format!("{error:#}").contains("ignore_control_budget"));
+        Ok(())
+    }
+
+    #[test]
+    fn positive_partition_controls_do_not_expand_document_or_asset_eligibility() -> Result<()> {
+        use airk_core::index_catalog::ScopeAtom;
+        let (_owned, mut policy) = fixture()?;
+        let root = PathBuf::from(&policy.roots[0].canonical_path);
+        fs::create_dir_all(root.join("docs/nested"))?;
+        fs::write(root.join(".airkignore"), "*.secret\n")?;
+        fs::write(root.join("docs/.ignore"), "omit.md\n")?;
+        policy.positive_includes = Some(vec![ScopeAtom {
+            source_root_id: policy.roots[0].id,
+            kind: PathScope::Subtree,
+            path: "docs".into(),
+        }]);
+        let mut protected = ProtectedIgnore::local(&root, &policy)?;
+        assert!(protected.charged > 0);
+        assert_eq!(
+            protected.decision(Path::new("docs/item.secret"), false)?,
+            Decision::Ignore
+        );
+        assert_eq!(
+            protected.decision(Path::new("docs/omit.md"), false)?,
+            Decision::Ignore
+        );
+        assert_eq!(
+            protected.decision(Path::new("docs/nested/keep.md"), false)?,
+            Decision::None
+        );
+        assert!(!crate::permanent_policy::allows_checked(
+            &policy,
+            root.to_str().unwrap(),
+            ".airkignore",
+            false
+        )?);
+        assert!(!crate::permanent_policy::allows_absolute_input_checked(
+            &policy,
+            &root.join(".airkignore")
+        )?);
+        assert!(!crate::permanent_policy::allows_absolute_input_checked(
+            &policy,
+            &root.join("unselected/model.bin")
+        )?);
+        policy.denies[0].path = ".airkignore".into();
+        policy.denies[0].kind = PathScope::Exact;
+        let error = ProtectedIgnore::local(&root, &policy)
+            .err()
+            .expect("deny must also reject positive partition controls");
+        assert!(format!("{error:#}").contains("excluded_ignore_control"));
+        assert_eq!(fs::read_to_string(root.join(".airkignore"))?, "*.secret\n");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn positive_partition_control_alias_remains_unavailable() -> Result<()> {
+        use airk_core::index_catalog::ScopeAtom;
+        let (_owned, mut policy) = fixture()?;
+        let root = PathBuf::from(&policy.roots[0].canonical_path);
+        fs::create_dir(root.join("docs"))?;
+        fs::write(root.join("unselected-rules"), "keep.md\n")?;
+        std::os::unix::fs::symlink("unselected-rules", root.join(".airkignore"))?;
+        policy.positive_includes = Some(vec![ScopeAtom {
+            source_root_id: policy.roots[0].id,
+            kind: PathScope::Exact,
+            path: "docs/keep.md".into(),
+        }]);
+        let error = ProtectedIgnore::local(&root, &policy)
+            .err()
+            .expect("control dependencies must never follow a link");
+        assert!(format!("{error:#}").contains("aliased_ignore_control"));
+        assert_eq!(
+            fs::read_to_string(root.join("unselected-rules"))?,
+            "keep.md\n"
+        );
         Ok(())
     }
 }

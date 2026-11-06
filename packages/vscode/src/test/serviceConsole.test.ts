@@ -9,7 +9,99 @@ import { managementView, panelDetails } from '../explorerManagement';
 const shown = (state: ServiceConsoleState): string => JSON.stringify(managementView(state));
 import { record, RecordValue, ServiceClient, ServiceError } from '../serviceClient';
 import { IntentJournal } from '../serviceIntents';
+import { splitFixture, splitAtStage, splitFrozenFixture } from './fixtures/split';
+import { splitExport } from '../indexingSplit';
 const project='12'.repeat(32),namespace='34'.repeat(16),instance='56'.repeat(16),job='78'.repeat(32);
+
+test('lost split acceptance survives restart, missing/expired evidence and later terminal native status without replay',async()=>{
+    const f=fixture(),base=f.host.runtime.client({} as any),split=splitFixture();let writes=0,lookup:'missing'|'expired'|'found'='missing',current=split.snapshot;
+    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(input){
+        const name=typeof input==='string'?input:Object.keys(record(input))[0];
+        if(name==='catalog_split_draft'){const selection=record(record(input).catalog_split_draft).selection,key=record(selection).key;record(split.draft.request).key=structuredClone(key);record(split.snapshot.request).key=structuredClone(key);return {status:'catalog_split_draft',draft:split.draft,future_draft_envelope:'retained'};}
+        if(name==='catalog_split_apply'){writes++;const saved=[...f.values.values()].map(record).filter(value=>record(value.intent).catalog_split_apply);assert.equal(saved.length,1);assert.equal(saved[0].reservedObservationBytes,192*1024);current=splitAtStage(split.snapshot,'building');throw new ServiceError('console_transport_closed',true);}
+        if(name==='catalog_split_receipt'){const request=record(record(input).catalog_split_receipt);assert.deepEqual(request.key,record(split.draft.request).key);return {status:name,...request,snapshot:lookup==='found'?current:null,expired:lookup==='expired',future_receipt_envelope:'retained'};}
+        return base.transport.request(input);
+    }});
+    let reopened:ServiceConsoleController|undefined;
+    try{
+        await f.controller.refresh();const review=await f.controller.catalogSplitDraft(split.index,split.choice,1);
+        await assert.rejects(f.controller.catalogSplitApply(review,()=>true),/console_transport_closed/);assert.equal(writes,1);
+        f.controller.dispose();reopened=new ServiceConsoleController(f.host);await reopened.refresh();assert.equal(reopened.catalogPending().length,1);
+        await reopened.catalogReconcile();lookup='expired';await reopened.catalogReconcile();assert.equal(reopened.catalogPending().length,1,'absence or expiry never establishes no effect');
+        lookup='found';await reopened.catalogReconcile();assert.deepEqual(reopened.catalogPending(),[],'accepted active split is tracked separately from uncertain mutation');
+        const tracked=reopened.catalogPendingDetails();assert.equal(tracked.length,1);assert.equal(record(tracked[0].native_observation).future_receipt_envelope,'retained');assert.equal(record(record(tracked[0].native_observation).snapshot).future_native_snapshot!==undefined,true);
+        lookup='expired';await reopened.catalogReconcile();const retained=reopened.catalogPendingDetails()[0];assert.equal(record(retained.native_observation).snapshot,null);assert.equal(record(record(retained.last_known_split_snapshot).receipt).stage,'building');assert.equal(record(retained.last_known_split_snapshot).future_native_snapshot!==undefined,true,'null current lookup cannot erase full previously accepted proof');assert.equal(reopened.catalogPendingDetails().length,1);
+        lookup='found';
+        current=splitAtStage(current,'complete',3);current.receipt_digest='a4'.repeat(32);const terminal=await reopened.catalogReconcile();assert.equal(record(record(terminal[0].snapshot).receipt).stage,'complete');assert.deepEqual(reopened.catalogPendingDetails(),[]);assert.equal(writes,1);
+    }finally{f.controller.dispose();reopened?.dispose();}
+});
+
+test('catalog receipt batches rotate past active split records and a failed lookup without mutation replay',async()=>{
+    const f=fixture(),base=f.host.runtime.client({} as any),split=splitFixture(),journal=new IntentJournal(f.host.storage,'/control',namespace),seen:string[]=[];let fail=true;
+    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(input){
+        if(typeof input!=='string'&&'catalog_split_receipt'in record(input)){const query=record(record(input).catalog_split_receipt),nonce=String(record(query.key).nonce);seen.push(nonce);if(fail){fail=false;throw new ServiceError('fixture_lookup_failed');}return {status:'catalog_split_receipt',...query,snapshot:null,expired:false};}
+        if(typeof input!=='string'&&'catalog_split_apply'in record(input))throw new Error('must never replay');
+        return base.transport.request(input);
+    }});
+    try{
+        for(let at=0;at<10;at++){const draft=structuredClone(split.draft);record(draft.request).key={namespace,epoch:7,nonce:at.toString(16).padStart(32,'0')};await journal.prepare('Tracked split',{catalog_split_apply:{draft}});}
+        await f.controller.refresh();await assert.rejects(f.controller.catalogReconcile(),/fixture_lookup_failed/);
+        await f.controller.catalogReconcile();await f.controller.catalogReconcile();
+        assert.equal(new Set(seen).size,10);assert.equal(f.controller.catalogPendingDetails().length,10);
+    }finally{f.controller.dispose();}
+});
+
+test('lost split recovery keeps immutable accepted acknowledgment independent of newer complete state',async()=>{
+    const f=fixture(),base=f.host.runtime.client({} as any),split=splitFixture(),reviewed=splitAtStage(split.snapshot,'original_fenced');record(reviewed.receipt).state={state:'needs_attention',code:'fixture_failure'};
+    let writes=0,ack:RecordValue|undefined,current=reviewed,crossed=false;
+    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(input){
+        const name=typeof input==='string'?input:Object.keys(record(input))[0];
+        if(name==='catalog_split_status')return {status:name,operation_id:split.operation,snapshot:current,future_status:'retained'};
+        if(name==='catalog_split_recover'){
+            writes++;assert.equal([...f.values.values()].map(record).filter(value=>record(value.intent).catalog_split_recover).length,1);
+            const request=record(record(record(input).catalog_split_recover).request),next=structuredClone(reviewed),receipt=record(next.receipt),accepted='a5'.repeat(32);
+            receipt.revision=3;receipt.previous_receipt_digest=reviewed.receipt_digest;receipt.state={state:'pending'};receipt.jobs=[{purpose:'original_removal',caller:request.caller,key:request.key,backing:project,job:accepted,engine_identity:'a6'.repeat(32),configuration_digest:'a7'.repeat(32)}];next.receipt_digest='a8'.repeat(32);
+            ack={request:structuredClone(request),request_digest:'a9'.repeat(32),outcome:{outcome:'resume_accepted',accepted_job:accepted,receipt_digest:next.receipt_digest,resulting_receipt:structuredClone(receipt)},future_ack:'retained'};
+            current=splitAtStage(next,'complete',4);current.receipt_digest='aa'.repeat(32);throw new ServiceError('console_transport_closed',true);
+        }
+        if(name==='catalog_split_recovery_receipt'){const request=record(record(input).catalog_split_recovery_receipt),receipt=structuredClone(ack!);if(crossed)record(receipt.request).caller='ff'.repeat(16);return {status:name,...request,receipt,snapshot:current,expired:false,future_receipt:'retained'};}
+        return base.transport.request(input);
+    }});
+    let reopened:ServiceConsoleController|undefined;
+    try{
+        await f.controller.refresh();const observed=await f.controller.catalogSplitStatus(split.operation);
+        await assert.rejects(f.controller.catalogSplitRecover(observed,'resume',()=>true),/console_transport_closed/);assert.equal(writes,1);
+        f.controller.dispose();reopened=new ServiceConsoleController(f.host);await reopened.refresh();crossed=true;await assert.rejects(reopened.catalogReconcile(),/crossed_split_recovery_receipt/);assert.equal(reopened.catalogPending().length,1);
+        crossed=false;const responses=await reopened.catalogReconcile(),response=responses[0];assert.equal(record(record(response.receipt).outcome).outcome,'resume_accepted');assert.equal(record(response.receipt).future_ack,'retained');assert.equal(record(record(response.snapshot).receipt).stage,'complete');assert.equal(response.future_receipt,'retained');assert.deepEqual(reopened.catalogPendingDetails(),[]);assert.equal(writes,1);
+    }finally{f.controller.dispose();reopened?.dispose();}
+});
+
+test('generic split recovery failure retains exact frozen request through restart and later finalization attention',async()=>{
+    const f=fixture(),base=f.host.runtime.client({} as any),split=splitFrozenFixture();let writes=0,current=structuredClone(split.reviewed),ack:RecordValue|undefined;
+    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(input){
+        const name=typeof input==='string'?input:Object.keys(record(input))[0];
+        if(name==='catalog_split_status')return {status:name,operation_id:split.operation,snapshot:current};
+        if(name==='catalog_split_recover'){writes++;const request=record(record(record(input).catalog_split_recover).request);assert.equal(request.expected_finalization_revision,1);ack={...structuredClone(split.acknowledgment),request:structuredClone(request)};record(current.finalization).revision=3;record(current.finalization).attention='later_publish_failure';return {status:'failure',code:'invalid_registry_request'};}
+        if(name==='catalog_split_recovery_receipt')return {status:name,...record(record(input)[name]),receipt:ack,snapshot:current,expired:false};
+        return base.transport.request(input);
+    }});
+    let reopened:ServiceConsoleController|undefined;
+    try{
+        await f.controller.refresh();const observed=await f.controller.catalogSplitStatus(split.operation);await assert.rejects(f.controller.catalogSplitRecover(observed,'resume',()=>true),(error:unknown)=>error instanceof ServiceError&&error.outcomeUnknown);assert.equal(writes,1);assert.equal(f.controller.catalogPending().length,1);
+        f.controller.dispose();reopened=new ServiceConsoleController(f.host);await reopened.refresh();await reopened.catalogReconcile();
+        let tracked=reopened.catalogPendingDetails()[0];assert.equal(record(record(record(tracked.historical_split_recovery_receipt).outcome).terminal_receipt).stage,'complete');assert.equal(record(record(tracked.last_known_split_snapshot).finalization).attention,'later_publish_failure');assert.equal(record(record(tracked.last_known_split_snapshot).finalization).revision,3);assert.equal(reopened.catalogPendingDetails().length,1);
+        current=structuredClone(split.terminal);current.finalization={...record(split.reviewed.finalization),revision:4,progress:'acknowledging',attention:'release_ack_failure'};await reopened.catalogReconcile();assert.equal(reopened.catalogPendingDetails().length,1,'logical completion cannot erase pending funding acknowledgment');
+        record(current.finalization).revision=5;record(current.finalization).progress='complete';record(current.finalization).attention=null;record(current.finalization).funding_acknowledged=Object.values(record(record(current.receipt).funding_release_receipts));await reopened.catalogReconcile();assert.equal(reopened.catalogPendingDetails().length,0);assert.equal(writes,1);
+    }finally{f.controller.dispose();reopened?.dispose();}
+});
+
+test('split confirmation rechecks trust and stale review before any durable mutation dispatch',async()=>{
+    for(const reason of ['trust','stale'] as const){
+        const f=fixture(),base=f.host.runtime.client({} as any),split=splitFixture();let writes=0;
+        f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(input){const name=typeof input==='string'?input:Object.keys(record(input))[0];if(name==='catalog_split_draft'){const key=record(record(record(input).catalog_split_draft).selection).key;record(split.draft.request).key=key;return {status:name,draft:split.draft};}if(name==='catalog_split_apply'){writes++;throw new Error('must not dispatch');}return base.transport.request(input);}});
+        try{await f.controller.refresh();const review=await f.controller.catalogSplitDraft(split.index,split.choice,1);f.host.confirm=async()=>{if(reason==='trust')f.setTrusted(false);return true;};await assert.rejects(f.controller.catalogSplitApply(review,()=>reason!=='stale'));assert.equal(writes,0);assert.equal([...f.values.keys()].filter(key=>key.startsWith('airk.service.intent.')).length,0);}finally{f.controller.dispose();}
+    }
+});
 
 function nativePolicyStatus():RecordValue{
     const index='idx_'+'91'.repeat(16),root='src_'+'92'.repeat(16);
@@ -1350,4 +1442,28 @@ test('optional failure retains genuine early health and records the failed obser
         assert.equal(f.controller.state.resources.code,'resource_observation_failed');
         assert.equal(f.controller.state.connected,true);
     }finally{release();await poll;f.controller.dispose();}
+});
+
+test('split journal reconciles retained witness through observed pending refresh and preserves completed proof in exports',async()=>{
+    const f=fixture(),base=f.host.runtime.client({} as any),split=splitFixture(),journal=new IntentJournal(f.host.storage,'/control',namespace);
+    const first=splitAtStage(split.snapshot,'destination_validated',4),initial=record(first.receipt),sourceProof=record(record(splitAtStage(split.snapshot,'original_fenced').receipt).remainder_witness);
+    const witnessJob=(id:string)=>({purpose:'original_witness',caller:'c1'.repeat(16),key:{namespace,epoch:7,nonce:id.repeat(16)},job:id.repeat(32),backing:record(record(first.request).original_registration).binding,engine_identity:'c2'.repeat(32),configuration_digest:'c3'.repeat(32)});
+    initial.jobs=[witnessJob('c4')];initial.remainder_witness={...sourceProof,job:'c4'.repeat(32)};
+    const pending=structuredClone(first),pendingReceipt=record(pending.receipt);pendingReceipt.revision=5;pendingReceipt.previous_receipt_digest=first.receipt_digest;pendingReceipt.jobs=[witnessJob('c4'),witnessJob('c5')];pendingReceipt.state={state:'running'};pending.receipt_digest='c6'.repeat(32);
+    const completed=structuredClone(pending),completedReceipt=record(completed.receipt);completedReceipt.revision=6;completedReceipt.previous_receipt_digest=pending.receipt_digest;completedReceipt.state={state:'pending'};completedReceipt.remainder_witness={...sourceProof,job:'c5'.repeat(32),expected_hash:'c7'.repeat(32),observed_from_unix_ms:3,observed_to_unix_ms:4,future_verification:'complete_native_proof_retained'};completed.receipt_digest='c8'.repeat(32);
+    let current=first,reads=0,writes=0;
+    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(input){
+        if(typeof input!=='string'&&'catalog_split_receipt'in record(input)){reads++;return {status:'catalog_split_receipt',...record(record(input).catalog_split_receipt),snapshot:current,expired:false};}
+        if(typeof input!=='string'&&('catalog_split_apply'in record(input)||'catalog_split_recover'in record(input))){writes++;throw new Error('read reconciliation must never dispatch a split mutation');}
+        return base.transport.request(input);
+    }});
+    let reopened:ServiceConsoleController|undefined;
+    try{
+        await journal.prepare('Tracked accepted split',{catalog_split_apply:{draft:split.draft}});await f.controller.refresh();
+        await f.controller.catalogReconcile();assert.deepEqual(record(f.controller.catalogPendingDetails()[0].last_known_split_snapshot).receipt,first.receipt);
+        current=pending;await f.controller.catalogReconcile();assert.deepEqual(record(f.controller.catalogPendingDetails()[0].last_known_split_snapshot).receipt,pending.receipt);
+        current=completed;await f.controller.catalogReconcile();const details=f.controller.catalogPendingDetails();assert.equal(details.length,1);assert.deepEqual(record(details[0].last_known_split_snapshot).receipt,completed.receipt);
+        assert.ok(splitExport({details}).includes('complete_native_proof_retained'));assert.ok(splitExport({details},true).includes('complete_native_proof_retained'));
+        f.controller.dispose();reopened=new ServiceConsoleController(f.host);await reopened.refresh();assert.deepEqual(record(reopened.catalogPendingDetails()[0].last_known_split_snapshot).receipt,completed.receipt);await reopened.catalogReconcile();assert.equal(reads,4);assert.equal(writes,0);
+    }finally{f.controller.dispose();reopened?.dispose();}
 });
