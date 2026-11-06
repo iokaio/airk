@@ -82,6 +82,19 @@ admission, pause and source-fairness rules remain in force. Optional semantic
 readiness is an explicit reviewed requirement, distinct from publication or
 physical cleanup.
 
+### Cold semantic-ready destinations in the P14 candidate
+
+When the review requires semantic readiness, the destination selects the paired
+bundled default through the existing shared-model owner before initialization and
+indexing. This also handles a fresh service with no installed default reference.
+The resulting native job must prove the actual ready destination publication;
+helper availability or an empty continuation queue alone cannot establish readiness.
+The original index's custom model is not treated as an inherited destination model.
+Dated Windows and Neo cold-default cases passed on `d4e48a53...`. Prior source
+`5d8912b1...` also classifies genuine quota-ledger read admission through the
+existing bounded `selection_busy` contract, without replaying jobs or ledger
+mutations. Prior source `5d8912b1...` passed **2,626 Windows tests**, five Neo cases and signed/copied-launcher/isolated-install checks. That prior source's final R4 queue passed all 15 stages and 84 unchanged gates. All 10 selected broader stages passed by exact evidence adoption; the failed original queue is preserved. The real-corpus campaign failed at its deadline. Four editor scenarios passed on that original package. A later usage Stop and initial legacy scenario failed; fresh current-source usage/legacy passed; current Windows native qualification also passed. These selected local results do not establish wider platform or release qualification.
+
 ## Cancellation and exact recovery
 
 Before the original transfer fence, explicit Cancel preserves the original's

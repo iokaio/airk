@@ -255,3 +255,10 @@ Successful MCP `status` and `diagnostics` responses (including the `airk_status`
 The value reuses the existing admission policy read; reporting adds no configuration read, collection access or service RPC. It is refreshed for each request even when the index status snapshot is cached. Original publication, observation time and cache age continue to describe the index snapshot. Error receipts remain unchanged. Both terse and full responses include the field; status retains its lightweight scope. The [bridge implementation and regression](../crates/airk-mcp/src/remote.rs) cover live capacity changes, aliases, cached metadata, text/structured agreement, error preservation and one policy read per request.
 
 Status and diagnostics preserve recognized temporary publication/selection contention as the existing typed read retry receipt (`publication_busy` or `selection_busy`, with `action: repeat_same_request`). This is not evidence that the index is unavailable. Honor the exact retry delay and repeat only that read. Diagnostic runtime/work context does not suppress the receipt. Missing or damaged evidence retains its separate existing reporting path.
+
+The 1.8.8 candidate retains the correction introduced on `5d8912b1...`:
+genuine bounded quota-ledger
+**read admission** uses the existing `selection_busy` hint with a **25 ms** delay.
+Repeat only the identical read within its original deadline. Ledger mutations and
+jobs are not replayed; job diagnostics retain `quota_ledger_busy`. Generic lookalike
+text, permission failures and corruption do not acquire this hint.

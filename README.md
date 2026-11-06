@@ -1,35 +1,8 @@
 # AIRK: Local Search for Coding Agents
 
-The unpublished **1.8.8 manual-test working build** includes accepted local
-P9 permanent exclusions, P10 reviewed index splitting, P11a per-file profile
-reporting and P11b explicit Lean/Rich retained profiles. Existing indexing levels
-and reply defaults keep their meanings. These development checkpoints do not
-constitute a published release or final installed-editor acceptance.
+**1.8.8 is an unpublished manual-test working build.** Accepted local P9–P12 work adds permanent exclusions, reviewed index splitting, per-file profile reporting, explicit Lean/Rich retained profiles and reviewed reference refresh with separate requery. P13 retains current ranking and diversity. P14 selected local qualification includes Windows native tests and documented editor coverage. Manual acceptance and release promotion remain separate. See the [working-build record](docs/releases/release-1.8.8.md) and [implementation ledger](docs/research/implementation-v190.md) for exact evidence, failures and platform limits.
 
-P12 adds accepted local **reviewed reference refresh and separate requery**.
-Its focused Windows native selection passed **39 tests**, including actual
-native/CLI/MCP shared-helper, Lean/Rich, pause, lost-reply and restart paths.
-The 12-stage Windows release qualification and 19 scoped Neo tests passed;
-Neo testing ended with `cargo clean` and its target removed. Primary review
-accepted this unpublished local phase. The first wave refreshes one existing index
-from eligible references and requires full-index metadata authority; partial
-Project/path grants are unsupported. Evidence reads and source verification do
-not start indexing. P13 ranking/diversity remains conditional; P14, deleted-source
-recovery and the final local test installer remain pending.
-
-See [refresh controls and limits](docs/source-verification.md#explicit-reference-refresh),
-[retained profiles](docs/code-indexing-options.md),
-[profile family reporting](docs/profile-family-reporting.md),
-[reviewed splitting](docs/index-splitting.md),
-[permanent exclusions](docs/source-policy.md),
-[combined Project reads](docs/combined-reads.md) and
-[Recommendations](docs/recommendations.md). The [working-build record](docs/releases/release-1.8.8.md)
-and [dated implementation ledger](docs/research/implementation-v190.md) retain
-exact qualification identities, earlier failures and platform limits. Promotion
-to 1.9.0 follows implementation and manual acceptance; it does not relabel these
-working binaries.
-
-**Inherited 1.8.7 behavior:** CLI and Workbench reads use the MCP handlers and retain their full results, including configured `query_concurrency` in status/diagnostics. Cold status preserves explicit setup-timeout receipts across later polls. This release consolidates all unpublished 1.8.0-1.8.6 storage, startup, retrieval, concurrency and Workbench improvements. See the [consolidated release notes](docs/releases/release-1.8.7.md) for current behavior and dated validation.
+Opening a trusted folder does not register or index it. Use **Indexing > Index library** to review sources, storage and watching; create Project memberships and review an access grant, then explicitly **Use Grant for this window**. Evidence reads and source verification do not start indexing.
 
 **Find the code and documents behind a feature. Give your coding agent cited evidence, or explore it yourself in AIRK Workbench.**
 
@@ -60,7 +33,7 @@ AIRK builds a searchable local index of your project so you and your coding tool
 ## Try AIRK
 
 1. Install the platform extension from the [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=iokaio.airk), or use a local candidate VSIX when testing unreleased changes. The runtime and models are bundled; VS Code 1.140+ is required.
-2. Open a trusted project. Automatic setup registers it and starts indexing saved files. Review progress and extraction failures in **AIRK Explorer → Management**.
+2. **Review an index and its access.** Open a trusted folder, then use **Indexing > Index library** to review source, storage and watching choices and the resulting native setup work. Create Project memberships and an access grant, then explicitly **Use Grant for this window** before reading evidence. Opening a folder alone does not register or index it. Management shows progress, readiness and skipped or failed work.
 3. Open **AIRK: Open Workbench** and run `/files`. Search for a term from your project, inspect a cited result and open its source. Workbench opens once automatically after successful setup.
 4. To use an agent, run **AIRK: Connect Coding Agent**, review its configuration and enable AIRK in that client. Verify access with a scoped request; configuration alone does not prove a live connection.
 
@@ -164,7 +137,11 @@ The Mac layout uses a [GUI-less signed app bundle](docs/service-macos-login.md) 
 
 Each project has a canonical source, separate data root, collection name and opaque service binding. Registration reserves disjoint storage before creating it. Sources cannot overlap registered data, runtime state, control or bound logs. Native workers own indexing and source watching. Automatic watching explicitly continues after editor windows close; login startup is a separate opt-in choice.
 
-## Start with a fresh 1.4 namespace
+## Historical 1.4 namespace transition
+
+The following clean-break and automatic-folder behavior describes the historical
+1.4 transition, not current setup or instructions to discard existing state.
+For this 1.8.8 working build, follow [reviewed setup](docs/service-project-setup.md).
 
 The [native management clients](docs/service-native-management.md) provide direct usage/settings reads, bounded exports and guarded project changes. Usage & Savings waits for native completion; imports bind the reviewed input bytes, and shared quota updates reject stale policies.
 
@@ -172,7 +149,9 @@ The [native management clients](docs/service-native-management.md) provide direc
 
 In the extension, trusted activation sets up new workspace roots automatically. Use **AIRK: Index Now** for later explicit indexing and **AIRK: Choose Native Automatic Watching** to switch between manual and automatic watching. **AIRK Explorer > Management** shows cached observations, readiness, jobs, sampled native wait reasons, independent source/helper state, project settings, guarded repairs and lifecycle controls. Queued jobs remain visible while paused and can be canceled explicitly. Start is explicit after a deliberate Stop; reconnect cannot clear that preference. Management also offers Terse/Full response mode, reviewed runtime upgrades/rollback and saved-request recovery.
 
-Project settings offer [project removal](docs/service-project-retirement.md), including paused projects. Removal stops admission and source watching, drains the selected owner and automatically deletes its index and saved settings. Source files are untouched. A minimal opaque identity/time record keeps explicit removal authoritative; explicit Add Project can register again after cleanup.
+## Current native management
+
+Native project retirement is reviewed and preserves source files. Permanent exclusions keep their stable owner after retirement; review a distinct new index setup when a new independent index is intended. Reopening folders grants no authority. See [project retirement](docs/service-project-retirement.md), [permanent exclusions](docs/source-policy.md) and [reviewed setup](docs/service-project-setup.md).
 
 Native project settings can reset scan-limit overrides to automatic limits. Native quotas apply to manual and automatic work; retired editor timer/soft-budget settings no longer appear. Workspace tree actions use the clicked project, and native usage counts performed source, semantic and replacement work independently of job acceptance.
 

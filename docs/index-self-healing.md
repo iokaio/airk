@@ -25,6 +25,13 @@ Management reconciles lost job/configuration acknowledgements through a read-onl
 | Repeated terminal source/recovery failures | Persist a project budget across new source hints, worker exits and service restarts. Three terminal failures stop automatic source retries. Explicit retry/index/recovery or a successful source/publication recovery clears the applicable budget. |
 | Confirmed no-progress stall | Keep the existing ten-minute advancement threshold and thirty-second cooperative grace. Permit one recovery of a stalled job, with a project work budget preventing source edits from replenishing repeated recovery attempts. Heartbeats and phase-label changes do not count as progress. |
 
+The 1.8.8 candidate retains the correction introduced on `5d8912b1...`:
+genuine bounded quota-ledger
+**read admission** uses the existing `selection_busy` hint with a **25 ms** delay.
+Repeat only the identical read within its original deadline. Ledger mutations and
+jobs are not replayed; job diagnostics retain `quota_ledger_busy`. Generic lookalike
+text, permission failures and corruption do not acquire this hint.
+
 Condition checks are bounded to eight due jobs per pass, at most once per second; unavailable prerequisites are checked again after thirty seconds. Waiting does not consume another job attempt. Such active waits keep the service from declaring itself idle merely because no worker is currently executing. Removed projects and paused/canceled work cannot be released by a condition check.
 
 Initial model setup may wait while its independent text-indexing continuation proceeds. This keeps text usable on machines with a missing or unavailable helper. Recovery of the same job keeps the same durable receipt. Existing finite queue, source-revision, cleanup, process ownership, resource admission and fencing contracts remain in force.

@@ -1858,3 +1858,119 @@ fn mcp_pipe_clean_eof_without_newline_and_malformed_input_keep_sdk_semantics() -
     assert!(replies[0]["result"].is_object());
     Ok(())
 }
+
+#[test]
+fn held_quota_ledger_preserves_same_read_hint_through_native_cli_and_mcp() -> anyhow::Result<()> {
+    fn hint(reply: &Value) -> anyhow::Result<Value> {
+        anyhow::ensure!(reply.is_object() && reply["isError"] == true, "{reply}");
+        let blocks = reply["content"]
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("{reply}"))?;
+        anyhow::ensure!(blocks.len() == 1 && blocks[0]["type"] == "text", "{reply}");
+        let value: Value = serde_json::from_str(
+            blocks[0]["text"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("{reply}"))?,
+        )?;
+        anyhow::ensure!(
+            value
+                == json!({"status":"retry","retryable":true,"code":"selection_busy",
+            "retry_after_ms":25,"action":"repeat_same_request"}),
+            "{reply}"
+        );
+        Ok(value)
+    }
+    let root = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    let original = "QuotaLedgerSentinel original retained source.\n";
+    fs::write(root.path().join("one.txt"), original)?;
+    let service = common::Service::start(root.path(), data.path(), "project-a");
+    service.configure(airk_cli::service_configuration::Draft::Vectors { enabled: false });
+    service.job(airk_core::service::JobKind::Index);
+    assert!(
+        matches!(service.request(airk_core::service::ControlMethod::Pause {
+        project: service.project.binding, paused: true
+    }), airk_core::service::ControlResponse::Registered { project } if project.paused)
+    );
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let mut direct = runtime.block_on(airk_cli::project_client::Connection::connect(
+        &service.control,
+        service.project.binding,
+    ))?;
+    let args = json!({"response_mode":"full"});
+    let baseline = runtime
+        .block_on(direct.call("airk_diagnostics".into(), args.as_object().unwrap().clone()))?;
+    anyhow::ensure!(baseline["isError"] != true, "{baseline}");
+    let baseline: Value = serde_json::from_str(baseline["content"][0]["text"].as_str().unwrap())?;
+    let publication = baseline["publication"]["token"].clone();
+    anyhow::ensure!(publication.is_string(), "{baseline}");
+    let mut session = Session::start(root.path(), data.path())?;
+    session.send(json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+        "protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"quota-read-admission","version":"1"}}}))?;
+    anyhow::ensure!(session.receive(1)?.get("error").is_none());
+    session.send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
+    let warm = session.call(2, "airk_diagnostics", args)?;
+    anyhow::ensure!(
+        warm.get("error").is_none() && warm["result"]["isError"] != true,
+        "{warm}"
+    );
+    let ledger = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(data.path().join(".quota-1.4/ledger.lock"))?;
+    let until = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        match ledger.try_lock() {
+            Ok(()) => break,
+            Err(fs::TryLockError::WouldBlock) if std::time::Instant::now() < until => {
+                std::thread::sleep(Duration::from_millis(5))
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    for (id, mode) in [(3, "terse"), (4, "full")] {
+        let args = json!({"response_mode":mode});
+        // native read: exactly once while holding the real ledger, so a typed
+        // complete rejection is observed rather than hidden by fixture retries.
+        let native = runtime
+            .block_on(direct.call("airk_diagnostics".into(), args.as_object().unwrap().clone()))?;
+        hint(&native)?;
+        let encoded = args.to_string();
+        let mut command = common::command(root.path(), data.path(), "project-a");
+        command.args(["tools", "call", "airk_diagnostics", "--args", &encoded]);
+        // native read: single complete refusal, never auto-repeat under held lock.
+        let output = common::read_retry::once_until(
+            &command,
+            std::time::Instant::now() + Duration::from_secs(60),
+        )?;
+        anyhow::ensure!(
+            output.status.code() == Some(1),
+            "stdout={};stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let cli: Value = serde_json::from_slice(&output.stdout)?;
+        hint(&cli)?;
+        // native read: single MCP response has the same complete error contract.
+        let wire = session.call(id, "airk_diagnostics", args)?;
+        anyhow::ensure!(wire.get("error").is_none(), "{wire}");
+        hint(&wire["result"])?;
+        assert_eq!(native, cli, "complete native/CLI refusal differs");
+        assert_eq!(
+            native, wire["result"],
+            "complete native/MCP refusal differs"
+        );
+    }
+    ledger.unlock()?;
+    drop(ledger);
+    let args = json!({"response_mode":"full"});
+    let recovered = runtime
+        .block_on(direct.call("airk_diagnostics".into(), args.as_object().unwrap().clone()))?;
+    anyhow::ensure!(recovered["isError"] != true, "{recovered}");
+    let recovered: Value = serde_json::from_str(recovered["content"][0]["text"].as_str().unwrap())?;
+    assert_eq!(recovered["publication"]["token"], publication);
+    assert_eq!(fs::read_to_string(root.path().join("one.txt"))?, original);
+    Ok(())
+}

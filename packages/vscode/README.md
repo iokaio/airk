@@ -1,31 +1,8 @@
 # AIRK: Local Search for Coding Agents
 
-The unpublished **1.8.8 manual-test working build** includes accepted local
-P9 permanent exclusions, P10 reviewed index splitting, P11a per-file profile
-reporting and P11b explicit Lean/Rich retained profiles. Existing indexing levels
-and reply defaults keep their meanings. These development checkpoints do not
-constitute a published release or final installed-editor acceptance.
+**1.8.8 is an unpublished manual-test working build.** Accepted local P9–P12 work adds permanent exclusions, reviewed index splitting, per-file profile reporting, explicit Lean/Rich retained profiles and reviewed reference refresh with separate requery. P13 retains current ranking and diversity. P14 selected local qualification includes Windows native tests and documented editor coverage. Manual acceptance and release promotion remain separate. See the [working-build record](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.8.md) and [implementation ledger](https://github.com/iokaio/airk/blob/main/docs/research/implementation-v190.md) for exact evidence, failures and platform limits.
 
-P12 adds accepted local **reviewed reference refresh and separate requery**.
-Its focused Windows native selection passed **39 tests**, including actual
-native/CLI/MCP shared-helper, Lean/Rich, pause, lost-reply and restart paths.
-The 12-stage Windows release qualification and 19 scoped Neo tests passed;
-Neo testing ended with `cargo clean` and its target removed. Primary review
-accepted this unpublished local phase. The first wave refreshes one existing index
-from eligible references and requires full-index metadata authority; partial
-Project/path grants are unsupported. Evidence reads and source verification do
-not start indexing. P13 ranking/diversity remains conditional; P14, deleted-source
-recovery and the final local test installer remain pending.
-
-The [refresh guide](https://github.com/iokaio/airk/blob/main/docs/source-verification.md#explicit-reference-refresh)
-explains explicit review, exact receipts, memory-only refresh evidence and requery.
-[Retained profiles](https://github.com/iokaio/airk/blob/main/docs/code-indexing-options.md),
-[profile reports](https://github.com/iokaio/airk/blob/main/docs/profile-family-reporting.md),
-[split](https://github.com/iokaio/airk/blob/main/docs/index-splitting.md) and
-[exclusion](https://github.com/iokaio/airk/blob/main/docs/source-policy.md) guides
-keep those controls separate. The [working-build record](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.8.md)
-and [implementation ledger](https://github.com/iokaio/airk/blob/main/docs/research/implementation-v190.md)
-record exact evidence and remaining release limits.
+Opening a trusted folder does not register or index it. Use **Indexing > Index library** to review sources, storage and watching; create Project memberships and review an access grant, then explicitly **Use Grant for this window**. Evidence reads and source verification do not start indexing.
 
 **Find the code and documents behind a feature. Give your coding agent cited evidence, or explore it yourself in AIRK Workbench.**
 
@@ -66,7 +43,7 @@ Explorer brings search, code navigation, document facts, evidence review and ind
 ## Get your first result
 
 1. **Install AIRK** for your workspace host’s OS and architecture. The native runtime and local models are bundled; no Docker, Rust toolchain or separate API key is needed to use the extension. VS Code 1.140 or newer is required.
-2. **Open a trusted project.** With automatic setup enabled, AIRK registers the folder and starts indexing saved files. Open **AIRK Explorer → Management** to inspect progress, readiness and any skipped or failed files.
+2. **Review an index and its access.** Open a trusted folder, then use **Indexing > Index library** to review source, storage and watching choices and the resulting native setup work. Create Project memberships and an access grant, then explicitly **Use Grant for this window** before reading evidence. Opening a folder alone does not register or index it. Management shows progress, readiness and skipped or failed work.
 3. **Try Workbench.** It opens once after successful setup, or run **AIRK: Open Workbench**. Start with `/files` to see indexed paths. Then try `/search retry --mode lexical`, replacing `retry` with a term in your project, and open a cited result.
 4. **Connect an agent when you want one.** Run **AIRK: Connect Coding Agent**, review its scoped configuration, and enable or approve AIRK in that client. Ask the agent to discover AIRK’s tools, check `status`, search the relevant scope and verify the cited live files before editing.
 
@@ -118,9 +95,9 @@ Developer references: [MCP tools](https://github.com/iokaio/airk/blob/main/docs/
 
 **Published version 1.7.6** asks before the first installation what it will change, can run without starting any AIRK process (`airk.runtime.nativeExecution`), removes its terminal integration on uninstall and reports interrupted cleanups, and adds **AIRK: Review and Remove AIRK Data**. Common credential files are skipped by default. [Release notes and validation limits](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.7.6.md) document the changes. Earlier records remain in the [release archive](https://github.com/iokaio/airk/blob/main/docs/releases/README.md).
 
-VS Code may require **Developer: Reload Window** to replace an already running extension after an upgrade. AIRK keeps a **Reload to finish update** action when it detects a pending replacement. VS Code saves sidebar tab order; drag the AIRK tab to the right if needed. `airk.cli.autoInstall: false` disables automatic installation and registration; discovery can still run bundled native probes. `airk.runtime.nativeExecution: false` starts no AIRK process at all, and `airk.cli.shellIntegration` limits which shell startup files setup edits.
+VS Code may require **Developer: Reload Window** to replace an already running extension after an upgrade. AIRK keeps a **Reload to finish update** action when it detects a pending replacement. VS Code saves sidebar tab order; drag the AIRK tab to the right if needed. `airk.cli.autoInstall: false` disables automatic runtime and terminal setup; discovery can still run bundled native probes. `airk.runtime.nativeExecution: false` starts no AIRK process at all, and `airk.cli.shellIntegration` limits which shell startup files setup edits.
 
-Before the first installation AIRK shows what setup changes and lets you set up, customize, defer or decline it. Setup installs the runtime/CLI, updates user PATH or marked shell-profile blocks and starts background indexing of registered folders; home folders and drive roots need an explicit choice. Hidden files can be included; common credential files are skipped by default, but AIRK is not a secret scanner, so ignore other sensitive sources before indexing. Index objects and saved Workbench results can retain excerpts, and evidence returned to an agent may reach its provider. On macOS/Linux, new storage folders are created private to you, and storage other accounts may read is reported, not changed. Uninstall removes AIRK's terminal integration but preserves native indexes; use **AIRK: Review and Remove AIRK Data** first if you want them gone. See [installation and evidence privacy](https://github.com/iokaio/airk/blob/main/docs/vscode-extension.md#installation-and-evidence-privacy) for controls and cleanup limits.
+Before the first installation AIRK reviews runtime/CLI and terminal integration changes; Customize controls the external terminal command. New index source, storage and watching choices are separate explicit reviews, as are Project memberships and grants. Existing accepted jobs or saved watching may continue independently. Hidden files can be indexed and common credential files are skipped by default, but AIRK is not a secret scanner: review sensitive sources before indexing. Indexes and saved Workbench results may retain excerpts; evidence returned to an agent may reach its provider. Private storage permissions, terminal cleanup and explicit data retirement remain separate controls. See [reviewed setup](https://github.com/iokaio/airk/blob/main/docs/service-project-setup.md) and [installation and evidence privacy](https://github.com/iokaio/airk/blob/main/docs/vscode-extension.md#installation-and-evidence-privacy).
 
 AIRK stands for **Artifact Indexing and Retrieval Kernel**. It is an independent local indexing and retrieval engine, licensed under Apache-2.0.
 

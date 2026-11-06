@@ -1,25 +1,12 @@
 # AIRK documentation
 
-The unpublished **1.8.8 manual-test working build** includes accepted local
-P9 permanent exclusions, P10 reviewed index splitting, P11a per-file profile
-reporting and P11b explicit Lean/Rich retained profiles. Existing indexing levels
-and reply defaults keep their meanings. These development checkpoints do not
-constitute a published release or final installed-editor acceptance.
+**1.8.8 is an unpublished manual-test working build.** Accepted local P9–P12 work adds permanent exclusions, reviewed index splitting, per-file profile reporting, explicit Lean/Rich retained profiles and reviewed reference refresh with separate requery. P13 retains current ranking and diversity. P14 selected local qualification includes Windows native tests and documented editor coverage. Manual acceptance and release promotion remain separate. See the [working-build record](releases/release-1.8.8.md) and [implementation ledger](research/implementation-v190.md) for exact evidence, failures and platform limits.
 
-P12 adds accepted local **reviewed reference refresh and separate requery**.
-Its focused Windows native selection passed **39 tests**, including actual
-native/CLI/MCP shared-helper, Lean/Rich, pause, lost-reply and restart paths.
-The 12-stage Windows release qualification and 19 scoped Neo tests passed;
-Neo testing ended with `cargo clean` and its target removed. Primary review
-accepted this unpublished local phase. The first wave refreshes one existing index
-from eligible references and requires full-index metadata authority; partial
-Project/path grants are unsupported. Evidence reads and source verification do
-not start indexing. P13 ranking/diversity remains conditional; P14, deleted-source
-recovery and the final local test installer remain pending.
+Opening a trusted folder does not register or index it. Use **Indexing > Index library** to review sources, storage and watching; create Project memberships and review an access grant, then explicitly **Use Grant for this window**. Evidence reads and source verification do not start indexing.
 
 | Current guide | Scope |
 | --- | --- |
-| [Source verification and explicit reference refresh](source-verification.md) | Dated read-only verification; separately reviewed P12 refresh/requery candidate and its limits |
+| [Source verification and explicit reference refresh](source-verification.md) | Dated read-only verification; separately reviewed P12 refresh/requery and its limits |
 | [Retained indexing profiles](code-indexing-options.md) | Explicit Lean/Rich migration, legacy meanings and independent replies |
 | [Per-file family reporting](profile-family-reporting.md) | Actual applied profile and bounded availability observations |
 | [Reviewed index splitting](index-splitting.md) | Independent destination, restrictive cutover and exact cleanup/recovery |
@@ -44,7 +31,7 @@ locations, explicit rich symbol-ID lookups, guards and transport/export coverage
 [Lean/Rich replies](reply-detail.md) explains independent per-read
 projection, legacy defaults/flags, Workbench choices, CLI/MCP examples and limits.
 
-[P3 design contracts](research/contracts-v190/README.md), [ADR 002](decisions/002-projects-indexes-and-query-scope.md), [ADR 003](decisions/003-dated-saved-source-verification.md) and the [profile-family inventory](research/profile-family-inventory-v190.md) fix future scope, ownership, upgrade and verification boundaries; runtime activation remains gated.
+[P3 design contracts](research/contracts-v190/README.md), [ADR 002](decisions/002-projects-indexes-and-query-scope.md), [ADR 003](decisions/003-dated-saved-source-verification.md) and the [profile-family inventory](research/profile-family-inventory-v190.md) define scope, ownership, upgrade and verification boundaries. Native activation is implemented for this local working build; final release and broader platform qualification remain separate from the selected local P14 results.
 
 [Evidence guidance](evidence-guidance.md) describes bounded existing-observation
 reasons, empty-result limits and inert next reads across CLI/MCP/Workbench.
@@ -123,7 +110,14 @@ The [MCP contract](mcp.md) documents `diagnostics.runtime`, including running fr
 
 CLI installation removes previous terminal executables regardless of version and retires the previous native runtime and rollback reference after successful activation. Locked files report incomplete cleanup and retry on a later trusted activation or **Install or Repair CLI**. Sources, indexes and settings are preserved. See the [console installation contract](service-console.md).
 
-Trusted VSIX activation now installs the native runtime and the `airk` terminal command, registers new workspace folders, prepares the bundled offline model and queues indexing with automatic watching. No setup links are required. Open a new VS Code terminal after installation; restart external terminal applications to refresh PATH. User `airk.cli.autoInstall: false` disables automatic installation and registration. Existing 1.4 registrations, selected index-data locations and watching preferences are preserved, including after a storage change. Compatible 1.4 runtime updates use the native fenced activation and schema-migration path; no fresh registration or reindex is requested for saved projects. Managed runtime ownership and explicit Stop remain authoritative. Use **Choose Index Storage Folder** or **Choose Native Automatic Watching** to change defaults later. Storage selection creates a reviewed binding and retains old index files for separate cleanup. Agent connection remains a separate explicit action.
+Trusted activation can install or reconnect the approved runtime and terminal
+command, then reconcile existing native registrations. It does not register opened
+folders, start a new index or grant evidence access. New source/storage/watching
+choices require [reviewed index setup](service-project-setup.md); Project memberships, grants and
+**Use Grant for this window** remain separate. `airk.cli.autoInstall` controls
+automatic runtime setup, not indexing authority. Existing accepted work, explicit
+Stop, pause and watching preferences remain native. Open a new terminal after PATH
+integration; external terminal applications may need restarting.
 
 **AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents**
 

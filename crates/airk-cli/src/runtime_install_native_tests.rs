@@ -570,3 +570,57 @@ async fn actual_copied_first_install_qualifies_genesis_before_first_service() ->
     }
     Ok(())
 }
+
+#[tokio::test]
+#[ignore = "requires a freshly built sealed pair and explicit approved digest; run serially"]
+async fn native_lifecycle_waits_for_installer_then_completes_one_exact_stop() -> Result<()> {
+    let fixture = NativeFixture::new().await?;
+    let result = async {
+        let first = fixture.health().await?;
+        let ledger = airk_store::service::registry::ServiceRegistry::open_saved(&fixture.control)?;
+        let (namespace, epoch) = ledger.saved_request_epoch()?;
+        drop(ledger);
+        let request = serde_json::json!({
+            "caller":airk_kernel::service_broker::new_instance_id()?,
+            "key":{"namespace":namespace,"epoch":epoch,"nonce":airk_kernel::service_broker::new_instance_id()?},
+            "action":"stop","expected_instance":first.instance,"runtime":fixture.identity,"force":false
+        });
+        let before = lifecycle::inspect(&fixture.root)?;
+        let count = || -> Result<i64> {
+            let database = rusqlite::Connection::open_with_flags(
+                fixture.control.join("service-1.4.sqlite3"),
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+            )?;
+            Ok(database.query_row("SELECT COUNT(*) FROM service_lifecycle", [], |row| row.get(0))?)
+        };
+        let rows_before = count()?;
+        let held = install_lock(&fixture.root)?;
+        let input = serde_json::from_value::<lifecycle::Input>(request.clone())?;
+        let mut stopping = Box::pin(lifecycle::run(&fixture.root, input));
+        std::future::poll_fn(|cx| {
+            assert!(std::future::Future::poll(stopping.as_mut(), cx).is_pending(),
+                "lifecycle must wait for the real held installer lock");
+            std::task::Poll::Ready(())
+        }).await;
+        ensure!(lifecycle::inspect(&fixture.root)? == before && count()? == rows_before,
+            "waiting accepted or mutated lifecycle work before admission");
+        ensure!(fixture.health().await?.instance == first.instance, "waiting changed the live instance");
+        drop(held);
+        let record = tokio::time::timeout(Duration::from_secs(90), stopping).await??;
+        let observed = serde_json::to_value(&record)?;
+        ensure!(observed["phase"] == "complete", "Stop did not complete: {observed}");
+        let mut expected = request.clone();
+        expected.as_object_mut().context("request object")?.remove("force");
+        expected["manager"] = serde_json::Value::Bool(false);
+        ensure!(observed["request"] == expected, "completed another lifecycle request: {observed}");
+        ensure!(count()? == rows_before + 1, "one invocation created multiple lifecycle records");
+        let after = lifecycle::inspect(&fixture.root)?;
+        ensure!(after["pending"].is_null() && after["explicitly_stopped"] == true,
+            "Stop did not settle its durable lifecycle state");
+        wait_quiescent(&fixture.root).await?;
+        ensure!(fixture.health().await.is_err(), "completed Stop left the service live");
+        Ok(())
+    }.await;
+    let cleanup = fixture.cleanup().await;
+    result.and(cleanup)
+}

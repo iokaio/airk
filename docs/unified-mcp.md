@@ -226,4 +226,11 @@ The value reuses the existing admission policy read; reporting adds no configura
 
 Status and diagnostics preserve recognized temporary publication/selection contention as the existing typed read retry receipt (`publication_busy` or `selection_busy`, with `action: repeat_same_request`). This is not evidence that the index is unavailable. Honor the exact retry delay and repeat only that read. Diagnostic runtime/work context does not suppress the receipt. Missing or damaged evidence retains its separate existing reporting path.
 
+The 1.8.8 candidate retains the correction introduced on `5d8912b1...`:
+genuine bounded quota-ledger
+**read admission** uses the existing `selection_busy` hint with a **25 ms** delay.
+Repeat only the identical read within its original deadline. Ledger mutations and
+jobs are not replayed; job diagnostics retain `quota_ledger_busy`. Generic lookalike
+text, permission failures and corruption do not acquire this hint.
+
 See [CLI, MCP and Workbench parity](read-interface-parity.md) for the complete command audit, input/output contracts and regression coverage.

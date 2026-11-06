@@ -1,5 +1,25 @@
 # Architecture
 
+P14's current **1.8.8 candidate**, `237f8969...` / 960 inputs, keeps the
+existing owners. A claimed DestinationBuild job that explicitly requires semantic
+readiness selects the paired bundled default through its model owner before Current
+initialization and indexing. The collection writer, prepaid funding, source policy
+and bounded continuation remain authoritative; metadata-only reads do not provision.
+Kernel's canonical read hint also classifies genuine typed quota-ledger contention
+as existing `selection_busy` admission. Raw lookalike text and permission failures
+stay terminal; ledger operations and mutations are not replayed. CLI/MCP and the
+existing read clients retain the same complete hint contract.
+
+**Prior source `5d8912b1...` evidence (6 November 2026):** Windows full Nextest passed **2,626 tests** with **50 selection exclusions**; its fresh producer took **764.1665 s**, and all **15 final R4 stages / 84 unchanged gates** passed, including **459 Python tests / 9 expected skips**. All **10 selected broader stages** passed by exact evidence adoption; the original failed queue stays failed. The real-corpus campaign remains a deadline failure with partial coverage. Its native/extension/VSIX package stages, `same`, `different`, `multi` and `untrusted` editor scenarios passed on their original native/package identities. Failed usage Stop and initial legacy attempts are retained. These observations do not become current-source qualification by relabeling.
+
+Current native source `237f8969...` / **960 inputs** adds bounded native installation-lock admission before accepting lifecycle work. Only typed installation-lock contention can wait within the **60-second admission budget** before Stop/Restart mutation acceptance. After acquiring the lock, native code rechecks the same instance/runtime and retains the lock through authority checks and completion. Submitted actions are never replayed; generic text and other failures do not become retryable. Scoped CLI Clippy passed in **32.292 s**, the unaccepted-state timeout regression passed in **36.053 s**, a fresh matched debug pair built in **90.262 s**, and the actual held-lock Stop integration passed in **29.522 s**. The current optimized producer passed in **734.0468 s**; native packaging passed in **15.255 s** and VSIX packaging in **17.183 s**. The fresh current-source legacy fixture passed in **68.399 s** and its whole installed-editor scenario in **33.561 s**, including native Stop and canonical cleanup. The subsequent whole usage scenario passed in **97.960 s**, including its native Stop and cleanup. A preceding **259.85 s** quick-pick failure remains unresolved and intermittent; the successful rerun used observational diagnostics, with no product picker correction or cause claim. All six selected editor scenarios are covered using four retained old-source scenarios and fresh current-source usage/legacy. Current-source Windows qualification passed formatting (**6.244 s**), strict workspace Clippy (**24.3543 s**) and full Nextest: **2,627 passed / 0 failed / 51 skipped**, with no retries. All four restored long campaigns passed: compact reads (**246.170 s**), retention plateau (**146.632 s**), sparse catalog edits (**29.658 s**) and manual backlog (**108.021 s**). Nextest ran for **1,542.644 s**; its wrapper took **1,617.6504 s**. Serial doctests passed across **8 crate targets** in **18.6745 s**; there were **0 eligible examples**, not eight executed examples. Immutable JUnit and Cargo timing reports retain this current-source run. These are selected local qualification results; manual acceptance and release promotion remain separate.
+
+Prior source `5d8912b1...` passed 2,626 Windows tests (50 selection exclusions),
+focused checks and five Neo tests, the fresh ARM release, Developer ID and
+copied-launcher checks, isolated installed lifecycle and Cargo cleanup. Ten selected broader stages passed; the corpus deadline failure and partial editor results retain their scope. Selected local observations retain their documented scope. Earlier D4e evidence
+retains its source identity. No new crate, database,
+scheduler, source write or release/promotion is introduced.
+
 P12's accepted local **1.8.8 working build** adds explicitly reviewed reference refresh
 through the existing native Configure job and collection publication owners.
 Core owns bounded intent, exact selection identity and typed review-required
@@ -262,7 +282,7 @@ The native CLI captures path-free process/build observations for `airk_status.ru
 
 Extension CLI installation removes obsolete terminal executable copies at its own fixed global-storage locations. Native CLI ownership remains responsible for retiring the previous runtime: it fences the active selection, journals inventory-bound cleanup, drains owners, clears rollback and restarts the selected runtime. Sources, indexes and settings remain outside executable retirement. Managed provider payloads are excluded. See [console installation](service-console.md).
 
-Trusted extension activation now installs the approved runtime and terminal forwarding command and sets up new workspace folders automatically. Existing 1.4 project/storage/watching selections remain native and are preserved on compatible runtime updates. Runtime activation and any schema migrations stay in the native adapter; the dashboard renders metadata and does not open indexes.
+Trusted extension activation installs or reconnects the approved runtime and terminal forwarding command, then reconciles metadata for existing native registrations. Opening workspace folders does not create an index, scan sources or grant access. Missing indexes require explicit native setup through Indexing > Index library; source/storage/watching choices and accepted setup work are reviewed. Project memberships, access grants and Use Grant are separate authority steps. Existing storage, pause, Stop and watching preferences remain native. Runtime activation and schema migrations stay in CLI/Store; the dashboard renders metadata and does not open indexes. See [reviewed setup](service-project-setup.md).
 
 Store classifies registry storage contention; the CLI applies the existing registry_busy response only to an explicit whitelist of read-only observations. Mutation and receipt recovery contracts remain unchanged, including RequestEpoch receipt pruning.
 
@@ -464,5 +484,6 @@ owns exact reviewed migration admission and the dual-owner compatibility barrier
 CLI dispatches its existing job/receipt flow. Workbench displays and confirms the
 full native review. Consumer tests alone do not qualify publication, predecessor
 readers, split inheritance or native recovery. Those boundaries now have the
-separate scoped native/release and focused Mac evidence in the ledger; broader
-P14 qualification remains pending. P11b is accepted for unpublished local development; publication remains separate.
+separate scoped native/release and focused Mac evidence in the ledger. Selected
+local P14 results are recorded there; broader platform and publication qualification
+remain separate. P11b is accepted for unpublished local development.

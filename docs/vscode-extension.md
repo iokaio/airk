@@ -1,5 +1,9 @@
 # Native VS Code extension
 
+Current 1.8.8 setup uses the explicit index/grant review below; opening folders
+does not create indexing authority. Prior source `5d8912b1...` passed its final Windows and 10 selected broader stages. Its `same`, `different`, `multi` and `untrusted` editor scenarios passed on the original package; failed usage Stop and initial legacy scenarios remain recorded. New source `237f8969...` adds bounded native lifecycle installation-lock admission; fresh whole usage/legacy passed; current Windows native qualification also passed; manual acceptance and release promotion remain separate. See
+[the working-build record](releases/release-1.8.8.md) and [reviewed setup](service-project-setup.md).
+
 **1.8.8 P12 accepted local development:** Workbench can review refresh of eligible
 references from one completed live result step and one index, then check the
 exact native receipt and separately confirm requery. The first wave requires
@@ -156,7 +160,7 @@ Each trusted window publishes a private attachment endpoint (a named pipe on Win
 
 **Open AIRK Tools** on each dashboard collection, or **AIRK: Open AIRK Tools** in the Command Palette, opens an interactive console in the Terminal panel. It launches the verified bundled helper directly with that collection's root and storage. Enter `list`, `help airk_search`, `call airk_status`, or `exit`. [Direct MCP tool access](mcp.md#call-tools-without-a-coding-agent) documents JSON/file arguments and standalone equivalents. Trust is required; the console does not trigger indexing. Existing consoles close when their collection bindings change or the extension shuts down.
 
-An independent thin native-helper extension is implemented under [packages/vscode](../packages/vscode). It wraps the Rust kernel and bundles the native helper in platform-specific VSIX packages. The checked-in release version is 1.7.6; earlier 1.2/1.3 candidate records below retain their original scope. New collections default to Agent Lean; existing saved or published detail remains in effect. See [1.3.0 candidate changes](releases/release-1.3.0.md), [1.2.4 diagnosis and recovery](releases/release-1.2.4.md) and [1.2.3 defaults](releases/release-1.2.3.md). Local and ordinary CI candidates contain unsigned helpers; the separate GitHub release workflow signs Windows/macOS downloads. [Windows local build/review instructions](windows-local-build.md) provide the single PowerShell command and an isolated editor test.
+An independent thin native-helper extension is implemented under [packages/vscode](../packages/vscode). It wraps the Rust kernel and bundles the native helper in platform-specific VSIX packages. The checked-in manual-test working version is 1.8.8, unpublished; earlier 1.2/1.3 candidate records below retain their original scope. New collections default to Agent Lean; existing saved or published detail remains in effect. See [1.3.0 candidate changes](releases/release-1.3.0.md), [1.2.4 diagnosis and recovery](releases/release-1.2.4.md) and [1.2.3 defaults](releases/release-1.2.3.md). Local and ordinary CI candidates contain unsigned helpers; the separate GitHub release workflow signs Windows/macOS downloads. [Windows local build/review instructions](windows-local-build.md) provide the single PowerShell command and an isolated editor test.
 
 [Deployment and packaging](extension-deployment.md) adapts VCP's delivery practices; [CI](ci-and-builds.md) builds matching native and extension candidates on all three operating systems. Actual observed checks remain in [validation](validation.md).
 
@@ -164,13 +168,13 @@ An independent thin native-helper extension is implemented under [packages/vscod
 
 New vector-model setup asks the native helper for its CPU capabilities and pinned model catalog before installing its embedded assets offline. Version 1.6 selects unsigned INT8 on x64 without VNNI and signed INT8 on VNNI x64 and ARM64; prior semantic state is rebuilt. `airk model-catalog` inspects the choice offline without opening collection/model state. [CPU selection and offline provisioning](onnx-models.md) describe the implemented optimization.
 
-### First-use review (1.7.6)
+### Current first-use review (1.8.8 working build)
 
 Before the first runtime installation on a machine, a trusted window asks **Set up AIRK on this computer?** and shows what setup will change:
 
-- where indexes are stored;
-- which folders will be registered for background indexing;
-- that indexing continues after windows close, and that login startup is a separate opt-in;
+- the saved storage preference and separate per-index source/storage review;
+- that opening folders does not register or index them during runtime installation;
+- that existing accepted indexing or saved watching can continue after windows close, and login startup is a separate opt-in;
 - the shell or PATH change;
 - possible updates to existing AIRK agent entries;
 - that hidden files can be indexed (see `.airkignore`).
@@ -178,11 +182,11 @@ Before the first runtime installation on a machine, a trusted window asks **Set 
 The choices are:
 
 - **Set up** installs as described.
-- **Customize…** lets you deselect folders or the external terminal command.
-- **Not now** saves a deferral. Nothing is installed, edited or registered until you run **AIRK: Set Up** or **AIRK: Install or Repair CLI**.
+- **Customize…** controls the external terminal command and its shell/PATH integration.
+- **Not now** defers runtime/terminal setup; existing accepted native work is independent. Run **AIRK: Set Up** or **AIRK: Install or Repair CLI** when ready.
 - **Don't set up automatically** sets `airk.cli.autoInstall` to `false`.
 
-The review is not shown again when an existing installation or a managed (organization) runtime is found. A home folder or a filesystem/volume root is never registered automatically: it is unchecked in **Customize…**, and otherwise needs **Add Project**. A folder you leave out is remembered and is not registered on later activations.
+Existing or managed runtimes are reconciled through their authenticated native binding. All new indexes, including broad source locations, require **Indexing > Index library** review; opening or reordering folders does not register them. Review Project memberships and an access grant, then explicitly **Use Grant for this window**. Customize does not select or deselect workspace folders. See [reviewed setup](service-project-setup.md).
 
 ### Terminal command
 

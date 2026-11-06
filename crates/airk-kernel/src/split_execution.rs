@@ -49,6 +49,12 @@ impl Kernel {
             if work.snapshot.request.require_semantic_ready && !selected.vectors_enabled()? {
                 selected.configure_vectors(true)?;
             }
+            if work.snapshot.request.require_semantic_ready {
+                // Source-only indexing consumes installed model references; it
+                // never provisions one implicitly. Bind the paired default
+                // through its existing owner before requiring vector readiness.
+                selected.select_service_bundled_model()?;
+            }
             // Establish and account the actual current journal before the scan
             // borrows its long-lived capture and failure reservations.
             selected.initialize_current()?;

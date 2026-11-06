@@ -9,13 +9,9 @@ import * as vscode from 'vscode';
 import { parse as parseJsonc, type ParseError } from 'jsonc-parser';
 import { UNIFIED_TOOLS } from '../model';
 import { readRetryDelay } from '../explorerEvidence';
+import { installedSelector, installedToolBody, installedMember, installedRevocation, finishInstalledClient, InstalledNativeReplyError as NativeReplyError, installedLegacyLifecycle } from './installedEditorContracts';
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-class NativeReplyError extends Error {
-    readonly code?:string;
-    constructor(readonly reply:unknown,body?:any){super('Native MCP refused: '+JSON.stringify(reply));const code=body?.error?.code??body?.code??(reply as any)?.error?.data?.code;this.code=typeof code==='string'?code:undefined;}
-}
-
 async function waitFor(file: string): Promise<void> {
     const end = Math.min(Date.now()+150000,Number(process.env.AIRK_EDITOR_DEADLINE));
     while (Date.now() < end) {
@@ -90,9 +86,11 @@ class Mcp {
     }
     async start(): Promise<void> {
         const result = await this.request('initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'airk-installed-editor-test', version: '1' } });
+        this.observations.push({method:'initialize',result});
         if(result.error)throw new NativeReplyError(result,result.error.data);
         this.child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
         const tools=await this.request('tools/list',{});
+        this.observations.push({method:'tools/list',result:tools});assert.equal(tools.error,undefined);assert.ok(Array.isArray(tools.result?.tools));
         assert.deepEqual(tools.result.tools.map((tool:any)=>tool.name).sort(),[...UNIFIED_TOOLS].sort());
     }
     async call(name: string, args: object, rejected = false): Promise<any> {
@@ -100,8 +98,8 @@ class Mcp {
         while (true) {
             const result = await this.request('tools/call', { name, arguments: {response_mode:'full',...args} }, Math.max(1,deadline-Date.now()));
             this.observations.push({name,args,result});if(this.observations.length>512)throw new Error('Native observation bound exhausted');
-            let body:any;
-            try { body=JSON.parse(result.result?.content?.[0]?.text); } catch { /* Preserve protocol errors below. */ }
+            if(result.error)throw new NativeReplyError(result,result.error.data);
+            const body=installedToolBody(result);
             // Only the shared typed read-retry contract authorizes repeating the exact call.
             const delay=readRetryDelay(result.result);
             if(delay!==undefined&&Date.now()+delay<deadline){await sleep(delay);continue;}
@@ -163,24 +161,14 @@ export async function run(): Promise<void> {
     const use=async(selection:any)=>{
         await context();await ui('page',{kind:'grants'});await ui('inspect',{kind:'grant',id:selection.grant});
         const result=await ui('useGrant',{index:selection.index,project:selection.project});
-        assert.equal(result.outcome.selected_subset,true);
-        const current=await definitions();assert.equal(current.length,1,'One deliberately selected Index, independent of open folder count');
-        const argument=current[0].args.indexOf('--catalog-session');assert.ok(argument>=0,'Actual native catalog selector');
-        const selector=JSON.parse(current[0].args[argument+1]);
-        assert.equal(selector.index_id,selection.index);assert.equal(selector.grant_id,selection.grant);
-        assert.deepEqual(selector.project_ids,[selection.project]);
-        assert.ok(!current[0].args.includes('--root'),'No reconstructed legacy source selector');
+        const current=await definitions();
         evidence.definitions=(evidence.definitions??[]).concat(current.map(value=>({command:value.command,args:[...value.args],env:value.env,cwd:value.cwd?.fsPath,cwd_explicit:value.cwd!==undefined})));
+        await mark('retained-evidence',evidence); // Complete definitions/UI result retained even on an early contract refusal.
+        assert.equal(result.outcome.selected_subset,true);assert.equal(current.length,1,'One deliberately selected Index, independent of open folder count');
+        const selector=installedSelector(current[0],result,selection);selection.session=selector;
         return current[0];
     };
-    const scoped=(body:any,selection:any)=>{
-        const scope=body.scope_observation;assert.equal(scope?.qualifier,'selected_subset');
-        assert.equal(scope.provenance,'user_reviewed_project_grant');assert.equal(scope.grant.id,selection.grant);
-        assert.match(scope.fingerprint,/^[0-9a-f]{64}$/);assert.equal(scope.members.length,1);
-        assert.equal(scope.members[0].index_id,selection.index);
-        assert.deepEqual(scope.members[0].memberships.map((value:any)=>value.project_id),[selection.project]);
-        return body;
-    };
+    const scoped=(body:any,selection:any,denied=false)=>installedMember(body,selection,denied);
     const finish=async()=>{await mark('result',evidence);await mark('capture');await waitFor(path.join(folder,'capture-complete.json'));};
     await vscode.commands.executeCommand('airk.dashboard.focus');
     if(scenario==='legacy'){
@@ -194,6 +182,11 @@ export async function run(): Promise<void> {
         assert.deepEqual(entry.env??{},fixture.legacy_config.env??{});
         const definition=new vscode.McpStdioServerDefinition('Retained manual legacy configuration',entry.command,entry.args,entry.env);
         definition.cwd=vscode.Uri.file(fixture.legacy_config.cwd);
+        await noSelection('Existing manual agent configuration owns its connection before explicit service start');
+        await vscode.commands.executeCommand('airk.collections');
+        await installedLegacyLifecycle(
+        async()=>{await ui('startService',{installDir:fixture.install_dir,runtimeSha256:fixture.candidate.install_manifest_sha256},'#manage/service');checks.push('explicit trusted Start service on the verified legacy installation');},
+        async()=>{
         const client=new Mcp(definition);
         try{
             if(fixture.legacy_config.binding_kind==='pinned_predecessor'){
@@ -213,7 +206,12 @@ export async function run(): Promise<void> {
                 assert.equal(result.items[0].citation.content_hash,fixture.probe.content_sha256);
                 evidence.native.push({legacyProbe:result});evidence.legacyRetrievalParity=true;
             }
-        }catch(error){evidence.failure={error:String(error),stack:error instanceof Error?error.stack:undefined,native:error instanceof NativeReplyError?error.reply:undefined};throw error;}finally{evidence.native.push({transport:client.observations});await mark('retained-evidence',evidence);await client.close();}
+        }catch(error){evidence.failure={error:String(error),stack:error instanceof Error?error.stack:undefined,native:error instanceof NativeReplyError?error.reply:undefined};throw error;}finally{await finishInstalledClient(client,evidence,mark);}
+        },async()=>{
+            const stop=await ui('serviceStop',{installDir:fixture.install_dir,runtimeSha256:fixture.candidate.install_manifest_sha256},'#manage/service');
+            await fs.writeFile(path.join(folder,'native-stop.json'),JSON.stringify(stop,null,2));
+            evidence.native.push({ownedLegacyServiceStop:stop});
+        },evidence,mark);
         assert.equal(createHash('sha256').update(await fs.readFile(fixture.legacy_config.path)).digest('hex'),fixture.legacy_config.sha256);
         await noSelection('Existing manual agent configuration owns its connection; no duplicate automatic definition');
         evidence.legacyUpgradeCoverage=true;checks.push(fixture.legacy_config.binding_kind==='pinned_predecessor'?'unchanged incapable pinned predecessor refuses upgraded format':'unchanged stable launcher retrieves through sealed imported scope');
@@ -256,7 +254,7 @@ export async function run(): Promise<void> {
         const grantDraft=await ui('read'),grant=grantDraft.review.request.operation.grant.id;
         assert.match(grant,/^grt_[0-9a-f]{32}$/);applied(await ui('apply',{grant:true}));await noSelection('Persisted reviewed grant is inert');
         checks.push('native setup and multi-source membership full previews/receipts','persisted grant remains inert');
-        return {index,project,grant,backing,name:nativeIndex.name,source:primary,additional:extra,data:leaf};
+        return {index,project,grant,backing,name:nativeIndex.name,source:primary,additional:extra,data:leaf,source_ids:member.review.request.operation.membership.scope.map((atom:any)=>atom.source_root_id)};
     };
     let selection:any=phase?.selection;
     if(phase?.stage==='reloaded'){
@@ -321,12 +319,12 @@ export async function run(): Promise<void> {
         assert.equal(symbols.items[0].citation.path,'fixture.ts');
         assert.equal(symbols.items[0].citation.content_hash,createHash('sha256').update(await fs.readFile(path.join(source,'fixture.ts'))).digest('hex'));
         const extra=scoped(await client.call('symbols',{name:'SharedAllowedEvidence',compact:false}),selection);assert.equal(extra.items.length,1);
-        assert.equal((await client.call('search',{query:foreign,mode:'lexical',limit:5})).hits.length,0);
-        assert.equal((await client.call('search',{query:'HiddenPrivateEvidence',mode:'lexical',limit:5})).hits.length,0);
-        const denied=await client.call('read_file',{path:'hidden.ts',start_line:1,end_line:2},true);scoped(denied,selection);
-        await client.call('read_file',{path:'../workspace-b/fixture.ts',start_line:1,end_line:2},true);
+        assert.equal(scoped(await client.call('search',{query:foreign,mode:'lexical',limit:5}),selection).hits.length,0);
+        assert.equal(scoped(await client.call('search',{query:'HiddenPrivateEvidence',mode:'lexical',limit:5}),selection).hits.length,0);
+        const denied=await client.call('read_file',{path:'hidden.ts',start_line:1,end_line:2});scoped(denied,selection,true);
+        const escaped=await client.call('read_file',{path:'../workspace-b/fixture.ts',start_line:1,end_line:2});scoped(escaped,selection,true);
         evidence.native.push({symbols,additional:extra,denied});
-        checks.push('actual raw definition command/args/env','complete native tool catalog','native complete scope observation','citation bytes and out-of-grant isolation');
+        checks.push('actual raw definition command/args/env','advertised native tool catalog retained with inputs; supported names match','complete combined scope/member projection; original raw transport retained','citation bytes and out-of-grant isolation');
         const before=definition.args.slice(),otherData=path.join(folder,'selected-storage');
         await fs.mkdir(otherData,{recursive:true});
         await vscode.workspace.getConfiguration('airk').update('storage.path',otherData,vscode.ConfigurationTarget.Global);
@@ -342,8 +340,8 @@ export async function run(): Promise<void> {
             await mark('edited');await waitFor(marker('edited',role==='a'?'b':'a'));
             const expected=scenario==='same'||role==='a'?1:0,end=Math.min(Date.now()+180000,sharedDeadline);
             let changed:any;
-            do{changed=await client.call('symbols',{name:'SharedEditEvidence',compact:false});if(changed.items.length===expected)break;assert.ok(Date.now()<end);await sleep(500);}while(true);
-            scoped(changed,selection);assert.equal(changed.items.length,expected);
+            do{changed=scoped(await client.call('symbols',{name:'SharedEditEvidence',compact:false}),selection);if(changed.items.length===expected)break;assert.ok(Date.now()<end);await sleep(500);}while(true);
+            assert.equal(changed.items.length,expected);
             if(expected)assert.equal(changed.items[0].citation.content_hash,createHash('sha256').update(await fs.readFile(path.join(source,'fixture.ts'))).digest('hex'));
             await mark('retrieved');await waitFor(marker('retrieved',role==='a'?'b':'a'));
             const peer=JSON.parse(await fs.readFile(marker('created',role==='a'?'b':'a'),'utf8'));
@@ -401,7 +399,7 @@ export async function run(): Promise<void> {
                 const previous=vscode.window.tabGroups.all.flatMap(group=>group.tabs).filter(tab=>tab.input instanceof vscode.TabInputWebview&&tab.input.viewType.includes('airk.usage'));
                 if(previous.length)assert.equal(await vscode.window.tabGroups.close(previous,true),true);
                 await use(target);await vscode.commands.executeCommand('airk.usage');await ui('usageScoped');
-                await ui('usageAdmin',{collection:target.backing.collection});await ui('usageJson',{collection:target.backing.collection});
+                await ui('usageAdmin',{index:target.index,collection:target.backing.collection});await ui('usageJson',{collection:target.backing.collection});
                 const end=Math.min(Date.now()+30000,sharedDeadline);let value:any;
                 do{try{value=JSON.parse(vscode.window.activeTextEditor?.document.getText()??'');}catch{}if(value?.administrative_scope?.index_id===target.index)break;assert.ok(Date.now()<end);await sleep(100);}while(true);
                 assert.equal(value.administrative_scope.label,'Entire Index history and shared data-root totals');
@@ -415,7 +413,7 @@ export async function run(): Promise<void> {
             try{await otherClient.start();await vscode.commands.executeCommand('airk.index');
                 const deadline=Math.min(Date.now()+180000,sharedDeadline);
                 while(!scoped(await otherClient.call('symbols',{name:'WindowBetaEvidence',compact:false}),secondary).items.length){assert.ok(Date.now()<deadline);await sleep(500);}
-            }catch(error){evidence.failure={error:String(error),stack:error instanceof Error?error.stack:undefined,native:error instanceof NativeReplyError?error.reply:undefined};throw error;}finally{evidence.native.push({transport:otherClient.observations});await mark('retained-evidence',evidence);await otherClient.close();}
+            }catch(error){evidence.failure={error:String(error),stack:error instanceof Error?error.stack:undefined,native:error instanceof NativeReplyError?error.reply:undefined};throw error;}finally{await finishInstalledClient(otherClient,evidence,mark);}
             const before=await report(secondary);assert.ok(BigInt(before.report.calls)>0n,'The other Index must have real recorded calls before testing preservation');
             const primaryBefore=await report(selection);assert.ok(BigInt(primaryBefore.report.calls)>0n,'Primary Index must have actual usage to clear');
             await ui('usageClear',{index:selection.index,name:selection.name,collection:selection.backing.collection});
@@ -445,20 +443,15 @@ export async function run(): Promise<void> {
             assert.ok(refusal instanceof NativeReplyError,'Timeout/EOF is not native revocation proof');
             const envelope=refusal.reply as any;assert.equal(envelope.result?.isError,true);
             const body=JSON.parse(envelope.result.content[0].text),error=body.error;
-            assert.equal(error?.code,'scoped_observation_unavailable');assert.equal(error.query_submitted,null);
-            assert.equal(error.retryable,true);assert.equal(error.fresh_brokerage_required,true);assert.equal(error.query_replay_safe,false);
-            assert.equal(body.requested_scope.confirmed,false);
-            assert.deepEqual(body.requested_scope.selection,JSON.parse(definition.args[definition.args.indexOf('--catalog-session')+1]));
-            for(const field of ['items','hits','evidence','result'])assert.equal(body[field],undefined);
+            installedRevocation(body,selection.session);
             assert.equal(client.observations.length,observedBefore+1,'Revocation must not replay or rebroker the query');
             checks.push('actual grant revocation fences the retained MCP session');
         }
-    }catch(error){evidence.failure={error:String(error),stack:error instanceof Error?error.stack:undefined,native:error instanceof NativeReplyError?error.reply:undefined};throw error;}finally{evidence.native.push({transport:client.observations});await mark('retained-evidence',evidence);await client.close();}
+    }catch(error){evidence.failure={error:String(error),stack:error instanceof Error?error.stack:undefined,native:error instanceof NativeReplyError?error.reply:undefined};throw error;}finally{await finishInstalledClient(client,evidence,mark);}
     await mark('transport-closed');
     if(['same','different'].includes(scenario))await waitFor(marker('transport-closed',role==='a'?'b':'a'));
     if(role==='a'){
-        const selector=JSON.parse(definition.args[definition.args.indexOf('--catalog-session')+1]);
-        const stop=await ui('serviceStop',{installDir:path.join(folder,'native-service'),runtimeSha256:process.env.AIRK_EDITOR_RUNTIME_SHA256,namespace:selector.namespace},'#manage/service');
+        const stop=await ui('serviceStop',{installDir:path.join(folder,'native-service'),runtimeSha256:process.env.AIRK_EDITOR_RUNTIME_SHA256},'#manage/service');
         await fs.writeFile(path.join(folder,'native-stop.json'),JSON.stringify(stop,null,2));
         evidence.native.push({ownedServiceStop:stop});
     }else await waitFor(path.join(folder,'native-stop.json'));

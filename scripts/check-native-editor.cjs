@@ -3,16 +3,16 @@
 const fs=require('node:fs/promises'),path=require('node:path'),net=require('node:net');
 const {spawn,execFile}=require('node:child_process');
 const {promisify}=require('node:util');
-const execute=promisify(execFile),services=[];
+const execute=promisify(execFile),services=[],legacyServices=new Map();
 let bundle;
-const {editorUi}=require('./editor-ui.cjs');
+const {editorUi,privateEditorEnvironment}=require('./editor-ui.cjs');
 const root=path.resolve(__dirname,'..');
 const [editor,cli,source]=process.argv.slice(2).map(value=>path.resolve(value));
 if(!source)throw new Error('Expected editor, its cli.js, and an approved extension stage or VSIX.');
 const scenarios=(process.env.AIRK_EDITOR_SCENARIOS||'same,different,multi,usage,untrusted,legacy').split(',');
 if(scenarios.some(value=>!['same','different','multi','usage','untrusted','legacy'].includes(value)))throw new Error('Unknown native editor scenario');
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms)),active=new Map();
-const environment={...process.env,RUST_BACKTRACE:'1'};delete environment.ELECTRON_RUN_AS_NODE;delete environment.VSCODE_IPC_HOOK_CLI;
+const environment=privateEditorEnvironment(process.env); // Child only: never inherit the normal editor's bootstrap/cache/IPC role.
 async function runProcess(args,logfile,extra={}){
     const log=await fs.open(logfile,'w'),deadline=Number(extra.AIRK_EDITOR_DEADLINE)||Date.now()+600000;
     return new Promise((resolve,reject)=>{
@@ -167,7 +167,7 @@ async function checkExplorer(ui){
 async function cleanupServices(){
     const results=[];
     for(const folder of services.splice(0)){
-        const install=path.join(folder,'native-service');if(!await exists(install))continue;
+        const legacy=legacyServices.get(folder),install=legacy?.install_dir??path.join(folder,'native-service');if(!await exists(install))continue;
         let receipt;
         try{
             const stop=JSON.parse(await fs.readFile(path.join(folder,'native-stop.json'),'utf8'));
@@ -176,7 +176,12 @@ async function cleanupServices(){
             if(!Number.isSafeInteger(captured.capturedAt)||captured.capturedAt<stop.started||record.id===stop.previous_capture?.response?.record?.id||!record.id||stop.dispatch?.dispatch===stop.confirmation?.dispatch)throw new Error('Captured native receipt does not identify this one-dispatch Stop');
             if(captured.runtime.installDir!==install||captured.runtime.runtimeSha256!==bundle.digest||request.runtime!==bundle.digest||captured.namespace!==request.key?.namespace||captured.namespace!==stop.requested_binding?.namespace)throw new Error('Crossed native Stop runtime/namespace binding');
             const result=await execute(bundle.main,['runtime','inspect','--install-dir',install],{windowsHide:true,timeout:30000,maxBuffer:65536});
-            const observation=JSON.parse(result.stdout),owned=await fs.realpath(folder),control=await canonicalOwned(owned,observation.control_dir);
+            const observation=JSON.parse(result.stdout),owned=await fs.realpath(legacy?.fixture_root??folder),control=await canonicalOwned(owned,observation.control_dir);
+            if(legacy){
+                if(legacy.qualification?.status!=='qualified_native_fixture'||install!==legacy.install_dir||control!==await canonicalOwned(owned,legacy.control_dir)||captured.namespace!==legacy.native.inspect.registry_namespace)throw new Error('Crossed qualified legacy Stop installation');
+                if(sha(await fs.readFile(legacy.legacy_config.path))!==legacy.legacy_config.sha256)throw new Error('Legacy configuration changed during lifecycle');
+                for(const [name,digest]of Object.entries(legacy.source_hashes_before)){const file=await ownedPath(legacy.source_root,path.resolve(legacy.source_root,name));if(sha(await fs.readFile(file))!==digest)throw new Error('Legacy source changed during lifecycle');}
+            }
             if(await canonicalOwned(owned,captured.runtime.controlDir)!==control||observation.approval?.manifest_sha256!==bundle.digest||observation.registry_namespace!==captured.namespace||observation.payload_verified!==true)throw new Error('Native stopped inspection crossed the captured installation');
             if(observation.lifecycle?.explicitly_stopped!==true||observation.lifecycle?.pending!==null)throw new Error('Native lifecycle has not settled stopped');
             receipt={qualified:true,stop,observation};
@@ -216,7 +221,7 @@ exports.activate=()=>{if(!process.env.AIRK_EDITOR_RUN)return;void require(${JSON
             summary.scenarios.push({scenario,status:'unqualified',coverage:false,reason:legacy?.qualification.reason??'AIRK_EDITOR_LEGACY_FIXTURE from an actual native managed upgrade is unavailable'});
             if(legacy)await fs.writeFile(path.join(folder,'legacy-fixture-unqualified.json'),JSON.stringify(legacy,null,2));
             await fs.writeFile(path.join(run,'summary.json'),JSON.stringify(summary,null,2));continue;}
-        if(!legacy)services.push(folder);const storage=path.join(folder,'storage');await fs.mkdir(storage);
+        services.push(folder);if(legacy)legacyServices.set(folder,legacy);const storage=path.join(folder,'storage');await fs.mkdir(storage);
         if(!legacy)await verifyFreshFixtureLayout(folder);
         if(legacy)await fs.writeFile(path.join(folder,'legacy-fixture.json'),JSON.stringify(legacy,null,2));
         for(const [name,symbol] of [['workspace-a','WindowAlphaEvidence'],['workspace-b','WindowBetaEvidence']]){const workspace=path.join(folder,name);await fs.mkdir(workspace);await fs.writeFile(path.join(workspace,'fixture.ts'),`export function ${symbol}() { return 42; }\n`);await fs.writeFile(path.join(workspace,'hidden.ts'),'export function HiddenPrivateEvidence() {}\n');}
@@ -258,7 +263,21 @@ exports.activate=()=>{if(!process.env.AIRK_EDITOR_RUN)return;void require(${JSON
                         const actions=['serviceStop','connect','startService','page','inspect','setupDraft','setupApply','projectDraft','renameDraft','membershipDraft','apply','context','associationDraft','grantDraft','useGrant','revokeDraft','read','reconcile','staleApply','restricted','usageScoped','usageAdmin','usageJson','usageClear'];
                         if(!actions.includes(request.action))throw new Error('Unknown private Indexing action');
                         const fixture=await fs.realpath(folder);
-                        if(request.action==='serviceStop'){await canonicalOwned(fixture,request.installDir);if(request.installDir!==path.join(folder,'native-service')||request.runtimeSha256!==bundle.digest||!/^[a-f0-9]{32}$/.test(request.namespace))throw new Error('Crossed owned Stop fixture binding');}
+                        if(request.action==='serviceStop'||(legacy&&request.action==='startService')){
+                            if(legacy){
+                                if(legacy.qualification?.status!=='qualified_native_fixture'||request.installDir!==legacy.install_dir||request.runtimeSha256!==legacy.candidate.install_manifest_sha256||request.runtimeSha256!==bundle.digest)throw new Error('Crossed qualified legacy lifecycle binding');
+                                await canonicalOwned(await fs.realpath(legacy.fixture_root),request.installDir);
+                            }else{
+                                await canonicalOwned(fixture,request.installDir);
+                                if(request.installDir!==path.join(folder,'native-service')||request.runtimeSha256!==bundle.digest)throw new Error('Crossed owned Stop fixture binding');
+                            }
+                            const observed=await execute(bundle.main,['runtime','inspect','--install-dir',request.installDir],{windowsHide:true,env:environment,timeout:30000,maxBuffer:65536});
+                            const metadata=JSON.parse(observed.stdout);
+                            if(metadata.payload_verified!==true||metadata.approval?.manifest_sha256!==bundle.digest||!/^[a-f0-9]{32}$/.test(metadata.registry_namespace))throw new Error('Owned service namespace unavailable before Stop');
+                            if(legacy&&(metadata.registry_namespace!==legacy.native.inspect.registry_namespace||await canonicalOwned(await fs.realpath(legacy.fixture_root),metadata.control_dir)!==await canonicalOwned(await fs.realpath(legacy.fixture_root),legacy.control_dir)))throw new Error('Legacy lifecycle changed native namespace/control');
+                            await fs.writeFile(path.join(folder,request.action==='serviceStop'?'native-pre-stop-inspect.json':'native-pre-start-inspect.json'),JSON.stringify(metadata,null,2));
+                            request.namespace=metadata.registry_namespace;
+                        }
                         if(request.action==='setupDraft'){await ownedPath(fixture,request.source);await ownedPath(fixture,request.storage,true);if(request.additional)await ownedPath(fixture,request.additional.path);}
                         if(request.action==='membershipDraft')for(const atom of request.roots??[])await ownedPath(fixture,atom.path);
                         for(const key of ['index','project','id'])if(request[key]!==undefined&&!/^(idx_|prj_|grt_)[a-f0-9]{32}$/.test(request[key]))throw new Error('Invalid exact native catalog ID');
@@ -282,7 +301,7 @@ exports.activate=()=>{if(!process.env.AIRK_EDITOR_RUN)return;void require(${JSON
                 const page=await ui.workbench('document.title');const image=await page.client.call('Page.captureScreenshot',{format:'png'});
                 await fs.writeFile(path.join(folder,`${role}-workbench.png`),Buffer.from(image.data,'base64'));
             }
-        }finally{for(const [role,ui]of Object.entries(uis)){await fs.writeFile(path.join(folder,role+'-ui-dispatch-receipts.json'),JSON.stringify(ui.dispatchReceipts(),null,2));ui.close();}await fs.writeFile(path.join(folder,'capture-complete.json'),'{}');}
+        }finally{for(const [role,ui]of Object.entries(uis)){await fs.writeFile(path.join(folder,role+'-ui-dispatch-receipts.json'),JSON.stringify(ui.dispatchReceipts(),null,2));try{await fs.writeFile(path.join(folder,role+'-ui-diagnostics.json'),JSON.stringify(ui.diagnostics(),null,2));}catch(error){console.error('Private UI diagnostic retention failed:',String(error));}ui.close();}await fs.writeFile(path.join(folder,'capture-complete.json'),'{}');}
         await exited;if(failure)throw failure;
         const sourcePreservation=[];
         for(const [name,original]of Object.entries(originalSources)){

@@ -12,7 +12,14 @@ New captured inputs carry posting format one, and terminal-name memberships part
 
 Ordinary format-140 publication continues serving the coherent committed generation. If read admission is temporarily unavailable, MCP returns an error whose JSON body contains `status: "retry"`, `retryable: true`, a bounded `retry_after_ms` (currently 25), and `action: "repeat_same_request"`. The code is `selection_busy` or `publication_busy`. Retain the same explicit revision and other arguments when retrying; a superseded exact revision still expires normally. AIRK does not automatically replay an ambiguous exchange.
 
-Only confirmed selection-lock contention, the typed current-index applying gate, and SQLite BUSY/LOCKED errors from read-only operations receive hints. Permissions, corruption, I/O failures, unsupported state and expired revisions remain distinct errors. Text resembling a busy error does not make an error retryable. A retry result contains no invented publication, `items`, source freshness or empty-success claim. Usage records the actual error result; failed reads do not advance status receipts.
+The 1.8.8 candidate retains the correction introduced on `5d8912b1...`:
+genuine bounded quota-ledger
+**read admission** uses the existing `selection_busy` hint with a **25 ms** delay.
+Repeat only the identical read within its original deadline. Ledger mutations and
+jobs are not replayed; job diagnostics retain `quota_ledger_busy`. Generic lookalike
+text, permission failures and corruption do not acquire this hint.
+
+Only confirmed selection-lock contention, genuine typed quota-ledger read admission, the typed current-index applying gate, and SQLite BUSY/LOCKED errors from read-only operations receive hints. Permissions, corruption, I/O failures, unsupported state and expired revisions remain distinct errors. Text resembling a busy error does not make an error retryable. A retry result contains no invented publication, `items`, source freshness or empty-success claim. Usage records the actual error result; failed reads do not advance status receipts.
 
 Development tests exercise real SQLite read exclusion and a subsequent exact-token retry, classify SQLite error codes independently of their wording, and reject false retry hints for permissions/corruption/expired revisions. Existing Windows/Linux publication tests establish committed-reader behavior separately from this rejection path. Evidence from macOS execution and installed-editor acceptance remains part of final qualification.
 

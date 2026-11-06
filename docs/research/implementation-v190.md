@@ -9,7 +9,23 @@ The maintainer authorized sequential implementation and signed phase commits.
 Progress below is observed local evidence; it does not establish publication or
 cross-platform qualification.
 
-**Current checkpoint, 6 November 2026:** P9, P10, P11a, P11b and P12 are accepted for
+**Current checkpoint, 6 November 2026 - P14 selected local qualification results:** P9-P12 remain accepted
+for unpublished local development. P13 retained ranking/diversity; no candidate
+or gain is claimed. Current source `237f8969...` / 960 inputs adds bounded lifecycle installation-lock
+admission to cold-default split and typed quota-read corrections. Prior source
+`5d8912b1...` Windows full Nextest passed **2,626 tests**, with **50 selection exclusions**.
+Formatting, strict Clippy (17.394 s), Kernel typed tests (2), actual native/CLI/MCP
+held-ledger coverage (1) and lightweight check passed. Neo passed five native tests,
+fresh ARM64 release, Developer ID/post-seal copied-launcher checks and the actual
+isolated installed lifecycle; all three cleanup observations exited 0 with target
+absent. **Prior source `5d8912b1...` evidence (6 November 2026):** Windows full Nextest passed **2,626 tests** with **50 selection exclusions**; its fresh producer took **764.1665 s**, and all **15 final R4 stages / 84 unchanged gates** passed, including **459 Python tests / 9 expected skips**. All **10 selected broader stages** passed by exact evidence adoption; the original failed queue stays failed. The real-corpus campaign remains a deadline failure with partial coverage. Its native/extension/VSIX package stages, `same`, `different`, `multi` and `untrusted` editor scenarios passed on their original native/package identities. Failed usage Stop and initial legacy attempts are retained. These observations do not become current-source qualification by relabeling.
+
+Current native source `237f8969...` / **960 inputs** adds bounded native installation-lock admission before accepting lifecycle work. Only typed installation-lock contention can wait within the **60-second admission budget** before Stop/Restart mutation acceptance. After acquiring the lock, native code rechecks the same instance/runtime and retains the lock through authority checks and completion. Submitted actions are never replayed; generic text and other failures do not become retryable. Scoped CLI Clippy passed in **32.292 s**, the unaccepted-state timeout regression passed in **36.053 s**, a fresh matched debug pair built in **90.262 s**, and the actual held-lock Stop integration passed in **29.522 s**. The current optimized producer passed in **734.0468 s**; native packaging passed in **15.255 s** and VSIX packaging in **17.183 s**. The fresh current-source legacy fixture passed in **68.399 s** and its whole installed-editor scenario in **33.561 s**, including native Stop and canonical cleanup. The subsequent whole usage scenario passed in **97.960 s**, including its native Stop and cleanup. A preceding **259.85 s** quick-pick failure remains unresolved and intermittent; the successful rerun used observational diagnostics, with no product picker correction or cause claim. All six selected editor scenarios are covered using four retained old-source scenarios and fresh current-source usage/legacy. Current-source Windows qualification passed formatting (**6.244 s**), strict workspace Clippy (**24.3543 s**) and full Nextest: **2,627 passed / 0 failed / 51 skipped**, with no retries. All four restored long campaigns passed: compact reads (**246.170 s**), retention plateau (**146.632 s**), sparse catalog edits (**29.658 s**) and manual backlog (**108.021 s**). Nextest ran for **1,542.644 s**; its wrapper took **1,617.6504 s**. Serial doctests passed across **8 crate targets** in **18.6745 s**; there were **0 eligible examples**, not eight executed examples. Immutable JUnit and Cargo timing reports retain this current-source run. These are selected local qualification results; manual acceptance and release promotion remain separate.
+Earlier D4e receipts retain their original identity.
+Deleted-source recovery and the local test installer remain unfinished. Version
+**1.8.8** is unpublished.
+
+**Earlier P12 checkpoint, 6 November 2026 (historical):** P9, P10, P11a, P11b and P12 are accepted for
 unpublished local development. P10 is committed as `c2584cb`, P11a as `f2bf2d2`
 and P11b as `aa28425`. P12 passed primary local phase review: its focused
 Windows native selection passed **39/39** on `4121692a…` / 960 inputs, strict
@@ -66,8 +82,8 @@ failed attempts and platform limits; they are not relabeled.
 | P11a | Accepted locally — `f2bf2d2` | Bounded actual per-file profile family reporting and complete transports |
 | P11b | Accepted locally — `aa28425` | Explicit retained Lean/Rich migration, legacy continuity and paid split inheritance |
 | P12 | Accepted locally | 39 focused Windows native tests; strict scoped Clippy; UI 776 passed/19 skipped; all 12 final Windows release stages and 19 scoped Neo tests passed; clean exit zero and target removed |
-| P13a/P13b | Conditional decision: retain current ranking | Candidate remains inert; quality/resource, independent-label, native disclosure and scope gates are not established; no quality gain or candidate failure is claimed |
-| P14 | Pending | Combined qualification, platform/fault/resource coverage and final candidate evidence |
+| P13a/P13b | Resolved: retain current ranking/diversity | Candidate remains inert; quality/resource, independent-label, native disclosure and scope gates are not established; no quality gain or candidate failure is claimed |
+| P14 | Selected local qualification | Current `237f8969...`: formatting, strict workspace Clippy, full Nextest **2,627 passed / 0 failed / 51 skipped**, four restored campaigns, serial doctests, optimized producer and fresh whole usage/legacy passed. Six editor scenarios include four retained earlier-source cases. Corpus deadline failure, intermittent picker failure and platform limits remain disclosed; deleted-source recovery and the final local installer remain required |
 
 **Additional maintainer request — 5 November 2026:** after P9–P14, reproduce and
 fix deleted-source failure loops in the current release: individual indexed files
@@ -5024,3 +5040,96 @@ conditional decision does not waive them, publish a release, alter source files
 or modify dependency/model/OCR adapters. Any later adoption requires a new
 reviewed evidence-based decision. This P13 record is a separate checkpoint after
 P12 acceptance; its authorized signed commit is a separate Git action.
+
+## P14 - selected local qualification results, 6 November 2026
+
+Current native source is
+`237f896933ad59a4075f9395fd53fcb92e376946faf1fc01036c139fc0533c0f`
+(**960** inputs), on working version **1.8.8**. P13 retained the existing ranker and
+diversity behavior. No ranking gain or phase acceptance is inferred.
+
+The cold-default split failure exposed a destination without an installed model
+reference. Source-only indexing correctly does not provision one. An explicitly
+semantic-ready DestinationBuild now selects the paired bundled default through
+its existing claimed model owner before indexing. The 32-turn bound, prepaid
+funding, source policy and actual ready-publication checks remain intact.
+
+The later D4e service-load case (10 Projects, 50 clients) exposed a real typed
+quota-ledger read refusal falling back to raw error text. Current code maps only
+Store's typed `QuotaContention` to the existing same-request `selection_busy`
+read-admission category. Permission errors and identical generic text do not
+become retryable. Durable jobs retain `quota_ledger_busy`; mutation replay is
+unchanged. Actual held-ledger coverage compares complete native/CLI/MCP refusals
+in Full and Terse, then verifies the same publication and unchanged source.
+
+The 10k scale harness previously failed on a supported typed read refusal. Its
+correction preserves the exact read, original deadline, finite attempts and attempt
+outputs/costs. Only actual exit 1 with a complete typed hint is eligible; exit 2,
+signals and unknown/transport failures remain terminal. Index/configuration
+mutations never enter this path. Driver tests passed **8**, with **1** Linux RSS
+case skipped on Windows; these unit results do not establish a successful 10k run.
+
+The original runtime-upgrade fixture registered without initializing owned
+collection state, then met the intentional `ConfigurationUnavailable` compatibility
+boundary. Missing `roots.json` itself is not the cause: absent owned metadata stays
+unknown and cannot create imported authority. The corrected positive harness
+explicitly indexes the fictional OLD runtime through one saved job before upgrade;
+its prior `5d8912b1...` producer positive campaign subsequently passed in **69.2571 s**; the separately retained never-indexed negative case remains a refusal. The corrected positive
+fixture passed on the prior D4e pair in **67.743 s**, registry **11 to 12**, with
+exact source/registration preservation and acknowledged uninstall. This qualifies
+the fixture against that prior pair, not the newer producer. The never-indexed mode
+retains the original `ConfigurationUnavailable` refusal, nonzero exit and pending manual recovery. The current negative observation retained exact source and registration; the read-only base-grant census was zero. The not-yet-created provenance column was unavailable, not inferred. It is not counted as a
+successful upgrade and does not auto-index, abort, restart an old reader or uninstall
+committed pending state. The SQL registry target is **12**, separate from working
+version and policy contracts. Early fixture detachment and separate primary/teardown
+diagnostics preserve failures; the original failed fixture was lost under the old
+masked teardown, so no retained database proof is claimed. Seven Python ownership,
+acknowledgment and timeout tests passed.
+
+| Scope | Observed qualification and retained source identity |
+| --- | --- |
+| Prior Windows focused `5d8912b1...` | Formatting, strict workspace Clippy **17.394 s**, Kernel **2**, native/CLI/MCP **1** and lightweight check passed. |
+| Prior `5d8912b1...` Windows full / producer | **2,626 passed**, **0 failed**, **50 selection exclusions**; Nextest **1,599.125 s**, wrapper **1,648.753 s**. Its producer passed in **764.1665 s** with incremental off. All **15 final R4 stages / 84 unchanged gates** and Python **459 / 9 skips** passed on that original identity. |
+| Current `237f8969...` focused | Scoped CLI Clippy **32.292 s**, timeout regression **36.053 s**, fresh debug pair **90.262 s** and actual held-lock Stop integration **29.522 s** passed. Fresh producer **734.0468 s** and whole legacy **33.561 s** passed. Whole current-source usage also passed **97.960 s**. Full current Nextest passed **2,627 / 0 failed / 51 skipped**, all four restored campaigns passed, strict workspace Clippy and format passed. Serial doctests covered **8 targets / 0 eligible examples**. Prior intermittent usage failure is retained. |
+| Prior `5d8912b1...` Neo source | **5 tests** across 4 commands plus format passed; fresh ARM64 release **1,096.11 s**. Developer ID signing of four components, post-seal copied-launcher check and actual isolated installed lifecycle passed. All **3** cleanup observations exited **0** with target absent. No notarization claim. |
+| Prior `5d8912b1...` broader / installed / corpus | **10 selected broader stages passed** by exact adoption: eight original passes, corrected usage and three ignored vector tests. Original broader queue remains failed. Corpus **failed campaign_deadline / 3,668.425 s**, with native errors and partial semantic coverage retained. Package stages and `same`, `different`, `multi`, `untrusted` scenarios passed on that original package. Failed usage Stop and initial legacy are retained; fresh current-source usage/legacy passed; current Windows native qualification also passed; platform limits remain explicit. |
+| Qualification boundary | Selected local evidence is recorded above. Manual acceptance and wider platform/release qualification remain separate. Deleted-source recovery and the final local test installer remain required follow-ups. |
+
+The selected prior `5d8912b1...` 10,000-file synthetic lexical campaign passed in **659.4201 s** of wrapper wall time, with **81,920,000 source bytes** and **317,580,564 logical index bytes**. These are owned-fixture/final logical footprint observations, not measured peak physical allocation or total process CPU/RSS. OS caches were not controlled. No 100,000-file campaign was selected; no extrapolated speed or 100k result is claimed.
+
+The original broader queue passed its first eight stages, then failed usage accounting and remains failed. The corrected usage harness establishes actual Verify/quiescence and holds both the existing writer lease and an explicit read-only SQLite transaction on the exact active retained publication. This prevents last-reader-close churn during fresh CLI reads. It passed **9 pure tests** and the actual prior `5d8912b1...` runtime campaign in **32.7458 s**. The original **41 queries**, **four workers / forty requests**, attribution, BPE/pricing and enable/disable/clear assertions remain unchanged; no submitted query is replayed. Earlier audit-veto and typed `publication_busy` failures are retained. The separate `5d8912b1...` ignored vector-performance run passed **3 tests** in **76.6576 s**. The supplement adopts those results and the eight original passes as **10 selected passing stages**, without relabeling the failed original queue.
+
+The real-corpus campaign **failed** with `campaign_deadline` after **3,668.425 s** and observation outcome `native_errors_observed`. All four probes eventually became usable, but semantic coverage was partial; session, reopen, cancellation and the second corpus were not reached. No complete semantic-readiness, corpus performance or cross-corpus result is claimed. The collection recorded `cleanup_failed: false`; that does not convert the failed campaign into a pass. The actual AIRK source inventory remained identical: **1,789 files / 67,382,061 bytes**, and every sealed runtime file remained unchanged. No source excerpt was selected.
+
+The prior `5d8912b1...` producer positive predecessor upgrade passed in **69.2571 s**. This is separate from the preserved never-indexed `ConfigurationUnavailable` refusal and from the prior D4e **67.743 s** result. The older fifteen-suite stress result remains historical; the prior `5d8912b1...` pair separately passed three selected installed native smoke suites.
+
+The prior `5d8912b1...` package owner passed native packaging (**15.076 s**), extension compilation (**10.822 s**) and VSIX packaging (**16.887 s**). Its **1.8.8** VSIX has **774 files / 73.82 MB**, SHA-256 `49170b51765048e438dfd9516a35e4884d7667efe5ad2652d02303caf22f4c90`. After the normal updater blocked the first attempt, a checksum-verified official **1.145.0** ZIP host launched private profiles. The original **3,280 stock files** remained unchanged. No normal editor/updater process was killed or repinned. The original `same`, `different` and `multi` scenarios passed with five completed roles; later `untrusted` passed in **9.9336 s**. Its owner nevertheless failed because Electron created an additional `runtime/debug.log`; the actual scenario pass is separate from that stock-inventory failure.
+
+The usage picker handoff required an explicit existing Index selection; the corrected helper and later observational diagnostics passed **12 Node tests**. The subsequent actual usage scenario completed its usage assertions, but its final Stop failed before mutation acceptance while a launcher held the installation lock. The **276.78 s** owner remains failed; a separate exact-instance Stop cleanup is not a passing usage scenario. The new native admission fix is qualified separately above. The whole fresh usage scenario on the new producer then failed after **259.85 s** at the Index administration quick pick, before native Stop; retained raw native observations contained no errors. Separate cleanup found health absent and proved native quiescence without inventing a Stop receipt. A subsequent whole current-source usage run with bounded observational UI diagnostics passed in **97.960 s**, including its complete native Stop and canonical cleanup. The preceding quick-pick failure remains **undiagnosed and intermittent**. Source and package identities were unchanged; no picker product fix, resolved cause or timing improvement is claimed.
+
+A fresh actual legacy fixture passed in **67.927 s**, but its editor scenario failed in **16.926 s**. The fixture had deliberately completed Stop; the old driver attempted a manual read without explicit Start. MCP initialization/catalog succeeded locally, then the read returned a generic plaintext error that a JSON parser masked. Read-only inspection confirmed the durable stopped state; the generic envelope did not expose a typed compatibility error. The corrected external driver explicitly starts the verified private installation, preserves the unchanged manual configuration and imported scope checks, closes the manual transport, then submits one exact Stop and verifies canonical cleanup. Plaintext native refusals retain their complete raw envelope with no invented code; pinned-predecessor acceptance still requires an actual typed refusal. Stop/retention failures preserve the original error. All **13 installed-contract Node tests** passed. Targeted TypeScript emission changed only external test outputs; production source/output and the old VSIX remained unchanged. The fresh current-source fixture subsequently passed in **68.399 s**; the whole installed legacy scenario passed in **33.561 s**. Independent raw/byte review verified the unchanged original manual configuration and source, sealed imported Index/Project scope, exact cited hash, explicit Start, unforced transport closure, one complete instance/runtime/namespace-bound Stop and canonical stopped-state inspection. This legacy scenario will be retained without rerunning it.
+
+The current package is **1.8.8**, VSIX SHA-256 `3482475a658c74760f9dc3627cc493d5b57043e73a44fcae50eb0f7c18598d71`. Its embedded native installation manifest matches the sealed producer byte-for-byte, SHA-256 `f52d263e96154a5b675d4575df300c5e20e17ab9ba6433b7c670fe0798fd4f98`. The producer passed in **734.0468 s**; native package and VSIX package stages passed in **15.255 s** and **17.183 s**. No fresh production TypeScript compilation or all-platform qualification is inferred from those package stages.
+
+The actual six-scenario editor coverage aggregate retains `same`, `different`, `multi` and `untrusted` on their original `5d8912b1...` source and VSIX `49170b51...`. Fresh whole `usage` and `legacy` use current source `237f8969...` and VSIX `3482475a...`, with complete native Stop and canonical cleanup evidence. This is an explicit mixed-identity selection, not six fresh current-source runs. No passed scenario is rerun merely to replace its identity. The current-source native gates above also passed. The aggregate retains its documented mixed identities and does not establish broader platform or publication qualification.
+
+Earlier failed queues, missing UI Stop receipts and separate native cleanup proofs remain historical evidence. Neither successful assertions before a failed Stop nor a separate later Stop is relabeled as a successful scenario. The old package is not the final current-source test installer.
+
+Docker was available but no cached images were observed. Linux/container qualification was not selected, not reported unavailable or passed. Intel Mac, full macOS workspace, installed Mac editor, notarization, clean-machine/external-agent and controlled cold-cache/model-cost results remain unqualified without actual evidence. P13 retained current ranking and diversity. These are selected local qualification results; version **1.8.8** is unpublished, with deleted-source recovery and the final local test installer still separate unfinished follow-ups.
+
+### Dated D4e checkpoint (6 November 2026; superseded source)
+
+`d4e48a53...` / 960 inputs passed **2,624** Windows tests with **50 selection
+exclusions**, the four restored long cases, **15** final stages and **15** native
+smoke suites (five repetitions of each of three suites). All **84** unchanged
+comparison gates passed. The P12 extension suite remained **776 passed / 19
+skipped**; two scoped Neo cases passed with Cargo clean exit 0 and target absent.
+These receipts keep their actual source/runtime identity. Later load, scale and
+upgrade failures remain failures, not erased by those passes. The canceled obsolete
+D4e Mac producer is not current signing qualification.
+
+Client-only counters do not establish total service CPU/RSS or peak physical disk.
+No full Mac workspace, current Linux/Intel/installed Mac editor, notarization or
+release/publication qualification follows without its actual evidence. Collected
+receipts retain their actual source identities; old artifacts are not relabeled. Earlier
+P12 and other dated records remain unchanged.

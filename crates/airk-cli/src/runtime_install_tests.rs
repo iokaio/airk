@@ -1649,3 +1649,67 @@ fn managed_frontend_metadata_authenticates_both_modes_without_reading_payload() 
     }
     Ok(())
 }
+
+#[tokio::test]
+async fn lifecycle_install_admission_timeout_preserves_unaccepted_state() -> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let root = owner.path().canonicalize()?.join("installation");
+    local_ipc::prepare_root(&root)?;
+    let selection = root.join("selected.json");
+    fs::write(
+        &selection,
+        b"Selection must not be inspected before admission.\n",
+    )?;
+    let before = fs::read(&selection)?;
+    let input = || {
+        serde_json::from_value::<lifecycle::Input>(serde_json::json!({
+            "caller":"11".repeat(16),
+            "key":{"namespace":"22".repeat(16),"epoch":0,"nonce":"33".repeat(16)},
+            "action":"stop","expected_instance":"44".repeat(16),"runtime":"55".repeat(32),"force":false
+        }))
+    };
+    let held = install_lock(&root)?;
+    let failure = tokio::time::timeout(
+        Duration::from_secs(2),
+        lifecycle::run_with_admission_budget(&root, input()?, Duration::from_millis(100)),
+    )
+    .await?
+    .expect_err("held installer lock must exhaust admission");
+    ensure!(
+        format!("{failure:#}").contains("service connection installer wait expired or failed"),
+        "failed after lifecycle admission instead: {failure:#}"
+    );
+    ensure!(
+        fs::read(&selection)? == before,
+        "admission failure rewrote selection"
+    );
+    ensure!(
+        !root.join("control").try_exists()?,
+        "admission failure created a native registry"
+    );
+    ensure!(
+        install_lock(&root).is_err(),
+        "admission failure stole lock ownership"
+    );
+    drop(held);
+    fs::write(root.join("install-1.4.lock"), b"foreign lock bytes")?;
+    let failure = tokio::time::timeout(
+        Duration::from_secs(2),
+        lifecycle::run_with_admission_budget(&root, input()?, Duration::from_secs(60)),
+    )
+    .await?
+    .expect_err("invalid lock data must fail without a contention wait");
+    ensure!(
+        format!("{failure:#}").contains("invalid install lock"),
+        "unexpected invalid-lock result: {failure:#}"
+    );
+    ensure!(
+        fs::read(root.join("install-1.4.lock"))? == b"foreign lock bytes",
+        "foreign lock was replaced"
+    );
+    ensure!(
+        fs::read(&selection)? == before && !root.join("control").try_exists()?,
+        "invalid lock admission changed lifecycle state"
+    );
+    Ok(())
+}

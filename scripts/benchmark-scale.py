@@ -56,8 +56,11 @@ def native_runner(fixture, root, state, directory, prefix, measurements, timeout
                                  "accepted_job": receipt["id"],
                                  "scope": "durable inspection/configuration completion; process counters not sampled"})
             return fixture.rpc({"configuration_result": {"id": receipt["id"]}})["result"]
-        value, metrics = measured([str(fixture.binary), *fixture.arguments(prefix), *args], directory,
-                                  prefix + "-" + label, timeout=timeout, environment=fixture.environment)
+        # Only these source/evidence reads may repeat a complete typed rejection.
+        # Never put index/configuration or other mutations through this path.
+        measure = measured_read if args[0] in ("status", "search", "files", "read") else measured
+        value, metrics = measure([str(fixture.binary), *fixture.arguments(prefix), *args], directory,
+                                 prefix + "-" + label, timeout=timeout, environment=fixture.environment)
         if "content" in value:
             assert not value.get("isError"), value
             value = clients.tool_value(value)
@@ -142,7 +145,7 @@ def process_metrics(process, expected_executable=None):
     return {"counter_basis": "OS counters unavailable in this harness; inspect native usage resource report"}
 
 
-def measured(command, output_directory, label, timeout=1800, environment=None):
+def measured(command, output_directory, label, timeout=1800, environment=None, *, allow_typed_read_rejection=False):
     started = time.monotonic()
     path = output_directory / (label + ".json")
     errors = output_directory / (label + ".stderr")
@@ -185,11 +188,70 @@ def measured(command, output_directory, label, timeout=1800, environment=None):
                 process.kill()
                 process.wait()
     metrics.update(label=label, wall_ms=round((time.monotonic() - started) * 1000, 3), exit_code=process.returncode)
-    if process.returncode:
-        raise RuntimeError(f"{label} failed: {errors.read_text(errors='replace')[:4000]}")
     if path.stat().st_size > 16 * 1024 * 1024:
         raise ValueError("benchmark command response exceeds 16 MiB")
-    return json.loads(path.read_text(encoding="utf-8-sig")), metrics
+    value = None
+    if allow_typed_read_rejection:
+        try:
+            value = json.loads(path.read_text(encoding="utf-8-sig"))
+        except (ValueError, UnicodeError):
+            pass
+    if process.returncode and not (allow_typed_read_rejection
+                                   and process.returncode == 1
+                                   and clients.read_retry_delay(value) is not None):
+        raise RuntimeError(f"{label} failed: {errors.read_text(errors='replace')[:4000]}")
+    if value is None:
+        value = json.loads(path.read_text(encoding="utf-8-sig"))
+    return value, metrics
+
+
+def measured_read(command, output_directory, label, timeout=1800, environment=None):
+    """Same read only; original deadline, finite attempts and complete attempt costs."""
+    started = time.monotonic()
+    deadline = started + timeout
+    attempts = []
+    summary = {"label": label, "completed": False, "attempts": attempts}
+
+    def observe(until):
+        remaining = clients.remaining(until, timeout)
+        attempt_label = label if not attempts else f"{label}-retry-{len(attempts)}"
+        attempt = {"label": attempt_label, "exit_code": None}
+        attempts.append(attempt)
+        attempt_started = time.monotonic()
+        try:
+            value, metrics = measured(command, output_directory, attempt_label,
+                                      timeout=remaining, environment=environment,
+                                      allow_typed_read_rejection=True)
+            attempt.update(metrics)
+            return value
+        except BaseException as error:
+            attempt.update(failure_type=type(error).__name__,
+                           wall_ms=round((time.monotonic() - attempt_started) * 1000, 3))
+            raise
+
+    try:
+        value, retries = clients.read_envelope(observe, deadline, attempts=41)
+        summary.update(completed=True, exit_code=0, read_retry_count=retries)
+        # Sum sequential process CPU/logical I/O only where every attempt has
+        # that counter. A peak is the maximum single client-process peak, never
+        # the service/worker process-tree footprint or physical disk traffic.
+        for key in ("cpu_us", "read_bytes", "write_bytes"):
+            if attempts and all(key in item for item in attempts):
+                summary[key] = sum(item[key] for item in attempts)
+        for key in ("peak_rss_bytes", "child_lifetime_peak_rss_bytes"):
+            if attempts and all(key in item for item in attempts):
+                summary[key] = max(item[key] for item in attempts)
+        summary["counter_basis"] = "sequential client-attempt totals; maximum per-client peak; excludes service/workers; unavailable counters omitted"
+        return value, summary
+    finally:
+        summary.update(read_attempt_count=len(attempts),
+                       read_retry_count=max(0, len(attempts) - 1),
+                       wall_ms=round((time.monotonic() - started) * 1000, 3))
+        # Keep rejection files and failed/exhausted summaries too; no overwrite
+        # or conversion of a rejected run into a passing measurement.
+        with (output_directory / (label + "-attempts.json")).open("x", encoding="utf-8") as output:
+            json.dump(summary, output, indent=2)
+            output.write("\n")
 
 
 def machine_environment(directory):

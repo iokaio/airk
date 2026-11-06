@@ -1,5 +1,37 @@
 // SPDX-License-Identifier: Apache-2.0
 // Real UI automation for the explicitly launched private editor profiles only.
+// The driver is a separate private editor process, not a fork of the host's VS Code role.
+function privateEditorEnvironment(parent=process.env){
+    const value={...parent,RUST_BACKTRACE:'1'};
+    for(const key of Object.keys(value)){const name=key.toUpperCase();if(name.startsWith('VSCODE_')||name==='ELECTRON_RUN_AS_NODE'||name==='NODE_COMPILE_CACHE')delete value[key];}
+    return value;
+}
+function formFillExpressions(button,values){
+    if(typeof button!=='string'||!button.length||button.length>256||!values||typeof values!=='object'||Array.isArray(values))throw new Error('Invalid exact private form inputs');
+    const entries=Object.entries(values);
+    if(!entries.length||entries.length>32||entries.some(([label,value])=>!label.length||label.length>256||!(typeof value==='boolean'||typeof value==='string'&&value.length<=4096)))throw new Error('Private form input bound/type exceeded');
+    const lookup=`const buttons=[...document.querySelectorAll('button')].filter(b=>b.textContent.trim()===${JSON.stringify(button)});const form=buttons.length===1?buttons[0].closest('form'):null;if(!form)return false;const fields=Object.entries(${JSON.stringify(values)}).map(([label,value])=>{const labels=[...form.querySelectorAll('label')].filter(n=>[...n.childNodes].filter(c=>c.nodeType===Node.TEXT_NODE).map(c=>c.textContent).join('').trim()===label);return {value,node:labels.length===1?labels[0].querySelector('input,select'):null};});if(fields.some(({node,value})=>!node||(typeof value==='boolean')!==(node.type==='checkbox')))return false;`;
+    return {ready:`(()=>{${lookup}return true;})()`,
+        apply:`(()=>{${lookup}for(const {node,value}of fields){const proto=node.tagName==='SELECT'?HTMLSelectElement.prototype:HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(proto,node.type==='checkbox'?'checked':'value').set.call(node,value);node.dispatchEvent(new Event(node.tagName==='SELECT'||node.type==='checkbox'?'change':'input',{bubbles:true}));}return true;})()`,
+        readback:`(()=>{${lookup}return fields.every(({node,value})=>(node.type==='checkbox'?node.checked:node.value)===value);})()`};
+}
+async function openUsageAdministration(request,actions){
+    // The native combined selection opens a picker even for one selected Index.
+    // Bind the explicit choice to the exact fixture Index ID, never a row order.
+    if(!/^idx_[a-f0-9]{32}$/.test(request.index??'')||typeof request.collection!=='string'||!request.collection.length||request.collection.length>4096)throw new Error('Invalid exact usage administration selection');
+    await actions.open();
+    await actions.choose(request.index,'Choose an index for administration');
+    return actions.observe();
+}
+// Keep the first and three most recent distinct bounded DOM observations.
+function retainUiDiagnostic(samples,value){
+    let observed;
+    try{const bytes=Buffer.byteLength(JSON.stringify(value));observed=bytes<=65536?structuredClone(value):{observation_unavailable:'DOM snapshot exceeded64KiB',observed_bytes:bytes,truncated:true};}
+    catch(error){observed={observation_unavailable:String(error).slice(0,4096)};}
+    if(samples.length&&JSON.stringify(samples.at(-1).value)===JSON.stringify(observed))return;
+    if(samples.length===4)samples.splice(1,1);
+    samples.push({observed_unix_ms:Date.now(),value:observed});
+}
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function until(action,label,timeout=180000){const end=Date.now()+timeout;while(Date.now()<end){const value=await action();if(value)return value;await delay(120);}throw new Error(`Editor UI timeout: ${label}`);}
 const pollUntil=until;
@@ -20,7 +52,7 @@ async function connect(target,deadline){
 }
 async function editorUi(port,deadline=Date.now()+600000){
     const clients=new Map();
-    let reads=0,dispatches=0;const dispatchLog=[];
+    let reads=0,dispatches=0;const dispatchLog=[],pickerDiagnostics=[];
     const budget=max=>{const left=Math.min(max,deadline-Date.now());if(left<=0)throw new Error('Shared editor scenario deadline exhausted');return left;};
     const boundedUntil=(action,label,timeout=180000)=>pollUntil(action,label,budget(timeout));
     const until=boundedUntil;
@@ -52,11 +84,29 @@ async function editorUi(port,deadline=Date.now()+600000){
     const explorerPredicate="!!document.querySelector('.airk-explorer')",workbenchPredicate='!!document.querySelector(".monaco-workbench")';
     const clickButton=label=>`(()=>{const b=[...document.querySelectorAll('button')].find(n=>n.textContent.trim()===${JSON.stringify(label)});if(!b||b.disabled)return false;b.click();return true;})()`;
     async function quickPick(label,title){
+        const diagnostic={title,label,samples:[],views:[]};
+        if(pickerDiagnostics.length===8)pickerDiagnostics.splice(1,1);
+        pickerDiagnostics.push(diagnostic);
+        const body="({title:document.title,visibility:document.visibilityState,text:document.body.innerText.slice(0,16384),text_truncated:document.body.innerText.length>16384})";
+        let sampledViews=false,sampledError=false;
         const row=await until(async()=>{
-            const result=await workbench(`(()=>{const widget=document.querySelector('.quick-input-widget');if(!widget||!widget.getBoundingClientRect().height||!widget.innerText.includes(${JSON.stringify(title)}))return;
-                const rows=[...widget.querySelectorAll('.monaco-list-row')].filter(row=>row.getBoundingClientRect().height&&row.innerText.includes(${JSON.stringify(label)}));
-                if(rows.length!==1)return;const r=rows[0].getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()`);
-            return result?.value?result:undefined;
+            const result=await workbench(`(()=>{const visible=n=>!!n.getBoundingClientRect().height,clip=(n,max)=>({text:n.innerText.slice(0,max),truncated:n.innerText.length>max});
+                const all=[...document.querySelectorAll('.quick-input-widget')],widget=all[0];
+                const rows=widget&&visible(widget)&&widget.innerText.includes(${JSON.stringify(title)})?[...widget.querySelectorAll('.monaco-list-row')].filter(row=>visible(row)&&row.innerText.includes(${JSON.stringify(label)})):[];
+                const r=rows.length===1?rows[0].getBoundingClientRect():null;
+                const notices=[...document.querySelectorAll('.notifications-toasts .notification-list-item,.notifications-center .notification-list-item')].filter(visible),dialogs=[...document.querySelectorAll('.monaco-dialog-box')].filter(visible);
+                return {coordinates:r?{x:r.x+r.width/2,y:r.y+r.height/2}:null,diagnostic:{title:document.title,body:clip(document.body,8192),widget_count:all.length,widgets_truncated:all.length>8,widgets:all.slice(0,8).map(w=>{const rows=[...w.querySelectorAll('.monaco-list-row')].filter(visible);return {visible:visible(w),title:w.querySelector('.quick-input-title')?.innerText??null,text:clip(w,4096),row_count:rows.length,rows_truncated:rows.length>16,rows:rows.slice(0,16).map(n=>({text:clip(n,256),focused:n.classList.contains('focused'),aria_label:n.getAttribute('aria-label')}))};}),notification_count:notices.length,notifications_truncated:notices.length>8,notifications:notices.slice(0,8).map(n=>clip(n,1024)),dialog_count:dialogs.length,dialogs_truncated:dialogs.length>4,dialogs:dialogs.slice(0,4).map(n=>clip(n,2048))}};})()`);
+            if(result?.value?.diagnostic){
+                retainUiDiagnostic(diagnostic.samples,result.value.diagnostic);
+                if(!result.value.coordinates&&(!sampledViews||(!sampledError&&result.value.diagnostic.notification_count>0))){
+                    const reason=sampledViews?'visible notification after picker nonmatch':'first picker nonmatch';sampledViews=true;sampledError=result.value.diagnostic.notification_count>0;
+                    for(const [name,predicate]of [['usage',"document.visibilityState==='visible'&&!!document.querySelector('[data-usage]')"],['explorer',"!!document.querySelector('.airk-explorer')"]]){
+                        try{const value=(await document(predicate,body))?.value;diagnostic.views.push({name,reason,value:value??null});}
+                        catch(error){diagnostic.views.push({name,reason,observation_unavailable:String(error).slice(0,4096)});}
+                    }
+                }
+            }
+            return result?.value?.coordinates?{...result,value:result.value.coordinates}:undefined;
         },`quick pick ${title}: ${label}`);
         await row.client.call('Input.dispatchMouseEvent',{type:'mousePressed',...row.value,button:'left',clickCount:1});
         await row.client.call('Input.dispatchMouseEvent',{type:'mouseReleased',...row.value,button:'left',clickCount:1});
@@ -75,7 +125,11 @@ async function editorUi(port,deadline=Date.now()+600000){
         return dispatch(explorerPredicate,`!!${find}`,`(()=>{const b=${find};if(!b||b.disabled)return false;b.click();return true;})()`);
     }
     async function fill(button,values){
-        await dispatch(explorerPredicate,`(()=>{const b=[...document.querySelectorAll('button')].filter(b=>b.textContent.trim()===${JSON.stringify(button)});return b.length===1&&!!b[0].closest('form');})()`,`(()=>{const buttons=[...document.querySelectorAll('button')].filter(b=>b.textContent.trim()===${JSON.stringify(button)});const form=buttons.length===1?buttons[0].closest('form'):null;if(!form)return false;const values=${JSON.stringify(values)};for(const [label,value]of Object.entries(values)){const node=[...form.querySelectorAll('label')].find(n=>[...n.childNodes].filter(c=>c.nodeType===Node.TEXT_NODE).map(c=>c.textContent).join('').trim()===label)?.querySelector('input,select');if(!node)return false;const proto=node.tagName==='SELECT'?HTMLSelectElement.prototype:HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(proto,node.type==='checkbox'?'checked':'value').set.call(node,value);node.dispatchEvent(new Event(node.tagName==='SELECT'||node.type==='checkbox'?'change':'input',{bubbles:true}));}return true;})()`);
+        const expressions=formFillExpressions(button,values);
+        // All exact fields must exist before any setter; a captured-context
+        // outcome is still dispatched once and is never automatically replayed.
+        await dispatch(explorerPredicate,expressions.ready,expressions.apply);
+        await until(async()=>{const found=await service(expressions.readback);return found?.value===true?true:undefined;},'exact private form values before submit');
     }
     async function catalog(){
         return until(async()=>{const value=(await service("(()=>{const d=[...document.querySelectorAll('details')].find(d=>d.querySelector('summary')?.textContent==='Complete response');if(!d)return;try{return JSON.parse(d.querySelector('pre').textContent);}catch{return;}})()"))?.value;return value||undefined;},'complete native catalog details');
@@ -116,7 +170,7 @@ async function editorUi(port,deadline=Date.now()+600000){
                 const result=await until(async()=>(await report(scoped,"({text:document.body.innerText,writeControls:document.querySelectorAll('[data-usage=clear],[data-usage=recording],[data-usage=import]').length})"))?.value,'scoped usage unavailable');
                 if(result.writeControls!==0)throw new Error('Scoped Usage exposed administration without explicit choice');return result;
             }
-            if(request.action==='usageAdmin'){await reportClick(scoped,'openIndexAdministration');return until(async()=>(await report(admin,'({text:document.body.innerText})'))?.value,'explicit broad Index administration');}
+            if(request.action==='usageAdmin')return openUsageAdministration(request,{open:()=>reportClick(scoped,'openIndexAdministration'),choose:quickPick,observe:()=>until(async()=>(await report(admin,'({text:document.body.innerText})'))?.value,'explicit broad Index administration')});
             if(request.action==='usageJson'){await reportClick(admin,'json');return {requested:true};}
             if(request.action==='usageClear'){
                 await reportClick(admin,'clear');await confirm('Clear history',['Clear all usage history',request.name,'source files and index stay intact']);
@@ -160,7 +214,7 @@ async function editorUi(port,deadline=Date.now()+600000){
             case 'context':await click('Read saved association');return settled(v=>!!v.hostContext||!!v.context);
             case 'associationDraft':await fill('Preview saved association',{'Project IDs (comma separated; blank selects zero Projects)':request.project,'Default index IDs (comma separated; blank selects no index defaults)':request.index});await click('Preview saved association');return settled(v=>!!v.review);
             case 'grantDraft':await fill('Prepare native grant review',{'Project IDs (1–32, comma separated)':request.project,"Optional index subset (1–32 IDs; blank asks native to include the selected Projects' memberships)":request.index});await click('Prepare native grant review');return settled(v=>!!v.review);
-            case 'useGrant':await fill('Use Grant for this window',{'Index ID from this grant':request.index,'Project IDs from this grant (1–32, comma separated)':request.project});await click('Use Grant for this window');return settled(v=>!!v.outcome?.selected_subset);
+            case 'useGrant':await fill('Use Grant for this window',{'Optional index subset from this grant (1–32 IDs; blank includes all permitted members)':request.index,'Project IDs from this grant (1–32, comma separated)':request.project});await click('Use Grant for this window');return settled(v=>!!v.outcome?.selected_subset);
             case 'revokeDraft':await click('Preview revoke grant');return settled(v=>!!v.review);
             case 'read':return catalog();
             case 'reconcile':{const previous=await catalog();await click('Check native receipts');return settled(v=>v.generation>previous.generation&&Array.isArray(v.outcome?.receipts),previous);}
@@ -190,6 +244,6 @@ async function editorUi(port,deadline=Date.now()+600000){
             return rows.length===1&&['succeeded','failed','stale','skipped','canceled'].includes(rows[0].cells[1].textContent)?{phase:rows[0].cells[1].textContent,receipt:rows[0].innerText}:false;})()`))?.value,'native repair final receipt');
         if(result.phase!=='succeeded')throw new Error(`Native editor repair failed: ${result.receipt}`);
     }
-    return {dispatch,dispatchReceipts:()=>structuredClone(dispatchLog),document,workbench,service,quickPick,confirm,indexing,catalog,click,approveRepair,responseMode,until,close(){for(const client of clients.values())client.close();}};
+    return {dispatch,dispatchReceipts:()=>structuredClone(dispatchLog),diagnostics:()=>({picker:structuredClone(pickerDiagnostics),reads,dispatches}),document,workbench,service,quickPick,confirm,indexing,catalog,click,approveRepair,responseMode,until,close(){for(const client of clients.values())client.close();}};
 }
-module.exports={editorUi,until};
+module.exports={editorUi,until,formFillExpressions,privateEditorEnvironment,openUsageAdministration,retainUiDiagnostic};

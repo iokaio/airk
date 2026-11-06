@@ -1,5 +1,14 @@
 # AIRK 1.9.0 research assessment and delivery plan
 
+**Current implementation status, 6 November 2026:** P9–P12 are accepted locally.
+P13 review retained current ranking/diversity. P14 selected local qualification results are recorded for the 1.8.8
+working candidate; source `237f8969...` adds bounded lifecycle installation-lock
+admission. Current Windows native qualification and fresh whole usage/legacy editor checks
+passed. Manual acceptance, further platform qualification and release promotion
+remain separate; earlier observations retain their original identities.
+This dated research plan keeps its proposed gates; the
+[implementation ledger](implementation-v190.md) owns actual evidence and acceptance.
+
 **Assessment date:** 2 November 2026. **Baseline:** AIRK 1.8.7.
 **Status:** recommended scope and implementation gates, not implemented behavior or
 a release announcement. **Implementation authorized:** 2 November 2026; follow the

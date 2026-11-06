@@ -153,7 +153,18 @@ pub(super) async fn explicit_start(root: &Path) -> Result<ServiceHealth> {
     activation::start_selected(root, &approval, &main, None).await
 }
 pub(super) async fn run(root: &Path, input: Input) -> Result<LifecycleRecord> {
-    let _lock = install_lock(root)?;
+    run_with_admission_budget(root, input, Duration::from_secs(60)).await
+}
+
+pub(super) async fn run_with_admission_budget(
+    root: &Path,
+    input: Input,
+    budget: Duration,
+) -> Result<LifecycleRecord> {
+    // Launcher admission may briefly own the same installer lock. Wait before
+    // accepting lifecycle work; never replay a submitted Stop/Restart operation.
+    // Keep this lock through every authority check and the complete operation.
+    let _lock = connection_install_lock(root, budget).await?;
     activation::require_settled(root)?;
     launcher_repair::require_settled(root)?;
     ensure!(

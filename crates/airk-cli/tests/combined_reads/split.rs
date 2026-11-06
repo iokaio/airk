@@ -64,7 +64,51 @@ async fn state(f: &Fixture, operation: Incarnation) -> Result<SplitSnapshot> {
     Ok(*snapshot)
 }
 
+#[cfg(feature = "embedding-worker")]
+fn semantic_positive_body(reply: &Value, index: IndexId, label: &str) -> Result<Value> {
+    airk_core::index_catalog::encoded_size(reply, 3 * airk_core::MAX_RESPONSE_BYTES + 4096)?;
+    ensure!(
+        reply.is_object()
+            && reply
+                .get("isError")
+                .is_none_or(|flag| flag == &json!(false)),
+        "{label} outer error flag; complete bounded reply: {reply}"
+    );
+    let value = body(reply)?;
+    let members = value["members"]
+        .as_array()
+        .with_context(|| format!("{label} members absent: {reply}"))?;
+    ensure!(
+        members.len() == 1
+            && members[0]["index_id"] == json!(index)
+            && members[0]["outcome"] == "complete"
+            && members[0]["is_error"] == false,
+        "{label} exact positive member changed: {reply}"
+    );
+    Ok(value)
+}
+#[cfg(feature = "embedding-worker")]
+fn semantic_positive_mcp_body(wire: &Value, index: IndexId, label: &str) -> Result<Value> {
+    airk_core::index_catalog::encoded_size(wire, 3 * airk_core::MAX_RESPONSE_BYTES + 8192)?;
+    ensure!(
+        wire.get("error").is_none(),
+        "{label} RPC error; complete bounded reply: {wire}"
+    );
+    let reply = wire
+        .get("result")
+        .filter(|value| value.is_object())
+        .with_context(|| format!("{label} RPC result absent or malformed: {wire}"))?;
+    semantic_positive_body(reply, index, label)
+}
+
 async fn draft(f: &Fixture, nonce: u8) -> Result<SplitDraft> {
+    draft_with_readiness(f, nonce, false).await
+}
+async fn draft_with_readiness(
+    f: &Fixture,
+    nonce: u8,
+    require_semantic_ready: bool,
+) -> Result<SplitDraft> {
     let method = ControlMethod::CatalogSplitSourceState {
         index_id: f.indexes[2],
         expected_catalog_revision: revision(f)?,
@@ -119,7 +163,7 @@ async fn draft(f: &Fixture, nonce: u8) -> Result<SplitDraft> {
             original_rewrite: 128 << 20,
             cleanup_allowance: 64 << 20,
         },
-        require_semantic_ready: false,
+        require_semantic_ready,
         destination_watch_enabled: false,
     };
     let method = ControlMethod::CatalogSplitDraft {
@@ -205,6 +249,81 @@ async fn accept(f: &Fixture, draft: &SplitDraft) -> Result<Incarnation> {
     Ok(operation)
 }
 
+// Explicit local raw-failure export for this synthetic owned fixture only.
+// Stream/filter exact retained child IDs without allocating the complete log.
+fn split_raw_failures(f: &Fixture, snapshot: &SplitSnapshot) -> Value {
+    const LIMIT: usize = 65536;
+    struct Filter {
+        ids: Vec<String>,
+        line: Vec<u8>,
+        records: std::collections::VecDeque<Vec<u8>>,
+        bytes: usize,
+        oversized: bool,
+        truncated: bool,
+    }
+    impl std::io::Write for Filter {
+        fn write(&mut self, input: &[u8]) -> std::io::Result<usize> {
+            for byte in input {
+                if *byte == b'\n' {
+                    if !self.oversized
+                        && let Ok(value) = serde_json::from_slice::<Value>(&self.line)
+                        && value
+                            .pointer("/failure/job")
+                            .and_then(Value::as_str)
+                            .is_some_and(|job| self.ids.iter().any(|id| id == job))
+                    {
+                        self.line.push(b'\n');
+                        while self.bytes + self.line.len() > LIMIT {
+                            if let Some(old) = self.records.pop_front() {
+                                self.bytes -= old.len();
+                                self.truncated = true;
+                            } else {
+                                break;
+                            }
+                        }
+                        self.bytes += self.line.len();
+                        self.records.push_back(std::mem::take(&mut self.line));
+                    }
+                    self.line.clear();
+                    self.oversized = false;
+                } else if !self.oversized {
+                    if self.line.len() < LIMIT - 1 {
+                        self.line.push(*byte);
+                    } else {
+                        self.line.clear();
+                        self.oversized = true;
+                        self.truncated = true;
+                    }
+                }
+            }
+            Ok(input.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut output = Filter {
+        ids: snapshot
+            .receipt
+            .jobs
+            .iter()
+            .rev()
+            .take(8)
+            .map(|child| child.job.to_string())
+            .collect(),
+        line: Vec::new(),
+        records: std::collections::VecDeque::new(),
+        bytes: 0,
+        oversized: false,
+        truncated: false,
+    };
+    let exported = airk_cli::service_logs::export_raw_to(&f.control, &mut output);
+    let retained: Vec<u8> = output.records.into_iter().flatten().collect();
+    json!({"exact_child_ids":output.ids,"retained_bytes":retained.len(),
+        "truncated":output.truncated,"raw_jsonl":String::from_utf8_lossy(&retained),
+        "export_error":exported.err().map(|error|format!("{error:#}"))})
+}
+
 // Bounded read-only native queue/settings evidence, captured before fixture Drop.
 // This does not replay a job, recover a journal, or inspect source document bytes.
 fn stalled_native_diagnostics(f: &Fixture, snapshot: &SplitSnapshot) -> String {
@@ -216,6 +335,21 @@ fn stalled_native_diagnostics(f: &Fixture, snapshot: &SplitSnapshot) -> String {
         )?;
         sql.busy_timeout(Duration::from_secs(2))?;
         let native = registry.catalog_split_state(snapshot.receipt.operation_id)?;
+        // Retained split children can already be Failed/Canceled when the
+        // coordinator latches attention; pending-only SQL would hide the cause.
+        // Observe at most eight exact accepted child IDs, without retry/mutation.
+        let mut split_children = Vec::new();
+        for child in snapshot.receipt.jobs.iter().rev().take(8) {
+            let work = registry.configuration_work(child.job)?;
+            split_children.push(json!({
+                "reference": child,
+                "job": registry.job(child.job)?,
+                "configuration_operation": work.as_ref()
+                    .map(|work| serde_json::to_value(&work.request.configuration))
+                    .transpose()?.and_then(|value| value.get("operation").cloned()),
+                "saved_result": registry.configuration_result(child.job)?,
+            }));
+        }
         let mut participants = Vec::new();
         for registration in [
             &snapshot.request.original_registration,
@@ -269,7 +403,9 @@ fn stalled_native_diagnostics(f: &Fixture, snapshot: &SplitSnapshot) -> String {
         };
         Ok(
             json!({"operation":snapshot.receipt.operation_id,"stage":snapshot.receipt.stage,
-            "receipt_digest":snapshot.receipt_digest,"participants":participants,"witness_preparation":witness_preparation}),
+            "receipt_digest":snapshot.receipt_digest,"participants":participants,
+            "split_children":split_children,"split_children_truncated":snapshot.receipt.jobs.len()>8,
+            "witness_preparation":witness_preparation}),
         )
     };
     let metadata =
@@ -284,7 +420,9 @@ fn stalled_native_diagnostics(f: &Fixture, snapshot: &SplitSnapshot) -> String {
         Ok(String::from_utf8_lossy(&tail).into_owned())
     })()
     .unwrap_or_else(|error| format!("service log unavailable: {error:#}"));
-    json!({"native":metadata,"service_log_tail":log}).to_string()
+    json!({"native":metadata,"service_log_tail":log,
+        "private_fixture_raw_failures":split_raw_failures(f, snapshot)})
+    .to_string()
 }
 
 async fn terminal(
@@ -345,6 +483,17 @@ async fn terminal(
         if let Some(observer) = capture.as_mut() {
             observer.observe(f, service, &snapshot).await?;
         }
+        if matches!(snapshot.receipt.state, SplitRunState::NeedsAttention { .. }) {
+            // Registry completion precedes the supervisor's one-second status
+            // observation and asynchronous private log drain. Retain that
+            // failure before fixture Drop; this never retries the native job.
+            let diagnostic_deadline = Instant::now() + Duration::from_secs(3);
+            while split_raw_failures(f, &snapshot)["retained_bytes"] == 0
+                && Instant::now() < diagnostic_deadline
+            {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        }
         ensure!(
             !matches!(snapshot.receipt.state, SplitRunState::NeedsAttention { .. })
                 && snapshot.receipt.cleanup_attention.is_none()
@@ -352,9 +501,9 @@ async fn terminal(
                     .finalization
                     .as_ref()
                     .is_none_or(|finalization| finalization.attention.is_none()),
-            "native split needs attention: {}; service:{}",
+            "native split needs attention: {}; diagnostics:{}",
             serde_json::to_string(&snapshot)?,
-            fs::read_to_string(f.owner.path().join("service.log")).unwrap_or_default()
+            stalled_native_diagnostics(f, &snapshot)
         );
         if snapshot.finalization.as_ref().is_some_and(|finalization| {
             finalization.progress == SplitFinalizationProgress::Complete
@@ -540,6 +689,16 @@ pub(super) async fn pause_quiescent_original(f: &Fixture, index: usize) -> Resul
 #[tokio::test]
 async fn split_actual_service_provider_cutover_retains_complete_rpc_cli_mcp_evidence() -> Result<()>
 {
+    provider_cutover(false).await
+}
+#[cfg(feature = "embedding-worker")]
+#[tokio::test]
+async fn split_semantic_ready_destination_has_real_paid_vectors_and_complete_transports()
+-> Result<()> {
+    provider_cutover(true).await
+}
+#[cfg(feature = "embedding-worker")]
+async fn provider_cutover(require_semantic_ready: bool) -> Result<()> {
     let mut f = Fixture::with_helper()?;
     f.session.project_ids = vec![f.projects[2]];
     f.session.index_ids = Some(vec![f.indexes[2]]);
@@ -590,7 +749,27 @@ async fn split_actual_service_provider_cutover_retains_complete_rpc_cli_mcp_evid
         &body(&warm)?,
         &body(&warm_mcp["result"])?,
     )?;
-    let reviewed = draft(&f, 131).await?;
+    // The original tiny custom model prewarms a real provider. Semantic-ready
+    // destination work deliberately uses the production paired default model,
+    // not an unreviewed test model injection or inherited custom-model claim.
+    let helper_before = if require_semantic_ready {
+        ensure!(
+            airk_store::service::model_files::ServiceModelFiles::default_reference(
+                &f.control,
+                &airk_cli::bundled_assets::default_plan()?,
+            )?
+            .is_none(),
+            "cold semantic split fixture already has an installed default model"
+        );
+        Some(airk_cli::service_runtime::request(&f.control, ControlMethod::EmbeddingStatus).await?)
+    } else {
+        None
+    };
+    let reviewed = draft_with_readiness(&f, 131, require_semantic_ready).await?;
+    ensure!(
+        reviewed.request.require_semantic_ready == require_semantic_ready,
+        "native draft lost requested readiness"
+    );
     if let Some(observer) = capture.as_mut() {
         observer.destination(&f, &reviewed)?;
     }
@@ -602,6 +781,101 @@ async fn split_actual_service_provider_cutover_retains_complete_rpc_cli_mcp_evid
             .paused,
         "native split changed the original user's Pause setting"
     );
+    if require_semantic_ready {
+        let build = complete
+            .receipt
+            .jobs
+            .iter()
+            .find(|job| job.purpose == airk_core::catalog_split::SplitJobPurpose::DestinationBuild)
+            .context("native semantic destination job absent")?;
+        let method = ControlMethod::ConfigurationResult { id: build.job };
+        let response = airk_cli::service_runtime::request(&f.control, method.clone()).await?;
+        ensure!(
+            rpc_cli(&f, method).await? == serde_json::to_value(&response)?,
+            "CLI reduced actual semantic build result"
+        );
+        let ControlResponse::Configuration {
+            job,
+            result: Some(result),
+        } = response
+        else {
+            anyhow::bail!("actual semantic build result missing");
+        };
+        ensure!(
+            job.id == build.job
+                && job.project == complete.request.destination_registration.binding
+                && job.state == airk_core::service::JobState::Succeeded,
+            "semantic result belongs to wrong/unfinished native job"
+        );
+        let actual: airk_core::catalog_split::SplitJobResult = serde_json::from_value(result)?;
+        ensure!(
+            actual.operation_id == operation
+                && actual.request_digest == complete.receipt.request_digest
+                && actual.purpose == airk_core::catalog_split::SplitJobPurpose::DestinationBuild
+                && actual.semantic_ready
+                && actual.selected_sources > 0
+                && actual.publication.is_some()
+                && actual.publication == complete.receipt.destination_publication,
+            "native semantic destination never qualified actual ready publication: {actual:?}"
+        );
+        actual.validate_for(&complete.request, &complete.plan)?;
+        // Observe only the exact destination's saved descriptor; no model open,
+        // source pass or inference is needed to compare opaque asset identities.
+        {
+            let registration = &complete.request.destination_registration;
+            let selected = airk_store::service::collection::Collection::existing(
+                Path::new(&registration.data_root),
+                &registration.root,
+                &registration.collection,
+            )?
+            .select()?;
+            let scope = selected
+                .store
+                .current_scope(&registration.root, &registration.collection)?
+                .context("semantic destination current scope absent")?;
+            let read = selected.store.current_read(&scope)?;
+            let token = read.token()?;
+            let publication = airk_core::identity::RevisionToken {
+                incarnation: token.incarnation,
+                generation: token.sequence,
+                revision: token.digest,
+            };
+            ensure!(
+                Some(publication) == actual.publication,
+                "saved model descriptor does not belong to the accepted semantic destination publication"
+            );
+            let model = read
+                .collection_state()?
+                .context("semantic destination config absent")?
+                .configuration
+                .model
+                .context("ready destination model descriptor absent")?;
+            model.validate()?;
+            let expected = airk_cli::bundled_assets::default_plan()?;
+            ensure!(
+                model.local_set() == expected.local_set(),
+                "semantic destination saved model assets/pipeline differ from the paired default; actual={model:?};expected={expected:?}"
+            );
+        }
+        let helper_after =
+            airk_cli::service_runtime::request(&f.control, ControlMethod::EmbeddingStatus).await?;
+        ensure!(
+            matches!(
+                &helper_after,
+                ControlResponse::EmbeddingStatus {
+                    available: true,
+                    process_id: Some(_),
+                    worker: Some(_),
+                    loads: 1..,
+                    ..
+                }
+            ),
+            "real helper not observed; before={};after={}",
+            serde_json::to_string(&helper_before)?,
+            serde_json::to_string(&helper_after)?
+        );
+        // Loads/forwards are observations, not guessed exact inference counts.
+    }
     let removal = complete
         .receipt
         .jobs
@@ -688,6 +962,35 @@ async fn split_actual_service_provider_cutover_retains_complete_rpc_cli_mcp_evid
     fresh_grant(&mut f, &complete, 133).await?;
     let backend = airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
     let mut mcp = McpSession::start(&f)?;
+    if require_semantic_ready {
+        let destination = complete.request.destination.index_id;
+        let args = json!({"query":"boundaryneedle","mode":"vector","limit":8,"max_bytes":16384,"verification":"off","response_mode":"full","project_ids":[f.projects[2]],"index_ids":[destination],"member_availability":"require"});
+        let native = native_read(backend.as_ref(), "airk_search", &args).await?;
+        let cli = f.cli("airk_search", &args).await?;
+        let wire = mcp.call(19, "airk_search", args)?;
+        let result = semantic_positive_body(&native, destination, "semantic destination native")?;
+        let cli_result = semantic_positive_body(&cli, destination, "semantic destination CLI")?;
+        let mcp_result =
+            semantic_positive_mcp_body(&wire, destination, "semantic destination MCP")?;
+        let ranking = result["ranking"]
+            .as_array()
+            .context("semantic destination ranking absent")?;
+        ensure!(
+            !ranking.is_empty(),
+            "ready destination produced no actual vector evidence"
+        );
+        for row in ranking {
+            let origin = airk_core::combined_reads::materialize_ranked_origin(&result, row)?;
+            ensure!(
+                origin.index_id == destination
+                    && origin.project_ids == vec![f.projects[2]]
+                    && origin.source_relative_path.starts_with("api/"),
+                "semantic destination origin/scope changed"
+            );
+        }
+        assert_parity("actual paid semantic destination CLI", &result, &cli_result)?;
+        assert_parity("actual paid semantic destination MCP", &result, &mcp_result)?;
+    }
     for (tool, args) in [
         (
             "airk_list_files",
