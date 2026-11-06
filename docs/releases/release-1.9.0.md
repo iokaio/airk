@@ -1,10 +1,16 @@
 # Planned AIRK 1.9.0 release and development checkpoints
 
-P8 implements [Recommendations and agent scope instructions](../recommendations.md)
-on the unpublished **1.8.8** working build. Advice is metadata-only, selections
-are explicit and saved defaults retain separate native review. Split and trim
-remain pending P10/P9; [P8 evidence and limits](../research/implementation-v190.md#p8--recommendations-and-harness-guidance)
-remain separate from final 1.9.0 release qualification.
+This is the planned promotion record, not a published release. The current
+working version remains **1.8.8**. P9 exclusions, P10 splitting and P11a/P11b
+profile work are accepted for unpublished local development. P12's explicit
+[reference refresh/requery](../source-verification.md#explicit-reference-refresh)
+passed 39 focused Windows native tests, all 12 final release qualification
+stages and 19 scoped Neo tests with successful cleanup. Primary review accepted
+P12 for unpublished local development; installed-editor and final plan acceptance
+remain separate. P13 remains
+conditional; P14, deleted-source cleanup and the final local test installer
+remain pending. Exact accepted and historical evidence is in the
+[working-build record](release-1.8.8.md) and [ledger](../research/implementation-v190.md).
 
 P7 implements [combined Project reads](../combined-reads.md) with complete
 native, CLI, MCP, Workbench, plan/session, verification and export support.

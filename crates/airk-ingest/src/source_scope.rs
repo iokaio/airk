@@ -156,7 +156,7 @@ impl DirectoryIgnore {
 
 enum SourceMatcher {
     Ordinary(IncrementalIgnore),
-    Protected(crate::policy_ignore::ProtectedIgnore),
+    Protected(Box<crate::policy_ignore::ProtectedIgnore>),
 }
 impl SourceMatcher {
     fn ordinary(root: &Path) -> Self {
@@ -165,9 +165,9 @@ impl SourceMatcher {
     fn new(root: &Path, policy: Option<&airk_core::source_policy::SourcePolicy>) -> Result<Self> {
         Ok(
             match policy.filter(|policy| crate::permanent_policy::restricts(policy)) {
-                Some(policy) => {
-                    Self::Protected(crate::policy_ignore::ProtectedIgnore::new(root, policy)?)
-                }
+                Some(policy) => Self::Protected(Box::new(
+                    crate::policy_ignore::ProtectedIgnore::new(root, policy)?,
+                )),
                 None => Self::ordinary(root),
             },
         )

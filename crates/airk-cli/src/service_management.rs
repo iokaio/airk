@@ -363,6 +363,7 @@ fn request_is_read_only(method: &ControlMethod) -> bool {
             | ControlMethod::Job { .. }
             | ControlMethod::RequestReceipt { .. }
             | ControlMethod::ConfigurationResult { .. }
+            | ControlMethod::ReferenceRefreshReceipt { .. }
             | ControlMethod::Plan { .. }
             | ControlMethod::PlanItems { .. }
             | ControlMethod::Projects { .. }
@@ -945,6 +946,9 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         } => ControlResponse::Events {
             page: registry.events(project, cursor.as_ref(), limit)?,
         },
+        ControlMethod::ReferenceRefreshReceipt { caller, key } => {
+            crate::reference_refresh_control::receipt(registry, caller, &key)?
+        }
         ControlMethod::ConfigurationResult { id } => ControlResponse::Configuration {
             job: registry.job(id)?,
             result: registry.configuration_result(id)?,
@@ -954,15 +958,26 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
             caller,
             key,
             request,
-        } => ControlResponse::Job {
-            job: registry.enqueue_configuration(
-                project,
-                caller,
-                &key,
-                &request,
-                crate::runtime_pair::engine_identity()?,
-            )?,
-        },
+        } => {
+            if matches!(
+                request.configuration,
+                airk_core::service_configuration::ProjectConfiguration::RefreshReferences { .. }
+            ) {
+                crate::reference_refresh_control::admit_response(
+                    registry, project, caller, &key, &request,
+                )?
+            } else {
+                ControlResponse::Job {
+                    job: registry.enqueue_configuration(
+                        project,
+                        caller,
+                        &key,
+                        &request,
+                        crate::runtime_pair::engine_identity()?,
+                    )?,
+                }
+            }
+        }
         ControlMethod::Enqueue {
             project,
             caller,

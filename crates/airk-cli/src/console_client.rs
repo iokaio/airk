@@ -94,6 +94,7 @@ async fn handle(
         | ControlMethod::ConfigureWatch { .. }
         | ControlMethod::ConfigureProject { .. }
         | ControlMethod::ConfigurationResult { .. }
+        | ControlMethod::ReferenceRefreshReceipt { .. }
         | ControlMethod::Enqueue { .. }
         | ControlMethod::Job { .. }
         | ControlMethod::Retry { .. }

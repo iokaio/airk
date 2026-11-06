@@ -9,15 +9,19 @@ The maintainer authorized sequential implementation and signed phase commits.
 Progress below is observed local evidence; it does not establish publication or
 cross-platform qualification.
 
-**Current checkpoint, 6 November 2026:** P9, P10 and P11a are accepted for
-unpublished local development; P11a is committed as `f2bf2d2`. P11b scoped local
-qualification and primary review passed; P11b is accepted for unpublished
-local development. Current native source is `8c4fc38e…` / 954
-inputs. The original functional/Mac source `e3827769…` remains separately
-identified, with 952 unchanged native inputs and only two resource-test changes.
-P12–P14, deleted-source recovery and the final local test installer remain
-unfinished. Earlier checkpoints retain their original source and payload
-identities, failures and platform limits; they are not relabeled.
+**Current checkpoint, 6 November 2026:** P9, P10, P11a, P11b and P12 are accepted for
+unpublished local development. P10 is committed as `c2584cb`, P11a as `f2bf2d2`
+and P11b as `aa28425`. P12 passed primary local phase review: its focused
+Windows native selection passed **39/39** on `4121692a…` / 960 inputs, strict
+six-package all-target/all-feature Clippy passed, and the full extension suite
+passed **776 tests with 19 skips**. All **12** final Windows release qualification
+stages and **19** scoped Neo tests passed; Neo `cargo clean` exited zero and
+removed its target. The matched release pair built in **815.503 seconds**.
+The signed checkpoint is recorded by the subsequent human-authorized commit;
+this entry does not invent its hash. P13 ranking/diversity remains
+conditional; P14, deleted-source recovery and the final local test installer
+remain pending. Earlier entries preserve their exact source/runtime identities,
+failed attempts and platform limits; they are not relabeled.
 
 ## Entry identity and boundaries
 
@@ -58,10 +62,12 @@ identities, failures and platform limits; they are not relabeled.
 | P7 | Complete — locally qualified checkpoint | Unique-index composition and complete native/CLI/MCP/Workbench/parse/session/verification support; Windows release and Neo debug actual suites, all 84 latency gates and 120 Windows fan-out trials passed; platform/release limits below |
 | P8 | Complete — locally qualified checkpoint | Canonical Recommendations and harness scope guidance; Windows release / Neo debug actual transports, useful subset evidence and all 84 unchanged latency gates passed; installed/platform limits below |
 | P9 | Accepted locally | Windows workspace/runtime, 84 frozen latency gates and focused Mac ARM checks passed; exact source identities, test-only follow-up and release limits recorded below |
-| P10 | Isolated implementation in progress — not integrated or accepted | Split and integrated management advice; acceptance follows signed P9 |
-| P11a–P12 | Not started | Effective-profile reporting, explicit retained-profile migration and refresh |
-| P13a/P13b | Conditional | Ranking/diversity only if frozen relevance/resource gates pass |
-| P14 | Not started | Combined qualification and release-candidate evidence |
+| P10 | Accepted locally — `c2584cb` | Reviewed independent split, native cutover and recovery through funding acknowledgment; dated Windows/Mac evidence below |
+| P11a | Accepted locally — `f2bf2d2` | Bounded actual per-file profile family reporting and complete transports |
+| P11b | Accepted locally — `aa28425` | Explicit retained Lean/Rich migration, legacy continuity and paid split inheritance |
+| P12 | Accepted locally | 39 focused Windows native tests; strict scoped Clippy; UI 776 passed/19 skipped; all 12 final Windows release stages and 19 scoped Neo tests passed; clean exit zero and target removed |
+| P13a/P13b | Conditional; current ranking retained | No candidate enabled; adoption needs frozen quality/resource, native disclosure and scope gates |
+| P14 | Pending | Combined qualification, platform/fault/resource coverage and final candidate evidence |
 
 **Additional maintainer request — 5 November 2026:** after P9–P14, reproduce and
 fix deleted-source failure loops in the current release: individual indexed files
@@ -4865,3 +4871,112 @@ excluded campaigns, doctests and installed/platform matrix requirements. P11b
 qualification and primary review passed; it is accepted for unpublished local development. P12–P14, deleted-source
 recovery and the final local test installer remain unfinished. No push,
 publication, normal installation or complete-plan claim is made.
+
+
+### P12 — local phase checkpoint, 6 November 2026
+
+P11b is accepted at `aa28425d2d3031b42f358e41d6ec366822635379`.
+P12's current **1.8.8** implementation passed primary review and is **accepted
+for unpublished local development**. The frozen
+native input identity is
+`4121692a2cc0272358023f5362ae886eeed4fd06203cea7af23bbfc5f4be86b9`
+(**960 inputs**). The matched Windows release pair built in **815.503 seconds**
+with release incremental compilation disabled. All **12** final qualification
+stages and **19** scoped ARM64 Neo tests passed; Neo cleanup exited zero and
+removed the target. This is a local phase checkpoint, not publication or final
+installed-editor acceptance.
+
+The [refresh guide](../source-verification.md#explicit-reference-refresh)
+describes the first wave: one existing index and at most 64 referenced sources,
+subject to wire limits, with complete configured-source metadata authority even
+for selected work. Partial Project/path grants and several refreshed indexes in
+one operation are unsupported. Native review binds the actual backing, grant,
+original publication/source identities, settings and configured policy/model.
+Full fallback is a separate explicit choice. Generic configuration enqueue/retry
+cannot bypass the dedicated native refresh owner. MCP evidence stays read-only.
+
+Kernel checks the original publication, unfinished bootstrap/current work and
+saved settings while holding the actual writer, before recovery or source work.
+Ingest records protected matcher inputs and qualified absence; the authenticated
+Current witness binds exact incarnation/sequence. Trusted source and qualified
+semantic-only publication rebind it, while older writer publication invalidates
+an unchanged unknown witness. Full requalification cannot no-op on identical
+historical unbound bytes. Original Lean/Rich identity, source coordinates,
+unselected payload, pause/manual/watch choices and semantic policy are preserved.
+
+Exact receipt lookup remains read-only after lost responses or restart. Missing
+saved evidence remains unknown; no mutation replay or reconstructed success is
+introduced. Requery is separately confirmed from the original query, yields new
+native evidence and leaves the old result/refresh acknowledgment historical.
+Workbench rechecks host trust, selection and Stop generation across asynchronous
+review and journal boundaries. Its refresh-specific originals stay in memory;
+metadata/receipt export does not invent unavailable originals after reload.
+
+**Observed focused evidence:**
+
+- Strict Windows Clippy passed on all targets/features of Core, Ingest, Store,
+  Kernel, MCP and CLI with warnings denied (`p12-focused-clippy-r8`). This is a
+  scoped six-package check, not a claim of a full workspace suite.
+- `p12-focused-r4` passed **39/39**, zero failures, with 2,578 tests not selected
+  by its explicit filter. It includes all **18 new cases** and 21 Windows legacy
+  cases. One additional legacy ignore-control alias test is `cfg(unix)` and is
+  retained for Neo instead of being counted as a Windows pass.
+- The actual CLI process case passed in **115.855 seconds** using Cargo's matched
+  debug main/helper pair and the existing isolated component-format fixture. It
+  exercises real native Lean/Rich migration, full qualification then selected
+  publication, a transport closed without reading its acknowledgment, receipt-only
+  reconciliation, paused Pending work, explicit unpause, stale review refusal,
+  graceful restart and actual shared-helper continuation. Complete native/CLI/MCP
+  FileInfo/profile/status/query responses and exact scoped members are compared.
+- The full extension suite after the epoch correction passed **776**, failed
+  **0**, skipped **19**, out of **795** (`p12-ui-full-epoch-r1`). These mocks and
+  host-flow tests do not substitute for installed-editor qualification.
+
+**Final source-bound qualification:**
+
+- `p12-final-qualification-r1` passed all **12** stages: actual refresh release
+  parity, retained-profile release parity, service clients, publication faults,
+  Off and Report samples, unchanged latency gates, repository checks, license
+  notices, fresh dependency audit, Python tests and whitespace checks. These
+  adopt the existing successful focused and UI results; they do not rerun or
+  relabel those earlier results. All **84** original latency gates passed with
+  their limits unchanged. No P12 resource-cost improvement is claimed.
+- The release producer and all native stages retain the exact 960-input source
+  above. Main SHA-256:
+  `1e41d1bf497eb8b092491629160e0d988cdd15c675417603a1fb30844e4543e1`;
+  helper:
+  `bc873940a807c772deaf0b678ca878a769d8a99023a54eb5b78a1e9f102750a1`.
+  Runtime/build/install manifests and notices remain sealed together; no
+  replacement producer or source identity is inferred from current timestamps.
+- `p12-neo-combined-verification-r1` confirms the same source, **19** passing
+  tests across **10** successful commands on ARM64 Neo. Actual native/helper and
+  source/OS custody cases passed. Test exit and `cargo clean` exit were **0**;
+  the target was removed, while source, reports and timing evidence survived.
+  This is scoped Mac evidence, not a full workspace, installed release, Intel,
+  Linux, signing, default ONNX or editor/platform qualification.
+
+**Earlier attempts remain failed evidence.** R1 collected **31 passed / 8 failed
+out of 39**, while the original queue incorrectly expected 40 because it included
+a Unix-only baseline. R2 correctly selected 39 and again collected **31 passed /
+8 failed**. Native validators had conflated catalog and service-request namespaces
+and then rejected valid native request epoch zero. Corrections preserve those
+separate authority domains and the actual registry epoch; fixtures were not made
+to pretend they were equal or positive. The earlier attempts also exposed a
+writer preflight that recursively acquired its already-held lock through ordinary
+inspection, losing the settings observation and reporting configuration change.
+The owning writer-aware digest fixed that common pipeline error before R3.
+R3 then collected **37 passed / 2 failed**: identical historical-unbound witness
+bytes suppressed full requalification, and the process fixture compared Pending
+with Running job observations from different moments. The no-op guard now also requires exact
+current witness binding; moving-state polling uses complete native observations,
+while strict full native/CLI equality remains at stable receipt boundaries.
+R4 passed after those corrections; no earlier result is relabeled.
+
+This is bounded development evidence, not a published release/installer/Genesis, ONNX/default
+provider, physical power-loss, arbitrary remote source or total model/resource
+cost qualification. Publication-before-saved-result remains failed/unknown.
+Release-runtime, source-bound scoped Neo qualification, mandatory `cargo clean`
+and primary review passed. The authorized signed commit remains a separate
+Git action; no human sign-off is invented here. P13 remains
+conditional; P14, the separately requested missing-source isolation/cleanup fix
+and final local test installer are not completed by this entry.

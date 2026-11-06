@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
+import {captureWorkbenchRefresh,sameRefreshAuthority,type ReferenceRefreshControl} from './workbenchReferenceRefresh';
+import {refreshQueryTool,type ReferenceRefreshFlow,type RefreshFlowHost} from './referenceRefresh';
+import {validateCombinedCatalogSession} from './catalogSession';
 import {NativeMetadataProjectionCache} from './nativeMetadata';
 import * as vscode from 'vscode';
 import * as path from 'node:path';
@@ -35,6 +38,20 @@ export function workbenchHtml(webview:vscode.Webview, extension:vscode.Uri, nonc
 
 /** Host owns sessions, evidence and native transport; webview actions carry opaque handles. */
 export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposable {
+    private refreshQueryClient?:EvidenceClient;
+    private readonly refreshRequeries=new Map<string,Value>();
+    private readonly refreshFlows=new Map<string,ReferenceRefreshFlow>();
+    private readonly refreshTurns=new Map<string,string>();
+    private refreshControl():ReferenceRefreshControl {
+        const control=this.host.control.controller;
+        if(!control.referenceRefreshPrepare||!control.referenceRefreshFlow||!control.referenceRefreshReconfirm||!control.referenceRefreshPending)throw new Error('refresh_native_host_flow_unavailable');
+        return control as typeof control&ReferenceRefreshControl;
+    }
+    private refreshState():Value[] {
+        const selection=this.selectedSpec()?.combinedSession;
+        if(!this.permitted()||!selection)return [];
+        try{return this.refreshControl().referenceRefreshPending(selection as unknown as Value).map(value=>({...value,turn:this.refreshTurns.get(value.id),canRequery:this.refreshFlows.has(value.id)}));}catch{return [];}
+    }
     private view?:vscode.WebviewView;
     private readonly display=new CurrentTurnProjections();
     private readonly metadata=new NativeMetadataProjectionCache();
@@ -143,7 +160,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
     }
     private state():WorkbenchState{
         return {projects:this.host.specs().flatMap(s=>{const id=workbenchProjectKey(s);return id?[{id,name:s.name}]:[];}),project:this.session?.project,session:this.session,sessionEpoch:this.sessionEpoch,recent:this.recent,
-            ...this.display.project(this.session?.turns??[],turn=>this.metadata.view(turn.envelope??{}).payload??{}),metadataViews:Object.fromEntries((this.session?.turns??[]).filter(turn=>turn.envelope).map(turn=>[turn.id,this.metadata.view(turn.envelope!).payload??{}])),metadataIssues:Object.fromEntries((this.session?.turns??[]).filter(turn=>turn.envelope&&this.metadata.view(turn.envelope).error).map(turn=>[turn.id,this.metadata.view(turn.envelope!).error!])),capabilityDetails:this.capabilityDisplay.project(this.session?.turns??[]),busy:this.busy,notice:this.notice,sourceOpen:this.sourceOpen?.generation===this.generation&&this.sourceOpen.project===this.session?.project?{id:this.sourceOpen.id,observation:this.sourceOpen.observation}:undefined,save:this.saving,status:this.status,publicationRelations:this.publicationRelations(),persistence:this.persistence(),operations:this.operations};
+            ...this.display.project(this.session?.turns??[],turn=>this.metadata.view(turn.envelope??{}).payload??{}),metadataViews:Object.fromEntries((this.session?.turns??[]).filter(turn=>turn.envelope).map(turn=>[turn.id,this.metadata.view(turn.envelope!).payload??{}])),metadataIssues:Object.fromEntries((this.session?.turns??[]).filter(turn=>turn.envelope&&this.metadata.view(turn.envelope).error).map(turn=>[turn.id,this.metadata.view(turn.envelope!).error!])),capabilityDetails:this.capabilityDisplay.project(this.session?.turns??[]),busy:this.busy,notice:this.notice,sourceOpen:this.sourceOpen?.generation===this.generation&&this.sourceOpen.project===this.session?.project?{id:this.sourceOpen.id,observation:this.sourceOpen.observation}:undefined,save:this.saving,status:this.status,publicationRelations:this.publicationRelations(),persistence:this.persistence(),operations:this.operations,referenceRefresh:this.refreshState()};
     }
     private send():void{if(!this.disposed){void this.view?.webview.postMessage({type:'state',state:this.state()});}}
     private sendStatus():void{if(!this.disposed){void this.view?.webview.postMessage({type:'status',sessionId:this.session?.id,project:this.session?.project,status:this.status,publicationRelations:this.publicationRelations()});}}
@@ -198,7 +215,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
         if(!this.client){this.client=new EvidenceClient(spec,this.host.version,{workbench:true,clientName:'airk-workbench',timeout:35000});this.clientIdentity=identity;}
         return this.client;
     }
-    stop():void{this.generation++;if(this.busy){const turn=this.session?.turns.at(-1);if(turn&&!turn.envelope){turn.error='Request stopped. Already admitted native reads may still finish; late replies are discarded.';}}this.busy=false;this.client?.cancel('workbench');this.send();}
+    stop():void{this.refreshQueryClient?.cancel('workbench-refresh');this.refreshQueryClient?.dispose();this.refreshQueryClient=undefined;this.refreshFlows.clear();this.refreshRequeries.clear();this.generation++;if(this.busy){const turn=this.session?.turns.at(-1);if(turn&&!turn.envelope){turn.error='Request stopped. Already admitted native reads may still finish; late replies are discarded.';}}this.busy=false;this.client?.cancel('workbench');this.send();}
     async newSession():Promise<void>{if(this.session){await this.select(this.session.project);}else{await this.refresh();}}
     async clear():Promise<void>{
         this.authorized();if(!this.session){return;}
@@ -291,11 +308,101 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
         }catch(error){if(generation===this.generation){turn.error=error instanceof Error?error.message:String(error);if(error instanceof EvidenceFailure&&error.nativeResponse){turn.error=explorerError(error.error.code).message;turn.nativeFailure=structuredClone(error.nativeResponse);}}}
         finally{if(generation===this.generation){this.busy=false;session.updatedAt=Date.now();this.save(session);this.send();}}
     }
+    private async refreshReferences(message:Extract<WorkbenchMessage,{type:'refreshReferences'}>):Promise<void> {
+        if(this.busy)throw new Error('refresh_wait_for_current_workbench_read');
+        const session=this.session,turn=session?.turns.find(value=>value.id===message.turn),spec=this.selectedSpec(),identity=JSON.stringify(spec),generation=this.generation;
+        if(!session||!turn?.envelope||!spec?.combinedSession||this.turnAuthorities.get(turn)!==identity)throw new Error('refresh_requires_live_authorized_turn');
+        const captured=captureWorkbenchRefresh(turn,this.logical(turn),message.cards,spec.combinedSession as unknown as Value),control=this.refreshControl();
+        const valid=()=>this.permitted()&&session===this.session&&generation===this.generation&&identity===JSON.stringify(this.selectedSpec())&&this.turnAuthorities.get(turn)===identity;
+        const current=()=>{if(!valid())throw new Error('refresh_selection_changed');};
+        this.busy=true;this.notice=undefined;this.send();
+        try{
+            const sources:Value[]=[],seen=new Set<string>();
+            for(const card of captured.cards){
+                const key=JSON.stringify([card.sourceRootId,card.sourceRelativePath]);if(seen.has(key))continue;seen.add(key);
+                current();const response=await this.evidence().call('airk_file_info',{path:card.path,revision:card.publication,known_hash:card.hash,verification:'off',response_mode:'full',project_ids:captured.selection.project_ids,index_ids:[card.indexId],member_availability:'require'});current();
+                const payload=response.payload,members=Array.isArray(payload.members)?payload.members.map(object):[],member=members.filter(value=>value.index_id===card.indexId&&value.outcome==='complete');
+                if(member.length!==1)throw new Error('refresh_original_source_metadata_unavailable');
+                const body=readResultBody(member[0].result),info=Object.keys(object(body.content)).length?object(body.content):body,source=object(info.source);
+                const origin=evidenceRows(payload).map(row=>object(row.origin)).filter(value=>value.index_id===card.indexId&&value.source_root_id===card.sourceRootId&&value.source_relative_path===card.sourceRelativePath);
+                if(origin.length!==1||typeof source.root!=='string'||source.relative_path!==card.sourceRelativePath||info.content_hash!==card.hash)throw new Error('refresh_original_source_identity_changed');
+                sources.push({source_root_id:card.sourceRootId,source_relative_path:card.sourceRelativePath,canonical_root:source.root,indexed_hash:card.hash});
+            }
+            sources.sort((a,b)=>String(a.source_root_id).localeCompare(String(b.source_root_id))||String(a.source_relative_path).localeCompare(String(b.source_relative_path)));
+            let journaled=false;
+            const flowValid=()=>{
+                if(!journaled)return valid();const now=this.selectedSpec();
+                return this.permitted()&&session===this.session&&generation===this.generation&&this.turnAuthorities.get(turn)===identity&&!!now?.combinedSession
+                    &&now.command===spec.command&&now.root===spec.root&&now.dataDir===spec.dataDir&&now.collection===spec.collection
+                    &&JSON.stringify(now.service)===JSON.stringify(spec.service)&&sameRefreshAuthority(now.combinedSession as unknown as Value,spec.combinedSession as unknown as Value);
+            };
+            const host=this.refreshHost(flowValid,spec),members=[{index_id:captured.cards[0].indexId,original_publication:captured.cards[0].publication,sources}];
+            const prepared=await control.referenceRefreshPrepare(captured.selection,members,message.mode,captured.query,captured.result,host,valid);current();
+            const id=prepared.intent.reference_refresh.configure_project.key.nonce;
+            this.refreshFlows.set(id,prepared.flow);this.refreshTurns.set(id,turn.id);
+            let accepted:string|undefined;
+            try{accepted=await prepared.flow.reviewAndSubmit(prepared.intent,prepared.capabilities);}
+            finally{journaled=control.referenceRefreshPending(captured.selection).some(value=>value.id===id);}
+            if(accepted===undefined){this.refreshFlows.delete(id);this.refreshTurns.delete(id);this.notice='Refresh review canceled.';}
+            else this.notice='Refresh submitted. Check its exact native receipt; requery requires a separate confirmation.';
+        }catch(error){
+            const raw=(error as {nativeResponse?:Value})?.nativeResponse;
+            if(raw){session.turns.push({id:randomUUID(),at:Date.now(),input:'Reference refresh review diagnostic',format:'structured',error:error instanceof Error?error.message:'Refresh review refused; inspect the exact native receipt before any further mutation.',nativeFailure:structuredClone(raw)});session.updatedAt=Date.now();this.save(session);}
+            throw error;
+        }finally{this.busy=false;if(session===this.session)this.send();}
+    }
+    private refreshHost(valid:()=>boolean,spec:LaunchSpec):RefreshFlowHost {
+        return {trusted:valid,persistEvidenceAllowed:()=>false,
+            confirm:async(details,action)=>{if(!valid())throw new Error('refresh_selection_changed');const answer=await vscode.window.showWarningMessage(details,{modal:true},action);if(!valid())throw new Error('refresh_selection_changed');return answer===action;},
+            reconfirm:selection=>this.refreshControl().referenceRefreshReconfirm(selection,valid),
+            query:async(query,selection)=>{
+                if(!valid())throw new Error('refresh_selection_changed');
+                const tool=refreshQueryTool(query.tool);
+                const selected=validateCombinedCatalogSession(selection),client=new EvidenceClient({...spec,combinedSession:selected},this.host.version,{workbench:true,clientName:'airk-workbench',timeout:35000});
+                this.refreshQueryClient=client;
+                try{const response=await client.call(tool,structuredClone(object(query.arguments)),{timeout:35000,supersede:'workbench-refresh'}),raw=response.rawPayload??response.payload;
+                    if(!valid()){const error=new Error('refresh_late_reply_retained_as_historical_diagnostic') as Error&{nativeResponse?:Value};error.nativeResponse=raw;throw error;}
+                    return raw;
+                }finally{if(this.refreshQueryClient===client)this.refreshQueryClient=undefined;client.dispose();}
+            }};
+    }
+    private async observeReferenceRefresh(id:string,requery:boolean):Promise<void> {
+        const session=this.session,spec=this.selectedSpec(),identity=JSON.stringify(spec),generation=this.generation;
+        if(!session||!spec?.combinedSession||this.busy)throw new Error('refresh_current_selection_required');
+        const valid=()=>this.permitted()&&session===this.session&&generation===this.generation&&identity===JSON.stringify(this.selectedSpec());
+        if(!this.refreshControl().referenceRefreshPending(spec.combinedSession as unknown as Value).some(value=>value.id===id))throw new Error('refresh_saved_intent_outside_current_selection');
+        const flow=this.refreshFlows.get(id)??this.refreshControl().referenceRefreshFlow(this.refreshHost(valid,spec),valid);
+        this.busy=true;this.send();
+        try{
+            if(!requery){await flow.check(id);this.notice='Exact native receipt read; no mutation was replayed.';return;}
+            const result=await flow.requery(id);
+            if(!valid()){const error=new Error('refresh_late_reply_retained_as_historical_diagnostic') as Error&{nativeResponse?:Value};error.nativeResponse=result.current;throw error;}
+            const turn={id:randomUUID(),at:Date.now(),input:'Explicit requery after reviewed reference refresh',format:'structured' as const,envelope:result.current};
+            session.turns.push(turn);this.turnAuthorities.set(turn,identity);this.refreshRequeries.set(id,structuredClone(result.current));session.updatedAt=Date.now();this.save(session);
+            this.notice='New query result retained separately; original evidence and native receipt remain historical.';
+        }catch(error){
+            const raw=(error as {nativeResponse?:Value})?.nativeResponse;
+            if(raw){const late=error instanceof Error&&error.message==='refresh_late_reply_retained_as_historical_diagnostic';session.turns.push({id:randomUUID(),at:Date.now(),input:late?'Late refresh requery diagnostic':'Refused reference refresh requery',format:'structured',error:late?'Reply arrived after trust or selection changed; it is historical diagnostic evidence only.':error instanceof Error?error.message:'Native requery refused; original evidence is retained.',nativeFailure:structuredClone(raw)});session.updatedAt=Date.now();this.save(session);}
+            throw error;
+        }finally{this.busy=false;if(session===this.session)this.send();}
+    }
+    private async exportReferenceRefresh(message:Extract<WorkbenchMessage,{type:'exportReferenceRefresh'}>):Promise<void>{
+        const session=this.session,spec=this.selectedSpec(),identity=JSON.stringify(spec);
+        const valid=()=>this.permitted()&&session===this.session&&identity===JSON.stringify(this.selectedSpec());
+        if(!spec?.combinedSession||!valid()||!this.refreshControl().referenceRefreshPending(spec.combinedSession as unknown as Value).some(value=>value.id===message.id))throw new Error('refresh_saved_intent_outside_current_selection');
+        const flow=this.refreshFlows.get(message.id)??this.refreshControl().referenceRefreshFlow(this.refreshHost(valid,spec),valid),output=flow.exportObservation(message.id,this.refreshRequeries.get(message.id)),text=output[message.format];
+        if(message.action==='copy'){if(!valid())throw new Error('refresh_selection_changed');await vscode.env.clipboard.writeText(text);}
+        else{const uri=await vscode.window.showSaveDialog({defaultUri:vscode.Uri.file(`airk-reference-refresh.${message.format==='json'?'json':'md'}`),filters:message.format==='json'?{JSON:['json']}:{Markdown:['md']}});if(uri){if(!valid())throw new Error('refresh_selection_changed');await vscode.workspace.fs.writeFile(uri,Buffer.from(text));}}
+    }
     private async message(message:WorkbenchMessage):Promise<void>{
         if(message.type==='ready'){await this.refresh();if(this.pendingInput){void this.view?.webview.postMessage({type:'prefill',input:this.pendingInput});this.pendingInput=undefined;}if(this.pendingForm){void this.view?.webview.postMessage({type:'prefillForm'});this.pendingForm=false;}return;}
         if(message.type==='help'){await vscode.commands.executeCommand('airk.explorer.open',WORKBENCH_HELP_ROUTE);return;}
         this.authorized();
         switch(message.type){
+            case 'exportReferenceRefresh':await this.exportReferenceRefresh(message);break;
+            case 'refreshReferences':await this.refreshReferences(message);break;
+            case 'checkReferenceRefresh':await this.observeReferenceRefresh(message.id,false);break;
+            case 'requeryReferenceRefresh':await this.observeReferenceRefresh(message.id,true);break;
             case 'project':await this.select(message.id);break;
             case 'refresh':{const session=this.session;await this.refresh();if(this.session&&this.session===session){const client=this.evidence(),generation=this.generation,identity=this.clientIdentity;const result=await client.call('airk_status',{}, {timeout:STATUS_RESPONSE_TIMEOUT_MS});if(generation===this.generation&&session===this.session&&client===this.client&&identity===this.clientIdentity&&identity===JSON.stringify(this.selectedSpec())&&this.permitted()){this.observeStatus(result.payload,identity!);this.sendStatus();}}break;}
             case 'new':await this.newSession();break;

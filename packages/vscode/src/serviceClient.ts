@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import {ReferenceRefreshIntent,refreshConfiguration,refreshDigest,validateRefreshIntent,validateRefreshJob,validateRefreshReceipt,validateRefreshRefusal} from './referenceRefresh';
 import * as path from 'node:path';
 import { requireNativeExecution } from './nativeGate';
 import { CatalogApplyIntent, CatalogObject, CatalogRequest, CatalogReview, IndexSetupApplyIntent, IndexSetupReview, catalogBound, catalogFenceObservation, catalogHex, catalogObject, catalogRevision, sameCatalogValue, CATALOG_RECEIPT_BYTES, validateCatalogApply, validateGrantSelection, validateNativeGrantDraft, validateNativeHostContext, validateIndexSetupSelection, validateIndexSetupApply, validateNativeIndexSetupDraft, validateIndexSetupReceipt, indexSetupObservation, validateNativeLegacyBinding } from './indexingCatalog';
@@ -120,9 +121,10 @@ export function validateConfigurationRequest(input:unknown):ProjectConfiguration
     const names:Record<string,string[]>={unregister:[],prepare_derived_cleanup:[],delete_derived:['preview'],bundled_model:[],vectors:['enabled'],detail:['level'],retained_profile:['review'],vector_selection:['policy'],
         add_root:['alias','path'],remove_root:['alias'],install_model:['directory','manifest_sha256'],usage:['mode'],
         clear_usage:[],reset_scan_limits:[],usage_feedback:['request_id','usefulness'],import_usage:['input'],extraction_policy:['input'],scan_limits:['input'],quota_policy:['input','expected_policy_digest'],
-        calibrate:['tokenizer','baseline','returned','generation','content_kind','record']};
+        calibrate:['tokenizer','baseline','returned','generation','content_kind','record'],refresh_references:['selection']};
     if(typeof operation!=='string'||!Object.hasOwn(names,operation)||Object.keys(configuration).sort().join(',')!==['operation',...names[operation]].sort().join(','))throw new ServiceError('invalid_project_configuration');
     const filePath=(input:unknown)=>{if(typeof input!=='string'||!path.isAbsolute(input)||input.length>4096||/[\u0000-\u001f\u007f]/.test(input))throw new ServiceError('invalid_configuration_path');};
+    if(operation==='refresh_references')refreshConfiguration(input);
     if(operation==='vectors'&&typeof configuration.enabled!=='boolean')throw new ServiceError('invalid_project_configuration');
     if(operation==='detail'&&!['essential','agent_lean','balanced','detailed'].includes(String(configuration.level)))throw new ServiceError('invalid_project_configuration');
     if(operation==='retained_profile'){
@@ -204,7 +206,7 @@ export class ServiceClient {
     constructor(readonly transport: ControlTransport) {}
     async rpc(method: unknown, expected?: string): Promise<RecordValue> {
         const name=typeof method==='string'?method:method&&typeof method==='object'?Object.keys(method)[0]:undefined;
-        const readOnly=['health','resources','embedding_status','source_status','workers','worker','console','inactive_console','projects','job','configuration_result','request_receipt','inspection','watch','progress','events','plan','plan_items','maintenance','catalog_page','catalog_detail','catalog_context','catalog_receipt','catalog_host_context','catalog_grant_draft','catalog_index_setup_draft','catalog_index_setup_receipt','catalog_legacy_binding','catalog_source_mutation_draft','catalog_source_change_observation','catalog_pending_source_change','catalog_policy_status','catalog_policy_resume_receipt','catalog_split_draft','catalog_split_source_state','catalog_split_status','catalog_split_receipt','catalog_split_recovery_receipt'].includes(String(name));
+        const readOnly=['health','resources','embedding_status','source_status','workers','worker','console','inactive_console','projects','job','configuration_result','reference_refresh_receipt','request_receipt','inspection','watch','progress','events','plan','plan_items','maintenance','catalog_page','catalog_detail','catalog_context','catalog_receipt','catalog_host_context','catalog_grant_draft','catalog_index_setup_draft','catalog_index_setup_receipt','catalog_legacy_binding','catalog_source_mutation_draft','catalog_source_change_observation','catalog_pending_source_change','catalog_policy_status','catalog_policy_resume_receipt','catalog_split_draft','catalog_split_source_state','catalog_split_status','catalog_split_receipt','catalog_split_recovery_receipt'].includes(String(name));
         let response = await this.transport.request(method);
         for(let attempt=0;(readOnly||name==='catalog_index_retirement_evidence')&&response.status==='failure'&&response.code==='registry_busy'&&attempt<2;attempt++){
             await new Promise(resolve=>setTimeout(resolve,25*(attempt+1)));
@@ -587,7 +589,24 @@ export class ServiceClient {
     async prepareRetry(id: string): Promise<MutationIntent> {
         return { retry: { id: identifier(id,32), caller: this.caller, key: await this.key() } };
     }
+    async prepareReferenceRefresh(project:string,draft:ProjectConfigurationRequest,originalQuery:RecordValue,originalResult:RecordValue,persistEvidence=false):Promise<ReferenceRefreshIntent>{
+        const key=await this.key(),selection=structuredClone(record(draft.configuration.selection));
+        selection.caller=this.caller;selection.key=key;selection.original_query_digest=refreshDigest(originalQuery);selection.original_result_digest=refreshDigest(originalResult);selection.original_evidence_selection_digest=refreshDigest(selection.members);
+        const request={...structuredClone(draft),configuration:{operation:'refresh_references',selection}},intent={reference_refresh:{configure_project:{project:identifier(project,32),caller:this.caller,key,request},original_query:structuredClone(originalQuery),original_result:structuredClone(originalResult),evidence_retention:persistEvidence?'local_approved':'memory_only'}};
+        delete (request as ProjectConfigurationRequest).prepare;
+        return validateRefreshIntent(intent);
+    }
+    async submitReferenceRefresh(input:ReferenceRefreshIntent):Promise<RecordValue>{
+        const intent=validateRefreshIntent(input),response=await this.rpc({configure_project:intent.reference_refresh.configure_project});
+        try{if(response.status==='reference_refresh_review_required')validateRefreshRefusal(response,intent);else {if(response.status!=='job')throw new Error('invalid_refresh_ack_status');validateRefreshJob(response.job,intent);}return response;}catch{throw new ServiceError('crossed_reference_refresh_acknowledgment',true,response);}
+    }
+    async referenceRefreshReceipt(input:ReferenceRefreshIntent):Promise<RecordValue>{
+        const intent=validateRefreshIntent(input),request=intent.reference_refresh.configure_project;
+        const response=await this.rpc({reference_refresh_receipt:{caller:request.caller,key:request.key}},'reference_refresh_receipt');
+        try{validateRefreshReceipt(response,intent);return response;}catch{throw new ServiceError('unqualified_reference_refresh_receipt',true,response);}
+    }
     async prepareConfiguration(project:string,request:ProjectConfigurationRequest):Promise<MutationIntent>{
+        if(request.configuration.operation==='refresh_references')throw new ServiceError('refresh_requires_original_evidence_review');
         validateConfigurationRequest(request);
         return {configure_project:{project:identifier(project,32),caller:this.caller,key:await this.key(),request:structuredClone(request)}};
     }
@@ -606,6 +625,7 @@ export class ServiceClient {
     }
     async submitMutation(intent: MutationIntent): Promise<RecordValue> {
         validateMutationIntent(intent);
+        if('configure_project'in intent&&intent.configure_project.request.configuration.operation==='refresh_references')throw new ServiceError('refresh_requires_exact_receipt_tracking');
         // The host persists the complete prepared intent before this call and
         // retires it only after receiving a complete, matching native result.
         const response = await this.rpc(intent, 'plan_create' in intent ? 'plan' : 'job');

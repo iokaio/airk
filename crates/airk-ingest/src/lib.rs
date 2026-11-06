@@ -22,6 +22,7 @@ mod extraction_jobs;
 mod extraction_pool;
 pub mod retention;
 pub use extraction_pool::ExtractionExecution;
+pub mod control_snapshot;
 pub mod header_context;
 mod host_components;
 mod host_html;
@@ -730,6 +731,52 @@ pub fn scan_payloads_with_execution_source_policy(
     )
 }
 
+/// Native reviewed refresh only. All actual ignore inputs use protected capture;
+/// absent/unsupported policy/configuration refuses qualification before scanning.
+#[allow(clippy::too_many_arguments)]
+pub fn scan_payloads_with_optional_control_snapshot(
+    root: &Path,
+    data_dir: &Path,
+    previous: &Snapshot,
+    roots: &BTreeMap<String, String>,
+    limits: ScanLimits,
+    policy: &adapters::profile::ExtractionPolicy,
+    full_reindex: bool,
+    execution: ExtractionExecution,
+    paths: Option<&std::collections::BTreeSet<String>>,
+    source_policy: Option<&airk_core::source_policy::SourcePolicy>,
+    controls: Option<std::sync::Arc<control_snapshot::ControlSnapshot>>,
+    lookup: impl FnMut(observations::ReuseRequest<'_>) -> Result<Option<observations::VerifiedReuse>>,
+    emit: impl FnMut(
+        &airk_core::extraction::ExtractionProfile,
+        &Artifact,
+        &[u8],
+        Option<&airk_core::extraction::ExtractionPayload>,
+    ) -> Result<Artifact>,
+) -> Result<(Snapshot, IndexReport, observations::ScanObservation)> {
+    ensure!(
+        controls.is_none() || policy.declared_configurations().is_empty(),
+        "tracked refresh requires reviewed full fallback for declared extraction dependencies"
+    );
+    limits.validate()?;
+    execution.validate()?;
+    scan_observed_profiled_controlled(
+        root,
+        data_dir,
+        previous,
+        roots,
+        limits,
+        policy,
+        full_reindex,
+        execution,
+        paths,
+        source_policy,
+        controls,
+        lookup,
+        emit,
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 fn scan_observed_profiled(
     root: &Path,
@@ -742,6 +789,44 @@ fn scan_observed_profiled(
     execution: ExtractionExecution,
     paths: Option<&std::collections::BTreeSet<String>>,
     source_policy: Option<&airk_core::source_policy::SourcePolicy>,
+    lookup: impl FnMut(observations::ReuseRequest<'_>) -> Result<Option<observations::VerifiedReuse>>,
+    emit: impl FnMut(
+        &airk_core::extraction::ExtractionProfile,
+        &Artifact,
+        &[u8],
+        Option<&airk_core::extraction::ExtractionPayload>,
+    ) -> Result<Artifact>,
+) -> Result<(Snapshot, IndexReport, observations::ScanObservation)> {
+    scan_observed_profiled_controlled(
+        root,
+        data_dir,
+        previous,
+        roots,
+        limits,
+        policy,
+        full_reindex,
+        execution,
+        paths,
+        source_policy,
+        None,
+        lookup,
+        emit,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn scan_observed_profiled_controlled(
+    root: &Path,
+    data_dir: &Path,
+    previous: &Snapshot,
+    roots: &BTreeMap<String, String>,
+    limits: ScanLimits,
+    policy: &adapters::profile::ExtractionPolicy,
+    full_reindex: bool,
+    execution: ExtractionExecution,
+    paths: Option<&std::collections::BTreeSet<String>>,
+    source_policy: Option<&airk_core::source_policy::SourcePolicy>,
+    controls: Option<std::sync::Arc<control_snapshot::ControlSnapshot>>,
     mut lookup: impl FnMut(
         observations::ReuseRequest<'_>,
     ) -> Result<Option<observations::VerifiedReuse>>,
@@ -818,8 +903,14 @@ fn scan_observed_profiled(
                     .map(str::to_owned)
                     .collect()
             });
-            discovery_selected_with_policy(source, &data_dir, selected, source_policy.cloned())
-                .map(move |entry| (prefix, source, entry))
+            discovery_selected_with_controls(
+                source,
+                &data_dir,
+                selected,
+                source_policy.cloned(),
+                controls.clone(),
+            )
+            .map(move |entry| (prefix, source, entry))
         });
     let scanned = (|| -> Result<()> {
         for (prefix, source, entry) in walker {
@@ -1338,6 +1429,16 @@ fn discovery_selected_with_policy(
     selected: Option<Vec<String>>,
     policy: Option<airk_core::source_policy::SourcePolicy>,
 ) -> impl Iterator<Item = Result<ignore::DirEntry>> {
+    discovery_selected_with_controls(root, data_dir, selected, policy, None)
+}
+
+fn discovery_selected_with_controls(
+    root: &Path,
+    data_dir: &Path,
+    selected: Option<Vec<String>>,
+    policy: Option<airk_core::source_policy::SourcePolicy>,
+    controls: Option<std::sync::Arc<control_snapshot::ControlSnapshot>>,
+) -> impl Iterator<Item = Result<ignore::DirEntry>> {
     let data_dir = data_dir.to_path_buf();
     let ordering_root = root.to_path_buf();
     let credential_root = root.to_path_buf();
@@ -1360,7 +1461,7 @@ fn discovery_selected_with_policy(
     let root_blocked = matches!(initial, Ok(false));
     let failure = std::sync::Arc::new(std::sync::Mutex::new(initial.err()));
     let filter_failure = failure.clone();
-    let restricted = policy.as_ref().is_some_and(permanent_policy::restricts);
+    let restricted = controls.is_some() || policy.as_ref().is_some_and(permanent_policy::restricts);
     let protected = if restricted
         && !root_blocked
         && failure
@@ -1368,7 +1469,13 @@ fn discovery_selected_with_policy(
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .is_none()
     {
-        match policy_ignore::ProtectedIgnore::new(root, policy.as_ref().unwrap()) {
+        let captured = match controls {
+            Some(controls) => {
+                policy_ignore::ProtectedIgnore::tracked(root, policy.as_ref(), controls)
+            }
+            None => policy_ignore::ProtectedIgnore::new(root, policy.as_ref().unwrap()),
+        };
+        match captured {
             Ok(matcher) => Some(std::sync::Mutex::new(matcher)),
             Err(error) => {
                 *failure

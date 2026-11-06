@@ -485,7 +485,7 @@ impl Kernel {
         full: bool,
         defer_completion: bool,
     ) -> Result<airk_ingest::IndexReport> {
-        self.index_current_selected(full, defer_completion, None)
+        self.index_current_selected(full, defer_completion, None, None)
     }
 
     /// Refresh saved logical paths; untouched bindings retain their indexed revision.
@@ -512,7 +512,27 @@ impl Kernel {
                 Ok(path)
             })
             .collect::<Result<std::collections::BTreeSet<_>>>()?;
-        self.index_current_selected(false, defer_completion, Some(&paths))
+        self.index_current_selected(false, defer_completion, Some(&paths), None)
+    }
+
+    pub(crate) fn index_current_reviewed_refresh(
+        &self,
+        project: airk_core::service::ProjectBinding,
+        request: &airk_core::service_configuration::ConfigurationRequest,
+    ) -> Result<airk_ingest::IndexReport> {
+        // Legacy control provenance requires explicit full reconciliation.
+        // Selected execution is never silently widened through this adapter.
+        self.index_current_selected(false, true, None, Some((project, request)))
+    }
+
+    pub(crate) fn index_current_reviewed_refresh_paths(
+        &self,
+        project: airk_core::service::ProjectBinding,
+        request: &airk_core::service_configuration::ConfigurationRequest,
+        paths: &std::collections::BTreeSet<String>,
+    ) -> Result<airk_ingest::IndexReport> {
+        ensure!(!paths.is_empty(), "empty reviewed source subset");
+        self.index_current_selected(false, true, Some(paths), Some((project, request)))
     }
 
     fn index_current_selected(
@@ -520,6 +540,10 @@ impl Kernel {
         full: bool,
         defer_completion: bool,
         paths: Option<&std::collections::BTreeSet<String>>,
+        reviewed: Option<(
+            airk_core::service::ProjectBinding,
+            &airk_core::service_configuration::ConfigurationRequest,
+        )>,
     ) -> Result<airk_ingest::IndexReport> {
         let mut repaired_retained_artifacts = 0;
         match self.index_current_once(
@@ -527,6 +551,7 @@ impl Kernel {
             defer_completion,
             &mut repaired_retained_artifacts,
             paths,
+            reviewed,
         ) {
             Ok(report) => Ok(report),
             Err(error)
@@ -534,6 +559,9 @@ impl Kernel {
                     .downcast_ref::<airk_store::blobs::MissingRetainedObject>()
                     .is_some() =>
             {
+                if reviewed.is_some() {
+                    return Err(error.context("reviewed refresh stopped; retained-object repair requires a separate new review"));
+                }
                 // The failed attempt has released its capture guard, writer and
                 // reservations. Never replace captured inputs in a durable journal
                 // with live source bytes, even if the live path still exists.
@@ -551,7 +579,7 @@ impl Kernel {
                         "automatic retained-object repair could not verify an idle index: {admission:#}"
                     ))),
                 }
-                let mut report = self.index_current_once(full, defer_completion, &mut repaired_retained_artifacts, paths).context(
+                let mut report = self.index_current_once(full, defer_completion, &mut repaired_retained_artifacts, paths, reviewed).context(
                     "automatic retained-object repair failed after one fresh scan; indexing stopped without further retries; run AIRK: Diagnose & Repair to inspect the remaining failure"
                 )?;
                 report.retained_repair_retries = 1;
@@ -630,6 +658,10 @@ impl Kernel {
         defer_completion: bool,
         repaired_retained_artifacts: &mut usize,
         paths: Option<&std::collections::BTreeSet<String>>,
+        reviewed: Option<(
+            airk_core::service::ProjectBinding,
+            &airk_core::service_configuration::ConfigurationRequest,
+        )>,
     ) -> Result<airk_ingest::IndexReport> {
         use crate::diagnostics::IndexFailureStage as Stage;
         self.source_policy_for_work()?;
@@ -637,6 +669,14 @@ impl Kernel {
             .context(Stage("source_access"))?;
         let execution_lease =
             crate::execution::acquire(&self.data_root).context(Stage("execution_admission"))?;
+        let (reviewed_writer, reviewed_controls) = if let Some((project, request)) = reviewed {
+            ensure!(!full, "reviewed refresh cannot silently rebuild");
+            let writer = self.store.lock().context(Stage("writer_admission"))?;
+            let controls = self.require_refresh_base_before_recovery(project, request, &writer)?;
+            (Some(writer), controls)
+        } else {
+            (None, None)
+        };
         if full {
             self.prepare_full_rebuild()
                 .context(Stage("rebuild_admission"))?;
@@ -647,8 +687,10 @@ impl Kernel {
             phase: "scan_started",
             ..Default::default()
         });
-        self.recover_runtime_bootstrap()
-            .context(Stage("bootstrap"))?;
+        if reviewed.is_none() {
+            self.recover_runtime_bootstrap()
+                .context(Stage("bootstrap"))?;
+        }
         let mut execution = if self.service_collection.is_some() {
             crate::limits::execution_from_grant(&execution_lease.plan)
                 .context(Stage("extraction_admission"))?
@@ -665,11 +707,16 @@ impl Kernel {
             .validate()
             .context(Stage("extraction_admission"))?;
         // Recovery takes its own writer lock, before this scan owns one.
-        if let Some(scope) = self.current_scope().context(Stage("current_scope"))? {
+        if reviewed.is_none()
+            && let Some(scope) = self.current_scope().context(Stage("current_scope"))?
+        {
             super::recover_current(&self.store, &self.collection_quota()?, &scope)
                 .context(Stage("recover_current"))?;
         }
-        let writer = self.store.lock().context(Stage("writer_admission"))?;
+        let writer = match reviewed_writer {
+            Some(writer) => writer,
+            None => self.store.lock().context(Stage("writer_admission"))?,
+        };
         let quota = self.collection_quota().context(Stage("quota_open"))?;
         ensure!(
             !self.root.starts_with(quota.root()),
@@ -786,11 +833,38 @@ impl Kernel {
                             .unwrap_or(false)
                 })
         });
+        if let Some((_, request)) = reviewed {
+            let airk_core::service_configuration::ProjectConfiguration::RefreshReferences {
+                selection,
+            } = &request.configuration
+            else {
+                unreachable!()
+            };
+            if selection.mode == airk_core::catalog_refresh::RefreshMode::SelectedOnly {
+                ensure!(
+                    paths.is_some(),
+                    airk_core::catalog_refresh::RefreshReviewRequired {
+                        reasons: vec![
+                            airk_core::catalog_refresh::RefreshFallbackReason::DependencyInput
+                        ]
+                    }
+                );
+                ensure!(
+                    !configuration_changed,
+                    airk_core::catalog_refresh::RefreshReviewRequired {
+                        reasons: vec![
+                            airk_core::catalog_refresh::RefreshFallbackReason::ConfigurationChanged
+                        ]
+                    }
+                );
+            }
+        }
         // A newly initialized (or format-rebuilt) empty index needs the same
         // bounded first publications as a collection with no current store.
         // A full scan of an empty base cannot mix old and rebuilt evidence.
         // Populated full/configuration rebuilds retain their atomic boundary.
         let progressive_enabled = defer_completion
+            && reviewed.is_none()
             && paths.is_none()
             && (previous.artifacts.is_empty() || (!full && !configuration_changed));
         let publish_scan_start = progressive_enabled
@@ -885,7 +959,7 @@ impl Kernel {
         }
         let permanent_policy = self.source_policy_for_work()?;
         let scan_started = std::time::Instant::now();
-        let scan_result = airk_ingest::scan_payloads_with_execution_source_policy(
+        let scan_result = airk_ingest::scan_payloads_with_optional_control_snapshot(
             &self.root,
             &self.data_root,
             &previous,
@@ -896,6 +970,7 @@ impl Kernel {
             execution.execution,
             paths,
             permanent_policy.as_deref(),
+            reviewed_controls.clone(),
             |request| {
                 let same = previous
                     .artifacts
@@ -991,6 +1066,35 @@ impl Kernel {
                     record_scan_failure(progressive.as_mut(), error).context(Stage("scan_sources"))
                 );
             }
+        };
+        let refreshed_baseline = if let Some(controls) = &reviewed_controls {
+            if paths.is_some() {
+                controls.revalidate_inputs()?;
+            }
+            let (_, request) = reviewed.context("tracked refresh lost native request")?;
+            let baseline = controls.seal_complete(
+                airk_core::identity::framed_digest(
+                    b"airk/refresh-applied-configuration/1",
+                    &[&serde_json::to_vec(&configuration)?],
+                ),
+                request.settings,
+            )?;
+            let bytes = serde_json::to_vec(&baseline)?;
+            let read = self.current_reader()?;
+            let prior = read
+                .resource_reference(airk_core::source_control::CONTROL_BASELINE_RESOURCE)?
+                .map(|reference| self.store.read_current_resource(&reference))
+                .transpose()?;
+            // Equal capture bytes alone cannot certify an unbound historical
+            // witness or one preserved across an older writer's publication.
+            // Equality includes the binding; only the exact current qualified
+            // witness may keep the ordinary selected no-op path.
+            let unchanged_qualified = prior.as_deref() == Some(bytes.as_slice())
+                && baseline
+                    .matches_publication(read.head().scope.incarnation, read.head().sequence);
+            (!unchanged_qualified).then_some(bytes)
+        } else {
+            None
         };
         report.repaired_retained_artifacts = *repaired_retained_artifacts;
         report.path_scoped = paths.is_some();
@@ -1116,6 +1220,7 @@ impl Kernel {
             .as_ref()
             .is_some_and(|work| work.failure.is_some());
         if !changes.is_empty()
+            || refreshed_baseline.is_some()
             || configuration_changed
             || analysis_expired
             || retry_failed_semantic
@@ -1169,6 +1274,43 @@ impl Kernel {
             ];
             if let Some(work) = &final_scan_work {
                 resources.push(work.resource_change(&self.store, &writer, &reservation)?);
+            }
+            // Publish attestation only after successful complete capture or
+            // exact saved-control revalidation. Ordinary changes invalidate it.
+            if reviewed_controls.is_some() {
+                if let Some(bytes) = &refreshed_baseline {
+                    // Avoid retaining an unbound intermediate object. The
+                    // actual writer already excludes another publication;
+                    // CurrentUpdater independently rechecks this successor.
+                    let mut baseline: airk_core::source_control::SourceControlBaseline =
+                        serde_json::from_slice(bytes)?;
+                    let read = self.store.current_build_read(&scope, &writer)?;
+                    baseline.bind_publication(
+                        read.head().scope.incarnation,
+                        read.head()
+                            .sequence
+                            .checked_add(1)
+                            .context("control successor sequence overflow")?,
+                    )?;
+                    drop(read);
+                    let bytes = serde_json::to_vec(&baseline)?;
+                    resources.push(airk_store::current::resources::ResourceChange {
+                        key: airk_core::source_control::CONTROL_BASELINE_RESOURCE.into(),
+                        reference: Some(self.store.retain_current_resource_owned(
+                            &writer,
+                            &bytes,
+                            &reservation,
+                        )?),
+                    });
+                } else {
+                    let read = self.current_reader()?;
+                    resources.push(airk_store::current::resources::ResourceChange {
+                        key: airk_core::source_control::CONTROL_BASELINE_RESOURCE.into(),
+                        reference: read.resource_reference(
+                            airk_core::source_control::CONTROL_BASELINE_RESOURCE,
+                        )?,
+                    });
+                }
             }
             let result = CurrentUpdater {
                 store: &self.store,

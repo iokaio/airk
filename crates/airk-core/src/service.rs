@@ -324,6 +324,11 @@ pub enum ControlMethod {
     ConfigurationResult {
         id: Sha256Digest,
     },
+    /// Complete exact-key historical refresh proof; never starts or retries work.
+    ReferenceRefreshReceipt {
+        caller: Incarnation,
+        key: RequestKey,
+    },
     Enqueue {
         project: ProjectBinding,
         caller: Incarnation,
@@ -461,6 +466,19 @@ pub enum PolicyStatusBasis {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ControlResponse {
+    ReferenceRefreshReviewRequired {
+        project: ProjectBinding,
+        caller: Incarnation,
+        key: RequestKey,
+        request: Box<crate::service_configuration::ConfigurationRequest>,
+        review: crate::catalog_refresh::RefreshReviewRequired,
+    },
+    ReferenceRefreshReceipt {
+        job: Option<JobRecord>,
+        configuration: Option<crate::service_configuration::ConfigurationWork>,
+        result: Option<serde_json::Value>,
+        expired: bool,
+    },
     CombinedDeliveryValidated {
         receipt: CombinedDeliveryReceipt,
     },

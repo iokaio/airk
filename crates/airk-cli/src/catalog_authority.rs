@@ -713,6 +713,7 @@ mod tests {
             maximum_registry_schema: 12,
             authority_contract: 1,
             policy_contract: 0,
+            reference_refresh_contract: None,
             production_activation_enabled: false,
         };
         validate_catalog_fence(&state, &f.selection, &capabilities)?;

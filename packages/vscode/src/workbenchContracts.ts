@@ -47,6 +47,7 @@ export interface WorkbenchSessionSummary { id: string; title: string; updatedAt:
 /** Verified by the host for presentation only; native envelopes remain unchanged. */
 export type CapabilityFieldDisplay={state:'verified';values:Record<string,Value>}|{state:'unavailable';error:string};
 export interface WorkbenchState {
+    referenceRefresh?:Value[];
     projects: { id: string; name: string }[]; project?: string; session?: WorkbenchSession;
     recent: WorkbenchSessionSummary[];
     cards: Record<string, EvidenceCard[]>; busy: boolean; notice?: string; save: string;
@@ -137,6 +138,9 @@ export function toolFormArguments(schema:unknown,values:Record<string,string>):V
     return Object.fromEntries(entries);
 }
 export type WorkbenchMessage =
+    | {type:'exportReferenceRefresh';id:string;format:'json'|'markdown';action:'copy'|'save'}
+    | {type:'refreshReferences';turn:string;cards:string[];mode:'selected_only'|'full_reconcile_reviewed'}
+    | {type:'checkReferenceRefresh'|'requeryReferenceRefresh';id:string}
     | { type: 'ready' | 'stop' | 'new' | 'clear' | 'manage' | 'help' | 'refresh' | 'retrySave' | 'fork' | 'forms' }
     | { type: 'project' | 'recent' | 'delete'; id: string }
     | { type: 'rename'; title: string }
@@ -159,6 +163,9 @@ export function parseWorkbenchMessage(raw: unknown): WorkbenchMessage | undefine
     const formFence=()=>str('sessionId')&&str('project',64)&&/^[0-9a-f]{64}$/.test(String(v.project))
         &&Number.isSafeInteger(v.epoch)&&Number(v.epoch)>=0&&Number.isSafeInteger(v.revision)&&Number(v.revision)>0&&Number(v.revision)<=2147483647
         &&typeof v.tool==='string'&&FORM_TOOLS.includes(v.tool);
+    if(type==='exportReferenceRefresh'&&exact(['type','id','format','action'])&&str('id',32)&&/^[0-9a-f]{32}$/.test(String(v.id))&&['json','markdown'].includes(String(v.format))&&['copy','save'].includes(String(v.action)))return v as WorkbenchMessage;
+    if(type==='refreshReferences'&&exact(['type','turn','cards','mode'])&&str('turn')&&['selected_only','full_reconcile_reviewed'].includes(String(v.mode))&&Array.isArray(v.cards)&&v.cards.length>0&&v.cards.length<=64&&new Set(v.cards).size===v.cards.length&&v.cards.every(id=>typeof id==='string'&&/^record-(0|[1-9][0-9]*)$/.test(id)))return v as WorkbenchMessage;
+    if(['checkReferenceRefresh','requeryReferenceRefresh'].includes(String(type))&&exact(['type','id'])&&str('id',32)&&/^[0-9a-f]{32}$/.test(String(v.id)))return v as WorkbenchMessage;
     if(type==='formDraft'&&exact(['type','sessionId','project','epoch','revision','tool','values','scope','recipe'])&&formFence()
         &&(v.values===undefined||validWorkbenchToolFormValues(v.values))&&(v.scope===undefined||validFormText(v.scope,1024))
         &&(v.recipe===undefined||typeof v.recipe==='string'&&FORM_RECIPES.includes(v.recipe))){return v as WorkbenchMessage;}

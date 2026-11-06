@@ -28,12 +28,13 @@ pub(crate) enum Decision {
 
 pub(crate) struct ProtectedIgnore {
     root: PathBuf,
-    policy: SourcePolicy,
+    policy: Option<SourcePolicy>,
     charged: usize,
     directories: BTreeMap<PathBuf, [Gitignore; 4]>,
     failure: Option<&'static str>,
     global: Gitignore,
     root_blocked: bool,
+    controls: Option<std::sync::Arc<crate::control_snapshot::ControlSnapshot>>,
 }
 
 impl ProtectedIgnore {
@@ -45,27 +46,55 @@ impl ProtectedIgnore {
         Ok(selected)
     }
 
+    pub(crate) fn tracked(
+        root: &Path,
+        policy: Option<&SourcePolicy>,
+        controls: std::sync::Arc<crate::control_snapshot::ControlSnapshot>,
+    ) -> Result<Self> {
+        let mut selected = Self::local_with_controls(root, policy, Some(controls))?;
+        if !selected.root_blocked {
+            selected.global = selected.global_rules()?;
+        }
+        Ok(selected)
+    }
     fn local(root: &Path, policy: &SourcePolicy) -> Result<Self> {
+        Self::local_with_controls(root, Some(policy), None)
+    }
+    fn local_with_controls(
+        root: &Path,
+        policy: Option<&SourcePolicy>,
+        controls: Option<std::sync::Arc<crate::control_snapshot::ControlSnapshot>>,
+    ) -> Result<Self> {
         let root = root.to_path_buf();
         let mut selected = Self {
             global: Gitignore::empty(),
             root,
-            policy: policy.clone(),
+            policy: policy.cloned(),
             charged: 0,
             directories: BTreeMap::new(),
             failure: None,
             root_blocked: false,
+            controls,
         };
+        if let Some(controls) = &selected.controls {
+            controls.record_environment(&selected.root)?;
+        }
         let root_text = selected
             .root
             .to_str()
             .ok_or_else(|| refused("ignore_control_locator"))?;
-        selected.root_blocked =
-            !crate::permanent_policy::allows_checked(policy, root_text, "", true)?;
+        selected.root_blocked = policy
+            .map(|policy| crate::permanent_policy::allows_checked(policy, root_text, "", true))
+            .transpose()?
+            .is_some_and(|allowed| !allowed);
         if selected.root_blocked {
             return Ok(selected);
         }
-        crate::permanent_policy::qualify_discovery_directory(policy, root_text, "")?;
+        if let Some(policy) = policy {
+            crate::permanent_policy::qualify_discovery_directory(policy, root_text, "")?;
+        } else {
+            crate::native_name_boundary::qualify(&selected.root, "", true)?;
+        }
         // The explicit walk root has its own controls even when no child is
         // eligible. Ancestor controls retain their existing precedence.
         let ancestors = selected
@@ -86,9 +115,17 @@ impl ProtectedIgnore {
 
     fn capture(&mut self, path: &Path) -> Result<Option<String>> {
         let path = std::path::absolute(path).map_err(|_| refused("ignore_control_locator"))?;
+        if self.controls.is_some() {
+            crate::control_snapshot::qualify_locator(&path, false)?;
+        }
         let metadata = match fs::symlink_metadata(&path) {
             Ok(value) => value,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if let Some(controls) = &self.controls {
+                    controls.absent_qualified(&path)?;
+                }
+                return Ok(None);
+            }
             Err(_) => return Err(refused("ignore_control_metadata")),
         };
         ensure!(
@@ -104,7 +141,15 @@ impl ProtectedIgnore {
             );
         }
         ensure!(
-            crate::permanent_policy::allows_absolute_control_input_checked(&self.policy, &path)?,
+            self.policy
+                .as_ref()
+                .map(
+                    |policy| crate::permanent_policy::allows_absolute_control_input_checked(
+                        policy, &path
+                    )
+                )
+                .transpose()?
+                .unwrap_or(true),
             refused("excluded_ignore_control")
         );
         let length =
@@ -131,6 +176,9 @@ impl ProtectedIgnore {
             bytes.len() <= MAX_FILE_BYTES,
             refused("ignore_control_budget")
         );
+        if let Some(controls) = &self.controls {
+            controls.file(&path, &bytes)?;
+        }
         String::from_utf8(bytes)
             .map(Some)
             .map_err(|_| refused("ignore_control_encoding"))
@@ -186,6 +234,9 @@ impl ProtectedIgnore {
         // Worktree/commondir indirection needs a separately qualified protected
         // resolver. Never let the dependency follow an unreviewed control path.
         let git = path.join(".git");
+        if self.controls.is_some() {
+            crate::control_snapshot::qualify_locator(&git, true)?;
+        }
         match fs::symlink_metadata(&git) {
             Ok(metadata) => {
                 ensure!(
@@ -200,6 +251,9 @@ impl ProtectedIgnore {
                         refused("ignore_control_git_reference")
                     );
                 }
+                if let Some(controls) = &self.controls {
+                    controls.directory_qualified(&git)?;
+                }
                 ensure!(
                     !git.join("commondir")
                         .try_exists()
@@ -207,8 +261,21 @@ impl ProtectedIgnore {
                     refused("ignore_control_git_reference")
                 );
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if let Some(controls) = &self.controls {
+                    controls.absent_qualified(&git)?;
+                }
+            }
             Err(_) => return Err(refused("ignore_control_metadata")),
+        }
+        if let Some(controls) = self.controls.clone() {
+            let commondir = git.join("commondir");
+            crate::control_snapshot::qualify_locator(&commondir, false)?;
+            ensure!(
+                matches!(fs::symlink_metadata(&commondir),Err(error) if error.kind()==std::io::ErrorKind::NotFound),
+                refused("ignore_control_git_reference")
+            );
+            controls.absent_qualified(&commondir)?;
         }
         let rules = [
             self.compile(path, &path.join(".airkignore"))?,

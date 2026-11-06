@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { randomUUID } from 'node:crypto';
+import {ReferenceRefreshFlow,type RefreshFlowHost} from './referenceRefresh';
+import {refreshWithinAuthority,type PreparedWorkbenchRefresh} from './workbenchReferenceRefresh';
+import {validateCombinedCatalogSession} from './catalogSession';
 import { isDeepStrictEqual } from 'node:util';
 import { BootstrapObservation, LegacyStartupReview, LegacyStartupTarget, RuntimeBinding, RuntimeHost } from './serviceBootstrap';
 import { count, identifier, parseConsolePage, record, RecordValue, ServiceClient, ServiceError } from './serviceClient';
@@ -1053,6 +1056,54 @@ export class ServiceConsoleController {
         this.state.legacyReview={value:review.value,phase:'complete',checkedAt:Date.now()};this.legacyReview=undefined;
         if(Array.isArray(this.state.legacyReceipts?.items))this.state.legacyReceipts={...this.state.legacyReceipts,items:this.state.legacyReceipts.items.map(value=>record(value).approval===review.approval?{...record(value),phase:'complete'}:value)};
         this.state.message='The reviewed old startup was removed. Sources, project settings and old indexes were retained.';
+    }
+    /** Host-only refresh adapter: existing authenticated connection and durable journal. */
+    referenceRefreshFlow(host:RefreshFlowHost,valid:()=>boolean):ReferenceRefreshFlow {
+        this.authorized();const client=this.client,journal=this.journal,identity=this.observationIdentity;
+        if(!client||!journal||!this.state.connected||this.registryObservationSuspended)throw new ServiceError('refresh_control_unavailable');
+        const current=()=>this.host.trusted()&&!this.disposed&&valid()&&client===this.client&&journal===this.journal&&identity===this.observationIdentity;
+        return new ReferenceRefreshFlow(client,journal,{...host,trusted:()=>current()&&host.trusted()});
+    }
+    referenceRefreshPending(selection:RecordValue):Array<{id:string;latest?:RecordValue;historical?:RecordValue}> {
+        this.authorized();
+        return (this.journal?.list()??[]).flatMap(saved=>{
+            if(!('reference_refresh'in saved.value.intent))return [];
+            const selected=record(record(saved.value.intent.reference_refresh.configure_project.request.configuration.selection).selection);
+            if(!refreshWithinAuthority(selected,selection))return [];
+            return [{id:saved.id,latest:saved.value.nativeRefreshLookup,historical:saved.value.nativeRefreshReceipt}];
+        });
+    }
+    private async refreshGrant(selection:RecordValue,valid:()=>boolean):Promise<{selection:RecordValue;capabilities:RecordValue}> {
+        this.authorized();const selected=validateCombinedCatalogSession(selection),client=this.client,identity=this.observationIdentity;
+        const check=()=>{this.authorized();if(!valid()||!client||client!==this.client||identity!==this.observationIdentity||selected.namespace!==this.registryNamespace)throw new ServiceError('refresh_selection_changed');};check();
+        const host=await this.catalogHostContext(selected.context_key,null);check();const descriptor=record(host.descriptor);
+        if(descriptor.namespace!==selected.namespace)throw new ServiceError('refresh_namespace_changed');
+        const reply=await this.catalogRead({catalog_detail:{entity:{kind:'grant',id:selected.grant_id},expected_catalog_revision:descriptor.catalog_revision}});check();
+        const item=record(record(reply.detail).item),grant=record(record(item.value).grant);
+        if(item.kind!=='grant'||grant.id!==selected.grant_id||grant.revision!==selected.expected_grant_revision||grant.revoked!==false||grant.host!==descriptor.host)throw new ServiceError('refresh_grant_changed_review_required',false,reply);
+        const members=Array.isArray(grant.memberships)?grant.memberships.map(value=>record(record(value).membership)):[];
+        if(selected.project_ids.some(project=>!members.some(member=>member.project_id===project&&(selected.index_ids===undefined||selected.index_ids.includes(String(member.index_id))))))throw new ServiceError('refresh_grant_selection_unavailable',false,reply);
+        return {selection:{...selected,expected_catalog_revision:descriptor.catalog_revision},capabilities:record(reply.capabilities)};
+    }
+    async referenceRefreshReconfirm(selection:RecordValue,valid:()=>boolean):Promise<RecordValue>{return (await this.refreshGrant(selection,valid)).selection;}
+    async referenceRefreshPrepare(selection:RecordValue,members:RecordValue[],mode:'selected_only'|'full_reconcile_reviewed',query:RecordValue,result:RecordValue,host:RefreshFlowHost,valid:()=>boolean):Promise<PreparedWorkbenchRefresh>{
+        const flow=this.referenceRefreshFlow(host,valid),client=this.client!,identity=this.observationIdentity;
+        const check=()=>{this.authorized();if(!valid()||client!==this.client||identity!==this.observationIdentity)throw new ServiceError('refresh_selection_changed');};
+        const fresh=await this.refreshGrant(selection,valid);check();
+        if(!isDeepStrictEqual(fresh.selection,selection))throw new ServiceError('refresh_catalog_changed_review_required');
+        if(members.length!==1)throw new ServiceError('refresh_select_one_index');
+        const index=String(members[0].index_id),response=await this.catalogRead({catalog_detail:{entity:{kind:'index',id:index},expected_catalog_revision:selection.expected_catalog_revision}});check();
+        const item=record(record(response.detail).item),definition=record(item.value);
+        if(item.kind!=='index'||definition.id!==index||definition.tombstone!==false)throw new ServiceError('refresh_index_unavailable',false,response);
+        const backing=record(definition.backing),project=identifier(backing.binding,32);
+        // Cached native inspection is a read, never an Inspect job or recovery opener.
+        // Actual admission independently revalidates settings and all source guards.
+        const observation=await client.rpc({inspection:{project}},'inspection');check();const snapshot=record(record(observation.observation).snapshot);
+        if(snapshot.project!==project||snapshot.source_state!=='available'||snapshot.recovery_required!==false||snapshot.settings_digest==null||snapshot.failure!=null||snapshot.publication!==members[0].original_publication)throw new ServiceError('refresh_inspection_changed_review_required',false,observation);
+        const draft={incarnation:identifier(snapshot.incarnation,16),settings:identifier(snapshot.settings_digest,32),configuration:{operation:'refresh_references',selection:{schema:1,selection:structuredClone(selection),mode,members:structuredClone(members)}}};
+        const persist=host.persistEvidenceAllowed?.()===true;
+        const intent=await client.prepareReferenceRefresh(project,draft,query,result,persist);check();
+        return {flow,intent,capabilities:{capabilities:fresh.capabilities}};
     }
     /** Trusted host command: capture a native repair preview; execution still needs its separate review. */
     async projectConfiguration(project:string,draft:RecordValue,valid:()=>boolean=()=>true):Promise<void>{

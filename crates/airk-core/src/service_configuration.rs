@@ -28,6 +28,11 @@ impl InputFile {
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ProjectConfiguration {
     Unregister,
+    /// Existing authenticated native management only; generic Store admission
+    /// rejects this variant. No evidence/MCP read can construct accepted work.
+    RefreshReferences {
+        selection: Box<crate::catalog_refresh::RefreshSelection>,
+    },
     PrepareDerivedCleanup,
     DeleteDerived {
         preview: Sha256Digest,
@@ -124,6 +129,7 @@ fn alias(value: &str) -> Result<()> {
 impl ProjectConfiguration {
     pub fn validate(&self) -> Result<()> {
         match self {
+            Self::RefreshReferences { selection } => selection.validate()?,
             Self::ImportUsage { input }
             | Self::ExtractionPolicy { input }
             | Self::ScanLimits { input }

@@ -430,3 +430,155 @@ fn model_open_failure_keeps_its_cause_when_recording_also_fails() -> Result<()> 
     assert_eq!(fs::read(&path)?, vec![b'x'; bytes.len()]);
     Ok(())
 }
+
+// SPDX-License-Identifier: Apache-2.0
+#[test]
+fn refresh_control_baseline_survives_real_shared_model_semantic_metadata_and_vector_batch_then_selected_update()
+-> Result<()> {
+    use airk_core::{
+        catalog_refresh::RefreshMode,
+        identity::{Incarnation, Sha256Digest},
+        service_configuration::ConfigurationRequest,
+    };
+    use airk_store::service::model_files::ServiceModelFiles;
+    fn request(
+        kernel: &Kernel,
+        project: airk_core::service::ProjectBinding,
+        mode: RefreshMode,
+    ) -> Result<ConfigurationRequest> {
+        let observed = kernel.inspect_service(project)?;
+        let file = kernel.file_info("one.txt")?;
+        let id = Incarnation::from_bytes([1; 16]);
+        let hash = Sha256Digest::from_bytes([2; 32]);
+        Ok(serde_json::from_value(
+            serde_json::json!({"incarnation":observed.incarnation,"settings":observed.settings_digest.context("settings absent")?,"configuration":{"operation":"refresh_references","selection":{"schema":1,"caller":id,"key":{"namespace":id,"epoch":1,"nonce":id},"original_result_digest":hash,"original_evidence_selection_digest":hash,"original_query_digest":hash,"mode":mode,"selection":{"schema":1,"context_key":hash,"namespace":id,"expected_catalog_revision":1,"grant_id":format!("grt_{id}"),"expected_grant_revision":1,"project_ids":[format!("prj_{id}")],"index_ids":[format!("idx_{id}")]},"members":[{"index_id":format!("idx_{id}"),"original_publication":file.publication.context("publication absent")?.token,"sources":[{"source_root_id":format!("src_{id}"),"source_relative_path":"one.txt","canonical_root":kernel.root_id(),"indexed_hash":file.content_hash}]}]}}}),
+        )?)
+    }
+    let owner = crate::unlinked_tempdir()?;
+    let source = owner.path().join("source");
+    let data = owner.path().join("data");
+    let runtime = owner.path().join("runtime");
+    let model_directory = owner.path().join("model");
+    for directory in [&source, &data, &runtime, &model_directory] {
+        fs::create_dir(directory)?;
+    }
+    fs::write(source.join("one.txt"), b"alpha baseline\n")?;
+    fs::write(source.join("two.txt"), b"beta baseline\n")?;
+    let vocabulary = br#"{"alpha":[1.0,0.0],"beta":[0.0,1.0]}"#;
+    fs::write(model_directory.join("vocabulary.json"), vocabulary)?;
+    fs::write(
+        model_directory.join("model.json"),
+        serde_json::to_vec(
+            &serde_json::json!({"schema":1,"name":"original-p12-qualified-vector-continuity-fixture","license":"Apache-2.0","dimensions":2,"sha256":format!("{:x}",Sha256::digest(vocabulary))}),
+        )?,
+    )?;
+    let plan = airk_retrieval::model::inspect_object_plan(&model_directory)?;
+    let mut files = ServiceModelFiles::open(&runtime)?;
+    let _lease = files.install_readers(&plan, |name| {
+        Ok(Box::new(fs::File::open(
+            model_directory.join(name.filename()),
+        )?))
+    })?;
+    let installed = files.publish_default(&plan)?;
+    let kernel = Kernel::open_service_collection(&source, Some(data.clone()), "refresh-hybrid")?
+        .with_service_models(&runtime, plan)?;
+    kernel.configure_vectors(true)?;
+    kernel.index_service_sources()?;
+    let project = crate::service_projects::registration(&source, &data, "refresh-hybrid")?.binding;
+    kernel.refresh_service_references(
+        project,
+        &request(&kernel, project, RefreshMode::FullReconcileReviewed)?,
+    )?;
+    let read = kernel.current_reader()?;
+    let baseline = read
+        .resource_reference(airk_core::source_control::CONTROL_BASELINE_RESOURCE)?
+        .context("full scan did not qualify controls")?;
+    let before = read.token()?;
+    drop(read);
+    kernel.begin_service_vector_regeneration(Sha256Digest::from_bytes([11; 32]))?;
+    let read = kernel.current_reader()?;
+    assert_ne!(read.token()?, before);
+    let metadata_baseline = read
+        .resource_reference(airk_core::source_control::CONTROL_BASELINE_RESOURCE)?
+        .context("vector metadata lost controls")?;
+    assert_ne!(
+        metadata_baseline.object_digest()?,
+        baseline.object_digest()?
+    );
+    let metadata_witness: airk_core::source_control::SourceControlBaseline =
+        serde_json::from_slice(&kernel.store.read_current_resource(&metadata_baseline)?)?;
+    assert!(
+        metadata_witness.matches_publication(read.head().scope.incarnation, read.head().sequence)
+    );
+    drop(read);
+    // Exercise the actual retained semantic batch/CurrentUpdater with an
+    // original tiny local vocabulary provider. Shared immutable descriptors are
+    // identical; no process-global test connector or actual helper IPC is used.
+    let local = EmbeddingModel::open(&model_directory)?;
+    let execution = crate::execution::acquire(&kernel.data_root)?;
+    let selection = kernel.vector_selection()?;
+    kernel.drain_current_enrichment(
+        &local,
+        &selection,
+        &mut EmbeddingCacheStats::default(),
+        1,
+        None,
+        DrainAdmission {
+            execution: &execution,
+            deadline: None,
+        },
+    )?;
+    drop(execution);
+    assert!(kernel.status()?.indexed_vectors > 0);
+    let read = kernel.current_reader()?;
+    let batch_baseline = read
+        .resource_reference(airk_core::source_control::CONTROL_BASELINE_RESOURCE)?
+        .context("vector batch lost controls")?;
+    let batch_witness: airk_core::source_control::SourceControlBaseline =
+        serde_json::from_slice(&kernel.store.read_current_resource(&batch_baseline)?)?;
+    assert!(batch_witness.matches_publication(read.head().scope.incarnation, read.head().sequence));
+    assert_eq!(batch_witness.contexts, metadata_witness.contexts);
+    assert_eq!(batch_witness.inputs, metadata_witness.inputs);
+    assert_eq!(
+        read.collection_state()?
+            .context("configuration absent")?
+            .configuration
+            .model,
+        Some(installed)
+    );
+    let untouched = serde_json::to_value(
+        read.artifact("two.txt")?
+            .context("second artifact absent")?,
+    )?;
+    drop(read);
+    let selected = request(&kernel, project, RefreshMode::SelectedOnly)?;
+    fs::write(source.join("one.txt"), b"alpha selected\n")?;
+    fs::write(source.join("two.txt"), b"beta changed but not selected\n")?;
+    assert!(
+        kernel
+            .refresh_service_references(project, &selected)?
+            .path_scoped
+    );
+    assert_eq!(
+        kernel.file_info("one.txt")?.content_hash,
+        Sha256Digest::from_bytes(Sha256::digest(b"alpha selected\n").into()).to_string()
+    );
+    assert_eq!(
+        serde_json::to_value(
+            kernel
+                .current_reader()?
+                .artifact("two.txt")?
+                .context("second artifact absent")?
+        )?,
+        untouched
+    );
+    // An unrelated ordinary source publication cannot re-sign qualification.
+    kernel.index_service_sources()?;
+    assert!(
+        kernel
+            .current_reader()?
+            .resource_reference(airk_core::source_control::CONTROL_BASELINE_RESOURCE)?
+            .is_none()
+    );
+    Ok(())
+}

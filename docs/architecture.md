@@ -1,5 +1,36 @@
 # Architecture
 
+P12's accepted local **1.8.8 working build** adds explicitly reviewed reference refresh
+through the existing native Configure job and collection publication owners.
+Core owns bounded intent, exact selection identity and typed review-required
+outcomes. CLI authenticates the native host, current Project/grant/catalog scope
+and backing, binds the existing shared-model metadata context, and saves complete
+job/results. Store rejects generic enqueue/retry of this special work and retains
+exact receipts. Kernel rechecks publication, settings and controls under the
+actual writer before recovery, source capture or publication. Held-writer
+validation uses the owning saved-settings digest; it does not recursively inspect
+or reacquire that writer.
+
+Ingest records the actual protected matcher inputs and qualified absence.
+The optional Current control resource binds its configuration and input ledger
+to the exact incarnation/publication sequence, avoiding a self-referential resource
+hash. Trusted source publication and qualified semantic-only successors rebind
+it; an older writer that preserves the unknown resource cannot keep it qualified
+across another publication. Explicit full requalification publishes a new binding
+even when an old unbound witness has identical captured bytes.
+
+First-wave admission targets one existing index, at most 64 source locators
+within wire budgets, and requires complete frozen/configured-source metadata
+authority even for selected work. It grants no partial-scope bypass. Workbench
+uses live native reference handles, a separately reviewed mutation, exact receipt
+reads and a separately confirmed requery; Stop, trust and selection fences stay
+in the extension host. Evidence MCP remains read-only. No new crate, database or
+scheduler is introduced. The [guide](source-verification.md#explicit-reference-refresh)
+and [ledger](research/implementation-v190.md) record 39 passing focused Windows
+tests, all 12 final release qualification stages, 19 scoped Neo tests with
+successful cleanup and primary local phase acceptance. Installed-editor and
+P14 platform qualification remain separate.
+
 P11a's unpublished **1.8.8 working build** adds opt-in
 [per-file family reporting](profile-family-reporting.md). Core owns the fixed
 18-family contract and independent support, retention and reply observations.

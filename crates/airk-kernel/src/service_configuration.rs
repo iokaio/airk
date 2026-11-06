@@ -272,6 +272,57 @@ impl Kernel {
         );
         Ok(())
     }
+    /// Recheck the same saved configuration under an already held native
+    /// collection writer. Inspection takes its own writer and cannot be used
+    /// here: lock contention must never masquerade as changed settings.
+    pub(crate) fn validate_service_configuration_with_writer(
+        &self,
+        project: ProjectBinding,
+        request: &ConfigurationRequest,
+        writer: &airk_store::WriterLock,
+    ) -> Result<()> {
+        request.validate()?;
+        self.require_unrestricted_read()?;
+        ensure!(
+            !matches!(
+                request.configuration,
+                ProjectConfiguration::SplitWork { .. }
+            ),
+            "split work requires its exact native operation owner"
+        );
+        ensure!(
+            self.service_collection.is_some(),
+            "service collection required"
+        );
+        // Match ordinary inspection's active-manifest selection, rather than
+        // validating a cached incarnation after a completed replacement.
+        let selected = self.refresh_service_snapshot()?;
+        let registration = airk_core::service::ProjectRegistration::new(
+            selected.root_id(),
+            selected
+                .data_root
+                .to_str()
+                .context("non-UTF-8 service data root")?
+                .into(),
+            selected.collection.clone(),
+        )?;
+        ensure!(
+            registration.binding == project,
+            "configuration registration differs from selected project"
+        );
+        ensure!(
+            selected.store.directory() == self.store.directory()
+                && selected.store.service_incarnation()? == Some(request.incarnation),
+            ConfigurationChanged
+        );
+        let settings = airk_store::service::collection::settings_digest_with_writer(
+            &selected.store,
+            &selected.root_id(),
+            writer,
+        )?;
+        ensure!(settings == request.settings, ConfigurationChanged);
+        Ok(())
+    }
     /// Reserve proposed source boundaries in the registry before writing roots.
     pub fn service_configuration_roots(
         &self,
@@ -319,6 +370,9 @@ impl Kernel {
             _ => (),
         }
         let result = match &request.configuration {
+            ProjectConfiguration::RefreshReferences { .. } => {
+                anyhow::bail!("reference refresh requires its exact native worker owner")
+            }
             ProjectConfiguration::SplitWork { .. } => {
                 anyhow::bail!("split work requires its exact native operation owner")
             }

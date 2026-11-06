@@ -22,13 +22,14 @@ pub(crate) fn authenticated_decode_error(error: anyhow::Error) -> anyhow::Error 
 }
 
 pub const MAX_RESOURCE_BYTES: usize = 256 << 20;
-pub const KEYS: [&str; 6] = [
+pub const KEYS: [&str; 7] = [
     "analysis",
     "analysis-projection",
     "embedding-cache",
     "semantic-work",
     "semantic-policy",
     "scan-work",
+    "source-controls/1",
 ];
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

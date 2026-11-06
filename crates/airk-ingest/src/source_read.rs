@@ -258,6 +258,32 @@ pub fn read_protected_path(
     Ok(bytes)
 }
 
+/// Observe absence through the same no-follow pinned traversal as source
+/// capture. Permission/type/redirect errors are uncertainty, never absence.
+/// Does not enumerate directories or read bytes from an existing file.
+pub(crate) fn missing_protected_path(path: &Path) -> Result<bool> {
+    ensure!(
+        path.is_absolute(),
+        "protected missing locator must be absolute"
+    );
+    let root = path
+        .ancestors()
+        .last()
+        .context("protected missing locator has no root")?;
+    let relative = path.strip_prefix(root)?;
+    match open(root, relative) {
+        Ok(_) => Ok(false),
+        Err(error)
+            if error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
+        {
+            Ok(true)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 pub(crate) fn read(root: &Path, path: &Path, limit: usize, remaining: usize) -> Result<Vec<u8>> {
     read_with_alias_policy(root, path, limit, remaining, false)
 }

@@ -25,11 +25,11 @@ MODULES = ("extension.js", "extensionUninstall.js", "uninstallHook.js", "diagnos
            "mcpStdioSession.js", "explorerSidebar.js", "explorerStatus.js", "explorerController.js", "explorerControl.js",
            "explorerContracts.js", "explorerErrors.js", "explorerEvidence.js", "explorerFeatures.js", "explorerPanel.js",
            "explorerRoutes.js", "explorerSearch.js", "explorerSource.js", "explorerWorkspaceIO.js",
-           "explorerFacts.js", "explorerInspect.js", "explorerManagement.js", "indexingCatalog.js", "indexingSplit.js", "indexingCatalogController.js", "catalogSession.js", "scopeSelection.js",
+           "explorerFacts.js", "explorerInspect.js", "explorerManagement.js", "indexingCatalog.js", "indexingSplit.js", "referenceRefresh.js", "indexingCatalogController.js", "catalogSession.js", "scopeSelection.js",
            "explorerCommands.js", "explorerAssistanceHost.js", "explorerAssistanceLaunch.js",
            "explorerStrategies.js", "explorerStrategyRunner.js",
            "explorerDrafts.js", "explorerSuggestions.js", "explorerReview.js", "explorerHandoffs.js", "explorerPlanFiles.js",
-           "workbenchView.js", "workbenchContracts.js", "workbenchRender.js", "sharedCapabilityFields.js", "nativeMetadata.js", "sourceVerification.js", "publications.js", "workbenchSessions.js", "workbenchStrategies.js")
+           "workbenchView.js", "workbenchContracts.js", "workbenchRender.js", "sharedCapabilityFields.js", "nativeMetadata.js", "sourceVerification.js", "publications.js", "workbenchSessions.js", "workbenchStrategies.js", "workbenchReferenceRefresh.js")
 # esbuild outputs; referenced by URI or path from host modules, never require()d.
 BUNDLES = ("explorerWebview.js", "explorerWebview.css", "explorerAssistance.js", "workbenchWebview.js", "workbenchWebview.css")
 # Host-only implementations that must never ship a second bundled copy.

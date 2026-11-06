@@ -23,6 +23,8 @@ pub struct CatalogCapabilities {
     pub maximum_registry_schema: u32,
     pub authority_contract: u32,
     pub policy_contract: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference_refresh_contract: Option<u32>,
     pub production_activation_enabled: bool,
 }
 impl CatalogCapabilities {

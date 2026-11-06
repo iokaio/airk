@@ -264,6 +264,23 @@ impl Kernel {
     /// Saved policy used for the next publication; does not interpret old indexes.
     pub fn vector_selection(&self) -> Result<VectorSelectionPolicy> {
         self.require_unrestricted_read()?;
+        self.vector_selection_metadata()
+    }
+    /// Private native eligibility projection, after full authenticated metadata
+    /// authority and configured-root coverage. Public vector_selection keeps
+    /// its unrestricted-reader contract unchanged.
+    pub(crate) fn vector_selection_for_index_metadata(
+        &self,
+        read: &airk_store::current::CurrentRead,
+    ) -> Result<VectorSelectionPolicy> {
+        self.require_index_metadata(read)?;
+        self.require_configured_index_metadata(read, &self.configured_roots()?)?;
+        read.token()?;
+        let selection = self.vector_selection_metadata()?;
+        read.token()?;
+        Ok(selection)
+    }
+    fn vector_selection_metadata(&self) -> Result<VectorSelectionPolicy> {
         self.vector_policy()?
             .selection
             .map(Ok)

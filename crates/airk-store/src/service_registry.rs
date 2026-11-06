@@ -108,6 +108,14 @@ pub struct ServiceRegistry {
     watch_traversal_state: bool,
 }
 
+impl ServiceRegistry {
+    /// Canonical root of this already opened native registry. Metadata only;
+    /// this path is not an authorization credential or a model provisioning request.
+    pub fn control_root(&self) -> &Path {
+        &self.root
+    }
+}
+
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Owner {

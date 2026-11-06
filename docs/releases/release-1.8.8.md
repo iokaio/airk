@@ -1,51 +1,30 @@
 # AIRK 1.8.8 manual-test working build
 
-P11b's unpublished **1.8.8 working build** adds explicitly reviewed Lean/Rich
-retained profiles. Legacy indexing levels keep their existing meanings and
-defaults; reply projection remains independent. Scoped Windows native/resource,
-release-runtime and focused Mac ARM checks passed, with the limits in the
-implementation ledger. P11b is accepted for unpublished local development. P11a remains accepted for local development.
-P12–P14 and deleted-source recovery remain unfinished.
+The unpublished **1.8.8 manual-test working build** includes accepted local
+P9 permanent exclusions, P10 reviewed index splitting, P11a per-file profile
+reporting and P11b explicit Lean/Rich retained profiles. Existing indexing levels
+and reply defaults keep their meanings. These development checkpoints do not
+constitute a published release or final installed-editor acceptance.
 
-P11a’s [per-file profile family reporting](../profile-family-reporting.md) adds an explicit opt-in to File info. It keeps applied file-profile identity separate from collection policy, preserves scoped unknowns and retains complete native metadata through Workbench details and exports. P10 is accepted for local development. P11a qualification has passed: focused native, Mac ARM, Workbench and actual CLI/console/MCP checks, followed by the required final gates. P11a has passed its local phase checks and is accepted for unpublished local development. The working version remains **1.8.8**, unpublished.
+P12 adds accepted local **reviewed reference refresh and separate requery**.
+Its focused Windows native selection passed **39 tests**, including actual
+native/CLI/MCP shared-helper, Lean/Rich, pause, lost-reply and restart paths.
+The 12-stage Windows release qualification and 19 scoped Neo tests passed;
+Neo testing ended with `cargo clean` and its target removed. Primary review
+accepted this unpublished local phase. The first wave refreshes one existing index
+from eligible references and requires full-index metadata authority; partial
+Project/path grants are unsupported. Evidence reads and source verification do
+not start indexing. P13 ranking/diversity remains conditional; P14, deleted-source
+recovery and the final local test installer remain pending.
 
-P10's [reviewed split workflow](../index-splitting.md) adds independent
-partitions, sealed build, complete Project review and exact recovery through
-physical cleanup and final funding acknowledgment. Frozen Windows qualification
-passed all **22 gates** on `c713b469…` / 945 native inputs, including **2,565 passed /
-0 failed / 49 ignored** workspace tests, actual CLI/MCP process checks and all 84
-unchanged latency gates. Focused Mac ARM batches passed with mandatory Cargo
-cleanup; their distinct source identities and coverage remain in the
-[dated ledger](../research/implementation-v190.md#p10--local-phase-checkpoint-5-november-2026).
-**P10 has passed its local phase checks; the working build remains unpublished.** Resource samples do not establish total CPU or true physical peaks.
-P11–P14 remain unaccepted.
-
-P9 adds [permanent source exclusions](../source-policy.md)
-through reviewed native management. Native policy fences precede removal;
-logical removal and physical reclamation have separate resumable observations.
-Windows workspace/runtime and focused Mac ARM checks passed with the limits in
-the [ledger](../research/implementation-v190.md). P11–P14 acceptance remains pending;
-this working build is unpublished.
-
-Contributor iteration now has a [scoped, timed Clippy command](../../CONTRIBUTING.md#local-rust-iteration)
-with persistent build output and a Windows-only development incremental default.
-Required qualification and release profiles remain unchanged; measured speedup
-is not yet established. Mac Neo test batches retain their mandatory cleanup.
-
-P8 adds [Recommendations and copied agent scope instructions](../recommendations.md)
-through the canonical native `query_scope` read, CLI/MCP aliases and Workbench
-plans/forms. Indexing renders available/selected/omitted scope, explicit temporary
-selection and separately reviewed defaults. Missing observations remain unknown;
-capability-qualified split review is implemented in P10; permanent exclusions use accepted P9 management. [Validation and limits](../research/implementation-v190.md#p8--recommendations-and-harness-guidance)
-are recorded separately from release qualification. The working version remains 1.8.8.
-
-P7 implements [combined Project reads](../combined-reads.md) across native, CLI, MCP and Workbench, including plans, sessions, verification and exports. Windows release and Apple Silicon debug native checks passed, along with all 84 unchanged legacy latency gates and 120 Windows fan-out trials. [Evidence and platform limits](../research/implementation-v190.md#p7--combined-retrieval-and-consumers). Working version **1.8.8** remains unpublished.
-
-P6e makes [oversized stdio input](../mcp.md) an explicit bounded failure and uses [qualified Workbench publication comparisons](../workbench/implementation.md) instead of treating unequal tokens as older. It adds no status polling and preserves retained exports. Local qualification and release limits remain in the implementation ledger.
-
-P6d's [source admission changes](../service-freshness.md) give eligible source work priority over pending Vector jobs and yield running Vector turns at safe boundaries. Saved semantic work resumes afterward. Actual Windows and Mac ARM backlog scenarios passed; the implementation ledger records final qualification and remaining platform limits.
-
-P6c's [search execution contract](../search-execution.md) discloses policy-qualified lexical results when the embedding helper is unavailable, preserving strict explicit semantic requests and independent source-verification receipts. Local Windows/Mac ARM gates and all 84 unchanged-bound latency comparisons passed; the ledger records exact coverage and remaining release limits.
+The [refresh guide](../source-verification.md#explicit-reference-refresh)
+keeps native mutation review separate from read-only verification and MCP evidence.
+The [implementation ledger](../research/implementation-v190.md) records accepted
+P9–P12 local checkpoints on source `4121692a…` / 960 native inputs. The
+matched Windows release pair built in **815.503 seconds**; all **12** final
+qualification stages and **19** scoped Neo tests passed. Neo `cargo clean`
+exited zero and removed the target. These results do not qualify a published
+release, installed editor, default ONNX provider or the remaining P14 matrix.
 
 On 3 November 2026, the maintainer selected **1.8.8** as the working version for
 completing and manually testing the [1.9.0 implementation plan](../research/plan-v190.md).
@@ -69,9 +48,8 @@ P5's foundation passed local isolated qualification: normalized catalog metadata
 backup/migration/import/recovery, candidate-process handoff and a gated installer
 coordinator. P6f's working candidate activates only qualified authority-1 catalogs
 with reviewed Indexing/setup/grant consumers. P7 adds combined reads and P8 adds
-Recommendations. P9 permanent exclusions are accepted for this local development
-phase; P10 splitting is implemented only as the unaccepted candidate described
-above. Earlier dated receipts retain their original scope. See the [storage boundary](../storage-formats.md#development-catalog-boundary).
+Recommendations. P9 exclusions, P10 splitting and P11a/P11b profile work are
+accepted for unpublished local development, including P12 reviewed refresh. Earlier dated receipts retain their original scope. See the [storage boundary](../storage-formats.md#development-catalog-boundary).
 
 Complete implementation and local gates, then manually test the identified 1.8.8
 native pair and VSIX before the CI/release handoff. Use explicit isolated testing

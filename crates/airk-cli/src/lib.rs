@@ -19,6 +19,7 @@ mod embedding_pool_process;
 pub mod embedding_pool_protocol;
 pub mod local_ipc;
 mod native_admin_connections;
+mod reference_refresh_control;
 /// Leaf Windows file-ACL check shared with the Explorer Assistance forwarder,
 /// which must not depend on service or IPC protocol code.
 #[cfg(windows)]

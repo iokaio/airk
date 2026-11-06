@@ -163,11 +163,90 @@ pub(super) fn result(
         length <= MAX_CONFIGURATION_BYTES,
         ConfigurationResultCorrupt("recorded length exceeds budget")
     );
-    Ok(Some(
-        serde_json::from_slice(&bytes[8..8 + length])
-            .context(ConfigurationResultCorrupt("invalid recorded JSON"))?,
-    ))
+    let value = serde_json::from_slice(&bytes[8..8 + length])
+        .context(ConfigurationResultCorrupt("invalid recorded JSON"))?;
+    validate_refresh_result(connection, job, &value)?;
+    Ok(Some(value))
 }
+fn validate_refresh_result(
+    connection: &Connection,
+    job: Sha256Digest,
+    value: &serde_json::Value,
+) -> Result<()> {
+    let Some(saved) = work(connection, job)? else {
+        return Ok(());
+    };
+    let airk_core::service_configuration::ProjectConfiguration::RefreshReferences { selection } =
+        &saved.request.configuration
+    else {
+        return Ok(());
+    };
+    let record = super::jobs::record(connection, job)?;
+    ensure!(
+        job == airk_core::catalog_source_change::source_job_id(
+            record.project,
+            selection.caller,
+            &selection.key
+        )?,
+        ConfigurationResultCorrupt("refresh job lineage changed")
+    );
+    if value["schema"] == "airk.reference-refresh-review-required/1" {
+        ensure!(
+            value["selection_digest"] == serde_json::to_value(selection.identity()?)?
+                && value["original_query_digest"]
+                    == serde_json::to_value(selection.original_query_digest)?
+                && value["publication_applied"] == false
+                && value["requery_executed"] == false,
+            ConfigurationResultCorrupt("refresh refusal intent changed")
+        );
+        let review: airk_core::catalog_refresh::RefreshReviewRequired =
+            serde_json::from_value(value["review"].clone()).context(ConfigurationResultCorrupt(
+                "refresh refusal missing typed reason",
+            ))?;
+        review.validate()?;
+        return Ok(());
+    }
+    ensure!(
+        selection.members.len() == 1
+            && value["schema"] == "airk.reference-refresh-result/1"
+            && value["selection_digest"] == serde_json::to_value(selection.identity()?)?
+            && value["original_query_digest"]
+                == serde_json::to_value(selection.original_query_digest)?
+            && value["effective_mode"] == serde_json::to_value(selection.mode)?
+            && value["effective_scope"]
+                == if selection.mode == airk_core::catalog_refresh::RefreshMode::SelectedOnly {
+                    "selected_sources"
+                } else {
+                    "whole_index_explicitly_reviewed"
+                }
+            && value["requery_executed"] == false,
+        ConfigurationResultCorrupt("refresh receipt intent changed")
+    );
+    let before: airk_core::identity::RevisionToken =
+        serde_json::from_value(value["before_publication"].clone()).context(
+            ConfigurationResultCorrupt("refresh original publication missing"),
+        )?;
+    let after: airk_core::identity::RevisionToken =
+        serde_json::from_value(value["after_publication"].clone()).context(
+            ConfigurationResultCorrupt("refresh resulting publication missing"),
+        )?;
+    ensure!(
+        before == selection.members[0].original_publication,
+        ConfigurationResultCorrupt("refresh original publication changed")
+    );
+    before
+        .validate_against(&after)
+        .context(ConfigurationResultCorrupt(
+            "refresh publication scope/order changed",
+        ))?;
+    ensure!(
+        value["status"]["publication"]["token"] == serde_json::to_value(after)?
+            && value["report"]["generation"].as_u64() == Some(after.generation),
+        ConfigurationResultCorrupt("refresh report/status publication mismatch")
+    );
+    Ok(())
+}
+
 pub(super) fn recover_results(
     connection: &Connection,
     lease: &crate::service::ProjectLease,
@@ -214,14 +293,27 @@ pub(super) fn recover_results(
                 id.parse()?,
                 &saved,
             )?;
+            let outcome = if saved["schema"] == "airk.reference-refresh-review-required/1" {
+                airk_core::service::JobOutcome::Failed {
+                    code: "refresh_scope_changed_review_required".into(),
+                }
+            } else {
+                airk_core::service::JobOutcome::Succeeded {
+                    revision: if saved["schema"] == "airk.reference-refresh-result/1" {
+                        Some(serde_json::from_value(saved["after_publication"].clone())?)
+                    } else {
+                        None
+                    },
+                }
+            };
+            let state = if matches!(outcome, airk_core::service::JobOutcome::Failed { .. }) {
+                "failed"
+            } else {
+                "succeeded"
+            };
             connection.execute(
-                "UPDATE service_jobs SET state='succeeded',outcome=?1 WHERE id=?2",
-                params![
-                    serde_json::to_vec(&airk_core::service::JobOutcome::Succeeded {
-                        revision: None
-                    })?,
-                    id
-                ],
+                "UPDATE service_jobs SET state=?1,outcome=?2 WHERE id=?3",
+                params![state, serde_json::to_vec(&outcome)?, id],
             )?;
             super::unregistration::finish_if_requested(connection, lease.binding, id.parse()?)?;
             super::cleanup::finish_if_requested(connection, lease.binding, id.parse()?)?;
@@ -285,6 +377,7 @@ impl ServiceRegistry {
             JobError::StaleWorker
         );
         super::catalog::source_change::validate_configuration_result(&transaction, job, result)?;
+        validate_refresh_result(&transaction, job, result)?;
         let unrecorded: bool = transaction.query_row(
             "SELECT substr(result,1,8)=zeroblob(8) FROM service_configuration WHERE job=?1",
             [job.to_string()],
@@ -356,6 +449,168 @@ mod tests {
             base.join("data").to_str().unwrap().into(),
             "configuration".into(),
         )
+    }
+    #[test]
+    fn saved_refresh_result_recovers_exact_publication_and_typed_refusal_never_becomes_success()
+    -> Result<()> {
+        use airk_core::{identity::RevisionToken, service::JobOutcome};
+        for refused in [false, true] {
+            let temporary = tempfile::tempdir()?;
+            let caller = Incarnation::from_bytes([1; 16]);
+            let engine = Sha256Digest::from_bytes([4; 32]);
+            let mut registry = open(temporary.path(), caller)?;
+            let project = project(temporary.path())?;
+            registry.register(&project)?;
+            let key = key(&mut registry, 33)?;
+            let ordinary = request(false);
+            let job =
+                registry.enqueue_configuration(project.binding, caller, &key, &ordinary, engine)?;
+            let index = format!("idx_{}", Incarnation::from_bytes([5; 16]));
+            let root = format!("src_{}", Incarnation::from_bytes([6; 16]));
+            let grant = format!("grt_{}", Incarnation::from_bytes([7; 16]));
+            let query_project = format!("prj_{}", Incarnation::from_bytes([8; 16]));
+            let hash = Sha256Digest::from_bytes([9; 32]);
+            let before = RevisionToken {
+                incarnation: ordinary.incarnation,
+                generation: 1,
+                revision: hash,
+            };
+            let after = RevisionToken {
+                generation: 2,
+                ..before
+            };
+            // This result-codec fixture installs saved immutable native work
+            // directly in its owned registry. It is not an admission/authority
+            // or real source-publication proof (covered by separate native tests).
+            let work: ConfigurationWork = serde_json::from_value(
+                serde_json::json!({"engine":engine,"request":{"incarnation":ordinary.incarnation,"settings":ordinary.settings,"configuration":{"operation":"refresh_references","selection":{"schema":1,"caller":caller,"key":key,"original_result_digest":hash,"original_query_digest":hash,"original_evidence_selection_digest":hash,"mode":"selected_only","selection":{"schema":1,"context_key":hash,"namespace":key.namespace,"expected_catalog_revision":1,"grant_id":grant,"expected_grant_revision":1,"project_ids":[query_project],"index_ids":[index]},"members":[{"index_id":index,"original_publication":before,"sources":[{"source_root_id":root,"source_relative_path":"one.txt","canonical_root":project.root,"indexed_hash":hash}]}]}}}}),
+            )?;
+            work.request.validate()?;
+            registry.connection.execute(
+                "UPDATE service_configuration SET payload=?1 WHERE job=?2",
+                params![serde_json::to_vec(&work)?, job.id.to_string()],
+            )?;
+            let ProjectConfiguration::RefreshReferences { selection } = &work.request.configuration
+            else {
+                unreachable!()
+            };
+            let result = if refused {
+                serde_json::json!({"schema":"airk.reference-refresh-review-required/1","selection_digest":selection.identity()?,"original_query_digest":hash,"review":{"reasons":["pending_recovery"]},"publication_applied":false,"requery_executed":false})
+            } else {
+                serde_json::json!({"schema":"airk.reference-refresh-result/1","selection_digest":selection.identity()?,"original_query_digest":hash,"effective_mode":"selected_only","effective_scope":"selected_sources","before_publication":before,"after_publication":after,"report":{"generation":2},"status":{"publication":{"token":after}},"requery_executed":false})
+            };
+            {
+                let mut lease = ProjectLease::acquire(&registry.root, project.binding)?;
+                registry.admit_worker(&mut lease)?;
+                registry
+                    .claim_job_id(&lease, job.id)?
+                    .context("fixture Configure not claimed")?;
+                registry.record_configuration_result(&lease, job.id, &result)?;
+            }
+            let mut replacement = ProjectLease::acquire(&registry.root, project.binding)?;
+            registry.admit_worker(&mut replacement)?;
+            registry.recover_jobs(&replacement)?;
+            let recovered = registry.job(job.id)?;
+            assert_eq!(registry.configuration_result(job.id)?, Some(result));
+            if refused {
+                assert_eq!(recovered.state, JobState::Failed);
+                assert_eq!(
+                    recovered.outcome,
+                    Some(JobOutcome::Failed {
+                        code: "refresh_scope_changed_review_required".into()
+                    })
+                );
+            } else {
+                assert_eq!(recovered.state, JobState::Succeeded);
+                assert_eq!(
+                    recovered.outcome,
+                    Some(JobOutcome::Succeeded {
+                        revision: Some(after)
+                    })
+                );
+            }
+        }
+        Ok(())
+    }
+    #[test]
+    fn generic_configuration_cannot_admit_refresh_or_consume_unrelated_work() -> Result<()> {
+        use airk_core::{
+            catalog_refresh::{RefreshMember, RefreshMode, RefreshSelection, RefreshSource},
+            identity::RevisionToken,
+            index_catalog::{CatalogRevision, GrantId, IndexId, QueryProjectId, SourceRootId},
+            service::CombinedConnectRequest,
+        };
+        let temporary = tempfile::tempdir()?;
+        let caller = Incarnation::from_bytes([1; 16]);
+        let mut registry = open(temporary.path(), caller)?;
+        let selected = project(temporary.path())?;
+        registry.register(&selected)?;
+        let other = ProjectRegistration::new(
+            selected.root.clone(),
+            selected.data_root.clone(),
+            "refresh-unrelated".into(),
+        )?;
+        registry.register(&other)?;
+        let other_key = key(&mut registry, 41)?;
+        let other_job = registry.enqueue(other.binding, caller, &other_key, JobKind::Index)?;
+        let key = key(&mut registry, 42)?;
+        let id = Incarnation::from_bytes([7; 16]);
+        let hash = Sha256Digest::from_bytes([8; 32]);
+        let index = IndexId::from_identity(id);
+        let mut request = request(false);
+        request.configuration = ProjectConfiguration::RefreshReferences {
+            selection: Box::new(RefreshSelection {
+                schema: 1,
+                caller,
+                key: key.clone(),
+                original_result_digest: hash,
+                original_evidence_selection_digest: hash,
+                original_query_digest: hash,
+                mode: RefreshMode::SelectedOnly,
+                selection: CombinedConnectRequest {
+                    schema: 1,
+                    context_key: hash,
+                    namespace: key.namespace,
+                    expected_catalog_revision: CatalogRevision::INITIAL,
+                    grant_id: GrantId::from_identity(id),
+                    expected_grant_revision: CatalogRevision::INITIAL,
+                    project_ids: vec![QueryProjectId::from_identity(id)],
+                    index_ids: Some(vec![index]),
+                },
+                members: vec![RefreshMember {
+                    index_id: index,
+                    original_publication: RevisionToken {
+                        incarnation: id,
+                        generation: 1,
+                        revision: hash,
+                    },
+                    sources: vec![RefreshSource {
+                        source_root_id: SourceRootId::from_identity(id),
+                        source_relative_path: "one.txt".into(),
+                        canonical_root: selected.root.clone(),
+                        indexed_hash: hash,
+                    }],
+                }],
+            }),
+        };
+        request.validate()?;
+        assert!(
+            registry
+                .enqueue_configuration(selected.binding, caller, &key, &request, hash)
+                .is_err()
+        );
+        assert!(registry.request_receipt(caller, &key)?.0.is_none());
+        assert!(!registry.pending_reference_refresh(selected.binding)?);
+        assert!(registry.next_pending_job(selected.binding)?.is_none());
+        assert_eq!(registry.job(other_job.id)?.state, JobState::Pending);
+        assert_eq!(
+            registry
+                .next_pending_job(other.binding)?
+                .context("unrelated job missing")?
+                .id,
+            other_job.id
+        );
+        Ok(())
     }
     #[test]
     fn unregister_is_atomic_preserves_other_projects_and_old_request_replay_cannot_unregister_a_reregistration()

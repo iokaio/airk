@@ -463,6 +463,107 @@ impl CurrentUpdater<'_> {
             .store
             .current_build_read(self.scope, self.writer)
             .context("open current update read")?;
+        let mut control_resources = resources.to_vec();
+        let control_key = airk_core::source_control::CONTROL_BASELINE_RESOURCE;
+        if !resources.iter().any(|resource| resource.key == control_key) {
+            let pure_semantic = changes.is_empty()
+                && self.configuration.is_none()
+                && (semantic_inputs.is_some() || !resources.is_empty())
+                && resources.iter().all(|resource| {
+                    matches!(
+                        resource.key.as_str(),
+                        "semantic-work" | "semantic-policy" | "embedding-cache"
+                    )
+                });
+            let mut carry = None;
+            if pure_semantic && let Some(reference) = read.resource_reference(control_key)? {
+                ensure!(
+                    reference.bytes <= airk_core::source_control::MAX_CONTROL_BASELINE_BYTES,
+                    "retained control witness exceeds bound"
+                );
+                let bytes = self.store.read_current_resource(&reference)?;
+                let baseline: airk_core::source_control::SourceControlBaseline =
+                    serde_json::from_slice(&bytes)?;
+                baseline.validate()?;
+                let state = read
+                    .collection_state()?
+                    .context("semantic carry lacks applied configuration")?;
+                let same_configuration = baseline.configuration
+                    == airk_core::identity::framed_digest(
+                        b"airk/refresh-applied-configuration/1",
+                        &[&serde_json::to_vec(&state.configuration)?],
+                    );
+                // A predecessor may preserve unknown resource-map entries.
+                // Never bless such a stale witness through semantic carry.
+                if same_configuration
+                    && baseline
+                        .matches_publication(read.head().scope.incarnation, read.head().sequence)
+                {
+                    if let Some(semantic) = semantic.as_ref() {
+                        ensure!(
+                            serde_json::to_vec(&state.configuration.model)?
+                                == serde_json::to_vec(&Some(semantic.objects.clone()))?
+                                && state.configuration.vector_selection.digest()?
+                                    == semantic.selection.digest()?,
+                            "semantic carry changed model/selection configuration"
+                        );
+                    }
+                    if let Some(inputs) = semantic_inputs {
+                        for input in inputs {
+                            let current = read
+                                .artifact(&input.artifact.path)?
+                                .context("semantic carry source missing")?;
+                            ensure!(
+                                serde_json::to_vec(&current)?
+                                    == serde_json::to_vec(&input.artifact)?,
+                                "semantic carry changed source/extraction/profile binding"
+                            );
+                        }
+                    }
+                    carry = Some(reference);
+                }
+            }
+            control_resources.push(airk_store::current::resources::ResourceChange {
+                key: control_key.into(),
+                reference: carry,
+            });
+        }
+        // Resource bytes are paid by the same reservation as this publication.
+        // The locked base determines the exact successor, before encoding the
+        // witness. Neither a caller-selected token nor the self-containing map
+        // root participates in this binding.
+        if let Some(resource) = control_resources
+            .iter_mut()
+            .find(|resource| resource.key == control_key)
+            && let Some(reference) = resource.reference.as_ref()
+        {
+            ensure!(
+                reference.bytes <= airk_core::source_control::MAX_CONTROL_BASELINE_BYTES,
+                "retained control witness exceeds bound"
+            );
+            let bytes = self.store.read_current_resource(reference)?;
+            let mut baseline: airk_core::source_control::SourceControlBaseline =
+                serde_json::from_slice(&bytes)?;
+            baseline.validate()?;
+            ensure!(
+                serde_json::to_vec(&baseline)? == bytes,
+                "noncanonical retained control baseline"
+            );
+            baseline.bind_publication(
+                read.head().scope.incarnation,
+                read.head()
+                    .sequence
+                    .checked_add(1)
+                    .context("control successor sequence overflow")?,
+            )?;
+            let bytes = serde_json::to_vec(&baseline)?;
+            resource.reference = Some(self.store.retain_current_resource_owned(
+                self.writer,
+                &bytes,
+                self.reservation,
+            )?);
+        }
+        let resources = control_resources.as_slice();
         let trusted_cache = read
             .resource(self.store, "embedding-cache")?
             .as_deref()

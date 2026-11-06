@@ -45,6 +45,7 @@ mod service_freshness;
 pub mod service_inspection;
 pub mod service_projects;
 mod service_publication;
+mod service_reference_refresh;
 pub mod service_resource_observations;
 pub mod service_resources;
 mod shared_models;

@@ -74,7 +74,7 @@ does not promote a subset of a failed/partial request into a successful check.
 Inspector and Checker also reuse native observations, retaining an independent
 unsaved-editor observation instead of hashing the file a second time.
 
-The P9 candidate applies the same native ownership boundary to explicit Strategy
+The P9 implementation applies the same native ownership boundary to explicit Strategy
 saved-source checks, Review Changes and source-open observations. The persisted
 `host.hashSavedFiles` operator name remains compatible, but verification runs
 through the native owner. The extension observes dirty buffers separately and
@@ -150,10 +150,11 @@ budget. A late projection that removes checked evidence cannot retain a dangling
 verification claim and returns `verification_projection_changed`. These are
 nonretryable requests to revise the inputs, not automatic replay instructions.
 
-Selected refresh and multi-index verification are later phases; P4 does not
-refresh sources or extend query scope. See [ADR 003](decisions/003-dated-saved-source-verification.md)
-for the contract and the [implementation ledger](research/implementation-v190.md)
-for measured costs, tests and remaining qualification boundaries.
+Verification itself does not refresh sources or extend query scope. P7 carries
+these receipts across combined members; P12 below adds a separate
+reviewed mutation and requery flow. See [ADR 003](decisions/003-dated-saved-source-verification.md)
+and the [implementation ledger](research/implementation-v190.md) for the dated
+contract, costs and qualification boundaries.
 
 
 Per-step verification requires the raw plan output view, which retains each step's
@@ -192,3 +193,83 @@ passed the frozen/preceding latency gates, and relevance scores stayed exact.
 Report adds intentional saved-byte and metadata work: the final warm-cache small
 file median was 135.76 ms versus 66.67 ms with Off. The phase ledger retains all
 earlier failures, final measurements and remaining platform/physical-I/O limits.
+
+
+## Explicit reference refresh
+
+The accepted local, unpublished 1.8.8 build separates **refresh**, **receipt lookup** and
+**requery**. Reading evidence, verifying saved source bytes, opening a result or
+exporting it does not start indexing. Focused Windows native selection passed
+39 tests, the extension suite passed 776 tests with 19 skips, all 12 final
+release qualification stages passed, and 19 scoped Neo tests passed. Neo
+`cargo clean` exited zero and removed its target. Primary review accepted the
+local phase.
+These results do not qualify a published release or an installed editor.
+
+First-wave review selects references from **one completed live result step and
+one existing index**, with at most 64 distinct source locators. The request must
+also fit its 12-KiB selection and 16-KiB configuration budgets. Long paths or
+metadata can therefore require a smaller selection. Both selected refresh and
+the full fallback require authority for that index's complete configured source
+metadata. Partial Project/path grants, arbitrary imported results and admission
+of several refreshed indexes in one operation are unsupported. The original
+query may include other members; only the explicitly reviewed index is refreshed.
+
+Native admission independently binds the current grant/Project/catalog choice,
+index backing, original publication, source-root identities and hashes, saved
+settings, retained policy and immutable model selection. Copied references and
+webview messages are not authority. Changed scope, settings, publication or
+control provenance requires fresh review. An unsafe selected operation refuses
+with review-required or failed/unknown evidence; it never silently performs a
+full scan. A full fallback requires its own explicit review, and declining it
+submits no broader job.
+
+Selected work revalidates the protected matcher inputs before source capture and
+before publication. Its retained control witness is authenticated and bound to
+one exact incarnation/publication sequence. Trusted source and qualified
+semantic-only successors rebind it under the owning writer. A predecessor that
+preserves the unknown resource across a publication cannot keep that witness
+qualified merely because the old control bytes return. An explicit reviewed
+full pass can qualify it again, including an older unbound witness with otherwise
+identical bytes. This is not an atomic filesystem snapshot or certification of
+all live source files.
+
+Refresh uses existing native Configure jobs and publication ownership. Sources
+remain read-only; retained Lean/Rich policy, original source locations, configured
+model/vector semantics and watch preferences remain separate choices. Accepting
+refresh does not unpause a Project: the job stays pending until explicit unpause.
+Selected work preserves unselected retained payload. Independently requested
+watcher or full-index work remains a different operation. Source completion does
+not imply complete semantic readiness; existing vector continuation rules apply.
+
+A lost response is reconciled through the **exact saved native receipt key**.
+The full acknowledgment retains its accepted configuration, current job outcome
+and saved native result. A missing, expired or pruned receipt is unknown; it is
+not permission to resend a mutation, invent success or discard the old intent.
+Publication without a saved qualified result remains failed/unknown. Cancellation
+and recovery use the existing native job controls and do not add an automatic
+retry loop. Native management owns these operations; MCP continues to expose
+read-only evidence rather than a refresh-administration tool.
+
+After qualified completion, **requery requires a separate confirmation** using
+the saved original query and a fresh valid selection. It produces a new result
+bound to its actual publication. Old snippets, hashes, dates and receipts remain
+historical; the refresh result records that it did not execute the query. Native,
+CLI and MCP evidence reads preserve the complete equivalent result, and native
+receipt reads through the CLI preserve all acknowledgment/result fields.
+
+Workbench's current refresh flow keeps its original query/result evidence in
+memory, separate from ordinary saved session history. Its durable intent journal
+retains bounded metadata and native acknowledgments, not a second persisted copy
+of that evidence. After reload, exact receipt checks remain available, while
+unavailable originals are not reconstructed from reduced cards or history for
+requery. Full details and JSON/Markdown copies retain the native observations;
+explicit exports identify any unavailable original evidence. Stop, trust or
+selection changes prevent further host submission/requery, but do not retract an
+already accepted durable native job. Inspect that job before deciding on a
+separate cancellation or newly reviewed action.
+
+See the [P12 ledger](research/implementation-v190.md#p12--local-phase-checkpoint-6-november-2026)
+for exact source identities, historical failures, accepted local qualification
+and remaining installed/platform checks. The tiny shared-helper fixture does not qualify ONNX/default-provider
+costs, physical power loss or all remote-source behavior.

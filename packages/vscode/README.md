@@ -1,57 +1,31 @@
 # AIRK: Local Search for Coding Agents
 
-P11b's unpublished **1.8.8 working build** adds explicitly reviewed Lean/Rich
-retained profiles. Legacy indexing levels keep their existing meanings and
-defaults; reply projection remains independent. Scoped Windows native/resource,
-release-runtime and focused Mac ARM checks passed, with the limits in the
-implementation ledger. P11b is accepted for unpublished local development. P11a remains accepted for local development.
-P12–P14 and deleted-source recovery remain unfinished.
+The unpublished **1.8.8 manual-test working build** includes accepted local
+P9 permanent exclusions, P10 reviewed index splitting, P11a per-file profile
+reporting and P11b explicit Lean/Rich retained profiles. Existing indexing levels
+and reply defaults keep their meanings. These development checkpoints do not
+constitute a published release or final installed-editor acceptance.
 
-P11a’s [per-file profile family reporting](https://github.com/iokaio/airk/blob/main/docs/profile-family-reporting.md) adds an explicit opt-in to File info. It keeps applied file-profile identity separate from collection policy, preserves scoped unknowns and retains complete native metadata through Workbench details and exports. P10 is accepted for local development. P11a qualification has passed: focused native, Mac ARM, Workbench and actual CLI/console/MCP checks, followed by the required final gates. P11a has passed its local phase checks and is accepted for unpublished local development. The working version remains **1.8.8**, unpublished.
+P12 adds accepted local **reviewed reference refresh and separate requery**.
+Its focused Windows native selection passed **39 tests**, including actual
+native/CLI/MCP shared-helper, Lean/Rich, pause, lost-reply and restart paths.
+The 12-stage Windows release qualification and 19 scoped Neo tests passed;
+Neo testing ended with `cargo clean` and its target removed. Primary review
+accepted this unpublished local phase. The first wave refreshes one existing index
+from eligible references and requires full-index metadata authority; partial
+Project/path grants are unsupported. Evidence reads and source verification do
+not start indexing. P13 ranking/diversity remains conditional; P14, deleted-source
+recovery and the final local test installer remain pending.
 
-The unpublished **1.8.8 P10 working build** implements [reviewed index splitting](https://github.com/iokaio/airk/blob/main/docs/index-splitting.md): independent destination storage, inherited source restrictions, sealed build, reviewed Project cutover and exact recovery through cleanup and funding acknowledgment. Frozen Windows qualification passed all **22 gates**, including the full workspace and actual CLI/MCP process checks; focused Mac ARM batches also passed and cleaned their Cargo targets. **P10 has passed its local phase checks; the working build remains unpublished.** See the [exact evidence and platform/resource limits](https://github.com/iokaio/airk/blob/main/docs/research/implementation-v190.md#p10--local-phase-checkpoint-5-november-2026).
-
-The unpublished **1.8.8 P9 working build** adds reviewed [permanent source exclusions](https://github.com/iokaio/airk/blob/main/docs/source-policy.md), native read fences, retained-evidence removal and resumable cleanup. Logical removal and physical reclamation have separate observations. Windows workspace/runtime and focused Mac ARM checks passed; qualification limits and pending P11–P14 acceptance are in the [implementation ledger](https://github.com/iokaio/airk/blob/main/docs/research/implementation-v190.md).
-
-The unpublished **1.8.8** P8 working build adds [Recommendations](https://github.com/iokaio/airk/blob/main/docs/recommendations.md): review available, selected and omitted indexes, prefill a temporary query scope, review saved Project defaults and copy catalog-checked agent instructions. Advice keeps missing readiness/cost observations unknown; capability-qualified split review is implemented in P10; permanent exclusions use accepted P9 management. [Validation and limits](https://github.com/iokaio/airk/blob/main/docs/research/implementation-v190.md#p8--recommendations-and-harness-guidance).
-
-P7 implements [combined Project reads](https://github.com/iokaio/airk/blob/main/docs/combined-reads.md) across native, CLI, MCP and Workbench, including plans, sessions, verification and exports. Windows release and Apple Silicon debug native checks passed, along with all 84 unchanged legacy latency gates and 120 Windows fan-out trials. [Evidence and platform limits](https://github.com/iokaio/airk/blob/main/docs/research/implementation-v190.md#p7--combined-retrieval-and-consumers). Working version **1.8.8** remains unpublished.
-
-P6e makes [oversized stdio input](https://github.com/iokaio/airk/blob/main/docs/mcp.md) an explicit bounded failure and uses [qualified Workbench publication comparisons](https://github.com/iokaio/airk/blob/main/docs/workbench/implementation.md) instead of treating unequal tokens as older. It adds no status polling and preserves retained exports. Local qualification and release limits remain in the implementation ledger.
-
-P6d's [source admission changes](https://github.com/iokaio/airk/blob/main/docs/service-freshness.md) give eligible source work priority over pending Vector jobs and yield running Vector turns at safe boundaries. Saved semantic work resumes afterward. Actual Windows and Mac ARM backlog scenarios passed; the implementation ledger records final qualification and remaining platform limits.
-
-P6c's [search execution contract](https://github.com/iokaio/airk/blob/main/docs/search-execution.md) discloses policy-qualified lexical results when the embedding helper is unavailable, preserving strict explicit semantic requests and independent source-verification receipts. Local Windows/Mac ARM gates and all 84 unchanged-bound latency comparisons passed; the ledger records exact coverage and remaining release limits.
-
-**1.8.8 manual-test working build:** native/extension versions and lockfiles are synchronized. The [working-build record](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.8.md) records accepted development phases toward the planned 1.9.0 release. Project/index setup and grants require explicit review. Saved-source verification defaults to Report; see the [controls and limits](https://github.com/iokaio/airk/blob/main/docs/source-verification.md).
-
-Compact discovery now supplies cited evidence to dependent plans and Workbench
-results. Nested plan inputs are advertised as JSON objects. See the candidate
-record for validation and qualification limits.
-
-P6a implements the macOS copied-launcher correction and shared signed
-release producer. Local gates passed, including actual Developer ID signed
-installation and all 60 latency comparisons. The [implementation ledger](https://github.com/iokaio/airk/blob/main/docs/research/implementation-v190.md)
-records remaining notarization, installed-editor and platform gates.
-
-P6b adds durable helper cooldown recovery, measured healthy reset and isolated
-worker-grant repair. Local Windows/Mac ARM gates and all 84 latency comparisons
-passed; see the validation limits in the
-[helper recovery contract](https://github.com/iokaio/airk/blob/main/docs/service-embedding.md#helper-recovery).
-
-**Lean/Rich replies:** select Reply detail in a Workbench tool form, or pass
-`reply_detail` in MCP / `--reply-detail` on CLI read commands. Choices affect
-available evidence in the reply, preserve existing defaults when omitted and
-require no reindex. Rich cannot recreate unretained facts. See the
-[reply guide](https://github.com/iokaio/airk/blob/main/docs/reply-detail.md).
-
-**Evidence guidance:** Workbench explains observed missing or limited evidence
-and suggests a next read without executing tools or changing indexing. See the
-[guide](https://github.com/iokaio/airk/blob/main/docs/evidence-guidance.md).
-
-The [P3 design contracts](https://github.com/iokaio/airk/blob/main/docs/research/contracts-v190/README.md) define Project/index scope, migration and verification safeguards. P6f implements their single-index management and grant path; P4 implemented saved-source verification.
-
-**Inherited 1.8.7 behavior:** CLI and Workbench reads use the MCP handlers and retain their full results, including configured `query_concurrency` in status/diagnostics. This release consolidates all unpublished 1.8.0-1.8.6 storage, startup, retrieval, concurrency and Workbench improvements. See the [consolidated release notes](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.7.md) for current behavior and dated validation.
+The [refresh guide](https://github.com/iokaio/airk/blob/main/docs/source-verification.md#explicit-reference-refresh)
+explains explicit review, exact receipts, memory-only refresh evidence and requery.
+[Retained profiles](https://github.com/iokaio/airk/blob/main/docs/code-indexing-options.md),
+[profile reports](https://github.com/iokaio/airk/blob/main/docs/profile-family-reporting.md),
+[split](https://github.com/iokaio/airk/blob/main/docs/index-splitting.md) and
+[exclusion](https://github.com/iokaio/airk/blob/main/docs/source-policy.md) guides
+keep those controls separate. The [working-build record](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.8.md)
+and [implementation ledger](https://github.com/iokaio/airk/blob/main/docs/research/implementation-v190.md)
+record exact evidence and remaining release limits.
 
 **Find the code and documents behind a feature. Give your coding agent cited evidence, or explore it yourself in AIRK Workbench.**
 

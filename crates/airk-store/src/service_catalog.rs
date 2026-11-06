@@ -39,6 +39,7 @@ pub fn capabilities() -> airk_core::index_catalog::CatalogCapabilities {
         maximum_registry_schema: 12,
         authority_contract: SUPPORTED_AUTHORITY_CONTRACT,
         policy_contract: SUPPORTED_POLICY_CONTRACT,
+        reference_refresh_contract: Some(1),
         production_activation_enabled: upgrade::PRODUCTION_ACTIVATION_ENABLED,
     }
 }
@@ -500,6 +501,79 @@ pub(super) fn validate_existing(connection: &Connection) -> Result<()> {
     );
     validate_catalog_layout(connection)?;
     state(connection)?;
+    Ok(())
+}
+
+/// Atomic counterpart of the native adapter's OS-host/full-scope review.
+/// No source I/O and no authority is minted. The native adapter separately
+/// authenticates the host; this binds its grant/backing/revision to insertion.
+pub(super) fn require_refresh_admission(
+    db: &Connection,
+    project: airk_core::identity::Sha256Digest,
+    selection: &airk_core::catalog_refresh::RefreshSelection,
+) -> Result<()> {
+    selection.validate()?;
+    let current = state(db)?;
+    ensure!(
+        current.activated
+            && current.authority_contract == 1
+            && current.namespace == selection.selection.namespace
+            && current.revision == selection.selection.expected_catalog_revision,
+        "refresh catalog changed before admission"
+    );
+    ensure!(
+        selection.members.len() == 1,
+        "refresh requires one exact member"
+    );
+    let index = operations::index_record(db, selection.members[0].index_id)?;
+    ensure!(
+        !index.tombstone
+            && index.backing.binding == project
+            && index.source_import == airk_core::index_catalog::SourceImportState::Complete,
+        "refresh index backing is not active and complete"
+    );
+    let grant = operations::read_persisted_grant(db, selection.selection.grant_id)?;
+    grant.validate()?;
+    ensure!(
+        !grant.grant.revoked
+            && grant.grant.revision == selection.selection.expected_grant_revision
+            && grant.provenance.kind()
+                == airk_core::grant_provenance::GrantProvenanceKind::UserReviewedProjectGrant,
+        "refresh reviewed grant changed"
+    );
+    let resolved = selection.selection.selection().resolve(&grant.grant)?;
+    let member = resolved
+        .member(index.id)
+        .ok_or_else(|| anyhow::anyhow!("refresh member not in current grant"))?;
+    ensure!(
+        member
+            .memberships
+            .iter()
+            .all(|frozen| frozen.source_revision == index.source_revision
+                && frozen.policy_epoch
+                    == index.policy.as_ref().map_or(0, |policy| policy.epoch.get())
+                && frozen.policy_digest == index.policy.as_ref().map(|policy| policy.digest)),
+        "refresh source/policy binding changed"
+    );
+    let mut statement = db.prepare(
+        "SELECT id FROM index_sources WHERE index_id=?1 AND enabled=1 ORDER BY id LIMIT 18",
+    )?;
+    let roots = statement
+        .query_map([index.id.to_string()], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    ensure!(
+        !roots.is_empty() && roots.len() <= 17,
+        "refresh source inventory unavailable"
+    );
+    for root in roots {
+        let root: airk_core::index_catalog::SourceRootId = root.parse()?;
+        ensure!(
+            member.scope.iter().any(|atom| atom.source_root_id == root
+                && atom.kind == airk_core::index_catalog::PathScope::Subtree
+                && atom.path.is_empty()),
+            "explicit full refresh requires whole-index authority; partial scope cannot widen"
+        );
+    }
     Ok(())
 }
 

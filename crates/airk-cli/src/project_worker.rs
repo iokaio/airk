@@ -668,6 +668,7 @@ pub async fn run() -> Result<()> {
     )?;
     // A staged participant starts as an unprivileged metadata observer. Only
     // its actually claimed native job can attach a private split permit later.
+    let refresh_pending = registry.pending_reference_refresh(init.project)?;
     let split_observer = registry
         .catalog_active_split_for_binding(init.project)?
         .map(|_| Kernel::open_existing_service_observer(&registration))
@@ -681,6 +682,8 @@ pub async fn run() -> Result<()> {
             .is_some_and(|observer| observer.require_unrestricted_read().is_err());
     let kernel = if split_write_fenced {
         split_observer.context("staged participant observer missing")?
+    } else if refresh_pending {
+        Kernel::open_existing_service_observer(&registration)?
     } else {
         Kernel::open_service_collection_for_diagnostics(
             Path::new(&registration.root),
@@ -710,7 +713,7 @@ pub async fn run() -> Result<()> {
         kernel.service_rebuild_receipt()?
     };
     registry.recover_jobs_with_rebuild_receipt(&lease, receipt.as_ref())?;
-    if !split_write_fenced {
+    if !split_write_fenced && !refresh_pending {
         source_configuration::recover(&kernel, &mut registry, &lease, init.engine)?;
     }
     // A crash after the accepted Configure result settles but before catalog
@@ -750,6 +753,7 @@ pub async fn run() -> Result<()> {
     // Recovery is durable desired work, admitted by the service rather than an
     // unaccounted startup replay. Failed recovery leaves the owner reachable.
     if !split_write_fenced
+        && !refresh_pending
         && kernel.service_recovery_required().unwrap_or(false)
         && !registry.source_failure_blocked(init.project)?
     {
@@ -883,6 +887,7 @@ pub async fn run() -> Result<()> {
                             .iter()
                             .any(|reference| reference.job == job.id)
                     });
+                let refresh_job=registry.configuration_work(job.id)?.is_some_and(|work|matches!(work.request.configuration,airk_core::service_configuration::ProjectConfiguration::RefreshReferences {..}));
                 let mut automatic_settled = false;
                 let mut verify_admission = None;
                 let mut completed_maintenance = None;
@@ -931,6 +936,9 @@ pub async fn run() -> Result<()> {
                                 registry.record_configuration_result(&job_lease, job.id, &result)?;
                                 source_completion = Some(prepared);
                                 return Ok(JobOutcome::Succeeded { revision: None });
+                            }
+                            if matches!(work.request.configuration,airk_core::service_configuration::ProjectConfiguration::RefreshReferences {..}) {
+                                return crate::reference_refresh_control::execute(&kernel,&mut registry,&job_lease,job.id);
                             }
                             if work.request.prepare {
                                 work.request.validate()?;
@@ -1523,7 +1531,7 @@ pub async fn run() -> Result<()> {
                         {
                             registry.catalog_record_policy_job(policy.index_id, operation_id)?;
                         }
-                        if !split_job {
+                        if !split_job && !refresh_job {
                             let _ = reconcile_semantic_setup(
                                 &kernel,
                                 &mut registry,

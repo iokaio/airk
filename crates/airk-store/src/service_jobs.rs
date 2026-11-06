@@ -117,7 +117,8 @@ fn pending_source_work(connection: &Connection, project: ProjectBinding) -> Resu
             "SELECT EXISTS(SELECT 1 FROM service_jobs j JOIN projects p ON p.binding=j.project
           WHERE j.project=?1 AND p.registered=1 AND j.state='pending'
           AND (p.paused=0 OR {RUN_WHILE_PAUSED}) AND {}
-          AND EXISTS(SELECT 1 FROM service_job_source source WHERE source.job=j.id)
+          AND (EXISTS(SELECT 1 FROM service_job_source source WHERE source.job=j.id)
+            OR EXISTS(SELECT 1 FROM service_configuration c WHERE c.job=j.id AND json_extract(CAST(c.payload AS TEXT),'$.request.configuration.operation')='refresh_references'))
           AND NOT EXISTS(SELECT 1 FROM service_job_cancellation canceled WHERE canceled.job=j.id))
           OR EXISTS(SELECT 1 FROM service_background b JOIN projects p ON p.binding=b.project
             WHERE b.project=?1 AND b.source_pending=1 AND p.registered=1 AND p.paused=0)",
@@ -131,6 +132,7 @@ fn pending_source_work(connection: &Connection, project: ProjectBinding) -> Resu
 #[derive(Default)]
 struct EnqueueOptions {
     explicit: bool,
+    native_refresh: bool,
     configuration: Option<Box<airk_core::service_configuration::ConfigurationWork>>,
     background_revision: Option<(u64, u64)>,
     audit_revision: Option<(u64, u64)>,
@@ -494,6 +496,7 @@ impl ServiceRegistry {
             !self.configuration_work(id)?.is_some_and(|work| matches!(
                 work.request.configuration,
                 airk_core::service_configuration::ProjectConfiguration::SplitWork { .. }
+                    | airk_core::service_configuration::ProjectConfiguration::RefreshReferences {..}
             )),
             "split work requires exact saved-operation recovery"
         );
@@ -522,6 +525,7 @@ impl ServiceRegistry {
             !matches!(
                 request.configuration,
                 airk_core::service_configuration::ProjectConfiguration::SplitWork { .. }
+                    | airk_core::service_configuration::ProjectConfiguration::RefreshReferences { .. }
             ),
             "split work requires its exact admitted lifecycle"
         );
@@ -542,6 +546,45 @@ impl ServiceRegistry {
         )
     }
 
+    /// Authenticated native adapter must establish current OS host/grant and
+    /// exact backing before this call. This method creates no such authority;
+    /// its transaction preserves the adapter's observed catalog fence.
+    pub fn enqueue_native_reference_refresh(
+        &mut self,
+        project: ProjectBinding,
+        caller: Incarnation,
+        key: &RequestKey,
+        request: &airk_core::service_configuration::ConfigurationRequest,
+        engine: Sha256Digest,
+    ) -> Result<JobRecord> {
+        request.validate()?;
+        let airk_core::service_configuration::ProjectConfiguration::RefreshReferences { selection } =
+            &request.configuration
+        else {
+            anyhow::bail!("native reference refresh request missing");
+        };
+        ensure!(
+            !request.prepare && selection.caller == caller && selection.key == *key,
+            "refresh exact caller/key/request binding changed"
+        );
+        self.enqueue_impl(
+            project,
+            caller,
+            key,
+            JobKind::Configure,
+            EnqueueOptions {
+                native_refresh: true,
+                configuration: Some(Box::new(
+                    airk_core::service_configuration::ConfigurationWork {
+                        engine,
+                        request: request.clone(),
+                    },
+                )),
+                ..Default::default()
+            },
+        )
+    }
+
     fn enqueue_impl(
         &mut self,
         project: ProjectBinding,
@@ -552,6 +595,7 @@ impl ServiceRegistry {
     ) -> Result<JobRecord> {
         let EnqueueOptions {
             explicit,
+            native_refresh,
             configuration,
             background_revision,
             audit_revision,
@@ -567,6 +611,16 @@ impl ServiceRegistry {
         ensure!(
             plan.is_some() || !matches!(kind, JobKind::PlanInspect | JobKind::Repair),
             airk_core::service_maintenance::PlanError::InvalidTransition
+        );
+        let is_refresh = configuration.as_ref().is_some_and(|work| {
+            matches!(
+                work.request.configuration,
+                airk_core::service_configuration::ProjectConfiguration::RefreshReferences { .. }
+            )
+        });
+        ensure!(
+            is_refresh == native_refresh,
+            "refresh requires the authenticated native admission adapter"
         );
         let epoch = i64::try_from(key.epoch).map_err(|_| JobError::KeyExpired)?;
         // Accepted keys remain readable even when every queue slot is occupied.
@@ -641,6 +695,18 @@ impl ServiceRegistry {
                 &transaction,
                 &work.request,
             )?;
+        }
+        if native_refresh {
+            let work = configuration
+                .as_ref()
+                .context("native refresh work missing")?;
+            let airk_core::service_configuration::ProjectConfiguration::RefreshReferences {
+                selection,
+            } = &work.request.configuration
+            else {
+                unreachable!()
+            };
+            super::catalog::require_refresh_admission(&transaction, project, selection)?;
         }
         let (namespace, current): (String, i64) = transaction.query_row(
             "SELECT incarnation,request_epoch FROM service_meta WHERE id=1",
@@ -1019,6 +1085,9 @@ impl ServiceRegistry {
                 ..Default::default()
             },
         )
+    }
+    pub fn pending_reference_refresh(&self, project: ProjectBinding) -> Result<bool> {
+        Ok(self.connection.query_row("SELECT EXISTS(SELECT 1 FROM service_jobs j JOIN service_configuration c ON c.job=j.id WHERE j.project=?1 AND j.state IN('pending','running') AND json_extract(CAST(c.payload AS TEXT),'$.request.configuration.operation')='refresh_references')",[project.to_string()],|row|row.get(0))?)
     }
     pub fn job(&self, id: Sha256Digest) -> Result<JobRecord> {
         record(&self.connection, id)

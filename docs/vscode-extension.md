@@ -1,5 +1,19 @@
 # Native VS Code extension
 
+**1.8.8 P12 accepted local development:** Workbench can review refresh of eligible
+references from one completed live result step and one index, then check the
+exact native receipt and separately confirm requery. The first wave requires
+full-index metadata authority; partial Project/path grants are unsupported.
+Refresh evidence for this flow stays in memory: after reload, its receipt can
+still be checked but unavailable originals are not reconstructed for requery.
+Stop, trust or selection changes prevent further host submission/requery; they
+do not undo an already accepted durable native job. Reading, verification and
+export remain separate from indexing. See the [controls and limits](source-verification.md#explicit-reference-refresh).
+Focused Windows native and UI tests, all 12 final release qualification stages
+and 19 scoped Neo tests passed; Neo cleanup completed successfully. Primary
+review accepted the local phase. The build is unpublished and installed-editor
+qualification remains separate.
+
 **1.8.4 development candidate:** Workbench's **+ → Tool forms** exposes indexed language/evidence-type filters, explicit name matching, reference ordering/paging, file summaries and count precision as typed controls. Default/Yes/No preserves optional booleans; blank fields retain the existing native default. Structured results show definition pointers and qualified written method targets with explicit **Inspect** and **Find callers** actions. Continuation preserves original selectors/publication, and both JSON and Markdown exports retain discovery metadata. These are local evidence operations; they do not execute tests, resolve every caller or modify sources. See [Workbench details](workbench/implementation.md#184-bounded-discovery-controls) and the [1.8.4 qualification record](releases/release-1.8.7.md#candidate-1-8-4).
 
 **1.8.2 installed responsiveness:** the owner approved quicker loading and responsive requests in the normal editor. Five fresh installed-launcher sessions returned available first statuses without timeouts; median initialization through confirmed status was 2.29 seconds, with a 7.31-second first-session outlier. See the [performance report and causal analysis](performance-improvements-1.8.2.md) for the unmatched historical comparison, UI transfer reductions, native regressions and qualification limits.

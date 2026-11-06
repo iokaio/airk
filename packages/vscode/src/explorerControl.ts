@@ -4,6 +4,7 @@ import type { ConnectionState, ProjectSummary, SemanticState } from './explorerC
 import type { RecordValue } from './serviceClient';
 import type { ServiceConsoleState } from './serviceConsoleView';
 import { displayPath } from './explorerSource';
+import type {ReferenceRefreshControl} from './workbenchReferenceRefresh';
 import type { CatalogControl } from './indexingCatalogController';
 
 /**
@@ -12,7 +13,7 @@ import type { CatalogControl } from './indexingCatalogController';
  * retries, confirmations and page-scoped validation behave exactly as they do today.
  */
 export interface ControlSource {
-    readonly controller: { readonly state: ServiceConsoleState; readonly observationIdentity?: string } & Partial<CatalogControl>;
+    readonly controller: { readonly state: ServiceConsoleState; readonly observationIdentity?: string } & Partial<CatalogControl> & Partial<ReferenceRefreshControl>;
     run(action: string, fields?: Record<string, unknown>): Promise<void>;
     retain(): { dispose(): void };
     onDidChangeState(listener: (state: ServiceConsoleState) => void): { dispose(): void };

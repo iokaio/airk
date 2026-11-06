@@ -8,6 +8,10 @@ mod read_retry;
 mod permanent_trim;
 
 #[cfg(feature = "embedding-worker")]
+#[path = "combined_reads/reference_refresh.rs"]
+mod reference_refresh;
+
+#[cfg(feature = "embedding-worker")]
 #[path = "combined_reads/retention.rs"]
 mod retention;
 #[path = "combined_reads/split.rs"]
