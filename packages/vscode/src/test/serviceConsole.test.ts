@@ -805,6 +805,61 @@ test('catalog known authority-fence refusal remains truthful and does not strand
     finally{f.controller.dispose();}
 });
 
+test('an untrusted status poll explains trust while preserving its diagnostic code',async()=>{
+    const f=fixture();
+    try{
+        f.setTrusted(false);await f.controller.refresh();
+        assert.match(f.controller.state.message!,/Workspace trust is required/);
+        assert.equal(f.controller.state.bootstrap.code,'runtime_client_no_longer_authorized');
+        assert.equal(f.sent.length,0,'trust denial starts no native request');
+        f.setTrusted(true);await f.controller.refresh();assert.equal(f.controller.state.connected,true);
+        assert.equal(f.controller.state.message,undefined);assert.equal(f.controller.state.bootstrap.code,undefined);
+    }finally{f.controller.dispose();}
+});
+
+test('connected trust loss retains native metadata provenance and clears only after healthy restoration',async context=>{
+    const f=fixture();
+    try{
+        await f.controller.refresh();assert.equal(f.controller.state.connected,true);
+        const value=structuredClone(f.controller.state.bootstrap.value),checkedAt=f.controller.state.bootstrap.checkedAt,sent=f.sent.length;
+        f.setTrusted(false);await f.controller.refresh();
+        assert.equal(f.sent.length,sent,'trust loss submits no native observation');
+        assert.match(f.controller.state.message!,/Workspace trust is required/);
+        assert.equal(f.controller.state.connected,false);assert.equal(f.controller.state.health.state,'cached');
+        assert.equal(f.controller.state.bootstrap.state,'failed');
+        assert.equal(f.controller.state.bootstrap.code,'runtime_client_no_longer_authorized');
+        assert.deepEqual(f.controller.state.bootstrap.value,value);assert.equal(f.controller.state.bootstrap.checkedAt,checkedAt);
+        f.setTrusted(true);await f.controller.refresh();
+        assert.equal(f.controller.state.connected,true);assert.equal(f.controller.state.health.state,'live');
+        assert.equal(f.controller.state.message,undefined);assert.equal(f.controller.state.bootstrap.code,undefined);
+        assert.equal(f.controller.state.bootstrap.state,'cached');
+        assert.deepEqual(f.controller.state.bootstrap.value,value);assert.equal(f.controller.state.bootstrap.checkedAt,checkedAt);
+        f.setTrusted(false);await f.controller.refresh();f.setTrusted(true);
+        const transport=f.host.runtime.client(f.host.runtime.binding({},'/install')).transport,request=transport.request.bind(transport);
+        const events=context.mock.method(transport,'request',async(method:unknown)=>{
+            if(typeof method!=='string'&&Object.keys(record(method))[0]==='events')throw new ServiceError('event_cursor_expired');
+            return request(method);
+        });
+        await f.controller.refresh();
+        assert.equal(f.controller.state.message,'event_cursor_expired','a different failed observation keeps its own cause');
+        assert.equal(f.controller.state.bootstrap.code,'runtime_client_no_longer_authorized','incomplete restoration retains the prior authorization failure');
+        events.mock.restore();await f.controller.refresh();
+        assert.equal(f.controller.state.bootstrap.code,undefined);assert.equal(f.controller.state.bootstrap.state,'cached');
+        assert.equal(f.controller.state.message,'event_cursor_expired','clearing authorization does not erase another observation message');
+        assert.deepEqual(f.controller.state.bootstrap.value,value);assert.equal(f.controller.state.bootstrap.checkedAt,checkedAt);
+    }finally{f.controller.dispose();}
+});
+
+test('authorization failure in a trusted workspace keeps the genuine error',async()=>{
+    const f=fixture();
+    f.host.runtime.discover=async()=>{throw new ServiceError('runtime_client_no_longer_authorized');};
+    try{
+        await f.controller.refresh();
+        assert.equal(f.controller.state.message,'runtime_client_no_longer_authorized');
+        assert.equal(f.controller.state.bootstrap.code,'runtime_client_no_longer_authorized');
+    }finally{f.controller.dispose();}
+});
+
 function fixture(){
     let trusted=true,fail=false,lastKind='inspect';const sent:unknown[]=[],values=new Map<string,unknown>(),copied:string[]=[];
     const row={project:{registration:{binding:project,root:'/sensitive/<source>',data_root:'/private/data',collection:'<script>name</script>'},paused:false,fencing_generation:1},progress:null,inspection:null};

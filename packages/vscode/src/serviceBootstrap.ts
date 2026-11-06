@@ -179,6 +179,24 @@ export async function verifyBundledRuntime(extensionPath:string,version:string,
     if(payload[main]!==files[main]||payload[helper]!==files[helper]||!files[main]||!files[helper]){throw new ServiceError('runtime_pair_missing');}
     return {main:path.join(source,main),helper:path.join(source,helper),source,digest,version,platform};
 }
+/** Early UX only: native runtime ownership and ancestor checks remain authoritative. */
+export function validateRuntimeInstallDirectory(installDir:string,
+    metadata:{isDirectory():boolean;isSymbolicLink():boolean;uid:number;mode:number},
+    platform:string=process.platform,effectiveUid:number|undefined=process.geteuid?.()):void {
+    if(!metadata.isDirectory()||metadata.isSymbolicLink())throw new ServiceError('unsafe_runtime_install_location');
+    if(platform==='win32')return;
+    if(effectiveUid===undefined||metadata.uid!==effectiveUid){
+        const error=new ServiceError('runtime_install_directory_wrong_owner');
+        error.message=`AIRK installation directory ${JSON.stringify(installDir)} is not owned by the current effective user. Choose a directory you own or a new, nonexistent directory. Changing permissions alone cannot fix ownership.`;
+        throw error;
+    }
+    if((metadata.mode&0o077)!==0){
+        const quoted="'"+installDir.replace(/'/g,"'\"'\"'")+"'";
+        const error=new ServiceError('runtime_install_directory_not_private');
+        error.message=`AIRK installation directory ${JSON.stringify(installDir)} has mode ${(metadata.mode&0o777).toString(8)} with group or other access. Make this user-owned directory private with chmod 700 ${quoted}, or choose a new, nonexistent directory. AIRK will not change its permissions automatically.`;
+        throw error;
+    }
+}
 export class RuntimeHost {
     private bundle?:Promise<VerifiedBundle>;
     private preparing?:Promise<RuntimeBinding>;
@@ -267,8 +285,8 @@ export class RuntimeHost {
         if(location.protocol!==1){throw new ServiceError('runtime_locator_protocol_mismatch');}
         const installDir=this.options.installDir??safePath(location.install_dir);
         const observation:BootstrapObservation={bundle,installDir,location,installed:false};
-        try {const metadata=await fs.lstat(installDir);if(!metadata.isDirectory()||metadata.isSymbolicLink()){throw new ServiceError('unsafe_runtime_install_location');}}
-        catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return observation;throw error;}
+        try {const metadata=await fs.lstat(installDir);this.active();validateRuntimeInstallDirectory(installDir,metadata);}
+        catch(error){this.active();if((error as NodeJS.ErrnoException).code==='ENOENT')return observation;throw error;}
         observation.installed=true;
         try {observation.inspection=await this.invoke(bundle.main,['runtime','inspect','--install-dir',installDir]);}
         catch {observation.error='runtime_selection_unavailable';}

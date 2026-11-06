@@ -4,8 +4,67 @@ import { test } from 'node:test';
 import { serviceTestHost } from './serviceTestHost';
 import { renderServiceDashboard } from '../serviceDashboard';
 import { RuntimeHost } from '../serviceBootstrap';
+import { ServiceWorkspace } from '../serviceWorkspace';
 import { ServiceError } from '../serviceClient';
 import * as path from 'node:path';
+
+async function startupState(f:Awaited<ReturnType<typeof serviceTestHost>>,requestId:string){
+    await f.commands.get('airk.explorer.open')!();
+    const panel=f.panels.find(panel=>panel.viewType==='airk.explorer');assert.ok(panel);
+    await panel.send({v:1,type:'ready',requestId});
+    return panel.posted.filter((entry:any)=>entry.type==='state').at(-1)?.state.startup;
+}
+
+test('successful explicit setup clears an earlier failed startup without creating indexes',async context=>{
+    let release!:()=>void;const discoveryGate=new Promise<void>(resolve=>{release=resolve;});
+    const f=await serviceTestHost(context,{automatic:true,deferStartup:true,discoveryGate,registered:false});
+    try{
+        f.state.down=true;release();await f.api.whenReady();
+        assert.equal((await startupState(f,'failed-startup'))?.failed,true);
+        const failures=f.calls.filter(value=>value.startsWith('Automatic installation failed:')).length;assert.ok(failures>0);
+        f.state.down=false;await f.commands.get('airk.setUp')!();
+        assert.equal(await startupState(f,'successful-retry'),undefined);
+        assert.equal(f.calls.filter(value=>value.startsWith('Automatic installation failed:')).length,failures,'recorded failures remain in output');
+        assert.equal(f.registrations.size,0);assert.equal(f.writes.filter(value=>value.reserve_project||value.enqueue).length,0);
+    }finally{release();await f.close();}
+});
+
+test('failed setup stays visible through missing-runtime refresh until successful setup',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,fresh:true,registered:false});
+    const discover=RuntimeHost.prototype.discover;
+    context.mock.method(RuntimeHost.prototype,'discover',async function(this:RuntimeHost){
+        const value=await discover.call(this);
+        return f.state.down?{...value,installed:false,inspection:undefined}:value;
+    });
+    try{
+        f.state.down=true;await f.commands.get('airk.setUp')!();
+        assert.match(f.statusBar.text,/setup failed/);
+        await f.refreshFolders();assert.match(f.statusBar.text,/setup failed/,'refresh must not replace failure with neutral setup text');
+        f.state.down=false;await f.commands.get('airk.setUp')!();
+        assert.doesNotMatch(f.statusBar.text,/setup failed/);
+        f.state.down=true;await f.commands.get('airk.setUp')!();assert.match(f.statusBar.text,/setup failed/);
+        f.state.installedVersion='1.4.1';f.extensionsChanged();await new Promise(resolve=>setImmediate(resolve));
+        await f.refreshFolders();assert.match(f.statusBar.text,/Reload to finish update/,'pending interface update keeps priority over setup failure');
+    }finally{await f.close();}
+});
+
+test('healthy automatic reconnect clears resolved preparation failure while failed retry remains visible',async context=>{
+    let release!:()=>void;const discoveryGate=new Promise<void>(resolve=>{release=resolve;});
+    const f=await serviceTestHost(context,{automatic:true,deferStartup:true,discoveryGate,registered:false});
+    const preparation=context.mock.method(ServiceWorkspace.prototype,'reconcileStartup',async()=>{throw new ServiceError('project_metadata_unavailable');});
+    try{
+        release();await f.api.whenReady();assert.equal((await startupState(f,'preparation-failed'))?.failed,true);
+        assert.ok(f.calls.some(value=>value.includes('installation is complete. Project preparation needs attention')));
+        await f.commands.get('airk.setUp')!();
+        assert.equal((await startupState(f,'retry-still-failed'))?.failed,true,'runtime health cannot erase unresolved preparation failure');
+        preparation.mock.restore();const ensures=f.state.ensured,progress=f.progressRuns.length;
+        await f.refreshFolders();
+        assert.ok(f.calls.some(value=>value.includes('Connected to AIRK.')));
+        assert.equal(await startupState(f,'healthy-reconnect'),undefined);
+        assert.equal(f.state.ensured,ensures);assert.equal(f.progressRuns.length,progress,'healthy reconnect does not rerun installation');
+        assert.equal(f.registrations.size,0);assert.equal(f.writes.filter(value=>value.reserve_project||value.enqueue).length,0);
+    }finally{release();await f.close();}
+});
 
 test('an installed update keeps one reload action visible and fences older installation attempts',async context=>{
     const f=await serviceTestHost(context,{automatic:true});

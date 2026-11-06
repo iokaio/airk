@@ -38,6 +38,45 @@ test('removal reverses only owned blocks, keeps user edits and deletes only file
     assert.deepEqual(again.removed, []);
 });
 
+for (const defaultsFirst of [true, false]) {
+    test(`uninstall merges profile creation receipts with default candidates (${defaultsFirst ? 'defaults first' : 'receipts first'})`, async context => {
+        const root = await fixture(context), home = path.join(root, 'home'), storage = path.join(path.sep, 'opt', 'airk-fixture-storage');
+        await fs.mkdir(home);
+        const [current] = ownedCommandDirectories(storage), touched: ShellTouch[] = [];
+        const env = { SHELL: '/bin/zsh', XDG_CONFIG_HOME: path.join(home, '.config') };
+        assert.deepEqual(await configureShellPath(current, home, env, 'all', touched), []);
+        const created = touched.filter(entry => entry.created).map(entry => entry.file);
+        for (const name of ['.profile', '.zprofile', '.zshrc']) { assert.ok(created.includes(path.join(home, name))); }
+        const defaults = defaultProfiles(home, env);
+        // extensionUninstall supplies defaults first; either order must retain
+        // the actual setup receipt's ownership before editing the file once.
+        const profiles = defaultsFirst ? [...defaults, ...touched] : [...touched, ...defaults];
+        const removed = await removeShellIntegration(storage, profiles, 'linux', { wrappers: false });
+        assert.deepEqual(removed.preserved, []);
+        assert.equal(removed.removed.length, created.length, 'each created profile is processed once');
+        for (const file of created) { await assert.rejects(fs.access(file), { code: 'ENOENT' }, file); }
+        assert.deepEqual((await removeShellIntegration(storage, profiles, 'linux', { wrappers: false })).removed, []);
+    });
+}
+
+test('duplicate uninstall candidates preserve preexisting empty profiles and user content', async context => {
+    const root = await fixture(context), home = path.join(root, 'home'), storage = path.join(path.sep, 'opt', 'airk-fixture-storage');
+    await fs.mkdir(home);
+    const userContent = '# existing startup settings\nexport KEEP=yes\n';
+    await fs.writeFile(path.join(home, '.profile'), '');
+    await fs.writeFile(path.join(home, '.zshrc'), userContent);
+    const [current] = ownedCommandDirectories(storage), touched: ShellTouch[] = [];
+    const env = { SHELL: '/bin/zsh', XDG_CONFIG_HOME: path.join(home, '.config') };
+    assert.deepEqual(await configureShellPath(current, home, env, 'all', touched), []);
+    const addedContent = 'export KEEP_CREATED=yes\n';
+    await fs.appendFile(path.join(home, '.bashrc'), addedContent);
+    const removed = await removeShellIntegration(storage, [...defaultProfiles(home, env), ...touched], 'linux', { wrappers: false });
+    assert.deepEqual(removed.preserved, []);
+    assert.equal(await fs.readFile(path.join(home, '.profile'), 'utf8'), '', 'a preexisting empty file is retained');
+    assert.equal(await fs.readFile(path.join(home, '.zshrc'), 'utf8'), userContent);
+    assert.equal(await fs.readFile(path.join(home, '.bashrc'), 'utf8'), addedContent, 'user content keeps an AIRK-created file');
+});
+
 test('wrapper removal deletes the owned wrapper, can keep it for VS Code terminals and preserves an unrecognized command', async context => {
     const root = await fixture(context), storage = path.join(root, 'storage');
     if (process.platform === 'win32') { context.mock.method(native, 'runSystemText', async () => '{"removed":0}'); }

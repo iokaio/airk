@@ -125,7 +125,11 @@ export async function removeShellIntegration(storage: string, profiles: readonly
         if (removed > 0) { result.removed.push(`Removed ${removed} AIRK entr${removed === 1 ? 'y' : 'ies'} from the user PATH.`); }
     } else {
         const blocks = directories.flatMap(directory => [posixBlock(directory), fishBlock(directory)]);
-        for (const { file, created } of profiles) {
+        // Uninstall supplies default candidates before creation receipts. Merge
+        // ownership first so removing a block cannot discard a later receipt.
+        const profilesByFile = new Map<string, boolean>();
+        for (const { file, created } of profiles) { profilesByFile.set(file, (profilesByFile.get(file) ?? false) || created); }
+        for (const [file, created] of profilesByFile) {
             try {
                 const { changed, message } = await removeProfileBlocks(file, blocks, created);
                 if (changed) { result.removed.push(`Removed AIRK PATH block from ${file}`); }

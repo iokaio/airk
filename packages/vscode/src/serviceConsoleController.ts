@@ -12,6 +12,8 @@ import { sourceChangeObservation, indexSetupObservation, validateSourceMutationS
 import { consoleAction, ConsoleObservation, diagnosticPreview, ServiceConsoleState } from './serviceConsoleView';
 import { SplitApplyIntent, SplitRecoverIntent, SplitReview, isSplitIntent, splitTerminal, validateSplitApply, validateSplitContinuity, validateSplitRecover, validateSplitSelection, validateSplitSnapshot } from './indexingSplit';
 
+const WORKSPACE_TRUST_MESSAGE='Workspace trust is required before AIRK can connect. Trust this workspace, then review AIRK setup and status.';
+
 export interface ConsoleHost {
     version:string; authority:string; storage:IntentStorage;
     runtime:Pick<RuntimeHost,'discover'|'binding'|'ensure'|'client'|'snapshot'|'repair'|'prepareConfiguration'|'reviewTransition'|'transition'>;
@@ -594,18 +596,36 @@ export class ServiceConsoleController {
     }
     async refresh(automatic=false):Promise<void>{
         if(this.disposed||this.state.busy)return;
+        const authorizationFailed=this.lastPollFailure==='runtime_client_no_longer_authorized'||this.state.bootstrap.code==='runtime_client_no_longer_authorized';
         this.pollDeadline=Date.now()+15000;this.state.busy=true;this.publish();
-        try{this.authorized();if(!this.client)await this.discover();await this.observe(automatic);this.lastPollFailure=undefined;}
+        try{
+            this.authorized();
+            if(this.state.message===WORKSPACE_TRUST_MESSAGE)this.state.message=undefined;
+            if(!this.client)await this.discover();await this.observe(automatic);
+            if(authorizationFailed&&this.state.connected&&this.state.health.state==='live'){
+                if(this.state.bootstrap.code==='runtime_client_no_longer_authorized')
+                    this.state.bootstrap={...this.state.bootstrap,state:this.state.bootstrap.value?'cached':'unavailable',code:undefined};
+                if(this.state.message==='runtime_client_no_longer_authorized')this.state.message=undefined;
+            }
+            this.lastPollFailure=undefined;
+        }
         catch(error){
             if(this.lastPollFailure!==code(error)){
                 this.lastPollFailure=code(error);void this.host.diagnosticFailure?.('status_poll',error,this.bootstrap).catch(()=>{});
             }
             this.state.message=code(error);
+            if(code(error)==='runtime_client_no_longer_authorized'){
+                this.disconnected();
+                // This poll observed no new native metadata. Retain its original
+                // value/time while disclosing the current authorization failure.
+                this.state.bootstrap={...this.state.bootstrap,state:'failed',code:code(error)};
+                if(!this.disposed&&!this.host.trusted())this.state.message=WORKSPACE_TRUST_MESSAGE;
+            }
             if(code(error)==='status_poll_timed_out'){
                 this.disconnected();this.state.health={...this.state.health,state:'failed',code:'status_poll_timed_out'};
                 this.state.message='Status check timed out. Reconnecting automatically; current indexing progress is unconfirmed.';
             }
-            if(!this.client)this.state.bootstrap={...this.state.bootstrap,state:'failed',code:code(error),checkedAt:Date.now()};
+            if(!this.client&&code(error)!=='runtime_client_no_longer_authorized')this.state.bootstrap={...this.state.bootstrap,state:'failed',code:code(error),checkedAt:Date.now()};
         }
         finally{this.pollDeadline=undefined;this.state.busy=false;this.publish();this.releaseIdle();}
     }

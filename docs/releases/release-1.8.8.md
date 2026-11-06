@@ -116,6 +116,44 @@ VS Code host qualification. Original Mac/debug source identities, historical
 corpus deadline failure, unselected 100k/Linux coverage and other P14 limits
 remain as recorded. Manual acceptance and release promotion remain separate.
 
+### 6 November 2026 - setup and uninstall follow-up
+
+This extension-only follow-up addresses the setup and uninstall issues reported
+by omar16100 in [PR #60](https://github.com/iokaio/airk/pull/60), adapted to the
+current explicit Index/Project setup and scope-selection contracts.
+
+- Successful setup and healthy reconnection clear obsolete failed-startup state;
+  current failures remain visible without hiding reload, Stop or native-execution controls.
+- Untrusted-workspace and empty Workbench messages explain the next user action
+  while diagnostic authorization codes remain available.
+- Unix install-directory guidance distinguishes foreign ownership from group/other
+  permissions. Native ownership checks remain authoritative; setup never changes
+  a directory's permissions automatically.
+- Shell-profile cleanup merges creation receipts before editing each file, removes
+  only empty files AIRK created, and preserves user content and unsafe/unknown files.
+- VS Code controls uninstall-hook scheduling. Another restart is conditional on
+  pending removal; a missing cleanup receipt never establishes success.
+
+The existing maintainer-requested working version remains **1.8.8**. These changes
+introduce no native protocol, Rust dependency or permission relaxation.
+
+Selected follow-up validation passed: TypeScript/webview compilation; the full
+87-file Windows Node suite (**828 passed, 4 skipped**, 832 selected); and the
+script suite (**480 selected, 9 skipped**). The four owning suites passed on
+Windows (**158 passed, 1 skipped**) and the Mac Neo over saved SSH (**156 passed,
+3 skipped**), including the actual POSIX directory-permission case on Mac.
+Windows used Node **24.21.0** and Neo used **26.3.1**; these runs do not establish
+qualification on the documented pinned Node version. Neo `cargo clean` exited
+zero after testing and its owned target was absent.
+
+All **968 native inputs** and **675 retained runtime files** matched their prior
+identities, so the optimized native pair was reused with its original compiled
+identity. No fresh Rust build, Clippy or native workspace campaign was run for
+this extension-only change. Version, repository and whitespace checks passed.
+The corrected local Windows VSIX was packaged and its **77 compiled files** and
+**675 runtime files** verified. Actual installed-editor uninstall scheduling,
+Linux and release publication remain separate qualification.
+
 ## Retained local phase checkpoints
 
 The unpublished **1.8.8 manual-test working build** includes accepted local

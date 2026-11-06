@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { automaticUpgrade, NativeRunner, RuntimeHost, RuntimeOptions, verifyBundledRuntime } from '../serviceBootstrap';
+import { automaticUpgrade, NativeRunner, RuntimeHost, RuntimeOptions, validateRuntimeInstallDirectory, verifyBundledRuntime } from '../serviceBootstrap';
 import { RecordValue, ServiceClient, ServiceError, record } from '../serviceClient';
 import { nativePayloadDirectory } from './nativeServiceFixture';
 import { LegacyRetirementSession } from '../runtimeLegacyRetirement';
@@ -137,7 +137,7 @@ test('Mac bundle verification resolves the same two native roles and refuses an 
 });
 
 async function transitionFixture(version='1.4.0'){
-    const f=await fixture(undefined,version),install=path.join(f.root,'install');await fs.mkdir(install);
+    const f=await fixture(undefined,version),install=path.join(f.root,'install');await fs.mkdir(install,{mode:0o700});
     await fs.mkdir(path.join(install,'control'));
     const calls:string[][]=[];let active='ab'.repeat(32),pending:RecordValue|null=null,candidateVersion=version,selectedVersion=version;
     const inspection=()=>({selection:{active,previous:'cd'.repeat(32)},executable:path.join(install,'runtimes',active,f.main),launcher:path.join(install,'airk-launcher'),
@@ -330,7 +330,7 @@ test('invalid trusted payloads fail before any native invocation or user install
 });
 
 test('damaged selected payload exposes saved metadata but cannot be launched or silently restaged',async()=>{
-    const f=await fixture(),install=path.join(f.root,'install'),calls:string[][]=[];await fs.mkdir(install);
+    const f=await fixture(),install=path.join(f.root,'install'),calls:string[][]=[];await fs.mkdir(install,{mode:0o700});
     const run:NativeRunner=async(command,args)=>{
         assert.equal(command,path.join(f.source,f.main),'only the verified distribution runs');calls.push(args);
         switch(args[1]){
@@ -379,7 +379,7 @@ test('discovery does not install/start and concurrent first use shares one appro
     const run:NativeRunner=async(_command,args)=>{calls.push([...args]);switch(args[1]){
         case'self-test':return {protocol:1,version:'1.4.0',self_test:'passed',metadata_console:1};
         case'location':return {protocol:1,install_dir:install};
-        case'stage':assert.equal(args[args.indexOf('--approved-sha256')+1],f.digest);await fs.mkdir(install);return {};
+        case'stage':assert.equal(args[args.indexOf('--approved-sha256')+1],f.digest);await fs.mkdir(install,{mode:0o700});return {};
         case'activate':selected=true;return {};
         case'inspect':assert.ok(selected);return inspection();
         case'diagnose':return {live_service_health:'not_checked'};
@@ -406,7 +406,7 @@ test('runtime bootstrap rechecks authorization after asynchronous native observa
     }finally {await f.cleanup();}
 });
 test('managed policy conflicts do not stage payloads, change a pin or start a competing owner',async()=>{
-    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install);const calls:string[][]=[];
+    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install,{mode:0o700});const calls:string[][]=[];
     const options:RuntimeOptions={channel:'stable',installDir:install,managed:{source:f.source,approvedSha256:f.digest,lifecycle:'external'}};
     const run:NativeRunner=async(_command,args)=>{calls.push(args);if(args[1]==='self-test')return {protocol:1,version:'1.4.0',self_test:'passed',metadata_console:1};
         if(args[1]==='location')return {protocol:1,install_dir:install};if(args[1]==='inspect')return {selection:{active:f.digest},managed_policy:null};return {};};
@@ -419,7 +419,7 @@ test('managed policy conflicts do not stage payloads, change a pin or start a co
 });
 
 test('automatic bootstrap respects an approved same-version pin and a persistent explicit stop',async()=>{
-    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install);
+    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install,{mode:0o700});
     const pinned='ef'.repeat(32),calls:string[][]=[];let stopped=true;
     const run:NativeRunner=async(_command,args)=>{
         calls.push(args);switch(args[1]){
@@ -445,7 +445,7 @@ test('automatic bootstrap respects an approved same-version pin and a persistent
 });
 
 test('managed agent setup prepares a user client launcher while preserving external lifecycle ownership',async()=>{
-    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install);
+    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install,{mode:0o700});
     const calls:string[][]=[];let launcher:string|null=null;
     const approval={version:'1.4.0',manifest_sha256:f.digest,verification_basis:'organization_digest'};
     const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable',installDir:install,
@@ -497,7 +497,7 @@ test('activation admits supported forward upgrades and rejects downgrades, unkno
 
 
 test('healthy authenticated connection discovery does not wait for optional diagnostics', {timeout:30000},async()=>{
-    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install);
+    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install,{mode:0o700});
     const inspection={selection:{active:f.digest},approval:{manifest_sha256:f.digest,version:'1.4.0',verification_basis:'trusted_distribution'},
         executable:path.join(f.source,f.main),launcher:path.join(install,'launcher'),control_dir:path.join(install,'control'),payload_verified:true,
         lifecycle:{explicitly_stopped:false,pending:null},payload_repair:{phase:'none'},registry_namespace:'12'.repeat(16),
@@ -534,7 +534,7 @@ test('connection discovery refuses mandatory self-test failure before diagnostic
 
 test('pending or unavailable current recovery observation keeps diagnostics in the connection barrier',{timeout:30000},async()=>{
     for(const connection_observation of [undefined,{schema:1,activation_pending:true,launcher_repair_pending:false}]){
-        const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install);
+        const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install,{mode:0o700});
         let release!:()=>void,entered!:()=>void,done=false,health=0;
         const held=new Promise<void>(resolve=>{release=resolve;}),began=new Promise<void>(resolve=>{entered=resolve;});
         const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable',installDir:install},async(_command,args)=>{
@@ -555,7 +555,7 @@ test('pending or unavailable current recovery observation keeps diagnostics in t
 
 
 test('explicit Stop refuses the connection shortcut while optional diagnose is still blocked',{timeout:30000},async()=>{
-    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install);let release!:()=>void,entered!:()=>void;
+    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install,{mode:0o700});let release!:()=>void,entered!:()=>void;
     const held=new Promise<void>(resolve=>{release=resolve;}),began=new Promise<void>(resolve=>{entered=resolve;});
     const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable',installDir:install},async(_command,args)=>{
         if(args[1]==='self-test')return {protocol:1,version:'1.4.0',self_test:'passed',metadata_console:1};
@@ -574,7 +574,7 @@ test('explicit Stop refuses the connection shortcut while optional diagnose is s
 
 function lazySignal<T>(){let resolve!:(value:T)=>void;const promise=new Promise<T>(done=>{resolve=done;});return {promise,resolve};}
 async function lazyDiscoveryFixture(){
-    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install);
+    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install,{mode:0o700});
     const calls:string[][]=[];let healthCalls=0,disposed=0;
     const state={failSelfTest:false,stopped:false,healthError:undefined as Error|undefined,
         health:undefined as undefined|((number:number)=>Promise<void>)};
@@ -662,4 +662,57 @@ test('legacy retirement Stop during RuntimeHost location preparation prevents la
             await assert.rejects(pending,/review_stopped/);assert.equal(mutations,0);
         }finally{release.resolve();await Promise.allSettled([pending]);await f.cleanup();}
     }
+});
+
+
+test('POSIX runtime install metadata distinguishes ownership from privacy and quotes chmod paths',()=>{
+    const directory={isDirectory:()=>true,isSymbolicLink:()=>false,uid:42,mode:0o40700};
+    assert.doesNotThrow(()=>validateRuntimeInstallDirectory('/owned runtime',directory,'linux',42));
+    assert.throws(()=>validateRuntimeInstallDirectory('/foreign',{...directory,uid:43,mode:0o40755},'darwin',42),error=>{
+        assert.ok(error instanceof ServiceError);assert.equal(error.code,'runtime_install_directory_wrong_owner');
+        assert.match(error.message,/directory you own|nonexistent directory/);assert.doesNotMatch(error.message,/chmod/);return true;
+    });
+    assert.throws(()=>validateRuntimeInstallDirectory("/owned/a'b $HOME",{...directory,mode:0o40750},'linux',42),error=>{
+        assert.ok(error instanceof ServiceError);assert.equal(error.code,'runtime_install_directory_not_private');
+        assert.ok(error.message.includes("chmod 700 '/owned/a'\"'\"'b $HOME'"));return true;
+    });
+    assert.doesNotThrow(()=>validateRuntimeInstallDirectory('C:\\runtime',{...directory,uid:43,mode:0o40777},'win32',undefined));
+    assert.throws(()=>validateRuntimeInstallDirectory('/alias',{...directory,isSymbolicLink:()=>true},'linux',42),/unsafe_runtime_install_location/);
+    assert.throws(()=>validateRuntimeInstallDirectory('/file',{...directory,isDirectory:()=>false},'win32',undefined),/unsafe_runtime_install_location/);
+});
+
+test('runtime discovery accepts a new root without creation and a private existing root without changing permissions',async()=>{
+    const f=await fixture(),install=path.join(f.root,'private install'),calls:string[][]=[];
+    const run:NativeRunner=async(_command,args)=>{
+        calls.push(args);
+        if(args[1]==='self-test')return {protocol:1,version:'1.4.0',self_test:'passed',metadata_console:1};
+        if(args[1]==='location')return {protocol:1,install_dir:install};
+        if(args[1]==='inspect'||args[1]==='diagnose')return {};
+        throw new Error('Unexpected install mutation: '+args.join(' '));
+    };
+    try{
+        const missing=await new RuntimeHost(f.root,'1.4.0',{channel:'stable'},run).discover();
+        assert.equal(missing.installed,false);await assert.rejects(fs.lstat(install),{code:'ENOENT'});
+        await fs.mkdir(install,{mode:0o700});const before=await fs.lstat(install);
+        const existing=await new RuntimeHost(f.root,'1.4.0',{channel:'stable'},run).discover();
+        assert.equal(existing.installed,true);assert.equal((await fs.lstat(install)).mode,before.mode);
+        assert.ok(calls.every(args=>['self-test','location','inspect','diagnose'].includes(args[1])));
+    }finally{await f.cleanup();}
+});
+
+test('POSIX discovery refuses an existing public install before native inspection without changing it', {skip:process.platform==='win32'},async()=>{
+    const f=await fixture(),install=path.join(f.root,'public install'),calls:string[][]=[];
+    try{
+        await fs.mkdir(install,{mode:0o700});await fs.chmod(install,0o755);
+        const run:NativeRunner=async(_command,args)=>{
+            calls.push(args);
+            if(args[1]==='self-test')return {protocol:1,version:'1.4.0',self_test:'passed',metadata_console:1};
+            if(args[1]==='location')return {protocol:1,install_dir:install};
+            throw new Error('Unsafe root reached native inspection');
+        };
+        await assert.rejects(new RuntimeHost(f.root,'1.4.0',{channel:'stable'},run).discover(),error=>
+            error instanceof ServiceError&&error.code==='runtime_install_directory_not_private');
+        assert.equal((await fs.lstat(install)).mode&0o777,0o755);
+        assert.deepEqual(calls.map(args=>args[1]),['self-test','location']);
+    }finally{await f.cleanup();}
 });
