@@ -453,7 +453,7 @@ fn check_named_pin(pin: &SetupDirectory, path: &Path) -> Result<()> {
     );
     Ok(())
 }
-fn write_exact(directory: &SetupDirectory, name: &str, bytes: &[u8]) -> Result<()> {
+pub(crate) fn write_exact(directory: &SetupDirectory, name: &str, bytes: &[u8]) -> Result<()> {
     match directory.read_file(OsStr::new(name), bytes.len() as u64) {
         Ok(actual) => {
             ensure!(

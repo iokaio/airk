@@ -150,6 +150,183 @@ fn postcommit_failure_capture_preserves_full_terminal_proof_and_replay_finishes_
 struct NoTargets {
     gate: NativeCatalogAdmission,
 }
+
+struct CleanupControl {
+    gate: NativeCatalogAdmission,
+    attempts: std::cell::RefCell<Vec<FencedReceipt>>,
+    failures: std::cell::Cell<usize>,
+}
+impl CatalogControl for CleanupControl {
+    fn uses_gate(&self, gate: &NativeCatalogAdmission) -> bool {
+        self.gate.same_instance(gate)
+    }
+    fn revoke(&self, _: &FenceTicket, _: &FenceTarget) -> Result<()> {
+        anyhow::bail!("cleanup fixture has no installed scopes")
+    }
+    fn confirm_reaped(&self, _: WorkerIdentity) -> Result<bool> {
+        Ok(false)
+    }
+    fn finish_worker_drains(&self, receipt: &FencedReceipt) -> Result<()> {
+        self.attempts.borrow_mut().push(receipt.clone());
+        let remaining = self.failures.get();
+        if remaining > 0 {
+            self.failures.set(remaining - 1);
+            anyhow::bail!("native cleanup acknowledgement still pending")
+        }
+        Ok(())
+    }
+}
+
+fn committed_before_native_finish(
+    registry: &mut ServiceRegistry,
+    gate: &NativeCatalogAdmission,
+    request: &CatalogRequest,
+) -> Result<FencedReceipt> {
+    let preview = registry.catalog_preview(request)?.identity()?;
+    let plan = gate.close_request_admission(request)?;
+    let FencePreparation::Prepared(intent) =
+        registry.catalog_prepare_fence(request, preview, &plan.durable)?
+    else {
+        anyhow::bail!("fresh cleanup fixture unexpectedly replayed")
+    };
+    gate.begin_revocations(&plan.ticket)?;
+    registry.catalog_record_fence_confirmations(
+        request.caller,
+        &request.key,
+        intent.prepared_digest,
+        &[],
+    )?;
+    registry.catalog_apply_fenced(request, preview, intent.prepared_digest)
+}
+
+fn cleanup_coordinator(
+    gate: &NativeCatalogAdmission,
+    failures: usize,
+) -> Result<CatalogCoordinator<CleanupControl>> {
+    CatalogCoordinator::new(
+        gate.clone(),
+        CleanupControl {
+            gate: gate.clone(),
+            attempts: Default::default(),
+            failures: std::cell::Cell::new(failures),
+        },
+    )
+}
+
+fn assert_terminal_observation(
+    registry: &ServiceRegistry,
+    coordinator: &mut CatalogCoordinator<CleanupControl>,
+    receipt: &FencedReceipt,
+) -> Result<()> {
+    let observed = CatalogCoordinator::observe_receipt(
+        registry,
+        Some(coordinator),
+        receipt.request.caller,
+        &receipt.request.key,
+    )?;
+    let airk_core::service::ControlResponse::CatalogReceipt {
+        receipt: Some(metadata),
+        fence: Some(FenceObservation::Applied(actual)),
+    } = observed
+    else {
+        anyhow::bail!("complete durable terminal receipt was lost")
+    };
+    assert_eq!(metadata, receipt.metadata);
+    assert_eq!(&actual, receipt);
+    Ok(())
+}
+
+#[test]
+fn terminal_receipt_defers_exact_native_cleanup_to_owner_resume_once() -> Result<()> {
+    let (_owner, mut registry, request, _, gate) = fixture()?;
+    let terminal = committed_before_native_finish(&mut registry, &gate, &request)?;
+    let mut coordinator = cleanup_coordinator(&gate, 0)?;
+    assert_terminal_observation(&registry, &mut coordinator, &terminal)?;
+    assert!(!coordinator.receipt_reconciliation_pending);
+    assert!(gate.pending_fence_key()?.is_none());
+    assert!(coordinator.has_pending_cleanup());
+    assert!(
+        coordinator.control.attempts.borrow().is_empty(),
+        "receipt reads must not execute native cleanup"
+    );
+    assert_eq!(
+        coordinator.resume_pending(&mut registry)?,
+        Some(terminal.clone())
+    );
+    assert!(!coordinator.has_pending_cleanup());
+    assert_eq!(
+        *coordinator.control.attempts.borrow(),
+        vec![terminal.clone()]
+    );
+    assert_terminal_observation(&registry, &mut coordinator, &terminal)?;
+    assert!(
+        !coordinator.has_pending_cleanup(),
+        "historical receipt reads must not replay completed cleanup"
+    );
+    assert_eq!(coordinator.resume_pending(&mut registry)?, None);
+    assert_eq!(*coordinator.control.attempts.borrow(), vec![terminal]);
+    Ok(())
+}
+
+#[test]
+fn terminal_receipt_retains_cleanup_after_failed_native_owner_resume() -> Result<()> {
+    let (_owner, mut registry, request, _, gate) = fixture()?;
+    let terminal = committed_before_native_finish(&mut registry, &gate, &request)?;
+    let mut coordinator = cleanup_coordinator(&gate, 1)?;
+    assert_terminal_observation(&registry, &mut coordinator, &terminal)?;
+    assert!(coordinator.resume_pending(&mut registry).is_err());
+    assert_eq!(coordinator.cleanup.as_ref(), Some(&terminal));
+    assert_terminal_observation(&registry, &mut coordinator, &terminal)?;
+    assert_eq!(coordinator.cleanup.as_ref(), Some(&terminal));
+    assert_eq!(coordinator.control.attempts.borrow().len(), 1);
+    assert_eq!(
+        coordinator.resume_pending(&mut registry)?,
+        Some(terminal.clone())
+    );
+    assert!(!coordinator.has_pending_cleanup());
+    assert_eq!(
+        *coordinator.control.attempts.borrow(),
+        vec![terminal.clone(), terminal]
+    );
+    Ok(())
+}
+
+#[test]
+fn different_retained_cleanup_keeps_pending_gate_and_complete_terminal_observation() -> Result<()> {
+    let (_owner, mut registry, request, _, gate) = fixture()?;
+    let terminal = committed_before_native_finish(&mut registry, &gate, &request)?;
+    let (_other_owner, mut other_registry, mut other_request, _, other_gate) = fixture()?;
+    other_request.key.nonce = Incarnation::from_bytes([91; 16]);
+    let owned = committed_before_native_finish(&mut other_registry, &other_gate, &other_request)?;
+    assert_ne!(owned, terminal);
+    let mut coordinator = cleanup_coordinator(&gate, 0)?;
+    coordinator.cleanup = Some(owned.clone());
+    assert_terminal_observation(&registry, &mut coordinator, &terminal)?;
+    assert!(coordinator.receipt_reconciliation_pending);
+    assert_eq!(coordinator.cleanup.as_ref(), Some(&owned));
+    assert!(
+        gate.matching_plan(&request)?.is_some(),
+        "a different retained cleanup must keep this gate closed"
+    );
+    assert!(coordinator.control.attempts.borrow().is_empty());
+    assert_eq!(
+        coordinator.resume_pending(&mut registry)?,
+        Some(owned.clone())
+    );
+    assert!(gate.matching_plan(&request)?.is_some());
+    assert_terminal_observation(&registry, &mut coordinator, &terminal)?;
+    assert!(!coordinator.receipt_reconciliation_pending);
+    assert_eq!(coordinator.cleanup.as_ref(), Some(&terminal));
+    assert_eq!(
+        coordinator.resume_pending(&mut registry)?,
+        Some(terminal.clone())
+    );
+    assert_eq!(
+        *coordinator.control.attempts.borrow(),
+        vec![owned, terminal]
+    );
+    Ok(())
+}
 impl CatalogControl for NoTargets {
     fn uses_gate(&self, gate: &NativeCatalogAdmission) -> bool {
         self.gate.same_instance(gate)

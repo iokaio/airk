@@ -228,7 +228,27 @@ impl SourceWatcher {
         }
         let weight = binding.weight()?;
         let project = binding.registration.binding;
+        let previously_installed = self.entries.contains_key(&project);
         self.remove(project);
+        if !binding.configuration_observed {
+            // Unknown native policy is not a successful empty policy. Do not
+            // construct ignore matchers, traverse sources or admit event work.
+            if previously_installed {
+                self.revoke_watch_backend();
+            }
+            self.observations.insert(
+                project,
+                Observation {
+                    project,
+                    epoch: binding.epoch,
+                    native_roots: 0,
+                    backend: WatchBackend::PeriodicFallback,
+                    failure: Some(WatchFailure::MetadataUnavailable),
+                    traversal: None,
+                },
+            );
+            return Ok(false);
+        }
         if self.entries.len() >= MAX_PROJECTS || self.weight + weight > MAX_BINDING_BYTES {
             self.observations.insert(
                 project,
@@ -263,6 +283,46 @@ impl SourceWatcher {
         self.plan = None;
         self.refresh = now.checked_sub(Duration::from_secs(10)).unwrap_or(now);
         Ok(true)
+    }
+    fn revoke_watch_backend(&mut self) {
+        // A shared directory can have several policy owners. Retire the owned
+        // backend rather than guessing which handles an unknown policy permits.
+        // Remaining qualified bindings replan through the existing bounded loop.
+        drop(self.watcher.take());
+        self.watched.clear();
+        self.plan = None;
+        for _ in 0..256 {
+            if self.receiver.try_recv().is_err() {
+                break;
+            }
+        }
+        self.overflow.store(false, Ordering::Release);
+        self.topology.store(false, Ordering::Release);
+        self.force_rebind = false;
+        let now = Instant::now();
+        for (project, entry) in &mut self.entries {
+            Self::dirty(entry, now);
+            self.observations.insert(
+                *project,
+                Observation {
+                    project: *project,
+                    epoch: entry.binding.epoch,
+                    native_roots: 0,
+                    backend: WatchBackend::PeriodicFallback,
+                    failure: Some(WatchFailure::BackendUnavailable),
+                    traversal: None,
+                },
+            );
+        }
+    }
+    /// Withdraw source authority before native policy changes or requalification.
+    /// Repeated fences for an already absent binding do not disrupt other roots.
+    pub fn fence_policy(&mut self, project: ProjectBinding) {
+        let previously_installed = self.entries.contains_key(&project);
+        self.remove(project);
+        if previously_installed {
+            self.revoke_watch_backend();
+        }
     }
     pub fn remove(&mut self, project: ProjectBinding) {
         if let Some(entry) = self.entries.remove(&project) {

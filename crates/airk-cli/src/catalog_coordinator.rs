@@ -699,10 +699,26 @@ impl<C: CatalogControl> CatalogCoordinator<C> {
                     if let Some(native) = coordinator.as_deref_mut() {
                         native.receipt_reconciliation_pending =
                             match native.gate.matching_plan(&receipt.request) {
-                                Ok(Some(_)) => native
-                                    .gate
-                                    .reconcile_terminal(&receipt.request, &receipt)
-                                    .is_err(),
+                                Ok(Some(_)) => {
+                                    // Releasing the gate must not orphan its
+                                    // provider/watcher cleanup. Receipt reads
+                                    // retain that exact work for the existing
+                                    // metadata-owner resume turn, without RPC.
+                                    if native
+                                        .cleanup
+                                        .as_ref()
+                                        .is_some_and(|owned| owned != &receipt)
+                                        || native
+                                            .gate
+                                            .reconcile_terminal(&receipt.request, &receipt)
+                                            .is_err()
+                                    {
+                                        true
+                                    } else {
+                                        native.cleanup = Some(receipt.clone());
+                                        false
+                                    }
+                                }
                                 Ok(None) => native
                                     .gate
                                     .pending_fence_key()

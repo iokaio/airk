@@ -138,9 +138,9 @@ pub fn project(
         ),
         Situation::DifferentLifecycles => (
             "You identified groups with different lifecycle or policy needs.",
-            "split_pending",
+            "review_split",
             "Independent indexes could provide separate policy and budgets.",
-            "Prefer query filters when sufficient. Split is unavailable until P10; destination build, temporary space and future jobs cost work. Size alone is not a reason to split.",
+            "Prefer query filters when sufficient. Open the selected index's split controls for a separate native review; destination build, temporary space and future jobs cost work. Advice does not prepare or apply a split. Size alone is not a reason to split.",
         ),
         Situation::Overlap => (
             "You asked to review possible overlapping indexes; physical overlap is unproven.",
@@ -158,7 +158,7 @@ pub fn project(
             "You explicitly identified evidence that should never be indexed.",
             "removal_pending",
             "A reviewed permanent exclusion applies to every user of this index.",
-            "Use the selected index's Sources controls to review permanent exclusion. Advice-linked management previews remain pending P10. Review all affected Projects and other indexes; exclusion, cleanup and unblock are separate. Source files are never removed.",
+            "Open the selected index's Sources controls for a separate native review of permanent exclusion. Advice does not prepare or apply removal. Review all affected Projects and other indexes; exclusion, cleanup and unblock are separate. Source files are never removed.",
         ),
     };
     let selected_scope = selected

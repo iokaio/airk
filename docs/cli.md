@@ -82,16 +82,83 @@ References add `--order index|path|code_first`, `--include-files`, `--include-co
 
 ## Services, projects and scope
 
-One **service** owns a control directory: its project registry, job queue and worker processes. A **project** is a source folder (`--root`), an index directory (`--data-dir`) and a collection name (`--collection`). Its canonical form has a 64-character hexadecimal **binding**.
+One **service** owns a control directory: its registry, job queue and worker
+processes. In the current catalog, an **index** has an independent native backing
+registration; a query **Project** groups reviewed source/path memberships from
+one or more indexes. A legacy lowercase **project** is the source/data/collection
+registration with a 64-character hexadecimal **binding**. These identities are
+not interchangeable.
 
 There are two ways to reach a service:
 
 - **Installed runtime** (what the VS Code extension sets up). Commands find the per-user installation automatically; `--service-install-dir` selects another one. Select a project with `--root <folder>`, plus `--data-dir` and `--collection` when they are not the defaults.
 - **A service you start yourself** (headless, no installation). Run `airk serve --runtime-dir <control>`. Then add `--service-runtime-dir <control> --service-project <binding> --root … --data-dir … --collection …` to project commands.
 
-## Creating a project for any folder
+## Reviewed index and Project setup in 1.8.8
 
-You can register any folder you can read as a project. Indexes and settings live in the data directory; the source folder is only read.
+The working build activates authority-1 catalogs through the qualified native
+installer. New indexes require the catalog setup flow; `init` and `service register`
+cannot bypass it. Query Project membership and evidence grants are separate from
+creating an index. [Reviewed setup](service-project-setup.md) describes those
+boundaries; [combined reads](combined-reads.md) describes evidence selection.
+
+Headless administration uses the same native methods as the editor. Save one
+method JSON value in a file and run:
+
+```console
+airk service rpc --runtime-dir <control> --request-file <method.json>
+```
+
+For example, this read-only method lists a bounded first page of indexes:
+
+```json
+{"catalog_page":{"request":{"kind":"indexes","index_id":null,"project_id":null,"after":null,"expected_catalog_revision":null,"limit":16,"max_bytes":16384}}}
+```
+
+Use the returned revision and continuation for later pages; do not infer a
+complete library from one page. Current setup follows these separate steps:
+
+1. Read `"request_epoch"` through `service rpc` and retain its namespace/epoch.
+   Choose one new 32-hex nonce for the request key. Submit
+   `catalog_index_setup_draft` with a `selection` containing that key, the current
+   `expected_catalog_revision`, `name`, `primary_root`, `data_root`, `collection`,
+   `additional_roots` (an array of alias/path objects) and `setup_watch`.
+2. Inspect the returned complete native `draft`, canonical registration and
+   storage action. Only after review, send
+   `{"catalog_index_setup_apply":{"draft":<exact returned draft>}}`.
+   Keep the original draft and its request caller/key for
+   `catalog_index_setup_receipt`; uncertain outcomes do not permit a new key.
+3. Create a query Project and its memberships using `catalog_preview` and
+   explicit `catalog_apply` of the same request/preview digest. Use
+   `catalog_host_context` and `catalog_grant_draft` for a reviewed grant, then
+   explicitly apply that grant. The complete method and request shapes are in
+   [native metadata methods](../crates/airk-core/src/service.rs),
+   [index setup](../crates/airk-core/src/catalog_setup.rs) and
+   [catalog operations](../crates/airk-core/src/catalog_management.rs).
+4. Select that grant explicitly with `--catalog-session <reviewed-session-json>`
+   for one index or `--combined-session <reviewed-session-json>` for a Project
+   selection. Do not mix these flags with root/data/collection/project selectors.
+   Native validation still checks the grant, catalog revision and complete scope.
+   Management and indexing jobs use the native backing registration separately.
+
+These are raw metadata APIs: inspect the native `status` and complete receipt,
+not just the CLI exit code. A ready index, a saved grant and a currently authorized
+evidence session are distinct outcomes. Missing/expired receipts are unknown;
+never regenerate request identities to replay an uncertain mutation.
+
+For removal, request `catalog_source_mutation_draft` with the current index ID,
+catalog revision and request key, and `change: {"operation":"retire_index"}`.
+Review and explicitly apply its exact `request` and `preview_digest` through
+`catalog_apply`, then read `catalog_receipt` using the original caller/key.
+Retirement removes current references while preserving frozen grants; physical
+cleanup has its own proof. See [guarded index retirement](service-project-retirement.md).
+The legacy `configure`/`unregister` path does not replace this catalog review.
+
+## Legacy authority-zero registration examples
+
+The following retained commands apply to authority-zero services. They are not
+setup instructions for new indexes in the current authority-1 catalog. Indexes
+and settings live in the data directory; the source folder is only read.
 
 ```text
 # A service you started:

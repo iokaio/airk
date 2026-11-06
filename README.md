@@ -4,7 +4,7 @@
 
 Opening a trusted folder does not register or index it. Use **Indexing > Index library** to review sources, storage and watching; create Project memberships and review an access grant, then explicitly **Use Grant for this window**. Evidence reads and source verification do not start indexing.
 
-**Setup and uninstall:** Successful setup or reconnection clears obsolete failure warnings. Current setup failures remain visible, and uninstall removes empty shell startup files that AIRK created. See [setup and uninstall guidance](docs/vscode-extension.md).
+**Setup and uninstall:** Successful setup or reconnection clears obsolete failure warnings. Current setup failures remain visible, and uninstall removes empty shell startup files that AIRK created. See [setup and uninstall guidance](docs/vscode-extension.md) and the [branch review](docs/reviews/branch-v190-review-2026-11-06.md).
 
 **Missing sources and storage:** the working source adds [reviewed index
 retirement and cleanup](docs/service-project-retirement.md) for removed files or folders and separate

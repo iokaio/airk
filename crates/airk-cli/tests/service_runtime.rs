@@ -1317,7 +1317,9 @@ fn on_demand_idle_exit_does_not_require_login_manager_and_health_does_not_extend
 
 #[test]
 fn enabled_background_watch_retains_idle_service_until_explicitly_disabled() -> Result<()> {
-    use airk_core::service::{ControlMethod as Method, ControlResponse as Response};
+    use airk_core::service::{
+        ControlMethod as Method, ControlResponse as Response, JobKind, JobOutcome, RequestKey,
+    };
     let owner = tempfile::tempdir()?;
     let runtime = owner.path().join("runtime");
     let source = owner.path().join("source");
@@ -1355,6 +1357,49 @@ fn enabled_background_watch_retains_idle_service_until_explicitly_disabled() -> 
             paused: true,
         })
         .await?;
+        // Registration alone has no authoritative root observation. Inspect is
+        // admitted while paused and lets the native worker publish that metadata
+        // without indexing source content or changing the pause preference.
+        let Response::RequestEpoch { namespace, epoch } = request(Method::RequestEpoch).await?
+        else {
+            anyhow::bail!("inspection request epoch unavailable");
+        };
+        let Response::Job { job: inspection } = request(Method::Enqueue {
+            project: project.binding,
+            caller: airk_kernel::service_broker::new_instance_id()?,
+            key: RequestKey {
+                namespace,
+                epoch,
+                nonce: airk_kernel::service_broker::new_instance_id()?,
+            },
+            kind: JobKind::Inspect,
+        })
+        .await?
+        else {
+            anyhow::bail!("quiet-watcher inspection was not accepted");
+        };
+        let until = tokio::time::Instant::now() + Duration::from_secs(30);
+        loop {
+            let Response::Job { job } = request(Method::Job { id: inspection.id }).await? else {
+                anyhow::bail!("quiet-watcher inspection receipt unavailable");
+            };
+            ensure!(
+                job.project == project.binding && job.kind == JobKind::Inspect,
+                "quiet-watcher inspection receipt changed identity"
+            );
+            if let Some(outcome) = &job.outcome {
+                ensure!(
+                    matches!(outcome, JobOutcome::Succeeded { .. }),
+                    "quiet-watcher inspection failed: {job:?}"
+                );
+                break;
+            }
+            ensure!(
+                tokio::time::Instant::now() < until,
+                "quiet-watcher inspection did not settle: {job:?}"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
         request(Method::ConfigureWatch {
             project: project.binding,
             enabled: true,
@@ -1362,20 +1407,65 @@ fn enabled_background_watch_retains_idle_service_until_explicitly_disabled() -> 
         .await?;
         let until = tokio::time::Instant::now() + Duration::from_secs(20);
         loop {
-            if matches!(
-                request(Method::SourceStatus).await?,
+            let source = request(Method::SourceStatus).await?;
+            let worker = request(Method::Worker {
+                project: project.binding,
+            })
+            .await?;
+            let resources = request(Method::Resources).await?;
+            let console = request(Method::Console {
+                after: None,
+                revision: None,
+                limit: 1,
+            })
+            .await?;
+            // Worker waits retain the last sampled job even after it completes.
+            // Only this already-succeeded Inspect may remain as historical wait
+            // metadata; the worker and all live jobs/grants must still be gone.
+            // An ordinary worker may also attempt the optional helper at startup.
+            // Its stopped, jobless global failure is retained history, not active
+            // recovery work. Every other recovery observation prevents readiness.
+            let ready = matches!(
+                &source,
                 Response::SourceStatus {
                     available: true,
                     projects: Some(1),
                     pending_events: Some(0),
                     ..
                 }
-            ) {
+            ) && matches!(&worker, Response::Worker {
+                project: found, identity: None, restarting: false, waiting, ..
+            } if *found == project.binding
+                && waiting.as_ref().is_none_or(|wait| wait.job == inspection.id))
+                && matches!(&resources, Response::Resources {
+                    observation, configuration_error: false, ..
+                } if observation.resident_workers == 0
+                    && observation.running_jobs == 0
+                    && observation.waiting_projects == 0
+                    && observation.pending_provider_drains == 0
+                    && !observation.provider_drain_error
+                    && observation.extraction_threads_reserved == 0
+                    && observation.background_io_reserved_bytes_per_second == 0)
+                && matches!(&console, Response::Console { page }
+                    if page.after.is_none() && page.projects.len() == 1
+                        && page.projects[0].project.registration.binding == project.binding
+                        && page.projects[0].project.paused
+                        && page.projects[0].pending_job.is_none()
+                        && page.projects[0].pending_gate.is_none()
+                        && page.projects[0].recovery.iter().all(|recovery|
+                            recovery.reason == "helper_unavailable"
+                                && recovery.state == "stopped"
+                                && recovery.job.is_none())
+                        && page.projects[0].failed_observations.is_empty()
+                        && page.projects[0].watch.as_ref().is_some_and(|watch|
+                            watch.configuration_observed && watch.enabled));
+            if ready {
                 break;
             }
             ensure!(
                 tokio::time::Instant::now() < until,
-                "quiet watcher did not become ready"
+                "quiet watcher or worker/grant drain did not become ready: {}",
+                serde_json::to_string(&(source, worker, resources, console))?
             );
             tokio::time::sleep(Duration::from_millis(100)).await;
         }

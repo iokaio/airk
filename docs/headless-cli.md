@@ -17,7 +17,7 @@ For command purpose, implementation ownership, effects and catalog differences, 
 | Extension feature | Headless equivalent |
 |---|---|
 | Install or repair the runtime | `airk runtime location`, `inspect` and `ensure` for the per-user installation, or `airk serve --runtime-dir <control>` from a local build |
-| Add a project | Installed runtime: `airk --root <src> init`. Explicit service: `airk --root <src> --data-dir <data> --collection <name> service register --runtime-dir <control>` |
+| Set up a new index and query Project | Use `service rpc` with native catalog draft, review, apply and receipt methods; see [current headless setup](cli.md#reviewed-index-and-project-setup-in-188). Legacy `init`/`service register` cannot create new indexes in an authority-1 catalog. |
 | List projects | `airk projects` (installed runtime) or `airk projects --runtime-dir <control>` |
 | Explorer Assistance tools | `airk explorer draft-search\|draft-strategy\|draft-plan\|suggest-view\|validate-draft\|list-templates\|get-template\|proposal-status\|get-handoff --output <new file>`: results go to the file, never to an Inbox (see the [CLI guide](cli.md#explorer-assistance-from-the-cli)) |
 | Index, pause, resume, watch | `airk <scope> index`, `pause`, `resume`, `watch on`/`watch off`, `inspect` |
@@ -28,12 +28,19 @@ For command purpose, implementation ownership, effects and catalog differences, 
 | Agent connection | `airk <scope> setup --client claude` (also codex, vscode, cursor, gemini, cline, roo, junie, copilot-cli, opencode and others) prints the MCP configuration for an installed runtime; agents launch `airk … mcp` |
 | Usage reports | `airk <scope> usage report`, `policy`, `configure`, `clear`, `feedback`, `import` |
 | Management status and logs | `airk service health`, `service logs`, `service console` (JSON transport), `tools call airk_status` and `airk_diagnostics` |
-| Remove a project's index | `airk <scope> configure --stdin` with `{"operation":"unregister"}` (sources untouched) |
+| Retire an index | Prepare `catalog_source_mutation_draft` with `change: {"operation":"retire_index"}`, then explicitly apply its exact native request and preview digest through `catalog_apply`; inspect the exact receipt. [Retirement and physical cleanup](service-project-retirement.md) are separate. |
 | Review and remove AIRK data | `airk runtime inventory --install-dir <dir>`; `airk runtime purge --install-dir <dir> --select <id> [--confirm <digest>]` |
 | Login startup | `airk runtime login --install-dir <dir> plan`, `status`, `install` or `uninstall` |
 | Uninstall the runtime | `airk runtime uninstall --install-dir <dir>` |
 
-`<scope>` is either `--root <src> [--data-dir …] [--collection …]` for the installed runtime, or `--service-runtime-dir <control> --service-project <binding> --root … --data-dir … --collection …` for a service you started.
+For current evidence reads, `<scope>` can be `--catalog-session <reviewed-session-json>`
+or `--combined-session <reviewed-session-json>`, with `--service-runtime-dir <control>`
+for an explicitly selected service. Sessions bind the reviewed grant and explicit
+Project/index selection; paths and saved defaults grant no access. Do not combine
+these session flags with legacy root/data/collection/project selectors. Imported
+legacy connections retain their qualified one-index binding. [Current setup](cli.md#reviewed-index-and-project-setup-in-188)
+describes the separate management flow; management/index-job commands use their
+native backing registration rather than an evidence-session flag.
 
 ## Editor-only features
 
@@ -54,5 +61,9 @@ These belong to the editor integration and have no headless meaning:
 
 - **Guarded maintenance** (rebuild, repair and verify previews with plans) has no dedicated command. The extension creates and executes plans through `service rpc` requests (`plan_create`, `plan_items`, `plan_execute`). Headless users can send the same JSON with `airk service rpc --runtime-dir <control> --stdin`, but there is no friendlier wrapper yet. `airk index --full` deliberately refuses and points to this path.
 - **Durable request retries** use `airk service requests prepare|list|retry|forget`, which exposes the raw request model.
+- **Current catalog setup and retirement** use `service rpc` with the native
+  catalog contracts; there is no dedicated friendly CLI wizard. A successful
+  metadata transport exit is not proof of application success: inspect the
+  returned native `status`, complete receipt and readiness/cleanup observations.
 
 These gaps are recorded for a follow-up; the CLI is not claimed to be friendlier than the extension for them.

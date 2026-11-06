@@ -1127,7 +1127,136 @@ fn real_claimed_cancellation_disposes_paid_shell_then_publishes_and_acknowledges
         job,
     )?;
     assert!(current.receipt.physical_cleanup_authorization.is_some());
-    let mut saw_slot = false;
+    // The first finalization action only retires the canceled destination's
+    // catalog registration. It returns its exact metadata successor before any
+    // terminal slot is allocated; advance to that boundary before injecting I/O.
+    let before_retirement = current.clone();
+    let catalog_before = registry
+        .catalog_state()?
+        .context("catalog missing")?
+        .revision;
+    let original_before =
+        super::super::operations::index_record(&registry.connection, request.original_index)?;
+    let funding_before_retirement = quota.observe_funding(request.operation_id()?)?;
+    current = registry
+        .catalog_advance_split_finalization(request.operation_id()?, current.receipt_digest)?;
+    let mut expected_retirement = before_retirement.clone();
+    expected_retirement.receipt.revision = before_retirement.receipt.revision.next()?;
+    expected_retirement.receipt.previous_receipt_digest = Some(before_retirement.receipt_digest);
+    expected_retirement.receipt.catalog_revision = catalog_before.next()?;
+    expected_retirement.receipt_digest = expected_retirement.receipt.identity(&request)?;
+    assert_eq!(current, expected_retirement);
+    assert!(current.receipt.terminal_publication_slots.is_empty());
+    assert!(current.finalization.is_none());
+    let retired: (bool, Option<String>, bool, bool) = registry.connection.query_row(
+        "SELECT i.tombstone,i.active_registration,p.registered,p.paused FROM index_definitions i JOIN projects p ON p.binding=i.legacy_binding WHERE i.id=?1",
+        [request.destination.index_id.to_string()],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    )?;
+    assert_eq!(retired, (true, None, false, true));
+    assert_eq!(
+        super::super::operations::index_record(&registry.connection, request.original_index)?,
+        original_before
+    );
+    assert_eq!(
+        quota.observe_funding(request.operation_id()?)?,
+        funding_before_retirement
+    );
+    assert!(
+        registry
+            .catalog_advance_split_finalization(
+                request.operation_id()?,
+                before_retirement.receipt_digest
+            )
+            .is_err(),
+        "the previous metadata acknowledgment cannot authorize the next action"
+    );
+    assert_eq!(
+        registry.catalog_split_status(request.operation_id()?)?,
+        Some(current.clone())
+    );
+    // Materialize the exact initial native files and interrupted intent scratch
+    // left before protected publication. The actual finalization adapter below
+    // must recover this prefix through all ordinary custody/funding gates.
+    use super::super::setup::storage::{SetupDirectory, file_identity, write_exact};
+    use crate::service::collection::TerminalSlot;
+    let terminal_directory = Path::new(&request.destination_registration.data_root)
+        .join("collections-1.4")
+        .join(&request.destination_registration.collection);
+    let pin = SetupDirectory::open_canonical(&terminal_directory)?;
+    let capsule_name = format!(".split-final-{}-capsule.part", request.operation_id()?);
+    let owner_name = format!(".split-final-{}-owner.part", request.operation_id()?);
+    let intent_name = format!(".split-final-{}.json", request.operation_id()?);
+    let capsule = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .open(terminal_directory.join(&capsule_name))?;
+    let owner = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .open(terminal_directory.join(&owner_name))?;
+    let intent = TerminalSlot {
+        schema: 1,
+        operation: request.operation_id()?,
+        request: request.identity()?,
+        index: request.destination.index_id,
+        registration: request.destination_registration.clone(),
+        directory: pin.identity()?,
+        capsule_file: file_identity(&capsule)?,
+        owner_file: file_identity(&owner)?,
+    };
+    drop(capsule);
+    drop(owner);
+    let bytes = serde_json::to_vec(&intent)?;
+    let final_path = terminal_directory.join(&intent_name);
+    std::fs::write(&final_path, &bytes[..bytes.len() / 2])?;
+    let funding_before = quota.observe_funding(request.operation_id()?)?;
+    let rejected = registry
+        .catalog_advance_split_finalization(request.operation_id()?, current.receipt_digest)
+        .expect_err("malformed final intent was accepted at terminal allocation");
+    assert!(rejected.is::<serde_json::Error>(), "{rejected:#}");
+    assert_eq!(std::fs::read(&final_path)?, bytes[..bytes.len() / 2]);
+    assert_eq!(
+        quota.observe_funding(request.operation_id()?)?,
+        funding_before
+    );
+    assert_eq!(
+        registry.catalog_split_status(request.operation_id()?)?,
+        Some(current.clone()),
+        "refused allocation must preserve the complete current snapshot"
+    );
+    // This negative fixture is the only actor that removes its injected foreign
+    // final file. Production recovery must never truncate or reinterpret it.
+    std::fs::remove_file(&final_path)?;
+    let scratch = terminal_directory.join(super::super::setup::native_setup_scratch_name(
+        &intent_name,
+        &bytes,
+    ));
+    std::fs::write(&scratch, b"foreign partial")?;
+    assert!(write_exact(&pin, &intent_name, &bytes).is_err());
+    assert_eq!(std::fs::read(&scratch)?, b"foreign partial");
+    assert!(!final_path.exists());
+    std::fs::write(&scratch, &bytes[..bytes.len() / 2])?;
+    current = registry
+        .catalog_advance_split_finalization(request.operation_id()?, current.receipt_digest)?;
+    assert_eq!(std::fs::read(&final_path)?, bytes);
+    assert!(
+        !scratch.exists(),
+        "intent publication left a duplicate scratch inode"
+    );
+    assert_eq!(
+        current
+            .receipt
+            .terminal_publication_slots
+            .get(&request.destination.index_id),
+        Some(&intent.identity()?)
+    );
+    let mut saw_slot = current
+        .receipt
+        .terminal_publication_slots
+        .contains_key(&request.destination.index_id);
     let mut saw_ack = false;
     for _ in 0..12 {
         current = registry

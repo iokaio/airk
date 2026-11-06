@@ -87,13 +87,22 @@ fn recommendations_narrow_disjoint_prefixes_and_cover_all_decision_rows() -> Res
         (Situation::Reuse, "review_reuse"),
         (Situation::FocusedTask, "use_query_scope"),
         (Situation::SharedDependencies, "use_query_scope"),
-        (Situation::DifferentLifecycles, "split_pending"),
+        (Situation::DifferentLifecycles, "review_split"),
         (Situation::Overlap, "review_reuse"),
         (Situation::IrrelevantPath, "use_query_scope"),
         (Situation::NeverIndexPath, "removal_pending"),
     ] {
         let result = advise(&available, &selected, &[], &[], situation, 100)?;
         assert_eq!(result["cards"][0]["action"], action);
+        let guidance = result["cards"][0]["tradeoff"].as_str().unwrap();
+        assert!(!guidance.contains("until P10") && !guidance.contains("pending P10"));
+        if matches!(
+            situation,
+            Situation::DifferentLifecycles | Situation::NeverIndexPath
+        ) {
+            assert!(guidance.contains("separate native review"));
+            assert!(guidance.contains("Advice does not prepare or apply"));
+        }
         assert_eq!(result["omitted_index_ids"], json!([index(2)]));
         assert_eq!(result["available"][0]["readiness"]["state"], "unknown");
         assert_eq!(result["limits"]["source_scans"], 0);

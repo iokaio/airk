@@ -638,8 +638,16 @@ enum Exchange {
 }
 impl Pending {
     fn accept(self, reply: Reply) -> Result<Result<Exchange>> {
-        // Outer failure means an unidentifiable/corrupt reply: quarantine. Inner
-        // failure means the exact exchange settled but authority changed/refused.
+        // Outer failure means an unidentifiable/corrupt reply or an installation
+        // that cannot settle its retained lease: quarantine. Inner failure means
+        // the exact non-install exchange settled but authority changed/refused.
+        // A failed installation cannot settle the supervisor's retained lease:
+        // the worker may have rejected the first install or retained an older
+        // generation. Retire this worker through the existing native drain/reap
+        // path instead of repeatedly renewing a scope it may never have owned.
+        if matches!(reply, Reply::Failed) && matches!(&self.expected, Expected::Install(_)) {
+            anyhow::bail!("native scope installation refused; worker retirement required");
+        }
         if matches!(reply, Reply::Failed)
             && !matches!(
                 &self.expected,
@@ -727,10 +735,10 @@ impl Pending {
                     identity == ticket.worker() && scope == ticket.scope(),
                     "foreign native scope installation reply"
                 );
-                Ok(self
-                    .gate
+                self.gate
                     .acknowledge_install(ticket, identity, scope)
-                    .map(|_| Exchange::Installed))
+                    .context("native scope installation acknowledgement could not settle; worker retirement required")?;
+                Ok(Ok(Exchange::Installed))
             }
             (Expected::Revoke { ticket, target }, Reply::ScopeRevoked { identity, scope }) => {
                 ensure!(
@@ -1324,6 +1332,10 @@ pub(super) fn execute(
 #[cfg(test)]
 #[path = "catalog_startup_order_tests.rs"]
 mod startup_order_tests;
+
+#[cfg(test)]
+#[path = "catalog_install_recovery_tests.rs"]
+mod install_recovery_tests;
 
 #[cfg(test)]
 mod tests {

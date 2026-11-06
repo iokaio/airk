@@ -18,7 +18,7 @@ The bundled **Project instructions for AI agents** help topic explains the workf
 
 ## Connection setup
 
-Current source exposes one unified endpoint; see the [catalog and startup migration](unified-mcp.md). The native evidence adapter retains seventeen compatibility aliases, including airk_help. The fifteen-tool 1.3 statements below describe that historical source.
+Current source exposes one unified endpoint; see the [catalog and startup migration](unified-mcp.md). The native evidence adapter retains nineteen compatibility aliases, including `airk_help`, `airk_parse` and `airk_query_scope`. The fifteen-tool 1.3 statements below describe that historical source.
 
 The 1.5.11 connection correction checks native project registrations before setup and updates both storage and project identity when the user explicitly replaces a recognized connection for the same source/collection. Codex creation/update verifies the saved connection and reports failures separately from file writes. The earlier client research below retains its original date; see the [current setup contract](unified-mcp.md#startup-migration).
 

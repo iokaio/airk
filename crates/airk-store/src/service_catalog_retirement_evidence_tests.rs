@@ -205,3 +205,273 @@ fn native_retirement_evidence_rejects_ambiguous_full_saved_lineage() -> Result<(
     );
     Ok(())
 }
+
+#[test]
+fn completed_native_purge_preserves_retirement_evidence_across_new_same_root_setup() -> Result<()> {
+    let (temp, mut registry, original) = fixture()?;
+    let request = retire_request(&mut registry, &original)?;
+    let index = id(&request);
+    let retired = apply(&mut registry, &request)?;
+    let before = registry
+        .catalog_index_retirement_evidence(index)?
+        .context("pre-cleanup retirement proof missing")?;
+    let backing = before.index.backing.clone();
+    let source = temp.path().join("source").join("preserved.txt");
+    std::fs::write(&source, b"source is not cleanup state")?;
+    assert!(registry.catalog_policy_status(index)?.is_none());
+    assert!(!std::path::Path::new(&backing.data_root).exists());
+
+    // Actual owning cleanup, including its native ancestor-absence proof and
+    // committed removed-project identity. No fabricated null FK or cleanup row.
+    assert!(registry.purge_removed_project_turn(backing.binding)?);
+    let pointer: Option<String> = registry.connection.query_row(
+        "SELECT active_registration FROM index_definitions WHERE id=?1",
+        [index.to_string()],
+        |row| row.get(0),
+    )?;
+    assert_eq!(pointer, Some(backing.binding.to_string()));
+    assert!(registry.pending_project_removals(None, 1)?.is_empty());
+    let after = registry
+        .catalog_index_retirement_evidence(index)?
+        .context("completed cleanup lost canonical retirement proof")?;
+    assert_eq!(before.index, after.index);
+    assert_eq!(after.retirement, retired);
+    assert_eq!(after.retirement, before.retirement);
+    after.validate()?;
+    assert_eq!(std::fs::read(&source)?, b"source is not cleanup state");
+    assert!(!std::path::Path::new(&backing.data_root).exists());
+
+    // Canonical native setup of a different backing on the same source clears
+    // the mutable old suppression marker. The old exact retained identity must
+    // still authenticate its unchanged full fence, without touching source bytes.
+    use super::super::super::setup::storage::{NativeSetupPins, prepare_index_storage};
+    use airk_core::catalog_setup::{IndexSetupRequest, SetupCompletion, SetupSource, SetupStage};
+    let (namespace, epoch) = registry.saved_request_epoch()?;
+    let setup = IndexSetupRequest {
+        caller: Incarnation::from_bytes([115; 16]),
+        key: RequestKey {
+            namespace,
+            epoch,
+            nonce: Incarnation::from_bytes([116; 16]),
+        },
+        expected_catalog_revision: registry
+            .catalog_state()?
+            .context("catalog missing")?
+            .revision,
+        name: "New same-source index".into(),
+        registration: ProjectRegistration::new(
+            backing.root.clone(),
+            temp.path()
+                .canonicalize()?
+                .join("new-data")
+                .to_str()
+                .unwrap()
+                .into(),
+            "replacement".into(),
+        )?,
+        sources: vec![SetupSource {
+            canonical_path: backing.root.clone(),
+            aliases: vec![],
+            owner: true,
+        }],
+        setup_watch: false,
+    };
+    let reserved = registry.reserve_index_setup(&setup)?;
+    assert!(!registry.project_was_removed(backing.binding)?);
+    fn directory_pin(path: &std::path::Path) -> Result<std::fs::File> {
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            use windows_sys::Win32::Storage::FileSystem::{
+                FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES,
+                FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE,
+            };
+            options
+                .access_mode(FILE_TRAVERSE | FILE_READ_ATTRIBUTES)
+                .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+                .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT);
+        }
+        Ok(options.open(path)?)
+    }
+    let data = std::path::Path::new(&setup.registration.data_root);
+    let pins = NativeSetupPins::from_native_review(
+        directory_pin(data.parent().unwrap())?,
+        None,
+        vec![directory_pin(std::path::Path::new(&backing.root))?],
+    );
+    let control = registry.root.clone();
+    let prepared =
+        prepare_index_storage(&registry, &control, &reserved, pins)?.record(&mut registry)?;
+    let ready = registry.complete_index_setup(
+        setup.caller,
+        &setup.key,
+        prepared.request_digest,
+        &SetupCompletion {
+            prepared_digest: prepared.preparation.as_ref().unwrap().digest,
+            expected_catalog_revision: prepared.catalog_revision,
+            expected_source_revision: prepared.source_revision,
+        },
+    )?;
+    assert_eq!(ready.stage, SetupStage::Ready);
+    assert_eq!(
+        registry.get(setup.registration.binding)?.registration,
+        setup.registration
+    );
+    assert_eq!(
+        registry
+            .catalog_index_retirement_evidence(index)?
+            .context("new setup lost old proof")?
+            .retirement,
+        retired
+    );
+    assert_eq!(std::fs::read(&source)?, b"source is not cleanup state");
+    assert!(
+        registry.register_with_setup(&backing, None).is_err(),
+        "retained tombstone became registration authority"
+    );
+    Ok(())
+}
+
+#[test]
+fn policy_retirement_cleanup_keeps_strict_retained_registration_evidence() -> Result<()> {
+    use airk_core::{
+        index_catalog::{DenyId, PathScope, ScopeAtom},
+        source_policy::{PolicyChange, SourcePolicy},
+    };
+    let (_temp, mut registry, original) = fixture()?;
+    let index = match &original.operation {
+        CatalogOperation::BeginIndexSourceChange { id, .. } => *id,
+        _ => unreachable!(),
+    };
+    let definition = super::super::super::operations::index_record(&registry.connection, index)?;
+    let roots = super::super::super::policy::source_roots(&registry.connection, index)?;
+    let selector = ScopeAtom {
+        source_root_id: roots[0].id,
+        kind: PathScope::Exact,
+        path: "private.rs".into(),
+    };
+    let rule_id = DenyId::from_identity(Incarnation::from_bytes([112; 16]));
+    let policy = SourcePolicy::initial_trim(&definition, roots, rule_id, selector.clone())?;
+    let operation = catalog_operation_id(original.caller, &original.key)?;
+    let change = CatalogRequest {
+        operation: CatalogOperation::ChangeIndexPolicy {
+            id: index,
+            expected_source_revision: definition.source_revision,
+            expected_policy_epoch: 0,
+            expected_policy_digest: None,
+            change: PolicyChange::Trim { rule_id, selector },
+            engine_identity: Sha256Digest::from_bytes([113; 32]),
+            configuration: Box::new(ConfigurationRequest {
+                prepare: false,
+                incarnation: original.key.namespace,
+                settings: definition.backing.binding,
+                configuration: ProjectConfiguration::ApplySourcePolicy {
+                    policy: Box::new(policy),
+                    operation_id: operation,
+                },
+            }),
+        },
+        ..original.clone()
+    };
+    let preview = registry.catalog_preview(&change)?.identity()?;
+    let plan = FencePlan::new(Incarnation::from_bytes([114; 16]), 1, vec![])?
+        .with_worker_obligation(airk_core::catalog_fences::WorkerDrainObligation {
+            index_id: index,
+            backing: definition.backing.binding,
+            workers: vec![],
+            providers: vec![],
+        })?;
+    let FencePreparation::Prepared(intent) =
+        registry.catalog_prepare_fence(&change, preview, &plan)?
+    else {
+        anyhow::bail!("fresh policy fence required");
+    };
+    registry.catalog_record_fence_confirmations(
+        change.caller,
+        &change.key,
+        intent.prepared_digest,
+        &[],
+    )?;
+    registry.catalog_apply_fenced(&change, preview, intent.prepared_digest)?;
+    let request = retire_request(&mut registry, &original)?;
+    let retired = apply(&mut registry, &request)?;
+    assert!(registry.purge_removed_project_turn(definition.backing.binding)?);
+    let evidence = registry
+        .catalog_index_retirement_evidence(index)?
+        .context("retained policy proof missing")?;
+    assert_eq!(evidence.retirement, retired);
+    assert!(registry.catalog_policy_status(index)?.is_some());
+    let pointer: Option<String> = registry.connection.query_row(
+        "SELECT active_registration FROM index_definitions WHERE id=?1",
+        [index.to_string()],
+        |row| row.get(0),
+    )?;
+    assert_eq!(pointer, Some(definition.backing.binding.to_string()));
+    // A cleanup record is not permission to ignore inconsistent retained state.
+    registry.connection.execute(
+        "UPDATE projects SET paused=0 WHERE binding=?1",
+        [definition.backing.binding.to_string()],
+    )?;
+    assert!(registry.catalog_index_retirement_evidence(index).is_err());
+    Ok(())
+}
+
+#[test]
+fn historical_purged_registration_requires_exact_surviving_cleanup_marker() -> Result<()> {
+    let (_temp, mut registry, original) = fixture()?;
+    let request = retire_request(&mut registry, &original)?;
+    let index = id(&request);
+    let retired = apply(&mut registry, &request)?;
+    let backing = registry
+        .catalog_index_retirement_evidence(index)?
+        .unwrap()
+        .index
+        .backing;
+    assert!(registry.purge_removed_project_turn(backing.binding)?);
+    // Model only the old implementation's final SQL deletion after actual purge;
+    // the positive cleanup marker was produced by the real owning transaction.
+    registry.connection.execute(
+        "DELETE FROM projects WHERE binding=?1",
+        [backing.binding.to_string()],
+    )?;
+    assert_eq!(
+        registry
+            .catalog_index_retirement_evidence(index)?
+            .context("historical proof missing")?
+            .retirement,
+        retired
+    );
+    let removed: (String, i64) = registry.connection.query_row(
+        "SELECT root_identity,removed_ms FROM service_removed_projects WHERE binding=?1",
+        [backing.binding.to_string()],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    registry.connection.execute(
+        "DELETE FROM service_removed_projects WHERE binding=?1",
+        [backing.binding.to_string()],
+    )?;
+    assert!(registry.catalog_index_retirement_evidence(index).is_err());
+    registry.connection.execute(
+        "INSERT INTO service_removed_projects VALUES(?1,?2,?3)",
+        params![
+            backing.binding.to_string(),
+            Sha256Digest::from_bytes([111; 32]).to_string(),
+            removed.1
+        ],
+    )?;
+    assert!(registry.catalog_index_retirement_evidence(index).is_err());
+    registry.connection.execute(
+        "UPDATE service_removed_projects SET root_identity=?1 WHERE binding=?2",
+        params![removed.0, backing.binding.to_string()],
+    )?;
+    assert_eq!(
+        registry
+            .catalog_index_retirement_evidence(index)?
+            .unwrap()
+            .retirement,
+        retired
+    );
+    Ok(())
+}

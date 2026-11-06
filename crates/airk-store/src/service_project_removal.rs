@@ -283,9 +283,25 @@ impl ServiceRegistry {
                 i64::try_from(super::maintenance::clock_ms()?)?
             ],
         )?;
-        if policy.is_some() {
-            // The tombstone's exact policy job has a registration FK. Retain
-            // only that inactive identity and stop polling completed cleanup.
+        let retained_catalog_index = if tx
+            .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))?
+            == 12
+        {
+            tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM index_definitions WHERE legacy_binding=?1 AND active_registration=?1 AND tombstone=1)",
+                [project.to_string()],
+                |row| row.get::<_, bool>(0),
+            )?
+        } else {
+            false
+        };
+        if policy.is_some() || retained_catalog_index {
+            // Keep the exact inactive catalog backing identity after cleanup.
+            // Removal suppression history can legitimately be cleared by a new
+            // explicit index on this source; it cannot be the sole permanent
+            // proof for reconciling the old full retirement fence. Policy jobs
+            // additionally retain this registration through their existing FK.
+            // Catalog index/tombstone capacity already bounds these identities.
             tx.execute(
                 "UPDATE projects SET cleanup_guard=NULL WHERE binding=?1 AND registered=0",
                 [project.to_string()],

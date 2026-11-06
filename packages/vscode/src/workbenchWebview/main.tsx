@@ -112,7 +112,7 @@ function Turn({turn,state}:{turn:WorkbenchTurn;state:WorkbenchState}){
 
         {!!turn.nativeFailure&&<section class="result" aria-label="Original native refusal">
             <details class="complete-response"><summary>Complete original native refusal</summary><p class="note">Captured native response from this attempt. It does not certify current authorization or publication freshness.</p><pre>{canonical(turn.nativeFailure)}</pre></details>
-            <footer><button onClick={()=>send({type:'copy',turn:turn.id,format:'json'})}>Copy JSON</button><button onClick={()=>send({type:'copy',turn:turn.id,format:'markdown'})}>Copy Markdown</button><button onClick={()=>send({type:'export',turn:turn.id,format:'json'})}>Save JSON export…</button><button onClick={()=>send({type:'export',turn:turn.id,format:'markdown'})}>Save Markdown export…</button></footer>
+            <footer><button onClick={()=>send({type:'copy',turn:turn.id,format:'json'})}>Copy JSON</button><button onClick={()=>send({type:'copy',turn:turn.id,format:'markdown'})}>Copy Markdown</button><button onClick={()=>send({type:'export',turn:turn.id,format:'json'})}>Save JSON export...</button><button onClick={()=>send({type:'export',turn:turn.id,format:'markdown'})}>Save Markdown export...</button></footer>
         </section>}
 
         {!!turn.envelope&&<>

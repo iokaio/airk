@@ -28,6 +28,48 @@ struct Pending {
     roots: Vec<String>,
 }
 
+fn source_policy(
+    registry: &airk_store::service::registry::ServiceRegistry,
+    project: airk_core::service::ProjectBinding,
+) -> Result<Option<airk_core::source_policy::SourcePolicy>> {
+    if registry
+        .catalog_state()?
+        .is_some_and(|state| state.authority_contract >= 1)
+    {
+        let index = registry
+            .catalog_index_for_binding(project)?
+            .context("watcher has no current native index binding")?;
+        registry.catalog_source_policy(index.id)
+    } else {
+        Ok(None)
+    }
+}
+
+fn install_policy_observation(
+    watcher: &mut SourceWatcher,
+    pending: Pending,
+    policy: Result<Option<airk_core::source_policy::SourcePolicy>>,
+) -> Result<bool> {
+    // Unknown policy is not a successful legacy/no-policy observation. The
+    // Kernel's unobserved-binding boundary removes traversal and publishes an
+    // explicit MetadataUnavailable observation without opening source inputs.
+    let (configuration_observed, source_policy) = match policy {
+        Ok(policy) => (pending.observed, policy),
+        Err(_) => (false, None),
+    };
+    watcher.install(Binding {
+        registration: pending.registration,
+        epoch: pending.epoch,
+        configuration_observed,
+        additional_roots: pending.roots,
+        source_policy,
+    })
+}
+
+#[cfg(test)]
+#[path = "source_worker_policy_tests.rs"]
+mod policy_tests;
+
 fn reply(reply: &Reply) -> Result<()> {
     Ok(service_ipc::write_frame(
         &mut std::io::stdout().lock(),
@@ -113,7 +155,7 @@ pub fn run() -> Result<()> {
                         );
                     }
                     policy_fences.insert(project, (operation_id, nonce));
-                    watcher.remove(project);
+                    watcher.fence_policy(project);
                     missing.remove(&project);
                     epochs.remove(&project);
                     if pending
@@ -302,27 +344,9 @@ pub fn run() -> Result<()> {
                             &init.runtime,
                             init.service,
                         )?;
-                        if registry
-                            .catalog_state()?
-                            .is_some_and(|state| state.authority_contract >= 1)
-                        {
-                            registry
-                                .catalog_index_for_binding(project)?
-                                .map(|index| registry.catalog_source_policy(index.id))
-                                .transpose()
-                                .map(Option::flatten)
-                        } else {
-                            Ok(None)
-                        }
+                        source_policy(&registry, project)
                     })();
-                    let configuration_observed = pending.observed && policy.is_ok();
-                    let installed = watcher.install(Binding {
-                        registration: pending.registration,
-                        epoch: pending.epoch,
-                        configuration_observed,
-                        additional_roots: pending.roots,
-                        source_policy: policy.unwrap_or(None),
-                    })?;
+                    let installed = install_policy_observation(&mut watcher, pending, policy)?;
                     epochs.insert(project, (configuration_epoch, Some(digest), installed));
                 }
                 Command::Remove {

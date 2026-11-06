@@ -229,16 +229,15 @@ impl Collection {
             bytes.len() as u64 <= INTENT_BYTES,
             "terminal allocation intent exceeds bound"
         );
-        match directory.read_file(OsStr::new(&intent_name), INTENT_BYTES) {
-            Ok(actual) => ensure!(actual == bytes, "terminal allocation intent changed"),
-            Err(error) if absent(&error) => {
-                let mut file =
-                    directory.open_file(OsStr::new(&intent_name), SetupFileMode::CreateNew)?;
-                file.write_all(&bytes)?;
-                file.sync_all()?;
-            }
-            Err(error) => return Err(error),
-        }
+        // The final name must never identify an interrupted JSON prefix.
+        // Existing protected publication resumes only this exact native scratch
+        // prefix, syncs complete bytes, then atomically renames without replacing
+        // a foreign final intent. No preallocation grows before that publication.
+        crate::service::registry::catalog::setup::storage::write_exact(
+            &directory,
+            &intent_name,
+            &bytes,
+        )?;
         allocate(&mut capsule_file, CAPSULE_BYTES)?;
         allocate(&mut owner_file, OWNER_BYTES)?;
         directory.sync()?;

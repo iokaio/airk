@@ -11,7 +11,7 @@ cross-platform qualification.
 
 **Retained P14 checkpoint, 6 November 2026 - selected local qualification results:** P9-P12 remain accepted
 for unpublished local development. P13 retained ranking/diversity; no candidate
-or gain is claimed. Current source `237f8969...` / 960 inputs adds bounded lifecycle installation-lock
+or gain is claimed. Checkpoint source `237f8969...` / 960 inputs adds bounded lifecycle installation-lock
 admission to cold-default split and typed quota-read corrections. Prior source
 `5d8912b1...` Windows full Nextest passed **2,626 tests**, with **50 selection exclusions**.
 Formatting, strict Clippy (17.394 s), Kernel typed tests (2), actual native/CLI/MCP
@@ -20,10 +20,11 @@ fresh ARM64 release, Developer ID/post-seal copied-launcher checks and the actua
 isolated installed lifecycle; all three cleanup observations exited 0 with target
 absent. **Prior source `5d8912b1...` evidence (6 November 2026):** Windows full Nextest passed **2,626 tests** with **50 selection exclusions**; its fresh producer took **764.1665 s**, and all **15 final R4 stages / 84 unchanged gates** passed, including **459 Python tests / 9 expected skips**. All **10 selected broader stages** passed by exact evidence adoption; the original failed queue stays failed. The real-corpus campaign remains a deadline failure with partial coverage. Its native/extension/VSIX package stages, `same`, `different`, `multi` and `untrusted` editor scenarios passed on their original native/package identities. Failed usage Stop and initial legacy attempts are retained. These observations do not become current-source qualification by relabeling.
 
-Current native source `237f8969...` / **960 inputs** adds bounded native installation-lock admission before accepting lifecycle work. Only typed installation-lock contention can wait within the **60-second admission budget** before Stop/Restart mutation acceptance. After acquiring the lock, native code rechecks the same instance/runtime and retains the lock through authority checks and completion. Submitted actions are never replayed; generic text and other failures do not become retryable. Scoped CLI Clippy passed in **32.292 s**, the unaccepted-state timeout regression passed in **36.053 s**, a fresh matched debug pair built in **90.262 s**, and the actual held-lock Stop integration passed in **29.522 s**. The current optimized producer passed in **734.0468 s**; native packaging passed in **15.255 s** and VSIX packaging in **17.183 s**. The fresh current-source legacy fixture passed in **68.399 s** and its whole installed-editor scenario in **33.561 s**, including native Stop and canonical cleanup. The subsequent whole usage scenario passed in **97.960 s**, including its native Stop and cleanup. A preceding **259.85 s** quick-pick failure remains unresolved and intermittent; the successful rerun used observational diagnostics, with no product picker correction or cause claim. All six selected editor scenarios are covered using four retained old-source scenarios and fresh current-source usage/legacy. Current-source Windows qualification passed formatting (**6.244 s**), strict workspace Clippy (**24.3543 s**) and full Nextest: **2,627 passed / 0 failed / 51 skipped**, with no retries. All four restored long campaigns passed: compact reads (**246.170 s**), retention plateau (**146.632 s**), sparse catalog edits (**29.658 s**) and manual backlog (**108.021 s**). Nextest ran for **1,542.644 s**; its wrapper took **1,617.6504 s**. Serial doctests passed across **8 crate targets** in **18.6745 s**; there were **0 eligible examples**, not eight executed examples. Immutable JUnit and Cargo timing reports retain this current-source run. These are selected local qualification results; manual acceptance and release promotion remain separate.
+Checkpoint native source `237f8969...` / **960 inputs** adds bounded native installation-lock admission before accepting lifecycle work. Only typed installation-lock contention can wait within the **60-second admission budget** before Stop/Restart mutation acceptance. After acquiring the lock, native code rechecks the same instance/runtime and retains the lock through authority checks and completion. Submitted actions are never replayed; generic text and other failures do not become retryable. Scoped CLI Clippy passed in **32.292 s**, the unaccepted-state timeout regression passed in **36.053 s**, a fresh matched debug pair built in **90.262 s**, and the actual held-lock Stop integration passed in **29.522 s**. The current optimized producer passed in **734.0468 s**; native packaging passed in **15.255 s** and VSIX packaging in **17.183 s**. The fresh current-source legacy fixture passed in **68.399 s** and its whole installed-editor scenario in **33.561 s**, including native Stop and canonical cleanup. The subsequent whole usage scenario passed in **97.960 s**, including its native Stop and cleanup. A preceding **259.85 s** quick-pick failure remains unresolved and intermittent; the successful rerun used observational diagnostics, with no product picker correction or cause claim. All six selected editor scenarios are covered using four retained old-source scenarios and fresh current-source usage/legacy. Current-source Windows qualification passed formatting (**6.244 s**), strict workspace Clippy (**24.3543 s**) and full Nextest: **2,627 passed / 0 failed / 51 skipped**, with no retries. All four restored long campaigns passed: compact reads (**246.170 s**), retention plateau (**146.632 s**), sparse catalog edits (**29.658 s**) and manual backlog (**108.021 s**). Nextest ran for **1,542.644 s**; its wrapper took **1,617.6504 s**. Serial doctests passed across **8 crate targets** in **18.6745 s**; there were **0 eligible examples**, not eight executed examples. Immutable JUnit and Cargo timing reports retain this current-source run. These are selected local qualification results; manual acceptance and release promotion remain separate.
 Earlier D4e receipts retain their original identity.
-Deleted-source recovery and the local test installer remain unfinished. Version
-**1.8.8** is unpublished.
+At this retained checkpoint, deleted-source recovery and the local test installer
+were unfinished. Later selected recovery and package results appear at the end
+of this ledger. Version **1.8.8** remains unpublished.
 
 **Earlier P12 checkpoint, 6 November 2026 (historical):** P9, P10, P11a, P11b and P12 are accepted for
 unpublished local development. P10 is committed as `c2584cb`, P11a as `f2bf2d2`
@@ -5320,3 +5321,62 @@ The final Python suite completed **480 tests / 9 skips** without failures in
 **25.810338 s**.
 These selected/native/extension observations do not infer a newly exercised
 installed VS Code host, Mac optimized/signing repeat or full platform matrix.
+
+### 6 November 2026 - branch review validation checkpoint
+
+The [branch review](../reviews/branch-v190-review-2026-11-06.md) covers the
+**737-file** snapshot at `8546b54` against merge base `0dbd2f0`, eight parallel
+areas and follow-up dependency reviews. Current corrections retain native
+watcher authority, scope-installation retirement, complete cleanup/fence evidence,
+funded capture custody, split terminal publication and guarded-helper admission.
+Recommendations, Explorer outcome guidance and current setup documentation were
+also corrected. These review corrections add no dependency, database, storage
+schema or OCR change. Version **1.8.8** remains unpublished.
+
+The first full Windows native run selected **2,681 tests**:
+**2,674 passed / 7 failed**, with **51 ignored**. The first corrected owning
+selection passed **6 of 7**; its remaining quiet-watcher assertion confused
+completed wait/recovery history with live work. The subsequent test-only
+correction preserves the original monitoring/idle-disable scenario and timeouts.
+The final corrected selection passed **all 7 tests**, in **25.616 s** of Nextest
+time (**35.518 s** owner elapsed), using the existing owner-controlled fixture
+base without changing user ACLs. Failed full/selected runs remain failed evidence;
+a selected pass does not become an all-green full invocation.
+
+Current reviewed native source is
+`2fb291eada72a3161622ed20b6a0c4cd7c478b2a07843cec3d4019a1fddaf972`
+/ **973 inputs**, with `source-freeze-r3.json` SHA-256
+`4d95a3ad1cc81e38415373f8ff8653e3b6b779dccc53efcb0e68e028e228b6d5`.
+The final delta from original review/Mac source is only test code in
+`crates/airk-cli/tests/service_runtime.rs` and the `#[cfg(test)]` fixture in
+`crates/airk-store/src/service_catalog_upgrade_recovery.rs`. Complete maps preserve
+the unchanged production code and extension inputs, and each tested identity.
+
+Final formatting and strict all-target/all-feature workspace Clippy passed in
+**8.122 s** through the documented helper, persistent P10 target and explicit
+`--incremental on --offline`; Cargo timings were retained. This was development
+validation, not a new optimized build.
+
+Neo passed **37 selected native tests** and **15 split Node tests** on original
+source `b409ff3d25c46ad22cf4f179edf343492780dcb048d344cfa59a9034920ac209`
+/ **973 inputs**. Results/timings were retained before successful `cargo clean`
+and target-absence verification. The later two test-only changes were not rerun
+on Mac; its original result is not relabeled as fresh final-source qualification.
+Full Mac workspace, optimized/signing, installed-editor, Linux and Intel remain
+outside that selected batch.
+
+| Final prepackage gate | Current recorded status |
+| --- | --- |
+| Unfiltered Windows native R2 and the four restored routine campaigns | Passed: 2,681 tests; 51 ignored; all four restored campaigns passed |
+| Serial doctests, lightweight main and workspace build | Commands passed; eight crates contain zero doctest examples |
+| Fresh optimized pair and complete seal | Passed: 675 files, current native identity, 821.198 s; release incremental disabled |
+| Actual native client/model and isolated installation checks | Passed: two projects with 16 files each, model inference, launcher repair, upgrade/rollback and resumable uninstall |
+| Complete compiled extension and Python suites | Node: 830 passed, 4 skipped. Python: 471 passed, 9 skipped |
+| Final repository/version, notices, dependency policy and whitespace | Passed; dependency policy retains three existing reviewed exceptions; notices cover 366 packages |
+
+The [working-build record](../releases/release-1.8.8.md#6-november-2026---branch-review-validation-checkpoint)
+holds the matching current checkpoint; earlier phase and PR60 evidence retains
+its original source/artifact scope. Use the checksum supplied with the manual-test
+Windows VSIX to identify the exact candidate. Manual acceptance on another machine
+and release promotion/publication remain separate; no package result is inferred
+before execution.

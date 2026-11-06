@@ -94,19 +94,45 @@ impl ServiceRegistry {
             return Ok(None);
         };
         ensure!(
-            binding == index.backing.binding.to_string()
-                && active.as_deref() == Some(binding.as_str()),
-            "native retirement backing pointer changed"
+            binding == index.backing.binding.to_string(),
+            "native retirement backing identity changed"
         );
-        let (payload, registered, paused): (Vec<u8>, bool, bool) = read.query_row(
-            "SELECT substr(payload,1,20481),registered,paused FROM projects WHERE binding=?1",
-            [&binding],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )?;
-        ensure!(
-            !registered && paused && payload == serde_json::to_vec(&index.backing)?,
-            "native retirement retained registration changed"
-        );
+        let registration: Option<(Vec<u8>, bool, bool)> = read
+            .query_row(
+                "SELECT substr(payload,1,20481),registered,paused FROM projects WHERE binding=?1",
+                [&binding],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?;
+        match (active.as_deref(), registration) {
+            (Some(pointer), Some((payload, registered, paused))) => ensure!(
+                pointer == binding
+                    && !registered
+                    && paused
+                    && payload == serde_json::to_vec(&index.backing)?,
+                "native retirement retained registration changed"
+            ),
+            (None, None) => {
+                // Physical cleanup drops the exact inactive registration and
+                // its FK pointer together. Absence alone is not retirement
+                // evidence: require the cleanup transaction's saved identity,
+                // in addition to the complete canonical fence verified above.
+                let removed: bool = read.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM service_removed_projects WHERE binding=?1 AND root_identity=?2)",
+                    params![
+                        binding,
+                        super::super::project_removal::removed_root_identity(&index.backing.root)
+                            .to_string()
+                    ],
+                    |row| row.get(0),
+                )?;
+                ensure!(
+                    removed,
+                    "native retirement cleanup identity is not retained"
+                );
+            }
+            _ => anyhow::bail!("native retirement backing pointer changed"),
+        }
         let enabled: bool = read.query_row(
             "SELECT EXISTS(SELECT 1 FROM index_sources WHERE index_id=?1 AND enabled<>0)",
             params![index_id.to_string()],

@@ -175,6 +175,42 @@ struct CatalogRuntime {
     coordinator: crate::catalog_coordinator::NativeCatalogCoordinator,
     policy_completions_pending: bool,
 }
+
+/// A saved terminal receipt describes an immutable completed operation, not
+/// current live admission. Keep its complete validated proof when unrelated
+/// reconciliation fails; every ordinary read/mutation remains fenced below.
+fn finalize_catalog_response(
+    response: ControlResponse,
+    reconcile: impl FnOnce() -> Result<()>,
+) -> ControlResponse {
+    if matches!(
+        response,
+        ControlResponse::Failure { .. }
+            | ControlResponse::CatalogOutcomeUnknown { .. }
+            | ControlResponse::SourceChangeBusy { .. }
+            | ControlResponse::SourceChangeResolutionOutcomeUnknown { .. }
+    ) {
+        return response;
+    }
+    let saved_terminal = matches!(
+        &response,
+        ControlResponse::CatalogReceipt {
+            receipt: Some(metadata),
+            fence: Some(airk_core::catalog_fences::FenceObservation::Applied(saved)),
+        } if metadata == &saved.metadata && saved.validate().is_ok()
+    );
+    if reconcile().is_err() && !saved_terminal {
+        return ControlResponse::Failure {
+            code: "catalog_metadata_saved_outcome_unknown".into(),
+        };
+    }
+    response
+}
+
+#[cfg(test)]
+#[path = "service_management_receipt_tests.rs"]
+mod receipt_tests;
+
 impl CatalogRuntime {
     fn advance_split(
         &mut self,
@@ -1436,7 +1472,7 @@ impl Management {
                                         catalog_request(registry, &root, &method, catalog.as_mut())
                                     }
                                 });
-                                let mut response = match routed {
+                                let response = match routed {
                                     Ok(Some(response)) => response,
                                     Ok(None) => execute_request(registry, method),
                                     Err(error) => {
@@ -1444,20 +1480,10 @@ impl Management {
                                         failure_response(error, request_is_read_only(&method))
                                     },
                                 };
-                                if !matches!(
-                                    response,
-                                    ControlResponse::Failure { .. }
-                                        | ControlResponse::CatalogOutcomeUnknown { .. }
-                                        | ControlResponse::SourceChangeBusy { .. }
-                                        | ControlResponse::SourceChangeResolutionOutcomeUnknown { .. }
-                                ) && let Some(native) = catalog.as_ref()
-                                    && native.reconcile(registry).is_err()
-                                {
-                                    response = ControlResponse::Failure {
-                                        code: "catalog_metadata_saved_outcome_unknown".into(),
-                                    };
-                                }
-                                response
+                                finalize_catalog_response(response, || match catalog.as_ref() {
+                                    Some(native) => native.reconcile(registry),
+                                    None => Ok(()),
+                                })
                             }
                             Err(_) => ControlResponse::Failure {
                                 code: "registry_unavailable".into(),

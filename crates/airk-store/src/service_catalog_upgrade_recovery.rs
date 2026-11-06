@@ -1087,12 +1087,52 @@ mod tests {
         drop(fixture.owner); // Ordinary purge must acquire A's actual project lease.
         let mut registry = ServiceRegistry::open(&control, namespace)?;
         assert!(registry.get(fixture.b.binding)?.paused);
-        // This depends on the approved normal15 absence-proof cleanup proposal.
-        // It never creates A's absent data root merely to obtain an advisory lock.
+        // Actual absence-proof cleanup retains the catalog's exact inactive
+        // backing identity, without recreating A's data or scheduling more purge work.
         assert!(registry.purge_removed_project_turn(fixture.a.binding)?);
+        assert_eq!(
+            legacy_retirement_receipt(&control, &request)?,
+            Some(result.clone())
+        );
+        let retained = registry.retained_project(fixture.a.binding)?;
+        assert_eq!(retained.registration, fixture.a);
+        assert!(retained.paused);
+        assert!(!registry.is_registered(fixture.a.binding)?);
+        assert!(registry.get(fixture.a.binding).is_err());
+        let (tombstone, pointer, legacy): (bool, Option<String>, String) = registry
+            .connection
+            .query_row(
+                "SELECT tombstone,active_registration,legacy_binding FROM index_definitions WHERE id=?1",
+                [fixture.a_index.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )?;
+        assert!(tombstone);
+        assert_eq!(pointer, Some(fixture.a.binding.to_string()));
+        assert_eq!(legacy, fixture.a.binding.to_string());
+        let cleanup_guard: Option<String> = registry.connection.query_row(
+            "SELECT cleanup_guard FROM projects WHERE binding=?1",
+            [fixture.a.binding.to_string()],
+            |row| row.get(0),
+        )?;
+        assert!(cleanup_guard.is_none());
+        assert!(registry.pending_project_removals(None, 32)?.is_empty());
+        let catalog_after_cleanup = registry.catalog_state()?;
+        assert!(registry.purge_removed_project_turn(fixture.a.binding)?);
+        assert_eq!(registry.catalog_state()?, catalog_after_cleanup);
         assert_eq!(legacy_retirement_receipt(&control, &request)?, Some(result));
-        assert!(registry.retained_project(fixture.a.binding).is_err());
+        assert!(
+            registry
+                .catalog_index_retirement_evidence(fixture.a_index)?
+                .is_none(),
+            "upgrade receipt must not become ordinary worker-fence evidence"
+        );
+        assert!(registry.get(fixture.b.binding)?.paused);
         assert_eq!(registry.get(fixture.b.binding)?.registration, fixture.b);
+        assert_eq!(
+            registry.job(fixture.b_job)?.state,
+            airk_core::service::JobState::Pending
+        );
+        assert_eq!(fs::read(&fixture.b_sentinel)?, b"healthy original B bytes");
         assert!(!Path::new(&fixture.a.root).exists() && !Path::new(&fixture.a.data_root).exists());
         Ok(())
     }

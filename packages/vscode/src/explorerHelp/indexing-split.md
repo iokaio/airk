@@ -1,6 +1,6 @@
 ---
 id: indexing.split
-title: Indexing — Split review and recovery
+title: Indexing - Split review and recovery
 route:
 area: explorer
 aliases: split, partition, recovery

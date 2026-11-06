@@ -18,9 +18,11 @@ To save defaults, inspect the affected Project and choose **Review saving as
 Project default**. Native preview and explicit apply remain separate. Defaults
 affect future selections for that Project's users, never grant access and never
 silently replace restored explicit choices. Reuse opens existing Project
-membership review. Split and permanent-removal advice remains explanatory until
-P10 and P9. Query omission differs from membership removal, index deletion and
-permanent denial.
+membership review. Split advice can open the selected index's controls when its
+native split capability is available; [splitting](index-splitting.md) still requires
+a separate complete native review and explicit apply. [Permanent exclusions](source-policy.md)
+likewise require their own reviewed operation; advice cannot apply them. Query
+omission differs from membership removal, index deletion and permanent denial.
 
 The current catalog has no dated, prefix-qualified coverage, overlap or cost
 receipt. These observations remain **unknown**, including source lag and semantic

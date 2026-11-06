@@ -74,6 +74,296 @@ impl Fixture {
 }
 
 #[test]
+fn closed_preallocation_settles_after_publication_faults_and_sibling_progress() -> Result<()> {
+    for boundary in [1, 2] {
+        for fail_after_replace in [false, true] {
+            let fixture = Fixture::new()?;
+            let (owner, funded) = fixture.destination()?;
+            let before = funded.observe_funding(owner.operation_id)?;
+            let id = reservation_identity(&owner, before.revision)?;
+            let lease_path = funded
+                .control_path()
+                .join(DIRECTORY)
+                .join("leases")
+                .join(format!("l-{id}.lease"));
+            let mut publication = 0;
+            {
+                let _ledger = funded.lock()?;
+                let result = allocate_prepared(
+                    &funded,
+                    &owner,
+                    FundingChildKind::Reservation {
+                        staging_name: String::new(),
+                    },
+                    4096,
+                    false,
+                    None,
+                    |point| {
+                        if matches!(point, PersistPoint::BeforeReplace) {
+                            publication += 1;
+                        }
+                        if publication == 1 {
+                            assert!(
+                                !lease_path.exists(),
+                                "closed preallocation must precede lease creation"
+                            );
+                        } else {
+                            let lease = OpenOptions::new()
+                                .read(true)
+                                .write(true)
+                                .open(&lease_path)?;
+                            assert_eq!(lease.metadata()?.len(), 0);
+                            assert!(matches!(
+                                lease.try_lock(),
+                                Err(std::fs::TryLockError::WouldBlock)
+                            ));
+                        }
+                        if publication == boundary
+                            && matches!(point, PersistPoint::AfterReplace) == fail_after_replace
+                        {
+                            anyhow::bail!("interrupted funded reservation publication");
+                        }
+                        Ok(())
+                    },
+                );
+                assert!(result.is_err());
+            }
+            let published = funded.observe_funding(owner.operation_id)?;
+            if boundary == 1 && !fail_after_replace {
+                assert_eq!(published, before);
+                assert!(!lease_path.exists());
+                continue;
+            }
+            assert_eq!(published.children.len(), 1);
+            assert_eq!(published.children[0].id, id);
+            assert_eq!(
+                published.children[0].closed,
+                boundary == 1 || !fail_after_replace
+            );
+            assert_eq!(lease_path.exists(), boundary == 2);
+            // Real independent B work advances this same funding record before
+            // A recovers. A's recorded child identity cannot become an orphan.
+            let peer_owner = funded.begin_funding_phase(
+                &published,
+                fixture.request.original_index,
+                FundingPhase {
+                    revision: 2,
+                    purpose: SplitJobPurpose::OriginalRemoval,
+                    job: Sha256Digest::from_bytes([7; 32]),
+                },
+            )?;
+            let peer_quota = fixture.quota.clone().with_funding(peer_owner)?;
+            let peer = peer_quota.reserve("original", 2048)?;
+            peer.charge(4)?;
+            let peer_stage = peer.staging_directory()?;
+            fs::write(peer_stage.join("peer"), b"keep")?;
+            let advanced = funded.observe_funding(owner.operation_id)?;
+            assert!(advanced.revision > published.revision);
+            let peer_children = advanced
+                .children
+                .iter()
+                .filter(|child| child.index_id == fixture.request.original_index)
+                .cloned()
+                .collect::<Vec<_>>();
+            let mut recovery = owner.clone();
+            recovery.phase = FundingPhase {
+                revision: 3,
+                purpose: SplitJobPurpose::DestinationBuild,
+                job: Sha256Digest::from_bytes([8; 32]),
+            };
+            let transferred = funded.transfer_funded_children(
+                &advanced,
+                &recovery,
+                FundingTakeoverKind::FailedWorkRetry,
+                |_| Ok(()),
+            )?;
+            assert_eq!(
+                transferred
+                    .children
+                    .iter()
+                    .find(|child| child.index_id == owner.index_id)
+                    .unwrap()
+                    .id,
+                id
+            );
+            let recovering = fixture.quota.clone().with_funding(recovery)?;
+            let recovery_owner = recovering.funding_use().unwrap();
+            let closed = recovering.close_abandoned_funded_reservations(recovery_owner)?;
+            assert_eq!(closed, usize::from(boundary == 2 && fail_after_replace));
+            let store = fixture.destination_store();
+            let writer = store.lock()?;
+            let settled = recovering.reconcile_funding_phase(&writer, recovery_owner, None)?;
+            assert!(
+                settled
+                    .children
+                    .iter()
+                    .all(|child| child.index_id != owner.index_id)
+            );
+            assert_eq!(
+                settled
+                    .children
+                    .iter()
+                    .filter(|child| child.index_id == fixture.request.original_index)
+                    .cloned()
+                    .collect::<Vec<_>>(),
+                peer_children
+            );
+            assert_eq!(settled.participants[0], advanced.participants[0]);
+            assert_eq!(
+                settled.participants[1].remaining_growth + settled.participants[1].consumed_growth,
+                BUDGET
+            );
+            assert!(!lease_path.exists());
+            assert_eq!(fs::read(peer_stage.join("peer"))?, b"keep");
+            let retry = recovering.reserve("destination", 2048)?;
+            assert_ne!(retry.0.funded.as_ref().unwrap().child, id);
+            drop(retry);
+            drop(peer);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn lease_setup_failure_preserves_closed_credit_and_foreign_entries() -> Result<()> {
+    let fixture = Fixture::new()?;
+    let (owner, funded) = fixture.destination()?;
+    let before = funded.observe_funding(owner.operation_id)?;
+    let lease_directory = funded.control_path().join(DIRECTORY).join("leases");
+    {
+        let _ledger = funded.lock()?;
+        assert!(
+            allocate_prepared(
+                &funded,
+                &owner,
+                FundingChildKind::Reservation {
+                    staging_name: String::new()
+                },
+                4096,
+                false,
+                None,
+                |point| {
+                    if matches!(point, PersistPoint::AfterReplace) {
+                        // An actual filesystem collision makes lease creation fail.
+                        fs::write(&lease_directory, b"foreign entry stays intact")?;
+                    }
+                    Ok(())
+                },
+            )
+            .is_err()
+        );
+    }
+    let prepared = funded.observe_funding(owner.operation_id)?;
+    assert_eq!(prepared.children.len(), 1);
+    assert!(prepared.children[0].closed);
+    assert_eq!(prepared.participants[0], before.participants[0]);
+    assert_eq!(
+        prepared.participants[1].remaining_growth + prepared.children[0].held_bytes,
+        BUDGET
+    );
+    assert_eq!(fs::read(&lease_directory)?, b"foreign entry stays intact");
+    assert_eq!(funded.close_abandoned_funded_reservations(&owner)?, 0);
+    let store = fixture.destination_store();
+    let writer = store.lock()?;
+    assert!(
+        funded
+            .reconcile_funding_phase(&writer, &owner, None)
+            .is_err()
+    );
+    assert_eq!(funded.observe_funding(owner.operation_id)?, prepared);
+    assert_eq!(fs::read(&lease_directory)?, b"foreign entry stays intact");
+    // The fixture, not recovery, removes its deliberate foreign obstruction.
+    fs::remove_file(&lease_directory)?;
+    let settled = funded.reconcile_funding_phase(&writer, &owner, None)?;
+    assert!(settled.children.is_empty());
+    assert_eq!(
+        settled.participants[1].remaining_growth + settled.participants[1].consumed_growth,
+        BUDGET
+    );
+    Ok(())
+}
+
+#[test]
+fn published_open_missing_lease_refuses_recovery_and_adoption() -> Result<()> {
+    let fixture = Fixture::new()?;
+    let (owner, funded) = fixture.destination()?;
+    let (child, prepared) = {
+        let _ledger = funded.lock()?;
+        allocate_prepared(
+            &funded,
+            &owner,
+            FundingChildKind::Reservation {
+                staging_name: String::new(),
+            },
+            4096,
+            false,
+            None,
+            |_| Ok(()),
+        )?
+    };
+    drop(prepared.context("prepared lease missing")?.published()?);
+    let before = funded.observe_funding(owner.operation_id)?;
+    let path = funded
+        .control_path()
+        .join(DIRECTORY)
+        .join("leases")
+        .join(format!("l-{}.lease", child.child));
+    fs::remove_file(&path)?;
+    assert!(funded.close_abandoned_funded_reservations(&owner).is_err());
+    assert!(
+        funded
+            .adopt_funded_reservation(&owner, child.child)
+            .is_err()
+    );
+    assert_eq!(funded.observe_funding(owner.operation_id)?, before);
+    assert!(!path.exists());
+    // Adoption of a CLOSED preallocation may create custody, but an uncertain
+    // OPEN commit must return its error without dropping a Reservation under
+    // the ledger (which would recursively lock it), or deleting its disk lease.
+    let fixture = Fixture::new()?;
+    let (owner, funded) = fixture.destination()?;
+    {
+        let _ledger = funded.lock()?;
+        assert!(
+            allocate_prepared(
+                &funded,
+                &owner,
+                FundingChildKind::Reservation {
+                    staging_name: String::new()
+                },
+                4096,
+                false,
+                None,
+                |point| {
+                    if matches!(point, PersistPoint::AfterReplace) {
+                        anyhow::bail!("closed preallocation committed");
+                    }
+                    Ok(())
+                },
+            )
+            .is_err()
+        );
+    }
+    let prepared = funded.observe_funding(owner.operation_id)?;
+    let child = &prepared.children[0];
+    assert!(child.closed);
+    assert!(
+        funded
+            .adopt_funded_reservation_observed(&owner, child.id, |point| {
+                if matches!(point, PersistPoint::AfterReplace) {
+                    anyhow::bail!("adopted OPEN commit reply lost");
+                }
+                Ok(())
+            })
+            .is_err()
+    );
+    let adopted = funded.observe_funding(owner.operation_id)?;
+    assert!(!adopted.children[0].closed);
+    assert_eq!(funded.close_abandoned_funded_reservations(&owner)?, 1);
+    Ok(())
+}
+
+#[test]
 fn parent_credit_transfers_atomically_and_cannot_fund_another_collection() -> Result<()> {
     let fixture = Fixture::new()?;
     let (owner, funded) = fixture.destination()?;

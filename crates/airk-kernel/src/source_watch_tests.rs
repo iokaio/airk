@@ -45,6 +45,123 @@ fn directory_plan_with_policy(
     Ok((project, plan))
 }
 
+#[test]
+fn unobserved_configuration_never_admits_directory_planning_or_source_notices() -> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let base = owner.path().canonicalize()?;
+    let source = base.join("unavailable-source");
+    let data = base.join("data");
+    let mut unknown = binding(&source, &data, "unobserved")?;
+    let project = unknown.registration.binding;
+    unknown.configuration_observed = false;
+    unknown
+        .additional_roots
+        .push(base.join("unavailable-alias").to_str().unwrap().into());
+    let mut watcher = SourceWatcher::new();
+    assert!(!watcher.install(unknown)?);
+    assert!(!watcher.entries.contains_key(&project));
+    assert!(watcher.root_index.is_empty());
+    assert_eq!(watcher.weight, 0);
+    for _ in 0..3 {
+        watcher.poll()?;
+        assert!(watcher.plan.as_ref().is_none_or(|plan| {
+            plan.tasks.is_empty()
+                && plan.walk.is_none()
+                && plan.wanted.is_empty()
+                && plan.usage.is_empty()
+        }));
+        assert!(watcher.watched.is_empty());
+        assert!(watcher.notices(32)?.is_empty());
+    }
+    let observation = watcher.observations(32).pop().unwrap();
+    assert_eq!(observation.project, project);
+    assert_eq!(observation.native_roots, 0);
+    assert_eq!(observation.failure, Some(WatchFailure::MetadataUnavailable));
+    assert!(observation.traversal.is_none());
+    assert!(!source.exists() && !data.exists());
+    Ok(())
+}
+
+#[test]
+fn authority_loss_revokes_old_watches_without_stranding_healthy_or_requalified_bindings()
+-> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let base = owner.path().canonicalize()?;
+    let source = base.join("source");
+    let healthy = base.join("healthy");
+    let data = base.join("data");
+    fs::create_dir(&source)?;
+    fs::create_dir(&healthy)?;
+    let marker = source.join(".gitignore");
+    fs::write(&marker, b"# unchanged source control\n")?;
+    for fenced_first in [false, true] {
+        let mut watcher = SourceWatcher::new();
+        ensure!(watcher.watcher.is_some(), "native watcher unavailable");
+        let original = binding(&source, &data, "lost-authority")?;
+        let project = original.registration.binding;
+        let peer = binding(&healthy, &data, "healthy")?;
+        let peer_id = peer.registration.binding;
+        assert!(watcher.install(original)?);
+        assert!(watcher.install(peer)?);
+        for path in [&source, &healthy] {
+            watcher
+                .watcher
+                .as_mut()
+                .unwrap()
+                .watch(path, RecursiveMode::NonRecursive)?;
+            watcher.watched.insert(path.clone());
+        }
+        watcher.sender.try_send(vec![marker.clone()])?;
+        if fenced_first {
+            watcher.fence_policy(project);
+            assert!(watcher.watcher.is_none());
+        }
+        let mut unknown = binding(&source, &data, "lost-authority")?;
+        unknown.configuration_observed = false;
+        assert!(!watcher.install(unknown)?);
+        assert!(watcher.watcher.is_none());
+        assert!(watcher.watched.is_empty() && watcher.plan.is_none());
+        assert!(watcher.receiver.try_recv().is_err());
+        assert!(!watcher.entries.contains_key(&project));
+        assert!(watcher.entries.contains_key(&peer_id));
+        assert_eq!(
+            watcher.observations[&project].failure,
+            Some(WatchFailure::MetadataUnavailable)
+        );
+        assert_eq!(watcher.observations[&peer_id].native_roots, 0);
+        // Delayed events from the withdrawn scope cannot admit source work.
+        watcher.sender.try_send(vec![marker.clone()])?;
+        let until = Instant::now() + Duration::from_secs(5);
+        while !watcher.watched.contains(&healthy) && Instant::now() < until {
+            watcher.poll()?;
+        }
+        assert!(watcher.watched.contains(&healthy));
+        assert!(!watcher.watched.contains(&source));
+        assert!(
+            watcher
+                .notices(32)?
+                .iter()
+                .all(|notice| notice.project == peer_id)
+        );
+        // Repeated failed qualification must not keep dropping the peer backend.
+        let mut unknown = binding(&source, &data, "lost-authority")?;
+        unknown.configuration_observed = false;
+        assert!(!watcher.install(unknown)?);
+        watcher.fence_policy(project);
+        assert!(watcher.watcher.is_some() && watcher.watched.contains(&healthy));
+        // A successful same-epoch legacy empty-policy observation remains valid.
+        assert!(watcher.install(binding(&source, &data, "lost-authority")?)?);
+        let until = Instant::now() + Duration::from_secs(5);
+        while !watcher.watched.contains(&source) && Instant::now() < until {
+            watcher.poll()?;
+        }
+        assert!(watcher.watched.contains(&source) && watcher.watched.contains(&healthy));
+        assert_eq!(watcher.entries[&project].binding.epoch, 1);
+    }
+    assert_eq!(fs::read(&marker)?, b"# unchanged source control\n");
+    Ok(())
+}
+
 #[cfg(any(windows, target_os = "macos"))]
 #[test]
 fn permanent_watch_policy_prunes_denies_and_reports_unknown_names_and_ignore_controls() -> Result<()>

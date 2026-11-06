@@ -741,6 +741,30 @@ export const WEBVIEW_MESSAGES = {
 } as const satisfies Record<string, Record<string, FieldSpec>>;
 
 export type WebviewMessageType = keyof typeof WEBVIEW_MESSAGES;
+
+/** Transport classification follows actual host effects, not naming prefixes.
+ * A lost acknowledgement never authorizes replay of native or local writes.
+ * Draft/preview and receipt reads stay reads even when they retain observations. */
+const UNCERTAIN_REQUESTS: ReadonlySet<WebviewMessageType> = new Set<WebviewMessageType>([
+    'indexing.apply', 'indexing.export', 'indexing.grant.use',
+    'indexing.setup.apply', 'indexing.setup.resume', 'indexing.source.resolve',
+    'indexing.policy.resume', 'indexing.split.apply', 'indexing.split.recover',
+    'indexing.retirement.stopTracking', 'indexing.recommendations.use', 'indexing.recommendations.copy',
+    'strategy.run.export', 'details.copy', 'clipboard.write',
+    'manage.action', 'manage.command', 'planner.saveInWorkspace', 'planner.exportJSON',
+    'strategy.export', 'studio.save', 'usage.action', 'suggestions.resolve',
+    'suggestions.applied', 'suggestions.discardAll', 'handoff.share',
+    'recipes.save', 'recipes.delete', 'recipes.export',
+]);
+const INTERACTIVE_READ_REQUESTS: ReadonlySet<WebviewMessageType> = new Set<WebviewMessageType>([
+    'planner.import', 'strategy.import', 'recipes.import', 'source.open', 'source.choose',
+    'help.choose', 'workspace.manageTrust', 'instructions.open', 'planner.openDraft',
+]);
+export function explorerRequestPolicy(type: WebviewMessageType): { uncertain: boolean; interactive: boolean } {
+    const uncertain = UNCERTAIN_REQUESTS.has(type);
+    return { uncertain, interactive: uncertain || INTERACTIVE_READ_REQUESTS.has(type) };
+}
+
 type FieldValue<S> = S extends { kind: 'string' } ? string : S extends { kind: 'int' } ? number : S extends { kind: 'bool' } ? boolean
     : S extends { kind: 'enum'; values: readonly (infer V)[] } ? V : S extends { kind: 'json' } ? Record<string, unknown> : never;
 type Fields<T> = { -readonly [K in keyof T as T[K] extends { optional: true } ? never : K]: FieldValue<T[K]> }

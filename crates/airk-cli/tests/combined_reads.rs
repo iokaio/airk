@@ -1881,6 +1881,17 @@ async fn recommendations_keep_native_cli_mcp_parity_and_execute_copied_examples(
         );
         let result = body(&native)?;
         assert_eq!(result["schema"], "airk.recommendations/1");
+        let instructions = result["instructions"]["text"]
+            .as_str()
+            .context("scope instructions absent")?;
+        ensure!(
+            instructions.contains("separate native management review"),
+            "missing reviewed management guidance: {instructions}"
+        );
+        ensure!(
+            !instructions.contains("pending P9/P10"),
+            "obsolete management guidance: {instructions}"
+        );
         assert_parity("recommendations CLI", &result, &body(&cli)?)?;
         assert_parity("recommendations MCP", &result, &body(&wire["result"])?)?;
         let plan = json!({"schema":"airk.parse.request/1","mode":"execute","verification":"off","plan":{"schema":"airk.parse.plan/1","steps":[{"id":"advice","tool":"query_scope","args":args}]}});
@@ -1975,6 +1986,56 @@ async fn recommendations_keep_native_cli_mcp_parity_and_execute_copied_examples(
         "P8 useful subset observations",
         &json!({"scope":"Original fictional positive lexical fixture; selected and all available scope, not a general recall/latency/physical-I/O claim","cases":subset_observations}),
     )?;
+    // Lifecycle/removal advice uses the same complete canonical body in all
+    // transports. It offers a separate review and never prepares a mutation.
+    for (situation, action) in [
+        ("different_lifecycles", "review_split"),
+        ("never_index_path", "removal_pending"),
+    ] {
+        let args = json!({"view":"recommendations","situation":situation,"max_bytes":65536});
+        let native = native_read(backend.as_ref(), "airk_query_scope", &args).await?;
+        let cli = f.cli("airk_query_scope", &args).await?;
+        let wire = mcp.call(id, "query_scope", args.clone())?;
+        id += 1;
+        ensure!(
+            native["isError"] != true
+                && cli["isError"] != true
+                && wire["result"]["isError"] != true,
+            "management advice failed: {native} {cli} {wire}"
+        );
+        let result = body(&native)?;
+        assert_eq!(result["cards"][0]["action"], action);
+        let tradeoff = result["cards"][0]["tradeoff"]
+            .as_str()
+            .context("management tradeoff absent")?;
+        ensure!(
+            tradeoff.contains("separate native review")
+                && tradeoff.contains("Advice does not prepare or apply"),
+            "management review boundaries absent: {tradeoff}"
+        );
+        assert_parity("management recommendations CLI", &result, &body(&cli)?)?;
+        assert_parity(
+            "management recommendations MCP",
+            &result,
+            &body(&wire["result"])?,
+        )?;
+        let plan = json!({"schema":"airk.parse.request/1","mode":"execute","verification":"off","plan":{"schema":"airk.parse.plan/1","steps":[{"id":"advice","tool":"query_scope","args":args}]}});
+        let parsed = mcp.call(id, "parse", plan)?;
+        id += 1;
+        ensure!(
+            parsed["result"]["isError"] != true,
+            "management advisory plan failed: {parsed}"
+        );
+        let parsed_body = body(&parsed["result"])?;
+        assert_parity(
+            "management recommendations Workbench plan",
+            &result,
+            &body(&parsed_body["steps"][0]["result"])?,
+        )?;
+        assert_eq!(result["limits"]["evidence_queries"], 0);
+        assert_eq!(result["limits"]["source_scans"], 0);
+        assert_eq!(result["limits"]["worker_probes"], 0);
+    }
     for args in [
         json!({"view":"recommendations","selection":{"project_ids":[f.projects[2]],"index_ids":[f.indexes[2]]}}),
         json!({"view":"recommendations","max_bytes":1}),

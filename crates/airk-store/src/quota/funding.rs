@@ -1496,6 +1496,22 @@ fn allocate(
     available: bool,
     deadline: Option<Instant>,
 ) -> Result<FundedChildRef> {
+    ensure!(
+        matches!(kind, FundingChildKind::Current { .. }),
+        "reservation allocation requires its prepared lease handoff"
+    );
+    Ok(allocate_prepared(quota, owner, kind, bytes, available, deadline, |_| Ok(()))?.0)
+}
+
+fn allocate_prepared(
+    quota: &Quota,
+    owner: &FundingUse,
+    kind: FundingChildKind,
+    bytes: u64,
+    available: bool,
+    deadline: Option<Instant>,
+    mut observer: impl FnMut(PersistPoint) -> Result<()>,
+) -> Result<(FundedChildRef, Option<PreparedReservationLease>)> {
     within_deadline(deadline)?;
     let mut record = read_record(quota, owner.operation_id)?;
     let participant = check_use(&record, owner)?;
@@ -1529,21 +1545,13 @@ fn allocate(
                 &serde_json::to_vec(allocation)?,
             ],
         ),
-        FundingChildKind::Reservation { .. } => framed_digest(
-            b"airk/funded-reservation/1",
-            &[
-                owner.operation_id.as_bytes(),
-                owner.request_digest.as_bytes(),
-                owner.index_id.identity().as_bytes(),
-                &serde_json::to_vec(&owner.phase)?,
-                &ordinal.to_be_bytes(),
-            ],
-        ),
+        FundingChildKind::Reservation { .. } => reservation_identity(owner, ordinal)?,
     };
     ensure!(
         !record.children.iter().any(|child| child.id == id),
         "funded child exists; exact native recovery adoption required"
     );
+    let reservation = matches!(&kind, FundingChildKind::Reservation { .. });
     let kind = match kind {
         FundingChildKind::Reservation { .. } => FundingChildKind::Reservation {
             staging_name: format!("r-funded-{id}"),
@@ -1560,16 +1568,121 @@ fn allocate(
         capacity: bytes,
         held_bytes: bytes,
         charged: 0,
-        closed: false,
+        closed: reservation,
         current_owned: false,
     });
     advance(&mut record)?;
-    within_deadline(deadline)?;
-    persist(quota, &record)?;
-    Ok(FundedChildRef {
+    let reference = FundedChildRef {
         owner: owner.clone(),
         child: id,
-    })
+    };
+    // A prepared closed child owns its credit and prospective staging name but
+    // has never exposed a live capture. Existing native settlement can recover
+    // this state even if no lease could be created, including after a takeover.
+    within_deadline(deadline)?;
+    persist_observed(quota, &record, &mut observer)?;
+    if !reservation {
+        return Ok((reference, None));
+    }
+    let mut lease = PreparedReservationLease::open(quota, id, true)?;
+    record
+        .children
+        .last_mut()
+        .context("allocated child missing")?
+        .closed = false;
+    advance(&mut record)?;
+    within_deadline(deadline)?;
+    // Opening can commit and still report a synchronization failure. Keep the
+    // lease on disk once this boundary is attempted; a File is not a live
+    // Reservation whose destructor could recursively acquire this ledger.
+    lease.created = false;
+    persist_observed(quota, &record, observer)?;
+    Ok((reference, Some(lease)))
+}
+
+fn reservation_identity(owner: &FundingUse, ordinal: u64) -> Result<Sha256Digest> {
+    Ok(framed_digest(
+        b"airk/funded-reservation/1",
+        &[
+            owner.operation_id.as_bytes(),
+            owner.request_digest.as_bytes(),
+            owner.index_id.identity().as_bytes(),
+            &serde_json::to_vec(&owner.phase)?,
+            &ordinal.to_be_bytes(),
+        ],
+    ))
+}
+
+struct PreparedReservationLease {
+    directory: crate::service::registry::catalog::setup::storage::SetupDirectory,
+    name: std::ffi::OsString,
+    file: Option<File>,
+    created: bool,
+}
+impl PreparedReservationLease {
+    fn open(quota: &Quota, child: Sha256Digest, allow_create: bool) -> Result<Self> {
+        use crate::service::registry::catalog::setup::storage::{SetupDirectory, SetupFileMode};
+        let parent = SetupDirectory::open_canonical(&quota.control_path().join(DIRECTORY))?;
+        let directory = if allow_create {
+            parent.create_dir(std::ffi::OsStr::new("leases"))?
+        } else {
+            parent.open_dir(std::ffi::OsStr::new("leases"))?
+        };
+        let name: std::ffi::OsString = format!("l-{child}.lease").into();
+        let (file, created) = if !allow_create {
+            (directory.open_file(&name, SetupFileMode::ReadWrite)?, false)
+        } else {
+            match directory.open_file(&name, SetupFileMode::CreateNew) {
+                Ok(file) => (file, true),
+                Err(error)
+                    if error
+                        .downcast_ref::<io::Error>()
+                        .is_some_and(|error| error.kind() == io::ErrorKind::AlreadyExists) =>
+                {
+                    // The durable closed child already owns this exact name.
+                    // Never sweep unrelated well-formed orphan names.
+                    (directory.open_file(&name, SetupFileMode::ReadWrite)?, false)
+                }
+                Err(error) => return Err(error),
+            }
+        };
+        let pending = Self {
+            directory,
+            name,
+            file: Some(file),
+            created,
+        };
+        let file = pending
+            .file
+            .as_ref()
+            .context("funded lease handle missing")?;
+        file.try_lock()
+            .context("funded reservation has a live owner")?;
+        ensure!(
+            file.metadata()?.len() == 0,
+            "funded lease has unexpected contents"
+        );
+        file.sync_all()?;
+        pending.directory.sync()?;
+        parent.sync()?;
+        Ok(pending)
+    }
+    fn published(mut self) -> Result<File> {
+        self.created = false;
+        self.file
+            .take()
+            .context("prepared funded lease handle missing")
+    }
+}
+impl Drop for PreparedReservationLease {
+    fn drop(&mut self) {
+        if self.created
+            && let Some(file) = &self.file
+        {
+            // Roll back only the exact newly created inode, before publication.
+            let _ = self.directory.unlink_file_if_identity(&self.name, file);
+        }
+    }
 }
 
 pub(super) fn reserve(
@@ -1587,7 +1700,7 @@ pub(super) fn reserve(
         record.participants[offset].collection == collection,
         "funded reservation crosses participant"
     );
-    let child = allocate(
+    let (child, lease) = allocate_prepared(
         quota,
         owner,
         FundingChildKind::Reservation {
@@ -1596,13 +1709,22 @@ pub(super) fn reserve(
         bytes,
         available,
         deadline,
+        |_| Ok(()),
     )?;
-    reservation_handle(quota, child, ledger.lifecycle)
+    reservation_handle_with_lease(
+        quota,
+        child,
+        ledger.lifecycle,
+        lease
+            .context("prepared funded lease missing")?
+            .published()?,
+    )
 }
-fn reservation_handle(
+fn reservation_handle_with_lease(
     quota: &Quota,
     child: FundedChildRef,
     lifecycle: Arc<File>,
+    lease: File,
 ) -> Result<Reservation> {
     let record = read_record(quota, child.owner.operation_id)?;
     let saved = record
@@ -1614,25 +1736,7 @@ fn reservation_handle(
         anyhow::bail!("funded child is not a reservation");
     };
     let directory = quota.control_path().join(DIRECTORY).join("leases");
-    fs::create_dir_all(&directory)?;
-    unlinked(&directory)?;
     let lease_path = directory.join(format!("l-{}.lease", child.child));
-    if lease_path.try_exists()? {
-        unlinked(&lease_path)?;
-    }
-    let lease = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(&lease_path)?;
-    lease
-        .try_lock()
-        .context("funded reservation has a live owner")?;
-    ensure!(
-        lease.metadata()?.len() == 0,
-        "funded lease has unexpected contents"
-    );
     let collection = record
         .request
         .registration(saved.index_id)
@@ -2116,6 +2220,14 @@ impl Quota {
         owner: &FundingUse,
         id: Sha256Digest,
     ) -> Result<Reservation> {
+        self.adopt_funded_reservation_observed(owner, id, |_| Ok(()))
+    }
+    fn adopt_funded_reservation_observed(
+        &self,
+        owner: &FundingUse,
+        id: Sha256Digest,
+        observer: impl FnMut(PersistPoint) -> Result<()>,
+    ) -> Result<Reservation> {
         let ledger = self.lock()?;
         let mut record = read_record(self, owner.operation_id)?;
         check_use(&record, owner)?;
@@ -2133,20 +2245,22 @@ impl Quota {
                 ),
             "funded staging recovery identity changed"
         );
-        let handle = reservation_handle(
+        let mut lease = PreparedReservationLease::open(self, id, record.children[offset].closed)?;
+        record.children[offset].closed = false;
+        let part = check_use(&record, owner)?;
+        record.participants[part].settled_revision = None;
+        advance(&mut record)?;
+        lease.created = false;
+        persist_observed(self, &record, observer)?;
+        reservation_handle_with_lease(
             self,
             FundedChildRef {
                 owner: owner.clone(),
                 child: id,
             },
             ledger.lifecycle.clone(),
-        )?;
-        record.children[offset].closed = false;
-        let part = check_use(&record, owner)?;
-        record.participants[part].settled_revision = None;
-        advance(&mut record)?;
-        persist(self, &record)?;
-        Ok(handle)
+            lease.published()?,
+        )
     }
     /// Existing native writer/journal owner invokes this only after Ready/no
     /// pending, after closing captures. Cleanup runs outside ledger.lock; missing

@@ -961,9 +961,7 @@ impl SourceSupervisor {
                             ) in observations
                             {
                                 if fences.blocked(project) { continue; }
-                                if failure == Some(WatchFailure::RootLimit) {
-                                    sent.remove(&project);
-                                }
+                                retry_unavailable_configuration(&mut sent, project, epoch, failure);
                                 if registry
                                     .record_watch_observation(
                                         project, epoch, native, backend, failure, now_ms,
@@ -1292,6 +1290,29 @@ fn send_configuration(
     sent.insert(id, (epoch, Some(digest)));
     Ok(())
 }
+
+fn retry_unavailable_configuration(
+    sent: &mut BTreeMap<ProjectBinding, (u64, Option<Sha256Digest>)>,
+    project: ProjectBinding,
+    epoch: u64,
+    failure: Option<WatchFailure>,
+) {
+    if matches!(
+        failure,
+        Some(WatchFailure::RootLimit | WatchFailure::MetadataUnavailable)
+    ) && sent
+        .get(&project)
+        .is_some_and(|(current, _)| *current == epoch)
+    {
+        // Retry through the existing bounded registry sweep. A delayed failure
+        // from a superseded epoch must not invalidate its replacement binding.
+        sent.remove(&project);
+    }
+}
+
+#[cfg(test)]
+#[path = "source_supervisor_retry_tests.rs"]
+mod retry_tests;
 
 #[cfg(test)]
 mod tests {

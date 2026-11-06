@@ -200,12 +200,28 @@ pub fn accept_guarded_bootstrap() -> Result<GuardedBootstrap> {
     Ok(proof)
 }
 
+fn native_marker_present(path: &Path) -> Result<bool> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            ensure!(
+                metadata.is_file() && !metadata.file_type().is_symlink(),
+                "native helper metadata marker is redirected or nonregular"
+            );
+            Ok(true)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
 /// Missing standalone legacy metadata is supported only when BOTH native
 /// owner and registry are absent. Existing/corrupt authority never falls back.
 pub fn shared_mode(root: &Path) -> Result<bool> {
-    if !root.join("service-1.4.sqlite3").try_exists()? {
+    let registry_present = native_marker_present(&root.join("service-1.4.sqlite3"))?;
+    let owner_present = native_marker_present(&root.join("service-1.4.owner.json"))?;
+    if !registry_present {
         ensure!(
-            !root.join("service-1.4.owner.json").try_exists()?,
+            !owner_present,
             "native registry is missing under an existing owner"
         );
         return Ok(false);
@@ -272,3 +288,7 @@ fn accept_windows() -> Result<GuardedBootstrap> {
     drop(job);
     GuardedBootstrap::from_permit(permit)
 }
+
+#[cfg(test)]
+#[path = "embedding_pool_bootstrap_tests.rs"]
+mod tests;

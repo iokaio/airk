@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ExplorerError, EXPLORER_ERRORS, friendlyError } from '../explorerErrors';
-import { ExplorerViewState, HostMessage, MESSAGE_VERSION, WebviewMessageOf, WebviewMessageType } from '../explorerContracts';
+import { ExplorerViewState, HostMessage, MESSAGE_VERSION, WebviewMessageOf, WebviewMessageType, explorerRequestPolicy } from '../explorerContracts';
 
 const host = acquireVsCodeApi();
 let counter = 0;
@@ -17,8 +17,7 @@ type Fields<T extends WebviewMessageType> = Omit<WebviewMessageOf<T>, 'v' | 'typ
 export function request<T = unknown, K extends WebviewMessageType = WebviewMessageType>(type: K, fields: Fields<K>): Promise<T> {
     const requestId = `w${++counter}`;
     if (pending.size >= 64) { return Promise.reject(new HostFailure({ code: 'RATE_LIMITED', message: 'Explorer already has 64 requests waiting.' })); }
-    const uncertain = /^(indexing\.(apply|export)|manage\.(action|command)|planner\.(saveInWorkspace|exportJSON)|strategy\.export|studio\.save|usage\.action|suggestions\.(resolve|applied|discardAll)|handoff\.share|recipes\.(save|delete|export))$/.test(type);
-    const interactive = uncertain || type === 'planner.import' || type === 'strategy.import' || type === 'recipes.import' || type === 'source.open' || type === 'source.choose' || type === 'help.choose';
+    const { uncertain, interactive } = explorerRequestPolicy(type);
     return new Promise<T>((resolve, reject) => {
         const fail = (code: 'REQUEST_TIMEOUT' | 'REQUEST_OUTCOME_UNKNOWN' | 'HOST_UNAVAILABLE') => {
             const waiter = pending.get(requestId); if (!waiter) { return; }
