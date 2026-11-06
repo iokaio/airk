@@ -22,7 +22,7 @@ pub fn observe_authority_v1(
             && owner.catalog_upgrade == Some(upgrade_id),
         "authority-1 probe requires exact pending native ownership"
     );
-    let seal = verify_recovered_authority_v1(&root, &receipt)?;
+    let seal = super::super::recovery::verify_authority(&root, &receipt)?;
     let read = registry_read(&root)?;
     let catalog = super::super::super::state(&read)?;
     ensure!(
@@ -98,6 +98,10 @@ impl CatalogUpgrade {
         checkpoint: impl Fn(&str) -> Result<()>,
     ) -> Result<UpgradeReceipt> {
         let mut receipt = pending(&self.root)?.context("authority-1 upgrade intent missing")?;
+        if receipt.retirement_recovery.is_some() {
+            return super::super::recovery::settle_owned(self, native_host, checkpoint);
+        }
+
         ensure!(
             receipt.plan.namespace == self.namespace
                 && receipt.authority_v1_host == Some(native_host)

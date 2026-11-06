@@ -679,6 +679,14 @@ pub(super) fn pinned_records(
     root: &crate::service::registry::catalog::setup::storage::SetupDirectory,
     logical_root: &Path,
 ) -> Result<Vec<LiveRecord>> {
+    pinned_records_checked(control, root, logical_root, None)
+}
+fn pinned_records_checked(
+    control: &crate::service::registry::catalog::setup::storage::SetupDirectory,
+    root: &crate::service::registry::catalog::setup::storage::SetupDirectory,
+    logical_root: &Path,
+    retired_registration: Option<&ProjectRegistration>,
+) -> Result<Vec<LiveRecord>> {
     use crate::service::registry::catalog::setup::storage::SetupFileMode;
     use std::ffi::OsStr;
     let directory = match control.open_dir(OsStr::new(DIRECTORY)) {
@@ -738,6 +746,9 @@ pub(super) fn pinned_records(
                     == pinned_identity(root, logical_root, record.request.namespace)?,
             "pinned funding root binding changed"
         );
+        if let Some(registration) = retired_registration {
+            retired::participant(&record, registration)?;
+        }
         result.extend(accounting(&record)?);
         operations += 1;
         ensure!(
@@ -2344,3 +2355,7 @@ impl Quota {
         Ok(record)
     }
 }
+
+#[path = "funding_retired.rs"]
+mod retired;
+pub(super) use retired::RetiredCurrentInventory;

@@ -167,6 +167,14 @@ impl ProjectLease {
     pub fn identity(&self) -> (airk_core::service::ProjectBinding, Option<u64>) {
         (self.binding, self.epoch)
     }
+    /// Compare exact native custody without resolving a new path or implying an admitted epoch.
+    pub(crate) fn matches_registration(
+        &self,
+        control: &Path,
+        binding: airk_core::service::ProjectBinding,
+    ) -> bool {
+        self.binding == binding && self.root == control
+    }
 }
 
 pub struct ServiceLease {

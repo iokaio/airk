@@ -96,6 +96,12 @@ fn read_index(
     // Its native worker census and fence bind the immutable index backing;
     // it does not need an enabled source roster or readable RootConfig.
     if selection.change == SourceMutationSelection::RetireIndex {
+        ensure!(
+            registry
+                .catalog_active_split_for_binding(index.backing.binding)?
+                .is_none(),
+            "active split owns this participant; cancel or finish its exact recovery before retirement"
+        );
         return Ok(IndexReview {
             index,
             sources: Vec::new(),

@@ -167,6 +167,32 @@ impl Fixture {
     }
 
     fn with_runtime(dedicated_is_indexed: bool, count: usize, helper: bool) -> Result<Self> {
+        Self::with_runtime_layout(dedicated_is_indexed, count, helper, None)
+    }
+    fn with_runtime_layout(
+        dedicated_is_indexed: bool,
+        count: usize,
+        helper: bool,
+        removed_last_parent: Option<bool>,
+    ) -> Result<Self> {
+        Self::with_runtime_topology(
+            dedicated_is_indexed,
+            count,
+            helper,
+            removed_last_parent,
+            false,
+        )
+    }
+    fn with_shared_runtime() -> Result<Self> {
+        Self::with_runtime_topology(true, 3, false, None, true)
+    }
+    fn with_runtime_topology(
+        dedicated_is_indexed: bool,
+        count: usize,
+        helper: bool,
+        removed_last_parent: Option<bool>,
+        shared: bool,
+    ) -> Result<Self> {
         ensure!(
             (3..=32).contains(&count),
             "fixture index count outside bound"
@@ -221,10 +247,28 @@ impl Fixture {
             .collect::<Vec<_>>();
         let mut registrations = Vec::new();
         for n in 0..count {
-            let source = base.join(format!("source{n}"));
-            let data = base.join(format!("data{n}"));
+            let nested = n + 1 == count && removed_last_parent.is_some();
+            let parent = if nested {
+                let parent = base.join("removed-parent");
+                fs::create_dir(&parent)?;
+                parent
+            } else {
+                base.clone()
+            };
+            let source = parent.join(format!("source{n}"));
+            let data = if shared {
+                base.join("shared-data")
+            } else if nested && removed_last_parent == Some(true) {
+                parent.join(format!("data{n}"))
+            } else {
+                base.join(format!("data{n}"))
+            };
             fs::create_dir(&source)?;
-            fs::create_dir(&data)?;
+            if shared {
+                fs::create_dir_all(&data)?;
+            } else {
+                fs::create_dir(&data)?;
+            }
             for directory in ["api", "impl", "private", "api-other"] {
                 fs::create_dir(source.join(directory))?;
                 fs::write(

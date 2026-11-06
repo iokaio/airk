@@ -1,5 +1,50 @@
 # Offline service installation and lifecycle
 
+## Unavailable legacy index during upgrade
+
+The unpublished 1.8.8 working source adds explicit recovery for a **fresh upgrade
+from 1.8.7** whose saved index configuration is `pending_metadata`, for example
+after its source and storage ancestor disappeared. [Selected local qualification](releases/release-1.8.8.md#6-november-2026---final-local-test-package-checkpoint)
+is recorded; manual acceptance and broader platform qualification remain separate. Missing source files alone do not require this path when the saved
+index configuration is still available. The installer otherwise fails closed;
+it does not grant access to an unknown old index or treat it as an empty source.
+
+In VS Code, run **AIRK: Review unavailable legacy upgrade index retirement**.
+Choose the saved unavailable index and inspect its complete native review: exact
+source/storage registration, accepting candidate, original backup and affected
+work. **Authorize reviewed retirement** saves that exact authorization only.
+**Resume accepted same-candidate activation** is a separate confirmed action.
+The native owner can then retire that index logically and finish activation
+without changing a healthy index's original source, registration or retained
+publication. Returned storage is preserved for separately guarded cleanup.
+
+**Check exact receipt** reads the original saved request. Missing or uncertain
+receipts do not authorize a new key or automatic resubmission. Complete details,
+JSON/Markdown copies and exports retain the full native result. An **Applied**
+receipt records historical logical retirement with physical cleanup pending; it
+is not current activation readiness or an evidence grant. Reopening the view
+selects no evidence scope. The evidence MCP interface remains read-only.
+
+Invoke these commands through the verified 1.8.8 candidate executable that owns
+the saved installer identity. The normal stable launcher may still select 1.8.7
+during a blocked upgrade.
+
+The equivalent local CLI commands are `runtime legacy-retirement-candidates`,
+`runtime legacy-retirement-review`, `runtime legacy-retirement-authorize`,
+`runtime legacy-retirement-receipt` and `runtime legacy-retirement-resume`, each
+with the exact `--install-dir`. Review also takes `--index-id`; candidate pages
+accept the returned `--after` continuation. Authorization receives the exact
+native `preview` and `review_digest` JSON on stdin; receipt/resume receive the
+original native request JSON. Preserve the returned caller and key. These are
+runtime administration commands, not an additional MCP mutation route.
+
+Recovery must use the candidate that owns the saved installer identity. This
+fresh-upgrade path does not let another binary take over an older pending
+activation. A changed unconfirmed review requires a new explicit review; an
+already accepted retirement remains durable if genuine source metadata returns.
+Physical cleanup still checks the actual ownership and absence conditions in
+[guarded index retirement](service-project-retirement.md).
+
 See [process counts and ownership](process-model.md) for the purpose of each executable, Windows launcher chains, the observed installed 1.6.3 topology and the limits of identifying obsolete agent sessions from a process list.
 
 Since 1.5.4, upgrade behavior is: after validating and recording the exact candidate and predecessor intent, the installer stops the verified optional manager and forcibly terminates same-user processes using the approved predecessor main/helper and receipt-verified stable launcher on Windows and Linux. Captured native process handles (Windows) or pidfds (Linux) prevent PID reuse from redirecting termination. This works with previous releases without requiring a new shutdown protocol. The shared exit wait is five seconds; payload verification, manager control, copying and startup are additional. Connected AIRK clients are disconnected and must reconnect. macOS retains authenticated control/manager shutdown pending a native forced-stop implementation and qualification. Unknown executables and foreign installations are preserved. The new installer must run outside the predecessor payload/launcher. Previous-payload retirement uses the same verified hard stop before cleanup and restarts the selected service afterward. An exactly verified healthy instance deliberately stopped for cleanup restarts without crash backoff; unobserved or failed startup retains the existing circuit.

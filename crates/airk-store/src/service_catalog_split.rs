@@ -2284,6 +2284,24 @@ impl ServiceRegistry {
     }
 }
 
+// Generic retirement must not strand an admitted split's paid children or
+// destroy either participant's recovery authority, including before cutover.
+pub(super) fn require_retirement(db: &Connection, index: IndexId) -> Result<()> {
+    if !available(db)? {
+        return Ok(());
+    }
+    let active: bool = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM index_split_participants WHERE index_id=?1 AND active=1)",
+        [index.to_string()],
+        |row| row.get(0),
+    )?;
+    ensure!(
+        !active,
+        "active split owns this participant; finish exact split recovery before retirement"
+    );
+    Ok(())
+}
+
 pub(super) fn require_policy_change(
     db: &Connection,
     index: IndexId,

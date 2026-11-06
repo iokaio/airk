@@ -4,6 +4,22 @@ use super::*;
 
 pub async fn run(command: &RuntimeCommand) -> Result<()> {
     let output = match command {
+        RuntimeCommand::LegacyRetirementCandidates { install_dir, after } => {
+            legacy_retirement::candidates(install_dir, *after)?
+        }
+        RuntimeCommand::LegacyRetirementReview {
+            install_dir,
+            index_id,
+        } => serde_json::to_value(legacy_retirement::review(install_dir, *index_id)?)?,
+        RuntimeCommand::LegacyRetirementAuthorize { install_dir } => {
+            serde_json::to_value(legacy_retirement::authorize(install_dir)?)?
+        }
+        RuntimeCommand::LegacyRetirementReceipt { install_dir } => {
+            legacy_retirement::receipt(install_dir)?
+        }
+        RuntimeCommand::LegacyRetirementResume { install_dir } => {
+            serde_json::to_value(legacy_retirement::resume(install_dir).await?)?
+        }
         RuntimeCommand::SourceScope {
             install_dir,
             expected_control,

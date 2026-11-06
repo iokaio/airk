@@ -327,6 +327,7 @@ fn interrupted_intent_before_owner_fence_can_arm_on_resume() -> Result<()> {
         readiness: None,
         authority_v1_host: None,
         authority_v1: None,
+        retirement_recovery: None,
     };
     persist(
         &owner.control().join(INTENT),
@@ -417,6 +418,7 @@ fn stopped_or_pending_lifecycle_refuses_initial_and_pre_fence_catalog_admission(
                     readiness: None,
                     authority_v1_host: None,
                     authority_v1: None,
+                    retirement_recovery: None,
                 };
                 persist(
                     &owner.control().join(INTENT),

@@ -5,7 +5,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {NativeProcessError} from '../native';
-import {readNative} from './nativeReadRetry';
+import {readNative,capturedNativeText} from './nativeReadRetry';
 
 const busy={isError:true,content:[{type:'text',text:JSON.stringify({error:{
     code:'direct_query_admission',reason:'busy',query_submitted:false,
@@ -56,5 +56,19 @@ test('CLI reads admit no process after their observation deadline',async()=>{
     await fixture(async(directory,counter)=>{
         await assert.rejects(readNative(process.execPath,['-e',program(counter,'')],directory,performance.now()-1),/original observation budget/);
         await assert.rejects(fs.stat(counter),{code:'ENOENT'});
+    });
+});
+
+test('one-shot captured native failure retains complete stdout without replay',async()=>{
+    await fixture(async(directory,counter)=>{
+        const stdout=JSON.stringify({isError:true,structuredContent:{error:{code:'fixture_failed',retryable:false}}})+'\n';
+        const source=program(counter,`process.stdout.write(${JSON.stringify(stdout)});process.stderr.write('exact stderr');process.exitCode=1;`);
+        await assert.rejects(capturedNativeText(process.execPath,['-e',source],directory,5000),error=>{
+            assert.ok(error instanceof NativeProcessError);
+            assert.equal((error as NativeProcessError&{nativeStdout:string}).nativeStdout,stdout);
+            assert.equal((error as NativeProcessError&{nativeStderr:string}).nativeStderr,'exact stderr');
+            assert.equal(error.code,1);return true;
+        });
+        assert.equal(await fs.readFile(counter,'utf8'),'1');
     });
 });

@@ -143,7 +143,7 @@ pub struct LegacyPromotionObservation {
     pub seal_digest: Sha256Digest,
 }
 
-fn expected_grant(
+pub(super) fn expected_grant(
     plan: &UpgradePlan,
     plan_digest: Sha256Digest,
     index: &BackfillIndex,
@@ -248,7 +248,7 @@ fn insert_import(db: &Connection, persisted: &PersistedGrant) -> Result<()> {
     Ok(())
 }
 
-fn verify_sealed(db: &Connection, expected: &[PersistedGrant]) -> Result<()> {
+pub(super) fn verify_sealed(db: &Connection, expected: &[PersistedGrant]) -> Result<()> {
     let count: i64 = db.query_row("SELECT count(*) FROM index_access_grants", [], |r| r.get(0))?;
     ensure!(
         usize::try_from(count)? == expected.len(),
@@ -264,7 +264,7 @@ fn verify_sealed(db: &Connection, expected: &[PersistedGrant]) -> Result<()> {
     Ok(())
 }
 
-fn verify_original_sources(db: &Connection, index: &BackfillIndex) -> Result<()> {
+pub(super) fn verify_original_sources(db: &Connection, index: &BackfillIndex) -> Result<()> {
     let ready: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM index_definitions i JOIN projects p ON p.binding=i.active_registration JOIN project_index_memberships m ON m.index_id=i.id AND m.project_id=?1 WHERE i.id=?2 AND p.registered=1 AND i.tombstone=0 AND m.revision=1)",
         params![index.project_id.to_string(),index.index_id.to_string()],|r|r.get(0))?;
     ensure!(
@@ -395,6 +395,9 @@ impl CatalogUpgrade {
             if !registered {
                 continue;
             } // Removed bindings cannot regain access.
+            if super::recovery::authorized_index(receipt, index, read)? {
+                continue;
+            }
             let current = self.source_configuration(&index.registration)?;
             ensure!(
                 current.source_import == SourceImportState::Complete
@@ -509,10 +512,7 @@ impl CatalogUpgrade {
             );
         }
         let expected = self.expected_imports(&read, &receipt, native_host)?;
-        let seal_digest = framed_digest(
-            b"airk/legacy-compatibility-seal/1",
-            &[&serde_json::to_vec(&expected)?],
-        );
+        let seal_digest = super::recovery::sealed_imports_digest(&receipt, &expected)?;
         let revision = evidence.candidate.catalog.revision.next()?;
         let observation = LegacyPromotionObservation {
             schema: 1,

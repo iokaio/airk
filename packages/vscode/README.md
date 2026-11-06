@@ -4,6 +4,14 @@
 
 Opening a trusted folder does not register or index it. Use **Indexing > Index library** to review sources, storage and watching; create Project memberships and review an access grant, then explicitly **Use Grant for this window**. Evidence reads and source verification do not start indexing.
 
+**Missing sources and storage:** the working source adds [reviewed index
+retirement and cleanup](https://github.com/iokaio/airk/blob/main/docs/service-project-retirement.md) for removed files or folders and separate
+[unavailable legacy-index upgrade recovery](https://github.com/iokaio/airk/blob/main/docs/service-installation.md#unavailable-legacy-index-during-upgrade). Healthy indexes keep
+their independent evidence; old grants are never silently narrowed. Post-P14
+recovery has selected Windows native/process and Mac portable validation. Full
+workspace and final installer qualification remain separate; see the working-build
+record for current results and earlier failures.
+
 **Find the code and documents behind a feature. Give your coding agent cited evidence, or explore it yourself in AIRK Workbench.**
 
 AIRK builds a searchable local index of your project so you and your coding tools can retrieve relevant passages, definitions and document facts without loading entire files into every request. Use it with MCP clients such as Claude Code, Codex and GitHub Copilot, or work directly in VS Code with no coding agent required.

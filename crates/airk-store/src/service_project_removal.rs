@@ -3,7 +3,7 @@
 use super::{ServiceRegistry, bump};
 use crate::service::ProjectLease;
 use airk_core::service::{ProjectBinding, ProjectRegistration};
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use rusqlite::{Connection, TransactionBehavior, params};
 use std::path::Path;
 
@@ -109,6 +109,10 @@ impl ServiceRegistry {
             return Ok(false);
         }
         super::catalog::source_change::require_retired(&self.connection, project)?;
+        ensure!(
+            self.catalog_active_split_for_binding(project)?.is_none(),
+            "active split recovery owns this retired participant; finish exact split recovery first"
+        );
         let registration = self.retained_project(project)?.registration;
         let policy = super::catalog::policy::retired_for_binding(&self.connection, project)?;
         let directory = Path::new(&registration.data_root)
@@ -120,7 +124,54 @@ impl ServiceRegistry {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
             Err(error) => return Err(error.into()),
         };
-        if present || policy.is_some() {
+        // Explicit committed retirement, not a source watcher observation, is
+        // the authority for logical cleanup. Never recreate a missing data root
+        // just to retain a capsule or open its quota ledger.
+        let absent_data = if present {
+            None
+        } else {
+            RetiredDataAbsence::capture(Path::new(&registration.data_root))?
+        };
+        if let Some(snapshot) = &policy {
+            let job = self.job(snapshot.job)?;
+            ensure!(
+                matches!(
+                    job.state,
+                    airk_core::service::JobState::Succeeded
+                        | airk_core::service::JobState::Failed
+                        | airk_core::service::JobState::Canceled
+                ),
+                "retirement must settle the current policy job before cleanup"
+            );
+        }
+        let uninitialized_data = if !present && absent_data.is_none() {
+            RetiredUninitializedData::capture(Path::new(&registration.data_root))?
+        } else {
+            None
+        };
+        let absent_collection = if !present && absent_data.is_none() && uninitialized_data.is_none()
+        {
+            match crate::quota::AbsentCollectionSettlement::settle(
+                &registration,
+                &lease,
+                &self.root,
+                self.incarnation()?,
+            ) {
+                Ok(proof) => Some(proof),
+                Err(error)
+                    if matches!(
+                        error.downcast_ref::<std::fs::TryLockError>(),
+                        Some(std::fs::TryLockError::WouldBlock)
+                    ) =>
+                {
+                    return Ok(false);
+                }
+                Err(error) => return Err(error),
+            }
+        } else {
+            None
+        };
+        if present {
             super::super::data_scope::check(
                 Path::new(&registration.data_root),
                 &self.root,
@@ -137,16 +188,6 @@ impl ServiceRegistry {
                 // Stable ownership must also make old readers refuse a reset
                 // collection whose inner publication has already been removed.
                 let owner_present = directory.join("service-owner.json").try_exists()?;
-                let job = self.job(snapshot.job)?;
-                ensure!(
-                    matches!(
-                        job.state,
-                        airk_core::service::JobState::Succeeded
-                            | airk_core::service::JobState::Failed
-                            | airk_core::service::JobState::Canceled
-                    ),
-                    "retirement must settle the current policy job before cleanup"
-                );
                 let copy = crate::current::policy_capsule::PolicyCapsule::retirement_copy(
                     &directory,
                     &registration,
@@ -189,6 +230,15 @@ impl ServiceRegistry {
             )?,
             "removal ownership changed"
         );
+        if let Some(absent) = &absent_data {
+            absent.revalidate()?;
+        }
+        if let Some(absent) = &absent_collection {
+            absent.revalidate()?;
+        }
+        if let Some(uninitialized) = &uninitialized_data {
+            uninitialized.revalidate()?;
+        }
         // Child metadata is removed before its FK parents. Other projects/plans remain.
         for table in [
             "service_plan_jobs",
@@ -246,6 +296,17 @@ impl ServiceRegistry {
                 [project.to_string()],
             )?;
         }
+        // The held ancestor still names the absent data tree at the native
+        // metadata commit boundary. This records no physical disposal claim.
+        if let Some(absent) = &absent_data {
+            absent.revalidate()?;
+        }
+        if let Some(absent) = &absent_collection {
+            absent.revalidate()?;
+        }
+        if let Some(uninitialized) = &uninitialized_data {
+            uninitialized.revalidate()?;
+        }
         bump(&tx)?;
         tx.commit()?;
         Ok(true)
@@ -254,4 +315,269 @@ impl ServiceRegistry {
 
 pub(super) fn removed_root_identity(root: &str) -> airk_core::identity::Sha256Digest {
     airk_core::identity::framed_digest(b"airk-removed-source/1", &[root.as_bytes()])
+}
+
+// Metadata-only registration does not initialize or claim its data root. This
+// proof authorizes only dropping already retired registry references: no file,
+// allowance, ownership receipt or advisory is created, removed or adopted.
+struct RetiredUninitializedData {
+    path: std::path::PathBuf,
+    root: super::catalog::setup::storage::SetupDirectory,
+}
+impl RetiredUninitializedData {
+    fn capture(data: &Path) -> Result<Option<Self>> {
+        let root = super::catalog::setup::storage::SetupDirectory::open_canonical(data)?;
+        match root.open_entry(std::ffi::OsStr::new(super::super::data_scope::OWNER)) {
+            Ok(_) => return Ok(None),
+            Err(error) if missing_entry(&error) => (),
+            Err(error) => return Err(error),
+        }
+        let proof = Self {
+            path: data.to_path_buf(),
+            root,
+        };
+        proof.revalidate()?;
+        Ok(Some(proof))
+    }
+    fn revalidate(&self) -> Result<()> {
+        use std::ffi::OsStr;
+        ensure!(
+            super::catalog::setup::storage::SetupDirectory::open_canonical(&self.path)?
+                .identity()?
+                == self.root.identity()?,
+            "uninitialized retired data root changed"
+        );
+        // Any native ownership/claim/quota state requires the ordinary complete
+        // ownership-aware cleanup. Unrelated user/legacy files are untouched.
+        for name in [
+            super::super::data_scope::OWNER,
+            super::super::data_scope::PART,
+            super::super::data_scope::LOCK,
+            ".quota-1.4",
+            ".lifecycle-1.4.lock",
+        ] {
+            match self.root.open_entry(OsStr::new(name)) {
+                Err(error) if missing_entry(&error) => (),
+                Err(error) => return Err(error),
+                Ok(_) => anyhow::bail!("uninitialized retired data root contains native state"),
+            }
+        }
+        match self.root.open_dir(OsStr::new("collections-1.4")) {
+            Err(error) if missing_entry(&error) => (),
+            Err(error) => return Err(error),
+            Ok(directory) => ensure!(
+                directory.entries()?.next().transpose()?.is_none(),
+                "unbound retired collection namespace is not empty"
+            ),
+        }
+        Ok(())
+    }
+}
+fn missing_entry(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<std::io::Error>()
+        .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+}
+
+// Native-only, nonserializable proof. No source path, quota opener, marker or
+// missing directory creation is involved. A present/redirected/unavailable data
+// root must use the existing ownership-aware physical cleanup instead.
+struct RetiredDataAbsence {
+    ancestor_path: std::path::PathBuf,
+    ancestor: super::catalog::setup::storage::SetupDirectory,
+    missing: std::ffi::OsString,
+}
+impl RetiredDataAbsence {
+    fn capture(data: &Path) -> Result<Option<Self>> {
+        match std::fs::symlink_metadata(data) {
+            Ok(_) => return Ok(None),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+            Err(error) => return Err(error.into()),
+        }
+        let mut selected = None;
+        for candidate in data.ancestors().skip(1) {
+            match std::fs::symlink_metadata(candidate) {
+                Ok(metadata) => {
+                    ensure!(
+                        metadata.is_dir() && !metadata.file_type().is_symlink(),
+                        "retired data ancestor is not a plain directory"
+                    );
+                    selected = Some(candidate.to_path_buf());
+                    break;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+                Err(error) => return Err(error.into()),
+            }
+        }
+        let ancestor_path = selected.context("retired data has no existing ancestor")?;
+        let ancestor =
+            super::catalog::setup::storage::SetupDirectory::open_canonical(&ancestor_path)?;
+        let relative = data.strip_prefix(&ancestor_path)?;
+        let missing = match relative
+            .components()
+            .next()
+            .context("retired data missing child absent")?
+        {
+            std::path::Component::Normal(name) => name.to_os_string(),
+            _ => anyhow::bail!("invalid retired data absence path"),
+        };
+        let proof = Self {
+            ancestor_path,
+            ancestor,
+            missing,
+        };
+        proof.revalidate()?;
+        Ok(Some(proof))
+    }
+    fn revalidate(&self) -> Result<()> {
+        ensure!(
+            super::catalog::setup::storage::SetupDirectory::open_canonical(&self.ancestor_path)?
+                .identity()?
+                == self.ancestor.identity()?,
+            "retired data ancestor changed"
+        );
+        match self.ancestor.open_dir(&self.missing) {
+            Err(error)
+                if error
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
+            {
+                Ok(())
+            }
+            Err(error) => Err(error),
+            Ok(_) => anyhow::bail!(
+                "retired data reappeared; physical cleanup requires ownership validation"
+            ),
+        }
+    }
+}
+
+#[cfg(test)]
+mod missing_data_tests {
+    use super::*;
+    #[test]
+    fn missing_data_proof_preserves_reappeared_tree() -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let path = owner.path().canonicalize()?.join("removed").join("data");
+        let proof = RetiredDataAbsence::capture(&path)?.context("absence proof missing")?;
+        std::fs::create_dir_all(&path)?;
+        std::fs::write(path.join("sentinel"), b"preserved")?;
+        assert!(proof.revalidate().is_err());
+        assert_eq!(std::fs::read(path.join("sentinel"))?, b"preserved");
+        assert!(RetiredDataAbsence::capture(&path)?.is_none());
+        Ok(())
+    }
+    #[test]
+    fn metadata_only_registration_retires_without_claiming_uninitialized_storage() -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let base = owner.path().canonicalize()?;
+        let data = base.join("data");
+        let source = base.join("source");
+        let control = base.join("control");
+        for path in [&data, &source, &control] {
+            std::fs::create_dir(path)?;
+        }
+        std::fs::write(source.join("source.md"), b"preserved source")?;
+        std::fs::write(data.join("unrelated-user-data"), b"preserved user data")?;
+        std::fs::create_dir(data.join("collections-1.4"))?;
+        let registration = ProjectRegistration::new(
+            source.to_str().unwrap().into(),
+            data.to_str().unwrap().into(),
+            "never-started".into(),
+        )?;
+        let mut registry = ServiceRegistry::open(
+            &control,
+            airk_core::identity::Incarnation::from_bytes([61; 16]),
+        )?;
+        registry.register(&registration)?;
+        std::fs::rename(&source, base.join("offline-source"))?;
+        let epoch = registry.get(registration.binding)?.fencing_generation;
+        assert!(registry.retire_missing_source(registration.binding, epoch, 0)?);
+        assert!(registry.purge_removed_project_turn(registration.binding)?);
+        assert!(registry.project_was_removed(registration.binding)?);
+        assert!(registry.retained_project(registration.binding).is_err());
+        assert_eq!(
+            std::fs::read(data.join("unrelated-user-data"))?,
+            b"preserved user data"
+        );
+        assert_eq!(
+            std::fs::read(base.join("offline-source/source.md"))?,
+            b"preserved source"
+        );
+        let mut names = std::fs::read_dir(&data)?
+            .map(|e| e.map(|e| e.file_name()))
+            .collect::<std::io::Result<Vec<_>>>()?;
+        names.sort();
+        assert_eq!(
+            names,
+            vec![
+                std::ffi::OsString::from("collections-1.4"),
+                std::ffi::OsString::from("unrelated-user-data")
+            ]
+        );
+        assert!(
+            std::fs::read_dir(data.join("collections-1.4"))?
+                .next()
+                .is_none()
+        );
+        registry.register(&registration)?;
+        assert_eq!(
+            registry.get(registration.binding)?.registration,
+            registration
+        );
+        // Actual initial binding can precede the first writer/collection namespace.
+        // Retirement must not manufacture those missing nodes just to finish.
+        std::fs::remove_dir(data.join("collections-1.4"))?;
+        let bound = crate::service::data_scope::bind(&data, &control, registry.incarnation()?)?;
+        let owner_path = data.join(crate::service::data_scope::OWNER);
+        let owner_bytes = std::fs::read(&owner_path)?;
+        let names = || -> Result<Vec<std::ffi::OsString>> {
+            let mut names = std::fs::read_dir(&data)?
+                .map(|e| e.map(|e| e.file_name()))
+                .collect::<std::io::Result<Vec<_>>>()?;
+            names.sort();
+            Ok(names)
+        };
+        let bound_names = names()?;
+        let epoch = registry.get(registration.binding)?.fencing_generation;
+        assert!(registry.retire_missing_source(registration.binding, epoch, 0)?);
+        assert!(registry.purge_removed_project_turn(registration.binding)?);
+        bound.check()?;
+        assert_eq!(std::fs::read(owner_path)?, owner_bytes);
+        assert_eq!(names()?, bound_names);
+        assert!(!data.join("collections-1.4").exists());
+        assert_eq!(
+            std::fs::read(data.join("unrelated-user-data"))?,
+            b"preserved user data"
+        );
+        Ok(())
+    }
+    #[test]
+    fn uninitialized_retirement_proof_refuses_native_state_and_replaced_root() -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let base = owner.path().canonicalize()?;
+        let data = base.join("data");
+        std::fs::create_dir(&data)?;
+        let proof = RetiredUninitializedData::capture(&data)?.context("fresh proof missing")?;
+        for name in [
+            super::super::super::data_scope::PART,
+            super::super::super::data_scope::LOCK,
+            ".quota-1.4",
+            ".lifecycle-1.4.lock",
+        ] {
+            std::fs::write(data.join(name), b"unknown native state")?;
+            assert!(proof.revalidate().is_err());
+            assert!(RetiredUninitializedData::capture(&data).is_err());
+            assert_eq!(std::fs::read(data.join(name))?, b"unknown native state");
+            std::fs::remove_file(data.join(name))?;
+        }
+        std::fs::create_dir(data.join("collections-1.4"))?;
+        std::fs::write(data.join("collections-1.4/unknown"), b"unknown collection")?;
+        assert!(proof.revalidate().is_err());
+        std::fs::remove_file(data.join("collections-1.4/unknown"))?;
+        std::fs::rename(&data, base.join("old-data"))?;
+        std::fs::create_dir(&data)?;
+        assert!(proof.revalidate().is_err());
+        Ok(())
+    }
 }

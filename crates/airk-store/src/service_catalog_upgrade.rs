@@ -48,6 +48,9 @@ pub use settlement::{
 pub mod compatibility;
 pub use compatibility::activation as authority_v1;
 
+#[path = "service_catalog_upgrade_recovery.rs"]
+pub mod recovery;
+
 #[path = "service_catalog_exclusion.rs"]
 mod exclusion;
 pub use exclusion::PendingCatalogExclusion;
@@ -251,6 +254,8 @@ pub struct UpgradeReceipt {
     pub authority_v1_host: Option<Sha256Digest>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub authority_v1: Option<super::genesis::activation::AuthorityV1ActivationRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retirement_recovery: Option<recovery::RecoveryJournal>,
 }
 impl UpgradeReceipt {
     fn validate(&self, root: &Path) -> Result<()> {
@@ -264,6 +269,9 @@ impl UpgradeReceipt {
             self.backups.len() <= super::backup::MAX_ATTEMPTS,
             "catalog backup attempt capacity exceeded"
         );
+        if let Some(recovery) = &self.retirement_recovery {
+            recovery.validate(self)?;
+        }
         for (slot, attempt) in self.backups.iter().enumerate() {
             attempt.validate()?;
             ensure!(
@@ -559,7 +567,7 @@ fn recover_owned_migration(root: &Path, receipt: &UpgradeReceipt) -> Result<()> 
         )?;
         let current = registry_read(root)?;
         if super::state(&current)?.authority_contract == 1 {
-            compatibility::verify_recovered_authority_v1(root, receipt)?;
+            recovery::verify_authority(root, receipt)?;
         } else {
             CatalogUpgrade::validate_backfill(root, receipt.plan.namespace, &current, receipt)?;
         }
@@ -1092,6 +1100,15 @@ impl CatalogUpgrade {
             previous.plan_digest == receipt.plan_digest && previous.plan == receipt.plan,
             "catalog upgrade intent changed"
         );
+        if let Some(saved) = &previous.retirement_recovery {
+            ensure!(
+                receipt
+                    .retirement_recovery
+                    .as_ref()
+                    .is_some_and(|next| next.authorizations.starts_with(&saved.authorizations)),
+                "accepted retirement authorizations cannot be removed or rewritten"
+            );
+        }
         ensure!(
             previous.authority_v1_host.is_none()
                 || previous.authority_v1_host == receipt.authority_v1_host,
@@ -1313,6 +1330,36 @@ impl CatalogUpgrade {
             &root,
             registered.iter().map(|registration| registration.binding),
         )?;
+        if let Some(receipt) = &intent
+            && receipt.retirement_recovery.is_some()
+            && receipt.authority_v1_host.is_some()
+        {
+            // The recovery path borrows this actual all-lease owner; a serialized
+            // authorization cannot independently trigger SQLite journal recovery.
+            let native = Self {
+                root: root.clone(),
+                namespace: owner.incarnation,
+                registrations: registered.iter().cloned().map(|r| (r.binding, r)).collect(),
+                _workers: workers,
+                _watcher: watcher,
+                _embedding: embedding,
+                _service: service,
+            };
+            recovery::recover_owned(&native, receipt)?;
+            let current = registry_read(&root)?;
+            let namespace: String = current.query_row(
+                "SELECT incarnation FROM service_meta WHERE id=1",
+                [],
+                |row| row.get(0),
+            )?;
+            ensure!(
+                namespace.parse::<Incarnation>()? == owner.incarnation
+                    && registrations_digest(&registered)?
+                        == registrations_digest(&registrations(&current)?)?,
+                "registry changed during owned retirement recovery"
+            );
+            return Ok(native);
+        }
         if let Some(receipt) = &intent {
             recover_owned_migration(&root, receipt)?;
         }
@@ -1496,6 +1543,7 @@ impl CatalogUpgrade {
             readiness: None,
             authority_v1_host: None,
             authority_v1: None,
+            retirement_recovery: None,
         };
         persist(&self.root.join(INTENT), &serde_json::to_vec(&receipt)?)?;
         self.arm(&receipt)?;

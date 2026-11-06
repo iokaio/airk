@@ -12,6 +12,9 @@ use airk_core::{
     service::{JobOutcome, RequestKey},
 };
 
+#[path = "deleted_source_recovery.rs"]
+pub(super) mod deleted_source_recovery;
+
 pub(super) async fn policy_key(f: &Fixture, nonce: u8) -> Result<RequestKey> {
     let response =
         airk_cli::service_runtime::request(&f.control, ControlMethod::RequestEpoch).await?;

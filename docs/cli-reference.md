@@ -55,6 +55,11 @@ Every public command and subcommand, exactly as `airk <command> --help` prints i
 - [`airk runtime inspect-candidate`](#airk-runtime-inspect-candidate)
 - [`airk runtime inventory`](#airk-runtime-inventory)
 - [`airk runtime launch`](#airk-runtime-launch)
+- [`airk runtime legacy-retirement-authorize`](#airk-runtime-legacy-retirement-authorize)
+- [`airk runtime legacy-retirement-candidates`](#airk-runtime-legacy-retirement-candidates)
+- [`airk runtime legacy-retirement-receipt`](#airk-runtime-legacy-retirement-receipt)
+- [`airk runtime legacy-retirement-resume`](#airk-runtime-legacy-retirement-resume)
+- [`airk runtime legacy-retirement-review`](#airk-runtime-legacy-retirement-review)
 - [`airk runtime lifecycle`](#airk-runtime-lifecycle)
 - [`airk runtime location`](#airk-runtime-location)
 - [`airk runtime login`](#airk-runtime-login)
@@ -2396,39 +2401,44 @@ The VS Code extension uses these; headless experiments can instead run `airk ser
 Usage: airk runtime [OPTIONS] <COMMAND>
 
 Commands:
-  source-scope           Read one exact saved source scope, without electing a service or opening an index
-  container-host         Run one externally supervised Linux container service from an approved read-only image pair
-  location               Resolve the native user's stable-channel install location; no workspace settings or writes
-  login                  Optional login registration; never required by on-demand operation
-  foreground             Run the selected service under an explicit external/user startup manager
-  stage                  Stage an offline payload with an independently approved install-manifest digest
-  abort-layout           Abandon an unfinished state-layout claim; preserve all state directories and their contents
-  abort-activation       Restore the preceding selection after an unfinished activation; preserve runtime payloads
-  managed                Pin an approved organization-provided payload without copying or modifying it
-  prepare-client         Create an owned lightweight client launcher, including for a read-only managed payload
-  activate               Drain the selected service and select a staged runtime only after native health succeeds
-  inspect-candidate      Verify one immutable approved candidate without selecting or executing it
-  ensure                 Launch the selected service on demand, without registering login startup
-  start                  Explicitly start a deliberately stopped service; automatic ensure honors that stop
-  lifecycle              Stop/restart the observed instance using one bounded durable request read from stdin
-  abandon-lifecycle      Abandon one saved lifecycle recovery intent; preserve every running process and keep automatic starts disabled
-  inspect                Inspect verified selection without starting a process or opening a project
-  inventory              Read-only inventory of AIRK-owned per-user data and recorded project index roots
-  purge                  Preview, then with `--confirm <plan_digest>` delete, the contents of selected owned log/cache locations. Project indexes are removed only by unregistering projects
-  snapshot               Read saved bootstrap/project metadata without executing or trusting selected payload files
-  repair-payload         Preview or explicitly repair the selected payload, preserving the complete damaged slot
-  remove                 Remove one unused owned runtime; preserve active/rollback selections and unknown files
-  retire-previous        Retire the previous rollback payload after a successful replacement; preserve the active runtime and project data
-  abort-stage            Abort an ownership-proven interrupted copy; preserve promoted runtimes and unknown files
-  repair-launcher        Repair an absent or known older launcher from the selected approved payload; requires stopped owners
-  abort-launcher-repair  Abort an owned unfinished launcher copy; an already replaced image must be finalized
-  uninstall              Stop/unregister this service and retire owned runtime payloads; preserve project data
-  diagnose               Bounded bootstrap diagnostics work even when runtime selection or the service fails
-  reset-startup          Explicitly clear the on-demand crash circuit after diagnosing a startup failure
-  rollback               Restore the preceding verified selection using the same drain and health transaction
-  launch                 Stable launcher: forward arguments and stdio to the selected verified executable
-  self-test              Bounded executable/paired-helper self-test, without collection access or inference
-  help                   Print this message or the help of the given subcommand(s)
+  source-scope                  Read one exact saved source scope, without electing a service or opening an index
+  container-host                Run one externally supervised Linux container service from an approved read-only image pair
+  location                      Resolve the native user's stable-channel install location; no workspace settings or writes
+  login                         Optional login registration; never required by on-demand operation
+  foreground                    Run the selected service under an explicit external/user startup manager
+  stage                         Stage an offline payload with an independently approved install-manifest digest
+  abort-layout                  Abandon an unfinished state-layout claim; preserve all state directories and their contents
+  abort-activation              Restore the preceding selection after an unfinished activation; preserve runtime payloads
+  managed                       Pin an approved organization-provided payload without copying or modifying it
+  prepare-client                Create an owned lightweight client launcher, including for a read-only managed payload
+  activate                      Drain the selected service and select a staged runtime only after native health succeeds
+  inspect-candidate             Verify one immutable approved candidate without selecting or executing it
+  ensure                        Launch the selected service on demand, without registering login startup
+  start                         Explicitly start a deliberately stopped service; automatic ensure honors that stop
+  lifecycle                     Stop/restart the observed instance using one bounded durable request read from stdin
+  abandon-lifecycle             Abandon one saved lifecycle recovery intent; preserve every running process and keep automatic starts disabled
+  inspect                       Inspect verified selection without starting a process or opening a project
+  inventory                     Read-only inventory of AIRK-owned per-user data and recorded project index roots
+  purge                         Preview, then with `--confirm <plan_digest>` delete, the contents of selected owned log/cache locations. Project indexes are removed only by unregistering projects
+  snapshot                      Read saved bootstrap/project metadata without executing or trusting selected payload files
+  repair-payload                Preview or explicitly repair the selected payload, preserving the complete damaged slot
+  remove                        Remove one unused owned runtime; preserve active/rollback selections and unknown files
+  retire-previous               Retire the previous rollback payload after a successful replacement; preserve the active runtime and project data
+  abort-stage                   Abort an ownership-proven interrupted copy; preserve promoted runtimes and unknown files
+  repair-launcher               Repair an absent or known older launcher from the selected approved payload; requires stopped owners
+  abort-launcher-repair         Abort an owned unfinished launcher copy; an already replaced image must be finalized
+  uninstall                     Stop/unregister this service and retire owned runtime payloads; preserve project data
+  diagnose                      Bounded bootstrap diagnostics work even when runtime selection or the service fails
+  reset-startup                 Explicitly clear the on-demand crash circuit after diagnosing a startup failure
+  rollback                      Restore the preceding verified selection using the same drain and health transaction
+  launch                        Stable launcher: forward arguments and stdio to the selected verified executable
+  legacy-retirement-candidates  Review saved unavailable legacy indexes. No source/data reads or activation
+  legacy-retirement-review      Create one exact retirement review from a saved upgrade index identity
+  legacy-retirement-authorize   Explicitly authorize exact reviewed stdin JSON; activation requires separate Resume
+  legacy-retirement-receipt     Read only the exact saved request on stdin; never authorize/replay/resume
+  legacy-retirement-resume      Explicit continuation of an already accepted exact request on stdin
+  self-test                     Bounded executable/paired-helper self-test, without collection access or inference
+  help                          Print this message or the help of the given subcommand(s)
 
 Options:
       --root <ROOT>
@@ -3125,6 +3135,247 @@ Options:
           [default: .]
 
       --data-dir <DATA_DIR>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --service-project <SERVICE_PROJECT>
+
+
+  -h, --help
+          Print help
+```
+
+## airk runtime legacy-retirement-authorize
+
+```text
+Explicitly authorize exact reviewed stdin JSON; activation requires separate Resume
+
+Usage: airk runtime legacy-retirement-authorize [OPTIONS] --install-dir <INSTALL_DIR>
+
+Options:
+      --install-dir <INSTALL_DIR>
+
+
+      --root <ROOT>
+          [default: .]
+
+      --data-dir <DATA_DIR>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --service-project <SERVICE_PROJECT>
+
+
+  -h, --help
+          Print help
+```
+
+## airk runtime legacy-retirement-candidates
+
+```text
+Review saved unavailable legacy indexes. No source/data reads or activation
+
+Usage: airk runtime legacy-retirement-candidates [OPTIONS] --install-dir <INSTALL_DIR>
+
+Options:
+      --install-dir <INSTALL_DIR>
+
+
+      --root <ROOT>
+          [default: .]
+
+      --after <AFTER>
+
+
+      --data-dir <DATA_DIR>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --service-project <SERVICE_PROJECT>
+
+
+  -h, --help
+          Print help
+```
+
+## airk runtime legacy-retirement-receipt
+
+```text
+Read only the exact saved request on stdin; never authorize/replay/resume
+
+Usage: airk runtime legacy-retirement-receipt [OPTIONS] --install-dir <INSTALL_DIR>
+
+Options:
+      --install-dir <INSTALL_DIR>
+
+
+      --root <ROOT>
+          [default: .]
+
+      --data-dir <DATA_DIR>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --service-project <SERVICE_PROJECT>
+
+
+  -h, --help
+          Print help
+```
+
+## airk runtime legacy-retirement-resume
+
+```text
+Explicit continuation of an already accepted exact request on stdin
+
+Usage: airk runtime legacy-retirement-resume [OPTIONS] --install-dir <INSTALL_DIR>
+
+Options:
+      --install-dir <INSTALL_DIR>
+
+
+      --root <ROOT>
+          [default: .]
+
+      --data-dir <DATA_DIR>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --service-project <SERVICE_PROJECT>
+
+
+  -h, --help
+          Print help
+```
+
+## airk runtime legacy-retirement-review
+
+```text
+Create one exact retirement review from a saved upgrade index identity
+
+Usage: airk runtime legacy-retirement-review [OPTIONS] --install-dir <INSTALL_DIR> --index-id <INDEX_ID>
+
+Options:
+      --install-dir <INSTALL_DIR>
+
+
+      --root <ROOT>
+          [default: .]
+
+      --data-dir <DATA_DIR>
+
+
+      --index-id <INDEX_ID>
 
 
       --collection <COLLECTION>

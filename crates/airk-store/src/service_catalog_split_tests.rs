@@ -1570,3 +1570,23 @@ fn split_remainder_preview_rolls_back_without_claiming_native_fence_and_direct_c
     );
     Ok(())
 }
+
+#[test]
+fn generic_retirement_refuses_both_live_split_participants_before_any_storage_effect() -> Result<()>
+{
+    let (_owner, mut registry, request, baseline, plan) = fixture()?;
+    let state = registry.catalog_reserve_split(&request, &baseline, &plan)?;
+    assert!(require_retirement(&registry.connection, request.original_index).is_err());
+    assert!(require_retirement(&registry.connection, request.destination.index_id).is_err());
+    require_retirement(
+        &registry.connection,
+        IndexId::from_identity(Incarnation::from_bytes([199; 16])),
+    )?;
+    assert_eq!(
+        registry
+            .catalog_active_split_for_binding(request.original_registration.binding)?
+            .context("saved split missing")?,
+        state
+    );
+    Ok(())
+}
