@@ -157,14 +157,14 @@ export async function run(): Promise<void> {
         if(view.outcome.receipt.authority_fence_required)assert.ok(view.outcome.fenced_receipt?.proof,'Complete native delivery-fence proof');
         return view;
     };
-    const context=()=>ui('context',{},route.window);
     const use=async(selection:any)=>{
-        await context();await ui('page',{kind:'grants'});await ui('inspect',{kind:'grant',id:selection.grant});
-        const result=await ui('useGrant',{index:selection.index,project:selection.project});
+        const result=await ui('scopeSelect',{index:selection.index,project:selection.project,setName:selection.setName},route.window);
+        assert.equal(result.outcome.status,'search_scope_selected');
+        selection.grant=result.outcome.activation.selection.session.grant_id;
         const current=await definitions();
         evidence.definitions=(evidence.definitions??[]).concat(current.map(value=>({command:value.command,args:[...value.args],env:value.env,cwd:value.cwd?.fsPath,cwd_explicit:value.cwd!==undefined})));
         await mark('retained-evidence',evidence); // Complete definitions/UI result retained even on an early contract refusal.
-        assert.equal(result.outcome.selected_subset,true);assert.equal(current.length,1,'One deliberately selected Index, independent of open folder count');
+        assert.equal(result.outcome.activation.selected_subset,true);assert.equal(current.length,1,'One deliberately selected Index, independent of open folder count');
         const selector=installedSelector(current[0],result,selection);selection.session=selector;
         return current[0];
     };
@@ -245,23 +245,36 @@ export async function run(): Promise<void> {
         assert.equal(await canonical(backing.root),await canonical(primary));assert.equal(await canonical(backing.data_root),await canonical(leaf));
         const nativeExtra=setup.outcome.receipt.request.sources.find((row:any)=>row.owner===false&&row.aliases.includes('shared'));
         assert.ok(nativeExtra);assert.equal(await canonical(nativeExtra.canonical_path),await canonical(extra));
-        await ui('page',{kind:'projects'},route.projects);
-        const projectDraft=await ui('projectDraft',{name:'Fixture Project '+suffix}),project=projectDraft.review.request.operation.id;
-        assert.match(project,/^prj_[0-9a-f]{32}$/);applied(await ui('apply'));await ui('page',{kind:'projects'});await ui('inspect',{kind:'project',id:project});
-        const member=await ui('membershipDraft',{index,roots:[{path:backing.root,relative:'fixture.ts',kind:'exact'},{path:nativeExtra.canonical_path,relative:'',kind:'subtree'}]});
-        assert.equal(member.review.request.operation.membership.scope.length,2);applied(await ui('apply'));
-        await noSelection('Metadata Project membership is not permission');await context();await ui('grantDraft',{project,index});
-        const grantDraft=await ui('read'),grant=grantDraft.review.request.operation.grant.id;
-        assert.match(grant,/^grt_[0-9a-f]{32}$/);applied(await ui('apply',{grant:true}));await noSelection('Persisted reviewed grant is inert');
-        checks.push('native setup and multi-source membership full previews/receipts','persisted grant remains inert');
-        return {index,project,grant,backing,name:nativeIndex.name,source:primary,additional:extra,data:leaf,source_ids:member.review.request.operation.membership.scope.map((atom:any)=>atom.source_root_id)};
+        await ui('sources',{index},route.library);
+        const sources=await ui('read'),roots=sources.sources.page.items.map((row:any)=>row.value);
+        const ownerRoot=roots.find((row:any)=>row.index_id===index&&row.canonical_path===backing.root&&row.enabled===true);
+        assert.ok(ownerRoot,'Native primary source root retained');
+        const idle=await ui('indexIdle',{index,binding:backing.binding,root:backing.root,data:backing.data_root,collection:backing.collection});
+        assert.equal(idle.index,index);assert.equal(idle.binding,backing.binding);
+        assert.equal(idle.qualification,'dated_read_only_precondition_not_mutation_admission');
+        // Setup admits asynchronous native work. Observe its actual completion
+        // before this first explicit policy review; never retry/cancel a policy.
+        const exclusion=await ui('blockDraft',{root:ownerRoot.id,path:'hidden.ts'});
+        assert.equal(exclusion.review.request.operation.operation,'change_index_policy');
+        assert.deepEqual(exclusion.review.request.operation.change.selector,{source_root_id:ownerRoot.id,kind:'exact',path:'hidden.ts'});
+        assert.equal(exclusion.review.request.operation.change.operation,'trim');
+        applied(await ui('apply'));
+        await noSelection('Reviewed permanent exclusion does not select the index');
+        const setName='Fixture index set '+suffix;
+        const saved=await ui('setCreate',{name:setName,index,indexName:nativeIndex.name},route.projects);
+        assert.equal(saved.outcome.status,'index_set_saved');const project=saved.outcome.id;
+        assert.match(project,/^prj_[0-9a-f]{32}$/);
+        await noSelection('Saved index set remains unselected until Apply selection');
+        checks.push('native setup and reviewed permanent source exclusion','current index-set checkbox creation remains inert before Apply selection');
+        return {index,project,setName,backing,name:nativeIndex.name,source:primary,additional:extra,data:leaf,source_ids:roots.filter((row:any)=>row.index_id===index&&row.enabled===true).map((row:any)=>row.id)};
     };
     let selection:any=phase?.selection;
     if(phase?.stage==='reloaded'){
-        await noSelection('Reloaded saved preferences never restore permission');
         await vscode.commands.executeCommand('airk.collections');await ui('connect',{},'#manage/service');
-        await noSelection('Reconnect does not turn a saved preference into permission');
-        checks.push('real reload retained an inert saved choice and withdrew automatic scope');
+        const restored=await definitions();assert.equal(restored.length,1,'Previously applied choice revalidates on reload');
+        const restoredSelector=JSON.parse(restored[0].args[restored[0].args.indexOf('--combined-session')+1]);
+        assert.deepEqual(restoredSelector,selection.session,'Reload preserves the exact reviewed scope after native revalidation');
+        checks.push('real reload revalidated the saved applied choice without widening its native selector');
     }else{
         await noSelection('Fresh trusted folders are not indexes or permission');
         await vscode.commands.executeCommand('airk.collections');
@@ -282,14 +295,15 @@ export async function run(): Promise<void> {
             await mark('secondary',secondary);
         }
         if(scenario==='multi'){
-            await context();await ui('associationDraft',{project:selection.project,index:selection.index});applied(await ui('apply'));
-            await noSelection('Saved default association is not permission');
+            await noSelection('Index set creation requires explicit Apply selection');
             const other=path.join(folder,'storage','index-b');await assert.rejects(fs.stat(other),{code:'ENOENT'});
             checks.push('two open folders do not select or create all indexes');
         }
     }
     if(['same','different'].includes(scenario)){await mark('metadata-ready');await waitFor(marker('metadata-ready',role==='a'?'b':'a'));}
+    if(['same','different'].includes(scenario)&&role==='b')await waitFor(marker('scope-selected','a'));
     const definition=await use(selection);
+    if(['same','different'].includes(scenario))await mark('scope-selected');
     if(scenario==='multi'&&!phase){
         await mark('phase',{stage:'reloaded',selection,sequence});
         try{await vscode.commands.executeCommand('workbench.action.reloadWindow');}
@@ -305,26 +319,26 @@ export async function run(): Promise<void> {
     if(['same','different'].includes(scenario)){
         await mark('ready');await waitFor(marker('ready',role==='a'?'b':'a'));
     }
-    const client=new Mcp(definition);
+    const transportSelection=structuredClone(selection),client=new Mcp(definition);
     try{
         await client.start();
         const fixtureDocument=await vscode.workspace.openTextDocument(vscode.Uri.file(path.join(source,'fixture.ts')));
         await vscode.window.showTextDocument(fixtureDocument);await vscode.commands.executeCommand('airk.index');
         let symbols:any;const until=Math.min(Date.now()+180000,sharedDeadline);
         do{
-            symbols=scoped(await client.call('symbols',{name:own,compact:false}),selection);
+            symbols=scoped(await client.call('symbols',{name:own,compact:false}),transportSelection);
             if(symbols.items?.length===1)break;
             assert.ok(Date.now()<until,'Explicit native indexing did not publish fixture');await sleep(500);
         }while(true);
         assert.equal(symbols.items[0].citation.path,'fixture.ts');
         assert.equal(symbols.items[0].citation.content_hash,createHash('sha256').update(await fs.readFile(path.join(source,'fixture.ts'))).digest('hex'));
-        const extra=scoped(await client.call('symbols',{name:'SharedAllowedEvidence',compact:false}),selection);assert.equal(extra.items.length,1);
-        assert.equal(scoped(await client.call('search',{query:foreign,mode:'lexical',limit:5}),selection).hits.length,0);
-        assert.equal(scoped(await client.call('search',{query:'HiddenPrivateEvidence',mode:'lexical',limit:5}),selection).hits.length,0);
-        const denied=await client.call('read_file',{path:'hidden.ts',start_line:1,end_line:2});scoped(denied,selection,true);
-        const escaped=await client.call('read_file',{path:'../workspace-b/fixture.ts',start_line:1,end_line:2});scoped(escaped,selection,true);
+        const extra=scoped(await client.call('symbols',{name:'SharedAllowedEvidence',compact:false}),transportSelection);assert.equal(extra.items.length,1);
+        assert.equal(scoped(await client.call('search',{query:foreign,mode:'lexical',limit:5}),transportSelection).hits.length,0);
+        assert.equal(scoped(await client.call('search',{query:'HiddenPrivateEvidence',mode:'lexical',limit:5}),transportSelection).hits.length,0);
+        const denied=await client.call('read_file',{path:'hidden.ts',start_line:1,end_line:2});scoped(denied,transportSelection,true);
+        const escaped=await client.call('read_file',{path:'../workspace-b/fixture.ts',start_line:1,end_line:2});scoped(escaped,transportSelection,true);
         evidence.native.push({symbols,additional:extra,denied});
-        checks.push('actual raw definition command/args/env','advertised native tool catalog retained with inputs; supported names match','complete combined scope/member projection; original raw transport retained','citation bytes and out-of-grant isolation');
+        checks.push('actual raw definition command/args/env','advertised native tool catalog retained with inputs; supported names match','complete combined scope/member projection; original raw transport retained','citation bytes, reviewed permanent exclusion and index isolation');
         const before=definition.args.slice(),otherData=path.join(folder,'selected-storage');
         await fs.mkdir(otherData,{recursive:true});
         await vscode.workspace.getConfiguration('airk').update('storage.path',otherData,vscode.ConfigurationTarget.Global);
@@ -340,7 +354,7 @@ export async function run(): Promise<void> {
             await mark('edited');await waitFor(marker('edited',role==='a'?'b':'a'));
             const expected=scenario==='same'||role==='a'?1:0,end=Math.min(Date.now()+180000,sharedDeadline);
             let changed:any;
-            do{changed=scoped(await client.call('symbols',{name:'SharedEditEvidence',compact:false}),selection);if(changed.items.length===expected)break;assert.ok(Date.now()<end);await sleep(500);}while(true);
+            do{changed=scoped(await client.call('symbols',{name:'SharedEditEvidence',compact:false}),transportSelection);if(changed.items.length===expected)break;assert.ok(Date.now()<end);await sleep(500);}while(true);
             assert.equal(changed.items.length,expected);
             if(expected)assert.equal(changed.items[0].citation.content_hash,createHash('sha256').update(await fs.readFile(path.join(source,'fixture.ts'))).digest('hex'));
             await mark('retrieved');await waitFor(marker('retrieved',role==='a'?'b':'a'));
@@ -349,8 +363,8 @@ export async function run(): Promise<void> {
             checks.push('peer edit publication and Index isolation');
             if(scenario==='same'){
                 if(role==='a'){
-                    await ui('page',{kind:'projects'},route.projects);await ui('inspect',{kind:'project',id:selection.project});
-                    const old=await ui('renameDraft',{name:'Stale review must not apply'});assert.equal(old.review.request.operation.operation,'rename_project');
+                    await ui('page',{kind:'indexes'},route.library);await ui('inspect',{kind:'index',id:selection.index});
+                    const old=await ui('renameDraft',{kind:'index',name:'Stale review must not apply'});assert.equal(old.review.request.operation.operation,'rename_index');
                     await mark('stale-review-ready');await waitFor(marker('peer-mutation-done','b'));
                     const rejected=await ui('staleApply');
                     evidence.native.push({staleOriginal:old.review,staleRefusal:rejected});await mark('retained-evidence',evidence);
@@ -374,7 +388,7 @@ export async function run(): Promise<void> {
                     assert.ok(reconciled.pending.includes(old.review.request.key.nonce));
                     const retained=reconciled.pendingDetails.find((row:any)=>row.id===old.review.request.key.nonce);assert.ok(retained);
                     assert.deepEqual(retained.intent,pending.intent);evidence.native.push({staleReconciliation:reconciled});
-                    await ui('page',{kind:'projects'});const current=await ui('inspect',{kind:'project',id:selection.project});
+                    await ui('page',{kind:'indexes'});const current=await ui('inspect',{kind:'index',id:selection.index});
                     const peer=JSON.parse(await fs.readFile(marker('peer-mutation-done','b'),'utf8'));
                     const appliedRevision=peer.applied.outcome.receipt.catalog_revision;
                     assert.ok(appliedRevision>old.review.request.expected_catalog_revision);
@@ -383,9 +397,9 @@ export async function run(): Promise<void> {
                     assert.equal(current.detail.detail.item.value.name,'Renamed by peer');
                     evidence.native.push({peerApplied:peer,observedCurrent:current});await mark('stale-checked');
                 }else{
-                    await waitFor(marker('stale-review-ready','a'));await ui('page',{kind:'projects'},route.projects);await ui('inspect',{kind:'project',id:selection.project});
-                    const review=await ui('renameDraft',{name:'Renamed by peer'}),result=applied(await ui('apply'));
-                    await ui('page',{kind:'projects'});const current=await ui('inspect',{kind:'project',id:selection.project});
+                    await waitFor(marker('stale-review-ready','a'));await ui('page',{kind:'indexes'},route.library);await ui('inspect',{kind:'index',id:selection.index});
+                    const review=await ui('renameDraft',{kind:'index',name:'Renamed by peer'}),result=applied(await ui('apply'));
+                    await ui('page',{kind:'indexes'});const current=await ui('inspect',{kind:'index',id:selection.index});
                     await mark('peer-mutation-done',{review,applied:result,current});await waitFor(marker('stale-checked','a'));
                 }
                 checks.push('observed stale request remained unapplied; null receipt keeps exact unknown local intent retained without resubmission');
@@ -428,14 +442,14 @@ export async function run(): Promise<void> {
             const after=await report(secondary);
             assert.ok(BigInt(after.report.calls)>=BigInt(before.report.calls),'Clearing one Index must preserve the other Index ledger');
             await use(selection);
-            scoped(await client.call('symbols',{name:own,compact:false}),selection);
+            scoped(await client.call('symbols',{name:own,compact:false}),transportSelection);
             checks.push('scoped Usage remains unavailable until explicit entire-Index administration','actual clear preserves the other Index ledger and read grant');
         }
         if(scenario==='multi'){
             await vscode.commands.executeCommand('airk.explorer.search','return 42');await mark('explorer-ready');await waitFor(path.join(folder,'explorer-checked.json'));
-            checks.push('installed Explorer cited search, metadata Projects and live help');
-            await context();await ui('page',{kind:'grants'});await ui('inspect',{kind:'grant',id:selection.grant});
-            const revoke=await ui('revokeDraft');assert.equal(revoke.review.request.operation.operation,'revoke_grant');
+            checks.push('installed Explorer cited search, current Index sets and live help');
+            await ui('page',{kind:'projects'},route.projects);await ui('inspect',{kind:'project',id:selection.project});
+            const revoke=await ui('deleteSetDraft');assert.equal(revoke.review.request.operation.operation,'delete_project');
             const receipt=applied(await ui('apply'));assert.ok(receipt.outcome.fenced_receipt?.proof);
             const observedBefore=client.observations.length;let refusal:unknown;
             try{await client.call('symbols',{name:own,compact:false});}catch(error){refusal=error;}
@@ -443,9 +457,9 @@ export async function run(): Promise<void> {
             assert.ok(refusal instanceof NativeReplyError,'Timeout/EOF is not native revocation proof');
             const envelope=refusal.reply as any;assert.equal(envelope.result?.isError,true);
             const body=JSON.parse(envelope.result.content[0].text),error=body.error;
-            installedRevocation(body,selection.session);
+            installedRevocation(body,transportSelection.session);
             assert.equal(client.observations.length,observedBefore+1,'Revocation must not replay or rebroker the query');
-            checks.push('actual grant revocation fences the retained MCP session');
+            checks.push('deleting the selected index set fences the retained MCP session');
         }
     }catch(error){evidence.failure={error:String(error),stack:error instanceof Error?error.stack:undefined,native:error instanceof NativeReplyError?error.reply:undefined};throw error;}finally{await finishInstalledClient(client,evidence,mark);}
     await mark('transport-closed');

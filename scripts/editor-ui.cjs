@@ -15,6 +15,20 @@ function formFillExpressions(button,values){
         apply:`(()=>{${lookup}for(const {node,value}of fields){const proto=node.tagName==='SELECT'?HTMLSelectElement.prototype:HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(proto,node.type==='checkbox'?'checked':'value').set.call(node,value);node.dispatchEvent(new Event(node.tagName==='SELECT'||node.type==='checkbox'?'change':'input',{bubbles:true}));}return true;})()`,
         readback:`(()=>{${lookup}return fields.every(({node,value})=>(node.type==='checkbox'?node.checked:node.value)===value);})()`};
 }
+/** Match complete checkbox groups by reviewed native names before changing any field. */
+function checkboxFillExpressions(button,groups){
+    if(typeof button!=='string'||!button||!Array.isArray(groups)||!groups.length||groups.length>2||groups.some(group=>typeof group.legend!=='string'||!Array.isArray(group.names)||group.names.length>32||new Set(group.names).size!==group.names.length||group.names.some(name=>typeof name!=='string'||!name||name.length>256)))throw new Error('Invalid exact checkbox selection');
+    const lookup=`const buttons=[...document.querySelectorAll('button')].filter(b=>b.textContent.trim()===${JSON.stringify(button)});const form=buttons.length===1?buttons[0].closest('form'):null;if(!form)return false;const rows=[];for(const group of ${JSON.stringify(groups)}){const fields=[...form.querySelectorAll('fieldset')].filter(f=>f.querySelector('legend')?.textContent.trim()===group.legend);if(fields.length!==1||fields[0].disabled)return false;const labels=[...fields[0].querySelectorAll('label')].map(label=>({name:(label.querySelector('strong')?.textContent??label.textContent).trim(),node:label.querySelector('input[type="checkbox"]')}));if(labels.some(row=>!row.node||row.node.disabled)||group.names.some(name=>labels.filter(row=>row.name===name).length!==1))return false;rows.push(...labels.map(row=>({...row,value:group.names.includes(row.name)})));}`;
+    return {ready:`(()=>{${lookup}return true;})()`,apply:`(()=>{${lookup}for(const {node,value}of rows){Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'checked').set.call(node,value);node.dispatchEvent(new Event('change',{bubbles:true}));}return true;})()`,readback:`(()=>{${lookup}return rows.every(({node,value})=>node.checked===value);})()`};
+}
+function appliedReviewMatches(value,review){
+    const same=require('node:util').isDeepStrictEqual;
+    const request=review?.request,receipt=value?.outcome?.receipt;
+    if(!request||!receipt||value.outcome.status!=='catalog_applied'||!same(value.submittedReview,review))return false;
+    if(receipt.schema!==1||receipt.caller!==request.caller||!same(receipt.key,request.key)||receipt.request_digest!==review.requestDigest||receipt.catalog_revision!==request.expected_catalog_revision+1)return false;
+    if(receipt.authority_fence_required===true){const full=value.outcome.fenced_receipt;if(!full?.proof||!same(full.request,request)||full.preview_digest!==review.previewDigest)return false;}
+    return true;
+}
 async function openUsageAdministration(request,actions){
     // The native combined selection opens a picker even for one selected Index.
     // Bind the explicit choice to the exact fixture Index ID, never a row order.
@@ -148,6 +162,15 @@ async function editorUi(port,deadline=Date.now()+600000){
         await dispatch(explorerPredicate,expressions.ready,expressions.apply);
         await until(async()=>{const found=await service(expressions.readback);return found?.value===true?true:undefined;},'exact private form values before submit');
     }
+    async function checkboxes(button,groups){
+        const expressions=checkboxFillExpressions(button,groups);
+        await dispatch(explorerPredicate,expressions.ready,expressions.apply);
+        await until(async()=>(await service(expressions.readback))?.value===true,'exact checkbox readback before submit');
+    }
+    async function openDetails(summary){
+        const find=`[...document.querySelectorAll('details')].filter(d=>d.querySelector('summary')?.textContent.trim()===${JSON.stringify(summary)})`;
+        await dispatch(explorerPredicate,`${find}.length===1`,`(()=>{const rows=${find};if(rows.length!==1)return false;rows[0].open=true;return true;})()`);
+    }
     async function catalog(){
         const diagnostic=activeReadDiagnostic??beginUiDiagnostic(readDiagnostics,{action:'catalog',native:[],rendered:[]});
         return until(async()=>{const value=(await service("(()=>{const d=[...document.querySelectorAll('details')].find(d=>d.querySelector('summary')?.textContent==='Complete response');if(!d)return;try{return JSON.parse(d.querySelector('pre').textContent);}catch{return;}})()"))?.value;
@@ -163,11 +186,17 @@ async function editorUi(port,deadline=Date.now()+600000){
     async function settled(predicate,previous){
         return until(async()=>{const value=await catalog();if(value.error){if(previous&&value.error===previous.error&&value.generation===previous.generation)return undefined;throw new Error(value.error);}return !value.busy&&predicate(value)?value:undefined;},'native catalog outcome');
     }
+    async function afterClick(label,predicate){
+        const previous=await catalog();await click(label);
+        // Native previews replace their reviewed object without advancing the
+        // catalog generation. Require a distinct settled snapshot in either case.
+        return settled(value=>JSON.stringify(value)!==JSON.stringify(previous)&&predicate(value));
+    }
     async function inspect(kind,id){
-        const label=kind==='grant'?'Inspect grant':'Inspect';
-        const query=`(()=>{const cards=[...document.querySelectorAll('article')].filter(a=>[...a.children].some(n=>n.tagName==='P'&&[...n.querySelectorAll('code')].some(c=>c.textContent===${JSON.stringify(id)})));const b=cards.flatMap(a=>[...a.children].filter(n=>n.tagName==='BUTTON'&&n.textContent.trim()===${JSON.stringify(label)}));return b.length===1&&!b[0].disabled?b[0]:null;})()`;
+        const label=kind==='project'?'Open index set':'Open index';
+        const query=`(()=>{const cards=[...document.querySelectorAll('article')].filter(a=>[...a.children].some(n=>n.tagName==='DETAILS'&&n.querySelector('code')?.textContent===${JSON.stringify(id)}));const b=cards.flatMap(a=>[...a.querySelectorAll('button')].filter(n=>n.textContent.trim()===${JSON.stringify(label)}));return b.length===1&&!b[0].disabled?b[0]:null;})()`;
         await dispatch(explorerPredicate,`!!${query}`,`(()=>{const b=${query};if(!b)return false;b.click();return true;})()`);
-        return settled(v=>!!(kind==='grant'?v.grantDetail:v.detail));
+        return settled(v=>v.detail?.detail?.item?.value?.id===id);
     }
     async function indexing(request){
         const previous=actionDeadline,previousDiagnostic=activeReadDiagnostic;actionDeadline=editorActionDeadline(deadline);
@@ -186,7 +215,7 @@ async function editorUi(port,deadline=Date.now()+600000){
             return {preStop:before,dispatch:receipt,confirmation,started,previous_capture:previous??null,capture,requested_binding:{installDir:request.installDir,runtimeSha256:request.runtimeSha256,namespace:request.namespace}};
         }
         if(request.action==='restricted'){
-            const result=await until(async()=>(await service("(()=>{if(!document.body.innerText.includes('Restricted Mode'))return;const labels=['Prepare native setup review','Apply reviewed index setup','Persist reviewed grant','Use Grant for this window'];return {blocked:![...document.querySelectorAll('button')].some(b=>!b.disabled&&labels.includes(b.textContent.trim())),text:document.body.innerText};})()"))?.value,'actual Restricted Mode view');
+            const result=await until(async()=>(await service("(()=>{if(!document.body.innerText.includes('Restricted Mode'))return;const labels=['Review new index','Apply reviewed index setup','Create index set','Apply selection','Save index set'];return {blocked:![...document.querySelectorAll('button')].some(b=>!b.disabled&&labels.includes(b.textContent.trim())),text:document.body.innerText};})()"))?.value,'actual Restricted Mode view');
             if(!result.blocked)throw new Error('Restricted Mode exposed a native mutation');
             await click('Manage Workspace Trust');return result;
         }
@@ -219,35 +248,35 @@ async function editorUi(port,deadline=Date.now()+600000){
                 },'authenticated service connection after explicit action');
                 return {...observation,dispatch:receipt};
             }
-            case 'page':await click(request.kind==='projects'?'Refresh Projects':request.kind==='grants'?'Read grants':'Refresh indexes');return settled(v=>!!(request.kind==='grants'?v.grants:v.page));
+            case 'page':return afterClick(request.kind==='projects'?'Refresh index sets':'Refresh indexes',v=>!!v.page);
             case 'inspect':return inspect(request.kind,request.id);
             case 'setupDraft':
-                for(let count=Number((await service("[...document.querySelectorAll('form')].find(f=>[...f.querySelectorAll('button')].some(b=>b.textContent==='Prepare native setup review'))?.querySelectorAll('fieldset').length??0"))?.value);count>0;count--)await click('Remove additional source '+count);
+                await openDetails('Set up a new index');
+                for(let count=Number((await service("[...document.querySelectorAll('form')].find(f=>[...f.querySelectorAll('button')].some(b=>b.textContent==='Review new index'))?.querySelectorAll('fieldset').length??0"))?.value);count>0;count--)await click('Remove additional source '+count);
                 if(request.additional){await click('Add source location');}
-                await fill('Prepare native setup review',{'Index name':request.name,'Primary source location':request.source,'Index storage location':request.storage,'Collection':request.collection,'Enable native watching after setup':false,...(request.additional?{'Alias':request.additional.alias,'Source location':request.additional.path}:{})});
-                await click('Prepare native setup review');return settled(v=>!!v.setupReview);
-            case 'setupApply':await click('Apply reviewed index setup');return settled(v=>!!v.outcome);
-            case 'projectDraft':await fill('Preview create Project',{'New Project name':request.name});await click('Preview create Project');return settled(v=>!!v.review);
-            case 'renameDraft':await fill('Preview rename',{'New name':request.name});await click('Preview rename');return settled(v=>!!v.review);
-            case 'membershipDraft':{
-                await fill('Preview membership',{'Index ID':request.index,'Current membership revision (blank for new membership)':''});await click('Read Sources for this index');const sources=await settled(v=>!!v.sources);
-                const rows=sources.sources.page.items.map(row=>row.value);
-                const selected=request.roots.map(root=>{const row=rows.find(row=>row.canonical_path===root.path&&row.index_id===request.index&&row.enabled===true);if(!row)throw new Error('Native Source identity unavailable');return {...root,id:row.id};});
-                let count=Number((await service("[...document.querySelectorAll('form')].find(f=>[...f.querySelectorAll('button')].some(b=>b.textContent==='Preview membership'))?.querySelectorAll('fieldset').length??0"))?.value);
-                while(count>selected.length){await click('Remove scope '+count);count--;}
-                while(count<selected.length){await click('Add source scope');count++;}
-                for(let at=0;at<selected.length;at++){
-                    const root=selected[at];
-                    await dispatch(explorerPredicate,`!![...document.querySelectorAll('form')].find(f=>[...f.querySelectorAll('button')].some(b=>b.textContent==='Preview membership'))?.querySelectorAll('fieldset')[${at}]`,`(()=>{const form=[...document.querySelectorAll('form')].find(f=>[...f.querySelectorAll('button')].some(b=>b.textContent==='Preview membership'));const field=form?.querySelectorAll('fieldset')[${at}];if(!field)return false;for(const [label,value]of Object.entries(${JSON.stringify({'Source ID':root.id,'Canonical relative path':root.relative,'Scope':root.kind})})){const node=[...field.querySelectorAll('label')].find(n=>[...n.childNodes].filter(c=>c.nodeType===Node.TEXT_NODE).map(c=>c.textContent).join('').trim()===label)?.querySelector('input,select');if(!node)return false;Object.getOwnPropertyDescriptor(node.tagName==='SELECT'?HTMLSelectElement.prototype:HTMLInputElement.prototype,'value').set.call(node,value);node.dispatchEvent(new Event(node.tagName==='SELECT'?'change':'input',{bubbles:true}));}return true;})()`);
-                }
-                await click('Preview membership');return settled(v=>!!v.review);
+                await fill('Review new index',{'Index name':request.name,'Primary source location':request.source,'New index storage folder':request.storage,'New collection name':request.collection,'Enable native watching after setup':false,...(request.additional?{'Alias':request.additional.alias,'Source location':request.additional.path}:{})});
+                return afterClick('Review new index',v=>!!v.setupReview);
+            case 'setupApply':return afterClick('Apply reviewed index setup',v=>v.outcome?.status==='catalog_index_setup_applied');
+            case 'setCreate':
+                await openDetails('Create an index set');await fill('Create index set',{'Index set name':request.name});
+                await checkboxes('Create index set',[{legend:'Include indexes',names:[request.indexName]}]);
+                return afterClick('Create index set',v=>v.outcome?.status==='index_set_saved'&&v.detail?.detail?.item?.value?.id===v.outcome.id);
+            case 'scopeSelect':{
+                await afterClick('Refresh choices',v=>!!v.searchScope);
+                // Each explicit selection gets its actual new native grant. Retained
+                // transport assertions keep their original immutable selector.
+                const select=async(names,predicate)=>{await checkboxes('Apply selection',[{legend:'Indexes',names:[]},{legend:'Index sets',names}]);return afterClick('Apply selection',predicate);};
+                const before=await catalog();if(before.searchScope.active)await select([],v=>v.outcome?.status==='search_scope_cleared'&&!v.searchScope.active);
+                return select([request.setName],v=>v.searchScope?.active&&v.outcome?.status==='search_scope_selected'&&v.outcome.selected.project_ids.length===1&&v.outcome.selected.project_ids[0]===request.project);
             }
-            case 'apply':await click(request.grant?'Persist reviewed grant':'Apply reviewed changes');return settled(v=>!!v.outcome);
-            case 'context':await click('Read saved association');return settled(v=>!!v.hostContext||!!v.context);
-            case 'associationDraft':await fill('Preview saved association',{'Project IDs (comma separated; blank selects zero Projects)':request.project,'Default index IDs (comma separated; blank selects no index defaults)':request.index});await click('Preview saved association');return settled(v=>!!v.review);
-            case 'grantDraft':await fill('Prepare native grant review',{'Project IDs (1–32, comma separated)':request.project,"Optional index subset (1–32 IDs; blank asks native to include the selected Projects' memberships)":request.index});await click('Prepare native grant review');return settled(v=>!!v.review);
-            case 'useGrant':await fill('Use Grant for this window',{'Optional index subset from this grant (1–32 IDs; blank includes all permitted members)':request.index,'Project IDs from this grant (1–32, comma separated)':request.project});await click('Use Grant for this window');return settled(v=>!!v.outcome?.selected_subset);
-            case 'revokeDraft':await click('Preview revoke grant');return settled(v=>!!v.review);
+            case 'sources':await click('Sources and exclusions');return afterClick('Read Sources',v=>!!v.sources);
+            case 'blockDraft':await fill('Prepare permanent-block review',{'Source root':request.root,'Block':'exact','Path relative to the selected root':request.path});return afterClick('Prepare permanent-block review',v=>v.review?.request?.operation?.operation==='change_index_policy');
+            case 'deleteSetDraft':return afterClick('Delete index set',v=>v.review?.request?.operation?.operation==='delete_project');
+            case 'renameDraft':await click('Index settings');await openDetails('Rename index');await fill('Preview rename',{'New name':request.name});return afterClick('Preview rename',v=>!!v.review);
+            case 'apply':{
+                const before=await catalog();if(!before.review)throw new Error('No exact current review before Apply');
+                return afterClick('Apply reviewed changes',value=>appliedReviewMatches(value,before.review));
+            }
             case 'read':return catalog();
             case 'reconcile':{const previous=await catalog();await click('Check native receipts');return settled(v=>v.generation>previous.generation&&Array.isArray(v.outcome?.receipts),previous);}
             case 'staleApply':{
@@ -278,4 +307,4 @@ async function editorUi(port,deadline=Date.now()+600000){
     }
     return {dispatch,dispatchReceipts:()=>structuredClone(dispatchLog),diagnostics:()=>({picker:structuredClone(pickerDiagnostics),mutations:structuredClone(mutationDiagnostics),read_observations:structuredClone(readDiagnostics),reads,dispatches}),document,workbench,service,quickPick,confirm,indexing,catalog,click,approveRepair,responseMode,until,close(){for(const client of clients.values())client.close();}};
 }
-module.exports={editorUi,until,formFillExpressions,privateEditorEnvironment,openUsageAdministration,retainUiDiagnostic,beginUiDiagnostic,editorActionDeadline,editorRemainingBudget};
+module.exports={editorUi,until,formFillExpressions,checkboxFillExpressions,appliedReviewMatches,privateEditorEnvironment,openUsageAdministration,retainUiDiagnostic,beginUiDiagnostic,editorActionDeadline,editorRemainingBudget};

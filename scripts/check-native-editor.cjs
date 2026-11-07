@@ -5,6 +5,10 @@ const {spawn,execFile}=require('node:child_process');
 const {promisify}=require('node:util');
 const execute=promisify(execFile),services=[],legacyServices=new Map();
 let bundle;
+const profiles=new Map();
+const receiptPlans=new Map(),retainedProfileFolders=new Set();
+const {prepareOwnedReceipts,cleanupOwnedReceipts,verifyOwnedReceiptsAbsent}=require('./native-editor-receipts.cjs');
+const {waitForIndexIdle}=require('./native-editor-idle.cjs');
 const {editorUi,privateEditorEnvironment}=require('./editor-ui.cjs');
 const root=path.resolve(__dirname,'..');
 const [editor,cli,source]=process.argv.slice(2).map(value=>path.resolve(value));
@@ -13,13 +17,51 @@ const scenarios=(process.env.AIRK_EDITOR_SCENARIOS||'same,different,multi,usage,
 if(scenarios.some(value=>!['same','different','multi','usage','untrusted','legacy'].includes(value)))throw new Error('Unknown native editor scenario');
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms)),active=new Map();
 const environment=privateEditorEnvironment(process.env); // Child only: never inherit the normal editor's bootstrap/cache/IPC role.
+async function privateProfile(run,label){
+    const directory=process.platform==='win32'?path.join(run,'profile-'+label):await fs.realpath(await fs.mkdtemp('/tmp/airk-native-'));
+    if(process.platform==='win32')await fs.mkdir(directory);else await fs.chmod(directory,0o700);
+    profiles.set(directory,{run,label});await fs.writeFile(path.join(run,'profile-'+label+'-owned.json'),JSON.stringify({path:directory,label,private_user_data_dir:true},null,2));return directory;
+}
+async function finishProfile(profile,run,closed){
+    const receipt={path:profile,owned_editors_closed:closed,removed:false,logs_copied:0,log_bytes:0,log_directories:0};
+    if(process.platform==='win32'){receipt.retained_reason='Artifact-local Windows profile retained';return receipt;}
+    try{
+        if(!closed)throw new Error('Owned editor exit was not observed');
+        const resolved=await fs.realpath(profile),info=await fs.lstat(profile);
+        if(info.isSymbolicLink()||!info.isDirectory()||resolved!==profile||path.dirname(profile)!==await fs.realpath('/tmp')||!/^airk-native-[A-Za-z0-9]+$/.test(path.basename(profile)))throw new Error('Owned short profile identity changed');
+        async function copyLogs(source,destination,depth=0){
+            if(depth>12||++receipt.log_directories>256)throw new Error('Profile log directory bound exceeded');
+            let entries;try{entries=await fs.readdir(source,{withFileTypes:true});}catch(error){if(error.code==='ENOENT')return;throw error;}
+            await fs.mkdir(destination,{recursive:true});
+            for(const entry of entries){const input=path.join(source,entry.name),output=path.join(destination,entry.name);
+                if(entry.isSymbolicLink())throw new Error('Profile log symlink cannot be copied safely');
+                if(entry.isDirectory())await copyLogs(input,output,depth+1);
+                else if(entry.isFile()){const stat=await fs.stat(input);if(++receipt.logs_copied>256||(receipt.log_bytes+=stat.size)>33554432)throw new Error('Profile log copy bound exceeded');await fs.copyFile(input,output);}
+            }
+        }
+        await copyLogs(path.join(profile,'logs'),path.join(run,'profile-logs-'+path.basename(profile)));
+        await fs.rm(profile,{recursive:true,maxRetries:2,retryDelay:100});receipt.removed=true;
+    }catch(error){receipt.retained_reason=String(error);}
+    return receipt;
+}
+async function cleanupProfiles(){
+    const receipts=[];
+    for(const [profile,owner]of profiles){
+        const closed=!retainedProfileFolders.has(owner.run)&&![...active.values()].some(item=>item.profile===profile);
+        const receipt=await finishProfile(profile,owner.run,closed);receipt.label=owner.label;
+        await fs.writeFile(path.join(owner.run,'profile-'+owner.label+'-cleanup.json'),JSON.stringify(receipt,null,2));receipts.push(receipt);
+        if(receipt.removed||process.platform==='win32')profiles.delete(profile);
+    }
+    if(receipts.some(receipt=>process.platform!=='win32'&&!receipt.removed))throw new Error('Owned short profile cleanup remains uncertain: '+JSON.stringify(receipts));
+    return receipts;
+}
 async function runProcess(args,logfile,extra={}){
     const log=await fs.open(logfile,'w'),deadline=Number(extra.AIRK_EDITOR_DEADLINE)||Date.now()+600000;
     return new Promise((resolve,reject)=>{
         const child=spawn(editor,args,{windowsHide:true,env:{...environment,...extra},stdio:['ignore',log.fd,log.fd]});
         let failure,forced=false,killTimer,hardTimer;
         const closed=new Promise(done=>child.once('close',(code,signal)=>done({code,signal})));
-        active.set(child,{closed,logfile});
+        const profileAt=args.indexOf('--user-data-dir');active.set(child,{closed,logfile,profile:profileAt>=0?args[profileAt+1]:undefined});
         const timer=setTimeout(()=>{forced=true;failure=new Error(`Private editor timed out: ${logfile}`);child.kill();killTimer=setTimeout(()=>child.kill('SIGKILL'),3000);hardTimer=setTimeout(()=>reject(new Error('Owned editor close was not observed after bounded force: '+logfile)),6000);},Math.max(1,deadline-Date.now()));
         child.once('error',error=>{failure=error;});
         void closed.then(async result=>{clearTimeout(timer);clearTimeout(killTimer);clearTimeout(hardTimer);active.delete(child);await log.close();
@@ -40,6 +82,51 @@ async function closeOwnedEditors(){
 }
 async function unusedPort(){const server=net.createServer();await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const value=server.address().port;await new Promise(resolve=>server.close(resolve));return value;}
 async function exists(file){return fs.access(file).then(()=>true,()=>false);}
+async function observeIndexIdle(folder,role,request,scenarioDeadline){
+    const fixture=await fs.realpath(folder),install=await canonicalOwned(fixture,path.join(folder,'native-service'));
+    if(!/^idx_[a-f0-9]{32}$/.test(request.index)||!/^[a-f0-9]{64}$/.test(request.binding))throw new Error('Invalid exact indexing precondition binding');
+    await canonicalOwned(fixture,request.root);await canonicalOwned(fixture,request.data);
+    const deadline=Math.min(scenarioDeadline,Date.now()+90000),calls=[],samples=[],evidenceFile=path.join(folder,role+'-index-idle-'+request.index+'.json');
+    let count=0;
+    async function run(args){
+        if(++count>128||Date.now()>=deadline)throw new Error('Index idle native read budget/deadline exhausted');
+        const budget=path.join(folder,'native-request-budget');await fs.appendFile(budget,'x');if((await fs.stat(budget)).size>512)throw new Error('Shared native scenario request budget exhausted');
+        const record={args};calls.push(record);
+        try{const response=await execute(bundle.main,args,{cwd:folder,env:environment,windowsHide:true,timeout:Math.min(10000,deadline-Date.now()),maxBuffer:65536});record.stdout=response.stdout;record.stderr=response.stderr;return JSON.parse(response.stdout);}
+        catch(error){record.error=String(error);record.stdout=error.stdout;record.stderr=error.stderr;throw error;}
+    }
+    async function rpc(control,method){
+        const file=path.join(folder,role+'-idle-request-'+calls.length+'.json');await fs.writeFile(file,JSON.stringify(method),{flag:'wx'});
+        const args=['service','rpc','--runtime-dir',control,'--request-file',file];
+        for(let attempt=0;attempt<=40;attempt++){
+            const value=await run(args);
+            // The native Progress registry observation is read-only. Only its
+            // exact public contention refusal authorizes repeating this input.
+            if(Object.keys(value).sort().join(',')==='code,status'&&value.status==='failure'&&value.code==='registry_busy'&&method.progress&&attempt<40&&Date.now()+25<deadline){await delay(25);continue;}
+            return value;
+        }
+    }
+    try{
+        const before=await run(['runtime','inspect','--install-dir',install]);
+        if(before.payload_verified!==true||before.approval?.manifest_sha256!==bundle.digest||!/^[a-f0-9]{32}$/.test(before.registry_namespace))throw new Error('Index idle runtime approval unavailable');
+        const control=await canonicalOwned(fixture,before.control_dir),pair=JSON.parse(await fs.readFile(path.join(bundle.source,'airk-runtime.json'),'utf8'));
+        const health=await rpc(control,'health');
+        function verifyHealth(value){const observed=value.observation;if(value.status!=='health'||observed?.version!==bundle.version||observed.runtime_sha256!==bundle.digest||observed.executable_sha256!==pair.airk_sha256||observed.catalog_clock?.namespace!==before.registry_namespace||observed.policy?.accepting!==true||!/^[a-f0-9]{32}$/.test(observed.instance))throw new Error('Index idle service identity crossed its approved runtime/catalog');return observed;}
+        const service=verifyHealth(health);
+        async function backing(){
+            const response=await rpc(control,{catalog_detail:{entity:{kind:'index',id:request.index},expected_catalog_revision:null}}),detail=response.detail,index=detail?.item?.value;
+            if(response.status!=='catalog_detail'||detail.namespace!==before.registry_namespace||detail.item.kind!=='index'||index?.id!==request.index||index.tombstone!==false||index.backing?.binding!==request.binding||index.backing.root!==request.root||index.backing.data_root!==request.data||index.backing.collection!==request.collection)throw new Error('Index idle observation crossed the exact setup backing');
+            return response;
+        }
+        const original=await backing();
+        const idle=await waitForIndexIdle(()=>rpc(control,{progress:{project:request.binding}}),{project:request.binding,service:service.instance},{deadline,record:async value=>samples.push(value)});
+        const confirmedHealth=verifyHealth(await rpc(control,'health'));if(confirmedHealth.instance!==service.instance)throw new Error('Service restarted during indexing precondition observation');
+        const confirmed=await backing(),after=await run(['runtime','inspect','--install-dir',install]);
+        if(after.payload_verified!==true||after.approval?.manifest_sha256!==bundle.digest||after.registry_namespace!==before.registry_namespace||after.control_dir!==before.control_dir)throw new Error('Index idle runtime changed during observation');
+        const result={...idle,index:request.index,binding:request.binding,namespace:before.registry_namespace,runtime_sha256:bundle.digest,service_instance:service.instance,evidence:evidenceFile,original,confirmed};
+        await fs.writeFile(evidenceFile,JSON.stringify({request,calls,samples,result},null,2));return result;
+    }catch(error){await fs.writeFile(evidenceFile,JSON.stringify({request,calls,samples,error:String(error)},null,2));throw error;}
+}
 const sha=bytes=>require('node:crypto').createHash('sha256').update(bytes).digest('hex');
 function inside(root,value){const normalize=value=>process.platform==='win32'?path.toNamespacedPath(value).toLowerCase():value;const relative=path.relative(normalize(root),normalize(value));return relative!==''&&!relative.startsWith('..'+path.sep)&&relative!=='..'&&!path.isAbsolute(relative);}
 async function ownedPath(root,value,missingLeaf=false){
@@ -159,15 +246,20 @@ async function checkExplorer(ui){
     await contains('inputSchema');
     await click('About','.topbar button');await contains('Ioka LLC');await contains('Munarium');await contains('https://discord.gg/sJase5FbE');
     const about=await ui.until(async()=>(await inExplorer("(()=>{const labels=[...document.querySelectorAll('[aria-label=\"AIRK public links\"] button')].map(b=>b.textContent.trim());return labels.some(x=>x.includes('Report an issue'))&&labels.some(x=>x.includes('Contribute to AIRK'))?labels:false;})()"))?.value,'Explorer About community links');
-    await ui.click('Indexing');await ui.click('Projects');
+    await ui.click('Indexing');await ui.click('Index sets');
     const native=await ui.indexing({action:'page',kind:'projects'}),rows=native.page.page.items;
-    if(!rows.some(row=>row.kind==='project'&&String(row.value.name).includes('Fixture Project')))throw new Error('Indexing did not list the native metadata Project');
+    if(!rows.some(row=>row.kind==='project'&&String(row.value.name).includes('Fixture index set')))throw new Error('Indexing did not list the native index set');
     return {hits,rows,help:['role search','purpose and format guide','offline native engine guide','live tool schema','About credits/history/community links'],about};
 }
 async function cleanupServices(){
     const results=[];
     for(const folder of services.splice(0)){
-        const legacy=legacyServices.get(folder),install=legacy?.install_dir??path.join(folder,'native-service');if(!await exists(install))continue;
+        const legacy=legacyServices.get(folder),install=legacy?.install_dir??path.join(folder,'native-service'),plan=receiptPlans.get(folder);
+        if(!await exists(install)){
+            try{if(plan){const absent=await verifyOwnedReceiptsAbsent(plan);await fs.writeFile(path.join(folder,'uninstall-receipt-cleanup.json'),JSON.stringify(absent,null,2));receiptPlans.delete(folder);}}
+            catch(error){retainedProfileFolders.add(folder);results.push({qualified:false,error:String(error),retained:true});}
+            continue;
+        }
         let receipt;
         try{
             const stop=JSON.parse(await fs.readFile(path.join(folder,'native-stop.json'),'utf8'));
@@ -185,22 +277,27 @@ async function cleanupServices(){
             if(await canonicalOwned(owned,captured.runtime.controlDir)!==control||observation.approval?.manifest_sha256!==bundle.digest||observation.registry_namespace!==captured.namespace||observation.payload_verified!==true)throw new Error('Native stopped inspection crossed the captured installation');
             if(observation.lifecycle?.explicitly_stopped!==true||observation.lifecycle?.pending!==null)throw new Error('Native lifecycle has not settled stopped');
             receipt={qualified:true,stop,observation};
-        }catch(error){receipt={qualified:false,error:String(error),retained:true};}
+            if(plan){
+                const profileRoots=[...profiles].filter(([,owner])=>owner.run===folder).map(([profile])=>profile);
+                receipt.uninstallReceipts=await cleanupOwnedReceipts(plan,{profileRoots,editorsClosed:active.size===0,stop:receipt,evidenceDirectory:path.join(folder,'removed-uninstall-receipts')});
+                await fs.writeFile(path.join(folder,'uninstall-receipt-cleanup.json'),JSON.stringify(receipt.uninstallReceipts,null,2));receiptPlans.delete(folder);
+            }
+        }catch(error){receipt={...receipt,qualified:false,error:String(error),retained:true};retainedProfileFolders.add(folder);}
         results.push(receipt);await fs.writeFile(path.join(folder,'native-cleanup.json'),JSON.stringify(receipt,null,2));
     }
     if(results.some(value=>!value.qualified))throw new Error('Owned native service cleanup remains unqualified: '+JSON.stringify(results));
     return results;
 }
 async function main(){
-    const harnessPaths=['scripts/check-native-editor.cjs','scripts/editor-ui.cjs','scripts/native-editor-legacy.cjs','packages/vscode/out/test/installedEditor.js'];
+    const harnessPaths=['scripts/check-native-editor.cjs','scripts/editor-ui.cjs','scripts/native-editor-legacy.cjs','scripts/native-editor-receipts.cjs','scripts/native-editor-idle.cjs','packages/vscode/out/test/installedEditor.js','packages/vscode/out/test/installedEditorContracts.js'];
     const harness=Object.fromEntries(await Promise.all(harnessPaths.map(async name=>[name,sha(await fs.readFile(path.join(root,name)))])));
     const stage=(await fs.lstat(source)).isDirectory();
     if(stage){const version=JSON.parse(await fs.readFile(path.join(source,'package.json'),'utf8')).version;
         bundle=await require(path.join(root,'packages/vscode/out/serviceBootstrap.js')).verifyBundledRuntime(source,version);}
     const base=path.join(root,'artifacts/editor-qualification');await fs.mkdir(base,{recursive:true});
-    const run=await fs.mkdtemp(path.join(base,stage?'native-stage-':'native-installed-'));
+    const run=await fs.realpath(await fs.mkdtemp(path.join(base,stage?'native-stage-':'native-installed-')));
     const extensions=path.join(run,'extensions');await fs.mkdir(extensions);
-    if(!stage)await runProcess([cli,'--user-data-dir',path.join(run,'install-profile'),'--extensions-dir',extensions,
+    if(!stage)await runProcess([cli,'--user-data-dir',await privateProfile(run,'install'),'--extensions-dir',extensions,
         '--shared-data-dir',path.join(run,'shared-editor-data'),'--install-extension',source,'--force'],path.join(run,'install.log'),{ELECTRON_RUN_AS_NODE:'1'});
     if(!stage){const installed=(await fs.readdir(extensions)).filter(name=>name.startsWith('iokaio.airk-'));
         if(installed.length!==1)throw new Error('Expected one private installed AIRK extension');
@@ -226,14 +323,22 @@ exports.activate=()=>{if(!process.env.AIRK_EDITOR_RUN)return;void require(${JSON
         if(legacy)await fs.writeFile(path.join(folder,'legacy-fixture.json'),JSON.stringify(legacy,null,2));
         for(const [name,symbol] of [['workspace-a','WindowAlphaEvidence'],['workspace-b','WindowBetaEvidence']]){const workspace=path.join(folder,name);await fs.mkdir(workspace);await fs.writeFile(path.join(workspace,'fixture.ts'),`export function ${symbol}() { return 42; }\n`);await fs.writeFile(path.join(workspace,'hidden.ts'),'export function HiddenPrivateEvidence() {}\n');}
         for(const name of ['shared-a','shared-b']){await fs.mkdir(path.join(folder,name));await fs.writeFile(path.join(folder,name,'shared.ts'),'export function SharedAllowedEvidence() { return 19; }\n');}
+        const location=JSON.parse((await execute(bundle.main,['runtime','location','--channel','stable'],{windowsHide:true,env:environment,cwd:folder,timeout:30000,maxBuffer:65536})).stdout);
+        if(location.protocol!==1||typeof location.user_paths?.launcher!=='string')throw new Error('Actual native launcher location unavailable for exact fixture cleanup');
+        const receiptSources=legacy?[legacy.source_root]:[await fs.realpath(path.join(folder,'workspace-a')),await fs.realpath(path.join(folder,'workspace-b'))];
+        // Windows native metadata can retain the namespaced spelling. Both
+        // exact hashes remain bound to the same verified canonical fixture root.
+        const receiptSourceSpellings=[...new Set(receiptSources.flatMap(root=>process.platform==='win32'?[root,path.toNamespacedPath(root)]:[root]))];
+        const receiptPlan=await prepareOwnedReceipts({launcher:location.user_paths.launcher,fixture:legacy?legacy.fixture_root:folder,installDir:legacy?.install_dir??path.join(folder,'native-service'),sourceRoots:receiptSourceSpellings});
+        receiptPlans.set(folder,receiptPlan);await fs.writeFile(path.join(folder,'uninstall-receipt-baseline.json'),JSON.stringify({nativeLocation:location,plan:receiptPlan},null,2));
         const originalSources={};
         for(const name of ['workspace-a/fixture.ts','workspace-a/hidden.ts','workspace-b/fixture.ts','workspace-b/hidden.ts','shared-a/shared.ts','shared-b/shared.ts'])originalSources[name]=await fs.readFile(path.join(folder,name),'utf8');
         const roles=['same','different'].includes(scenario)?['a','b']:['a'],children=[],uis={},ports={};
-        for(const role of roles){const profile=path.join(folder,`profile-${role}`);await fs.mkdir(path.join(profile,'User'),{recursive:true});
+        for(const role of roles){const profile=await privateProfile(folder,role);await fs.mkdir(path.join(profile,'User'),{recursive:true});
             // All new bindings come from the real reviewed Indexing forms. A
             // separately supplied legacy fixture keeps its original config.
             await fs.writeFile(path.join(profile,'User/settings.json'),JSON.stringify({'airk.service.channel':'stable','airk.service.installDir':legacy?.install_dir??path.join(folder,'native-service'),'airk.storage.path':legacy?.data_root??storage,'airk.cli.autoInstall':false,
-                'workbench.startupEditor':'none','window.restoreWindows':'none','security.workspace.trust.startupPrompt':'never','extensions.autoUpdate':false,'extensions.autoCheckUpdates':false,
+                'airk.cli.shellIntegration':'off','workbench.startupEditor':'none','window.restoreWindows':'none','security.workspace.trust.startupPrompt':'never','extensions.autoUpdate':false,'extensions.autoCheckUpdates':false,
                 'telemetry.telemetryLevel':'off','update.mode':'none','files.simpleDialog.enable':true,'window.dialogStyle':'custom',
 }));
             let workspace=path.join(folder,scenario==='different'&&role==='b'?'workspace-b':'workspace-a');
@@ -260,7 +365,7 @@ exports.activate=()=>{if(!process.env.AIRK_EDITOR_RUN)return;void require(${JSON
                     if(request&&handled.get(role)!==request.sequence){
                         if(!Number.isSafeInteger(request.sequence)||request.sequence<1||request.sequence>256)throw new Error('Private UI action budget/sequence invalid');
                         uis[role]??=await editorUi(ports[role],scenarioDeadline);
-                        const actions=['serviceStop','connect','startService','page','inspect','setupDraft','setupApply','projectDraft','renameDraft','membershipDraft','apply','context','associationDraft','grantDraft','useGrant','revokeDraft','read','reconcile','staleApply','restricted','usageScoped','usageAdmin','usageJson','usageClear'];
+                        const actions=['serviceStop','connect','startService','page','inspect','setupDraft','setupApply','setCreate','scopeSelect','sources','indexIdle','blockDraft','deleteSetDraft','renameDraft','apply','read','reconcile','staleApply','restricted','usageScoped','usageAdmin','usageJson','usageClear'];
                         if(!actions.includes(request.action))throw new Error('Unknown private Indexing action');
                         const fixture=await fs.realpath(folder);
                         if(request.action==='serviceStop'||(legacy&&request.action==='startService')){
@@ -279,11 +384,12 @@ exports.activate=()=>{if(!process.env.AIRK_EDITOR_RUN)return;void require(${JSON
                             request.namespace=metadata.registry_namespace;
                         }
                         if(request.action==='setupDraft'){await ownedPath(fixture,request.source);await ownedPath(fixture,request.storage,true);if(request.additional)await ownedPath(fixture,request.additional.path);}
-                        if(request.action==='membershipDraft')for(const atom of request.roots??[])await ownedPath(fixture,atom.path);
+                        if(request.action==='blockDraft'&&(!/^src_[a-f0-9]{32}$/.test(request.root)||request.path!=='hidden.ts'))throw new Error('Invalid exact reviewed fixture exclusion');
+                        if(['scopeSelect','setCreate'].includes(request.action)&&typeof(request.setName??request.name)!=='string')throw new Error('Exact native index-set name required');
                         for(const key of ['index','project','id'])if(request[key]!==undefined&&!/^(idx_|prj_|grt_)[a-f0-9]{32}$/.test(request[key]))throw new Error('Invalid exact native catalog ID');
                         // Mark dispatch before invoking the UI; unknown outcomes are never replayed.
                         handled.set(role,request.sequence);
-                        const value=await uis[role].indexing(request);
+                        const value=request.action==='indexIdle'?await observeIndexIdle(folder,role,request,scenarioDeadline):await uis[role].indexing(request);
                         if(Buffer.byteLength(JSON.stringify(value))>1048576)throw new Error('Complete private UI receipt exceeds 1 MiB');
                         await fs.writeFile(path.join(folder,`${role}-ui-done-${request.sequence}.json`),JSON.stringify(value));}
                 }
@@ -297,7 +403,7 @@ exports.activate=()=>{if(!process.env.AIRK_EDITOR_RUN)return;void require(${JSON
             for(const role of roles){uis[role]??=await editorUi(ports[role],scenarioDeadline);const ui=uis[role];
                 const body=await ui.until(async()=>(await ui.service('document.body.innerText'))?.value,'AIRK Explorer Management');
                 await fs.writeFile(path.join(folder,`${role}-service.txt`),body);
-                if(scenario==='untrusted'){if(!(await ui.service("![...document.querySelectorAll('button')].some(b=>!b.disabled&&['Prepare native setup review','Apply reviewed index setup','Use Grant for this window','Persist reviewed grant'].includes(b.textContent.trim()))"))?.value)throw new Error('Untrusted native controls were enabled');}
+                if(scenario==='untrusted'){if(!(await ui.service("![...document.querySelectorAll('button')].some(b=>!b.disabled&&['Review new index','Apply reviewed index setup','Create index set','Apply selection','Save index set'].includes(b.textContent.trim()))"))?.value)throw new Error('Untrusted native controls were enabled');}
                 const page=await ui.workbench('document.title');const image=await page.client.call('Page.captureScreenshot',{format:'png'});
                 await fs.writeFile(path.join(folder,`${role}-workbench.png`),Buffer.from(image.data,'base64'));
             }
@@ -315,7 +421,7 @@ exports.activate=()=>{if(!process.env.AIRK_EDITOR_RUN)return;void require(${JSON
         if(legacy){if(sha(await fs.readFile(legacy.legacy_config.path))!==legacy.legacy_config.sha256)throw new Error('Legacy config changed after installed-editor probe');
             for(const [name,digest]of Object.entries(legacy.source_hashes_before)){const file=await ownedPath(legacy.source_root,path.resolve(legacy.source_root,name));if(sha(await fs.readFile(file))!==digest)throw new Error('Legacy source changed during installed-editor probe');}
             summary.legacyUpgradeCoverage=true;}
-        await cleanupServices();
+        await cleanupServices();await cleanupProfiles();
         await fs.writeFile(path.join(run,'summary.json'),JSON.stringify(summary,null,2));console.log(`${scenario}: native editor passed`);
     }
     for(const [name,digest]of Object.entries(harness))if(sha(await fs.readFile(path.join(root,name)))!==digest)throw new Error('Installed-editor harness changed during qualification: '+name);
@@ -325,4 +431,4 @@ exports.activate=()=>{if(!process.env.AIRK_EDITOR_RUN)return;void require(${JSON
     if(summary.status==='partial'){console.log(`Native editor coverage remains unqualified: ${run}`);process.exitCode=2;}
     else console.log(`Native editor selected scenarios passed: ${run}`);
 }
-main().catch(async error=>{const editorCleanup=await closeOwnedEditors();let serviceCleanup;try{serviceCleanup=await cleanupServices();}catch(cleanupError){serviceCleanup=String(cleanupError);}console.error(JSON.stringify({error:String(error),editorCleanup,serviceCleanup}));process.exitCode=1;});
+main().catch(async error=>{const editorCleanup=await closeOwnedEditors();let serviceCleanup,profileCleanup;try{serviceCleanup=await cleanupServices();}catch(cleanupError){serviceCleanup=String(cleanupError);}try{profileCleanup=await cleanupProfiles();}catch(cleanupError){profileCleanup=String(cleanupError);}console.error(JSON.stringify({error:String(error),editorCleanup,serviceCleanup,profileCleanup}));process.exitCode=1;});

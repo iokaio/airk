@@ -393,6 +393,28 @@ test('source draft/apply and failed-resolution use one journal; unknown restart 
     }finally{f.controller.dispose();afterBegin?.dispose();restarted?.dispose();}
 });
 
+test('source review deferrals preserve native job counts without journaling or submitting a mutation',async()=>{
+    const index='idx_'+'31'.repeat(16),source='src_'+'41'.repeat(16);
+    for(const change of [{operation:'add_root',alias:'extra',path:'/extra'},{operation:'trim_path',source_root_id:source,kind:'subtree',path:'private'},{operation:'retire_index'}]){
+        const f=fixture(),base=f.host.runtime.client({} as any),calls:unknown[]=[],response={status:'source_change_busy',code:'source_change_jobs_pending',busy:{index_id:index,pending_jobs:1,running_jobs:0},future_native_busy:{retained:true}};
+        f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+            const name=typeof method==='string'?method:Object.keys(record(method))[0];
+            if(name==='catalog_source_mutation_draft'){calls.push(structuredClone(method));return response;}
+            if(name==='catalog_apply')throw new Error('a deferred source review cannot submit an Apply');
+            return base.transport.request(method);
+        }});
+        try{
+            await f.controller.refresh();
+            await assert.rejects(f.controller.catalogSourceDraft(index,change,1),(error:unknown)=>{
+                assert.ok(error instanceof ServiceError);assert.equal(error.code,'source_change_jobs_pending');assert.equal(error.outcomeUnknown,false);assert.equal(error.nativeResponse,response);return true;
+            });
+            assert.equal(calls.length,1);const {key,...selection}=record(record(record(calls[0]).catalog_source_mutation_draft).selection);
+            assert.deepEqual(selection,{expected_catalog_revision:1,index_id:index,change});assert.equal(record(key).namespace,namespace);
+            assert.deepEqual(f.controller.catalogPending(),[]);assert.equal(new IntentJournal(f.host.storage,'/control',namespace).list().length,0);
+        }finally{f.controller.dispose();}
+    }
+});
+
 test('setup Resume requires a fresh matching receipt and reuses the exact original draft after each explicit recovery',async()=>{
     const f=fixture(),base=f.host.runtime.client({} as any),digest='43'.repeat(32),requests:unknown[]=[];let nativeRequest:RecordValue|undefined,phase='reserved',lose=true;
     const receipt=()=>({schema:1,operation_id:'90'.repeat(16),request:nativeRequest,request_digest:digest,index_id:'idx_'+'31'.repeat(16),source_ids:['src_'+'41'.repeat(16)],stage:phase,catalog_revision:phase==='ready'?3:2,source_revision:phase==='ready'?2:1,preparation:phase==='reserved'?null:{digest:'51'.repeat(32),storage_identity:'52'.repeat(32),source_configuration_digest:'53'.repeat(32),review:{expected_catalog_revision:2,expected_source_revision:1}},completion:phase==='ready'?{prepared_digest:'51'.repeat(32),expected_catalog_revision:2,expected_source_revision:1}:null});

@@ -17,7 +17,7 @@ function fixture(denied=false):any{
         members:[{index_id:index,is_error:denied,allocation:{index_id:index,limit:20,max_bytes:65536,deadline_ms:30000,verification_max_sources:1,verification_max_bytes:65536,verification_deadline_ms:1},outcome:denied?'failed':'complete',result}],
         ranking:denied?[]:[{index_id:index,result_pointer:'/members/0/result/structuredContent/items/0',local_rank:1,rank_contribution:1/61,origin:{index_id:index,project_ids:[project],source_root_id:source,source_relative_path:'fixture.ts',publication}}],
         rank_policy:'fixture',partial:denied,truncated:false,delivery_observation:{receipt:{schema:1,namespace:session.namespace,catalog_revision:3,scope_identity:hash('b'),result_digest:hash('c')}}};
-    return {selection,raw,body,definition:{args:['--combined-session',JSON.stringify(session),'mcp']},ui:{outcome:{selection:{session}}}};
+    return {selection,raw,body,definition:{args:['--combined-session',JSON.stringify(session),'mcp']},ui:{outcome:{status:'search_scope_selected',selected:{index_ids:[],project_ids:[project]},activation:{selected_subset:true,selection:{session}}}}};
 }
 test('complete current combined definition binds native reviewed singleton and rejects obsolete flag',()=>{
     const f=fixture();assert.deepEqual(installedSelector(f.definition,f.ui,f.selection),f.selection.session);
@@ -29,6 +29,13 @@ test('crossed index, Project and native session refuse',()=>{
         assert.throws(()=>installedSelector({args:['--combined-session',JSON.stringify(bad),'mcp']},f.ui,f.selection));
     }
 });
+test('current checkbox activation retains exact visible choice and reviewed native grant',()=>{
+    const f=fixture();assert.deepEqual(installedSelector(f.definition,f.ui,f.selection),f.selection.session);
+    for(const mutate of [(ui:any)=>{ui.outcome.selected.project_ids=[];},(ui:any)=>{ui.outcome.selected.index_ids=[f.selection.index];},(ui:any)=>{ui.outcome.activation.selected_subset=false;},(ui:any)=>{ui.outcome.activation.selection.session.grant_id=id('grt_','f');}]){
+        const ui=structuredClone(f.ui);mutate(ui);assert.throws(()=>installedSelector(f.definition,ui,f.selection));
+    }
+});
+
 test('lossless member projection preserves raw body, floats and distinct identity domains',()=>{
     const f=fixture(),before=structuredClone(f.raw);assert.equal(installedMember(f.raw,f.selection).items.length,1);
     assert.deepEqual(f.raw,before);assert.notEqual(f.raw.selection.identity,f.raw.publication_vector.authority);

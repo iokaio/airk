@@ -29,7 +29,10 @@ export function installedSelector(definition:any,result:any,selection:any):any{
     for(const arg of ['--catalog-session','--root','--data-dir','--collection','--service-project'])assert.ok(!definition.args.includes(arg),'No reconstructed legacy selector');
     const at=definition.args.indexOf('--combined-session');assert.ok(at>=0&&typeof definition.args[at+1]==='string');
     const selector=validateCombinedCatalogSession(JSON.parse(definition.args[at+1]));
-    assert.deepEqual(selector,result.outcome.selection.session,'Complete native reviewed selection');
+    assert.equal(result.outcome.status,'search_scope_selected');
+    assert.deepEqual(result.outcome.selected,{index_ids:[],project_ids:[selection.project]},'Exact visible checkbox selection');
+    assert.equal(result.outcome.activation.selected_subset,true);
+    assert.deepEqual(selector,result.outcome.activation.selection.session,'Complete native reviewed selection');
     assert.deepEqual(selector.index_ids,[selection.index]);assert.deepEqual(selector.project_ids,[selection.project]);assert.equal(selector.grant_id,selection.grant);
     return selector;
 }

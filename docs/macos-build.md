@@ -109,11 +109,31 @@ allowing only that platform metadata rewrite. Archive verification still checks
 the exact reviewed source bytes. This is separate from Apple trust, quarantine,
 notarization and actual installed-editor acceptance.
 
-The optional legacy `check-native-editor.cjs` selection journeys still target
-controls removed by the 1.8.11 Indexing redesign. They need the bounded current-UI
-follow-up described in [CI's installed-editor limit](ci-and-builds.md#native-build-reuse-and-darwin-failure-diagnostics).
-Bootstrap/tab-handoff checks, Restricted Mode and native installer checks must
-not be reported as a passing full Indexing or multi-window GUI journey.
+The native-enabled `check-native-editor.cjs` journeys now implement the current
+**Search scope / Index library / Index sets** flow; the earlier removed-controls
+failure remains a dated historical checkpoint. They use a permanent exact
+`hidden.ts` source exclusion, real index-rename stale review, index-set deletion
+with retained-session fencing and exact saved applied-selector revalidation on
+reload. The first migrated actual `same` run failed when a one-queued-job native
+`SourceChangeBusy` refusal was classified as `unexpected_service_response`.
+The host correction preserves that typed pre-insert refusal and complete body,
+shows queued/running work and never replays the mutation. Its source regressions
+passed; the actual Mac GUI rerun with the corrected host is pending.
+
+The first exclusion review is preceded by a read-only observation of the exact
+index/backing, service and worker generation with a **90-second idle deadline**;
+this does not grant native mutation admission. Unix profile paths are short and
+canonical, Code runs privately and shell integration is off. Cleanup closes the
+fixture editors and requires a qualified exact-owned Stop before removing only
+new account uninstall receipts whose exact ownership was captured; unknown
+ownership or state is retained. The reviewed old-VSIX upgrade helper remains
+unexecuted and is separate from a prequalified native legacy fixture.
+
+Current local notarization reached **Accepted**, with separately recorded native
+lifecycle/model checks. Those observations do not establish a passing current
+native-enabled GUI journey. Bootstrap/tab handoff and Restricted Mode retain
+their narrower scope. No CI workflow invokes the desktop GUI harness; this
+follow-up changes local fixture behavior, not hosted workflow selection.
 
 ## Prior failures and remaining evidence
 

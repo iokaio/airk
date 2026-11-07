@@ -96,19 +96,34 @@ To install the reviewed package into your normal profile later, use **Extensions
 
 ## Automated packaged-editor smoke
 
-**Current 1.8.12 limit:** `-RunEditorTests` invokes the older
-`check-native-editor.cjs` selection journeys. Their saved-association and
-explicit-grant controls are absent from the inherited 1.8.11 checkbox UI, so the
-trusted journeys need a current-UI fixture update. They are not a completed
-1.8.12 Indexing or multi-window GUI qualification. Native installer/client/MCP
-checks remain separate, and their assertions are not bypassed by this limit.
-See [the recorded CI distinction](ci-and-builds.md#native-build-reuse-and-darwin-failure-diagnostics).
+**Current implementation and acceptance (7 November 2026):** the native-enabled
+`check-native-editor.cjs` journeys now use **Search scope**, **Index library** and
+**Index sets**. The earlier saved-association/explicit-grant UI mismatch is a
+retained failed checkpoint, not the current implementation. The first migrated
+actual `same` run then failed because a native `SourceChangeBusy` response with
+one queued job was classified as `unexpected_service_response`. The host now
+validates that exact pre-insert refusal, preserves its complete body and reports
+queued/running work through `source_change_jobs_pending`, without replaying the
+mutation. Source regressions passed; a new native-enabled Mac GUI run with the
+corrected host is pending. Do not report the implemented journeys as passing
+current GUI acceptance before that complete run is collected.
+
+Before its first permanent exclusion review, the harness makes a bounded,
+read-only observation of the exact index/backing, service and worker generation
+until initial indexing is idle, with a **90-second deadline**. This is a dated
+qualification precondition, not permission to mutate or a retry of refused work.
+Native installer/client/MCP and bootstrap/tab checks retain their separate scope.
 
 ```powershell
 pwsh -NoProfile -File scripts/build-windows.ps1 -RunEditorTests
 ```
 
-The legacy test installs the verified VSIX into isolated profiles, using the installed Code.exe and its matching CLI identified by code.cmd. It was designed to exercise reviewed native registration, stable-launcher MCP definitions, indexing, stdio handshakes, citation hashes and separately reviewed storage rebinding that retains the old index. Its earlier scenario descriptions below retain that intended scope; the current UI mismatch above must be resolved before treating a new run as acceptance. Only generated fixtures and private profiles are used; the normal user's settings and trust are untouched.
+The current test installs the verified VSIX into isolated profiles, using the
+installed editor and matching CLI. It reviews native index setup and a permanent
+exact `hidden.ts` exclusion, creates an index set with the current checkboxes,
+and explicitly applies a search choice before testing stable-launcher MCP,
+citations and native isolation. Only generated fixtures and private profiles
+are used; the normal user's settings and trust are untouched.
 
 A passing run of a matching fixture is isolated installed-VSIX acceptance. Marketplace, remote-host, upgrade/rollback and clean-machine qualification remain separate. It does not exercise any paid coding model. VS Code startup may show a temporary test window even though the process is launched with its console hidden.
 
@@ -121,10 +136,10 @@ node scripts/check-installed-explorer.cjs "<Code.exe>" "<resources/app/out/cli.j
 It exercises the actual installed product API/controller with native execution
 disabled: platform manifest metadata, one Explorer after repeated opens,
 close/reopen and same-version interface replacement. It does not claim index
-creation, checkbox selection, native service installation or the broader legacy
+creation, checkbox selection, native service installation or the broader native-enabled
 journeys. The working-build release record retains its actual results.
 
-`-RunEditorTests -OpenReview` runs acceptance first, then opens a separate private profile for review. The review-dialog scenarios explicitly set `airk.cli.autoInstall: false` and select manual native indexing. Automatic onboarding and agent-entry migration are covered separately by `check-agent-install.cjs`; the review fixture must not assume that default trusted activation leaves projects unregistered.
+`-RunEditorTests -OpenReview` runs acceptance first, then opens a separate private profile for review. The review-dialog scenarios explicitly set `airk.cli.autoInstall: false` and select manual native indexing. Runtime onboarding and agent-entry migration are covered separately by `check-agent-install.cjs`. Opening a trusted folder does not create an index; this fixture must perform explicit reviewed setup and apply its search selection.
 
 ## Installed extension and two-window qualification
 
@@ -136,9 +151,44 @@ node scripts/check-editor-windows.cjs "<Code.exe>" "<resources/app/out/cli.js>" 
 
 Use the installed editor executable and its matching CLI script (the installed `bin/code.cmd` identifies the latter, which can be under a versioned directory). This test installs the VSIX and a tiny local test-driver extension into a fresh directory under ignored `artifacts/editor-qualification/`. Ordinary editor windows use private user profiles and an explicitly private shared-application-data directory. The driver is not shipped in AIRK packages. Only generated fictional workspaces are edited.
 
-The scenarios cover two simultaneous windows sharing one workspace/collection, two simultaneous windows using different workspaces/collections in the same storage root, a two-root workspace, and an untrusted workspace. Checks include concurrent native scheduling and MCP reads, post-edit retrieval, positive/negative collection isolation, rejected collection overrides and path traversal, the sixteen-tool handshake in unreleased source, registration settings off/on, and storage changes that preserve the previous indexes. The trust scenario runs with workspace trust enabled and verifies that indexing is rejected, server definitions are empty and storage remains untouched. Trusted scenarios disable the trust prompt in their private processes only.
+The current scenario contracts are:
 
-Each trusted window opens the native service console. The harness reviews the exact source/data binding through real root/mode pickers and confirmation dialogs, then exercises Full and Terse through the panel. It checks MCP advertisement off/on through the public setting and runs the native sixteen-tool probe. Untrusted native controls must remain disabled. Screenshots use a loopback-only debugging endpoint; results record independent extension-host process IDs and the native install digest. Citation paths and SHA-256 hashes must match source bytes, including peer edits. A private install directory isolates service ownership from the user's installation. Cleanup requests shutdown only in that fixture's control namespace and retains diagnostic state on failure. Storage changes require a new reviewed registration; OS-native folder dialogs, coding-agent approval screens, Marketplace installation, upgrade/rollback, remote hosts and native macOS/Linux editors remain separate qualification.
+- **same:** two windows share the existing native index, observe peer edits and
+  stage a real index-rename race. The stale reviewed request remains unapplied;
+  its exact retained intent and null native receipt are inspected without replay.
+- **different:** two windows use distinct indexes in the same private storage
+  root, observe edits and check positive/negative index isolation.
+- **multi:** two opened folders do not create or select both indexes. After an
+  explicit checkbox choice, a real reload must revalidate and restore the
+  **exact saved applied selector**, without widening it.
+- **usage:** scoped usage stays separate from explicit entire-index
+  administration; clearing one index's ledger preserves the other index and its
+  evidence scope.
+- **untrusted:** Restricted Mode rejects native handlers and leaves Indexing
+  controls disabled, with no advertised native evidence definitions or storage
+  creation.
+- **legacy:** requires the separately validated previous-version native fixture;
+  it is not qualified by a current-source mock, bootstrap check or merely
+  supplying an old VSIX.
+
+Trusted journeys review the exact source/storage binding, explicitly exclude
+`hidden.ts` through the permanent source-policy flow and check its read denial,
+path traversal refusal, citation hashes and complete advertised tool catalog.
+Deleting the selected **index set** must fence the already retained MCP session;
+EOF or a timeout is not native withdrawal proof. These checks replace the removed
+partial-grant/saved-association UI; they do not add grant controls back to the UI.
+
+Profiles use an explicitly private Code process and short canonical Unix paths
+where applicable, with shell integration disabled. Screenshots use loopback-only
+debugging; receipts retain extension-host process IDs and native install identity.
+Cleanup first closes fixture editors and obtains a qualified Stop for the exact
+owned namespace/runtime. Only newly created, exact-owned account uninstall
+receipts captured by the fixture may then be removed, with evidence retained.
+Unknown ownership, uncertain Stop or cleanup failures retain the files and
+profiles for inspection. This grants no authority to clean unrelated account
+receipts, change shell profiles or affect the user's normal installation.
+OS-native dialogs, external coding-agent approvals, Marketplace, upgrade/rollback
+and full remote/platform qualification remain separate.
 
 Installed runs explicitly launch the separate private driver through its own development path. VSIX installation creates an `extensions.json` registry, so copying the driver directory afterward does not register it. AIRK resolves from the verified installed VSIX directory; the driver is separate and is never shipped in the package. The receipt must report `staged: false` and every target window must report `installed: true`.
 
@@ -150,7 +200,7 @@ Repeating the earlier package exposed intermittent concurrent-start failures: a 
 
 The 1.1.3 harness also includes a `usage` scenario. It clicks the installed report's date selector, exports CSV and Markdown through VS Code's built-in simple file dialogs, imports a fictional measurement through preview/confirmation, enters model prices, toggles recording, opens two collection reports, cancels and confirms clearing, and rejects an old panel after a storage change. Native readback verifies the other collection's imported measurement survives and the source files/indexes remain intact. The untrusted scenario also rejects the reporting command. These test profiles select VS Code's simple dialogs; OS-native dialogs and a live trust-revocation/reload remain separate from these checks.
 
-To run just the reporting and untrusted scenarios, set `AIRK_EDITOR_SCENARIOS=usage,untrusted` in the harness process environment. Omit it for all five scenarios. The test driver, fixtures, screenshots and receipts stay in the private qualification directory; none are packaged with the extension.
+To run just the reporting and untrusted scenarios, set `AIRK_EDITOR_SCENARIOS=usage,untrusted` in the harness process environment. The default now names `same,different,multi,usage,untrusted,legacy`; the legacy path still requires its separately qualified native fixture. The test driver, fixtures, screenshots and receipts stay in the private qualification directory; none are packaged with the extension.
 
 On October 18, 2026, the final 1.1.3 candidate passed all five scenarios across seven installed VS Code 1.142.0 windows. See [1.1.3 validation](releases/release-1.1.3.md#installed-vs-code-acceptance) for the package digest, reporting checks and qualification limits.
 
@@ -188,3 +238,10 @@ indexes do not need a manual policy-contract update just to expose splitting.
 Run `python scripts/check-runtime-upgrade.py --runtime <new-native-payload> --previous-runtime <old-native-payload> --output target/upgrade-receipt.json` on Windows or Linux. An optional `--interrupted-runtime <superseded-native-payload>` also checks guarded recovery of an exact older Drain intent. Use independently built payloads with their original manifests; never relabel a binary. The fixture creates isolated source, data, installation and state directories under `target`, starts an old launcher/MCP client, upgrades with that client connected, checks registry migration and source/registration preservation, then uninstalls its runtime. It writes a passing receipt only after teardown succeeds. This is a native process regression, separate from installed-editor qualification and the routine CI matrix.
 
 The fixture creates both roots required by `register`, lets the stable launcher supply installation context, completes the MCP handshake and explicitly closes read-only SQLite connections before teardown. Bounded client startup diagnostics distinguish setup errors from upgrade failures.
+
+### Reviewed old-VSIX upgrade helper
+
+`scripts/check-vsix-upgrade-editor.cjs` implements a separate reviewed real
+old-VSIX/new-VSIX upgrade journey with a private driver. It has not been executed
+for this checkpoint. It does not supply or qualify the native harness's
+prequalified legacy fixture, and its contract tests are not upgrade acceptance.

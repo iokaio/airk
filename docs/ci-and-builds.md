@@ -97,24 +97,33 @@ kept publication skipped; [41406112490](https://github.com/iokaio/airk/actions/r
 then completed publication. This historical 1.8.7 distribution evidence predates
 the new loader inventory and does not qualify its 1.8.12 signed-promotion fix.
 
-**Installed-editor journey limit (7 November 2026):** the optional local
-`scripts/check-native-editor.cjs` harness still contains the earlier saved-window
-association and explicit-grant UI actions. Those controls were removed from the
-inherited 1.8.11 Indexing screen in favor of **Search scope**, **Index library**
-and **Index sets**. Its `same`, `different`, `multi` and other trusted journeys
-that reuse those actions therefore need a current-UI rewrite; changing button
-labels alone would not preserve their scope and reload assertions. This mismatch
-is present in the inherited source and is not a completed 1.8.12 GUI result.
+**Installed-editor checkpoints (7 November 2026):** the earlier failure caused
+by removed saved-association/explicit-grant UI is retained as historical
+failure evidence. The current `scripts/check-native-editor.cjs` and installed
+driver now use **Search scope**, **Index library** and **Index sets**, reviewed
+permanent source exclusion, a native index-rename stale race, index-set deletion
+that fences a retained session, and exact applied-selector revalidation after
+reload. The first migrated actual native-enabled `same` run failed a later
+boundary: one queued job produced `SourceChangeBusy`, which the host incorrectly
+classified as `unexpected_service_response`. The corrected host validates that
+known pre-insert refusal, retains the full native body and human-readable
+queued/running counts, and does not replay the operation. Source regressions
+passed: the complete extension suite selected **943 cases**, with **922 passed / 0 failed / 21 optional skips**; **39 Node helper tests** passed; Python completed **498 tests, 489 passed / 9 expected skips / 0 failed**, in **30.249 s**. Repository checks passed for **1,844 public files**. Actual native-enabled acceptance with that host is pending.
 
-No hosted workflow currently invokes that desktop-editor harness, including
-`ci.yml` with `qualification` enabled. `npm test` and the native installed-process,
-MCP/client and package gates remain separate checks. The new installed Explorer
-bootstrap/tab-handoff preflight and the Restricted Mode scenario do not qualify
-the full index-creation, selection or multi-window GUI journeys. A bounded
-follow-up should exercise visible checkbox selection and **Apply selection**,
-explicit index setup and index-set editing, retaining real native isolation,
-stale-selection and withdrawal assertions. Native grant API regressions remain
-necessary but cannot substitute for those user-visible journeys.
+The fixture now observes the exact index's initial work through a bounded,
+read-only **90-second idle precondition** before its permanent exclusion review.
+That observation is not mutation admission. Short canonical Unix profiles,
+private editor processes, shell integration off and exact-owned cleanup after
+qualified native Stop remain fixture boundaries; uncertain ownership/state is
+retained. See [the current scenario contracts](windows-local-build.md#installed-extension-and-two-window-qualification).
+
+No hosted workflow invokes this desktop GUI harness, including `ci.yml` with
+`qualification` enabled; that selection is unchanged. `npm test`, installed
+native-process/MCP/client/package gates, bootstrap/tab handoff and Restricted
+Mode remain separate observations. The local Mac notarization, native lifecycle
+and model checks passed on their recorded artifacts, but do not qualify the
+pending native-enabled UI journey. The reviewed new old-VSIX upgrade helper has
+not been executed and is not a prequalified native legacy fixture.
 
 
 When both `AIRK_PROCESS_DIAGNOSTICS=1` and `AIRK_NATIVE_DIAGNOSTIC_DIR` are set for disposable fixtures, project/derived worker stderr is continuously drained into a 4 KiB tail, with dropped-byte counts, an explicit stderr-EOF observation and the observed exit status after the existing owner drains the child. An inherited diagnostic descriptor never extends native shutdown; incomplete stderr drain remains visible. The MCP frontend records a bounded underlying connection error chain on stderr without changing its public result or retry authority. Failed smoke fixtures retain bounded frontend stderr, child PID/exit/signal, the original failure and numeric memory/disk observations before cleanup. Native build/validation jobs also retain runner memory, disk and process-count snapshots; unavailable observations remain explicit. No service databases, source trees, full command lines or environment values are uploaded. These diagnostics are opt-in and may contain fictional fixture paths. They do not warm the first status call or authorize another read.

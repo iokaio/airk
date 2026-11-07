@@ -220,8 +220,32 @@ export class ServiceClient {
             if(code==='invalid_service_failure')error.cause=new Error(`Invalid native failure code: ${String(JSON.stringify(response.code)).slice(0,2048)}`);
             throw error;
         }
+        if(response.status==='source_change_busy')this.rejectSourceChangeBusy(method,response);
         if (expected && response.status !== expected) { throw new ServiceError('unexpected_service_response', true,response); }
         return response;
+    }
+    /** Native source review/admission returns this refusal before inserting work.
+     * Keep the full response, but qualify no-effect only for its exact index. */
+    private rejectSourceChangeBusy(method:unknown,response:RecordValue):never {
+        let pending=0,running=0;
+        try{
+            catalogBound(response,65536);
+            const request=record(method),names=Object.keys(request);
+            if(names.length!==1)throw new Error('ambiguous_source_method');
+            const name=names[0],body=record(request[name]);let index:unknown;
+            if(name==='catalog_source_mutation_draft'){
+                const selection=record(body.selection);validateSourceMutationSelection(selection.change);index=selection.index_id;
+            }else if(name==='catalog_preview'||name==='catalog_apply'){
+                const operation=record(record(body.request).operation);
+                if(!['begin_index_source_change','change_index_policy','retire_index'].includes(String(operation.operation)))throw new Error('unrelated_catalog_operation');
+                index=operation.id;
+            }else throw new Error('unrelated_source_method');
+            const busy=record(response.busy);pending=count(busy.pending_jobs);running=count(busy.running_jobs);
+            if(typeof index!=='string'||!/^idx_[0-9a-f]{32}$/.test(index)||busy.index_id!==index||response.code!=='source_change_jobs_pending'||pending>4294967295||running>4294967295||pending+running===0)throw new Error('invalid_source_busy_identity_or_counts');
+        }catch(cause){const error=new ServiceError('crossed_source_change_busy',true,response);error.cause=cause;throw error;}
+        const error=new ServiceError('source_change_jobs_pending',false,response);
+        error.message=`Finish the current indexing work before changing sources (${pending} queued, ${running} running). Review jobs in Management.`;
+        throw error;
     }
     async projects(after: string | null = null, revision: number | null = null, limit = 16, inactive = false): Promise<ConsolePage> {
         if (after !== null) { identifier(after,32); } if (revision !== null) { count(revision); }
@@ -274,10 +298,6 @@ export class ServiceClient {
     async submitCatalog(intent: CatalogApplyIntent): Promise<RecordValue> {
         validateCatalogApply(intent);
         const response = await this.rpc({catalog_apply:intent.catalog_apply});
-        if(response.status==='source_change_busy'){
-            const busy=record(response.busy);if(intent.catalog_apply.request.operation.operation!=='begin_index_source_change'||response.code!=='source_change_jobs_pending'||busy.index_id!==intent.catalog_apply.request.operation.id||count(busy.pending_jobs)>4294967295||count(busy.running_jobs)>4294967295)throw new ServiceError('crossed_source_change_busy',true,response);
-            throw new ServiceError('source_change_jobs_pending',false,response);
-        }
         if(response.status==='catalog_outcome_unknown'){
             this.validateCatalogUnknown(response,intent.catalog_apply.request,intent.request_digest,intent.catalog_apply.preview_digest);
             throw new ServiceError(String(response.code),true,response);

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 const {test}=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs'),path=require('node:path');
-const {formFillExpressions,privateEditorEnvironment,openUsageAdministration,retainUiDiagnostic,beginUiDiagnostic,editorActionDeadline,editorRemainingBudget}=require('../editor-ui.cjs');
-const label='Optional index subset from this grant (1–32 IDs; blank includes all permitted members)';
+const {formFillExpressions,checkboxFillExpressions,appliedReviewMatches,privateEditorEnvironment,openUsageAdministration,retainUiDiagnostic,beginUiDiagnostic,editorActionDeadline,editorRemainingBudget}=require('../editor-ui.cjs');
+const label='New index storage folder';
 function fixture(specs){
     const writes=[],events=[];
     class Input{
@@ -13,35 +13,71 @@ function fixture(specs){
     class Select extends Input{constructor(){super();this.tagName='SELECT';}}
     const inputs=specs.map(row=>new Input(row.type));
     const labels=specs.map((row,i)=>({childNodes:[{nodeType:3,textContent:row.label}],querySelector:()=>inputs[i]}));
-    const form={querySelectorAll:()=>labels},button={textContent:'Use Grant for this window',closest:()=>form};
+    const form={querySelectorAll:()=>labels},button={textContent:'Review new index',closest:()=>form};
     const context=vm.createContext({document:{querySelectorAll:()=>[button]},Node:{TEXT_NODE:3},HTMLInputElement:Input,HTMLSelectElement:Select,Event:class{constructor(type){this.type=type;}}});
     return {run:expression=>vm.runInContext(expression,context),inputs,writes,events};
 }
-test('actual optional-index label remains aligned with renderer; exact requested subset is preserved',()=>{
+test('actual setup labels remain aligned with renderer; exact reviewed locations are preserved',()=>{
     const source=fs.readFileSync(path.resolve(__dirname,'../../packages/vscode/src/explorerWebview/indexing.tsx'),'utf8');assert.ok(source.includes(label));
-    const values={[label]:'idx_'+'1'.repeat(32),'Project IDs from this grant (1–32, comma separated)':'prj_'+'2'.repeat(32)};
-    const f=fixture(Object.keys(values).map(label=>({label}))),e=formFillExpressions('Use Grant for this window',values);
+    const values={[label]:'/owned/index-storage','New collection name':'fixture-a'};
+    const f=fixture(Object.keys(values).map(label=>({label}))),e=formFillExpressions('Review new index',values);
     assert.equal(f.run(e.ready),true);assert.equal(f.run(e.apply),true);assert.equal(f.run(e.readback),true);
     assert.deepEqual(f.writes,Object.values(values));assert.deepEqual(f.events,['input','input']);
 });
 test('missing later field causes no earlier write, not partial fill or a submit',()=>{
-    const f=fixture([{label}]),e=formFillExpressions('Use Grant for this window',{[label]:'exact-index','Missing later field':'exact-project'});
+    const f=fixture([{label}]),e=formFillExpressions('Review new index',{[label]:'exact-index','Missing later field':'exact-project'});
     assert.equal(f.run(e.ready),false);assert.equal(f.run(e.apply),false);assert.deepEqual(f.writes,[]);assert.deepEqual(f.events,[]);
 });
 test('old label and duplicate labels refuse without writes',()=>{
-    const f=fixture([{label}]),old=formFillExpressions('Use Grant for this window',{'Index ID from this grant':'exact-index'});
+    const f=fixture([{label}]),old=formFillExpressions('Review new index',{'Index ID from this grant':'exact-index'});
     assert.equal(f.run(old.ready),false);assert.equal(f.run(old.apply),false);assert.deepEqual(f.writes,[]);
-    const dup=fixture([{label},{label}]),e=formFillExpressions('Use Grant for this window',{[label]:'exact-index'});
+    const dup=fixture([{label},{label}]),e=formFillExpressions('Review new index',{[label]:'exact-index'});
     assert.equal(dup.run(e.apply),false);assert.deepEqual(dup.writes,[]);
 });
 test('readonly readback catches lost exact values before a separate submit',()=>{
-    const f=fixture([{label}]),e=formFillExpressions('Use Grant for this window',{[label]:'exact-index'});
+    const f=fixture([{label}]),e=formFillExpressions('Review new index',{[label]:'exact-index'});
     assert.equal(f.run(e.apply),true);f.inputs[0].current='';assert.equal(f.run(e.readback),false);assert.deepEqual(f.events,['input']);
 });
+
+function checkboxFixture(specs){
+    const writes=[],events=[];
+    class Input{constructor(){this.type='checkbox';this.flag=false;this.disabled=false;}get checked(){return this.flag;}set checked(value){this.flag=value;writes.push(value);}dispatchEvent(event){events.push(event.type);}}
+    const fields=specs.map(group=>({disabled:!!group.disabled,querySelector:()=>({textContent:group.legend}),labels:group.names.map(name=>{const node=new Input();return {node,textContent:name,querySelector:selector=>selector==='strong'?null:node};}),querySelectorAll(){return this.labels;}}));
+    const form={querySelectorAll:()=>fields},button={textContent:'Apply selection',closest:()=>form};
+    const context=vm.createContext({document:{querySelectorAll:()=>[button]},HTMLInputElement:Input,Event:class{constructor(type){this.type=type;}}});
+    return {run:expression=>vm.runInContext(expression,context),fields,writes,events};
+}
+test('Apply waits for the exact current review receipt, preserving nonce/digest/fence binding',()=>{
+    const review={request:{caller:'caller',key:{namespace:'namespace',epoch:1,nonce:'new-request'},expected_catalog_revision:8,operation:{operation:'delete_project'}},requestDigest:'new-digest',previewDigest:'preview-digest'};
+    const value={submittedReview:structuredClone(review),outcome:{status:'catalog_applied',receipt:{schema:1,caller:'caller',key:structuredClone(review.request.key),request_digest:'new-digest',catalog_revision:9,authority_fence_required:true},fenced_receipt:{request:structuredClone(review.request),preview_digest:'preview-digest',proof:{bound:true}}}};
+    assert.equal(appliedReviewMatches(value,review),true);
+    const reordered=structuredClone(value);reordered.outcome.receipt.key={epoch:1,nonce:'new-request',namespace:'namespace'};
+    assert.equal(appliedReviewMatches(reordered,review),true,'Native JSON field order does not change a reviewed request identity');
+    for(const change of [item=>{item.outcome.receipt.key.nonce='prior-request';},item=>{item.outcome.receipt.request_digest='prior-digest';},item=>{item.submittedReview.requestDigest='prior-digest';},item=>{item.outcome.fenced_receipt.request.key.nonce='crossed-request';},item=>{delete item.outcome.fenced_receipt.proof;}]){
+        const stale=structuredClone(value);change(stale);assert.equal(appliedReviewMatches(stale,review),false);
+    }
+    assert.equal(appliedReviewMatches({outcome:{status:'catalog_applied'}},review),false);
+});
+test('current checkbox selection sets every row exactly before a separate Apply dispatch',()=>{
+    const source=fs.readFileSync(path.resolve(__dirname,'../../packages/vscode/src/explorerWebview/indexing.tsx'),'utf8');
+    for(const label of ['Apply selection','Index sets','Create index set','Include indexes'])assert.ok(source.includes(label));
+    const f=checkboxFixture([{legend:'Indexes',names:['Index A','Index B']},{legend:'Index sets',names:['Shared A','Shared B']}]);
+    f.fields[0].labels[0].node.flag=true;const e=checkboxFillExpressions('Apply selection',[{legend:'Indexes',names:[]},{legend:'Index sets',names:['Shared B']}]);
+    assert.equal(f.run(e.ready),true);assert.equal(f.run(e.apply),true);assert.equal(f.run(e.readback),true);
+    assert.deepEqual(f.writes,[false,false,false,true]);assert.deepEqual(f.events,['change','change','change','change']);
+    f.fields[1].labels[1].node.flag=false;assert.equal(f.run(e.readback),false);
+});
+test('ambiguous, absent or disabled checkbox groups refuse before any field changes',()=>{
+    for(const specs of [[{legend:'Index sets',names:['A','A']}],[{legend:'Index sets',names:['B']}],[{legend:'Index sets',names:['A'],disabled:true}],[{legend:'Index sets',names:['A']},{legend:'Index sets',names:['A']}]]){
+        const f=checkboxFixture(specs),e=checkboxFillExpressions('Apply selection',[{legend:'Index sets',names:['A']}]);
+        assert.equal(f.run(e.ready),false);assert.equal(f.run(e.apply),false);assert.deepEqual(f.writes,[]);
+    }
+    assert.throws(()=>checkboxFillExpressions('Apply selection',[{legend:'Index sets',names:['A','A']}]),/Invalid exact/);
+});
 test('checkbox booleans retain type and change event; invalid input types refuse',()=>{
-    const f=fixture([{label:'Watch',type:'checkbox'}]),e=formFillExpressions('Use Grant for this window',{Watch:false});
+    const f=fixture([{label:'Watch',type:'checkbox'}]),e=formFillExpressions('Review new index',{Watch:false});
     assert.equal(f.run(e.apply),true);assert.equal(f.run(e.readback),true);assert.deepEqual(f.events,['change']);
-    assert.throws(()=>formFillExpressions('Use Grant for this window',{Watch:[]}));
+    assert.throws(()=>formFillExpressions('Review new index',{Watch:[]}));
 });
 test('child environment isolates inherited editor role/cache/IPC without changing host or explicit fixture scope',()=>{
     const parent={PATH:'owned-tools',AIRK_EDITOR_SCENARIOS:'same',AIRK_PRIVATE_CENSUS_BASE:'fictional-private',VSCODE_CWD:'normal-code',VSCODE_NODE_COMPILE_CACHE_ROOT:'normal-cache',VSCODE_CODE_CACHE_PATH:'normal-user-cache',VSCODE_ESM_ENTRYPOINT:'extensionHostProcess',VSCODE_IPC_HOOK_CLI:'normal-hook',vscode_fake_cache:'case-variant',ELECTRON_RUN_AS_NODE:'1',NODE_COMPILE_CACHE:'normal-node-cache'};

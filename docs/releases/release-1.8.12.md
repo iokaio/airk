@@ -478,6 +478,39 @@ separate gates. The [release verification procedure](../release-verification.md#
 now names these checks explicitly. Neither issue 66 nor issue 67 is established
 as resolved in a public release by this local review.
 
+### Native-enabled editor follow-up after the first push
+
+The maintainer authorized completing the remaining validation after commit
+`ee5ad77d14307800ac3894381039856d13708736` was pushed without a PR. The first
+native-enabled installed Mac editor journey reached actual reviewed index
+creation, then exposed a separate host response-contract defect: a source-policy
+draft while one initial job was queued returned the valid native
+`source_change_busy` / `source_change_jobs_pending` result. The host incorrectly
+reported `unexpected_service_response`. This was not a signature failure, and
+the service remained healthy. The entire failed journey remains retained in
+`mac-neo/native-ui-same1-complete/`; its original qualification stays failed.
+Independent shutdown and exact owned-profile cleanup are recorded separately
+in `mac-neo/native-ui-same1-independent-cleanup/`.
+
+The corrected host validates this refusal against the exact source-operation
+index, native code and bounded nonzero queued/running counts. Valid draft,
+preview and Apply deferrals remain known pre-insertion refusals, retain every
+native field in structured outcomes and exports, and do not create an uncertain
+journal entry or replay a mutation. Unrelated, malformed or crossed responses
+remain uncertain refusals. The message now tells the user to finish current
+indexing work and review jobs in Management. Windows, Linux and Mac share this
+VS Code host correction; native admission and executable behavior are unchanged.
+
+Regression coverage exercises the actual framed native-control transport,
+controller/export preservation and no-Apply/no-journal behavior. The full
+extension suite passed **943 tests: 922 passed, 21 expected skips, 0 failed**
+in **7.005 s** test time (**18.841 s** including compilation), retained in
+`npm-source-busy-idle-final.log`. The prior single stale message assertion is
+retained in its failed log and was corrected to check human guidance separately
+from the exact structured error code. Subsequent native-enabled editor and
+actual predecessor-VSIX acceptance must be recorded on their own candidate and
+harness identities; these regressions alone do not establish those scenarios.
+
 ### Local MCP contention review (7 November 2026)
 
 The maintainer requested investigation after the currently running **1.8.11**

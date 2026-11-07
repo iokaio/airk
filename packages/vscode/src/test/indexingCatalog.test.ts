@@ -153,6 +153,36 @@ function nativeSourceFixture(retire=false){
     return {nativeRequest,metadata,begin,response,observation};
 }
 
+test('reviewed source, policy and retirement Apply preserve exact native busy refusals without mutation replay',async()=>{
+    const operations=[nativeSourceOperation(),nativePolicyOperation(),nativeSourceFixture(true).nativeRequest.operation];
+    for(const operation of operations){
+        const calls:unknown[]=[],response={status:'source_change_busy',code:'source_change_jobs_pending',busy:{index_id:index,pending_jobs:4294967295,running_jobs:1},future_native_busy:{retained:true}};
+        const client=new ServiceClient({dispose(){},async request(method){calls.push(structuredClone(method));return response;}});
+        const intent:CatalogApplyIntent={catalog_apply:{request:{...request,operation},preview_digest:digest},request_digest:requestDigest};
+        await assert.rejects(client.submitCatalog(intent),(error:unknown)=>{
+            assert.ok(error instanceof ServiceError);assert.equal(error.code,'source_change_jobs_pending');assert.equal(error.outcomeUnknown,false);assert.equal(error.nativeResponse,response);return true;
+        });
+        assert.deepEqual(calls,[{catalog_apply:intent.catalog_apply}],String(operation.operation));
+    }
+});
+
+test('source draft job deferrals retain full native structured outcomes and exports without creating reviews or applying work',async()=>{
+    for(const change of [{operation:'add_root',alias:'extra',path:'/extra'},{operation:'trim_path',source_root_id:source,kind:'subtree',path:'private'},{operation:'retire_index'}]){
+        const f=controller(),calls:unknown[]=[],response={status:'source_change_busy',code:'source_change_jobs_pending',busy:{index_id:index,pending_jobs:1,running_jobs:0,future_jobs:{retained:true}},future_native_busy:{retained:true}};
+        const client=new ServiceClient({dispose(){},async request(method){calls.push(structuredClone(method));return response;}});
+        let applies=0;
+        f.control.catalogRead=async()=>({status:'catalog_detail',detail:{namespace,revision:1,item:{kind:'index',value:{id:index,name:'Index',definition_revision:1,source_revision:1,backing:{binding:digest},tombstone:false}}}});
+        f.control.catalogSourceDraft=(chosen,selection,revision)=>client.catalogSourceDraft({index_id:chosen,change:selection,expected_catalog_revision:revision,key:request.key});
+        f.control.catalogApply=async()=>{applies++;throw new Error('draft deferral must not apply');};
+        await f.value.detail('index',index);
+        await assert.rejects(f.value.sourceDraft(change,f.value.snapshot().generation),error=>error instanceof ServiceError&&error.code==='source_change_jobs_pending'&&!error.outcomeUnknown);
+        const view=f.value.snapshot();
+        assert.equal(view.busy,false);assert.equal(view.review,undefined);assert.equal(view.outcome,response);
+        assert.deepEqual(JSON.parse(catalogExport(view)).outcome,response,'JSON export retains every native field');
+        assert.match(view.error??'',/Finish the current indexing work/);assert.match(view.error??'',/1 queued, 0 running/);assert.match(view.error??'',/Management/);assert.equal(view.outcome?.code,'source_change_jobs_pending');assert.equal(calls.length,1);assert.equal(applies,0);assert.deepEqual(f.control.catalogPending(),[]);
+    }
+});
+
 test('native retirement evidence validates complete lineage and native-event reasons without public mutation admission',async()=>{
     const f=nativeSourceFixture(true),full=structuredClone(f.begin);full.request.expected_catalog_revision=2;full.metadata.catalog_revision=3;full.request.caller='aa'.repeat(16);full.metadata.caller=full.request.caller;full.request.operation.reason={reason:'confirmed_missing_source',registration_epoch:0,configuration_epoch:2};
     const response:CatalogObject={status:'catalog_index_retirement_evidence',index_id:index,evidence:{catalog_clock:{namespace,revision:4},index:{id:index,name:'Retired',definition_revision:2,source_revision:2,backing:{binding:digest},tombstone:true,source_import:'pending_metadata'},retirement:full,future_evidence:'retained'},future_output:'retained'};
