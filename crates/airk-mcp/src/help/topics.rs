@@ -132,7 +132,7 @@ Use changes for remembered evidence and independent freshness/coverage observati
     Topic {
         id: "search",
         title: "Lexical, vector and hybrid search",
-        text: r#"Lexical search uses AND terms and indexed text. Vector search is approximate similarity using a provisioned local model. Hybrid combines lexical and vector candidates from one pinned generation. Omitting mode follows the saved collection search policy; explicit vector requests do not silently become lexical results.
+        text: r#"Lexical search normalizes punctuation and quotes into AND terms over indexed text; quotes do not enable phrase matching. Lexical candidates use stable-id order, not relevance ranking. Vector search is approximate similarity using a provisioned local model. Hybrid combines lexical and vector candidates from one pinned generation. Omitting mode follows the saved collection search policy; explicit vector requests do not silently become lexical results.
 Use airk_search mode=lexical for exact terminology. Use vector or hybrid for conceptual questions when vectors are available. path_prefix is a literal collection-relative prefix, not a glob. limit and max_bytes bound returned evidence; check truncation before drawing broad conclusions.
 Pending, partial, ready or failed semantic readiness is reported separately from lexical/discovery availability. Vector similarity does not resolve references or prove an answer. Querying does not download models or start enrichment.
 Ask tool=airk_search for the current argument schema and command=search for native CLI flags."#,

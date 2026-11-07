@@ -96,7 +96,7 @@ test('one installed endpoint serves evidence and reviewed UI drafts with indepen
             cwd:catalogSpec.root,clientName:'native-test',clientVersion:version})).session;
         const evidenceCall=async(name:string,args={})=>{
             phase=`catalog tool ${name}`;
-            return body(await requestWithReadRetry(evidence!,name,args,120000,reply=>{lastRead={name,reply};}));
+            return body(await requestWithReadRetry(evidence!,name,args,120000,reply=>{lastRead={name,reply};},catalogSpec.catalogSession));
         };
         const assertGrantScope=(value:any,selected:typeof catalogSpec)=>{
             const scope=value.scope_observation,grant=selected.catalogSession!;
@@ -168,10 +168,10 @@ test('one installed endpoint serves evidence and reviewed UI drafts with indepen
                 cwd:selectedSpec.root,clientName:'native-test',clientVersion:version})).session;
             try{
                 phase=`selected evidence ${selectedSpec.name}`;
-                const result=await requestWithReadRetry(selectedSession,'search',{query,mode:'lexical',response_mode:'full'},120000,reply=>{lastRead={query,reply};});
+                const result=await requestWithReadRetry(selectedSession,'search',{query,mode:'lexical',response_mode:'full'},120000,reply=>{lastRead={query,reply};},selectedSpec.catalogSession);
                 const value=body(result);assert.ok(JSON.stringify(result).includes(file));
                 assert.ok(!JSON.stringify(result).includes(foreignFile));assertGrantScope(value,selectedSpec);
-                const foreign=body(await requestWithReadRetry(selectedSession,'search',{query:foreignQuery,mode:'lexical',response_mode:'full'},120000,reply=>{lastRead={query:foreignQuery,reply};}));
+                const foreign=body(await requestWithReadRetry(selectedSession,'search',{query:foreignQuery,mode:'lexical',response_mode:'full'},120000,reply=>{lastRead={query:foreignQuery,reply};},selectedSpec.catalogSession));
                 assert.deepEqual(foreign.hits,[]);assertGrantScope(foreign,selectedSpec);
             }finally{selectedSession.close();}
         }

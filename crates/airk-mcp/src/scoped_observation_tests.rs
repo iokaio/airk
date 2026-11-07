@@ -94,6 +94,28 @@ async fn scope_observation_survives_actual_sessions_terse_errors_and_workbench_c
         typed.validate()?;
         assert!(!serde_json::to_string(&typed)?.contains(root.to_str().unwrap()));
     }
+    for args in [
+        json!({"view":"projects"}),
+        json!({"view":"indexes","project_id":native.scope_observation().unwrap().members[0].memberships[0].project_id}),
+        json!({"view":"sources","project_id":native.scope_observation().unwrap().members[0].memberships[0].project_id,
+            "index_id":native.scope_observation().unwrap().members[0].index_id}),
+        json!({"view":"recommendations"}),
+    ] {
+        let canonical = native.query_scope(&serde_json::from_value(args.clone())?)?;
+        let queried = scoped
+            .call("airk_query_scope".into(), args.as_object().unwrap().clone())
+            .await?;
+        assert_eq!(payload(&queried)?, canonical);
+        assert_eq!(canonical["grant"], expected["grant"]);
+        let plan = json!({"schema":"airk.parse.request/1","mode":"execute","verification":"off",
+            "plan":{"steps":[{"id":"scope","tool":"query_scope","args":args}]},"output":{"view":"raw","max_bytes":32768}});
+        let direct = native.evidence_plan(serde_json::from_value(plan.clone())?)?;
+        assert_eq!(direct.steps[0].result.as_ref().unwrap(), &canonical);
+        let parsed = scoped
+            .call("airk_parse".into(), plan.as_object().unwrap().clone())
+            .await?;
+        assert_eq!(payload(&parsed)?["steps"][0]["result"], canonical);
+    }
     let denied = scoped
         .call(
             "airk_status".into(),
@@ -106,6 +128,28 @@ async fn scope_observation_survives_actual_sessions_terse_errors_and_workbench_c
         "scoped_read_unavailable"
     );
     assert_eq!(payload(&denied)?["scope_observation"], expected);
+    let relationship_args =
+        json!({"symbol":"file:public/a.rs","direction":"outgoing","limit":4,"max_bytes":4096});
+    let mut wire_args = relationship_args.as_object().unwrap().clone();
+    wire_args.insert("verification".into(), json!("off"));
+    wire_args.insert("response_mode".into(), json!("full"));
+    let actual = scoped.call("airk_relationships".into(), wire_args).await?;
+    let relationship_body = payload(&actual)?;
+    assert!(
+        relationship_body["bounds"].is_object(),
+        "{relationship_body}"
+    );
+    let plan = json!({"schema":"airk.parse.request/1","mode":"execute","verification":"off",
+        "plan":{"steps":[{"id":"edges","tool":"relationships","args":relationship_args}]},"output":{"view":"raw","max_bytes":32768}});
+    let plan = native.evidence_plan(serde_json::from_value(plan)?)?;
+    assert_eq!(
+        plan.steps[0].result.as_ref().unwrap()["bounds"],
+        relationship_body["bounds"]
+    );
+    assert_eq!(
+        plan.steps[0].result.as_ref().unwrap()["truncation_reasons"],
+        relationship_body["truncation_reasons"]
+    );
     let binding = airk_core::service::ProjectRegistration::new(
         kernel.root().to_str().unwrap().into(),
         kernel.data_dir().to_str().unwrap().into(),
@@ -139,6 +183,32 @@ async fn scope_observation_survives_actual_sessions_terse_errors_and_workbench_c
         payload(&parsed)?["steps"][0]["result"]["scope_observation"],
         expected
     );
+    for (tool, args) in [
+        ("symbols", json!({"language":"klingon"})),
+        ("code_facts", json!({"kind":"bogus_kind"})),
+        ("document_facts", json!({"kind":"bogus_kind"})),
+    ] {
+        let mut wire_args = args.as_object().unwrap().clone();
+        wire_args.insert("verification".into(), json!("off"));
+        wire_args.insert("response_mode".into(), json!("full"));
+        let actual = scoped.call(format!("airk_{tool}"), wire_args).await?;
+        let body = payload(&actual)?;
+        assert_ne!(actual.is_error, Some(true), "{body}");
+        assert!(
+            body["filter_observations"]
+                .as_array()
+                .is_some_and(|rows| !rows.is_empty()),
+            "{body}"
+        );
+        assert!(body.get("cursor").is_none());
+        let plan = json!({"schema":"airk.parse.request/1","mode":"execute","verification":"off",
+            "plan":{"steps":[{"id":"filtered","tool":tool,"args":args}]},"output":{"view":"raw","max_bytes":32768}});
+        let direct = native.evidence_plan(serde_json::from_value(plan)?)?;
+        assert_eq!(
+            direct.steps[0].result.as_ref().unwrap()["filter_observations"],
+            body["filter_observations"]
+        );
+    }
     let help = scoped
         .call(
             "airk_help".into(),
@@ -157,6 +227,14 @@ async fn scope_observation_survives_actual_sessions_terse_errors_and_workbench_c
         .await?;
     assert!(payload(&legacy)?.get("scope_observation").is_none());
     fence.revoke_scoped_reads();
+    let scope_refused = scoped
+        .call(
+            "airk_query_scope".into(),
+            json!({"view":"projects"}).as_object().unwrap().clone(),
+        )
+        .await?;
+    assert_eq!(scope_refused.is_error, Some(true));
+    assert_eq!(payload(&scope_refused)?["scope_observation"], expected);
     let revoked = scoped
         .call(
             "airk_list_files".into(),
@@ -167,5 +245,46 @@ async fn scope_observation_survives_actual_sessions_terse_errors_and_workbench_c
     assert_eq!(payload(&revoked)?["scope_observation"], expected);
     scoped.close().await?;
     owner.close().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn preserved_read_failure_retains_current_scope_fence_and_rejects_foreign_observation()
+-> Result<()> {
+    let temporary = tempfile::tempdir()?;
+    let root = temporary.path().join("source");
+    std::fs::create_dir_all(root.join("public"))?;
+    std::fs::write(root.join("public/a.rs"), "pub struct Public;\n")?;
+    let kernel = Kernel::open(&root, Some(temporary.path().join("data")))?;
+    kernel.configure_vectors(false)?;
+    kernel.index()?;
+    let frozen = authority(&kernel)?;
+    let native = kernel.with_scoped_reads(frozen)?;
+    let first = native.scope_observation().unwrap().clone();
+    let typed = anyhow::anyhow!("native publication admission")
+        .context(airk_kernel::CurrentGateContention::Applying)
+        .context(airk_core::scoped_reads::ScopeErrorObservation {
+            observation: first.clone(),
+            message: "first native owner".into(),
+        });
+    let preserved = response::PreservedReadFailure::from_error(&typed).unwrap();
+    let same = typed.context(preserved);
+    assert_eq!(
+        payload(&response::error_result(&same))?["scope_observation"],
+        serde_json::to_value(&first)?
+    );
+    let mut current = first.clone();
+    current.fingerprint = Sha256Digest::from_bytes([98; 32]);
+    current.grant.revision = CatalogRevision::INITIAL.next()?;
+    let changed = same.context(airk_core::scoped_reads::ScopeErrorObservation {
+        observation: current.clone(),
+        message: "replacement native owner".into(),
+    });
+    let reply = response::error_result(&changed);
+    let body = payload(&reply)?;
+    assert_eq!(body["scope_observation"], serde_json::to_value(current)?);
+    assert_eq!(body["error"]["code"], "scoped_read_unavailable");
+    assert_eq!(body["error"]["retryable"], false);
+    assert_eq!(reply.is_error, Some(true));
     Ok(())
 }

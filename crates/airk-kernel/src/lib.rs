@@ -811,12 +811,15 @@ impl Kernel {
         &self,
         query: &RelationshipQuery,
     ) -> Result<airk_core::RelationshipsResponse> {
+        query.validate_direction()?;
         let read = self.current_reader()?;
         let result = read.native_relationships(&self.store, query)?;
         let configuration = read
             .collection_state()?
             .context("current configuration missing")?;
         Ok(airk_core::RelationshipsResponse {
+            truncation_reasons: result.truncation_reasons,
+            bounds: Some(result.bounds),
             indexing: configuration.configuration.index_coverage(),
             publication: Some(current::runtime::envelope(&read)?),
             generation: read.head().sequence,
@@ -985,7 +988,8 @@ impl Kernel {
         max_bytes: usize,
     ) -> Result<SearchResponse> {
         ensure!(
-            before <= 100 && after <= 100,
+            before <= airk_core::native_reads::CONTEXT_RADIUS_MAX
+                && after <= airk_core::native_reads::CONTEXT_RADIUS_MAX,
             "context radius must be 0..100"
         );
         let read = self.current_reader()?;

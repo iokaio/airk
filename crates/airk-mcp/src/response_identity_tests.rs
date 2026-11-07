@@ -197,3 +197,40 @@ fn flattened_conditional_file_family_rows_and_unknown_fields_survive_display_mod
         }
     }
 }
+
+#[test]
+fn typed_contention_and_generic_read_failures_keep_distinct_machine_readable_contracts() {
+    for error in [
+        anyhow::anyhow!("native publication admission")
+            .context(airk_kernel::CurrentGateContention::Applying),
+        anyhow::Error::new(std::fs::TryLockError::WouldBlock)
+            .context(airk_kernel::CurrentGateContention::Applying),
+    ] {
+        let expected =
+            serde_json::to_value(airk_kernel::retrieval_retry::read_retry_hint(&error).unwrap())
+                .unwrap();
+        let reply = super::typed_error_result(&error.context("outer read boundary")).unwrap();
+        let body: Value = serde_json::from_str(&reply.content[0].as_text().unwrap().text).unwrap();
+        assert_eq!(body, expected);
+        assert_eq!(body["action"], "repeat_same_request");
+    }
+    for text in [
+        "selection_busy",
+        "quota_ledger_busy",
+        "invalid current relationship query",
+    ] {
+        let error = anyhow::anyhow!(text);
+        assert!(super::typed_error_result(&error).is_none());
+        let reply = super::error_result(&error);
+        let body: Value = serde_json::from_str(&reply.content[0].as_text().unwrap().text).unwrap();
+        assert_eq!(body["error"]["code"], "read_failed");
+        assert_eq!(body["error"]["retryable"], false);
+        assert_eq!(body["error"]["message"], text);
+    }
+    let error = anyhow::anyhow!("{}tail-sentinel", "🙂".repeat(2000));
+    let reply = super::error_result(&error);
+    let body: Value = serde_json::from_str(&reply.content[0].as_text().unwrap().text).unwrap();
+    assert!(body["error"]["message"].as_str().unwrap().len() <= 1024);
+    assert_eq!(body["error"]["message_truncated"], true);
+    assert!(!body.to_string().contains("tail-sentinel"));
+}

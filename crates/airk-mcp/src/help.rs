@@ -248,7 +248,32 @@ fn error(code: &str) -> CallToolResult {
     CallToolResult::error(vec![ContentBlock::text(json!({"schema":1,"version":env!("CARGO_PKG_VERSION"),
         "error":{"code":code},"guidance":"Call airk_help with no arguments for the topic catalog; use airk tools list and airk --help for native command discovery."}).to_string())])
 }
+/// `detail` belongs to Explorer guidance, not native topic/CLI/tool selectors.
+/// This validation is shared by public unified dispatch and native CLI help.
+pub(crate) fn validate_detail_selector(
+    arguments: &serde_json::Map<String, Value>,
+) -> anyhow::Result<()> {
+    if arguments.contains_key("detail")
+        && !arguments.contains_key("query")
+        && !arguments.contains_key("topic_id")
+    {
+        return Err(airk_core::read_arguments::ReadArgumentError::new(
+            "invalid_help_arguments", "detail",
+            "detail is valid only with Explorer query or topic_id help; omit it for native topic, command or tool help, which already returns full bounded content",
+        ).into());
+    }
+    Ok(())
+}
+fn detail_selector_refusal(arguments: &Value) -> Option<CallToolResult> {
+    let arguments = arguments.as_object()?;
+    validate_detail_selector(arguments)
+        .err()
+        .map(|error| crate::response::error_result(&error))
+}
 pub fn call(arguments: Value) -> CallToolResult {
+    if let Some(refusal) = detail_selector_refusal(&arguments) {
+        return refusal;
+    }
     match serde_json::from_value(arguments) {
         Ok(args) => reply(args),
         Err(_) => error("invalid_help_arguments"),
@@ -257,6 +282,9 @@ pub fn call(arguments: Value) -> CallToolResult {
 
 /// Public composition supplies its catalog while retaining the same byte/line contract.
 pub fn call_with_catalog(arguments: Value, tools: Vec<rmcp::model::Tool>) -> CallToolResult {
+    if let Some(refusal) = detail_selector_refusal(&arguments) {
+        return refusal;
+    }
     match serde_json::from_value(arguments) {
         Ok(args) => match answer_with_catalog(args, Some(tools)) {
             Ok(value) => CallToolResult::success(vec![ContentBlock::text(value.to_string())]),

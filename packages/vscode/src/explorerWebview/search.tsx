@@ -89,6 +89,7 @@ export function SearchScreen(props: ScreenProps) {
                 <label class="check"><input type="checkbox" checked={form.fullChunks} onChange={event => field('fullChunks', (event.target as HTMLInputElement).checked)} /> Full chunks</label>
                 <button type="submit" disabled={busy || !canSearch}>{busy ? 'Searching…' : 'Search'}</button>
             </form>
+            {form.mode === 'lexical' && <p class="muted">All normalized query terms must occur in a candidate chunk or its path. Punctuation and quotation marks separate terms; quotes do not enable phrase matching. Results follow stable index order, not relevance.</p>}
             {form.mode === 'vector' && <p class="muted">Describe a concept or behavior in natural language. Semantic search ranks indexed passages by embedding similarity; the exact query words need not appear.</p>}
             {vectorReason && <p class="muted">{vectorReason}</p>}
             {status?.detailsObservedAt !== undefined && (status.vectorsEnabled !== undefined || status.localModelReady !== undefined) && <p class="muted">Saved policy details observed {ago(status.detailsObservedAt)}.</p>}

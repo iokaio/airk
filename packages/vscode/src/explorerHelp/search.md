@@ -12,7 +12,7 @@ Search runs `search` against the selected project's published index. Every resul
 
 ## Steps
 
-1. Enter a query. For **Semantic (by meaning)**, describe the concept or behavior you want to find; exact words need not appear. **Lexical (all words)** requires all query words to appear.
+1. Enter a query. For **Semantic (by meaning)**, describe the concept or behavior you want to find; exact words need not appear. **Lexical (all words)** requires all normalized query terms to occur in a candidate chunk or its path. Punctuation and quotation marks separate terms; quotation marks do not enable phrase matching.
 2. Choose a mode. **Hybrid (lexical + semantic)** combines both approaches. **Collection policy** follows the project's saved policy; the result says which mode AIRK applied. Semantic search uses the native vector mode, including in saved recipes.
 3. Optionally set a path scope relative to the project, such as `src/auth/`.
 4. Choose **Search**. Use **Expand** for more indexed lines, **Inspect** for the file record, or **Open source** to open the file.
@@ -21,7 +21,7 @@ Results display twenty at a time with **Previous** and **Next**. The limit contr
 
 ## Limits
 
-- Lexical results are ordered by index identity, not relevance.
+- Lexical results are ordered by stable index identity, not relevance. A low limit can omit a literal-containing result even when other candidates contain the separate AND terms. Narrow the path scope or raise the limit. Snippets prefer the contiguous query spelling when it is already present in a selected chunk; this does not change matching or ranking.
 - Semantic and hybrid results are similarity candidates, not proof of meaning. Enable vectors in Management to use these modes. Building, partial or failed semantic coverage can mean empty, unavailable or incomplete results; readiness appears alongside the results.
 - "N returned · limit L · more may exist" means the limit cut the list; raise it or narrow the query.
 - Open source requests a dated native saved-source check against the citation and current source policy, then observes unsaved editor state. A past match does not establish continued freshness. Workbench retains the complete source-open observation separately from the original query and offers JSON copy/export.

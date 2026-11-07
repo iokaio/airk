@@ -30,7 +30,7 @@ export interface CatalogControl {
     catalogRetirementReview?(id:string):Promise<CatalogRetirementReview>;
     catalogStopTracking?(review:CatalogRetirementReview,valid:()=>boolean):Promise<CatalogObject>;
 }
-export interface CatalogHost { control?: CatalogControl; identity(): string; authorized(): boolean; changed(): void; windowContext?(): WindowContextDescriptor | undefined; windowContextObservation?(): CatalogObject | undefined; canReadWindowContext?(): boolean; useGrant?(choice:CatalogObject,namespace:string,revision:number,valid:()=>boolean):Promise<CatalogObject> }
+export interface CatalogHost { control?: CatalogControl; identity(): string; authorized(): boolean; changed(): void; windowContext?(): WindowContextDescriptor | undefined; windowContextObservation?(): CatalogObject | undefined; canReadWindowContext?(): boolean; useGrant?(choice:CatalogObject,namespace:string,revision:number,valid:()=>boolean):Promise<CatalogObject>;searchScopeSelection?():{index_ids:string[];project_ids:string[];managedProjectIds:string[];active:boolean};applySearchScope?(selection:CatalogObject):Promise<CatalogObject>;saveIndexSet?(selection:CatalogObject):Promise<CatalogObject> }
 /** Window memory only; the shared native console owns durable intents and transport. No polling or source scanning. */
 export class IndexingCatalogController {
     private owner?: string;
@@ -42,10 +42,11 @@ export class IndexingCatalogController {
     private membershipRequest?: CatalogObject;
     private sourceRequest?: CatalogObject;
     private grantRequest?: CatalogObject;
+    private scopeApplying=false;
     constructor(private readonly host: CatalogHost) {}
     snapshot(): CatalogView {
         this.sync();
-        return this.host.authorized() ? { ...this.view, canReviewSplit:hasSplitCapability(this.view.capabilities)&&!!this.host.control?.catalogSplitDraft&&!!this.host.control?.catalogSplitApply&&!!this.host.control?.catalogSplitSourceState, canReadPolicy:!!this.host.control?.catalogPolicyStatus,canResumePolicy:!!this.host.control?.catalogPolicyResume,canReviewRetirement:!!this.host.control?.catalogRetirementReview&&!!this.host.control?.catalogStopTracking,windowDescriptor:this.descriptor(),canReadWindowContext:this.host.canReadWindowContext?.(),canReviewGrant:!!this.host.control?.catalogGrantDraft,canUseGrant:!!this.host.useGrant,canReviewSource:!!this.host.control?.catalogSourceDraft,canReadPendingSource:!!this.host.control?.catalogPendingSource,canReviewSetup:!!this.host.control?.catalogIndexSetupDraft&&!!this.host.control?.catalogIndexSetupApply,pending: this.host.control?.catalogPending() ?? [],pendingDetails:this.host.control?.catalogPendingDetails?.() } : { generation: this.view.generation, busy: false, error: 'Workspace trust or client authority is unavailable.' };
+        return this.host.authorized() ? { ...this.view, busy:this.view.busy||this.scopeApplying, canReviewSplit:hasSplitCapability(this.view.capabilities)&&!!this.host.control?.catalogSplitDraft&&!!this.host.control?.catalogSplitApply&&!!this.host.control?.catalogSplitSourceState, canReadPolicy:!!this.host.control?.catalogPolicyStatus,canResumePolicy:!!this.host.control?.catalogPolicyResume,canReviewRetirement:!!this.host.control?.catalogRetirementReview&&!!this.host.control?.catalogStopTracking,windowDescriptor:this.descriptor(),canReadWindowContext:this.host.canReadWindowContext?.(),canReviewGrant:!!this.host.control?.catalogGrantDraft,canUseGrant:!!this.host.useGrant,canReviewSource:!!this.host.control?.catalogSourceDraft,canReadPendingSource:!!this.host.control?.catalogPendingSource,canReviewSetup:!!this.host.control?.catalogIndexSetupDraft&&!!this.host.control?.catalogIndexSetupApply,pending: this.host.control?.catalogPending() ?? [],pendingDetails:this.host.control?.catalogPendingDetails?.() } : { generation: this.view.generation, busy: false, error: 'Workspace trust or client authority is unavailable.' };
     }
     /** Complete native read, retained with the same owner fence as catalog data. */
     async recommendations(read:()=>Promise<CatalogObject>):Promise<CatalogView>{
@@ -61,10 +62,15 @@ export class IndexingCatalogController {
         this.grantRequest=undefined;
     }
     private sync(): void {
-        let native:unknown;
-        try{const observed=this.host.windowContextObservation?.()?.descriptor;if(observed&&typeof observed==='object'&&!Array.isArray(observed)){const value=observed as CatalogObject;native=[value.namespace,value.host,value.key,value.catalog_revision];}}catch{/* An unavailable producer cannot retain a prior authority identity. */}
+        let native:unknown,capabilities:CatalogObject|undefined;
+        try{const observation=this.host.windowContextObservation?.(),observed=observation?.descriptor;if(observed&&typeof observed==='object'&&!Array.isArray(observed)){const value=validateNativeHostContext(observed);native=[value.namespace,value.host,value.key,value.catalog_revision];
+            if(observation?.status==='catalog_host_context'&&observation.capabilities&&typeof observation.capabilities==='object')capabilities=catalogObject(observation.capabilities);
+        }}catch{/* An unavailable producer cannot retain a prior authority identity. */}
         const owner = JSON.stringify([this.host.authorized(),this.host.identity(),this.descriptor(),native]);
         if (owner !== this.owner) { this.owner = owner; this.invalidate(); }
+        // Automatic connection observations establish capability without loading
+        // library rows, changing membership, restoring a grant or starting work.
+        if(capabilities&&this.view.capabilities===undefined)this.view={...this.view,capabilities};
     }
     private descriptor(): WindowContextDescriptor | undefined {
         try{const value=this.host.windowContext?.();return value===undefined?undefined:validateWindowContext(value);}catch{return undefined;}
@@ -72,7 +78,7 @@ export class IndexingCatalogController {
     private async run(work: (control: CatalogControl, current: () => void) => Promise<void>): Promise<CatalogView> {
         this.sync();
         if (!this.host.authorized()) { throw new Error('runtime_client_no_longer_authorized'); }
-        if (this.view.busy) { throw new Error('catalog_request_pending'); }
+        if (this.view.busy||this.scopeApplying) { throw new Error('catalog_request_pending'); }
         if (!this.host.control) { throw new Error('catalog_control_connection_unavailable'); }
         const owner = this.owner, sequence = ++this.sequence;
         const current = () => { this.sync(); if (!this.host.authorized() || owner !== this.owner || sequence !== this.sequence) { throw new Error('stale_catalog_view'); } };
@@ -115,9 +121,66 @@ export class IndexingCatalogController {
                 const cursor=catalogObject(continuation);
                 if(cursor.namespace!==body.namespace||cursor.revision!==body.revision||cursor.kind!==kind||cursor.index_id!==request.index_id||cursor.project_id!==request.project_id)throw new Error('crossed_catalog_continuation');
             }
-            this.view = { ...this.view, [field]: response, review: undefined,setupReview:undefined, ...(field === 'page' ? { detail: undefined, sources: undefined, memberships: undefined,policyStatus:undefined } : {}) };
+            this.view = { ...this.view, [field]: response, review: undefined,setupReview:undefined, ...(field === 'page' ? { pageKind:kind, detail: undefined, sources: undefined, memberships: undefined,policyStatus:undefined,splitFormOpen:undefined,splitSourceState:undefined,splitReview:undefined } : {}) };
             if (field === 'page') { this.pageRequest = request; } else if (field === 'sources') { this.sourceRequest = request; } else if(field==='grants'){this.grantRequest=request;}else { this.membershipRequest = request; }
             this.view.generation++;
+        });
+    }
+    scopeRead(kind?:'indexes'|'projects',next=false):Promise<CatalogView>{
+        return this.run(async(control,current)=>{
+            const native=validateNativeHostContext(this.host.windowContextObservation?.()?.descriptor);
+            const prior=this.view.searchScope,selection=this.host.searchScopeSelection?.()??{index_ids:[],project_ids:[],managedProjectIds:[],active:false};
+            let scope:NonNullable<CatalogView['searchScope']>=prior??{indexes:[],projects:[],selectedIndexIds:[],selectedProjectIds:[],managedProjectIds:[],active:false,responses:[]};
+            if(this.view.namespace&&this.view.namespace!==native.namespace)throw new Error('catalog_namespace_changed_refresh');
+            for(const category of kind?[kind]:['indexes','projects'] as const){
+                const continuation=category==='indexes'?scope.indexContinuation:scope.projectContinuation;
+                if(next&&!continuation)throw new Error('catalog_continuation_unavailable');
+                const response=await control.catalogRead({catalog_page:{request:{kind:category,index_id:null,project_id:null,after:next?continuation:null,expected_catalog_revision:native.catalog_revision,limit:16,max_bytes:CATALOG_PAGE_BYTES}}});current();
+                this.accept(response,'page',native.catalog_revision);
+                const rows=catalogItems(response),expected=category==='indexes'?'index':'project';
+                if(rows.some(row=>row.kind!==expected))throw new Error('crossed_search_scope_page');
+                const field=category==='indexes'?'indexes':'projects',cursorField=category==='indexes'?'indexContinuation':'projectContinuation';
+                const values=next?[...scope[field],...rows.map(row=>row.value)]:rows.map(row=>row.value);
+                if(new Set(values.map(value=>value.id)).size!==values.length)throw new Error('search_scope_duplicate_items');
+                const cursor=catalogObject(response.page).continuation;
+                if(cursor!==null){const token=catalogObject(cursor);if(token.namespace!==native.namespace||token.revision!==native.catalog_revision||token.kind!==category||token.index_id!==null||token.project_id!==null||next&&JSON.stringify(cursor)===JSON.stringify(continuation))throw new Error('crossed_search_scope_continuation');}
+                if(values.length>512)throw new Error('search_scope_display_limit');
+                const responseField=category==='indexes'?'indexResponses':'projectResponses';
+                const retained=next?(scope[responseField]??[]):[];
+                scope={...scope,[field]:values,[cursorField]:cursor,[responseField]:[...retained,response]};
+                scope.responses=[...(scope.indexResponses??[]),...(scope.projectResponses??[])];
+            }
+            this.view={...this.view,searchScope:{...scope,selectedIndexIds:selection.index_ids,selectedProjectIds:selection.project_ids,managedProjectIds:selection.managedProjectIds,active:selection.active},generation:this.view.generation+1};
+        });
+    }
+    async scopeApply(selection:CatalogObject,generation:number,set=false):Promise<CatalogObject>{
+        this.sync();
+        const work=set?this.host.saveIndexSet:this.host.applySearchScope;
+        if(!this.host.authorized()||!work)throw new Error('native_search_scope_unavailable');
+        if(this.view.busy||this.scopeApplying||generation!==this.view.generation)throw new Error('stale_catalog_view');
+        this.scopeApplying=true;this.host.changed();
+        try{
+            const result=await work(selection);this.sync();
+            const selected=this.host.searchScopeSelection?.();
+            this.view={...this.view,outcome:result,generation:this.view.generation+1,...(this.view.searchScope&&selected?{searchScope:{...this.view.searchScope,selectedIndexIds:selected.index_ids,selectedProjectIds:selected.project_ids,managedProjectIds:selected.managedProjectIds,active:selected.active}}:{})};
+            return result;
+        }catch(error){this.sync();const native=error&&typeof error==='object'?(error as {nativeResponse?:unknown}).nativeResponse:undefined;this.view={...this.view,...(native&&typeof native==='object'&&!Array.isArray(native)?{outcome:catalogObject(native)}:{}),error:error instanceof Error?error.message:'search_scope_failed'};throw error;}
+        finally{this.scopeApplying=false;this.host.changed();}
+    }
+    setRead(id:string):Promise<CatalogView>{
+        return this.run(async(control,current)=>{
+            catalogId(id,'prj_');const native=validateNativeHostContext(this.host.windowContextObservation?.()?.descriptor),responses:CatalogObject[]=[];
+            const response=await control.catalogRead({catalog_detail:{entity:{kind:'project',id},expected_catalog_revision:native.catalog_revision}});current();this.accept(response,'detail',native.catalog_revision);responses.push(response);
+            const item=catalogItems(response,'detail')[0];if(item?.kind!=='project'||item.value.id!==id)throw new Error('index_set_unavailable');
+            const indexes:string[]=[];let after:unknown=null;const seen=new Set<string>();
+            for(let attempt=0;attempt<16;attempt++){
+                const result=await control.catalogRead({catalog_page:{request:{kind:'memberships',index_id:null,project_id:id,after,expected_catalog_revision:native.catalog_revision,limit:32,max_bytes:CATALOG_PAGE_BYTES}}});current();this.accept(result,'page',native.catalog_revision);responses.push(result);
+                for(const row of catalogItems(result)){if(row.kind!=='membership'||row.value.project_id!==id)throw new Error('crossed_index_set_membership');indexes.push(catalogId(row.value.index_id,'idx_'));}
+                if(indexes.length>32||new Set(indexes).size!==indexes.length)throw new Error('index_set_membership_limit');
+                after=catalogObject(result.page).continuation;if(after===null){this.view={...this.view,detail:response,setEditor:{id,name:String(item.value.name),indexIds:indexes,complete:true,responses},generation:this.view.generation+1};return;}
+                const token=JSON.stringify(after);if(seen.has(token))throw new Error('index_set_continuation_repeated');seen.add(token);
+            }
+            throw new Error('index_set_membership_limit');
         });
     }
     detail(kind: 'project' | 'index' | 'grant', id: string): Promise<CatalogView> {
@@ -127,7 +190,7 @@ export class IndexingCatalogController {
             const response = await control.catalogRead({ catalog_detail: { entity: { kind, id }, expected_catalog_revision: expected ?? null } });
             current(); this.accept(response, 'detail', expected);
             const item=catalogItems(response,'detail')[0];if(item&&(item.kind!==kind||(kind==='grant'?catalogObject(item.value.grant).id:item.value.id)!==id))throw new Error('crossed_catalog_detail');
-            this.view = { ...this.view, ...(kind==='grant'?{grantDetail:response}:{detail:response,sources:undefined,memberships:undefined,policyStatus:undefined}), review: undefined,setupReview:undefined, generation: this.view.generation + 1 };
+            this.view = { ...this.view, ...(kind==='grant'?{grantDetail:response}:{detail:response,sources:undefined,memberships:undefined,policyStatus:undefined,splitFormOpen:undefined,splitSourceState:undefined,splitReview:undefined}), review: undefined,setupReview:undefined, generation: this.view.generation + 1 };
         });
     }
     preview(operation: CatalogObject, generation: number): Promise<CatalogView> {
@@ -157,7 +220,7 @@ export class IndexingCatalogController {
             current();this.accept(response,'detail');
             const item=catalogItems(response,'detail')[0];
             if(item&&(item.kind!=='context'||item.value.host!==descriptor.host||item.value.key!==descriptor.key)){this.invalidate();throw new Error('crossed_window_context');}
-            this.view={generation:this.view.generation+1,busy:true,namespace:this.view.namespace,revision:this.view.revision,context:response};
+            this.view={generation:this.view.generation+1,busy:true,namespace:this.view.namespace,revision:this.view.revision,capabilities:this.view.capabilities,context:response};
         });
     }
     adoptHostContext(): Promise<CatalogView> {
@@ -166,7 +229,10 @@ export class IndexingCatalogController {
             if(!response||!descriptor||response.status!=='catalog_host_context')throw new Error('native_window_context_unavailable');
             const native=validateNativeHostContext(response.descriptor);current();
             if(native.host!==descriptor.host||native.key!==descriptor.key)throw new Error('crossed_window_context');
-            this.view={generation:this.view.generation+1,busy:true,namespace:native.namespace,revision:native.catalog_revision,hostContext:response};
+            // Capabilities belong to this exact authenticated observation, not a
+            // package version or a prior connection that happened to support split.
+            this.view={generation:this.view.generation+1,busy:true,namespace:native.namespace,revision:native.catalog_revision,
+                ...(response.capabilities&&typeof response.capabilities==='object'?{capabilities:catalogObject(response.capabilities)}:{}),hostContext:response};
         });
     }
     previewContext(selection: CatalogObject, generation: number, remove=false): Promise<CatalogView> {
@@ -208,6 +274,7 @@ export class IndexingCatalogController {
     }
     setupDraft(selection:CatalogObject,generation:number):Promise<CatalogView>{
         return this.run(async(control,current)=>{
+            if(this.host.canReadWindowContext?.()&&(!this.descriptor()||this.host.windowContextObservation?.()?.status!=='catalog_host_context'))throw new Error('read_native_window_context_before_setup_review');
             if(generation!==this.view.generation||!this.view.revision||!this.view.namespace)throw new Error('read_current_catalog_before_setup');
             if(!control.catalogIndexSetupDraft)throw new Error('native_index_setup_unavailable');
             if(control.catalogPending().length)throw new Error('catalog_outcome_unconfirmed_reconcile_first');
@@ -342,10 +409,13 @@ export class IndexingCatalogController {
         return this.run(async(control,current)=>{
             if(generation!==this.view.generation||!hasSplitCapability(this.view.capabilities)||!this.view.revision)throw new Error('split_capability_or_review_stale');
             const advice=this.view.recommendations;
-            if(!advice||advice.schema!=='airk.recommendations/1'||!Array.isArray(catalogObject(advice.selected).index_ids)||!(catalogObject(advice.selected).index_ids as unknown[]).includes(index))throw new Error('select_an_advised_index_for_split_review');
+            const advised=advice?.schema==='airk.recommendations/1'&&Array.isArray(catalogObject(advice.selected).index_ids)&&(catalogObject(advice.selected).index_ids as unknown[]).includes(index);
+            const listed=this.view.pageKind==='indexes'&&catalogItems(this.view.page).some(row=>row.kind==='index'&&row.value.id===index&&row.value.tombstone===false);
+            if(!advised&&!listed)throw new Error('select_a_listed_or_advised_index_for_split_review');
             catalogId(index,'idx_');const response=await control.catalogRead({catalog_detail:{entity:{kind:'index',id:index},expected_catalog_revision:this.view.revision}});current();this.accept(response,'detail',this.view.revision);
             const item=catalogItems(response,'detail')[0];if(item?.kind!=='index'||item.value.id!==index)throw new Error('crossed_split_index');
-            this.view={...this.view,detail:response,splitFormOpen:true,splitReview:undefined,review:undefined,setupReview:undefined,generation:this.view.generation+1};
+            if(item.value.tombstone!==false)throw new Error('split_requires_live_index');
+            this.view={...this.view,detail:response,sources:undefined,memberships:undefined,policyStatus:undefined,splitSourceState:undefined,splitFormOpen:true,splitReview:undefined,review:undefined,setupReview:undefined,generation:this.view.generation+1};
         });
     }
     splitDraft(selection:CatalogObject,generation:number):Promise<CatalogView>{

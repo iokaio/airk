@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { McpSessionError, McpStdioSession } from './mcpStdioSession';
+import { readRetryDelay } from './readRetry';
 import { ASSISTANCE_SERVER_NAME, ASSISTANCE_TOOLS } from './explorerContracts';
 import { LaunchSpec, launchArgs, ServerEntry, UNIFIED_TOOLS } from './model';
 import { requireNativeExecution } from './nativeGate';
@@ -235,7 +236,11 @@ export async function probeMcp(spec: LaunchSpec, expectedTools: 14 | 15 | 16 | 2
     let stage='starting the launcher and waiting for the MCP handshake';
     try {
         report('Starting the launcher and waiting for the MCP handshake…');
-        session = (await McpStdioSession.open({ command: entry?.command??spec.command, args: entry?[...entry.args]:launchArgs(spec), cwd: spec.service ? path.dirname(spec.command) : spec.root,
+        const selectedArgs=entry?[...entry.args]:launchArgs(spec);
+        const selectors=selectedArgs.flatMap((arg,index)=>arg==='--catalog-session'?[selectedArgs[index+1]]:[]);
+        let expectedScope:unknown;
+        if(selectors.length===1){try{expectedScope=JSON.parse(selectors[0]);}catch{/* No scoped retry without the original validated selector. */}}
+        session = (await McpStdioSession.open({ command: entry?.command??spec.command, args:selectedArgs, cwd: spec.service ? path.dirname(spec.command) : spec.root,
             env: { AIRK_CLIENT: 'vscode' }, clientName: 'airk-extension-check', clientVersion }, remaining())).session;
         const handshakeMs=Date.now()-startedAt;
         stage='listing MCP tools';report(`MCP handshake completed in ${(handshakeMs/1000).toFixed(1)} seconds. Reading the tool list…`);
@@ -244,10 +249,16 @@ export async function probeMcp(spec: LaunchSpec, expectedTools: 14 | 15 | 16 | 2
         const required = expectedTools>=26?UNIFIED_TOOLS.filter(name=>(expectedTools>=27||name!=='diagnostics')&&(expectedTools>=28||name!=='parse')&&(expectedTools>=UNIFIED_TOOLS.length||name!=='query_scope')):['airk_status', 'airk_symbols', 'airk_code_facts', 'airk_relationships', ...(expectedTools >= 15 ? ['airk_changes'] : []), ...(expectedTools >= 16 ? ['airk_help'] : [])];
         if (tools.length !== expectedTools || !required.every(name => tools.includes(name))) { throw new Error(`AIRK MCP tool inventory differs from the expected ${expectedTools} tools.`); }
         stage='reading index status';report(`${tools.length} MCP tools available. Reading index status…`);
-        const status = await session.request('tools/call', { name: expectedTools>=26?'status':'airk_status', arguments: {} }, remaining());
+        let status;
+        while(true){
+            status=await session.request('tools/call',{name:expectedTools>=26?'status':'airk_status',arguments:{}},remaining());
+            const delay=readRetryDelay(status,expectedScope);
+            if(delay===undefined||Date.now()+delay>=deadline)break;
+            await new Promise(resolve=>setTimeout(resolve,delay));
+        }
         if (status.isError) {
             const message = status.content?.map((part: { text?: string }) => part.text ?? '').join('\n') ?? '';
-            if (!message.includes('workspace is not indexed')) { throw new Error(`AIRK MCP status failed: ${message.slice(0, 300)}`); }
+            if (!message.includes('workspace is not indexed')) { throw Object.assign(new Error(`AIRK MCP status failed: ${message.slice(0, 300)}`),{nativeResponse:status}); }
             return { tools, status: { state: 'not_indexed' }, handshakeMs };
         }
         if(expectedTools>=16){
@@ -259,7 +270,9 @@ export async function probeMcp(spec: LaunchSpec, expectedTools: 14 | 15 | 16 | 2
         if(handshakeMs>10000)report(`AIRK responded, but its handshake took ${(handshakeMs/1000).toFixed(1)} seconds. An agent with a shorter startup deadline may time out.`);
         return { tools, status, handshakeMs };
     } catch (error) {
-        throw new Error(`AIRK connection check failed while ${stage}: ${error instanceof Error?error.message:String(error)}`);
+        const detail=error as {nativeResponse?:unknown}|null;
+        throw Object.assign(new Error(`AIRK connection check failed while ${stage}: ${error instanceof Error?error.message:String(error)}`),
+            detail?.nativeResponse!==undefined?{nativeResponse:detail.nativeResponse}:{});
     } finally { session?.close(); }
 }
 

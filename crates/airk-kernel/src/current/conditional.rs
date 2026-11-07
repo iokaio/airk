@@ -222,7 +222,9 @@ impl Kernel {
     ) -> Result<ConditionalRead<SearchResponse>> {
         airk_core::validate_budget(1, max_bytes)?;
         ensure!(
-            before <= 100 && after <= 100 && line > 0,
+            before <= airk_core::native_reads::CONTEXT_RADIUS_MAX
+                && after <= airk_core::native_reads::CONTEXT_RADIUS_MAX
+                && line > 0,
             "invalid context bounds"
         );
         let pinned = self.current_reader()?;

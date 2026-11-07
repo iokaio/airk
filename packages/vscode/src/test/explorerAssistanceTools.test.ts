@@ -11,7 +11,7 @@ import { windowChannel } from '../explorerAssistance/attach';
 import { AssistanceIpcHost } from '../explorerAssistanceHost';
 import { ASSISTANCE_SERVER_NAME, ASSISTANCE_TOOLS } from '../explorerContracts';
 import { HandoffStore, HANDOFF_TTL_MS } from '../explorerHandoffs';
-import { CORE_PACK, jsonBytes } from '../explorerStrategies';
+import { CORE_PACK, OPERATORS, jsonBytes, validateStrategy } from '../explorerStrategies';
 import { SuggestionStore } from '../explorerSuggestions';
 import { destinationOf, validateDraft } from '../explorerDrafts';
 import { McpStdioSession } from '../mcpStdioSession';
@@ -38,7 +38,67 @@ test('template discovery is offline, paginated by exact bytes, and exposes the a
         assert.ok(jsonBytes(reply.value) < 49152);
     }
     assert.equal((await tools.call('airk_explorer_templates_list', { offset: -1 })).ok, false);
-    assert.equal((await tools.call('airk_explorer_template_get', { template_id: 'airk.core/unknown' })).ok, false);
+    const unknown = await tools.call('airk_explorer_template_get', { template_id: 'airk.core/unknown' });
+    assert.equal(unknown.ok, false); if (!unknown.ok) { assert.equal(unknown.code, 'TEMPLATE_UNKNOWN'); }
+});
+
+test('strategy drafts reject unavailable operators consistently in schema, offline validation and host admission', async () => {
+    let attached = 0;
+    const tools = new AssistanceTools(index(), async () => { attached++; return { ok: false, code: 'UI_NOT_ATTACHED' }; });
+    const store = new SuggestionStore({ binding: () => 'ab'.repeat(8), revisions: () => ({}), publication: () => undefined, ttlMs: () => 60000 });
+    const schema = (toolDefinitions(index()) as any[]).find(tool => tool.name === 'airk_explorer_suggest_strategy').inputSchema;
+    const allowed = Object.entries(OPERATORS).filter(([, spec]) => !('unavailable' in spec)).map(([id]) => id);
+    assert.deepEqual(schema.properties.steps.items.properties.op.enum, allowed);
+    for (const op of ['host.gitDiff', 'host.readSavedText']) {
+        const draft = { schema_version: '1.0', idempotency_key: 'unavailable-' + op, title: 'Unavailable step', steps: [
+            { id: 'status', op: 'airk.status', args: {} }, { id: 'unavailable', op, args: {} },
+        ] };
+        const checked = validateDraft('strategy', draft); assert.equal(checked.ok, false);
+        if (!checked.ok) { assert.equal(checked.code, 'CAPABILITY_DISABLED'); assert.match(checked.errors[0], /^steps\[1\]\.op:/); }
+        const dryRun = await tools.call('airk_explorer_validate_draft', { kind: 'strategy', draft });
+        assert.ok(dryRun.ok); assert.equal(dryRun.value.code, 'CAPABILITY_DISABLED');
+        assert.equal((dryRun.value.errors as any[])[0].field, 'steps[1].op');
+        const submitted = await tools.call('airk_explorer_suggest_strategy', draft);
+        assert.equal(submitted.ok, false); if (!submitted.ok) { assert.equal(submitted.code, 'CAPABILITY_DISABLED'); }
+        const admitted = store.submit('strategy', draft, { name: 'qa', version: '1' });
+        assert.equal(admitted.ok, false); if (!admitted.ok) { assert.equal(admitted.code, 'CAPABILITY_DISABLED'); }
+    }
+    assert.equal(attached, 0); assert.equal(store.list().length, 0);
+    const preview = CORE_PACK.find(entry => entry.strategy.steps.some(step => step.op === 'host.gitDiff'))!;
+    assert.equal(validateStrategy(preview.strategy).ok, true, 'manual preview documents retain structural validation');
+    const template = await tools.call('airk_explorer_template_get', { template_id: preview.strategy.id });
+    assert.ok(template.ok); assert.equal(template.value.runnable, false);
+});
+
+test('management and review validation identify the invalid field instead of reporting a count error', async () => {
+    const tools = new AssistanceTools(index(), async () => { assert.fail('invalid draft must stay offline'); });
+    const store = new SuggestionStore({ binding: () => 'ab'.repeat(8), revisions: () => ({}), publication: () => undefined, ttlMs: () => 60000 });
+    const envelope = { schema_version: '1.0', idempotency_key: 'invalid-field', title: 'Invalid field' };
+    for (const [kind, extra, field] of [
+        ['management', { intent: 'unknown' }, 'intent'],
+        ['management', { intent: 'logs.review', mode: 'execute' }, 'mode'],
+        ['review', { names: ['validName', 'bad-name!'] }, 'names[1]'],
+    ] as const) {
+        const draft = { ...envelope, ...extra }, offline = await tools.call('airk_explorer_validate_draft', { kind, draft });
+        assert.ok(offline.ok); assert.equal(offline.value.valid, false);
+        const errors = offline.value.errors as any[]; assert.equal(errors[0].field, field);
+        assert.deepEqual(errors, store.validate(kind, draft).errors);
+        if (kind === 'review') { assert.match(errors[0].message, /starting with a letter/); assert.doesNotMatch(errors[0].message, /at most 20/); }
+    }
+});
+
+test('direct adapter errors retain the same specific diagnostic as standalone MCP errors', async () => {
+    const tools = new AssistanceTools(index(), async () => ({ ok: false, code: 'UI_NOT_ATTACHED' }));
+    const missingTopic = await tools.call('airk_explorer_help_get', { topic_id: 'explorer' });
+    assert.equal(missingTopic.ok, false);
+    if (!missingTopic.ok) {
+        assert.equal(missingTopic.code, 'HELP_TOPIC_UNKNOWN');
+        assert.match(missingTopic.detail!, /exact returned topic_id/);
+        assert.doesNotMatch(missingTopic.detail!, /attach/i);
+    }
+    const noWindow = await tools.call('airk_explorer_suggest_search', search);
+    assert.equal(noWindow.ok, false);
+    if (!noWindow.ok) { assert.equal(noWindow.code, 'UI_NOT_ATTACHED'); assert.match(noWindow.detail!, /No trusted AIRK Explorer window/); }
 });
 
 test('dry-run validation distinguishes offline schema checks from authoritative live conflicts and reserves nothing', async () => {
@@ -118,6 +178,8 @@ test('the real bundled MCP server reaches its project window for validation, nav
         const validation = await call('airk_explorer_validate_draft', { kind: 'search', draft: search }); assert.equal(validation.live_checked, true); assert.equal(store.list().length, 0);
         const proposal = await call('airk_explorer_suggest_navigation', { schema_version: '1.0', title: 'Read references', idempotency_key: 'nav', route: 'code/references', filters: { name: 'sample' } });
         assert.equal(proposal.destination, 'code/references'); assert.equal((await call('airk_explorer_proposal_status', { proposal_id: proposal.proposal_id })).reason, 'awaiting_user_review');
+        assert.equal((await call('airk_explorer_proposal_status', { proposal_id: 'ex-prop-' + '0'.repeat(16) })).error.code, 'PROPOSAL_UNKNOWN');
+        assert.equal((await call('airk_explorer_handoff_get', { token: 'ex-share-' + '0'.repeat(64) })).error.code, 'HANDOFF_UNAVAILABLE');
         const projects = ['prj_' + '01'.repeat(16)], indexes = ['idx_' + '02'.repeat(16)];
         const combined = await call('airk_explorer_suggest_search', { ...search, idempotency_key: 'combined-native-transport',
             draft: { query: 'original', project_ids: projects, index_ids: indexes, member_availability: 'require' } });
@@ -132,7 +194,7 @@ test('the real bundled MCP server reaches its project window for validation, nav
         assert.equal((await call('airk_explorer_handoff_get', { token: shared.token })).content, 'Shared complete text');
         generation++;
         assert.notEqual((await call('airk_explorer_ui_status')).ui.binding_fingerprint, status.ui.binding_fingerprint);
-        assert.equal((await call('airk_explorer_handoff_get', { token: shared.token })).error.code, 'PROPOSAL_EXPIRED');
+        assert.equal((await call('airk_explorer_handoff_get', { token: shared.token })).error.code, 'HANDOFF_UNAVAILABLE');
         const stale = await call('airk_explorer_suggest_search', { ...search, workspace_binding: status.ui.binding_fingerprint }); assert.equal(stale.error.code, 'STALE_BINDING');
         revision++;
     } finally {

@@ -91,3 +91,83 @@ async fn actual_remote_bridge_selected_help_preserves_full_native_refusal_and_tr
     server.close().await?;
     Ok(())
 }
+
+struct BoundaryFailure {
+    mode: AtomicUsize,
+    calls: AtomicUsize,
+}
+impl RemoteTools for BoundaryFailure {
+    fn call(&self, _: String, _: serde_json::Map<String, Value>) -> RemoteFuture<'_> {
+        Box::pin(async move {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            match self.mode.load(Ordering::SeqCst) {
+                0 => Err(anyhow::anyhow!("native publication admission")
+                    .context(airk_kernel::CurrentGateContention::Applying)),
+                1 => anyhow::bail!("private/transport/path must not leak"),
+                _ => Ok(json!("invalid MCP result")),
+            }
+        })
+    }
+}
+
+#[tokio::test]
+async fn actual_remote_and_cli_boundaries_preserve_typed_retry_and_unknown_dispatch_without_replay()
+-> anyhow::Result<()> {
+    let backend = Arc::new(BoundaryFailure {
+        mode: AtomicUsize::new(0),
+        calls: AtomicUsize::new(0),
+    });
+    let bridge = Bridge {
+        backend: backend.clone(),
+        admission: Arc::new(Admission::default()),
+        response_mode: crate::response::ResponseMode::Full,
+    };
+    let (client_transport, server_transport) = tokio::io::duplex(64 * 1024);
+    let (mut client, mut server) = tokio::try_join!(
+        async { Ok::<_, anyhow::Error>(().serve(client_transport).await?) },
+        async { Ok::<_, anyhow::Error>(bridge.serve(server_transport).await?) }
+    )?;
+    for mode in 0..3 {
+        backend.mode.store(mode, Ordering::SeqCst);
+        let before = backend.calls.load(Ordering::SeqCst);
+        let mcp = client
+            .call_tool(CallToolRequestParams::new("airk_symbols"))
+            .await?;
+        let cli =
+            call_observed(backend.as_ref(), "airk_symbols".into(), Default::default()).await?;
+        // The SDK's default client negotiates 2025-11-25. Only its complete
+        // protocol discriminator differs from a direct constructor result.
+        let mut expected = rmcp::model::ServerResult::CallToolResult(serde_json::from_value(cli)?);
+        expected.strip_result_type_for_legacy_peer();
+        assert_eq!(serde_json::to_value(&mcp)?, serde_json::to_value(expected)?);
+        assert_eq!(
+            backend.calls.load(Ordering::SeqCst),
+            before + 2,
+            "each explicit caller dispatches once"
+        );
+        assert_eq!(mcp.is_error, Some(true));
+        let body: Value = serde_json::from_str(&mcp.content[0].as_text().unwrap().text)?;
+        if mode == 0 {
+            assert_eq!(body["code"], "publication_busy");
+            assert_eq!(body["action"], "repeat_same_request");
+            assert_eq!(body["retryable"], true);
+        } else {
+            assert_eq!(
+                body["error"]["code"],
+                if mode == 1 {
+                    "direct_observation_unavailable"
+                } else {
+                    "direct_response_invalid"
+                }
+            );
+            assert_eq!(body["error"]["query_submitted"], Value::Null);
+            assert_eq!(body["error"]["retryable"], false);
+            assert_eq!(body["error"]["query_replay_safe"], false);
+            assert_eq!(body["error"]["fresh_brokerage_required"], true);
+            assert!(!body.to_string().contains("private/transport/path"));
+        }
+    }
+    client.close().await?;
+    server.close().await?;
+    Ok(())
+}

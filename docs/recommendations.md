@@ -1,11 +1,12 @@
 # Recommendations and agent query scope
 
-The unpublished **1.8.8** P8 working build adds Recommendations to Indexing and
-the canonical `query_scope` read. Review an existing index, a focused task or a
-purposeful combination without evidence queries, source scans or model loads.
+Recommendations were introduced in the unpublished **1.8.8** P8 working build
+and remain available in **1.8.11** through the canonical `query_scope` read.
+Review an existing index, a focused task or a purposeful combination without evidence queries, source scans or model loads.
 
-In **Indexing → Recommendations**, leave both selectors blank to inspect the
-active connection, or enter explicit Project and index subsets. Available,
+In **Indexing → Search scope**, expand **Help me choose indexes**. Leave both
+selectors blank to inspect the active connection, or enter explicit index-set and index subsets.
+The native response and API fields retain `Project` terminology for compatibility. Available,
 selected and omitted indexes are separate. Shared indexes appear once; selecting
 fewer Projects preserves only their own prefix grants. Each situation explains
 its user-stated reason, expected benefit and uncertainty. **Keep this layout /
@@ -14,11 +15,10 @@ Dismiss** is always available.
 **Use this query scope** deliberately prefills the selectors in a temporary
 Workbench Search form, preserving existing query, filters, limits and availability
 choices. Review it before running. It does not change the active grant or agent definition.
-To save defaults, inspect the affected Project and choose **Review saving as
-Project default**. Native preview and explicit apply remain separate. Defaults
-affect future selections for that Project's users, never grant access and never
-silently replace restored explicit choices. Reuse opens existing Project
-membership review. Split advice can open the selected index's controls when its
+To organize a reusable selection, open **Indexing → Index sets → Open index set**
+and review its memberships and defaults. Apply the desired search selection from
+**Search scope**. Set defaults do not silently replace a window's explicit
+selection. Reuse opens the existing set's membership review. Split advice can open the selected index's controls when its
 native split capability is available; [splitting](index-splitting.md) still requires
 a separate complete native review and explicit apply. [Permanent exclusions](source-policy.md)
 likewise require their own reviewed operation; advice cannot apply them. Query

@@ -65,7 +65,7 @@ test('a real universal launcher reads its pointer on every launch and forwards t
         await assert.rejects(probeMcp(universalCall), 'a pointer to a missing installation fails instead of guessing');
         pointer(spec.service!.installDir);
         assert.equal((await probeMcp(universalCall)).tools.length, UNIFIED_TOOLS.length, 'the next launch follows the rewritten pointer');
-    } finally {
+    } catch(error) {await fixture.retainFailure(error);throw error;} finally {
         // Closing a probe signals its child asynchronously. Windows may still
         // hold the copied executable briefly; always drain the owned fixture,
         // even when removing that executable fails.

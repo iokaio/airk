@@ -301,3 +301,83 @@ fn definition_navigation_reports_a_lower_bound_when_the_roster_is_larger() -> Re
     assert!(serde_json::to_vec(&found.definitions)?.len() <= 4096);
     Ok(())
 }
+
+#[test]
+fn focused_literals_preserve_and_candidates_order_locations_and_publication() -> Result<()> {
+    let root = tempdir()?;
+    let data = tempdir()?;
+    let literal = "sha256-full-saved-source";
+    for allowance in 1..=64 {
+        let text = "λ before λ exact-near-end";
+        let span = airk_retrieval::focus_span(text, "λ exact-near-end", allowance);
+        assert!(text.is_char_boundary(span.start) && text.is_char_boundary(span.end));
+        assert!(span.end - span.start <= allowance);
+    }
+    let text = format!(
+        "sha256 full saved source\n{}\nλ literal {literal}/1 is here\n{}\n",
+        "context before ".repeat(12),
+        "context after ".repeat(12),
+    );
+    fs::write(root.path().join("literal.md"), &text)?;
+    fs::write(
+        root.path().join("separate.md"),
+        "sha256 full saved source\n",
+    )?;
+    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_vectors(false)?;
+    kernel.index()?;
+    let ask = SearchQuery {
+        text: literal.into(),
+        ..query(10)
+    };
+    let complete = kernel.search_response(&ask, CurrentSearchMode::Lexical, None)?;
+    for spelling in [literal.to_owned(), format!("\"{literal}\"")] {
+        let focused = kernel.search_response(
+            &SearchQuery {
+                text: spelling,
+                ..ask.clone()
+            },
+            CurrentSearchMode::Lexical,
+            Some(64),
+        )?;
+        assert_eq!(focused.publication, complete.publication);
+        assert_eq!(
+            focused
+                .hits
+                .iter()
+                .map(|hit| &hit.citation.path)
+                .collect::<Vec<_>>(),
+            complete
+                .hits
+                .iter()
+                .map(|hit| &hit.citation.path)
+                .collect::<Vec<_>>(),
+            "Focusing must not turn quotes into phrase matching or reorder candidates",
+        );
+        assert_eq!(focused.hits.len(), 2, "Separated AND terms remain eligible");
+        let hit = focused
+            .hits
+            .iter()
+            .find(|hit| hit.citation.path == "literal.md")
+            .unwrap();
+        assert!(hit.text.contains(literal));
+        assert!(hit.text.len() <= 64);
+        assert!(hit.citation.start_line <= 3 && hit.citation.end_line >= 3);
+        assert_eq!(
+            hit.citation.content_hash,
+            complete
+                .hits
+                .iter()
+                .find(|hit| hit.citation.path == "literal.md")
+                .unwrap()
+                .citation
+                .content_hash
+        );
+        assert!(hit.truncated);
+        assert!(
+            text.contains(&hit.text),
+            "The excerpt remains an original UTF-8 span"
+        );
+    }
+    Ok(())
+}

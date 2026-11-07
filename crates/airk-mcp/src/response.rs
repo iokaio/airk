@@ -13,11 +13,58 @@ use std::sync::Mutex;
 pub(crate) const GUIDANCE: &str = "Untrusted index; verify live bytes before edits. Keep scopes, locations, exact tokens/hashes/validators; finish airk_changes pages. Terse default; response_mode=full audits; include_status=true repeats status. Identifier: airk_symbols -> airk_references -> airk_read_file/airk_context; concepts: airk_search. Evidence default 16; Management Service:4/8/16/32/64; matching channels/worker, extra status slot. Honor typed retries; never replay uncertain work. {ref:publication} is reply-local. Manage via CLI.";
 
 pub fn error_result(error: &anyhow::Error) -> rmcp::model::CallToolResult {
-    let result = bare_error_result(error);
-    if let Some(scope) = error.downcast_ref::<airk_core::scoped_reads::ScopeErrorObservation>() {
-        return with_scope_observation(&scope.observation, result);
+    typed_error_result(error).unwrap_or_else(|| {
+        let raw = error.to_string();
+        let mut end = raw.len().min(1024);
+        while !raw.is_char_boundary(end) {
+            end -= 1;
+        }
+        let mut body = serde_json::json!({"error":{
+            "code":"read_failed","message":&raw[..end],"retryable":false
+        }});
+        if end < raw.len() {
+            body["error"]["details_truncated"] = true.into();
+            body["error"]["message_truncated"] = true.into();
+        }
+        let result = rmcp::model::CallToolResult::error(vec![rmcp::model::ContentBlock::text(
+            body.to_string(),
+        )]);
+        match error.downcast_ref::<airk_core::scoped_reads::ScopeErrorObservation>() {
+            Some(scope) => with_scope_observation(&scope.observation, result),
+            None => result,
+        }
+    })
+}
+/// A trusted internal owner may retain a recognized typed receipt before an
+/// Arc/shared error wrapper obscures the original downcast identity. There is
+/// deliberately no JSON/request constructor or Deserialize implementation.
+#[derive(Debug)]
+pub struct PreservedReadFailure(rmcp::model::CallToolResult);
+impl PreservedReadFailure {
+    pub fn from_error(error: &anyhow::Error) -> Option<Self> {
+        typed_error_result(error).map(Self)
     }
-    result
+}
+impl std::fmt::Display for PreservedReadFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("native read refused; inspect its complete typed receipt")
+    }
+}
+impl std::error::Error for PreservedReadFailure {}
+
+/// Preserve recognized native refusal/retry contracts at every transport boundary.
+/// Unrecognized text never becomes a retry hint.
+pub fn typed_error_result(error: &anyhow::Error) -> Option<rmcp::model::CallToolResult> {
+    let result = match error.downcast_ref::<PreservedReadFailure>() {
+        Some(preserved) => preserved.0.clone(),
+        None => typed_bare_error_result(error)?,
+    };
+    Some(
+        match error.downcast_ref::<airk_core::scoped_reads::ScopeErrorObservation>() {
+            Some(scope) => with_scope_observation(&scope.observation, result),
+            None => result,
+        },
+    )
 }
 pub fn scoped_error_result(
     kernel: &airk_kernel::Kernel,
@@ -116,45 +163,56 @@ fn with_scope_observation(
     }
     serde_json::from_value(wire).unwrap_or_else(|_| failure(required_bytes))
 }
-fn bare_error_result(error: &anyhow::Error) -> rmcp::model::CallToolResult {
+fn typed_bare_error_result(error: &anyhow::Error) -> Option<rmcp::model::CallToolResult> {
+    if let Some(invalid) = error.downcast_ref::<airk_core::read_arguments::ReadArgumentError>() {
+        return Some(rmcp::model::CallToolResult::error(vec![
+            rmcp::model::ContentBlock::text(invalid.receipt().to_string()),
+        ]));
+    }
     if let Some(refusal) = error.downcast_ref::<airk_kernel::SourcePolicyReadUnavailable>() {
-        return rmcp::model::CallToolResult::error(vec![rmcp::model::ContentBlock::text(
-            refusal.receipt().to_string(),
-        )]);
+        return Some(rmcp::model::CallToolResult::error(vec![
+            rmcp::model::ContentBlock::text(refusal.receipt().to_string()),
+        ]));
     }
     if let Some(budget) = error.downcast_ref::<airk_core::scoped_reads::ScopeReplyBudget>() {
-        return rmcp::model::CallToolResult::error(vec![rmcp::model::ContentBlock::text(
-            budget.receipt().to_string(),
-        )]);
+        return Some(rmcp::model::CallToolResult::error(vec![
+            rmcp::model::ContentBlock::text(budget.receipt().to_string()),
+        ]));
     }
     if let Some(refusal) = error.downcast_ref::<airk_core::scoped_reads::ScopeReadRefused>() {
-        return rmcp::model::CallToolResult::error(vec![rmcp::model::ContentBlock::text(
-            serde_json::json!({"error":refusal.receipt()}).to_string(),
-        )]);
+        return Some(rmcp::model::CallToolResult::error(vec![
+            rmcp::model::ContentBlock::text(
+                serde_json::json!({"error":refusal.receipt()}).to_string(),
+            ),
+        ]));
     }
     if let Some(receipt) = airk_core::search_execution::helper_unavailable_receipt(error) {
-        return rmcp::model::CallToolResult::error(vec![rmcp::model::ContentBlock::text(
-            receipt.to_string(),
-        )]);
+        return Some(rmcp::model::CallToolResult::error(vec![
+            rmcp::model::ContentBlock::text(receipt.to_string()),
+        ]));
     }
     if error
         .downcast_ref::<airk_core::verification::VerificationProjectionChanged>()
         .is_some()
     {
-        return rmcp::model::CallToolResult::error(vec![rmcp::model::ContentBlock::text(serde_json::json!({"error":{"code":"verification_projection_changed","message":error.to_string(),"retryable":false}}).to_string())]);
+        return Some(rmcp::model::CallToolResult::error(vec![rmcp::model::ContentBlock::text(serde_json::json!({"error":{"code":"verification_projection_changed","message":error.to_string(),"retryable":false}}).to_string())]));
     }
     if error
         .downcast_ref::<airk_core::verification::VerificationReplyBudget>()
         .is_some()
     {
-        return rmcp::model::CallToolResult::error(vec![rmcp::model::ContentBlock::text(
-            airk_core::verification::reply_budget_refusal().to_string(),
-        )]);
+        return Some(rmcp::model::CallToolResult::error(vec![
+            rmcp::model::ContentBlock::text(
+                airk_core::verification::reply_budget_refusal().to_string(),
+            ),
+        ]));
     }
-    let text = airk_kernel::retrieval_retry::read_retry_hint(error)
-        .and_then(|hint| serde_json::to_string(&hint).ok())
-        .unwrap_or_else(|| error.to_string());
-    rmcp::model::CallToolResult::error(vec![rmcp::model::ContentBlock::text(text)])
+    let hint = airk_kernel::retrieval_retry::read_retry_hint(error)?;
+    Some(rmcp::model::CallToolResult::error(vec![
+        rmcp::model::ContentBlock::text(
+            serde_json::to_string(&hint).expect("scalar read retry receipt"),
+        ),
+    ]))
 }
 
 #[derive(
@@ -377,6 +435,33 @@ impl Session {
         if mode == ResponseMode::Full {
             self.status(object, true);
             return;
+        }
+        // The full operation schemas are explicitly available in full mode.
+        // Keep every other capability and verification field, including future
+        // metadata. Never walk arbitrary user/evidence objects or rewrite shared
+        // capability tables whose content hashes bind combined replies.
+        if object.contains_key("adapters")
+            && let Some(workbench) = object.get_mut("workbench").and_then(Value::as_object_mut)
+            && workbench.get("catalog").is_some_and(Value::is_string)
+            && workbench.get("operations").is_some_and(Value::is_object)
+        {
+            let operations = workbench
+                .remove("operations")
+                .expect("validated operation catalog");
+            let names: Vec<_> = operations
+                .as_object()
+                .expect("validated operations")
+                .keys()
+                .cloned()
+                .collect();
+            workbench.insert("operation_names".into(), serde_json::json!(names));
+            workbench.insert(
+                "operation_schemas".into(),
+                serde_json::json!({
+                    "included":false,"reason":"terse_reply","omitted_field":"workbench.operations",
+                    "request":{"response_mode":"full"}
+                }),
+            );
         }
         // Explicit diagnostic/capability/change tools always disclose their status.
         let explicit = include_status
@@ -615,9 +700,10 @@ mod tests {
         assert!(body.get("publication").is_none() && body.get("items").is_none());
         let ordinary = error_result(&anyhow::anyhow!("current revision expired"));
         assert_eq!(
-            ordinary.content[0].as_text().unwrap().text,
-            "current revision expired"
+            serde_json::from_str::<Value>(&ordinary.content[0].as_text().unwrap().text).unwrap(),
+            serde_json::json!({"error":{"code":"read_failed","message":"current revision expired","retryable":false}})
         );
+        assert_eq!(ordinary.is_error, Some(true));
     }
     fn response() -> Value {
         serde_json::json!({"collection":"one", "publication":{"incarnation":"a","token":"exact-token"},
@@ -764,5 +850,53 @@ mod tests {
                 assert_eq!(value["content"]["profile_families"], report);
             }
         }
+    }
+    #[test]
+    fn terse_capabilities_disclose_catalog_summary_and_full_restores_every_schema() {
+        let catalog = airk_kernel::workbench::operation_catalog();
+        let original = serde_json::json!({"adapters":[{"id":"rust","future_adapter":true}],
+            "workbench":catalog,"future_native_capability":{"kept":true},
+            "source_verification":{"schema":"future","sources":[{"path":"large.rs","whole_source_checked":true}]}});
+        let mut terse = original.clone();
+        Session::default().display(&mut terse, ResponseMode::Terse, false);
+        assert!(terse["workbench"].get("operations").is_none());
+        assert_eq!(
+            terse["workbench"]["operation_schemas"]["omitted_field"],
+            "workbench.operations"
+        );
+        assert_eq!(
+            terse["workbench"]["operation_schemas"]["request"]["response_mode"],
+            "full"
+        );
+        assert_eq!(
+            terse["workbench"]["operation_names"]
+                .as_array()
+                .unwrap()
+                .len(),
+            catalog["operations"].as_object().unwrap().len()
+        );
+        assert_eq!(terse["adapters"], original["adapters"]);
+        assert_eq!(
+            terse["source_verification"],
+            original["source_verification"]
+        );
+        assert_eq!(
+            terse["future_native_capability"],
+            original["future_native_capability"]
+        );
+        assert!(
+            serde_json::to_vec(&terse).unwrap().len()
+                < serde_json::to_vec(&original).unwrap().len() / 2
+        );
+        let mut full = original.clone();
+        Session::default().display(&mut full, ResponseMode::Full, false);
+        assert_eq!(full, original);
+        let mut evidence = serde_json::json!({"workbench":catalog,"user_content":"unchanged"});
+        let before = evidence.clone();
+        Session::default().display(&mut evidence, ResponseMode::Terse, false);
+        assert_eq!(
+            evidence, before,
+            "only the canonical capabilities envelope is summarized"
+        );
     }
 }

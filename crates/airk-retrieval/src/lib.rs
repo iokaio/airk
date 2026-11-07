@@ -122,6 +122,29 @@ pub fn focus_span(text: &str, query: &str, allowance: usize) -> airk_core::locat
             end: text.len(),
         };
     }
+    // Focus a selected chunk on its contiguous query spelling when available.
+    // This changes only the excerpt, never AND matching or candidate ordering.
+    let literal = query.trim();
+    let literal = literal
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .filter(|value| !value.is_empty())
+        .unwrap_or(literal);
+    if allowance > 0
+        && !literal.is_empty()
+        && let Some(found) = text.find(literal)
+    {
+        let before = allowance.saturating_sub(literal.len()).min(allowance / 4);
+        let mut start = found.saturating_sub(before);
+        while !text.is_char_boundary(start) {
+            start += 1;
+        }
+        let mut end = text.len().min(start.saturating_add(allowance));
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        return ByteSpan { start, end };
+    }
     let query = terms(query);
     let mut selected = None;
     let mut offset = 0;

@@ -80,7 +80,14 @@ pub fn public_catalog() -> Vec<Tool> {
     let native = crate::local::tools();
     let mut tools: Vec<_> = crate::unified::tools()
         .into_iter()
-        .map(|tool| {
+        .map(|mut tool| {
+            if tool.name == "query_scope" {
+                Arc::make_mut(&mut tool.input_schema)
+                    .get_mut("properties")
+                    .and_then(Value::as_object_mut)
+                    .expect("query scope properties")
+                    .remove("project");
+            }
             if tool.name != "query_scope"
                 && native
                     .iter()

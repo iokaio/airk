@@ -1,19 +1,19 @@
 ---
 id: indexing.projects
-title: Indexing — Projects
+title: Indexing — Index sets
 route: indexing/projects
 area: explorer
-aliases: Project catalog, memberships, defaults
+aliases: index sets, saved selections, memberships, Projects
 related_airk_help: indexing
 ---
-# Projects
+# Index sets
 
-Refresh reads a bounded native Project catalog page. Inspect a Project to read its revisions, defaults and paged memberships. Project creation, rename, deletion, assignment of an existing index, membership removal and defaults use a native preview before explicit apply. Index and source IDs come from Index library and Sources; source scope is explicit and never inferred from open folders.
+An index set is a named selection of existing indexes. It organizes search without copying or splitting index data. Choose it in Search scope alongside any individual indexes you want to search.
 
-Metadata and saved defaults grant no source access. This window can review saved associations and explicitly request a native access-grant draft after reading its canonical descriptor. Grant persistence does not switch or activate an evidence connection. New-index setup remains a separate flow. Native operations requiring an authority fence can complete only with a full matching native receipt and delivery proof; unavailable fences retain their native failure. Source files are read-only.
+The list loads automatically when the connection is ready. Refresh Index sets refreshes or retries a failed read. Next page reads more entries; filtering applies only to the displayed page. A failed read does not mean the list is empty.
 
-For a newly set up index, create a Project, inspect it, and assign that index using the actual native Source IDs and explicit scope rows. After applying the membership, read the current window descriptor, review and persist a new grant, then separately Use Grant with one index and the selected Project IDs. Source changes can invalidate frozen grants; the screen never creates a replacement grant or switches sessions automatically.
+Expand Create an index set, enter its name, check the indexes to include and choose Create index set. Open index set edits its name and index checkboxes. Save index set applies those choices. Newly added indexes include their current sources. Existing folder-specific selections stay unchanged when their indexes remain checked. Renaming never widens an existing folder selection. Existing sets load their complete membership before Save becomes available.
 
-Edit all membership scopes preserves the complete observed atom set, including different Source roots. Add or remove source/kind/path rows explicitly; duplicate atoms are refused. At most 128 atoms and the native 48 KiB request limit apply. Empty scopes grant no source authority. Paths are bounded by UTF-8 bytes and validated by the native canonical path contract.
+Delete index set removes only that grouping; its indexes and original source files remain. To stop maintaining an index and remove its searchable data, use Delete index in Index library instead.
 
-Stale revisions, namespace replacement, trust revocation and client replacement invalidate reviews. Exact requests, native request digests and native preview digests are saved before apply. Every apply or reconciled receipt must match the reviewed request digest, schema, caller, full key and catalog revision. An interrupted reply requires Check native receipts; no apply is automatically repeated. A missing receipt is not proof of failure or permission to retry. Complete JSON details, copy and export retain all fields of the currently displayed native results, including continuations and receipts.
+The underlying native contract calls an index set a Project; complete structured details retain those original field names. Complete details, JSON/Markdown copies and exports keep all native fields and receipts. Stale revisions, replaced connections and lost workspace trust refuse changes. Unconfirmed requests remain visible in Operation status and recovery and are reconciled by their exact receipts.

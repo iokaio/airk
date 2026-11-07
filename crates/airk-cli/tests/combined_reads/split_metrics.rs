@@ -217,6 +217,7 @@ impl Capture {
         .await?;
         let ControlResponse::CatalogHostContext {
             descriptor: context_descriptor,
+            ..
         } = context_response
         else {
             anyhow::bail!("native metric context descriptor unavailable")

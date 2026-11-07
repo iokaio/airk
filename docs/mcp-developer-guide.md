@@ -91,15 +91,27 @@ frozen native-reviewed grant before forming a combined request.
 `sources` requires both `project_id` and `index_id`. Optional `limit` is 1–32,
 `max_bytes` is 1–65,536, and `cursor` continues the exact view and revisions.
 These are new opaque `prj_`/`idx_` identities, separate from legacy `project`.
+For a connection with configured legacy bindings, the optional transport
+`project` selects the advertised binding and is required when no single default
+exists. It never follows the Explorer selection. Combined sessions and the
+native prefixed handler omit that transport selector.
 
 **Result and limits:** Granted-only metadata, exact scope/grant revisions,
-observation, pagination and truncation. No source scan or evidence worker is
-needed for discovery. Legacy connections return explicit `configuration_required`.
-A changed authority expires the page; it never restarts against broader scope.
+observation, pagination and truncation. Combined catalog discovery needs no source
+scan or evidence worker. A frozen single-index connection reports its exact
+installed grant, `scope_observation` and `observed_selection`, with
+`mode: frozen_single_index` and `configuration_required` for current catalog
+discovery. Its catalog rows remain empty and it has no continuation: it does not
+invent Project names or restore/widen a grant. An unscoped legacy connection
+reports `configuration_required` without an installed grant. A changed authority
+expires the page; it never restarts against broader scope.
 
 **Implementation:** [selected catalog](../crates/airk-mcp/src/combined.rs),
 [native owner](../crates/airk-cli/src/combined_frontend.rs), and
 [actual-process tests](../crates/airk-cli/tests/combined_reads.rs).
+The [single-index handler](../crates/airk-kernel/src/scoped_reads.rs) and
+[configured-binding adapter](../crates/airk-mcp/src/unified.rs) retain their
+separate authority and transport selection roles.
 
 ## projects
 
@@ -184,7 +196,7 @@ Deadline cancellation of setup admission retains its typed expiry through the sh
 
 **Inputs:** `query`; optional `mode`, `path_prefix`, `language`, `evidence_kind`, `exclude_path_prefix`, `limit`, `max_bytes`, `full_chunks` and response options. Language is an exact saved extraction label. Evidence kind is `code`, `document`, `configuration` or `unknown`, derived from indexed extraction metadata rather than a filename guess. Exclusion is one literal relative prefix for this query, not a change to indexing or authorization. Lexical terms are ANDed. Omitted mode follows saved collection policy; an explicit mode does not silently mean another mode.
 
-**Result and limits:** Ranked hits, citations, exact publication and truncation/coverage information. Filter candidate discovery has its own finite work limit; a truncated roster is disclosed rather than reported as an exhaustive absence. Optional bounded `definitions` hints identify verified native declaration records from the same sealed read, with exact/unknown count precision and cited candidate pointers; imported assertions are excluded from this hint family. Their pointer list can be shorter than the qualified count; they do not change search ranking or lexical AND semantics. Focused snippets are the default; `full_chunks` changes returned text, not the indexed source. Hybrid results while semantic work is partial do not prove complete vector coverage. Prose, comments and scripts can rank alongside code; for a known type/function use definition lookup first.
+**Result and limits:** Ranked hits, citations, exact publication and truncation/coverage information. Filter candidate discovery has its own finite work limit; a truncated roster is disclosed rather than reported as an exhaustive absence. Optional bounded `definitions` hints identify verified native declaration records from the same sealed read, with exact/unknown count precision and cited candidate pointers; imported assertions are excluded from this hint family. Their pointer list can be shorter than the qualified count; they do not change search ranking or lexical AND semantics. Focused snippets are the default; `full_chunks` changes returned text, not the indexed source. Lexical matching requires normalized AND terms in a candidate chunk or path; punctuation and quotes separate terms, and quotes do not enable phrase matching. Lexical candidate order is stable index identity, not relevance. A contiguous original query spelling can guide excerpt focus inside an already selected chunk without changing matching, candidate order or limits. Hybrid results while semantic work is partial do not prove complete vector coverage. Prose, comments and scripts can rank alongside code; for a known type/function use definition lookup first.
 
 ```json
 {

@@ -202,6 +202,21 @@ pub fn annotate(value: &mut Value) {
         advice.add(Reason::Stale,"source_work_watermark","freshness.requested_watermark/completed_watermark","Observed source work has not caught up. This is a work-watermark observation, not proof that any particular cited file differs on disk.",NextRead::InspectSourceStatus);
     }
     let page = get("page");
+    if get("filter_observations")
+        .or_else(|| page.and_then(|value| value.get("filter_observations")))
+        .and_then(Value::as_array)
+        .is_some_and(|rows| !rows.is_empty())
+    {
+        advice.add(Reason::Unknown,"requested_filters","filter_observations",
+            "The exact filter labels were not observed in this complete selected query. Check their spelling and file_info language/profile labels. Valid absent native and retained producer labels remain valid; this is not a global unsupported-language finding.",NextRead::InspectFileInfo);
+    }
+    if get("truncation_reasons")
+        .and_then(Value::as_array)
+        .is_some_and(|rows| !rows.is_empty())
+    {
+        advice.add(Reason::Truncated,"relationship_traversal","truncation_reasons/bounds",
+            "This bounded relationship traversal reports the actual limits or incomplete navigation it observed. There is no graph continuation cursor. Narrow path_prefix or the exact written target, reduce hops, or explicitly increase result/byte budgets within the reported bounds. Missing edges do not prove absence.",NextRead::ReadSelectedPassage);
+    }
     let cursor = [get("cursor"), page.and_then(|v| v.get("cursor"))]
         .into_iter()
         .flatten()
@@ -413,5 +428,31 @@ mod tests {
         let before = absent.clone();
         annotate(&mut absent);
         assert_eq!(absent, before);
+    }
+}
+
+#[cfg(test)]
+mod query_limit_guidance_tests {
+    use super::*;
+    #[test]
+    fn qualified_filter_and_relationship_limits_remain_visible() {
+        let mut value = serde_json::json!({"items":[],"filter_observations":[{"field":"language","value":"future_label"}],
+            "truncated":true,"truncation_reasons":["reply_bytes"],"bounds":{"max_record_bytes":16}});
+        annotate(&mut value);
+        let guidance = value["guidance"]["observations"].as_array().unwrap();
+        assert!(
+            guidance
+                .iter()
+                .any(|item| item["subject"] == "requested_filters")
+        );
+        assert!(guidance.iter().any(|item| {
+            item["subject"] == "relationship_traversal"
+                && item["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("no graph continuation")
+        }));
+        assert_eq!(value["filter_observations"][0]["value"], "future_label");
+        assert_eq!(value["truncation_reasons"][0], "reply_bytes");
     }
 }

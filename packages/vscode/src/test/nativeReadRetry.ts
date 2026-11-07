@@ -3,7 +3,7 @@
 import {execFile} from 'node:child_process';
 import {NativeProcessError} from '../native';
 import {requireNativeExecution} from '../nativeGate';
-import {readRetryDelay} from '../explorerEvidence';
+import {readRetryDelay} from '../readRetry';
 import {strict as assert} from 'node:assert';
 import {RecordValue} from '../serviceClient';
 import {McpStdioSession} from '../mcpStdioSession';
@@ -20,21 +20,25 @@ export function boundedReply(value:unknown,limit=2048):string{
 
 export type ReadRetryReceipt={code:string;query_submitted:false}|{code:string;action:'repeat_same_request'};
 /** Observe both native receipt shapes through the same strict replay validator. */
-export function readRetryReceipt(reply:any):ReadRetryReceipt{
-    assert.notEqual(readRetryDelay(reply),undefined,`Unrecognized native read refusal: ${boundedReply(reply)}`);
+export function readRetryReceipt(reply:any,expectedScope?:unknown):ReadRetryReceipt{
+    assert.notEqual(readRetryDelay(reply,expectedScope),undefined,`Unrecognized native read refusal: ${boundedReply(reply)}`);
     const body=JSON.parse(reply.content[0].text);
+    if(body.schema==='airk.combined-read/1'){
+        const code=body.read_retry.code;
+        return ['direct_query_admission','direct_query_setup'].includes(code)?{code,query_submitted:false}:{code,action:'repeat_same_request'};
+    }
     return body.error?{code:body.error.code,query_submitted:false}:{code:body.code,action:'repeat_same_request'};
 }
 
 /** Repeat one MCP read only after an explicit typed rejection, within its original budget. */
-export async function requestWithReadRetry(session:McpStdioSession,name:string,args:Record<string,unknown>={},timeout=120000,onReply?:(reply:any)=>void):Promise<any>{
+export async function requestWithReadRetry(session:McpStdioSession,name:string,args:Record<string,unknown>={},timeout=120000,onReply?:(reply:any)=>void,expectedScope?:unknown):Promise<any>{
     const deadline=performance.now()+timeout;
     while(true){
         const result=await session.request('tools/call',{name,arguments:args},Math.max(1,deadline-performance.now()));
         // Test assertions and diagnostics see every receipt, including refusals;
         // the shared native hint parser alone determines whether retry is safe.
         onReply?.(result);
-        const delay=readRetryDelay(result);
+        const delay=readRetryDelay(result,expectedScope);
         if(delay!==undefined&&performance.now()+delay<deadline){await new Promise(resolve=>setTimeout(resolve,delay));continue;}
         assert.notEqual(result?.isError,true,`${name} failed: ${boundedReply(result)}`);
         return result;
@@ -61,7 +65,7 @@ export type QuickStatusObserver=(observation:QuickStatusObservation)=>void;
 /** Observe the same scoped read after an explicit timeout/refusal; never accept either as readiness.
  * Optional measurements contain fixed categories and numbers only; observer failures cannot affect reads.
  */
-export async function observeQuickStatus(read:(deadline:number)=>Promise<RecordValue>,deadline=performance.now()+60000,observer?:QuickStatusObserver):Promise<RecordValue>{
+export async function observeQuickStatus(read:(deadline:number)=>Promise<RecordValue>,deadline=performance.now()+60000,observer?:QuickStatusObserver,expectedScope?:unknown):Promise<RecordValue>{
     let project:unknown;
     const started=observer?performance.now():0;let attempts=0;
     const emit=(value:QuickStatusObservation)=>{try{observer?.(value);}catch{/* Measurements never control native reads. */}};
@@ -73,7 +77,7 @@ export async function observeQuickStatus(read:(deadline:number)=>Promise<RecordV
         }
         if(observer){
             const ended=performance.now();
-            let outcome:QuickStatusOutcome=status.isError===true?(readRetryDelay(status)!==undefined?'retry':'error'):
+            let outcome:QuickStatusOutcome=status.isError===true?(readRetryDelay(status,expectedScope)!==undefined?'retry':'error'):
                 status.index_state==='available'?'available':status.index_state==='unavailable'?'unavailable':
                 status.index_state==='unknown'?'status_timeout':'other';
             if(ended>=deadline)outcome='late';
@@ -87,7 +91,7 @@ export async function observeQuickStatus(read:(deadline:number)=>Promise<RecordV
         if(status.isError===true){
             // A timed-out call can still hold native materialization admission.
             // Only the existing exact read-retry contract permits another read.
-            const delay=readRetryDelay(status);
+            const delay=readRetryDelay(status,expectedScope);
             assert.ok(delay!==undefined,`status failed: ${boundedReply(status)}`);
             assert.ok(performance.now()+delay<deadline,'Quick status observation budget exhausted');
             await new Promise(resolve=>setTimeout(resolve,delay));continue;
@@ -106,6 +110,10 @@ export async function observeQuickStatus(read:(deadline:number)=>Promise<RecordV
 
 export async function readNative(command:string,args:readonly string[],cwd:string,until?:number):Promise<unknown>{
     const deadline=Math.min(until??Infinity,performance.now()+120000);
+    // Only the original launch argument can bind an unconfirmed setup receipt.
+    const selectors=args.flatMap((arg,index)=>arg==='--catalog-session'?[args[index+1]]:[]);
+    let expectedScope:unknown;
+    if(selectors.length===1){try{expectedScope=JSON.parse(selectors[0]);}catch{/* Refuse scoped replay without a valid selector. */}}
     while(true){
         const started=performance.now();
         if(started>=deadline)throw new Error('Native fixture read exceeded its original observation budget');
@@ -113,9 +121,10 @@ export async function readNative(command:string,args:readonly string[],cwd:strin
         const result=await new Promise<{envelope:unknown;delay?:number}>((resolve,reject)=>{
             execFile(command,[...args],{cwd,timeout,maxBuffer:1024*1024,windowsHide:true,encoding:'utf8'},(error,stdout,stderr)=>{
                 let envelope:unknown;try{envelope=JSON.parse(stdout);}catch{ /* Report the actual process failure below. */ }
-                const delay=readRetryDelay(envelope);
+                const delay=readRetryDelay(envelope,expectedScope);
                 if(error&&!(error.code===1&&!error.killed&&!error.signal&&delay!==undefined)){
-                    reject(new NativeProcessError(command,error,stderr,Math.round(performance.now()-started),timeout));return;
+                    reject(Object.assign(new NativeProcessError(command,error,stderr,Math.round(performance.now()-started),timeout),
+                        {nativeStdout:stdout,nativeStderr:stderr,...(envelope!==undefined?{nativeResponse:envelope}:{})}));return;
                 }
                 if(envelope===undefined){reject(new Error('Native read returned no JSON envelope'));return;}
                 resolve({envelope,delay});

@@ -103,6 +103,25 @@ test('setup controller requires native review then explicit apply and drops late
     await f.value.page('indexes');f.control.catalogIndexSetupDraft=async()=>{f.replace();return validateNativeIndexSetupDraft(setup.response,setup.selection);};
     await assert.rejects(f.value.setupDraft(selection,f.value.snapshot().generation),/stale/);assert.equal(f.value.snapshot().setupReview,undefined);assert.equal(applies,1);
 });
+
+test('native setup reviews require an established window owner and keep all later owner fences',async()=>{
+    const f=controller(),setup=setupFixture();let descriptor:WindowContextDescriptor|undefined,observation:CatalogObject|undefined,drafts=0,applies=0;
+    f.control.catalogIndexSetupDraft=async()=>{drafts++;return validateNativeIndexSetupDraft(setup.response,setup.selection);};
+    f.control.catalogIndexSetupApply=async()=>{applies++;return {status:'catalog_index_setup_applied',receipt:setup.ready};};
+    const value=new IndexingCatalogController({control:f.control,identity:()=> 'current',authorized:()=>true,changed(){},canReadWindowContext:()=>true,windowContext:()=>descriptor,windowContextObservation:()=>observation});
+    const {key,expected_catalog_revision,...selection}=setup.selection;
+    await value.page('indexes');await assert.rejects(value.setupDraft(selection,value.snapshot().generation),/read_native_window_context_before_setup_review/);assert.equal(drafts,0);assert.equal(applies,0);
+    descriptor={host:'22'.repeat(32),key:'33'.repeat(32),kind:'folder',name:'Fixture'};
+    observation={status:'catalog_host_context',descriptor:{schema:1,namespace,host:descriptor.host,key:descriptor.key,catalog_revision:1,context:null},capabilities:{policy_contract:3}};
+    await value.adoptHostContext();await value.page('indexes');await value.setupDraft(selection,value.snapshot().generation);
+    const stable=value.snapshot();assert.ok(stable.setupReview);assert.equal(value.snapshot().setupReview,stable.setupReview,'stable authenticated owner keeps exact review');
+    await value.setupApply(stable.generation);assert.equal(applies,1);
+    await value.page('indexes');await value.setupDraft(selection,value.snapshot().generation);const established=value.snapshot();
+    observation={...observation,descriptor:{...catalogObject(observation.descriptor),catalog_revision:2}};
+    assert.equal(value.snapshot().setupReview,undefined,'changed native metadata still invalidates the review');
+    await assert.rejects(value.setupApply(established.generation),/stale_setup_review/);assert.equal(applies,1);assert.equal(drafts,2);
+});
+
 function nativeGrantOperation(host='22'.repeat(32)){
     return {operation:'create_grant',grant:{id:'grt_'+'11'.repeat(16),host,revision:1,revoked:false,memberships:[{
         membership:{project_id:project,index_id:index,revision:1,scope:[{source_root_id:source,kind:'subtree',path:''}]},source_revision:1,policy_epoch:0,policy_digest:null,
@@ -329,6 +348,15 @@ test('catalog UI preserves complete native pages, details, preview and exports',
     assert.deepEqual(exported.detail.detail.item.value.native_provenance,{kept:true});
     await assert.rejects(f.value.apply(generation-1),/stale_catalog_review/);
     assert.equal(f.value.snapshot().review,undefined);
+});
+
+test('empty catalog pages retain their requested kind across detail reads and reset with their owner',async()=>{
+    const f=controller();f.control.catalogRead=async method=>'catalog_detail' in method?{status:'catalog_detail',detail:{namespace,revision:1,item:{kind:'project',value:projectValue}}}:page({items:[]});
+    await f.value.page('indexes');assert.equal(f.value.snapshot().pageKind,'indexes');assert.deepEqual(catalogObject(f.value.snapshot().page!.page).items,[]);
+    await f.value.page('projects');assert.equal(f.value.snapshot().pageKind,'projects');
+    await f.value.detail('project',project);assert.equal(f.value.snapshot().pageKind,'projects');
+    await f.value.page('sources',false,index);assert.equal(f.value.snapshot().pageKind,'projects','auxiliary pages do not replace the displayed catalog kind');
+    f.replace();assert.equal(f.value.snapshot().pageKind,undefined);assert.equal(f.value.snapshot().page,undefined);
 });
 test('stale catalog trust, client, namespace, revisions and continuation filters refuse late work',async()=>{
     for(const fence of ['trust','client'] as const){

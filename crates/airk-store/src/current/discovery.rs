@@ -209,6 +209,15 @@ impl CurrentRead {
         fact_options: &FactDiscoveryOptions,
     ) -> Result<CurrentFactPage> {
         airk_core::validate_budget(query.limit, query.max_bytes)?;
+        for (field, value) in [
+            ("kind", query.kind.as_deref()),
+            ("language", query.language.as_deref()),
+        ] {
+            if value.is_some_and(|value| value.is_empty() || value.len() > 128) {
+                return Err(airk_core::read_arguments::ReadArgumentError::new("invalid_filter",field,
+                    format!("{field} must contain 1..128 UTF-8 bytes; native and retained producer labels are matched exactly")).into());
+            }
+        }
         ensure!(
             fact_options.name_match.is_none()
                 || query.name.as_ref().is_some_and(|name| !name.is_empty()),
@@ -281,7 +290,9 @@ impl CurrentRead {
         let exact_name = fact_options
             .name_match
             .map_or(query.exact_name, |mode| mode == NameMatch::Exact);
-        let lookup = if let Some(name) = query.name.as_deref().filter(|_| exact_name) {
+        let lookup = if let Some(language) = query.language.as_deref() {
+            Lookup::Language(language)
+        } else if let Some(name) = query.name.as_deref().filter(|_| exact_name) {
             if self.terminal_call_postings_complete()?
                 || query.kind.as_deref().is_some_and(|kind| kind != "call")
             {
@@ -303,20 +314,25 @@ impl CurrentRead {
         let mut imported_paths = projected_import
             .as_ref()
             .map(|projection| {
-                self.observe_private_integrity(projection.lookup_paths(
-                    Lookup::Files,
-                    &query.path_prefix,
-                    if query.path_exact {
-                        None
-                    } else {
-                        after.as_ref().map(|key| key.path.as_str())
-                    },
-                    if query.path_exact {
-                        1
-                    } else {
-                        MAX_FILES_PER_PAGE + 1
-                    },
-                ))
+                self.observe_private_integrity(
+                    projection.lookup_paths(
+                        query
+                            .language
+                            .as_deref()
+                            .map_or(Lookup::Files, Lookup::Language),
+                        &query.path_prefix,
+                        if query.path_exact {
+                            None
+                        } else {
+                            after.as_ref().map(|key| key.path.as_str())
+                        },
+                        if query.path_exact {
+                            1
+                        } else {
+                            MAX_FILES_PER_PAGE + 1
+                        },
+                    ),
+                )
             })
             .transpose()?
             .unwrap_or_default();
@@ -353,15 +369,20 @@ impl CurrentRead {
             (page.paths, page.next_after.is_some())
         };
         if !query.path_exact {
-            paths.extend(
-                imported_facts
-                    .keys()
-                    .filter(|path| {
-                        path.starts_with(&query.path_prefix)
-                            && after.as_ref().is_none_or(|key| *path > &key.path)
-                    })
-                    .cloned(),
-            );
+            for path in imported_facts.keys().filter(|path| {
+                path.starts_with(&query.path_prefix)
+                    && after.as_ref().is_none_or(|key| *path > &key.path)
+            }) {
+                let language_matches = match query.language.as_deref() {
+                    None => true,
+                    Some(language) => self
+                        .artifact(path)?
+                        .is_some_and(|artifact| artifact.language == language),
+                };
+                if language_matches {
+                    paths.push(path.clone());
+                }
+            }
             paths.extend(
                 imported_paths
                     .iter()
@@ -411,6 +432,18 @@ impl CurrentRead {
             let compact = self
                 .artifact(&path)?
                 .context("current fact candidate artifact missing")?;
+            if query
+                .language
+                .as_ref()
+                .is_some_and(|language| language != &compact.language)
+            {
+                last = Some(DiscoveryKey {
+                    path,
+                    ordinal: FILE_END,
+                    ..Default::default()
+                });
+                continue;
+            }
             let retained = compact
                 .retained
                 .as_ref()
@@ -648,6 +681,18 @@ impl CurrentRead {
                 .as_ref()
                 .map(|key| discovery::encode(&binding, key))
                 .transpose()?;
+        }
+        if after.is_none() && !response.truncated && matched == 0 {
+            for (field, value) in [
+                ("kind", query.kind.as_deref()),
+                ("language", query.language.as_deref()),
+            ] {
+                if let Some(value) = value {
+                    response.page.filter_observations.push(
+                        airk_core::discovery::FilterObservation::no_matching_records(field, value),
+                    );
+                }
+            }
         }
         if fact_options.include_count {
             let complete = after.is_none() && !response.truncated;

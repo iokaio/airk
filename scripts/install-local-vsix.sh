@@ -17,7 +17,13 @@ case "$code" in *insiders*) extensions="$HOME/.vscode-insiders/extensions" ;; *)
 echo "Installing $id_version from $vsix (forced; replaces the same version)"
 "$code" --install-extension "$vsix" --force
 "$python" -c 'import hashlib,sys,zipfile
-expected=hashlib.sha256(zipfile.ZipFile(sys.argv[1]).read("extension/out/serviceExtension.js")).hexdigest()
-actual=hashlib.sha256(open(sys.argv[2],"rb").read()).hexdigest()
-sys.exit(0 if expected==actual else "The installed code does not match the VSIX; close all VS Code windows and retry.")' "$vsix" "$extensions/$id_version/out/serviceExtension.js"
+from pathlib import Path
+with zipfile.ZipFile(sys.argv[1]) as archive:
+    names=[name for name in archive.namelist() if name.startswith("extension/out/") and "/" not in name[len("extension/out/"):] and name.endswith((".js", ".css"))]
+    if not all("extension/out/"+name in names for name in ("serviceExtension.js", "explorerWebview.js", "explorerWebview.css")):
+        sys.exit("VSIX is missing required host or Explorer UI code.")
+    for name in names:
+        file=Path(sys.argv[2])/name[len("extension/"):]
+        if not file.is_file() or hashlib.sha256(archive.read(name)).digest()!=hashlib.sha256(file.read_bytes()).digest():
+            sys.exit("The installed code at "+str(file)+" does not match the VSIX; close all VS Code windows and retry.")' "$vsix" "$extensions/$id_version"
 echo "Verified: $extensions/$id_version matches the VSIX. Reload each open VS Code window to run the new code."

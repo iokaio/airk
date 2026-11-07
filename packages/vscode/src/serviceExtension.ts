@@ -2,7 +2,7 @@
 //! Service-backed extension activation. Native ownership outlives editor windows.
 import * as vscode from 'vscode';
 import * as fs from 'node:fs/promises';
-import { statSync } from 'node:fs';
+import { readdirSync, statSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import * as path from 'node:path';
 import { setupAgent, AgentSetupHost } from './agentSetup';
@@ -19,7 +19,7 @@ import { defaultProfiles, removeShellIntegration } from './cliRemove';
 import { openUsagePanel, type AdministrativeIndexSelection, type UsageAccess } from './usagePanel';
 import { ADMINISTRATIVE_USAGE_LABEL, renderUsage } from './usageReport';
 import { COMMAND_ROUTES, MANAGE_WORKSPACE_TRUST_COMMAND, NATIVE_COMMANDS } from './explorerCommands';
-import { CatalogObject, WindowContextDescriptor, catalogBound, catalogId, catalogObject, catalogRevision, catalogHex, validateNativeHostContext, validateWindowContext } from './indexingCatalog';
+import { CatalogObject, WindowContextDescriptor, catalogBound, catalogId, catalogItems, catalogObject, catalogRevision, catalogHex, sameCatalogValue, validateNativeHostContext, validateWindowContext } from './indexingCatalog';
 import { reviewScopeSelection, reviewCombinedScopeSelection, scopeSelectionPreference, type ReviewedWindowScopeSelection } from './scopeSelection';
 import type { SearchDraft } from './explorerDrafts';
 import { ExplorerSidebar } from './explorerSidebar';
@@ -34,6 +34,8 @@ import { assistanceDirectory, launchDescriptorPath, writeLaunchDescriptor } from
 import { rememberShellIntegration, rememberUninstallTarget, shellProfiles } from './extensionUninstall';
 import { recordDiagnosticFailure } from './diagnosticLogs';
 import { nativeExecutionAllowed, NativeExecutionDisabled, setNativeExecutionGate } from './nativeGate';
+import type { RuntimeUpgradeProgress } from './explorerContracts';
+import { applyLocalSearchScope, saveLocalIndexSet, localScopeChoice, managedScopeProject, type ManagedScopeProject, type LocalScopeAdapter } from './localSearchScope';
 
 const SETUP_FAILED_STATUS='$(warning) AIRK: setup failed';
 
@@ -44,14 +46,18 @@ function nativeExecutionSetting():boolean{
 
 /** Identity of the loaded extension code. VS Code keeps a same-version reinstall
  * in place, so the version alone cannot reveal that a rebuilt VSIX replaced it. */
-function codeStamp(root:string|undefined):string|undefined{
+function codeStamp(root:string|undefined,required:readonly string[]=['serviceExtension.js']):{stamp:string;files:string[]}|undefined{
     if(!root)return undefined;
     try{
-        const info=statSync(path.join(root,'out','serviceExtension.js')),resolved=path.resolve(root);
+        const directory=path.join(root,'out'),files=readdirSync(directory).filter(name=>/\.(?:js|css)$/.test(name)).sort(),resolved=path.resolve(root);
+        // Installation can briefly remove files while replacing the payload. Wait
+        // for every previously loaded asset before declaring a rebuilt install.
+        if(required.some(name=>!files.includes(name)))return undefined;
+        const metadata=files.map(name=>{const info=statSync(path.join(directory,name));if(!info.isFile())throw new Error('Incomplete extension payload');return [name,info.size,info.mtimeMs];});
         // VS Code's context and extension registry may spell the same Windows
         // path differently. Preserve file changes without treating casing as a rebuild.
         const identity=process.platform==='win32'?path.toNamespacedPath(resolved).toLowerCase():resolved;
-        return `${identity}:${info.size}:${info.mtimeMs}`;
+        return {stamp:JSON.stringify([identity,metadata]),files};
     }catch{return undefined;}
 }
 function same(left:string,right:string):boolean {
@@ -60,7 +66,7 @@ function same(left:string,right:string):boolean {
 class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDataProvider<LaunchSpec> {
     // Capture the loaded code's version; extension metadata can change after a VSIX install.
     private readonly runningVersion:string;
-    private readonly codeIdentity:string|undefined;
+    private readonly codeIdentity:ReturnType<typeof codeStamp>;
     private extensionUpdate?:{runningVersion:string;installedVersion:string};
     readonly output=vscode.window.createOutputChannel('AIRK');
     readonly definitions=new vscode.EventEmitter<void>();
@@ -91,6 +97,12 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     private connectionCheck?:McpVerification;
     private checking?:Promise<void>;
     private startup?:{message:string;startedAt:number;failed?:boolean};
+    private runtimeUpgrade?:RuntimeUpgradeProgress;
+    private localScopeWorking=false;
+    private localScopeEpoch=0;
+    private localScopeLabelChoice?:{index_ids:string[];project_ids:string[]};
+    private restoringLocalScope=false;
+    private localScopeRestoreAttempt?:string;
     private refreshing?:{generation:number;promise:Promise<void>};
     private observedFolders?:string;
     private settingUp?:Promise<void>;
@@ -113,9 +125,22 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         if(this.startup){this.startup={...this.startup,message};this.treeChanges.fire();}
         this.installProgress?.report({message});this.output.appendLine(message);
     }
+    private reportUpgrade(stage:RuntimeUpgradeProgress['stage'],message:string,fromVersion?:string):void{
+        if(this.disposed)return;
+        const now=Date.now(),prior=this.runtimeUpgrade;
+        if(!prior&&!fromVersion)return;
+        this.runtimeUpgrade={fromVersion:fromVersion??prior!.fromVersion,toVersion:this.runningVersion,
+            startedAt:prior?.startedAt??now,updatedAt:now,stage,message};
+        this.reportInstall(message);
+        this.treeChanges.fire();
+    }
     private setupSucceeded(binding:RuntimeBinding,generation:number):void{
-        if(this.disposed||generation!==this.generation||!vscode.workspace.isTrusted||this.extensionUpdate||!nativeExecutionAllowed()
-            ||!this.binding||this.binding.runtimeSha256!==binding.runtimeSha256||!same(this.binding.controlDir,binding.controlDir))return;
+        if(this.disposed||generation!==this.generation||!vscode.workspace.isTrusted||this.extensionUpdate||!nativeExecutionAllowed())return;
+        if(!this.binding||this.binding.runtimeSha256!==binding.runtimeSha256||!same(this.binding.controlDir,binding.controlDir)){
+            this.reportUpgrade('failed','Runtime activation finished, but the updated connection could not be confirmed. Review Management → Service and Logs.');
+            return;
+        }
+        this.reportUpgrade('ready',`AIRK ${this.runningVersion} runtime upgrade complete. Saved indexes are connected; index contents and pending work are preserved.`);
         if(this.startup){this.startup=undefined;this.treeChanges.fire();}
     }
     /** Keep an unresolved setup failure visible when no usable runtime was observed. */
@@ -141,7 +166,10 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         const extension=vscode.extensions?.getExtension(this.context.extension.id??'iokaio.airk');
         let installed=extension?.packageJSON.version;
         // A rebuilt VSIX with the same version replaces the code on disk without a version change.
-        if(installed===this.runningVersion&&this.codeIdentity!==undefined&&codeStamp(extension?.extensionPath??this.context.extensionPath)!==this.codeIdentity)installed=`${installed} (rebuilt)`;
+        if(installed===this.runningVersion&&this.codeIdentity!==undefined){
+            const current=codeStamp(extension?.extensionPath??this.context.extensionPath,this.codeIdentity.files);
+            if(current!==undefined&&current.stamp!==this.codeIdentity.stamp)installed=`${installed} (rebuilt)`;
+        }
         if(!this.extensionUpdate&&typeof installed==='string'&&/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?(?: \(rebuilt\))?$/.test(installed)&&installed!==this.runningVersion){
             this.extensionUpdate={runningVersion:this.runningVersion,installedVersion:installed};
             this.publishNativeCommandAvailability();
@@ -223,7 +251,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             ||value.identity!==this.windowIdentity().identity||value.controller!==this.console.controller||value.controlIdentity!==this.console.controller.observationIdentity)return undefined;
         return value;
     }
-    /** Explicit administrative read only. Getters never connect, register, grant or invoke native work. */
+    /** Read-only administrative metadata. Getters never connect, register, grant or invoke native work. */
     async prepareWindowContext():Promise<void>{
         this.trusted();const window=this.windowIdentity(),generation=this.generation,controller=this.console.controller,controlIdentity=controller.observationIdentity;
         const binding=controller.connectedRuntimeBinding;
@@ -245,14 +273,21 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             const descriptor=validateWindowContext({host:native.host,key:native.key,kind:window.kind,name:window.name});
             // Another window may have installed the runtime after our startup.
             // Adopt only this completed, authenticated console connection. Reading
-            // its context selects no grant and restores no saved authority.
+            // its context creates no grant. A saved local-user choice is restored
+            // only after metadata revalidation of its exact existing grant.
             if(!this.binding||JSON.stringify(this.binding)!==JSON.stringify(binding)){
                 this.specs=[];this.roots=[];this.retireSelectedEligibility();this.explicitCatalogScope=undefined;
                 this.binding=binding;
             }
             this.observedFolders=JSON.stringify(this.folders().map(folder=>folder.uri.fsPath));
+            const previous=this.currentWindowContext();
+            // A repeated read of identical metadata does not change the owner
+            // captured by an explicit grant review or management picker. Any
+            // changed response field, runtime or window still replaces it.
+            if(previous&&sameCatalogValue(previous.response,response)&&sameCatalogValue(previous.descriptor,descriptor))return;
             this.windowContextValue={identity:window.identity,generation,controller,controlIdentity,response,descriptor};
             this.windowContextChanges.fire();
+            await this.restoreLocalSearchScope();
         })();
         this.windowContextRead={identity,work};
         try{await work;}finally{if(this.windowContextRead?.work===work)this.windowContextRead=undefined;}
@@ -267,6 +302,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         try{
             const saved=this.context.workspaceState.get('airk.scope.explicitWithdrawal.1');if(saved===undefined)return false;
             const value=catalogObject(saved);catalogBound(value,4096);
+            if(value.schema===1&&value.withdrawn===true)return true;
             if(value.schema!==1||!Array.isArray(value.project_ids)||!value.project_ids.length||value.project_ids.length>32||new Set(value.project_ids).size!==value.project_ids.length)throw new Error('invalid_scope_withdrawal');
             catalogHex(value.namespace);catalogHex(value.host,64);catalogHex(value.context_key,64);catalogId(value.grant_id,'grt_');catalogRevision(value.expected_grant_revision);value.project_ids.forEach(id=>catalogId(id,'prj_'));
             if(value.index_id!==undefined)catalogId(value.index_id,'idx_');
@@ -274,7 +310,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             return true;
         }catch{return true;} // Uncertain local storage can withdraw access, never enable a legacy fallback.
     }
-    /** Explicit user selection only: reads metadata, then exposes one native-reviewed selector. */
+    /** Explicit local choice or exact saved-grant restoration: native metadata revalidates the selector before exposure. */
     async useGrant(input:CatalogObject,namespace:string,revision:number,valid:()=>boolean):Promise<CatalogObject>{
         this.trusted();const context=this.currentWindowContext(),binding=this.binding,controller=this.console.controller,generation=this.generation,controlIdentity=controller.observationIdentity;
         if(!context||!binding||!controller.state.connected)throw new ServiceError('read_current_native_window_context_before_use_grant');
@@ -302,8 +338,10 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             for(const id of ids){current();indexes.push(await controller.catalogRead({catalog_detail:{entity:{kind:'index',id},expected_catalog_revision:revision}}));current();}
             selection=reviewCombinedScopeSelection({...common,...(subset?{index_ids:subset}:{})},descriptor,grant.detail,indexes.map(value=>value.detail));
         }
+        if(this.localScopeLabelChoice)selection.label=this.scopeLabel(this.localScopeLabelChoice);
         const spec=nativeScopeLaunchSpec(binding,selection);current();
-        // An inert local withdrawal survives reload; stored choices never activate access.
+        // Withdrawal survives reload; legacy preferences stay inert. The separate
+        // local-user selection can restore only this exact native-revalidated grant.
         await this.context.workspaceState.update('airk.scope.explicitWithdrawal.1',scopeSelectionPreference(selection));current();
         // No asynchronous gap between the final fence and publishing the new authority.
         this.explicitCatalogScope={selection,spec,generation,window:this.windowIdentity().identity,controlIdentity,runtime:JSON.stringify([binding.installDir,binding.controlDir,binding.runtimeSha256])};
@@ -314,6 +352,109 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         await this.openWorkbenchAfterSetup();
         this.trusted();if(this.currentCatalogScope()?.spec!==spec)throw new ServiceError('stale_scope_selection');
         return {selection,host_context:context.response,grant_detail:grant,...(index?{index_detail:index}:{}),...(indexes?{index_details:indexes}:{}),selected_subset:true};
+    }
+    private managedScopeKey(native:ReturnType<typeof validateNativeHostContext>):string{return `airk.localScope.managed.1.${native.namespace}.${native.host}.${native.key}`;}
+    private managedScope(fingerprint?:string):ManagedScopeProject|undefined{
+        try{const context=this.currentWindowContext();if(!context)return undefined;
+            const native=validateNativeHostContext(context.response.descriptor);
+            const key=this.managedScopeKey(native)+(fingerprint?`.cache.${catalogHex(fingerprint,64)}`:'');
+            return managedScopeProject(this.context.globalState.get(key),native);
+        }catch{return undefined;}
+    }
+    private savedLocalScope():CatalogObject|undefined{
+        try{const context=this.currentWindowContext();if(!context)return undefined;
+            const native=validateNativeHostContext(context.response.descriptor),raw=this.context.workspaceState.get('airk.localScope.selection.1');
+            if(raw===undefined)return undefined;
+            const value=catalogObject(raw);catalogBound(value,8192);
+            if(value.schema!==1||value.namespace!==native.namespace||value.host!==native.host||value.context_key!==native.key)return undefined;
+            localScopeChoice(value.selection);return value;
+        }catch{return undefined;}
+    }
+    searchScopeSelection():{index_ids:string[];project_ids:string[];managedProjectIds:string[];active:boolean}{
+        const saved=this.savedLocalScope(),choice=saved?localScopeChoice(saved.selection):{index_ids:[],project_ids:[]},context=this.currentWindowContext();
+        const managedProjectIds:string[]=[];
+        if(context){const native=validateNativeHostContext(context.response.descriptor),prefix=`airk.localScope.managed.1.${native.namespace}.${native.host}.`;
+            for(const key of this.context.globalState.keys().filter(key=>key.startsWith(prefix))){
+                try{const row=catalogObject(this.context.globalState.get(key));if(row.schema===1&&row.namespace===native.namespace&&row.host===native.host)managedProjectIds.push(catalogId(row.id,'prj_'));}catch{/* Uncertain metadata never claims another set. */}
+            }
+        }
+        const active=!!saved&&(saved.appliedEmpty===true&&!choice.index_ids.length&&!choice.project_ids.length&&this.hasScopeWithdrawal()||!!this.currentCatalogScope()&&!!saved.grant&&catalogObject(saved.grant).grant_id===this.currentCatalogScope()?.selection.session.grant_id);
+        return {...choice,managedProjectIds:[...new Set(managedProjectIds)],active};
+    }
+    private scopeLabel(choice:{index_ids:string[];project_ids:string[]}):string{
+        return [choice.index_ids.length?`${choice.index_ids.length} index${choice.index_ids.length===1?'':'es'}`:'',choice.project_ids.length?`${choice.project_ids.length} index set${choice.project_ids.length===1?'':'s'}`:''].filter(Boolean).join(' · ');
+    }
+    private async restoreLocalSearchScope():Promise<void>{
+        if(this.localScopeWorking||this.restoringLocalScope)return;
+        const saved=this.savedLocalScope(),context=this.currentWindowContext();if(!saved?.grant||!context)return;
+        const native=validateNativeHostContext(context.response.descriptor),attempt=JSON.stringify([this.generation,this.console.controller.observationIdentity,native,saved.grant]);
+        if(this.localScopeRestoreAttempt===attempt)return;this.localScopeRestoreAttempt=attempt;const epoch=this.localScopeEpoch;this.restoringLocalScope=true;this.localScopeLabelChoice=localScopeChoice(saved.selection);
+        try{
+            const choice=catalogObject(saved.grant),response=await this.console.controller.catalogRead({catalog_detail:{entity:{kind:'grant',id:choice.grant_id},expected_catalog_revision:native.catalog_revision}});
+            const frozen=catalogItems(response,'detail')[0];if(frozen?.kind!=='grant')throw new Error('saved_scope_grant_unavailable');
+            const grant=catalogObject(frozen.value.grant),members=grant.memberships;
+            if(!Array.isArray(choice.project_ids)||!Array.isArray(members)||members.length>1024)throw new Error('saved_scope_grant_unavailable');
+            for(const id of choice.project_ids){
+                const project=await this.console.controller.catalogRead({catalog_detail:{entity:{kind:'project',id},expected_catalog_revision:native.catalog_revision}});
+                const row=catalogItems(project,'detail')[0];if(row?.kind!=='project'||row.value.id!==id)throw new Error('saved_scope_set_unavailable');
+            }
+            for(const value of members){
+                const member=catalogObject(catalogObject(value).membership);
+                if(!choice.project_ids.includes(member.project_id)||Array.isArray(choice.index_ids)&&!choice.index_ids.includes(member.index_id))continue;
+                const current=await this.console.controller.catalogRead({catalog_detail:{entity:{kind:'membership',project_id:member.project_id,index_id:member.index_id},expected_catalog_revision:native.catalog_revision}});
+                const row=catalogItems(current,'detail')[0];if(row?.kind!=='membership'||!sameCatalogValue(row.value,member))throw new Error('saved_scope_membership_changed');
+            }
+            await this.useGrant(choice,native.namespace,native.catalog_revision,()=>!this.disposed&&!this.localScopeWorking&&epoch===this.localScopeEpoch);
+            const active=this.currentCatalogScope();if(epoch===this.localScopeEpoch&&active)active.selection.label=this.scopeLabel(localScopeChoice(saved.selection));
+        }catch(error){if(epoch===this.localScopeEpoch){this.explicitCatalogScope=undefined;this.checks.clear();this.connectionCheck=undefined;this.treeChanges.fire();this.definitions.fire();this.output.appendLine(`Saved search scope needs Apply selection: ${error instanceof Error?error.message:String(error)}`);}}
+        finally{this.restoringLocalScope=false;if(epoch===this.localScopeEpoch)this.localScopeLabelChoice=undefined;}
+    }
+    private localScopeAdapter():LocalScopeAdapter{
+        this.trusted();const controller=this.console.controller,binding=this.binding,generation=this.generation,window=this.windowIdentity().identity,identity=controller.observationIdentity;
+        if(!binding||!this.currentWindowContext()||!controller.state.connected)throw new ServiceError('read_current_native_window_context');
+        const current=()=>{this.trusted();if(this.disposed||controller!==this.console.controller||identity!==controller.observationIdentity||generation!==this.generation||binding!==this.binding||window!==this.windowIdentity().identity)throw new ServiceError('stale_search_scope_selection');};
+        const context=()=>{current();const observed=this.currentWindowContext();if(!observed)throw new ServiceError('read_current_native_window_context');return catalogObject(observed.response.descriptor);};
+        return {control:controller,current,context,managed:fingerprint=>this.managedScope(fingerprint),saveManaged:async(value,fingerprint)=>{current();const key=this.managedScopeKey(validateNativeHostContext(context()));await this.context.globalState.update(`${key}.${value.id}`,value);current();if(fingerprint){await this.context.globalState.update(`${key}.cache.${catalogHex(fingerprint,64)}`,value);current();}await this.context.globalState.update(key,value);current();},
+            refreshContext:()=>this.prepareWindowContext(),use:(choice,namespace,revision)=>this.useGrant(choice,namespace,revision,()=>{try{current();return true;}catch{return false;}}),
+            clear:async()=>{await this.context.workspaceState.update('airk.scope.explicitWithdrawal.1',{schema:1,withdrawn:true});current();this.explicitCatalogScope=undefined;this.checks.clear();this.connectionCheck=undefined;this.treeChanges.fire();this.definitions.fire();await this.workbench?.refresh();return {status:'search_scope_cleared'};}};
+    }
+    async applySearchScope(input:CatalogObject):Promise<CatalogObject>{
+        if(this.localScopeWorking)throw new ServiceError('search_scope_apply_pending');
+        const choice=localScopeChoice(input),adapter=this.localScopeAdapter(),native=validateNativeHostContext(adapter.context());
+        if(choice.project_ids.some(id=>this.searchScopeSelection().managedProjectIds.includes(id)))throw new ServiceError('managed_scope_set_is_not_selectable');
+        this.localScopeEpoch++;this.localScopeWorking=true;this.localScopeLabelChoice=choice;
+        try{
+            // Withdraw the prior session before changing its supporting membership.
+            await this.context.workspaceState.update('airk.localScope.selection.1',{schema:1,namespace:native.namespace,host:native.host,context_key:native.key,selection:choice});adapter.current();
+            await this.context.workspaceState.update('airk.scope.explicitWithdrawal.1',{schema:1,withdrawn:true});adapter.current();
+            this.explicitCatalogScope=undefined;this.checks.clear();this.connectionCheck=undefined;this.treeChanges.fire();this.definitions.fire();
+            const outcome=await applyLocalSearchScope(adapter,choice);adapter.current();
+            const active=this.currentCatalogScope(),grant=active?{grant_id:active.selection.session.grant_id,expected_grant_revision:active.selection.session.expected_grant_revision,project_ids:active.selection.session.project_ids,...('index_ids' in active.selection.session&&active.selection.session.index_ids?{index_ids:active.selection.session.index_ids}:{})}:undefined;
+            if(active)active.selection.label=this.scopeLabel(choice);
+            await this.context.workspaceState.update('airk.localScope.selection.1',{schema:1,namespace:native.namespace,host:native.host,context_key:native.key,selection:choice,...(grant?{grant}:!choice.index_ids.length&&!choice.project_ids.length?{appliedEmpty:true}:{})});adapter.current();
+            return outcome;
+        }finally{this.localScopeWorking=false;this.localScopeLabelChoice=undefined;this.treeChanges.fire();}
+    }
+    async saveIndexSet(input:CatalogObject):Promise<CatalogObject>{
+        if(this.localScopeWorking)throw new ServiceError('search_scope_apply_pending');
+        if(typeof input.id==='string'&&this.searchScopeSelection().managedProjectIds.includes(input.id))throw new ServiceError('managed_scope_set_is_not_editable');
+        const adapter=this.localScopeAdapter(),epoch=++this.localScopeEpoch;this.localScopeWorking=true;
+        let completed=false;
+        try{const outcome=await saveLocalIndexSet(adapter,input);completed=true;return outcome;}
+        finally{
+            let refreshed=completed;
+            if(!completed&&epoch===this.localScopeEpoch){
+                // Earlier steps may have committed before a later step failed.
+                // Do not keep advertising the old grant from a cached context.
+                this.explicitCatalogScope=undefined;this.checks.clear();this.connectionCheck=undefined;
+                this.localScopeRestoreAttempt=undefined;this.treeChanges.fire();this.definitions.fire();
+                try{await adapter.refreshContext();refreshed=true;}
+                catch(error){this.output.appendLine(`Could not refresh search scope after the failed index-set change: ${error instanceof Error?error.message:String(error)}`);}
+            }
+            this.localScopeWorking=false;
+            if(epoch===this.localScopeEpoch&&refreshed&&!adapter.control.catalogPending().length)await this.restoreLocalSearchScope();
+            this.treeChanges.fire();
+        }
     }
     /** Reported instead of probing: native status is never inferred while execution is off. */
     private renderNativeDisabled():void{
@@ -1025,16 +1166,20 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
                 if(!installed.inspection)throw new ServiceError('runtime_selection_changed_review_again');
                 const current=this.runtime().binding(installed.inspection,installed.installDir),target=this.runningVersion as string;
                 if(automaticUpgrade(current.version,target)&&(current.version!==target||current.runtimeSha256!==installed.bundle.digest)){
-                    this.reportInstall(`Upgrading ${current.version} → ${target}…`);
+                    this.reportUpgrade('checking',`Upgrading ${current.version} → ${target}… Checking the installed runtime and saved indexes.`,current.version);
                     // Finish a prior installation's deferred cleanup before staging another replacement.
-                    if(!installed.diagnosis?.pending_activation)await this.runtime().retirePrevious(current);
+                    if(!installed.diagnosis?.pending_activation){
+                        this.reportUpgrade('draining','Settling previous runtime cleanup before activating the update…');
+                        await this.runtime().retirePrevious(current);
+                    }
                     const review=await this.runtime().reviewTransition(current,installed.diagnosis?.pending_activation?'resume':'upgrade');this.trusted();
-                    await this.runtime().transition(current,review,message=>this.reportInstall(message));this.trusted();
+                    await this.runtime().transition(current,review,(message,stage)=>this.reportUpgrade(stage,message));this.trusted();
                 }
             }
             await this.installCommandLine();this.trusted();
             // Activation/retirement can replace the incarnation behind an older metadata pipe.
             this.console.reset();
+            this.reportUpgrade('reconnecting','Connecting to the updated runtime and loading saved index capabilities…');
             const binding=await this.runtime().ensure();this.trusted();
             runtimeInstalled=true;
             const completed=await this.runtime().discover();
@@ -1048,6 +1193,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         }
         catch(error){
             if(this.disposed)return;
+            this.reportUpgrade('failed',`AIRK upgrade needs attention: ${error instanceof Error?error.message:String(error)}. Review Management → Service and Logs.`);
             if(setupObservation)void recordDiagnosticFailure(setupObservation,'automatic_install',error)
                 .catch(failure=>{if(!this.disposed)this.output.appendLine(`Could not retain installation diagnostic: ${String(failure)}`);});
             if(error instanceof ServiceError&&error.code==='extension_reload_required')return;
@@ -1197,13 +1343,15 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     explorerHost():ExplorerHost{
         return {extensionUri:this.context.extensionUri,version:this.runningVersion,
             extensionUpdate:()=>this.extensionUpdate,reloadUpdatedExtension:()=>this.reloadUpdatedExtension(),
-            connectionCheck:()=>this.connectionCheck,startup:()=>this.startup,
+            connectionCheck:()=>this.connectionCheck,startup:()=>this.startup,runtimeUpgrade:()=>this.runtimeUpgrade,
             workbenchVisible:()=>this.workbench?.visible??false,toggleWorkbench:async()=>{await this.workbench?.toggle();},
             onDidChangeWorkbenchVisibility:this.workbench?.onDidChangeVisibility,
             trusted:()=>vscode.workspace.isTrusted&&!this.disposed&&!this.extensionUpdate,workspaceTrusted:()=>vscode.workspace.isTrusted,nativeExecutionEnabled:()=>nativeExecutionAllowed(),specs:()=>this.uiSpecs(),
             windowContext:()=>this.currentWindowContext()?.descriptor,windowContextObservation:()=>this.currentWindowContext()?.response,
+            windowContextIdentity:()=>JSON.stringify([this.windowIdentity().identity,this.generation]),
             prepareWindowContext:()=>this.prepareWindowContext(),onDidChangeWindowContext:this.windowContextChanges.event,
             useGrant:(choice,namespace,revision,valid)=>this.useGrant(choice,namespace,revision,valid),
+            searchScopeSelection:()=>this.searchScopeSelection(),applySearchScope:selection=>this.applySearchScope(selection),saveIndexSet:selection=>this.saveIndexSet(selection),
             prefillCombinedSearch:async(search:SearchDraft)=>{
                 this.trusted();const selected=this.currentCatalogScope(),spec=selected?.spec,session=spec?.combinedSession;
                 const choice=search as SearchDraft&{project_ids?:string[];index_ids?:string[]};
@@ -1313,8 +1461,8 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         if(nativeExecutionAllowed()){this.status.text='AIRK';this.status.command='airk.explorer.open';this.status.tooltip=undefined;}
         this.reset();this.definitions.fire();void this.start();
     }
-    reset():void{this.legacyRetirement?.stop();this.legacyRetirement=undefined;this.generation++;this.windowContextValue=undefined;this.publishNativeCommandAvailability();this.host=undefined;this.selectedEligible=undefined;this.selectedScope=undefined;this.specs=[];this.binding=undefined;this.checks.clear();this.checking=undefined;this.connectionCheck=undefined;this.console.reset();void this.refresh();}
-    dispose():void{if(this.disposed)return;this.legacyRetirement?.stop();this.legacyRetirement=undefined;this.host=undefined;this.disposed=true;this.generation++;this.windowContextValue=undefined;this.publishNativeCommandAvailability();this.windowContextChanges.dispose();this.assistanceGeneration++;this.assistanceHost?.dispose();this.assistanceDefinitions.dispose();void this.explorer?.then(explorer=>explorer.dispose(),()=>undefined);this.console.dispose();this.status.dispose();this.definitions.dispose();this.treeChanges.dispose();this.output.dispose();}
+    reset():void{this.localScopeEpoch++;this.legacyRetirement?.stop();this.legacyRetirement=undefined;this.generation++;this.windowContextValue=undefined;this.publishNativeCommandAvailability();this.host=undefined;this.selectedEligible=undefined;this.selectedScope=undefined;this.specs=[];this.binding=undefined;this.checks.clear();this.checking=undefined;this.connectionCheck=undefined;this.console.reset();void this.refresh();}
+    dispose():void{if(this.disposed)return;this.localScopeEpoch++;this.legacyRetirement?.stop();this.legacyRetirement=undefined;this.host=undefined;this.disposed=true;this.generation++;this.windowContextValue=undefined;this.publishNativeCommandAvailability();this.windowContextChanges.dispose();this.assistanceGeneration++;this.assistanceHost?.dispose();this.assistanceDefinitions.dispose();void this.explorer?.then(explorer=>explorer.dispose(),()=>undefined);this.console.dispose();this.status.dispose();this.definitions.dispose();this.treeChanges.dispose();this.output.dispose();}
 }
 
 let active:ServiceExtension|undefined;
@@ -1405,6 +1553,13 @@ export async function activate(context:vscode.ExtensionContext):Promise<{getServ
             else if(event.affectsConfiguration('airk.mcp'))controller.registrationChanged();
         }));
     if(vscode.extensions?.onDidChange)context.subscriptions.push(vscode.extensions.onDidChange(()=>controller.checkForExtensionUpdate()));
+    // Watch extension assets only: source watching remains native-owned. A VSIX
+    // replacement can happen while Explorer stays visible and the window focused.
+    if(vscode.RelativePattern&&vscode.workspace.createFileSystemWatcher){
+        const watcher=vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(context.extensionUri,'out/*.{js,css}'));
+        const changed=()=>controller.checkForExtensionUpdate();
+        context.subscriptions.push(watcher,watcher.onDidChange(changed),watcher.onDidCreate(changed));
+    }
     if(vscode.window.onDidChangeWindowState)context.subscriptions.push(vscode.window.onDidChangeWindowState(state=>{if(state.focused)controller.checkForExtensionUpdate();}));
     controller.checkForExtensionUpdate();
     void controller.startAssistance();

@@ -4608,7 +4608,7 @@ Options:
 ```text
 Search indexed evidence; results carry file, line and revision citations.
 
-Without --mode the saved search policy applies. Eligible policies can return lexical matches during helper outages; execution reports the served mode and semantic incompleteness. Explicit vector/hybrid and saved RequireComplete refuse helper outages. Hybrid can still serve lexical evidence during a pending index upgrade, with that separate limitation disclosed. --mode lexical uses AND terms.
+Without --mode the saved search policy applies. Eligible policies can return lexical matches during helper outages; execution reports the served mode and semantic incompleteness. Explicit vector/hybrid and saved RequireComplete refuse helper outages. Hybrid can still serve lexical evidence during a pending index upgrade, with that separate limitation disclosed. --mode lexical uses normalized AND terms: punctuation and quotation marks separate terms; quotes do not enable phrase matching. Lexical order is stable index identity, not relevance.
 
 Usage: airk search [OPTIONS] <QUERY>
 

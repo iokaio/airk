@@ -373,7 +373,9 @@ enum Command {
     /// lexical matches during helper outages; execution reports the served mode and
     /// semantic incompleteness. Explicit vector/hybrid and saved RequireComplete refuse
     /// helper outages. Hybrid can still serve lexical evidence during a pending index
-    /// upgrade, with that separate limitation disclosed. --mode lexical uses AND terms.
+    /// upgrade, with that separate limitation disclosed. --mode lexical uses normalized
+    /// AND terms: punctuation and quotation marks separate terms; quotes do not enable
+    /// phrase matching. Lexical order is stable index identity, not relevance.
     Search {
         #[command(flatten)]
         verification: VerificationOptions,
@@ -568,9 +570,9 @@ enum Command {
         evidence: EvidenceOptions,
         path: String,
         line: usize,
-        #[arg(long, default_value_t = 5)]
+        #[arg(long, default_value_t = airk_core::native_reads::CONTEXT_RADIUS_DEFAULT)]
         before: usize,
-        #[arg(long, default_value_t = 5)]
+        #[arg(long, default_value_t = airk_core::native_reads::CONTEXT_RADIUS_DEFAULT)]
         after: usize,
         #[arg(long, default_value_t = 8192)]
         max_bytes: usize,

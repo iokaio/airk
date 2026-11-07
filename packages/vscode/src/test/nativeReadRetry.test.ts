@@ -92,6 +92,8 @@ test('native read fixtures require the complete safe replay contract',()=>{
     const wrap=(hint:unknown)=>({isError:true,content:[{type:'text',text:JSON.stringify(hint)}]});
     const hint={status:'retry',code:'publication_busy',retryable:true,action:'repeat_same_request',retry_after_ms:25};
     assert.equal(readRetryDelay(wrap(hint)),25);
+    assert.equal(readRetryDelay({...wrap(hint),structuredContent:hint}),25);
+    assert.equal(readRetryDelay({...wrap(hint),structuredContent:{index_state:'available'}}),undefined);
     for(const changed of [{code:'unknown_busy'},{retryable:false},{action:'refresh_revision'},{retry_after_ms:0},{retry_after_ms:1001}]){
         assert.equal(readRetryDelay(wrap({...hint,...changed})),undefined);
     }
@@ -99,6 +101,8 @@ test('native read fixtures require the complete safe replay contract',()=>{
     for(const code of ['direct_query_admission','direct_query_setup']){
         const error={code,reason:'busy',query_submitted:false,retryable:true,retry_after_ms:100,fresh_brokerage_required:code==='direct_query_setup'};
         assert.equal(readRetryDelay(wrap({error})),100);
+        assert.equal(readRetryDelay({...wrap({error}),structuredContent:{error}}),100);
+        assert.equal(readRetryDelay({...wrap({error}),structuredContent:{hits:[]}}),undefined);
         for(const changed of [{query_submitted:true},{retryable:false},{fresh_brokerage_required:!error.fresh_brokerage_required}]){
             assert.equal(readRetryDelay(wrap({error:{...error,...changed}})),undefined);
         }
@@ -179,4 +183,147 @@ test('publication fixtures reject unhealthy, foreign and incomplete worker obser
     const published={collection:'collection-a',index_state:'available',publication:{collection:'collection-a',token:'exact'},files:1};
     assert.equal(publishedStatusPending(published,'collection-a','a'),false);
     assert.throws(()=>publishedStatusPending({...published,collection:'b'},'collection-a','a'));
+});
+
+
+const preparedSelection={schema:1 as const,context_key:'06'.repeat(32),namespace:'07'.repeat(16),expected_catalog_revision:7,
+    grant_id:'grt_'+'03'.repeat(16),expected_grant_revision:1,index_id:'idx_'+'01'.repeat(16),project_ids:['prj_'+'02'.repeat(16)]};
+function scopedSetupReceipt(code='scoped_status_prepare_timeout',nativeCode?:string):any{
+    const body={error:{code,retryable:true,query_submitted:false,retry_after_ms:1,fresh_brokerage_required:true,
+        ...(nativeCode?{native_control_response:{status:'failure',code:nativeCode}}:{})},requested_scope:{confirmed:false,selection:preparedSelection}};
+    return {isError:true,content:[{type:'text',text:JSON.stringify(body)}],structuredContent:body};
+}
+test('scoped preparation retry keeps original authority across a monotonic metadata-clock refresh',async()=>{
+    const timeout=scopedSetupReceipt();
+    assert.equal(readRetryDelay(timeout,preparedSelection),1);
+    assert.equal(readRetryDelay(timeout),undefined);
+    for(const initial of [timeout,scopedSetupReceipt('scoped_connection_unavailable','project_capacity_busy')]){
+        const advanced=structuredClone(initial);
+        advanced.structuredContent.requested_scope.selection.expected_catalog_revision=12;
+        advanced.content[0].text=JSON.stringify(advanced.structuredContent);
+        const before=structuredClone(advanced),original=structuredClone(preparedSelection);
+        assert.equal(readRetryDelay(advanced,preparedSelection),1,'native clock 7 to 12 retains the original reviewed authority');
+        assert.deepEqual(advanced,before,'retain the complete native receipt');
+        assert.deepEqual(preparedSelection,original,'never rewrite the caller selection');
+    }
+    for(const code of ['catalog_connection_busy','project_capacity_busy','project_restart_backoff','previous_workers_draining'])
+        assert.equal(readRetryDelay(scopedSetupReceipt('scoped_connection_unavailable',code),preparedSelection),1);
+    for(const code of ['scoped_connection_unavailable','scoped_read_unavailable','catalog_connection_outcome_unknown','native catalog exchange still pending'])
+        assert.equal(readRetryDelay(scopedSetupReceipt('scoped_connection_unavailable',code),preparedSelection),undefined);
+    for(const mutation of [
+        (body:any)=>{body.error.query_submitted=true;},(body:any)=>{body.error.query_submitted=null;},
+        (body:any)=>{body.error.retryable=false;},(body:any)=>{body.error.retry_after_ms=1001;},
+        (body:any)=>{delete body.error.fresh_brokerage_required;},(body:any)=>{body.requested_scope.confirmed=true;},
+        (body:any)=>{body.requested_scope.selection.grant_id='grt_'+'09'.repeat(16);},
+        (body:any)=>{body.requested_scope.selection.expected_catalog_revision=6;},(body:any)=>{body.hits=[];},
+        (body:any)=>{body.requested_scope.selection.expected_grant_revision=2;},
+        (body:any)=>{body.requested_scope.selection.namespace='09'.repeat(16);},
+        (body:any)=>{body.requested_scope.selection.context_key='09'.repeat(32);},
+        (body:any)=>{body.requested_scope.selection.index_id='idx_'+'09'.repeat(16);},
+        (body:any)=>{body.requested_scope.selection.project_ids=['prj_'+'09'.repeat(16)];},
+        (body:any)=>{body.error.query_replay_safe=false;},
+        (body:any)=>{body.status='retry';body.code='publication_busy';body.retryable=true;},
+        (body:any)=>{body.error.native_control_response={status:'failure',code:'broker_busy'};},
+    ]){
+        const reply=structuredClone(timeout);mutation(reply.structuredContent);reply.content[0].text=JSON.stringify(reply.structuredContent);
+        assert.equal(readRetryDelay(reply,preparedSelection),undefined,mutation.toString());
+    }
+    const advanced=structuredClone(timeout);advanced.structuredContent.requested_scope.selection.expected_catalog_revision=12;
+    advanced.content[0].text=JSON.stringify(advanced.structuredContent);
+    const replies=[advanced,{index_state:'available'}];let calls=0;const deadlines:number[]=[];
+    assert.deepEqual(await observeQuickStatus(async deadline=>{deadlines.push(deadline);return replies[calls++];},undefined,undefined,preparedSelection),{index_state:'available'});
+    assert.equal(calls,2);assert.equal(new Set(deadlines).size,1);
+});
+
+test('connection probe follows only scope-bound preparation hints and retains a refused native result',async t=>{
+    const {probeMcp}=await import('../native'),{UNIFIED_TOOLS}=await import('../model');
+    const spec={command:process.execPath,root:process.cwd(),dataDir:process.cwd(),collection:'fixture',name:'fixture',catalogSession:preparedSelection,
+        service:{installDir:process.cwd(),project:'01'.repeat(32)}};
+    const setup=scopedSetupReceipt();
+    let calls=0,closed=0;
+    const requests:unknown[]=[];
+    let replies:any[]=[setup,{content:[{type:'text',text:'{"index_state":"available"}'}]}];
+    const session={request:async(method:string,args:unknown)=>{
+        if(method==='tools/list')return {tools:UNIFIED_TOOLS.map(name=>({name}))};
+        requests.push(args);return replies[calls++];
+    },close:()=>{closed++;}};
+    t.mock.method(McpStdioSession,'open',async()=>({session} as any));
+    await probeMcp(spec);assert.equal(calls,2);assert.equal(closed,1);assert.deepEqual(requests[0],requests[1]);
+    const refused=structuredClone(setup);refused.structuredContent.requested_scope.selection.expected_grant_revision=2;
+    refused.content[0].text=JSON.stringify(refused.structuredContent);replies=[refused];calls=0;
+    await assert.rejects(probeMcp(spec),error=>{
+        assert.deepEqual((error as Error&{nativeResponse:unknown}).nativeResponse,refused);return true;
+    });
+    assert.equal(calls,1);assert.equal(closed,2);
+});
+
+
+function singleCombinedRetry(hint:any={status:'retry',code:'selection_busy',retryable:true,action:'repeat_same_request',retry_after_ms:25}):any{
+    const index='idx_'+'01'.repeat(16),identity='04'.repeat(32);
+    const result={isError:true,content:[{type:'text',text:JSON.stringify(hint)}],structuredContent:hint};
+    const body={schema:'airk.combined-read/1',selection:{project_ids:['prj_'+'02'.repeat(16)],index_ids:[index],grant_id:'grt_'+'03'.repeat(16),grant_revision:1,member_availability:'require',identity},
+        publication_vector:{authority:'05'.repeat(32),observed_from_unix_ms:1,observed_to_unix_ms:2,members:[{index_id:index,publication:null}]},
+        members:[{index_id:index,is_error:true,outcome:'failed',allocation:{index_id:index,limit:1,max_bytes:4096,deadline_ms:2000,verification_max_sources:1,verification_max_bytes:4096,verification_deadline_ms:2000},result}],
+        ranking:[],partial:true,truncated:false,error:{code:'member_unavailable',retryable:false,failed_members:[index]},
+        read_retry:{schema:1,scope:'same_single_required_member',index_id:index,selection_identity:identity,action:'repeat_same_request',query_replay_safe:true,
+            result_pointer:'/members/0/result/structuredContent',code:hint.code??hint.error?.code,retry_after_ms:hint.retry_after_ms??hint.error?.retry_after_ms,
+            fresh_brokerage_required:hint.error?.code==='direct_query_setup'}};
+    return body;
+}
+const combinedEnvelope=(body:any)=>({isError:true,content:[{type:'text',text:JSON.stringify(body)}],structuredContent:body});
+
+test('combined retry preserves complete qualified framing and rejects unknown evidence or crossed scope',()=>{
+    const original=singleCombinedRetry();
+    const scope={schema:1,qualifier:'selected_subset',fingerprint:'08'.repeat(32),provenance:'user_reviewed_project_grant',
+        grant:{id:original.selection.grant_id,revision:1},members:[{index_id:original.selection.index_ids[0],
+            memberships:[{project_id:original.selection.project_ids[0],membership_revision:1}],source_root_ids:['src_'+'07'.repeat(16)],source_revision:1,policy_epoch:0,policy_digest:null}]};
+    const hint={...original.members[0].result.structuredContent,scope_observation:scope,request_id:'bounded-request'};
+    assert.equal(readRetryDelay(combinedEnvelope(singleCombinedRetry(hint))),25);
+    for(const key of ['unknown_future','index_state','chunks','symbols','metadata','hits']){
+        assert.equal(readRetryDelay(combinedEnvelope(singleCombinedRetry({...hint,[key]:[]}))),undefined,key);
+        const error={code:'direct_query_admission',reason:'busy',query_submitted:false,retryable:true,fresh_brokerage_required:false,retry_after_ms:25,[key]:[]};
+        assert.equal(readRetryDelay(combinedEnvelope(singleCombinedRetry({error}))),undefined,'error.'+key);
+    }
+    for(const change of [
+        (value:any)=>{value.grant.revision=2;},(value:any)=>{value.members[0].index_id='idx_'+'09'.repeat(16);},
+        (value:any)=>{value.members[0].memberships[0].project_id='prj_'+'09'.repeat(16);},
+        (value:any)=>{value.members[0].policy_epoch=1;},(value:any)=>{value.members[0].memberships=[];},
+        (value:any)=>{value.unrecognized=true;},
+    ]){
+        const invalid=structuredClone(scope);change(invalid);
+        assert.equal(readRetryDelay(combinedEnvelope(singleCombinedRetry({...hint,scope_observation:invalid}))),undefined,change.toString());
+    }
+    assert.equal(readRetryDelay(combinedEnvelope(singleCombinedRetry({...hint,request_id:'é'.repeat(65)}))),undefined);
+});
+
+test('combined retry requires declared exact single-member admission without partial evidence or widening',()=>{
+    const original=singleCombinedRetry();
+    assert.equal(readRetryDelay(combinedEnvelope(original)),25);
+    for(const code of ['publication_busy','selection_busy']){
+        assert.equal(readRetryDelay(combinedEnvelope(singleCombinedRetry({status:'retry',code,retryable:true,action:'repeat_same_request',retry_after_ms:1}))),1);
+    }
+    for(const code of ['direct_query_admission','direct_query_setup']){
+        const body=singleCombinedRetry({error:{code,reason:'busy',query_submitted:false,retryable:true,fresh_brokerage_required:code==='direct_query_setup',retry_after_ms:50}});
+        assert.equal(readRetryDelay(combinedEnvelope(body)),50);
+    }
+    const mutations:Array<(body:any)=>void>=[
+        body=>{delete body.read_retry;},body=>{body.selection.member_availability='report';},body=>{body.selection.identity='09'.repeat(32);},
+        body=>{body.members.push(structuredClone(body.members[0]));},body=>{body.members[0].outcome='complete';},
+        body=>{body.members[0].is_error=false;},body=>{body.members[0].cutoff='budget';},body=>{body.members[0].allocation.limit=0;},
+        body=>{body.members[0].allocation.verification_max_sources=257;},body=>{body.publication_vector.members[0].publication={token:'actual-result'};},
+        body=>{body.ranking.push({result_pointer:'/members/0/result/hits/0'});},body=>{body.partial=false;},body=>{body.truncated=true;},
+        body=>{body.error.retryable=true;},body=>{body.read_retry.query_replay_safe=false;},body=>{body.read_retry.result_pointer='/members/0/result/error';},
+        body=>{body.read_retry.retry_after_ms=1;},body=>{body.members[0].result.content[0].text='different';},
+        body=>{const hint=body.members[0].result.structuredContent;hint.hits=[];body.members[0].result.content[0].text=JSON.stringify(hint);},
+        body=>{const hint=body.members[0].result.structuredContent;hint.query_replay_safe=false;body.members[0].result.content[0].text=JSON.stringify(hint);},
+    ];
+    for(const mutate of mutations){const body=structuredClone(original);mutate(body);assert.equal(readRetryDelay(combinedEnvelope(body)),undefined,mutate.toString());}
+    for(const hint of [
+        {status:'retry',code:'unknown_busy',retryable:true,action:'repeat_same_request',retry_after_ms:25},
+        {status:'retry',code:'selection_busy',retryable:true,action:'repeat_same_request',retry_after_ms:1001},
+        {error:{code:'unknown',retryable:true,nested:original.members[0].result.structuredContent}},
+        {error:{code:'direct_query_setup',reason:'busy',query_submitted:true,retryable:true,fresh_brokerage_required:true,retry_after_ms:25}},
+    ])assert.equal(readRetryDelay(combinedEnvelope(singleCombinedRetry(hint))),undefined);
+    const mismatched=combinedEnvelope(original);mismatched.structuredContent=singleCombinedRetry({status:'retry',code:'publication_busy',retryable:true,action:'repeat_same_request',retry_after_ms:25});
+    assert.equal(readRetryDelay(mismatched),undefined);
 });

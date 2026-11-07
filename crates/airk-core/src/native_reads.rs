@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Canonical native read requests shared by native transports and MCP adapters.
+/// Maximum neighboring indexed lines accepted by every native context read.
+pub const CONTEXT_RADIUS_MAX: usize = 100;
+/// Neighboring indexed lines used when a context radius is omitted.
+pub const CONTEXT_RADIUS_DEFAULT: usize = 5;
 /// Native read capabilities are separate from the fixed MCP tool inventory.
 #[derive(Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]

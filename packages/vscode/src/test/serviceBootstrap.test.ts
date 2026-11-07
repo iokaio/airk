@@ -262,7 +262,13 @@ test('runtime upgrade uses only its host-owned review and supplies the exact nat
         await assert.rejects(t.host.transition(binding,{...review}),/runtime_transition_not_reviewed/);
         await assert.rejects(t.host.reviewTransition({...binding,lifecycle:'external'},'upgrade'),/runtime_payload_managed_externally/);
         assert.equal(t.calls.length,before);
-        const result=await t.host.transition(binding,review);assert.equal(result.active,t.f.digest);
+        const stages:string[]=[];
+        const result=await t.host.transition(binding,review,(message,stage)=>{
+            assert.ok(message.length>0);stages.push(stage);
+            // Each observation precedes its actual native work, not a guessed percentage.
+            assert.equal(t.calls.slice(before).filter(args=>args[1]==='activate').length,0);
+        });assert.equal(result.active,t.f.digest);
+        assert.deepEqual(stages,['staging','activating']);
         const mutations=t.calls.slice(before);assert.deepEqual(mutations.map(args=>args[1]),['stage','activate']);
         assert.equal(mutations[0][mutations[0].indexOf('--approved-sha256')+1],t.f.digest);
         assert.equal(mutations[1][mutations[1].indexOf('--expected-active')+1],binding.runtimeSha256);

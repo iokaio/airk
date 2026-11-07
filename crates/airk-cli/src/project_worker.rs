@@ -344,7 +344,7 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
                     return scoped_worker_error(&response_kernel, &error, native_read);
                 }
                 if native_read { serde_json::json!({"error":{"code":"native_read_failed","message":format!("{error:#}").chars().take(1024).collect::<String>()}}) }
-                else { serde_json::json!({"content":[{"type":"text","text":"AIRK read-only tool failed or is unavailable."}],"isError":true}) }
+                else { unscoped_worker_error(&error) }
             });
             let reply = protocol::QueryResult { result: value, status_receipt: tools.status_receipt(), rebind: false };
             let result = deliver(&mut stream, &reply, &state, grant.scope, purpose).await;
@@ -443,6 +443,17 @@ fn admission_rejection(error: airk_core::service::AdmissionError) -> protocol::Q
         status_receipt: Default::default(),
         rebind: !busy,
     }
+}
+
+/// This worker boundary previously exposed only a fixed public failure. Keep
+/// unknown internal paths/content private while retaining recognized receipts.
+fn unscoped_worker_error(error: &anyhow::Error) -> serde_json::Value {
+    if let Some(reply) = airk_mcp::response::typed_error_result(error) {
+        return serde_json::to_value(reply).expect("typed worker failure receipt");
+    }
+    let body = serde_json::json!({"error":{"code":"read_failed",
+        "message":"AIRK read-only tool failed or is unavailable.","retryable":false}});
+    serde_json::json!({"content":[{"type":"text","text":body.to_string()}],"structuredContent":body,"isError":true})
 }
 
 /// Preserve the direct transport's native/MCP envelope distinction while using

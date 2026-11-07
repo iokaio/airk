@@ -8,7 +8,7 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { parse as parseJsonc, type ParseError } from 'jsonc-parser';
 import { UNIFIED_TOOLS } from '../model';
-import { readRetryDelay } from '../explorerEvidence';
+import { readRetryDelay } from '../readRetry';
 import { installedSelector, installedToolBody, installedMember, installedRevocation, finishInstalledClient, InstalledNativeReplyError as NativeReplyError, installedLegacyLifecycle } from './installedEditorContracts';
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));

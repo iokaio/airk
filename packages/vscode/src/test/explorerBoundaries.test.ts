@@ -81,8 +81,22 @@ test('the standalone uninstall bundle retains no Indexing controller, Preact or 
     const text=fs.readFileSync(path.join(compiled,'uninstallHook.js'),'utf8');
     assert.doesNotMatch(text,/\bclass\s+IndexingCatalogController\b|src\/explorerWebview\//);
     assert.doesNotMatch(text,/\bclass\s+WindowScopeSelection\b|src\/scopeSelection\.ts/);
+    assert.doesNotMatch(text,/\bclass\s+EvidenceClient\b|src\/explorerEvidence\.ts|src\/explorerErrors\.ts|src\/nativeMetadata\.ts/);
     assert.doesNotMatch(text,/\brequire\s*\(\s*["'](?:preact(?:\/[^"']*)?|vscode)["']/);
     assert.doesNotMatch(text,/\b(?:window|document)\.(?:addEventListener|createElement|querySelector|body)\b/);
+});
+
+test('native read retry validators retain a pure shared dependency boundary',()=>{
+    const file=path.join(source,'readRetry.ts');
+    assert.deepEqual(imports(file),['node:util','./catalogSession']);
+    for(const name of ['native','explorerEvidence']){
+        const dependencies=imports(path.join(source,name+'.ts'));
+        assert.ok(dependencies.includes('./readRetry'));
+        if(name==='native')assert.ok(!dependencies.includes('./explorerEvidence'));
+    }
+    const tree=ts.createSourceFile(file,fs.readFileSync(file,'utf8'),ts.ScriptTarget.Latest,true);
+    for(const statement of tree.statements)assert.ok(ts.isImportDeclaration(statement)||ts.isFunctionDeclaration(statement),
+        'shared retry validators perform no startup work');
 });
 
 test('catalog launch model imports only the pure selector contract and keeps host selection out of uninstall',()=>{

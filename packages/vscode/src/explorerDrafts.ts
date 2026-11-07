@@ -3,7 +3,7 @@
 // host (authoritative validation). Drafts are inert: they only ever become editable Explorer
 // drafts after a user applies them. No Node, vscode or host imports.
 import {
-    CORE_PACK, DEFAULT_BUDGETS, Plan, PLAN_SCHEMA, PlanTask, safePrefix, Strategy, STRATEGY_SCHEMA, StrategyParam, StrategyStep, validatePlan, validateStrategy,
+    CORE_PACK, DEFAULT_BUDGETS, OPERATORS, OperatorSpec, Plan, PLAN_SCHEMA, PlanTask, safePrefix, Strategy, STRATEGY_SCHEMA, StrategyParam, StrategyStep, validatePlan, validateStrategy,
 } from './explorerStrategies';
 import { ROUTE_ALIASES, ROUTE_KEYS } from './explorerRoutes';
 import { FEATURES } from './explorerFeatures';
@@ -226,14 +226,21 @@ function reviewBody(value: Record<string, unknown>, errors: string[]): DraftBody
     const scope = value.scope ?? 'changes';
     if (!(REVIEW_SCOPES as readonly unknown[]).includes(scope)) { errors.push(`scope must be one of ${REVIEW_SCOPES.join(', ')}`); return undefined; }
     const names = value.names ?? [];
-    if (!Array.isArray(names) || names.length > 20 || !names.every(name => typeof name === 'string' && /^[A-Za-z_$][\w$]{0,127}$/.test(name))) { errors.push('names must be at most 20 identifiers'); return undefined; }
+    if (!Array.isArray(names)) { errors.push('names: must be an array of identifiers'); return undefined; }
+    if (names.length > 20) { errors.push('names: at most 20 identifiers are supported'); return undefined; }
+    names.forEach((name, index) => {
+        if (typeof name !== 'string' || !/^[A-Za-z_$][\w$]{0,127}$/.test(name)) {
+            errors.push(`names[${index}]: must be a 1–128 character identifier starting with a letter, _ or $, followed by letters, digits, _ or $`);
+        }
+    });
+    if (errors.length) { return undefined; }
     if (value.note !== undefined && !text(value.note, 2000, 0)) { errors.push('note must be at most 2000 characters'); return undefined; }
     return { kind: 'review', scope: scope as typeof REVIEW_SCOPES[number], names: names as string[], ...(value.note ? { note: String(value.note) } : {}) };
 }
 
 function managementBody(value: Record<string, unknown>, errors: string[]): DraftBody | undefined {
-    if (typeof value.intent !== 'string' || !Object.hasOwn(MANAGEMENT_INTENTS, value.intent)) { errors.push(`intent must be one of ${Object.keys(MANAGEMENT_INTENTS).join(', ')}`); return undefined; }
-    if (value.reason !== undefined && !text(value.reason, 1000, 0)) { errors.push('reason must be at most 1000 characters'); return undefined; }
+    if (typeof value.intent !== 'string' || !Object.hasOwn(MANAGEMENT_INTENTS, value.intent)) { errors.push(`intent: must be one of ${Object.keys(MANAGEMENT_INTENTS).join(', ')}`); return undefined; }
+    if (value.reason !== undefined && !text(value.reason, 1000, 0)) { errors.push('reason: must be at most 1000 characters'); return undefined; }
     return { kind: 'management', intent: value.intent as ManagementIntent, ...(value.reason ? { reason: String(value.reason) } : {}) };
 }
 
@@ -274,7 +281,7 @@ export function validateDraft(kind: DraftKind, input: unknown): DraftCheck {
         review: ['scope', 'names', 'note'], management: ['intent', 'mode', 'reason'], navigation: ['route', 'filters', 'note'] }[kind];
     if (!specific) { return { ok: false, code: 'INVALID_SCHEMA', errors: ['unknown draft kind'] }; }
     if (kind === 'management' && input.mode !== undefined && input.mode !== 'show_guidance') {
-        return { ok: false, code: 'POLICY_DENIED', errors: ['management drafts only show guidance (mode "show_guidance"); they never run an operation'] };
+        return { ok: false, code: 'POLICY_DENIED', errors: ['mode: management drafts only show guidance (mode "show_guidance"); they never run an operation'] };
     }
     keys(input, [...ENVELOPE, ...specific], ['schema_version', 'idempotency_key', 'title'], 'draft call', errors);
     if (typeof input.idempotency_key !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(input.idempotency_key)) { errors.push('idempotency_key must be 1–128 letters, digits or ._:-'); }
@@ -287,6 +294,13 @@ export function validateDraft(kind: DraftKind, input: unknown): DraftCheck {
     const body = kind === 'search' ? searchBody(input, errors) : kind === 'strategy' ? strategyBody(input, title, errors) : kind === 'plan' ? planBody(input, title, errors)
         : kind === 'review' ? reviewBody(input, errors) : kind === 'navigation' ? navigationBody(input, errors) : managementBody(input, errors);
     if (!body || errors.length) { return { ok: false, code: 'INVALID_SCHEMA', errors: errors.slice(0, 20) }; }
+    if (body.kind === 'strategy') {
+        const unavailable = body.strategy.steps.flatMap((step, index) => {
+            const reason = (OPERATORS[step.op] as OperatorSpec).unavailable;
+            return reason ? [`steps[${index}].op: ${step.op} is unavailable: ${reason}`] : [];
+        });
+        if (unavailable.length) { return { ok: false, code: 'CAPABILITY_DISABLED', errors: unavailable }; }
+    }
     return { ok: true, draft: { idempotencyKey: String(input.idempotency_key), title, body,
         ...(input.expected_target_revision !== undefined ? { expectedTargetRevision: input.expected_target_revision as number } : {}),
         ...(input.workspace_binding ? { expectedBinding: String(input.workspace_binding) } : {}), ...(cited ? { evidence: cited } : {}) } };

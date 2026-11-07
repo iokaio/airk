@@ -507,6 +507,7 @@ pub enum ControlResponse {
     },
     CatalogHostContext {
         descriptor: crate::catalog_host::NativeHostContextDescriptor,
+        capabilities: crate::index_catalog::CatalogCapabilities,
     },
     CatalogLegacyBinding {
         observation: crate::catalog_host::NativeLegacyBindingObservation,

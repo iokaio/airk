@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { catalogExport, catalogObject } from '../indexingCatalog';
+import { CatalogObject, catalogExport, catalogObject } from '../indexingCatalog';
 import { CatalogControl, IndexingCatalogController } from '../indexingCatalogController';
 import { SPLIT_JOURNAL_BYTES, SPLIT_SNAPSHOT_BYTES, SPLIT_RECEIPT_BYTES, hasSplitCapability, normalizeSplitSelectors, splitExport, splitTerminal, validateSplitContinuity, validateSplitDraft, validateSplitRecover, validateSplitRecoveryReceipt, validateSplitSelection, validateSplitSnapshot, validateSplitSourceState } from '../indexingSplit';
 import { IntentJournal, IntentStorage } from '../serviceIntents';
@@ -73,6 +73,75 @@ test('capability-qualified Recommendation link opens native detail without prepa
     contract=2;await controller.page('indexes');await controller.recommendations(async()=>advice);const before=reads;await controller.splitOpen(f.index,controller.snapshot().generation);
     assert.equal(reads,before+1);assert.equal(drafts,0);assert.equal(applies,0);assert.equal(controller.snapshot().splitFormOpen,true);assert.equal(controller.snapshot().capabilities?.future_native_capability,true);assert.ok(catalogExport(controller.snapshot(),true).includes('future_advice'));
     assert.ok(controller.snapshot().canReviewSplit);const qualifiedReads=reads;await assert.rejects(controller.splitOpen(f.destinationIndex,controller.snapshot().generation),/advised_index/);assert.equal(reads,qualifiedReads);assert.equal(drafts,0);assert.equal(applies,0);
+});
+
+function listedSplitController(){
+    const f=splitFixture(),item={kind:'index',value:{id:f.index,name:'Original',definition_revision:1,source_revision:1,tombstone:false,backing:catalogObject(f.draft.request).original_registration}};
+    let detailItem:CatalogObject=item,detailRevision=1,reads=0,mutations=0;
+    const control:CatalogControl={
+        catalogRead:async method=>{reads++;return 'catalog_page' in method?{status:'catalog_page',page:{namespace:f.namespace,revision:1,items:[item],continuation:null},capabilities:{policy_contract:2}}:{status:'catalog_detail',detail:{namespace:f.namespace,revision:detailRevision,item:detailItem},capabilities:{policy_contract:2}};},
+        catalogPrepare:async()=>{mutations++;throw new Error('unexpected catalog mutation');},catalogApply:async()=>{mutations++;throw new Error('unexpected catalog mutation');},
+        catalogReconcile:async()=>[],catalogPending:()=>[],catalogSplitDraft:async()=>({response:{draft:f.draft},draft:f.draft,selection:f.choice}),
+        catalogSplitSourceState:async()=>splitSourceResponse(f),catalogSplitApply:async()=>{mutations++;throw new Error('unexpected split mutation');},
+    };
+    const controller=new IndexingCatalogController({control,identity:()=> 'stable',authorized:()=>true,changed(){}});
+    return {f,item,control,controller,reads:()=>reads,mutations:()=>mutations,setDetail:(next:CatalogObject,revision=1)=>{detailItem=next;detailRevision=revision;}};
+}
+
+test('a live listed index opens split review directly without Recommendations or any mutation',async()=>{
+    const f=listedSplitController();await f.controller.page('indexes');
+    assert.equal(f.controller.snapshot().pageKind,'indexes');assert.equal(f.controller.snapshot().recommendations,undefined);
+    const before=f.reads();await f.controller.splitOpen(f.f.index,f.controller.snapshot().generation);
+    assert.equal(f.reads(),before+1);assert.equal(f.controller.snapshot().splitFormOpen,true);assert.equal(f.mutations(),0);
+    assert.equal(catalogObject(catalogObject(f.controller.snapshot().detail!.detail).item).kind,'index');
+});
+
+test('listed split shortcuts retain subset, live-detail, identity and revision checks',async()=>{
+    const outside=listedSplitController();await outside.controller.page('indexes');const before=outside.reads();
+    await assert.rejects(outside.controller.splitOpen(outside.f.destinationIndex,outside.controller.snapshot().generation),/listed_or_advised_index/);
+    assert.equal(outside.reads(),before,'an index outside the displayed subset is not fetched');
+    const retired=listedSplitController();retired.item.value.tombstone=true;await retired.controller.page('indexes');
+    await assert.rejects(retired.controller.splitOpen(retired.f.index,retired.controller.snapshot().generation),/listed_or_advised_index/);
+    assert.equal(retired.reads(),1);
+    for(const failure of ['retired','crossed','revision'] as const){
+        const f=listedSplitController();await f.controller.page('indexes');
+        const next=structuredClone(f.item);
+        if(failure==='retired')next.value.tombstone=true;
+        if(failure==='crossed')next.value.id=f.f.destinationIndex;
+        f.setDetail(next,failure==='revision'?2:1);
+        await assert.rejects(f.controller.splitOpen(f.f.index,f.controller.snapshot().generation),failure==='retired'?/requires_live_index/:failure==='crossed'?/crossed_split_index/:/revision_changed/);
+        assert.equal(f.controller.snapshot().splitFormOpen,undefined);assert.equal(f.mutations(),0);
+    }
+});
+
+test('new catalog pages or inspected details discard the previous split selection and draft',async()=>{
+    for(const action of ['page','detail'] as const){
+        const f=listedSplitController();await f.controller.page('indexes');await f.controller.splitOpen(f.f.index,f.controller.snapshot().generation);
+        await f.controller.splitSourceRead(f.controller.snapshot().generation);await f.controller.splitDraft(f.f.choice,f.controller.snapshot().generation);
+        assert.ok(f.controller.snapshot().splitSourceState);assert.ok(f.controller.snapshot().splitReview);
+        if(action==='page')await f.controller.page('indexes');else await f.controller.detail('index',f.f.index);
+        assert.equal(f.controller.snapshot().splitFormOpen,undefined);assert.equal(f.controller.snapshot().splitSourceState,undefined);assert.equal(f.controller.snapshot().splitReview,undefined);
+        assert.equal(f.mutations(),0);
+    }
+});
+
+test('connected native context hydrates split capability automatically and context reads retain it',async()=>{
+    const f=splitFixture(),descriptor={host:'22'.repeat(32),key:'33'.repeat(32),kind:'folder' as const,name:'AIRK'};
+    const capabilities={policy_contract:3,future_native_capability:{retained:true}};
+    let identity='installed-runtime',observation:CatalogObject|undefined={status:'catalog_host_context',capabilities,descriptor:{schema:1,namespace:f.namespace,host:descriptor.host,key:descriptor.key,catalog_revision:1,context:null}};
+    let reads=0;
+    const control:CatalogControl={catalogRead:async()=>{reads++;return {status:'catalog_detail',capabilities,detail:{namespace:f.namespace,revision:1,item:null}};},
+        catalogPrepare:async()=>{throw new Error('no automatic mutation');},catalogApply:async()=>{throw new Error('no automatic mutation');},catalogReconcile:async()=>[],catalogPending:()=>[],
+        catalogSplitDraft:async()=>{throw new Error('no automatic split');},catalogSplitApply:async()=>{throw new Error('no automatic split');},catalogSplitSourceState:async()=>splitSourceResponse(f)};
+    const controller=new IndexingCatalogController({control,identity:()=>identity,authorized:()=>true,changed(){},windowContext:()=>descriptor,windowContextObservation:()=>observation});
+    assert.equal(controller.snapshot().canReviewSplit,true,'connected observation needs no library refresh or migration');
+    assert.equal(reads,0);assert.deepEqual(controller.snapshot().capabilities,capabilities);
+    await controller.adoptHostContext();assert.equal(controller.snapshot().canReviewSplit,true);
+    assert.deepEqual(JSON.parse(catalogExport(controller.snapshot())).hostContext,observation);
+    await controller.readContext();assert.equal(reads,1);assert.equal(controller.snapshot().canReviewSplit,true);assert.deepEqual(controller.snapshot().capabilities,capabilities);
+    observation=undefined;identity='replacement-runtime';assert.equal(controller.snapshot().canReviewSplit,false,'new connection must not inherit capability');
+    observation={status:'catalog_host_context',descriptor:{schema:1,namespace:f.namespace,host:descriptor.host,key:descriptor.key,catalog_revision:1,context:null}};
+    assert.equal(controller.snapshot().canReviewSplit,false,'a version or missing metadata cannot imply capability');
 });
 
 test('split receipt reads retry typed contention but split mutations dispatch only once',async()=>{

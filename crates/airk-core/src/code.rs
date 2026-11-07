@@ -117,6 +117,10 @@ pub struct RelationshipTargetSuggestion {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct RelationshipsResponse {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub truncation_reasons: Vec<RelationshipTruncationReason>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bounds: Option<RelationshipBounds>,
     #[serde(default)]
     pub indexing: crate::extraction::IndexCoverage,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -179,6 +183,57 @@ mod terminal_tests {
         ] {
             code.target = Some(target.into());
             assert_eq!(terminal_call_name(&code, "call"), None, "{target}");
+        }
+    }
+}
+
+/// Actual stops observed by bounded graph traversal. Navigation incompleteness
+/// can reflect ambiguous or omitted retained declarations, not only a budget.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RelationshipTruncationReason {
+    ResultLimit,
+    ReplyBytes,
+    CandidateFiles,
+    Symbols,
+    RetainedEvidenceBytes,
+    TypeNavigationIncomplete,
+    Deadline,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RelationshipBounds {
+    pub max_results: usize,
+    pub max_record_bytes: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_candidate_files: Option<usize>,
+    pub max_symbols: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_retained_evidence_bytes: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_navigation_evidence_bytes: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_navigation_facts: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deadline_ms: Option<u64>,
+}
+impl RelationshipQuery {
+    pub fn validate_direction(&self) -> anyhow::Result<()> {
+        if !matches!(self.direction.as_str(), "incoming" | "outgoing") {
+            return Err(crate::read_arguments::ReadArgumentError::new(
+                "invalid_arguments",
+                "direction",
+                "direction must be incoming or outgoing",
+            )
+            .into());
+        }
+        Ok(())
+    }
+}
+impl RelationshipsResponse {
+    pub fn mark_truncated(&mut self, reason: RelationshipTruncationReason) {
+        self.truncated = true;
+        if !self.truncation_reasons.contains(&reason) {
+            self.truncation_reasons.push(reason);
         }
     }
 }

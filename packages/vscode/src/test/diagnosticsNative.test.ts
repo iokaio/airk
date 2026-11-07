@@ -12,6 +12,7 @@ test('native console inspections and guarded repair preserve paused, missing and
     {skip:!binary,timeout:480000},async()=>{
     const fixture=await NativeServiceFixture.create(binary!);
     try{
+        await fixture.requireResidentProjects(2);
         const a=await fixture.register('diagnostic-a'),b=await fixture.register('diagnostic-b');
         const original='pub fn native_diagnostic_probe() -> bool { true }\n';
         await fs.writeFile(path.join(a.root,'original.rs'),original);
@@ -63,5 +64,5 @@ test('native console inspections and guarded repair preserve paused, missing and
         assert.ok(Array.isArray(retained.hits));assert.equal(record(retained.hits[0]).text,original);
         assert.equal(await fs.readFile(path.join(a.root,'original.rs'),'utf8'),original);
         assert.equal(await fs.readFile(path.join(b.root,'other.rs'),'utf8'),'pub fn unrelated_probe() {}\n');
-    }finally{await fixture.dispose();}
+    }catch(error){await fixture.retainFailure(error);throw error;}finally{await fixture.dispose();}
 });

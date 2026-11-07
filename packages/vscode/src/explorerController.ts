@@ -27,12 +27,13 @@ import { validateStudio } from './explorerStrategies';
 import { usageAction } from './usageReport';
 import { HandoffStore } from './explorerHandoffs';
 import { IndexingCatalogController } from './indexingCatalogController';
-import { catalogExport, CatalogObject, WindowContextDescriptor } from './indexingCatalog';
+import { catalogExport, CatalogObject, WindowContextDescriptor, validateNativeHostContext, validateWindowContext } from './indexingCatalog';
 import { MANAGE_WORKSPACE_TRUST_COMMAND } from './explorerCommands';
 import { NativeExecutionDisabled } from './nativeGate';
 import type { AssistanceWindowStatus } from './explorerContracts';
 import type { SearchDraft } from './explorerDrafts';
 import { nativeSavedSourceState, readResultBody, verificationLabel } from './sourceVerification';
+import { ServiceError } from './serviceClient';
 
 /** The narrow surface of the service extension that the Explorer may use. */
 export interface ExplorerHost {
@@ -42,6 +43,8 @@ export interface ExplorerHost {
     /** Trusted owning adapter supplies canonical identity; absence keeps window association controls gated. */
     windowContext?(): WindowContextDescriptor | undefined;
     windowContextObservation?(): CatalogObject | undefined;
+    /** Stable window/workspace producer generation, independent of observed metadata. */
+    windowContextIdentity?(): string;
     prepareWindowContext?(): Promise<void>;
     useGrant?(choice:CatalogObject,namespace:string,revision:number,valid:()=>boolean):Promise<CatalogObject>;
     readonly onDidChangeWindowContext?: vscode.Event<void>;
@@ -54,6 +57,10 @@ export interface ExplorerHost {
     toggleWorkbench?(): Promise<void>;
     readonly onDidChangeWorkbenchVisibility?: vscode.Event<void>;
     startup?(): ExplorerViewState['startup'];
+    runtimeUpgrade?(): ExplorerViewState['runtimeUpgrade'];
+    searchScopeSelection?():{index_ids:string[];project_ids:string[];managedProjectIds:string[];active:boolean};
+    applySearchScope?(selection:CatalogObject):Promise<CatalogObject>;
+    saveIndexSet?(selection:CatalogObject):Promise<CatalogObject>;
     reloadUpdatedExtension?(): Promise<void>;
     trusted(): boolean;
     workspaceTrusted?(): boolean;
@@ -79,6 +86,12 @@ export interface EmbeddedUsage {
     dispose(): void;
 }
 const RECIPE_LIMIT = 50;
+interface ContextObservation {
+    owner: string; attempts: number; deadline: number;
+    state: 'idle' | 'reading' | 'waiting' | 'complete' | 'stopped'; retryAt?: number;
+}
+const CONTEXT_OBSERVATION_ATTEMPTS = 8;
+const CONTEXT_OBSERVATION_BUDGET_MS = 30000;
 
 export interface ExplorerSnapshotListener { (state: ExplorerViewState): void }
 
@@ -109,6 +122,10 @@ export class ExplorerController implements vscode.Disposable {
     private statusFor?: string;
     private statusIdentity?: string;
     private observedIdentity?: string;
+    private contextObservation?: ContextObservation;
+    private contextObservationRead?: Promise<void>;
+    private contextObservationTimer?: ReturnType<typeof setTimeout>;
+    private panelVisible = false;
     private statusLoading?: Promise<void>;
     private statusLoadingKind?: 'scalar' | 'details';
     private retainedDetails?: { project: string; binding: string; identity?: string; summary: StatusSummary; settings?: string };
@@ -122,8 +139,9 @@ export class ExplorerController implements vscode.Disposable {
 
     constructor(private readonly host: ExplorerHost) {
         this.control = new ExplorerControl(host.control, host.version);
-        this.indexing = new IndexingCatalogController({ control: this.control.catalog, identity: () => `${this.control.observationIdentity}:${this.selectionEpoch}`,
-            authorized: () => !this.disposed && this.host.trusted() && !this.host.extensionUpdate?.(), windowContext:()=>this.host.windowContext?.(),windowContextObservation:()=>this.host.windowContextObservation?.(),canReadWindowContext:()=>!!this.host.prepareWindowContext&&this.host.nativeExecutionEnabled?.()!==false,...(host.useGrant?{useGrant:host.useGrant.bind(host)}:{}),changed: () => this.publish() });
+        const control=this.control;
+        this.indexing = new IndexingCatalogController({ get control(){return control.catalog;}, identity: () => `${this.control.observationIdentity}:${this.selectionEpoch}`,
+            authorized: () => !this.disposed && this.host.trusted() && !this.host.extensionUpdate?.(), windowContext:()=>this.host.windowContext?.(),windowContextObservation:()=>this.host.windowContextObservation?.(),canReadWindowContext:()=>!!this.host.prepareWindowContext&&this.host.nativeExecutionEnabled?.()!==false,...(host.useGrant?{useGrant:host.useGrant.bind(host)}:{}),searchScopeSelection:host.searchScopeSelection?.bind(host),applySearchScope:host.applySearchScope?.bind(host),saveIndexSet:host.saveIndexSet?.bind(host),changed: () => this.publish() });
         this.panel = new ExplorerPanel(host.extensionUri, {
             message: message => { void this.handle(message); },
             visible: visible => this.visibility(visible),
@@ -131,12 +149,13 @@ export class ExplorerController implements vscode.Disposable {
         });
         this.listeners.push(this.control.onDidChange(() => this.observedControl()), host.onDidChangeSpecs(() => this.specsChanged()), host.suggestions.onDidChange(() => this.publish()));
         if(host.onDidChangeWorkbenchVisibility)this.listeners.push(host.onDidChangeWorkbenchVisibility(()=>this.publish()));
-        if(host.onDidChangeWindowContext)this.listeners.push(host.onDidChangeWindowContext(()=>this.publish()));
+        if(host.onDidChangeWindowContext)this.listeners.push(host.onDidChangeWindowContext(()=>{this.publish();this.observeConnectedContext();}));
         this.selectDefault();
         this.rememberSource(vscode.window.activeTextEditor);
         const editorChanges = vscode.window.onDidChangeActiveTextEditor?.(editor => { if (this.rememberSource(editor)) { this.publish(); } });
         if (editorChanges) { this.listeners.push(editorChanges); }
         this.publish();
+        this.observeConnectedContext();
     }
 
     /** Reveal the Explorer, optionally at a route from the manifest. */
@@ -147,6 +166,7 @@ export class ExplorerController implements vscode.Disposable {
         this.panel.post({ v: MESSAGE_VERSION, type: 'navigate', route: this.route });
         this.publish();
         void this.loadStatus();
+        this.observeConnectedContext(true);
     }
 
     /** Studio and Planner draft revisions last reported by the webview (for agent draft conflicts). */
@@ -191,6 +211,7 @@ export class ExplorerController implements vscode.Disposable {
             ...(this.host.extensionUpdate?.() ? { extensionUpdate: this.host.extensionUpdate() } : {}),
             connectionCheck: this.host.connectionCheck?.(),
             startup: this.host.startup?.(),
+            runtimeUpgrade: this.host.trusted() ? this.host.runtimeUpgrade?.() : undefined,
             trusted: this.host.trusted(),
             workspaceTrusted: this.host.workspaceTrusted?.(),
             nativeExecutionEnabled: this.host.nativeExecutionEnabled?.(),
@@ -232,9 +253,12 @@ export class ExplorerController implements vscode.Disposable {
     }
 
     private visibility(visible: boolean): void {
+        this.panelVisible = visible;
+        if (!visible) { this.clearContextObservationTimer(); }
         if (!visible && !this.panel.open) { this.managementOpen = false; }
         if (visible && !this.retained) { this.retained = this.control.retain(); void this.loadStatus(); }
         else if (!visible && this.retained) { this.retained.dispose(); this.retained = undefined; }
+        if (visible) { this.observeConnectedContext(); }
     }
 
     private selectDefault(): void {
@@ -270,6 +294,7 @@ export class ExplorerController implements vscode.Disposable {
         this.selectDefault();
         this.publish();
         if (this.panel.open) { void this.loadStatus(); }
+        this.observeConnectedContext();
     }
 
     private observedControl(): void {
@@ -285,6 +310,91 @@ export class ExplorerController implements vscode.Disposable {
             this.lastAutomaticStatusCheck=Date.now();void this.loadStatus();
         }
         this.publish();
+        this.observeConnectedContext();
+    }
+
+    private contextObservationOwner(): string | undefined {
+        const identity = this.control.observationIdentity;
+        return this.disposed || !this.host.trusted() || this.host.extensionUpdate?.() || this.host.nativeExecutionEnabled?.() === false
+            || !this.control.state.connected || !identity || !this.host.prepareWindowContext
+            // Native window ownership is independent of the selected evidence
+            // view. Use Grant can change that view without replacing its host.
+            ? undefined : JSON.stringify([identity, this.host.windowContextIdentity?.() ?? this.selectionEpoch]);
+    }
+    private completeWindowContextObservation():boolean {
+        try{
+            const descriptor=validateWindowContext(this.host.windowContext?.()),observation=this.host.windowContextObservation?.();
+            if(observation?.status!=='catalog_host_context')return false;
+            const native=validateNativeHostContext(observation.descriptor),capabilities=observation.capabilities;
+            if(!capabilities||typeof capabilities!=='object'||Array.isArray(capabilities))return false;
+            const contract=(capabilities as CatalogObject).policy_contract;
+            return native.host===descriptor.host&&native.key===descriptor.key&&typeof contract==='number'&&Number.isSafeInteger(contract)&&contract>=0;
+        }catch{return false;}
+    }
+    private clearContextObservationTimer(): void {
+        if (this.contextObservationTimer !== undefined) { clearTimeout(this.contextObservationTimer); this.contextObservationTimer = undefined; }
+    }
+    private scheduleContextObservation(observation: ContextObservation): void {
+        if (!this.panelVisible || this.contextObservation !== observation || this.contextObservationTimer !== undefined) { return; }
+        const delay = Math.max(0, (observation.retryAt ?? Date.now()) - Date.now());
+        if (observation.attempts >= CONTEXT_OBSERVATION_ATTEMPTS || Date.now() + delay >= observation.deadline) {
+            observation.state = 'stopped';
+            this.host.log('AIRK connected-runtime capability observation exhausted its bounded retry budget.');
+            return;
+        }
+        this.contextObservationTimer = setTimeout(() => {
+            this.contextObservationTimer = undefined;
+            if (this.panelVisible && this.contextObservation === observation && observation.owner === this.contextObservationOwner()) { this.observeConnectedContext(); }
+        }, delay);
+        this.contextObservationTimer.unref?.();
+    }
+
+    /** Observe native capabilities; only known read-only/pre-query refusals may retry. */
+    private observeConnectedContext(retry=false):void {
+        const owner = this.contextObservationOwner();
+        if (!owner) { this.clearContextObservationTimer(); this.contextObservation = undefined; return; }
+        if (this.contextObservation?.owner !== owner) {
+            this.clearContextObservationTimer();
+            this.contextObservation = { owner, attempts: 0, deadline: Date.now() + CONTEXT_OBSERVATION_BUDGET_MS, state: 'idle' };
+        }
+        let observation = this.contextObservation;
+        // An explicit read can finish while the automatic observer is backing
+        // off. Its current authenticated result satisfies the same owner; do
+        // not later reread a newer catalog clock and retire an active review.
+        if(!this.contextObservationRead&&this.completeWindowContextObservation()){
+            this.clearContextObservationTimer();observation.state='complete';return;
+        }
+        if (retry && !this.contextObservationRead && !this.host.windowContextObservation?.()
+            && ['complete', 'stopped'].includes(observation.state)) {
+            observation = this.contextObservation = { owner, attempts: 0, deadline: Date.now() + CONTEXT_OBSERVATION_BUDGET_MS, state: 'idle' };
+        }
+        if (this.contextObservationRead || observation.state === 'complete' || observation.state === 'stopped') { return; }
+        if (observation.state === 'waiting') {
+            if (!this.panelVisible) { return; }
+            if (Date.now() >= observation.deadline || observation.attempts >= CONTEXT_OBSERVATION_ATTEMPTS) { observation.state = 'stopped'; return; }
+            if (Date.now() < (observation.retryAt ?? 0)) { this.scheduleContextObservation(observation); return; }
+        }
+        this.clearContextObservationTimer();
+        observation.state = 'reading'; observation.attempts++;
+        const current = () => this.contextObservation === observation && owner === this.contextObservationOwner();
+        const read = Promise.resolve().then(() => current() ? this.host.prepareWindowContext!() : undefined).then(() => {
+            if (current()) { observation.state = 'complete'; this.publish(); }
+        }, error => {
+            if (!current()) { return; }
+            this.host.log(`AIRK connected-runtime capability observation failed: ${String(error)}`);
+            if (error instanceof ServiceError && !error.outcomeUnknown
+                && ['registry_busy', 'console_queue_full', 'catalog_control_connection_unavailable'].includes(error.code)) {
+                observation.state = 'waiting';
+                observation.retryAt = Date.now() + Math.min(4000, 250 * 2 ** (observation.attempts - 1));
+                this.scheduleContextObservation(observation);
+            } else { observation.state = 'stopped'; }
+        }).finally(() => {
+            if (this.contextObservationRead === read) { this.contextObservationRead = undefined; }
+            // An old owner finishing cannot hydrate the replacement window; its
+            // release may admit one fresh observation for the current owner.
+            if (this.contextObservation !== observation || owner !== this.contextObservationOwner()) { this.observeConnectedContext(); }
+        });
+        this.contextObservationRead = read;
     }
 
     /** Observe source editors, ignoring webview focus loss and foreign projects. */
@@ -463,7 +573,28 @@ export class ExplorerController implements vscode.Disposable {
                 if(this.disposed)throw new EvidenceFailure(explorerError('CLIENT_NOT_AUTHORIZED'));
                 if(this.host.workspaceTrusted?.()!==false&&!this.host.trusted())throw new EvidenceFailure(explorerError('CLIENT_NOT_AUTHORIZED'));
                 await vscode.commands.executeCommand(MANAGE_WORKSPACE_TRUST_COMMAND);return;
-            case 'indexing.page': return this.indexing.page(message.kind,message.next,message.index,message.project);
+            case 'indexing.page': {
+                this.requireAuthorization(true);
+                // Establish the authenticated window owner before admitting a
+                // page that can seed a native review. The producer shares its
+                // in-flight read with automatic observation; this explicit read
+                // has no retry loop and creates no grant or indexing work. A
+                // saved explicit local choice can be revalidated on reconnect.
+                if(this.host.prepareWindowContext&&(!this.host.windowContext?.()||this.host.windowContextObservation?.()?.status!=='catalog_host_context')){
+                    const identity=this.control.observationIdentity,windowIdentity=this.host.windowContextIdentity?.();
+                    await this.host.prepareWindowContext();this.requireAuthorization(true);
+                    if(identity!==this.control.observationIdentity||windowIdentity!==this.host.windowContextIdentity?.())throw new ServiceError('window_context_changed');
+                    if(!this.host.windowContext?.()||this.host.windowContextObservation?.()?.status!=='catalog_host_context')throw new ServiceError('catalog_control_connection_unavailable');
+                }
+                return this.indexing.page(message.kind,message.next,message.index,message.project);
+            }
+            case 'indexing.scope.read':
+                this.requireAuthorization(true);
+                if(this.host.prepareWindowContext)await this.host.prepareWindowContext();
+                this.requireAuthorization(true);return this.indexing.scopeRead(message.kind,message.next);
+            case 'indexing.scope.apply':return this.indexing.scopeApply(message.selection,message.generation);
+            case 'indexing.set.read':return this.indexing.setRead(message.id);
+            case 'indexing.set.save':return this.indexing.scopeApply(message.selection,message.generation,true);
             case 'indexing.detail': return this.indexing.detail(message.kind,message.id);
             case 'indexing.preview': return this.indexing.preview(message.operation,message.generation);
             case 'indexing.create': return this.indexing.create(message.name,message.generation);
@@ -930,6 +1061,7 @@ export class ExplorerController implements vscode.Disposable {
         void this.usageSession?.value.then(session => session.dispose(), () => undefined);
         if (this.disposed) { return; }
         this.disposed = true;
+        this.clearContextObservationTimer(); this.contextObservation = undefined;
         this.retained?.dispose();
         this.evidence?.dispose();
         this.panel.dispose();

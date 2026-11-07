@@ -647,6 +647,7 @@ test('combined card context retains originating index, Projects and member publi
         const request=f.created[0].requests.find(value=>value.tool==='airk_parse')!.args,plan=object(request.plan),step=object((plan.steps as unknown[])[0]),args=object(step.args);
         assert.deepEqual(request.project_ids,projects);assert.deepEqual(request.index_ids,[originIndex]);assert.deepEqual(plan.query_scope,{project_ids:projects,index_ids:[originIndex]});
         assert.equal(plan.publication,undefined,'a combined plan has no invented scalar publication');assert.equal(args.revision,publicationToken(4));assert.equal(args.known_hash,'66'.repeat(32));
+        assert.equal(args.before,undefined,'context actions use the canonical native radius default');assert.equal(args.after,undefined);
         assert.equal(args.path,'same.rs');assert.equal(f.created[0].spec.combinedSession?.index_ids!.length,2,'the temporary follow-up never changes the frozen window session');
     }finally{f.provider.dispose();}
 });

@@ -57,7 +57,7 @@ test('combined review deduplicates shared indexes and never adds an unselected P
     assert.deepEqual(selection.indexes.map(row=>row.id),[index(1),index(2)]);
     assert.deepEqual(selection.session.project_ids,[project(1),project(2)]);
     assert.ok(!selection.session.project_ids.includes(project(3)));
-    assert.equal(selection.label,'2 selected Projects · 2 indexes');
+    assert.equal(selection.label,'2 selected index sets · 2 indexes');
     assert.throws(()=>reviewCombinedScopeSelection({...f.choice,index_ids:[index(3)]},context,f.grant,[]),/outside_reviewed_grant/);
     assert.throws(()=>reviewCombinedScopeSelection({...f.choice,project_ids:[project(4)]},context,f.grant,f.indexes),/outside_reviewed_grant/);
     assert.throws(()=>reviewCombinedScopeSelection({...f.choice,context_key:'09'.repeat(32)},context,f.grant,f.indexes),/choice_fields/);

@@ -52,6 +52,10 @@ pub struct MatchCount {
 /// The budget counts each complete serialized record; envelope/array framing is additional.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct DiscoveryPage {
+    /// Qualified observations about open exact labels, not a global catalog or
+    /// a claim that an unobserved producer label is unsupported.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub filter_observations: Vec<FilterObservation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
     /// Minimum budget for the next record when no record could be returned.
@@ -433,5 +437,23 @@ mod tests {
         assert_eq!(decoded.ordinal, key.ordinal);
         assert!(decoded.name.is_empty());
         Ok(())
+    }
+}
+
+/// Open producer labels remain valid inputs. Empty complete queries disclose
+/// their exact filters instead of silently making spelling mistakes look useful.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FilterObservation {
+    pub field: String,
+    pub value: String,
+    pub state: String,
+    pub basis: String,
+    pub message: String,
+}
+impl FilterObservation {
+    pub fn no_matching_records(field: &str, value: &str) -> Self {
+        Self {field:field.into(),value:value.into(),state:"not_observed_in_selected_query".into(),
+            basis:"complete_selected_published_query".into(),
+            message:"This exact filter produced no matching retained records in the selected index, prefix and other query filters. Check its spelling and file_info language/profile metadata. A valid absent native or retained producer label is not globally unsupported.".into()}
     }
 }

@@ -138,11 +138,12 @@ impl FileStore {
         collection: &str,
         q: &RelationshipQuery,
     ) -> Result<RelationshipsResponse> {
+        q.validate_direction()?;
         let _lifecycle = self.lifecycle(false)?;
         let conn = read_transaction(&self.directory)?;
         let tx = &conn;
         let generation = identity(tx, root, collection)?;
-        let mut response = RelationshipsResponse {indexing:conn.detail.into(),generation,publication:conn.publication.clone(),collection:collection.into(),relationships:Vec::new(),suggested_targets:Vec::new(),truncated:false,coverage:"Selected syntax patterns and optional manifest-bound producer assertions. External targets are identifiers only; impact is incomplete.".into()};
+        let mut response = RelationshipsResponse {indexing:conn.detail.into(),generation,publication:conn.publication.clone(),collection:collection.into(),relationships:Vec::new(),suggested_targets:Vec::new(),truncation_reasons:Vec::new(),bounds:Some(airk_core::code::RelationshipBounds{max_results:q.limit,max_record_bytes:q.max_bytes,max_candidate_files:None,max_symbols:100,max_retained_evidence_bytes:None,max_navigation_evidence_bytes:None,max_navigation_facts:None,deadline_ms:Some(250)}),truncated:false,coverage:"Selected syntax patterns and optional manifest-bound producer assertions. External targets are identifiers only; impact is incomplete.".into()};
         let mut pending = BTreeSet::from([q.symbol.clone()]);
         let mut visited = BTreeSet::new();
         let mut returned = BTreeSet::new();
@@ -155,7 +156,15 @@ impl FileStore {
                     continue;
                 }
                 if visited.len() > 100 || Instant::now() > deadline {
-                    response.truncated = true;
+                    if visited.len() > 100 {
+                        response
+                            .mark_truncated(airk_core::code::RelationshipTruncationReason::Symbols);
+                    }
+                    if Instant::now() > deadline {
+                        response.mark_truncated(
+                            airk_core::code::RelationshipTruncationReason::Deadline,
+                        );
+                    }
                     return Ok(response);
                 }
                 // Separate indexed branches prevent scanning the whole graph per hop.
@@ -180,7 +189,21 @@ impl FileStore {
                         || payload.len() > remaining
                         || Instant::now() > deadline
                     {
-                        response.truncated = true;
+                        if response.relationships.len() == q.limit {
+                            response.mark_truncated(
+                                airk_core::code::RelationshipTruncationReason::ResultLimit,
+                            );
+                        }
+                        if payload.len() > remaining {
+                            response.mark_truncated(
+                                airk_core::code::RelationshipTruncationReason::ReplyBytes,
+                            );
+                        }
+                        if Instant::now() > deadline {
+                            response.mark_truncated(
+                                airk_core::code::RelationshipTruncationReason::Deadline,
+                            );
+                        }
                         return Ok(response);
                     }
                     let edge: RelationshipHit = serde_json::from_str(&payload)?;

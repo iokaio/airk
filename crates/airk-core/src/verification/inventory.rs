@@ -68,7 +68,7 @@ impl ReferenceInventory {
             complete: true,
             ..Self::default()
         };
-        inventory.visit(value, "", None, false, 0);
+        inventory.visit(value, "", None, false, 0, true);
         inventory
     }
 
@@ -162,6 +162,88 @@ impl ReferenceInventory {
         });
     }
 
+    /// Only the canonical changes projection binds a validation's current
+    /// endpoint to the exact observed publication. Remembered input paths are
+    /// routing metadata when that endpoint already accounts for their source.
+    fn visit_changes_validation(
+        &mut self,
+        value: &Value,
+        pointer: &str,
+        publication: RevisionToken,
+        historical: bool,
+        depth: usize,
+    ) {
+        self.visited += 1;
+        if depth > 32 || self.visited > 32_768 {
+            self.complete = false;
+            return;
+        }
+        let Some(object) = value.as_object() else {
+            self.complete = false;
+            return;
+        };
+        if let Some(current) = object.get("current").filter(|endpoint| {
+            endpoint.get("path").is_some() && endpoint.get("source_hash").is_some()
+        }) {
+            // FileState.path is relative to its original root. The native
+            // validation's resolved_path is the collection citation locator;
+            // retain both explicitly so an @alias cannot open a primary file.
+            let locator = object.get("resolved_path").and_then(Value::as_str);
+            let mut endpoint = current.clone();
+            if let Some(locator) = locator {
+                endpoint["citation_path"] = Value::String(locator.into());
+            }
+            self.add(
+                &endpoint,
+                format!("{pointer}/current"),
+                "graph_endpoint",
+                Some(publication),
+                historical || locator.is_none(),
+            );
+        } else {
+            // Missing/removed/ambiguous remembered evidence is not silently
+            // turned into a verified empty subset.
+            for key in ["requested_path", "resolved_path"] {
+                if let Some(path) = object.get(key).filter(|path| path.is_string()) {
+                    self.add(
+                        path,
+                        format!("{pointer}/{key}"),
+                        "unsupported_file_reference",
+                        Some(publication),
+                        true,
+                    );
+                }
+            }
+            if let Some(selector) = object
+                .get("selector")
+                .filter(|selector| selector.get("path").is_some())
+            {
+                self.add(
+                    selector,
+                    format!("{pointer}/selector"),
+                    "unsupported_file_reference",
+                    Some(publication),
+                    true,
+                );
+            }
+        }
+        if let Some(candidates) = object.get("candidates").and_then(Value::as_array) {
+            for (index, candidate) in candidates.iter().enumerate() {
+                self.add(
+                    candidate,
+                    format!("{pointer}/candidates/{index}"),
+                    "graph_endpoint",
+                    Some(publication),
+                    true,
+                );
+                if self.references_lower_bound > MAX_REFERENCES {
+                    self.complete = false;
+                    break;
+                }
+            }
+        }
+    }
+
     fn visit(
         &mut self,
         value: &Value,
@@ -169,6 +251,10 @@ impl ReferenceInventory {
         inherited: Option<RevisionToken>,
         historical: bool,
         depth: usize,
+        // Only root reads and known native envelope/member/step results may
+        // qualify a changes response. Producer evidence rows never gain this
+        // authority by coincidentally containing changes-shaped attributes.
+        read_projection: bool,
     ) {
         self.visited += 1;
         if depth > 32 || self.visited > 32_768 {
@@ -215,6 +301,7 @@ impl ReferenceInventory {
                             None,
                             historical,
                             depth + 1,
+                            read_projection,
                         ),
                         Err(_) => {
                             // Preserve honest known inline locator lower bounds,
@@ -227,6 +314,7 @@ impl ReferenceInventory {
                                 None,
                                 historical,
                                 depth + 1,
+                                false,
                             );
                         }
                     }
@@ -254,6 +342,7 @@ impl ReferenceInventory {
                 inherited,
                 historical,
                 depth + 1,
+                read_projection,
             );
         }
         let previous_origin = self.member_origin.clone();
@@ -293,6 +382,25 @@ impl ReferenceInventory {
             .and_then(Value::as_str)
             .and_then(|token| token.parse().ok())
             .or(inherited);
+        // This exact response fence belongs to native ChangesResponse. Do not
+        // infer current authority from a row named `current`, the owner's head,
+        // a historical event endpoint, or an unqualified nested projection.
+        let changes_current = object
+            .get("current")
+            .and_then(Value::as_str)
+            .and_then(|token| token.parse::<RevisionToken>().ok())
+            .filter(|token| {
+                read_projection
+                    && object.get("status").and_then(Value::as_str) == Some("ready")
+                    && object.get("baseline_status").is_some()
+                    && object.get("validations").is_some_and(Value::is_array)
+                    && Some(*token) == publication
+                    && object
+                        .get("to")
+                        .and_then(Value::as_str)
+                        .and_then(|token| token.parse::<RevisionToken>().ok())
+                        == Some(*token)
+            });
         if let Some(citation) = object.get("citation") {
             self.add(
                 citation,
@@ -368,13 +476,23 @@ impl ReferenceInventory {
             if let Some(rows) = object.get(key).and_then(Value::as_array) {
                 for (index, row) in rows.iter().enumerate() {
                     let row_pointer = format!("{pointer}/{key}/{index}");
-                    if key == "files"
+                    if key == "validations"
+                        && let Some(changes_current) = changes_current
+                    {
+                        self.visit_changes_validation(
+                            row,
+                            &row_pointer,
+                            changes_current,
+                            historical,
+                            depth + 1,
+                        );
+                    } else if key == "files"
                         && row.get("path").is_some()
                         && row.get("content_hash").is_none()
                     {
                         self.add(row, row_pointer, "file_path", publication, historical);
                     } else {
-                        self.visit(row, &row_pointer, publication, historical, depth + 1);
+                        self.visit(row, &row_pointer, publication, historical, depth + 1, false);
                     }
                     if self.visited > 32_768 || self.references_lower_bound > MAX_REFERENCES {
                         self.complete = false;
@@ -470,6 +588,7 @@ impl ReferenceInventory {
                             publication,
                             historical,
                             depth + 1,
+                            false,
                         );
                         if self.visited > 32_768 || self.references_lower_bound > MAX_REFERENCES {
                             self.complete = false;
@@ -483,6 +602,7 @@ impl ReferenceInventory {
                         publication,
                         historical,
                         depth + 1,
+                        false,
                     );
                 }
             }
@@ -496,6 +616,7 @@ impl ReferenceInventory {
                         publication,
                         historical,
                         depth + 1,
+                        read_projection,
                     );
                 }
                 if self.visited > 32_768 || self.references_lower_bound > MAX_REFERENCES {
@@ -636,5 +757,119 @@ mod tests {
         assert_eq!(unknown.references.len(), 1);
         assert!(unknown.references[0].path.is_none());
         assert!(unknown.references[0].expected_hash.is_none());
+    }
+}
+#[test]
+fn current_changes_validations_keep_exact_authority_without_duplicate_selector_inputs() {
+    use crate::{evidence::RevisionEnvelope, identity::Incarnation};
+    use serde_json::json;
+    let token = RevisionToken {
+        incarnation: Incarnation::from_bytes([7; 16]),
+        generation: 3,
+        revision: Sha256Digest::from_bytes([8; 32]),
+    };
+    let endpoint = json!({"path":"src/current.rs","source_hash":"ab".repeat(32),
+            "profile_id":"cd".repeat(32),"root":"/fixture"});
+    let row = json!({"selector":{"kind":"citation","path":"src/current.rs","source_hash":"ef".repeat(32)},
+            "outcome":"modified","requested_path":"@docs/src/current.rs","resolved_path":"@docs/src/current.rs",
+            "current":endpoint,"candidates":[endpoint]});
+    let payload = json!({"status":"ready","baseline_status":"not_requested",
+            "publication":RevisionEnvelope::new("fixture".into(),token),"current":token,"to":token,
+            "validations":[row],"changes":[{"before":endpoint,"after":endpoint}]});
+    let inventory = ReferenceInventory::collect(&payload);
+    assert!(inventory.complete);
+    assert_eq!(inventory.references.len(), 4);
+    let current = inventory
+        .references
+        .iter()
+        .find(|reference| !reference.historical)
+        .unwrap();
+    assert_eq!(current.pointer, "/validations/0/current");
+    assert_eq!(current.publication, Some(token));
+    assert_eq!(current.path.as_deref(), Some("@docs/src/current.rs"));
+    assert_eq!(
+        current.source_relative_path.as_deref(),
+        Some("src/current.rs")
+    );
+    assert_eq!(current.original_root.as_deref(), Some("/fixture"));
+    assert_eq!(
+        current.expected_hash,
+        Some("ab".repeat(32).parse().unwrap())
+    );
+    assert_eq!(
+        current.profile_digest,
+        Some("cd".repeat(32).parse().unwrap())
+    );
+    assert!(inventory.references.iter().all(|reference| {
+        payload.pointer(&reference.pointer).is_some()
+            && !reference.pointer.ends_with("/selector")
+            && !reference.pointer.ends_with("/requested_path")
+            && !reference.pointer.ends_with("/resolved_path")
+    }));
+    assert!(
+        inventory
+            .references
+            .iter()
+            .filter(|reference| reference.historical)
+            .all(|reference| {
+                reference.pointer.starts_with("/changes/")
+                    || reference.pointer.contains("/candidates/")
+            })
+    );
+    for field in ["current", "to", "publication"] {
+        let mut unqualified = payload.clone();
+        unqualified.as_object_mut().unwrap().remove(field);
+        let rejected = ReferenceInventory::collect(&unqualified);
+        assert!(
+            rejected
+                .references
+                .iter()
+                .all(|reference| reference.historical),
+            "{field}"
+        );
+    }
+    let mut missing = payload.clone();
+    missing["validations"][0]["current"] = Value::Null;
+    let missing = ReferenceInventory::collect(&missing);
+    assert!(
+        missing
+            .references
+            .iter()
+            .all(|reference| reference.historical)
+    );
+    assert!(
+        missing
+            .references
+            .iter()
+            .any(|reference| reference.pointer.ends_with("/selector"))
+    );
+    let source_metadata = json!({
+        "publication":payload["publication"],
+        "facts":[payload.clone()],
+        "items":[{"structuredContent":payload.clone()}],
+        "evidence":[{"steps":[{"result":payload.clone()}]}]
+    });
+    let untrusted = ReferenceInventory::collect(&source_metadata);
+    assert!(untrusted.complete);
+    assert!(
+        untrusted
+            .references
+            .iter()
+            .all(|reference| reference.historical),
+        "producer rows cannot qualify native changes authority"
+    );
+    for native_envelope in [
+        json!({"content":[],"structuredContent":payload.clone()}),
+        json!({"steps":[{"result":payload}]}),
+    ] {
+        let wrapped = ReferenceInventory::collect(&native_envelope);
+        assert_eq!(
+            wrapped
+                .references
+                .iter()
+                .filter(|reference| !reference.historical)
+                .count(),
+            1
+        );
     }
 }

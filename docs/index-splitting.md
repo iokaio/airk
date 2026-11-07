@@ -1,26 +1,67 @@
 # Reviewed index splitting
 
-P10 is implemented in the unpublished **1.8.8 working build**.
+Index splitting is available in the unpublished **1.8.11 working build**.
+The [1.8.11 record](releases/release-1.8.11.md) tracks the current Explorer workflow
+and validation. The [1.8.10 record](releases/release-1.8.10.md) and P10 evidence
+below retain their historical identities. **Index sets** is the current UI name
+for the native `Project` memberships described by this contract.
+
+Splitting is optional. To stop maintaining an index and build a differently
+shaped independent one over some of the same source files, use **Delete index**
+and create a new index with a distinct storage leaf, collection and backing. See
+[deletion](service-project-retirement.md) and [setup](service-project-setup.md).
+
+P10 was implemented in the unpublished **1.8.8 working build**.
 Frozen Windows qualification passed all 22 gates; focused Mac ARM batches passed
 with their Cargo targets cleaned. [Exact evidence and limits](research/implementation-v190.md#p10--local-phase-checkpoint-5-november-2026)
 retain distinct source identities and resource/platform coverage. P10 has passed its local phase checks; the working build remains unpublished.
-This guide describes that working-build behavior.
+This guide describes the current workflow and the inherited native split contract.
 
 ## Review the partition
 
-In **Explorer → Indexing → Index detail → Split an index**, read the complete
-native split baseline before preparing a review. It contains the original source
-roots and policy plus every affected Project membership. A displayed library page
-is a bounded subset and cannot establish that census. Split availability requires
-an explicit native policy capability of at least contract 2.
+Supported installed-runtime upgrades and native
+capability discovery run automatically for saved active indexes. There is no
+separate policy-contract upgrade button and no rebuild just to enable split
+review. Explorer shows the actual runtime-upgrade stage and elapsed time across
+Overview, Indexing and Management. Split review distinguishes an upgrade in
+progress from capabilities still being checked or a connection that does not
+support splitting. A failed upgrade retains an attention message. The native
+runtime's reported capability, rather than its version label, enables the form.
 
-Choose original source-root IDs and exact files or directory subtrees, a separate
-destination storage location and collection, Project memberships, and growth,
-temporary-space, original-rewrite and cleanup ceilings. Exact files remain exact;
-a subtree includes future eligible descendants. Review the native canonical paths,
-source-ID mappings, affected Project effects, storage action, quota policies and
-control dependencies before applying. Stale identities or revisions require a new
-review. Oversized or unsupported reviews refuse without dropping fields.
+Open **Explorer → Indexing → Index library**. AIRK automatically reads one bounded
+native metadata page on entry. If that read fails, the error stays visible and
+**Refresh indexes** requests a fresh page explicitly; AIRK does not poll or
+repeat the failure. Use **Next page** to continue beyond the displayed page.
+Each row has **Open index**; eligible active indexes also have **Split index**.
+Choose **Split index**, or **Open index → Split index**, to open that index's form.
+A retired index cannot start a split. Split availability requires an explicit
+native policy capability of at least contract 2.
+
+The split form has three steps:
+
+1. **Load the source folders.** Click **Read complete native split baseline**.
+   It supplies the original roots, policy and complete affected-Project census.
+   Library rows alone cannot establish that census. Refresh the baseline after a
+   catalog revision changes.
+2. **Choose what moves to the new index.** Choose a **Source folder** from the
+   native baseline's dropdown, then enter a path relative to that folder and
+   select **Subtree** or **Exact file**. For example, subtree `docs` transfers
+   eligible documents under `docs`; exact file `docs/guide.md` transfers only that
+   file. A blank subtree path selects the entire chosen source root, subject to
+   native partition validation. Use **Add transferred scope** for another selection.
+3. **Choose the destination and review limits.** Enter the destination name,
+   absolute data-root path and collection. Expand **Project memberships for the
+   destination** to review each affected Project's deliberate membership choice.
+   Enter byte ceilings for destination growth, temporary work, original rewrite
+   and cleanup. Select semantic readiness and destination watching explicitly.
+   Click **Prepare complete native split review**, inspect its complete policies,
+   canonical paths, source-ID mappings, Project effects, quota policies and control
+   dependencies, then click **Apply reviewed split**.
+
+Exact files remain exact; a subtree includes future eligible descendants. Stale
+identities or revisions require a new review. Oversized or unsupported reviews
+refuse without dropping fields. Loading the baseline and preparing the review
+read metadata only; Apply is the separately reviewed mutation.
 
 Review the original index's pending and running jobs before applying. Witness
 admission and cutover wait for that queue to drain. Pausing preserves queued work;
@@ -111,7 +152,8 @@ finalization cannot be reported as already complete merely because its logical
 receipt is terminal; Cancel refuses that incomplete finalization. Resume is the
 explicit continuation path.
 
-A lost response, disconnect or restart requires the saved caller, request key,
+Expand **Operation status and recovery** in Indexing to look up a known operation
+and its exact saved receipts. A lost response, disconnect or restart requires the saved caller, request key,
 operation identity and native request digest. Read the exact acceptance or recovery
 receipt; never replay a mutation automatically, choose a replacement key, or infer
 no effect from missing/expired evidence. Missing evidence preserves uncertainty and

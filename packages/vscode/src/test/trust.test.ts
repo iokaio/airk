@@ -172,9 +172,15 @@ test('Restricted Mode keeps trust/navigation/log actions available while every c
         await assert.rejects(f.commands.get('airk.manageWorkspaceTrust')!({url:'untrusted'}),/invalid_manage_workspace_trust_arguments/);
         await f.commands.get('airk.showExtensionOutput')!();await f.commands.get('airk.menu')!();
         assert.equal(f.state.discovered,0);assert.equal(f.state.ensured,0);assert.deepEqual(f.writes,[]);assert.deepEqual(f.state.hostContextKeys,[]);
-        f.grantTrust();await f.commands.get('airk.treeRefresh')!();
-        assert.equal(f.commandContexts.get('airk.nativeCommandsAvailable'),true);assert.deepEqual(f.state.hostContextKeys,[],'trust grant alone does not observe or associate a context');
         const controller=f.context.subscriptions.find((item:any)=>typeof item.prepareWindowContext==='function');
+        f.grantTrust();await f.commands.get('airk.treeRefresh')!();
+        assert.equal(f.commandContexts.get('airk.nativeCommandsAvailable'),true);
+        await contextReadStarted(f.state.hostContextKeys);
+        const deadline=Date.now()+2000;while(!controller.explorerHost().windowContextObservation()&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,1));
+        const observed=controller.explorerHost().windowContextObservation();assert.equal(observed?.status,'catalog_host_context','trusted connection automatically reads capability metadata');
+        assert.equal(observed.descriptor.context,null,'metadata observation creates no saved Project association');
+        assert.equal(controller.currentCatalogScope(),undefined,'trust and metadata reads do not select a grant');
+        assert.deepEqual(f.writes,[],'automatic capability observation starts no indexing, configuration or lifecycle mutations');
         controller.dispose();await assert.rejects(f.commands.get('airk.index')!(),/runtime_client_no_longer_authorized/);
         await assert.rejects(f.commands.get('airk.manageWorkspaceTrust')!(),/runtime_client_no_longer_authorized/);
         assert.equal(f.commandContexts.get('airk.nativeCommandsAvailable'),false);
@@ -216,6 +222,42 @@ test('combined Use Grant freezes selected Projects, deduplicates shared indexes 
         assert.equal(selected!.service!.project,indexes[0].backing.binding,'display metadata does not become management authority');
         assert.equal(rows.at(-1).entity.id,other,'the chosen native backing was revalidated before management');
         const prior=f.writes.length;f.state.pick=()=>undefined;await controller.pause(true);assert.equal(f.writes.length,prior,'cancelled member selection dispatches no pause');
+        // A metadata refresh can finish while the explicit management picker is
+        // open. Identical complete metadata retains that intent's owner; an
+        // actual native descriptor change must still refuse before mutation.
+        for(const changed of [false,true]){
+            let entered!:()=>void,choose!:()=>void;
+            const picker=new Promise<void>(resolve=>{entered=resolve;});
+            f.state.pick=items=>new Promise(resolve=>{choose=()=>resolve(items.find((item:any)=>item.index?.id===other));entered();});
+            const pausing=controller.pause(true),writes=f.writes.length;
+            await picker;
+            const previous=controller.currentWindowContext();
+            if(changed){
+                f.state.hostContextReply=key=>({...structuredClone(previous.response),descriptor:{...previous.response.descriptor,key,catalog_revision:2}});
+            }
+            await controller.prepareWindowContext();
+            if(changed)assert.notEqual(controller.currentWindowContext(),previous,'changed native metadata replaces the captured owner');
+            else assert.equal(controller.currentWindowContext(),previous,'identical complete metadata preserves the explicit picker owner');
+            choose();
+            if(changed){await assert.rejects(pausing,/explicit_scope_selection_changed/);assert.equal(f.writes.length,writes,'changed metadata cannot dispatch a pause');}
+            else{await pausing;assert.equal(f.writes.length,writes+1);assert.deepEqual(f.writes.at(-1),{pause:{project:indexes[1].backing.binding,paused:true}});}
+        }
+    }finally{await f.close();}
+});
+
+test('repeated native context reads retain identical owners but publish changed capabilities and future fields',async context=>{
+    const f=await serviceTestHost(context,{registered:false}),controller=f.context.subscriptions.find((item:any)=>typeof item.prepareWindowContext==='function');
+    let contract=3;
+    f.state.hostContextReply=key=>({status:'catalog_host_context',capabilities:{policy_contract:contract,future_capability:{value:contract}},descriptor:{schema:1,namespace:'34'.repeat(16),host:'56'.repeat(32),key,catalog_revision:1,context:null},future_native_context:{value:contract}});
+    try{
+        await controller.refresh();await controller.console.controller.refresh();await controller.prepareWindowContext();
+        const prior=controller.currentWindowContext(),before=f.writes.length;
+        await controller.prepareWindowContext();assert.equal(controller.currentWindowContext(),prior,'exact duplicate metadata is not an authority change');
+        contract=4;await controller.prepareWindowContext();
+        const changed=controller.currentWindowContext();assert.notEqual(changed,prior,'equal descriptors cannot hide changed capabilities or future response fields');
+        assert.deepEqual(changed.descriptor,prior.descriptor);assert.deepEqual(changed.response.capabilities,{policy_contract:4,future_capability:{value:4}});assert.deepEqual(changed.response.future_native_context,{value:4});
+        assert.equal(prior.response.capabilities.policy_contract,3,'the previously captured response remains immutable');
+        assert.equal(f.writes.length,before);assert.equal(controller.currentCatalogScope(),undefined);
     }finally{await f.close();}
 });
 

@@ -187,7 +187,7 @@ export class AssistanceIpcHost {
             case 'handoff_get': {
                 if (!fields('token') || typeof request.token !== 'string' || !/^ex-share-[0-9a-f]{64}$/.test(request.token)) { break; }
                 const handoff = this.port.handoff?.(request.token);
-                return handoff ? { v: 1, ok: true, handoff } : { v: 1, ok: false, code: 'PROPOSAL_EXPIRED', message: 'Handoff is unknown, expired or its draft/binding changed; ask the user to share again.' };
+                return handoff ? { v: 1, ok: true, handoff } : { v: 1, ok: false, code: 'HANDOFF_UNAVAILABLE', message: 'Handoff is unknown, expired or its draft/binding changed; ask the user to share again.' };
             }
             case 'suggest': {
                 const client = request.client as Record<string, unknown> | undefined;
@@ -200,7 +200,7 @@ export class AssistanceIpcHost {
             case 'proposal_status': {
                 if (!fields('proposal_id') || typeof request.proposal_id !== 'string' || !/^ex-prop-[0-9a-f]{16}$/.test(request.proposal_id)) { break; }
                 const proposal = this.port.proposalStatus?.(request.proposal_id);
-                return proposal ? { v: 1, ok: true, proposal } : { v: 1, ok: false, code: 'PROPOSAL_EXPIRED', message: 'No proposal with that id is held by this window.' };
+                return proposal ? { v: 1, ok: true, proposal } : { v: 1, ok: false, code: 'PROPOSAL_UNKNOWN', message: 'No proposal with that id is retained by this window.' };
             }
         }
         return { v: 1, ok: false, code: 'INVALID_SCHEMA' };

@@ -61,6 +61,155 @@ fn deletion_query() -> Value {
         "verification":"off","response_mode":"full"})
 }
 
+#[tokio::test]
+async fn explicit_retirement_allows_fresh_subset_index_without_split() -> Result<()> {
+    use airk_core::{
+        catalog_management::{CatalogItem, CatalogKind, CatalogPageRequest, MAX_PAGE_BYTES},
+        catalog_setup::{IndexSetupSelection, SetupStage},
+    };
+    let mut f = Fixture::new(true)?;
+    let mut service = Some(f.start().await?);
+    let old = f.registrations[2].clone();
+    f.session = deletion_read_grant(&f, 2, 2, 230).await?;
+    let mut old_mcp = McpSession::start(&f)?;
+    let original = old_mcp.call(1, "airk_search", deletion_query())?;
+    ensure!(
+        original["result"]["isError"] != true,
+        "original index unavailable: {original}"
+    );
+    f.session = deletion_read_grant(&f, 0, 1, 231).await?;
+    let mut healthy = McpSession::start(&f)?;
+    let baseline = healthy_deletion_read(&f, &mut healthy, 2).await?;
+
+    let retirement = policy_draft(&f, 232, SourceMutationSelection::RetireIndex).await?;
+    apply_policy(&f, &retirement).await?;
+    let deadline = Instant::now() + Duration::from_secs(90);
+    loop {
+        if ServiceRegistry::open_saved(&f.control)?.project_was_removed(old.binding)? {
+            break;
+        }
+        ensure!(
+            Instant::now() < deadline,
+            "explicit retirement cleanup did not settle"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    let worker = airk_cli::service_runtime::request(
+        &f.control,
+        ControlMethod::Worker {
+            project: old.binding,
+        },
+    )
+    .await?;
+    ensure!(
+        matches!(worker, ControlResponse::Worker { identity: None, .. }),
+        "retired index restarted a worker: {}",
+        serde_json::to_string(&worker)?
+    );
+    f.assert_sources_unchanged()?;
+    ensure!(
+        healthy_deletion_read(&f, &mut healthy, 3).await? == baseline,
+        "deleting one index changed the healthy index publication"
+    );
+
+    // Reuse only one old source subtree with a distinct storage identity. This
+    // exercises ordinary setup, without any split operation or inherited child.
+    let selected_root = Path::new(&old.root).join("api").canonicalize()?;
+    let new_data = f.owner.path().canonicalize()?.join("fresh-api-index");
+    let selection = IndexSetupSelection {
+        key: policy_key(&f, 233).await?,
+        expected_catalog_revision: policy_revision(&f)?,
+        name: "Fresh API-only index".into(),
+        primary_root: selected_root
+            .to_str()
+            .context("source is not UTF-8")?
+            .into(),
+        data_root: new_data.to_str().context("storage is not UTF-8")?.into(),
+        collection: "fresh-api-only".into(),
+        additional_roots: vec![],
+        setup_watch: false,
+    };
+    let response = airk_cli::service_runtime::request(
+        &f.control,
+        ControlMethod::CatalogIndexSetupDraft { selection },
+    )
+    .await?;
+    let ControlResponse::CatalogIndexSetupDraft { draft, .. } = response else {
+        anyhow::bail!(
+            "fresh subset review refused: {}",
+            serde_json::to_string(&response)?
+        );
+    };
+    ensure!(!new_data.exists(), "read-only setup review created storage");
+    ensure!(
+        draft.request.registration.binding != old.binding
+            && draft.request.registration.root != old.root
+            && draft.request.sources.len() == 1,
+        "fresh setup reused the retired backing or old source shape"
+    );
+    let response = airk_cli::service_runtime::request(
+        &f.control,
+        ControlMethod::CatalogIndexSetupApply { draft },
+    )
+    .await?;
+    let ControlResponse::CatalogIndexSetupApplied { receipt } = response else {
+        anyhow::bail!(
+            "fresh subset setup refused: {}",
+            serde_json::to_string(&response)?
+        );
+    };
+    receipt.validate()?;
+    ensure!(
+        receipt.stage == SetupStage::Ready && receipt.index_id != f.indexes[2],
+        "fresh independent index did not complete native setup"
+    );
+    let response = airk_cli::service_runtime::request(
+        &f.control,
+        ControlMethod::CatalogPage {
+            request: CatalogPageRequest {
+                kind: CatalogKind::Sources,
+                index_id: Some(receipt.index_id),
+                project_id: None,
+                after: None,
+                expected_catalog_revision: Some(receipt.catalog_revision),
+                limit: 32,
+                max_bytes: MAX_PAGE_BYTES,
+            },
+        },
+    )
+    .await?;
+    let ControlResponse::CatalogPage { page, .. } = response else {
+        anyhow::bail!(
+            "fresh subset source observation refused: {}",
+            serde_json::to_string(&response)?
+        );
+    };
+    ensure!(
+        page.continuation.is_none()
+            && page.items.len() == 1
+            && matches!(&page.items[0], CatalogItem::Source(source)
+            if source.index_id == receipt.index_id && source.enabled && source.owner
+            && Path::new(&source.canonical_path) == selected_root),
+        "new index did not retain the independently selected source subtree"
+    );
+    let registry = ServiceRegistry::open_saved(&f.control)?;
+    ensure!(
+        !registry.is_registered(old.binding)?
+            && registry.is_registered(receipt.request.registration.binding)?,
+        "fresh setup reactivated the retired index instead of the new one"
+    );
+    drop(registry);
+    f.assert_sources_unchanged()?;
+    ensure!(
+        healthy_deletion_read(&f, &mut healthy, 4).await? == baseline,
+        "fresh overlapping-source setup changed the independent healthy index"
+    );
+    drop(old_mcp);
+    drop(healthy);
+    stop_deletion_service(&f, &mut service).await?;
+    Ok(())
+}
+
 async fn healthy_deletion_read(f: &Fixture, mcp: &mut McpSession, id: u64) -> Result<Value> {
     let query = deletion_query();
     let cli = f.cli("airk_search", &query).await?;

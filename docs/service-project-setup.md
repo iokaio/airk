@@ -1,40 +1,67 @@
-# Reviewed project registration and launcher binding
+# Index setup and search selection
 
-P9's reviewed [permanent exclusions](source-policy.md) survive index retirement.
-Ordinary registration of retired backing refuses rather than replacing its
-stable policy owner. Use a distinct reviewed index setup when a new independent
-index is intended; this does not authorize clearing another index's policy.
+The unpublished **1.8.11 working build** uses **Search scope**, **Index library**
+and **Index sets**. The local developer owns these indexes; selecting them does
+not require creating or inspecting access grants. The extension handles native
+scope and access records internally when **Apply selection** is chosen. Native
+CLI/API `Project` terminology remains for compatibility and corresponds to the
+UI's index sets. See the [working-build record](releases/release-1.8.11.md).
 
-The 1.8.8 P6f working candidate uses explicit setup and grant review. In a fresh
-trusted installation, **Management → Service → Start service** prepares the
-approved bundled runtime; **Connect / reconnect** observes an existing installation.
-Neither action selects workspace folders for indexing or grants evidence access.
-If another window installed the runtime after this window opened, connect and
-read the saved window association to adopt that authenticated runtime. This read
-does not restore saved grant authority; Use Grant remains an explicit action.
-Fresh native Genesis completes before the first ordinary service start. Public
-runtime selection follows qualified catalog metadata and actual native health.
-An interrupted fresh installer resumes its exact claimed layout and namespace;
-it does not create a replacement for lost initialized state.
+## Create an index
 
-In **Indexing → Library**, review the primary source, optional additional source
-locations, existing storage parent and new index leaf, collection and watching
-choice. Native prepare/reserve/storage/register ownership remains authoritative.
-The host retains the full draft and original request across uncertain outcomes;
-reconciliation follows that request rather than guessing that a timeout failed.
-Occupied or unowned destinations, missing parents, aliases and source/private
-state overlap refuse. Reads never create missing storage. Restore missing owned
-data from its original state, or review a distinct new index setup explicitly.
+In **Indexing → Index library**, expand **Set up a new index**. Review the primary
+source, additional source locations, storage parent and new index leaf,
+collection and watching choice. Creation uses the existing native
+prepare/reserve/storage/register owner. It does not silently adopt occupied or
+unowned storage. Missing parents, aliases and source/private-state overlap remain
+explicit failures. Uncertain outcomes retain the original request for recovery.
 
-Create a Project and its source/path memberships, review and persist an access
-grant, then explicitly **Use Grant for this window** for one index and a Project
-subset. Saved associations and defaults convey no authority. Revocation closes
-existing and new scoped connections through native delivery and worker fences.
-Imported legacy snapshots remain bound to their original one-index connection.
-Restricted Mode exposes Manage Workspace Trust and blocks native work; disposed
-or revoked client authority retains its distinct refusal and requires a current
-connection. See the [CLI catalog](cli-reference.md), [storage boundary](storage-formats.md#development-catalog-boundary)
-and [P6f execution ledger](research/implementation-v190.md#p6f--catalog-management-and-scoped-native-activation).
+Opening a trusted folder does not create or start an index. Compatible native
+runtime upgrades and capability discovery happen independently and show actual
+stages or failures. **Management → Service → Start service** prepares the approved
+runtime; **Connect / reconnect** observes an existing installation. Neither action
+chooses source folders or applies a search selection. Existing Stop, pause and
+watching preferences remain native.
+
+## Choose what to search
+
+Open **Search scope**. Check individual **Indexes**, reusable **Index sets**, or
+both, then choose **Apply selection**. Use **Refresh choices** after catalog
+changes or a failed read. Checkbox edits stay a draft until applied. The native
+host validates the selected current indexes and set memberships and installs the
+resulting window search scope. Access records are an internal implementation
+detail; users do not copy IDs or manage grants in this flow. The selection does
+not silently rewrite an external coding agent's configured scope.
+
+**Index sets** creates and manages named reusable selections of existing indexes
+or source scopes. A set does not duplicate stored evidence. **Index library** is
+the single place for index creation, source/settings changes, splitting and
+**Delete index**. Library and set pages load bounded metadata automatically;
+continuations and complete responses remain available. Reading metadata never
+creates an index or starts indexing.
+
+## Delete or replace an index
+
+Choose **Delete index** in the library, inspect **Delete this index?**, then confirm
+**Delete index and stop maintenance**. Native retirement stops maintenance and
+removes current memberships/default references; derived-data cleanup can finish
+later. The result distinguishes logical removal from cleanup completion, which
+is not observed in that view. Original
+source files, shared models and independent indexes remain intact. See
+[deletion and cleanup](service-project-retirement.md).
+
+To build a differently shaped independent index over some of the same source
+files, use **Set up a new index** with a new storage leaf, collection and backing
+identity. A split is optional. The exact retired backing cannot be reactivated or
+used to erase its permanent exclusion policy. Source/private-storage isolation
+and all new-index setup checks still apply.
+
+Restricted Mode blocks native work. Stale or revoked native scope requires a
+fresh explicit selection; imports of legacy snapshots retain their original
+connection boundary. Complete read results and exports preserve scope, revision,
+coverage and failures. See the [CLI catalog](cli-reference.md),
+[storage boundary](storage-formats.md#development-catalog-boundary) and the
+[historical P6f ledger](research/implementation-v190.md#p6f--catalog-management-and-scoped-native-activation).
 
 ## Historical registration checkpoints
 

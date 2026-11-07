@@ -1,8 +1,12 @@
 # AIRK: Local Search for Coding Agents
 
-**1.8.8 is an unpublished manual-test working build.** Accepted local P9–P12 work adds permanent exclusions, reviewed index splitting, per-file profile reporting, explicit Lean/Rich retained profiles and reviewed reference refresh with separate requery. P13 retains current ranking and diversity. P14 selected local qualification includes Windows native tests and documented editor coverage. Manual acceptance and release promotion remain separate. See the [working-build record](docs/releases/release-1.8.8.md) and [implementation ledger](docs/research/implementation-v190.md) for exact evidence, failures and platform limits.
+**VSIX update detection:** the working source watches installed host and UI JavaScript/CSS changes, including same-version UI rebuilds, and shows **Reload to finish update** in an already open Explorer. Use that action to load the updated extension and UI. Local installer verification checks every shipped JavaScript/CSS file. Installed-editor acceptance of this follow-up remains pending.
 
-Opening a trusted folder does not register or index it. Use **Indexing > Index library** to review sources, storage and watching; create Project memberships and review an access grant, then explicitly **Use Grant for this window**. Evidence reads and source verification do not start indexing.
+**1.8.11 is an unpublished manual-test working build.** Indexing has three tabs: **Search scope** selects local indexes and index sets with checkboxes; **Index library** creates and manages indexes, including **Delete index**; **Index sets** organizes reusable search groups. Choose indexes or sets and apply the selection; access details are handled internally. See the [1.8.11 working-build record](docs/releases/release-1.8.11.md) for behavior and validation. The earlier 1.8.10 and 1.8.9 records retain their dated evidence.
+
+**MCP QA follow-up:** the working source preserves structured read failures, discloses unobserved filters and relationship limits, and aligns context inputs across interfaces. Terse capability replies summarize operation schemas; Full retains them. Validation results and remaining limits are recorded in the [QA evaluation](docs/reviews/mcp-qa-1.8.9.md).
+
+Opening a trusted folder does not register or index it. Use **Indexing > Index library** to create an index with reviewed sources, storage and watching. In **Search scope**, check the indexes or index sets to search and apply the selection. Evidence reads and source verification do not start indexing.
 
 **Setup and uninstall:** Successful setup or reconnection clears obsolete failure warnings. Current setup failures remain visible, and uninstall removes empty shell startup files that AIRK created. See [setup and uninstall guidance](docs/vscode-extension.md) and the [branch review](docs/reviews/branch-v190-review-2026-11-06.md).
 
@@ -43,7 +47,7 @@ AIRK builds a searchable local index of your project so you and your coding tool
 ## Try AIRK
 
 1. Install the platform extension from the [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=iokaio.airk), or use a local candidate VSIX when testing unreleased changes. The runtime and models are bundled; VS Code 1.140+ is required.
-2. **Review an index and its access.** Open a trusted folder, then use **Indexing > Index library** to review source, storage and watching choices and the resulting native setup work. Create Project memberships and an access grant, then explicitly **Use Grant for this window** before reading evidence. Opening a folder alone does not register or index it. Management shows progress, readiness and skipped or failed work.
+2. **Create an index and choose what to search.** Open a trusted folder, then use **Indexing > Index library** to review source, storage and watching choices and create the index. In **Search scope**, check the indexes or index sets you want and apply the selection. Opening a folder alone does not register or index it. Management shows progress, readiness and skipped or failed work.
 3. Open **AIRK: Open Workbench** and run `/files`. Search for a term from your project, inspect a cited result and open its source. Workbench opens once automatically after successful setup.
 4. To use an agent, run **AIRK: Connect Coding Agent**, review its configuration and enable AIRK in that client. Verify access with a scoped request; configuration alone does not prove a live connection.
 
@@ -62,7 +66,7 @@ The [parser-training fork guide](docs/parser-training.md) shows how to inspect t
 
 Workbench opens once after successful trusted setup. Its compact header provides history, settings and new-session icons; the composer’s **+** menu holds scope, recipes and tool forms. Explorer’s **Workbench** toolbar button, immediately left of Help, toggles secondary-sidebar visibility and shows a pressed state while visible. The project selector is available inside Overview and Management; its selection remains shared across Explorer screens. VS Code retains control of sidebar tab order and pending extension replacement may still require Reload Window.
 
-**Workbench implementation introduced in 1.7.2:** a secondary-sidebar evidence transcript with editable plans, recipes, cited results, copy/export and bounded local sessions. Agents can use the same native `parse` tool to prepare or execute explicit read-only plans. Learned requests propose an editable plan; review its operation and arguments, then explicitly run it. Automatic learned execution remains disabled pending qualification. See the [implementation record](docs/workbench/implementation.md). Native/extension source versions are synchronized at the **1.8.8 working version**; the planned 1.9.0 promotion and release workflows remain separate.
+**Workbench implementation introduced in 1.7.2:** a secondary-sidebar evidence transcript with editable plans, recipes, cited results, copy/export and bounded local sessions. Agents can use the same native `parse` tool to prepare or execute explicit read-only plans. Learned requests propose an editable plan; review its operation and arguments, then explicitly run it. Automatic learned execution remains disabled pending qualification. See the [implementation record](docs/workbench/implementation.md). Native/extension source versions are synchronized at the **1.8.11 working version**; the planned 1.9.0 promotion and release workflows remain separate.
 
 **Version 1.6.4 — runtime upgrades, project cleanup and responsive diagnostics.** This public release consolidates the unpublished 1.6.1–1.6.3 branch work. Supported runtimes upgrade before connection checks; uninstall removes owned executables and recorded agent entries while preserving index data. Trusted open folders register and index automatically, subject to saved opt-out, pause and manual-update settings. Removing a project drains its workers and deletes its AIRK index and saved settings while preserving source files.
 
@@ -151,7 +155,7 @@ Each project has a canonical source, separate data root, collection name and opa
 
 The following clean-break and automatic-folder behavior describes the historical
 1.4 transition, not current setup or instructions to discard existing state.
-For this 1.8.8 working build, follow [reviewed setup](docs/service-project-setup.md).
+For this 1.8.11 working build, follow [reviewed setup](docs/service-project-setup.md).
 
 The [native management clients](docs/service-native-management.md) provide direct usage/settings reads, bounded exports and guarded project changes. Usage & Savings waits for native completion; imports bind the reviewed input bytes, and shared quota updates reject stale policies.
 

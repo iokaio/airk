@@ -2,7 +2,7 @@
   "name": "airk",
   "displayName": "AIRK: Local Search for Coding Agents",
   "description": "Local code and document search for agents and AIRK Workbench, with complete cited results and configurable concurrent retrieval.",
-  "version": "1.8.8",
+  "version": "1.8.11",
   "icon": "images/icon.png",
   "publisher": "iokaio",
   "license": "Apache-2.0",
@@ -339,7 +339,10 @@
       ]
     },
     "commands": [
-      {"command":"airk.reviewLegacyUpgrade","title":"AIRK: Review unavailable legacy upgrade index retirement"},
+      {
+        "command": "airk.reviewLegacyUpgrade",
+        "title": "AIRK: Review unavailable legacy upgrade index retirement"
+      },
       {
         "command": "airk.explorer.open",
         "title": "Open Explorer",
@@ -650,7 +653,7 @@
             "type": "boolean",
             "default": true,
             "scope": "machine",
-            "markdownDescription": "Install the native runtime and airk terminal command on trusted activation; register new workspace folders and start automatic indexing. Preserve existing 1.4 storage and watching selections during compatible runtime updates. Adds AIRK to new VS Code terminals and the user PATH (Windows) or Bash, Zsh and fish startup files (macOS/Linux). Restart external terminal applications after installation. Disable in User settings to skip future automatic installation and workspace registration; existing CLI files and PATH entries remain. Use **AIRK: Install or Repair CLI** to retry setup.\n\nDisabling this does **not** stop AIRK from running its bundled executable: trusted windows still run `runtime self-test` and `runtime location` to discover an existing installation. To start no AIRK process at all, turn off `#airk.runtime.nativeExecution#`. The Explorer Assistance endpoint is editor-hosted and controlled separately by `#airk.explorer.assistance.enabled#`."
+            "markdownDescription": "Install or upgrade the native runtime and airk terminal command on trusted activation. Compatible updates preserve existing index storage, source policies and watching selections. Adding sources requires reviewed setup in Indexing. Adds AIRK to new VS Code terminals and the user PATH (Windows) or Bash, Zsh and fish startup files (macOS/Linux). Restart external terminal applications after installation. Disable in User settings to skip future automatic installation and upgrades; existing CLI files and PATH entries remain. Use **AIRK: Install or Repair CLI** to retry setup.\n\nDisabling this does **not** stop AIRK from running its bundled executable: trusted windows still run `runtime self-test` and `runtime location` to discover an existing installation. To start no AIRK process at all, turn off `#airk.runtime.nativeExecution#`. The Explorer Assistance endpoint is editor-hosted and controlled separately by `#airk.explorer.assistance.enabled#`."
           },
           "airk.cli.shellIntegration": {
             "type": "string",

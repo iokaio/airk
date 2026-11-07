@@ -328,13 +328,24 @@ fn retained_input_with_facts_budget(
     facts: Vec<airk_core::extraction::LocalFact>,
     capture_bytes: u64,
 ) -> Result<CapturedInput> {
+    retained_input_with_facts_language_budget(fixture, path, text, facts, capture_bytes, "text")
+}
+
+fn retained_input_with_facts_language_budget(
+    fixture: &Fixture,
+    path: &str,
+    text: &str,
+    facts: Vec<airk_core::extraction::LocalFact>,
+    capture_bytes: u64,
+    language: &str,
+) -> Result<CapturedInput> {
     use airk_core::extraction::{ExtractionPayload, ExtractionProfile, LocalChunk, LocalSpan};
     use std::collections::BTreeMap;
     let profile = ExtractionProfile {
         contract_version: 1,
         adapter_id: "text".into(),
         adapter_version: "current-test/1".into(),
-        language: "text".into(),
+        language: language.into(),
         dialect: None,
         grammar_identity: None,
         mapping_version: 1,

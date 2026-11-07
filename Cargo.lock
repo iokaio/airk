@@ -53,7 +53,7 @@ dependencies = [
 
 [[package]]
 name = "airk-cli"
-version = "1.8.8"
+version = "1.8.11"
 dependencies = [
  "airk-core",
  "airk-ingest",
@@ -77,7 +77,7 @@ dependencies = [
 
 [[package]]
 name = "airk-core"
-version = "1.8.8"
+version = "1.8.11"
 dependencies = [
  "anyhow",
  "serde",
@@ -87,7 +87,7 @@ dependencies = [
 
 [[package]]
 name = "airk-ingest"
-version = "1.8.8"
+version = "1.8.11"
 dependencies = [
  "airk-core",
  "airk-process",
@@ -169,7 +169,7 @@ dependencies = [
 
 [[package]]
 name = "airk-kernel"
-version = "1.8.8"
+version = "1.8.11"
 dependencies = [
  "airk-core",
  "airk-ingest",
@@ -193,7 +193,7 @@ dependencies = [
 
 [[package]]
 name = "airk-mcp"
-version = "1.8.8"
+version = "1.8.11"
 dependencies = [
  "airk-core",
  "airk-kernel",
@@ -208,7 +208,7 @@ dependencies = [
 
 [[package]]
 name = "airk-process"
-version = "1.8.8"
+version = "1.8.11"
 dependencies = [
  "anyhow",
  "libc",
@@ -218,7 +218,7 @@ dependencies = [
 
 [[package]]
 name = "airk-retrieval"
-version = "1.8.8"
+version = "1.8.11"
 dependencies = [
  "airk-core",
  "anyhow",
@@ -235,7 +235,7 @@ dependencies = [
 
 [[package]]
 name = "airk-store"
-version = "1.8.8"
+version = "1.8.11"
 dependencies = [
  "airk-core",
  "anyhow",

@@ -1,14 +1,14 @@
 # Build and review the Windows app and VS Code extension
 
-The current local manual-test working version is **1.8.8**. Its [working-build record](releases/release-1.8.8.md) records native and extension identities, selected validation, failures and the local Windows package. Manual installed-editor acceptance and later 1.9.0 promotion remain separate.
+The current local manual-test working version is **1.8.11**. Its [working-build record](releases/release-1.8.11.md) records native and extension identities, selected validation, failures and the local Windows package. Manual installed-editor acceptance and later 1.9.0 promotion remain separate.
 
 The [1.8.7 predecessor record](releases/release-1.8.7.md) consolidates the earlier unpublished 1.8.0-1.8.6 work and retains its dated preparation and publication evidence. At that preparation checkpoint, the stable version was [1.7.6](releases/release-1.7.6.md). These and the prior 1.4.x build records retain their original scope.
 
 Trusted VSIX installation and **Install or Repair CLI** refresh recognized existing workspace AIRK connections in Codex (`.codex/config.toml`), Claude Code (`.mcp.json`) and GitHub Copilot (`.vscode/mcp.json`) to the installed stable launcher and configured source-root scope. Other servers, environment and tool policies remain intact; missing entries do not enable an agent. Foreign/custom launches, unsupported TOML, unsaved edits and unsafe files remain for manual review with a visible warning. Restart connected agents after installation. The current installer harness checks the 29-tool catalog, source-bound entries and detailed runtime observations through diagnostics. It resolves fixture registration/control metadata natively rather than expecting internal data/project selectors in managed agent files. Actual installed-editor acceptance and broader platform qualification must be recorded separately for each candidate.
 
-Historical October 25 manual-test checkpoint: cleanup, help and live-status changes used 1.4.0. The later 1.4.1 installer candidate is also historical; follow [versioning](versioning.md) and [current candidate notes](releases/release-1.8.8.md). Those earlier Windows checks do not replace installed-editor acceptance or native macOS/Linux qualification. The unified source catalog now advertises 29 tools; see [the MCP catalog](unified-mcp.md).
+Historical October 25 manual-test checkpoint: cleanup, help and live-status changes used 1.4.0. The later 1.4.1 installer candidate is also historical; follow [versioning](versioning.md) and [current candidate notes](releases/release-1.8.11.md). Those earlier Windows checks do not replace installed-editor acceptance or native macOS/Linux qualification. The unified source catalog now advertises 29 tools; see [the MCP catalog](unified-mcp.md).
 
-Historical October 25 onboarding follow-up: automatic trusted-workspace setup was covered by extension regressions and package closure checks. The current working build uses [explicit index and Project setup](service-project-setup.md); opening a trusted folder does not register or index it. Earlier installed-editor receipts and the manual-dialog harness below retain their original VSIX scope.
+Historical October 25 onboarding follow-up: automatic trusted-workspace setup was covered by extension regressions and package closure checks. The current working build uses [explicit index setup and search selection](service-project-setup.md); opening a trusted folder does not register or index it. Earlier installed-editor receipts and the manual-dialog harness below retain their original VSIX scope.
 
 The lightweight main and inference helper are built separately. The helper embeds the two pinned INT8 MiniLM exports; the main excludes inference dependencies and MiniLM weights. Workbench includes a separate 852,116-byte fixed intent scorer without ONNX. Before Cargo checks/builds, run `python scripts/provision-local-model.py --destination target/local-vector-model --download`, or supply verified offline assets there (or through `AIRK_BUNDLED_MODEL_DIR`). Also prepare native CPU libraries with `python scripts/provision-onnx-runtime.py --download`. Cargo never downloads model assets or runtime libraries. See [model provisioning](onnx-models.md).
 
@@ -156,6 +156,14 @@ In a fresh profile it first drives the actual **Set up AIRK on this computer?** 
 It shuts down its private service and retains results under ignored `artifacts/editor-qualification/`. On Windows, compare the observed control directory and owned installation root using the same namespaced-path normalization before the containment check; ordinary `D:\...` and `\\?\D:\...` spellings must not falsely reject the same fixture. Keep the ownership check and shutdown-result assertion: a product assertion receipt alone does not prove successful harness cleanup. It does not change the normal editor profile or qualify replacement of already connected external agent processes.
 
 ### Native previous-version upgrade fixture
+
+For a predecessor using reviewed catalog setup, including the 1.8.8 working
+build, pass `--fixture-setup reviewed`. This creates one fictional Index,
+Project membership and reviewed grant, explicitly indexes it with the old
+runtime, and verifies that the new runtime exposes split capability while
+preserving the complete original catalog values. The legacy default remains
+available for predecessors using historical registration. Existing eligible
+indexes do not need a manual policy-contract update just to expose splitting.
 
 Run `python scripts/check-runtime-upgrade.py --runtime <new-native-payload> --previous-runtime <old-native-payload> --output target/upgrade-receipt.json` on Windows or Linux. An optional `--interrupted-runtime <superseded-native-payload>` also checks guarded recovery of an exact older Drain intent. Use independently built payloads with their original manifests; never relabel a binary. The fixture creates isolated source, data, installation and state directories under `target`, starts an old launcher/MCP client, upgrades with that client connected, checks registry migration and source/registration preservation, then uninstalls its runtime. It writes a passing receipt only after teardown succeeds. This is a native process regression, separate from installed-editor qualification and the routine CI matrix.
 

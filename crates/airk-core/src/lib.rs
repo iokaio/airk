@@ -36,6 +36,7 @@ pub mod model_objects;
 pub mod native_reads;
 pub mod profile_families;
 pub mod publication;
+pub mod read_arguments;
 pub mod readiness;
 pub mod references;
 pub mod reply;

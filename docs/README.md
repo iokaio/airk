@@ -1,8 +1,13 @@
 # AIRK documentation
 
-**1.8.8 is an unpublished manual-test working build.** Accepted local P9–P12 work adds permanent exclusions, reviewed index splitting, per-file profile reporting, explicit Lean/Rich retained profiles and reviewed reference refresh with separate requery. P13 retains current ranking and diversity. P14 selected local qualification includes Windows native tests and documented editor coverage. Manual acceptance and release promotion remain separate. See the [working-build record](releases/release-1.8.8.md) and [implementation ledger](research/implementation-v190.md) for exact evidence, failures and platform limits.
+**VSIX update detection:** the working source watches installed host and UI JavaScript/CSS changes, including same-version UI rebuilds, and shows **Reload to finish update** in an already open Explorer. Use that action to load the updated extension and UI. Local installer verification checks every shipped JavaScript/CSS file. Installed-editor acceptance of this follow-up remains pending.
 
-Opening a trusted folder does not register or index it. Use **Indexing > Index library** to review sources, storage and watching; create Project memberships and review an access grant, then explicitly **Use Grant for this window**. Evidence reads and source verification do not start indexing.
+**1.8.11 is an unpublished manual-test working build.** Indexing has three tabs: **Search scope** selects local indexes and index sets with checkboxes; **Index library** creates and manages indexes, including **Delete index**; **Index sets** organizes reusable search groups. Choose indexes or sets and apply the selection; access details are handled internally. See the [1.8.11 working-build record](releases/release-1.8.11.md) for behavior and validation. The earlier 1.8.10 and 1.8.9 records retain their dated evidence.
+
+The [MCP QA follow-up](reviews/mcp-qa-1.8.9.md) tracks the supplied 1.8.8
+observations, confirmed defects, intentional contracts and current qualification.
+
+Opening a trusted folder does not register or index it. Use **Indexing > Index library** to create an index with reviewed sources, storage and watching. In **Search scope**, check the indexes or index sets to search and apply the selection. Evidence reads and source verification do not start indexing.
 
 **Setup and uninstall:** Successful setup or reconnection clears obsolete failure warnings. Current setup failures remain visible, and uninstall removes empty shell startup files that AIRK created. See [setup and uninstall guidance](vscode-extension.md) and the [branch review](reviews/branch-v190-review-2026-11-06.md).
 
@@ -50,7 +55,7 @@ reasons, empty-result limits and inert next reads across CLI/MCP/Workbench.
 
 **Inherited 1.8.7 behavior:** CLI and Workbench reads use the MCP handlers and retain their full results, including configured `query_concurrency` in status/diagnostics. Cold status preserves explicit setup-timeout receipts across later polls. This release consolidates all unpublished 1.8.0-1.8.6 storage, startup, retrieval, concurrency and Workbench improvements. See the [consolidated release notes](releases/release-1.8.7.md) for current behavior and dated validation.
 
-Unreleased developer workflow: [native build reuse and Darwin failure diagnostics](ci-and-builds.md#native-build-reuse-and-darwin-failure-diagnostics) describes the separate build/validation jobs, complete-attempt release rule, focused repetitions and remaining Intel failure. Product versions remain synchronized at 1.8.8 for manual testing before later 1.9.0 promotion.
+Unreleased developer workflow: [native build reuse and Darwin failure diagnostics](ci-and-builds.md#native-build-reuse-and-darwin-failure-diagnostics) describes the separate build/validation jobs, complete-attempt release rule, focused repetitions and remaining Intel failure. Product versions remain synchronized at 1.8.11 for manual testing before later 1.9.0 promotion.
 
 Developer references: [MCP tools](mcp-developer-guide.md) covers all 29 public tools with inputs, examples, evidence limits and implementation/test links. [CLI commands](cli-developer-guide.md) covers each command, its purpose, native ownership and guarded workflows. Both explain why `airk tools list` has 19 native tools while unified MCP has 29, and map the remaining capabilities to separate terminal commands.
 
@@ -112,7 +117,7 @@ Successful runtime activation finishes quietly. A detected extension update offe
 
 Trusted VSIX installation and **Install or Repair CLI** refresh recognized existing workspace AIRK connections in Codex (`.codex/config.toml`), Claude Code (`.mcp.json`) and GitHub Copilot (`.vscode/mcp.json`) to the installed stable launcher and registered service arguments. Other servers, environment and tool policies remain intact; missing entries do not enable an agent. Foreign/custom launches, unsupported TOML, unsaved edits and unsafe files remain for manual review with a visible warning. Restart connected agents after installation. Targeted Windows installation is covered by the local installer harness; broader platform qualification remains pending.
 
-The current branch uses the **1.8.8 working version**, with **1.9.0** reserved for the planned promotion, carrying forward the 1.5.0 addition of the [AIRK Explorer and Explorer Assistance](releases/release-1.5.0.md); the paragraphs above and below about 1.4.x describe earlier releases. [Routine CI](ci-and-builds.md) runs the full workspace once on Linux, focused native regressions elsewhere, all platform builds/package smoke and a container smoke. Full platform/container suites and installed-runtime lifecycle campaigns are explicit qualification. 1.4.2 scales Balanced admission to one quarter of detected RAM (2–32 GiB), protects capacity for up to four project query workers, and raises Balanced source pacing to 64 MiB/s per job within a 256 MiB/s shared ceiling. Native watching supports 8,192 directories per project and 32,768 shared, with bounded incremental traversal and specific limit diagnostics. Existing manual resource overrides and storage quotas are preserved. These are admission policies, not hard OS memory or disk-I/O limits. Follow the [versioning process](versioning.md) from local candidates through CI and publication. Its checks run on Windows x64; earlier installed-editor and Linux receipts do not qualify this follow-up.
+The current branch uses the **1.8.11 working version**, with **1.9.0** reserved for the planned promotion, carrying forward the 1.5.0 addition of the [AIRK Explorer and Explorer Assistance](releases/release-1.5.0.md); the paragraphs above and below about 1.4.x describe earlier releases. [Routine CI](ci-and-builds.md) runs the full workspace once on Linux, focused native regressions elsewhere, all platform builds/package smoke and a container smoke. Full platform/container suites and installed-runtime lifecycle campaigns are explicit qualification. 1.4.2 scales Balanced admission to one quarter of detected RAM (2–32 GiB), protects capacity for up to four project query workers, and raises Balanced source pacing to 64 MiB/s per job within a 256 MiB/s shared ceiling. Native watching supports 8,192 directories per project and 32,768 shared, with bounded incremental traversal and specific limit diagnostics. Existing manual resource overrides and storage quotas are preserved. These are admission policies, not hard OS memory or disk-I/O limits. Follow the [versioning process](versioning.md) from local candidates through CI and publication. Its checks run on Windows x64; earlier installed-editor and Linux receipts do not qualify this follow-up.
 
 The [MCP contract](mcp.md) distinguishes raw unavailable diagnostics, bounded publication/readiness observations and typed exact-request retries. Qualification clients preserve these distinctions and exact submitted-query accounting.
 
@@ -125,8 +130,9 @@ CLI installation removes previous terminal executables regardless of version and
 Trusted activation can install or reconnect the approved runtime and terminal
 command, then reconcile existing native registrations. It does not register opened
 folders, start a new index or grant evidence access. New source/storage/watching
-choices require [reviewed index setup](service-project-setup.md); Project memberships, grants and
-**Use Grant for this window** remain separate. `airk.cli.autoInstall` controls
+choices require [reviewed index setup](service-project-setup.md). Choose local indexes
+and index sets with **Search scope** checkboxes and apply the selection; the host
+handles native access details internally. `airk.cli.autoInstall` controls
 automatic runtime setup, not indexing authority. Existing accepted work, explicit
 Stop, pause and watching preferences remain native. Open a new terminal after PATH
 integration; external terminal applications may need restarting.
@@ -135,7 +141,7 @@ integration; external terminal applications may need restarting.
 
 The **1.4.4 release** corrects WAL admission and logical database sizing. Earlier 1.4.0/1.4.1/1.4.2 qualification remains historical. Start with the [historical 1.4.4 release record](releases/release-1.4.4.md), [service plan](airkservice-architecture.md), [completion checklist](service-implementation-checklist.md), [project setup](service-project-setup.md) and [client adapters](service-client-adapters.md). That historical record did not qualify native Mac or the complete installed-platform/signing/policy matrix; current P6 evidence is recorded in the implementation ledger.
 
-The 1.3.x/1.2.x release records and former direct-helper/window-scheduler guides are historical references. They do not describe the 1.4 default lifecycle or authorize opening legacy stores through the service. Native and extension source/lockfile versions are synchronized at the **1.8.8 manual-test working build**. Promotion to the planned **1.9.0** follows implementation and manual acceptance; publication is verified separately.
+The 1.3.x/1.2.x release records and former direct-helper/window-scheduler guides are historical references. They do not describe the 1.4 default lifecycle or authorize opening legacy stores through the service. Native and extension source/lockfile versions are synchronized at the **1.8.11 manual-test working build**. Promotion to the planned **1.9.0** follows implementation and manual acceptance; publication is verified separately.
 
 The [local Rust iteration guide](../CONTRIBUTING.md#local-rust-iteration) covers scoped Clippy, persistent targets, platform-specific development incremental settings and timing reports; full qualification remains required.
 

@@ -1,5 +1,22 @@
 # CLI, MCP and Workbench read parity
 
+MCP's protocol envelope follows the negotiated SDK version. For sessions older
+than `2026-07-28`, the SDK omits the top-level `resultType: "complete"`
+discriminator; a direct native/CLI result may retain it. The `2026-07-28` inline
+protocol uses per-request metadata and retains the discriminator. Requesting that
+version through the legacy `initialize` handshake negotiates the supported
+`2025-11-25` fallback. Parity tests project only that explicitly checked complete
+discriminator for the negotiated legacy transport and compare the complete
+remaining result, including error receipts, scope, provenance and retry details.
+
+An explicit, unsubmitted scoped-read retry may report a catalog metadata clock
+newer than the caller's original selector: the native resolver refreshes that
+clock before admission. Clients accept only a monotonic clock with the same
+validated context, namespace, index, Project selection, grant and grant revision.
+They repeat the original arguments within the original deadline and retain the
+complete receipt. Backward clocks, changed authority, unknown errors and
+submitted or uncertain work do not authorize a retry.
+
 P9's [permanent exclusions](source-policy.md) apply to canonical native handlers
 and delivery fences across CLI tool calls/shell/convenience commands, MCP aliases
 and Workbench plans, details and copies/exports. Full status and refusal responses
@@ -104,6 +121,12 @@ remain literal; no production deadline or source-check budget is increased.
 The frontend and one-shot CLI share response observation code. Direct status/diagnostics and completed plan steps report configured `query_concurrency`, reusing the policy observation made for admission. Unified project selection and diagnostics editor observations are also retained inside plan steps. Fresh inner status reads identify their own observation time, zero cache age and `cached: false`; separately cached direct status calls report their actual captured time and age. These values need not match between separate requests.
 
 Scope selection remains interface-specific: unified MCP's `project` is a connection-configured selector, while CLI root/data/collection options select a native registration. The unified endpoint adds its configured project identity and optional Explorer diagnostic observation to both direct and nested results. Headless native CLI calls do not fabricate an attached editor or a connection allowlist. Compare the same underlying collection and native arguments, retain those additional observations when present, and distinguish them from indexed evidence. Native usage accounting measures the worker response before frontend-only metadata is added.
+
+This configured-binding selector also appears on public `query_scope`. Its
+closed public input schema includes optional `project`; the native prefixed
+handler and combined-session catalog omit it. Tests compare each complete
+schema with its owning canonical catalog and independently check the closed,
+read-only contract. Selecting a binding does not widen its installed grant.
 
 Workbench requests full responses with explicit rich facts unless compact is chosen. Its forms and slash flags include every native read input apart from transport display controls. Conditional validators, artifact/continuity selectors, change selector arrays, extraction filters, paging/count options and detailed capabilities/help options remain available. Exact fact paths use the same native handler as prefix reads and remain scoped by the plan.
 

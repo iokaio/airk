@@ -93,7 +93,7 @@ impl Admission {
         }
         if self.0.closing.load(Ordering::Acquire) {
             self.0.rejected.fetch_add(1, Ordering::Relaxed);
-            return Err(error("AIRK server is closing"));
+            return Err(admission_error(false));
         }
         let queued = self
             .0
@@ -113,9 +113,7 @@ impl Admission {
             }
         }
         self.0.rejected.fetch_add(1, Ordering::Relaxed);
-        Err(error(
-            "AIRK request queue is full or timed out; retry after outstanding requests complete",
-        ))
+        Err(admission_error(true))
     }
 
     pub(crate) fn status(&self) -> serde_json::Value {
@@ -166,7 +164,23 @@ impl Drop for Queued<'_> {
 }
 
 fn error(message: &str) -> CallToolResult {
-    CallToolResult::error(vec![ContentBlock::text(message)])
+    CallToolResult::error(vec![ContentBlock::text(
+        serde_json::json!({"error":{
+            "code":"read_failed","message":message,"retryable":false
+        }})
+        .to_string(),
+    )])
+}
+fn admission_error(busy: bool) -> CallToolResult {
+    CallToolResult::error(vec![ContentBlock::text(serde_json::json!({"error":{
+        "code":if busy {"direct_query_admission"} else {"request_draining"},
+        "reason":if busy {"busy"} else {"draining"},
+        "message":if busy {"AIRK request queue is full or timed out; retry after outstanding requests complete"}
+            else {"AIRK server is closing"},
+        "query_submitted":false,"retryable":busy,
+        "retry_after_ms":if busy {Some(25)} else {None},
+        "fresh_brokerage_required":!busy
+    }}).to_string())])
 }
 
 impl AirkServer {
@@ -524,4 +538,27 @@ mod tests {
         assert_eq!(admission.status()["queued_requests"], 0);
         Ok(())
     }
+}
+
+#[cfg(test)]
+#[test]
+fn admission_rejections_are_typed_and_generic_errors_never_authorize_replay() {
+    for busy in [false, true] {
+        let reply = admission_error(busy);
+        let body: serde_json::Value =
+            serde_json::from_str(&reply.content[0].as_text().unwrap().text).unwrap();
+        assert_eq!(body["error"]["query_submitted"], false);
+        assert_eq!(body["error"]["retryable"], busy);
+        assert_eq!(body["error"]["fresh_brokerage_required"], !busy);
+        if busy {
+            assert_eq!(body["error"]["retry_after_ms"], 25);
+        } else {
+            assert_eq!(body["error"]["code"], "request_draining");
+        }
+    }
+    let reply = error("selection_busy");
+    let body: serde_json::Value =
+        serde_json::from_str(&reply.content[0].as_text().unwrap().text).unwrap();
+    assert_eq!(body["error"]["code"], "read_failed");
+    assert_eq!(body["error"]["retryable"], false);
 }

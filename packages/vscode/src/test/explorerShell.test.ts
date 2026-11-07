@@ -44,6 +44,7 @@ const load = (Module as any)._load;
 (Module as any)._load = function (request: string, ...rest: unknown[]) { return request === 'vscode' ? vscodeStub : load.call(this, request, ...rest); };
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { ExplorerController } = require('../explorerController') as typeof import('../explorerController');
+const { ServiceError } = require('../serviceClient') as typeof import('../serviceClient');
 const { explorerHtml } = require('../explorerPanel') as typeof import('../explorerPanel');
 const { ExplorerSidebar, renderSidebar, sidebarContent, sidebarMessage } = require('../explorerSidebar') as typeof import('../explorerSidebar');
 const { SuggestionStore } = require('../explorerSuggestions') as typeof import('../explorerSuggestions');
@@ -100,6 +101,254 @@ function controller(trusted = true, stored = new Map<string, unknown>(), handoff
     return { explorer: new TestController(host as any), statusBar, runs, suggestions, host,fireSpecs:()=>specsListener() };
 }
 const flush = () => new Promise(resolve => setTimeout(resolve, 5));
+async function contextMicrotasks() { for (let index = 0; index < 12; index++) { await Promise.resolve(); } }
+function automaticContextFixture() {
+    const f = controller(), host = f.host as any, instance = f.explorer as any;
+    let windowGeneration = 1, observation: { generation: number; response: Record<string, unknown> } | undefined;
+    host.control.controller = { ...host.control.controller, observationIdentity: 'connected-runtime',
+        catalogRead: async () => { throw new Error('no automatic library query'); },
+        catalogPrepare: async () => { throw new Error('no automatic mutation'); }, catalogApply: async () => { throw new Error('no automatic mutation'); },
+        catalogReconcile: async () => [], catalogPending: () => [],
+        catalogSplitDraft: async () => { throw new Error('no automatic split'); }, catalogSplitApply: async () => { throw new Error('no automatic split'); },
+        catalogSplitSourceState: async () => { throw new Error('no automatic split'); } };
+    host.windowContextIdentity = () => String(windowGeneration);
+    host.windowContextObservation = () => observation?.generation === windowGeneration ? observation.response : undefined;
+    const observe = (generation: number) => {
+        observation = { generation, response: { status: 'catalog_host_context', capabilities: { policy_contract: 3 },
+            descriptor: { schema: 1, namespace: generation.toString(16).padStart(32, '0'), host: '22'.repeat(32), key: '33'.repeat(32), catalog_revision: 1, context: null } } };
+    };
+    return { ...f, host, instance, observe, generation: () => windowGeneration,
+        nextWindow: () => { windowGeneration++; instance.observedControl(); } };
+}
+
+test('Explorer automatically observes native capabilities once per connected runtime without reconnecting',async()=>{
+    const f=controller(),instance=f.explorer as any,host=f.host as any;
+    let reads=0,observed=false;
+    host.control.controller.observationIdentity='runtime-one';
+    host.prepareWindowContext=async()=>{reads++;observed=true;};
+    host.windowContextObservation=()=>observed?{status:'catalog_host_context'}:undefined;
+    try{
+        instance.observedControl();await flush();assert.equal(reads,1);
+        instance.observedControl();instance.observeConnectedContext();await flush();assert.equal(reads,1,'routine scalar updates cannot repeat the read');
+        assert.deepEqual(f.runs,[],'capability discovery must not reconnect or start native work');
+        host.control.controller.observationIdentity='runtime-two';observed=false;
+        instance.observedControl();await flush();assert.equal(reads,2,'activation automatically observes the replacement runtime');
+        host.nativeExecutionEnabled=()=>false;host.control.controller.observationIdentity='runtime-three';
+        instance.observedControl();await flush();assert.equal(reads,2,'native execution opt-out forbids observation');
+    }finally{f.explorer.dispose();}
+});
+
+test('an open Explorer automatically retries known read-only capability refusals and enables splitting', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+    try {
+        for (const code of ['registry_busy', 'console_queue_full', 'catalog_control_connection_unavailable']) {
+            const f = automaticContextFixture(); let reads = 0;
+            f.host.prepareWindowContext = async () => { reads++; if (reads === 1) { throw new ServiceError(code); } f.observe(f.generation()); };
+            try {
+                f.explorer.open('#indexing/window'); await contextMicrotasks();
+                assert.equal(reads, 1); assert.equal(f.explorer.snapshot().indexing?.canReviewSplit, false);
+                f.instance.observedControl(); f.instance.observedControl(); await contextMicrotasks();
+                assert.equal(reads, 1, 'routine events cannot bypass backoff or duplicate a read');
+                t.mock.timers.tick(250); await contextMicrotasks();
+                assert.equal(reads, 2, code); assert.equal(f.explorer.snapshot().indexing?.canReviewSplit, true, code);
+                f.instance.selectionEpoch++;f.instance.observedControl();await contextMicrotasks();
+                assert.equal(reads,2,'an evidence selection change cannot replace the stable native window owner');
+                f.instance.observedControl(); t.mock.timers.tick(4000); await contextMicrotasks();
+                assert.equal(reads, 2, 'success remains once per stable owner'); assert.deepEqual(f.runs, []);
+            } finally { f.explorer.dispose(); }
+        }
+    } finally { t.mock.timers.reset(); }
+});
+
+test('window-generation replacement fences a late capability retry even when the control identity stays the same', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+    const f = automaticContextFixture(); let reads = 0, release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    f.host.prepareWindowContext = async () => {
+        const generation = f.generation(); reads++;
+        if (reads === 1) { throw new ServiceError('registry_busy'); }
+        if (reads === 2) { await held; }
+        // This is the existing producer fence in ServiceExtension.prepareWindowContext.
+        if (generation !== f.generation()) { throw new ServiceError('window_context_changed'); }
+        f.observe(generation);
+    };
+    try {
+        f.explorer.open(); await contextMicrotasks(); t.mock.timers.tick(250); await contextMicrotasks();
+        assert.equal(reads, 2);
+        f.nextWindow(); await contextMicrotasks();
+        assert.equal(reads, 2, 'replacement waits for the existing read to settle');
+        assert.equal(f.explorer.snapshot().indexing?.canReviewSplit, false);
+        release(); await contextMicrotasks();
+        assert.equal(reads, 3, 'the replacement window gets a fresh automatic read');
+        assert.equal(f.explorer.snapshot().indexing?.canReviewSplit, true);
+        assert.equal(f.explorer.snapshot().indexing?.capabilities?.policy_contract, 3);
+        t.mock.timers.tick(4000); await contextMicrotasks(); assert.equal(reads, 3); assert.deepEqual(f.runs, []);
+    } finally { release(); f.explorer.dispose(); t.mock.timers.reset(); }
+});
+
+test('capability retry timers stop while hidden, on disposal and after their bounded attempt budget', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+    const f = automaticContextFixture(); let reads = 0;
+    f.host.prepareWindowContext = async () => { reads++; throw new ServiceError('registry_busy'); };
+    try {
+        f.explorer.open(); await contextMicrotasks(); f.instance.visibility(false);
+        t.mock.timers.tick(4000); await contextMicrotasks(); assert.equal(reads, 1, 'hidden views have no retry timer');
+        f.instance.visibility(true); await contextMicrotasks(); assert.equal(reads, 2);
+        // Every read remains refused; routine updates must not create a new budget.
+        for (const delay of [500, 1000, 2000, 4000, 4000, 4000]) {
+            t.mock.timers.tick(delay); await contextMicrotasks(); f.instance.observedControl();
+        }
+        assert.equal(reads, 8); t.mock.timers.tick(60000); await contextMicrotasks();
+        f.instance.observedControl(); await contextMicrotasks(); assert.equal(reads, 8);
+        f.nextWindow(); await contextMicrotasks(); assert.equal(reads, 9);
+        f.explorer.dispose(); t.mock.timers.tick(4000); await contextMicrotasks(); assert.equal(reads, 9);
+    } finally { f.explorer.dispose(); t.mock.timers.reset(); }
+});
+
+test('capability observation never retries unknown outcomes, terminal codes or lookalike error text', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+    try {
+        for (const error of [new ServiceError('registry_busy', true), new ServiceError('invalid_saved_window_context_key'), new Error('registry_busy')]) {
+            const f = automaticContextFixture(); let reads = 0;
+            f.host.prepareWindowContext = async () => { reads++; throw error; };
+            try {
+                f.explorer.open(); await contextMicrotasks(); t.mock.timers.tick(10000); await contextMicrotasks();
+                f.instance.observedControl(); await contextMicrotasks(); assert.equal(reads, 1, String(error));
+            } finally { f.explorer.dispose(); }
+        }
+    } finally { t.mock.timers.reset(); }
+});
+
+
+test('initial native catalog page shares pending automatic context and retains the established owner for reviews',async()=>{
+    const f=automaticContextFixture();let requests=0,pages=0,release!:()=>void,inflight:Promise<void>|undefined;
+    const held=new Promise<void>(resolve=>{release=resolve;});
+    f.host.windowContext=()=>{const native=f.host.windowContextObservation()?.descriptor;return native?{host:native.host,key:native.key,kind:'folder',name:'Fixture'}:undefined;};
+    f.host.prepareWindowContext=()=>inflight??= (async()=>{requests++;const generation=f.generation();await held;if(generation!==f.generation())throw new ServiceError('window_context_changed');f.observe(generation);})();
+    f.host.control.controller.catalogRead=async()=>{pages++;return {status:'catalog_page',page:{namespace:'01'.padStart(32,'0'),revision:1,items:[],continuation:null},capabilities:{policy_contract:3}};};
+    try{
+        f.instance.observedControl();await contextMicrotasks();assert.equal(requests,1);
+        const pending=f.instance.dispatch({type:'indexing.page',kind:'indexes'});await contextMicrotasks();
+        assert.equal(requests,1,'explicit page shares the existing native producer request');assert.equal(pages,0,'no review-seeding page before authenticated window ownership');
+        release();await pending;assert.equal(pages,1);assert.ok(f.explorer.snapshot().indexing?.windowDescriptor);
+        const generation=f.explorer.snapshot().indexing?.generation;
+        f.instance.observedControl();await contextMicrotasks();assert.equal(f.explorer.snapshot().indexing?.generation,generation,'late automatic completion cannot introduce another owner');
+        await f.instance.dispatch({type:'indexing.page',kind:'indexes'});assert.equal(requests,1,'complete authenticated observation never refetches');assert.equal(pages,2);assert.deepEqual(f.runs,[]);
+    }finally{release();f.explorer.dispose();}
+});
+
+test('initial catalog page retains typed failure and refuses changed owners without submitting a page',async()=>{
+    for(const mode of ['failure','window','control','trust','native-off','missing'] as const){
+        const f=automaticContextFixture();let pages=0,release!:()=>void;
+        const held=new Promise<void>(resolve=>{release=resolve;}),failure=new ServiceError('registry_busy');
+        f.host.windowContext=()=>f.host.windowContextObservation()?{host:'22'.repeat(32),key:'33'.repeat(32),kind:'folder',name:'Fixture'}:undefined;
+        f.host.control.controller.catalogRead=async()=>{pages++;throw new Error('must not submit stale page');};
+        f.host.prepareWindowContext=async()=>{await held;if(mode==='failure')throw failure;if(mode!=='missing')f.observe(f.generation());};
+        try{
+            const pending=f.instance.dispatch({type:'indexing.page',kind:'indexes'});await contextMicrotasks();
+            if(mode==='window')f.nextWindow();else if(mode==='control')f.host.control.controller.observationIdentity='replacement';else if(mode==='trust')f.host.trusted=()=>false;else if(mode==='native-off')f.host.nativeExecutionEnabled=()=>false;
+            release();await assert.rejects(pending,error=>mode==='failure'?error===failure:/window_context_changed|authorized|untrusted|native execution|native_execution|catalog_control_connection_unavailable/i.test(String(error)));
+            assert.equal(pages,0,mode);assert.deepEqual(f.runs,[]);
+        }finally{release();f.explorer.dispose();}
+    }
+});
+
+
+function completeAutomaticWindow(f:ReturnType<typeof automaticContextFixture>){
+    f.host.windowContext=()=>{const native=f.host.windowContextObservation()?.descriptor;return native?{host:native.host,key:native.key,kind:'folder',name:'Fixture'}:undefined;};
+}
+test('waiting automatic observation is satisfied by explicit page success without a later clock-catching read',async t=>{
+    t.mock.timers.enable({apis:['setTimeout','Date']});
+    const f=automaticContextFixture();completeAutomaticWindow(f);let reads=0,nativeRevision=7;
+    f.host.prepareWindowContext=async()=>{
+        reads++;if(reads===1)throw new ServiceError('catalog_control_connection_unavailable');
+        f.observe(f.generation());(f.host.windowContextObservation().descriptor as any).catalog_revision=nativeRevision;
+        f.instance.observeConnectedContext(); // actual producer's context-change event
+    };
+    f.host.control.controller.catalogRead=async()=>({status:'catalog_page',page:{namespace:f.generation().toString(16).padStart(32,'0'),revision:nativeRevision,items:[],continuation:null},capabilities:{policy_contract:3}});
+    try{
+        f.explorer.open();await contextMicrotasks();assert.equal(reads,1);assert.equal(f.instance.contextObservation.state,'waiting');
+        await f.instance.dispatch({type:'indexing.page',kind:'indexes'});assert.equal(reads,2);assert.ok(f.explorer.snapshot().indexing?.page);
+        // Native setup can advance the catalog after this explicit page. A
+        // leftover retry must not introduce that later clock into its owner.
+        nativeRevision=9;t.mock.timers.tick(250);await contextMicrotasks();
+        const current=f.explorer.snapshot().indexing;
+        assert.deepEqual({reads,page:!!current?.page,revision:current?.revision},{reads:2,page:true,revision:7});
+        t.mock.timers.tick(30000);await contextMicrotasks();assert.equal(reads,2);assert.deepEqual(f.runs,[]);
+    }finally{f.explorer.dispose();t.mock.timers.reset();}
+});
+
+test('already complete current native owner does not start an automatic capability read',async()=>{
+    const f=automaticContextFixture();completeAutomaticWindow(f);let reads=0;
+    f.observe(f.generation());f.host.prepareWindowContext=async()=>{reads++;throw new Error('complete owner must not refetch');};
+    try{f.instance.observedControl();await contextMicrotasks();assert.equal(reads,0);assert.equal(f.explorer.snapshot().indexing?.canReviewSplit,true);}
+    finally{f.explorer.dispose();}
+});
+
+test('retired window and control observations cannot satisfy a replacement native owner',async t=>{
+    t.mock.timers.enable({apis:['setTimeout','Date']});
+    try{
+        for(const replacement of ['window','control'] as const){
+            const f=automaticContextFixture();let reads=0,release!:()=>void,payload:any;
+            const held=new Promise<void>(resolve=>{release=resolve;}),owner=()=>JSON.stringify([f.generation(),f.host.control.controller.observationIdentity]);
+            f.host.windowContextObservation=()=>payload?.owner===owner()?payload.response:undefined;completeAutomaticWindow(f);
+            f.host.prepareWindowContext=async()=>{
+                reads++;const producer=owner();if(reads===1)throw new ServiceError('registry_busy');if(reads===2)await held;
+                payload={owner:producer,response:{status:'catalog_host_context',capabilities:{policy_contract:3},descriptor:{schema:1,namespace:f.generation().toString(16).padStart(32,'0'),host:'22'.repeat(32),key:'33'.repeat(32),catalog_revision:1,context:null}}};
+                f.instance.observeConnectedContext();
+            };
+            try{
+                f.explorer.open();await contextMicrotasks();t.mock.timers.tick(250);await contextMicrotasks();assert.equal(reads,2);
+                if(replacement==='window')f.nextWindow();else{f.host.control.controller.observationIdentity='replacement';f.instance.observedControl();}
+                assert.equal(f.explorer.snapshot().indexing?.canReviewSplit,false);release();await contextMicrotasks();
+                assert.equal(reads,3,replacement);assert.equal(payload.owner,owner());assert.equal(f.explorer.snapshot().indexing?.canReviewSplit,true);
+                t.mock.timers.tick(4000);await contextMicrotasks();assert.equal(reads,3);assert.deepEqual(f.runs,[]);
+            }finally{release();f.explorer.dispose();}
+        }
+    }finally{t.mock.timers.reset();}
+});
+
+test('external missing malformed mismatched or unknown metadata cannot satisfy a waiting observer',async t=>{
+    t.mock.timers.enable({apis:['setTimeout','Date']});
+    try{
+        for(const malformed of ['missing','descriptor','mismatch','capability-missing','capability-array','capability-negative','capability-fraction'] as const){
+            const f=automaticContextFixture();completeAutomaticWindow(f);let reads=0;
+            f.host.prepareWindowContext=async()=>{reads++;throw new ServiceError('registry_busy');};
+            try{
+                f.explorer.open();await contextMicrotasks();assert.equal(reads,1);
+                if(malformed!=='missing'){
+                    f.observe(f.generation());const observation=f.host.windowContextObservation();
+                    if(malformed==='descriptor')observation.descriptor.schema=99;
+                    else if(malformed==='mismatch')f.host.windowContext=()=>({host:'44'.repeat(32),key:'33'.repeat(32),kind:'folder',name:'Fixture'});
+                    else if(malformed==='capability-missing')delete observation.capabilities;
+                    else if(malformed==='capability-array')observation.capabilities=[];
+                    else if(malformed==='capability-negative')observation.capabilities.policy_contract=-1;
+                    else observation.capabilities.policy_contract=1.5;
+                }
+                f.instance.observeConnectedContext();assert.equal(f.instance.contextObservation.state,'waiting',malformed);
+                t.mock.timers.tick(250);await contextMicrotasks();assert.equal(reads,2,malformed);assert.deepEqual(f.runs,[]);
+            }finally{f.explorer.dispose();}
+        }
+    }finally{t.mock.timers.reset();}
+});
+
+test('an open Explorer follows the replacement native catalog controller after automatic upgrade',async()=>{
+    const f=controller(),host=f.host as any,instance=f.explorer as any;
+    const namespace='34'.repeat(16),calls:string[]=[];
+    const catalog=(identity:string,contract:number)=>({...host.control.controller,observationIdentity:identity,
+        catalogRead:async()=>{calls.push(identity);return {status:'catalog_page',page:{namespace,revision:1,items:[],continuation:null},capabilities:{policy_contract:contract}};},
+        catalogPrepare:async()=>{throw new Error('no upgrade catalog mutation');},catalogApply:async()=>{throw new Error('no upgrade catalog mutation');},catalogReconcile:async()=>[],catalogPending:()=>[],
+        catalogSplitDraft:async()=>{throw new Error('no automatic split');},catalogSplitApply:async()=>{throw new Error('no automatic split');},catalogSplitSourceState:async()=>{throw new Error('no automatic split');}});
+    try{
+        const predecessor=catalog('predecessor',1);host.control.controller=predecessor;
+        await instance.dispatch({type:'indexing.page',kind:'indexes'});assert.equal(f.explorer.snapshot().indexing?.canReviewSplit,false);
+        // ServiceConsole.reset replaces rather than reconnects its controller.
+        host.control.controller=catalog('replacement',3);predecessor.catalogRead=async()=>{throw new Error('disposed predecessor catalog controller');};
+        await instance.dispatch({type:'indexing.page',kind:'indexes'});
+        assert.deepEqual(calls,['predecessor','replacement']);assert.equal(f.explorer.snapshot().indexing?.canReviewSplit,true);
+        assert.deepEqual(f.runs,[]);
+    }finally{f.explorer.dispose();}
+});
 
 test('Recommendations copy and temporary scope use revalidate native scope and never mutate catalog or configuration',async t=>{
     const f=controller(),instance=f.explorer as any,calls:unknown[]=[],copied:string[]=[],applied:unknown[]=[];
@@ -211,7 +460,7 @@ test('pending update is included in the view and reload dispatch is restricted t
 test('visible Explorer observations refresh readiness even when the publication token has not changed',()=>{
     const instance=Object.create(ExplorerController.prototype) as any;let reads=0,publishes=0;
     Object.assign(instance,{retained:disposable,panel:{open:true},selected:project,status:{publication:'same'},lastAutomaticStatusCheck:0,
-        control:{projects:()=>[{project,publication:'same'}]},loadStatus:async()=>{reads++;},publish:()=>{publishes++;}});
+        host:{trusted:()=>true},control:{state:{connected:false},projects:()=>[{project,publication:'same'}]},loadStatus:async()=>{reads++;},publish:()=>{publishes++;}});
     instance.observedControl();instance.observedControl();assert.equal(reads,1);
     instance.lastAutomaticStatusCheck=Date.now()-6000;instance.observedControl();assert.equal(reads,2);
     instance.retained=undefined;instance.lastAutomaticStatusCheck=0;instance.observedControl();assert.equal(reads,2);

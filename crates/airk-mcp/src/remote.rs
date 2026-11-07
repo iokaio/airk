@@ -92,6 +92,10 @@ pub fn scoped_setup_failure(
     if let Some(response) = native_control_response {
         body["error"]["native_control_response"] = response;
     }
+    if retryable {
+        body["error"]["retry_after_ms"] = 100.into();
+        body["error"]["fresh_brokerage_required"] = true.into();
+    }
     scoped_failure_envelope(body)
 }
 /// Transport loss or a deadline after dispatch cannot prove whether a query
@@ -109,6 +113,17 @@ pub fn scoped_observation_failure(
 }
 fn scoped_failure_envelope(body: serde_json::Value) -> serde_json::Value {
     serde_json::json!({"content":[{"type":"text","text":body.to_string()}],"structuredContent":body,"isError":true})
+}
+
+/// No exact dispatch receipt exists for this failed direct exchange. The caller
+/// can obtain fresh brokerage, but cannot infer that replaying the query is safe.
+pub fn direct_observation_failure(code: &str) -> serde_json::Value {
+    scoped_failure_envelope(serde_json::json!({"error":{
+        "code":code,
+        "message":"The native read could not be completed. Its submission state is unknown; obtain a fresh connection before deciding whether to repeat it.",
+        "retryable":false,"query_submitted":null,
+        "fresh_brokerage_required":true,"query_replay_safe":false
+    }}))
 }
 
 /// A lost outer composite exchange is uncertain; never replay its child reads.
@@ -314,17 +329,20 @@ impl ServerHandler for Bridge {
             query_concurrency,
         )
         .await;
-        Ok(result.unwrap_or_else(|error| {
-            if std::env::var_os("AIRK_PROCESS_DIAGNOSTICS").as_deref()
-                == Some(std::ffi::OsStr::new("1"))
-            {
-                // Explicit local/CI diagnostics only: keep the bounded cause on
-                // stderr without changing the public reply or retry authority.
-                let detail: String = format!("{error:#}").chars().take(4096).collect();
-                eprintln!("AIRK direct project connection failed: {detail}");
-            }
-            CallToolResult::error(vec![ContentBlock::text("AIRK direct project connection failed. Retry through fresh brokerage with the same revision selector; use the service console for indexing or repair.")])
-        }).into())
+        Ok(result
+            .unwrap_or_else(|error| {
+                if std::env::var_os("AIRK_PROCESS_DIAGNOSTICS").as_deref()
+                    == Some(std::ffi::OsStr::new("1"))
+                {
+                    // Explicit local/CI diagnostics only: keep the bounded cause on
+                    // stderr without changing the public reply or retry authority.
+                    let detail: String = format!("{error:#}").chars().take(4096).collect();
+                    eprintln!("AIRK direct project connection failed: {detail}");
+                }
+                serde_json::from_value(direct_observation_failure("direct_observation_unavailable"))
+                    .expect("bounded direct failure envelope")
+            })
+            .into())
     }
 }
 
@@ -352,6 +370,10 @@ async fn call_at_capacity(
         .await
     {
         Ok(value) => value,
+        Err(error) if crate::response::typed_error_result(&error).is_some() => {
+            return Ok(crate::response::typed_error_result(&error)
+                .expect("recognized native read failure"));
+        }
         Err(_) if backend.scoped_selection().is_some() => scoped_observation_failure(
             backend.scoped_selection().expect("checked scoped selector"),
             "scoped_observation_unavailable",
@@ -363,9 +385,12 @@ async fn call_at_capacity(
                 .expect("checked combined selector"),
             "combined_observation_unavailable",
         ),
-        Err(error) => return Err(error),
+        Err(_) => direct_observation_failure("direct_observation_unavailable"),
     };
-    let mut result = serde_json::from_value::<CallToolResult>(value)?;
+    let mut result = serde_json::from_value::<CallToolResult>(value).unwrap_or_else(|_| {
+        serde_json::from_value(direct_observation_failure("direct_response_invalid"))
+            .expect("bounded direct failure envelope")
+    });
     report_query_concurrency(&mut result, &tool, limit);
     Ok(result)
 }

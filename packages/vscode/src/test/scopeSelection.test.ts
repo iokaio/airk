@@ -39,7 +39,7 @@ test('explicit selection uses exact native index display origins and catalog-onl
     }
     assert.throws(()=>unifiedEntry(spec,undefined,[{...spec,catalogSession:undefined}]),/one selected Index/);
     assert.throws(()=>launchArgs({...spec,catalogSession:null} as unknown as typeof spec),/catalog_object/);
-    assert.equal(reviewScopeSelection(f.choice,f.context,f.grantDetail,f.indexDetail).label,'Native index · 1 selected Project');
+    assert.equal(reviewScopeSelection(f.choice,f.context,f.grantDetail,f.indexDetail).label,'Native index · 1 selected index set');
 });
 
 test('selection refuses crossed namespace/revision/host, revoked/imported and changed source policy',()=>{

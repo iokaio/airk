@@ -104,6 +104,69 @@ fn input(i: u8, hits: Vec<Value>) -> Result<MemberInput> {
 }
 
 #[test]
+fn single_required_member_failure_exposes_exact_safe_read_retry_without_losing_native_data()
+-> Result<()> {
+    use airk_core::combined_reads::read_retry::validated_retry;
+    let mut composition = request()?;
+    composition.selection.members.truncate(1);
+    composition.selection.member_availability = MemberAvailability::Require;
+    let hint = json!({"status":"retry","code":"selection_busy","retryable":true,
+        "action":"repeat_same_request","retry_after_ms":25});
+    let failed = MemberInput {
+        index_id: index(1),
+        is_error: true,
+        exhausted: false,
+        result: hint.clone(),
+        sources: vec![],
+    };
+    let result = compose(&composition, vec![failed.clone()])?;
+    let value = serde_json::to_value(&result)?;
+    let retry =
+        validated_retry(&value).context("single safe member lost its explicit retry contract")?;
+    assert_eq!(retry.code, "selection_busy");
+    assert_eq!(retry.selection_identity, result.selection.identity);
+    assert_eq!(value.pointer(&retry.result_pointer), Some(&hint));
+    assert_eq!(result.members[0].result, hint);
+    assert_eq!(result.error.as_ref().unwrap().code, "member_unavailable");
+    assert!(
+        !result.error.as_ref().unwrap().retryable,
+        "generic whole-union replay stays disabled"
+    );
+    for (field, value) in [
+        ("native_detail", json!({"preserved":[1,2,3]})),
+        ("chunks", json!(1)),
+        ("symbols", json!([])),
+    ] {
+        let mut unknown = failed.clone();
+        unknown.result[field] = value;
+        let original = unknown.result.clone();
+        let blocked = compose(&composition, vec![unknown])?;
+        assert!(
+            blocked.read_retry.is_none(),
+            "unknown member fields cannot confer replay authority"
+        );
+        assert_eq!(
+            blocked.members[0].result, original,
+            "the full original failure remains available"
+        );
+    }
+    composition.selection.member_availability = MemberAvailability::Report;
+    assert!(
+        compose(&composition, vec![failed.clone()])?
+            .read_retry
+            .is_none()
+    );
+    let mut multiple = request()?;
+    multiple.selection.member_availability = MemberAvailability::Require;
+    assert!(
+        compose(&multiple, vec![failed, input(2, vec![])?])?
+            .read_retry
+            .is_none()
+    );
+    Ok(())
+}
+
+#[test]
 fn shared_index_rank_is_one_contribution_with_precise_origins_and_complete_native_results()
 -> Result<()> {
     let request = request()?;

@@ -32,6 +32,14 @@ function retainUiDiagnostic(samples,value){
     if(samples.length===4)samples.splice(1,1);
     samples.push({observed_unix_ms:Date.now(),value:observed});
 }
+function beginUiDiagnostic(entries,value){
+    if(entries.length===8)entries.splice(1,1);
+    const diagnostic=structuredClone(value);entries.push(diagnostic);return diagnostic;
+}
+function editorActionDeadline(scenarioDeadline,now=Date.now()){return Math.min(scenarioDeadline,now+120000);}
+function editorRemainingBudget(deadline,maximum,now=Date.now()){
+    const left=Math.min(maximum,deadline-now);if(left<=0)throw new Error('Editor UI action/scenario deadline exhausted');return left;
+}
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function until(action,label,timeout=180000){const end=Date.now()+timeout;while(Date.now()<end){const value=await action();if(value)return value;await delay(120);}throw new Error(`Editor UI timeout: ${label}`);}
 const pollUntil=until;
@@ -52,8 +60,9 @@ async function connect(target,deadline){
 }
 async function editorUi(port,deadline=Date.now()+600000){
     const clients=new Map();
-    let reads=0,dispatches=0;const dispatchLog=[],pickerDiagnostics=[];
-    const budget=max=>{const left=Math.min(max,deadline-Date.now());if(left<=0)throw new Error('Shared editor scenario deadline exhausted');return left;};
+    let actionDeadline=deadline;
+    let reads=0,dispatches=0;const dispatchLog=[],pickerDiagnostics=[],mutationDiagnostics=[],readDiagnostics=[];let activeReadDiagnostic;
+    const budget=max=>editorRemainingBudget(actionDeadline,max);
     const boundedUntil=(action,label,timeout=180000)=>pollUntil(action,label,budget(timeout));
     const until=boundedUntil;
     async function document(predicate,expression,type='iframe'){
@@ -73,7 +82,15 @@ async function editorUi(port,deadline=Date.now()+600000){
     // AIRK Explorer › Management drives the same native controller the Service Console used.
     const service=expression=>document("!!document.querySelector('.airk-explorer')",expression);
     async function dispatch(predicate,ready,expression,type='iframe'){
-        const target=await until(async()=>{const found=await document(predicate,ready,type);return found?.value?found:undefined;},'exact mutation target');
+        const diagnostic=beginUiDiagnostic(mutationDiagnostics,{next_dispatch:dispatches+1,type,ready_sha256:require('node:crypto').createHash('sha256').update(ready).digest('hex'),samples:[]});
+        const target=await until(async()=>{
+            const found=await document(predicate,ready,type);
+            if(found?.value)return found;
+            // Read-only diagnostics never dispatch or retry a mutation. Retain
+            // bounded first/latest rendered states when an exact control vanishes.
+            if(found){try{retainUiDiagnostic(diagnostic.samples,await found.client.evaluate(found.context,"({title:document.title,visibility:document.visibilityState,text:document.body.innerText.slice(0,32768),text_truncated:document.body.innerText.length>32768,buttons:[...document.querySelectorAll('button')].slice(0,64).map(b=>({text:b.textContent.trim().slice(0,160),disabled:b.disabled})),buttons_truncated:document.querySelectorAll('button').length>64})"));}catch(error){retainUiDiagnostic(diagnostic.samples,{observation_unavailable:String(error).slice(0,4096)});}}
+            return undefined;
+        },'exact mutation target');
         const number=++dispatches;
         if(number>1024)throw new Error('UI mutation dispatch budget exhausted');
         const receipt={dispatch:number,context:target.context,target:target.target.id,started:Date.now(),expression_sha256:require('node:crypto').createHash('sha256').update(expression).digest('hex')};dispatchLog.push(receipt);
@@ -132,7 +149,16 @@ async function editorUi(port,deadline=Date.now()+600000){
         await until(async()=>{const found=await service(expressions.readback);return found?.value===true?true:undefined;},'exact private form values before submit');
     }
     async function catalog(){
-        return until(async()=>{const value=(await service("(()=>{const d=[...document.querySelectorAll('details')].find(d=>d.querySelector('summary')?.textContent==='Complete response');if(!d)return;try{return JSON.parse(d.querySelector('pre').textContent);}catch{return;}})()"))?.value;return value||undefined;},'complete native catalog details');
+        const diagnostic=activeReadDiagnostic??beginUiDiagnostic(readDiagnostics,{action:'catalog',native:[],rendered:[]});
+        return until(async()=>{const value=(await service("(()=>{const d=[...document.querySelectorAll('details')].find(d=>d.querySelector('summary')?.textContent==='Complete response');if(!d)return;try{return JSON.parse(d.querySelector('pre').textContent);}catch{return;}})()"))?.value;
+            // Retain each bounded native response independently of rendered
+            // text so diagnostic overhead cannot erase an otherwise valid reply.
+            retainUiDiagnostic(diagnostic.native,value??{observation_unavailable:'Complete response not rendered'});
+            try{
+                const rendered=(await service("({title:document.title,visibility:document.visibilityState,text:document.body.innerText.slice(0,32768),text_truncated:document.body.innerText.length>32768,notices:[...document.querySelectorAll('.notice')].slice(0,8).map(n=>n.innerText.slice(0,2048))})"))?.value;
+                retainUiDiagnostic(diagnostic.rendered,rendered??{observation_unavailable:'AIRK document not available'});
+            }catch(error){retainUiDiagnostic(diagnostic.rendered,{observation_unavailable:String(error).slice(0,4096)});}
+            return value||undefined;},'complete native catalog details');
     }
     async function settled(predicate,previous){
         return until(async()=>{const value=await catalog();if(value.error){if(previous&&value.error===previous.error&&value.generation===previous.generation)return undefined;throw new Error(value.error);}return !value.busy&&predicate(value)?value:undefined;},'native catalog outcome');
@@ -144,6 +170,12 @@ async function editorUi(port,deadline=Date.now()+600000){
         return settled(v=>!!(kind==='grant'?v.grantDetail:v.detail));
     }
     async function indexing(request){
+        const previous=actionDeadline,previousDiagnostic=activeReadDiagnostic;actionDeadline=editorActionDeadline(deadline);
+        const diagnostic=activeReadDiagnostic=beginUiDiagnostic(readDiagnostics,{action:request.action,sequence:request.sequence,native:[],rendered:[]});
+        try{return await indexingAction(request);}catch(error){diagnostic.failure=String(error).slice(0,4096);throw error;}
+        finally{actionDeadline=previous;activeReadDiagnostic=previousDiagnostic;}
+    }
+    async function indexingAction(request){
         if(request.action==='serviceStop'){
             await click('Check status now');
             const before=await until(async()=>{const found=await service("(()=>{const b=[...document.querySelectorAll('button')].find(n=>n.textContent.trim()==='Stop service');return b&&!b.disabled?{text:document.body.innerText}:false;})()");return found?.value;},'healthy owned fixture Stop control');
@@ -244,6 +276,6 @@ async function editorUi(port,deadline=Date.now()+600000){
             return rows.length===1&&['succeeded','failed','stale','skipped','canceled'].includes(rows[0].cells[1].textContent)?{phase:rows[0].cells[1].textContent,receipt:rows[0].innerText}:false;})()`))?.value,'native repair final receipt');
         if(result.phase!=='succeeded')throw new Error(`Native editor repair failed: ${result.receipt}`);
     }
-    return {dispatch,dispatchReceipts:()=>structuredClone(dispatchLog),diagnostics:()=>({picker:structuredClone(pickerDiagnostics),reads,dispatches}),document,workbench,service,quickPick,confirm,indexing,catalog,click,approveRepair,responseMode,until,close(){for(const client of clients.values())client.close();}};
+    return {dispatch,dispatchReceipts:()=>structuredClone(dispatchLog),diagnostics:()=>({picker:structuredClone(pickerDiagnostics),mutations:structuredClone(mutationDiagnostics),read_observations:structuredClone(readDiagnostics),reads,dispatches}),document,workbench,service,quickPick,confirm,indexing,catalog,click,approveRepair,responseMode,until,close(){for(const client of clients.values())client.close();}};
 }
-module.exports={editorUi,until,formFillExpressions,privateEditorEnvironment,openUsageAdministration,retainUiDiagnostic};
+module.exports={editorUi,until,formFillExpressions,privateEditorEnvironment,openUsageAdministration,retainUiDiagnostic,beginUiDiagnostic,editorActionDeadline,editorRemainingBudget};

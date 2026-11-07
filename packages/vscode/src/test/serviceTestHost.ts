@@ -57,6 +57,7 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
     let trustGranted:()=>void;
     const commandContexts=new Map<string,unknown>();
     let extensionsChanged:()=>void,windowFocused:(state:{focused:boolean})=>void;
+    const assetWatchers:{pattern:any;disposed:boolean;change:()=>void;create:()=>void}[]=[];
     const views=new Map<string,any>();
     const statusBar={text:'',tooltip:'',command:'',show(){},dispose(){}};
     const stub:any={extensions:{getExtension:()=>({extensionPath:root,packageJSON:{version:state.installedVersion}}),onDidChange:(callback:()=>void)=>{extensionsChanged=callback;return disposable;}},workspace:{isTrusted:options.trusted??true,workspaceFolders:folders,textDocuments:[],
@@ -65,7 +66,12 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
             update:async(key:string,value:unknown)=>{settings.set(key,value);}}),
         onDidChangeWorkspaceFolders:(callback:()=>Promise<void>)=>{foldersChanged=callback;return disposable;},onDidGrantWorkspaceTrust:(callback:()=>void)=>{trustGranted=callback;return disposable;},onDidChangeConfiguration:event,
         openTextDocument:async(value:any)=>{if(typeof value?.content!=='string')throw new Error('Fixture file editor not configured');openedDocuments.push(value);return value;},
-        createFileSystemWatcher:()=>{throw new Error('Editor-owned source watcher is forbidden');}},
+        createFileSystemWatcher:(pattern:any)=>{
+            assert.equal(pattern.base.fsPath,path.resolve(__dirname,'../..'),'editor watchers must stay inside the extension payload');
+            assert.equal(pattern.pattern,'out/*.{js,css}','editor-owned source watcher is forbidden');
+            const watcher={pattern,disposed:false,change:()=>{},create:()=>{}};assetWatchers.push(watcher);
+            return {dispose(){watcher.disposed=true;},onDidChange:(callback:()=>void)=>{watcher.change=callback;return disposable;},onDidCreate:(callback:()=>void)=>{watcher.create=callback;return disposable;}};
+        }},
     window:{activeTextEditor:{document:{uri:folders[0]?.uri}},createOutputChannel:()=>({appendLine:(text:string)=>calls.push(text),show(){calls.push('output-shown');},dispose(){}}),
         withProgress:async(options:any,task:any)=>{const run={title:options.title,messages:[] as string[]};progressRuns.push(run);return task({report:(value:any)=>run.messages.push(value.message)});},
         createStatusBarItem:()=>statusBar,createTreeView:()=>disposable,registerWebviewViewProvider:(id:string,provider:any)=>{views.set(id,provider);return disposable;},
@@ -91,6 +97,7 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
     EventEmitter:class{listeners:any[]=[];event=(listener:any)=>{this.listeners.push(listener);return disposable;};fire(){for(const listener of this.listeners)listener();}dispose(){}},
     TreeItem:class{constructor(public label:string){}},Uri:{file:(fsPath:string)=>({scheme:'file',fsPath}),joinPath:(base:any,...parts:string[])=>({scheme:'file',fsPath:path.join(base?.fsPath??'',...parts),toString(){return this.fsPath;}})},
     Range:class{constructor(..._args:any[]){}},
+    RelativePattern:class{constructor(public base:any,public pattern:string){}},
     WorkspaceEdit:class{uri:any;after='';replace(uri:any,_range:any,after:string){this.uri=uri;this.after=after;}},
     McpStdioServerDefinition:class{cwd:unknown;constructor(public label:string,public command:string,public args:string[],public env:unknown,public version:string){}}};
     const transport={dispose(){},async request(method:unknown):Promise<any>{
@@ -170,15 +177,16 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
     loader._load=function(request:string,...args:any[]){return request==='vscode'?stub:original.call(this,request,...args);};
     let extension:any;
     // Real installations carry compiled code; same-version rebuild detection stats it.
-    if(options.codeFile){await fs.mkdir(path.join(root,'out'),{recursive:true});await fs.writeFile(path.join(root,'out','serviceExtension.js'),'// fixture build 1\n');}
+    if(options.codeFile){await fs.mkdir(path.join(root,'out'),{recursive:true});for(const name of ['serviceExtension.js','explorerWebview.js','explorerWebview.css','workbenchWebview.js','workbenchWebview.css'])await fs.writeFile(path.join(root,'out',name),'// fixture build 1\n');}
     try{extension=require('../extension');const context:any={extensionPath:root,extensionUri:{scheme:'file',fsPath:path.resolve(__dirname,'../..')},extension:{id:'iokaio.airk',packageJSON:{version:bundledVersion}},globalState:storage,workspaceState:storage,
         globalStorageUri:{fsPath:path.join(root,'editor-storage')},subscriptions:[],environmentVariableCollection:{persistent:false,prepend(){}}};
         const api=await extension.activate(context);
         if(!options.deferStartup)await api.whenReady();
         return {views,root,folders,binding,registrations,inactiveRegistrations,values,settings,commands,commandContexts,writes,calls,warnings,clipboard,panels,openedDocuments,state,stub,api,context,providers:events,assistance,notices,progressRuns,statusBar,
+            assetWatchers,assetChanged(){for(const watcher of assetWatchers)if(!watcher.disposed)watcher.change();},assetCreated(){for(const watcher of assetWatchers)if(!watcher.disposed)watcher.create();},
             extensionsChanged(){extensionsChanged!();},focus(){windowFocused!({focused:true});},
             async refreshFolders(){await foldersChanged!();},
             grantTrust(){stub.workspace.isTrusted=true;trustGranted!();},
-            async close(){extension.deactivate();loader._load=original;clear();await fs.rm(root,{recursive:true,force:true});}};
+            async close(){for(const subscription of context.subscriptions)subscription.dispose();extension.deactivate();loader._load=original;clear();await fs.rm(root,{recursive:true,force:true});}};
     }catch(error){extension?.deactivate();loader._load=original;clear();await fs.rm(root,{recursive:true,force:true});throw error;}
 }

@@ -87,7 +87,7 @@ export function reviewCombinedScopeSelection(choiceInput:unknown,contextInput:un
         return reviewScopeSelection({grant_id:session.grant_id,expected_grant_revision:session.expected_grant_revision,index_id,project_ids},context,grantDetail,details.get(index_id)).index;
     });
     return {session,indexes,host:context.host,semanticIdentity:combinedScopeSelectionIdentity(session),
-        label:`${session.project_ids.length} selected Project${session.project_ids.length===1?'':'s'} · ${indexes.length} index${indexes.length===1?'':'es'}`};
+        label:`${session.project_ids.length} selected index set${session.project_ids.length===1?'':'s'} · ${indexes.length} index${indexes.length===1?'':'es'}`};
 }
 /** Called only for the user's explicit Use Grant action. Defaults and context
  * preferences never select a grant, project subset or index here. */
@@ -131,7 +131,7 @@ export function reviewScopeSelection(input: ReviewedScopeChoice, contextInput: u
     const index:NativeScopeIndex={id:session.index_id,name:row.name,backing:{binding:catalogHex(backing.binding,64),
         root:nativePath(backing.root),data_root:nativePath(backing.data_root),collection:backing.collection}};
     return {session,index,host:context.host,semanticIdentity:scopeSelectionIdentity(session),
-        label:`${index.name} · ${session.project_ids.length} selected Project${session.project_ids.length===1?'':'s'}`};
+        label:`${index.name} · ${session.project_ids.length} selected index set${session.project_ids.length===1?'':'s'}`};
 }
 
 /** Inert preference only. Restoring it never calls use(), connects or creates a

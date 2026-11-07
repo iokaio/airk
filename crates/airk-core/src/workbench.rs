@@ -175,3 +175,81 @@ pub struct ResultEnvelope {
     pub calls: usize,
     pub payload_bytes: usize,
 }
+
+/// Decode the one canonical request shape with precise paths for nested
+/// collections before Serde's value decoder loses those locations. This adds
+/// diagnostics only: semantic plan validation and budgets retain their owners.
+pub fn decode_request(value: Value) -> anyhow::Result<Request> {
+    use crate::read_arguments::ReadArgumentError;
+    fn object<'a>(value: &'a Value, path: &str) -> anyhow::Result<&'a Map<String, Value>> {
+        value.as_object().ok_or_else(|| {
+            ReadArgumentError::new("invalid_arguments", path, "expected an object").into()
+        })
+    }
+    fn array<'a>(value: &'a Value, path: &str) -> anyhow::Result<&'a Vec<Value>> {
+        value.as_array().ok_or_else(|| {
+            ReadArgumentError::new("invalid_arguments", path, "expected an array").into()
+        })
+    }
+    fn shape_plan(plan: &Value) -> anyhow::Result<()> {
+        let plan = object(plan, "plan")?;
+        if let Some(steps) = plan.get("steps") {
+            for (index, step) in array(steps, "plan.steps")?.iter().enumerate() {
+                let path = format!("plan.steps[{index}]");
+                let step = object(step, &path)?;
+                if let Some(args) = step.get("args") {
+                    object(args, &format!("{path}.args"))?;
+                }
+                if let Some(bind) = step.get("bind") {
+                    for (index, binding) in array(bind, &format!("{path}.bind"))?.iter().enumerate()
+                    {
+                        let path = format!("{path}.bind[{index}]");
+                        object(binding, &path)?;
+                        serde_json::from_value::<Binding>(binding.clone()).map_err(|error| {
+                            ReadArgumentError::new("invalid_arguments", &path, error.to_string())
+                        })?;
+                    }
+                }
+                serde_json::from_value::<Step>(Value::Object(step.clone())).map_err(|error| {
+                    ReadArgumentError::new("invalid_arguments", &path, error.to_string())
+                })?;
+            }
+        }
+        if let Some(selection) = plan.get("query_scope").filter(|value| !value.is_null()) {
+            let selection = object(selection, "plan.query_scope")?;
+            for key in ["project_ids", "index_ids"] {
+                if let Some(ids) = selection.get(key) {
+                    array(ids, &format!("plan.query_scope.{key}"))?;
+                }
+            }
+        }
+        for key in ["budgets", "output"] {
+            if let Some(value) = plan.get(key) {
+                object(value, &format!("plan.{key}"))?;
+            }
+        }
+        Ok(())
+    }
+    let fields = object(&value, "request")?;
+    if let Some(plan) = fields.get("plan").filter(|value| !value.is_null()) {
+        shape_plan(plan)?;
+    }
+    if let Some(recipe) = fields.get("recipe").filter(|value| !value.is_null()) {
+        let recipe = object(recipe, "recipe")?;
+        if let Some(parameters) = recipe.get("parameters") {
+            object(parameters, "recipe.parameters")?;
+        }
+    }
+    for key in ["budgets", "output"] {
+        if let Some(value) = fields.get(key).filter(|value| !value.is_null()) {
+            object(value, key)?;
+        }
+    }
+    serde_json::from_value(value).map_err(|error| {
+        ReadArgumentError::new("invalid_arguments", "request", error.to_string()).into()
+    })
+}
+
+#[cfg(test)]
+#[path = "workbench_decode_tests.rs"]
+mod decode_tests;

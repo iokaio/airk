@@ -57,7 +57,7 @@ test('the Explorer evidence session reads one pinned publication through the ver
         assert.equal(await liveCheck(file, String(hits[0].citation.content_hash), false), 'changed_since_index');
         await fixture.job(spec); await fixture.publishedStatus(spec);
         await assert.rejects(client.call('airk_context', { path: 'session.ts', line: 1, before: 5, after: 5, revision: token, known_hash: hits[0].citation.content_hash }), /citation|index|revision/i);
-    } finally {
+    } catch(error) {await fixture.retainFailure(error);throw error;} finally {
         client?.dispose();
         await fixture.dispose();
     }

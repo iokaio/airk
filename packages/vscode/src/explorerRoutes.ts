@@ -26,7 +26,7 @@ export const WORKSPACES: readonly WorkspaceDefinition[] = [
     { id: 'evidence', title: 'Evidence', placement: 'main', tabs: [{ id: 'inspector', title: 'Inspector' }, { id: 'checker', title: 'Checker' }, { id: 'changes', title: 'Changes' }] },
     { id: 'review', title: 'Review', placement: 'main', tabs: [{ id: 'changes', title: 'Changes' }, { id: 'impact', title: 'Impact' }, { id: 'tests', title: 'Tests' }] },
     { id: 'strategies', title: 'Strategies', placement: 'main', tabs: [{ id: 'library', title: 'Library' }, { id: 'studio', title: 'Studio' }, { id: 'planner', title: 'Planner' }] },
-    { id: 'indexing', title: 'Indexing', placement: 'main', tabs: [{ id: 'window', title: 'This window' }, { id: 'library', title: 'Index library' }, { id: 'projects', title: 'Projects' }] },
+    { id: 'indexing', title: 'Indexing', placement: 'main', tabs: [{ id: 'window', title: 'Search scope' }, { id: 'library', title: 'Index library' }, { id: 'projects', title: 'Index sets' }] },
     { id: 'manage', title: 'Management', placement: 'pinned', tabs: [
         { id: 'overview', title: 'Overview' }, { id: 'activity', title: 'Activity' },
         { id: 'storage', title: 'Storage' }, { id: 'repair', title: 'Recovery' },

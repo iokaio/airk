@@ -47,6 +47,32 @@ pub(crate) use catalog::{
     NativeAdministrativeRead, NativeLegacyAuthoritySelection, ScopedConnectionDelivery,
 };
 
+/// Explicit pre-query setup admission. Accepted catalog exchanges and unknown
+/// worker outcomes never construct this type.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum ConnectionSetupPending {
+    Queue,
+    Draining,
+    ResidentCapacity,
+    RestartBackoff,
+}
+impl ConnectionSetupPending {
+    pub(crate) fn code(self) -> &'static str {
+        match self {
+            Self::Queue => "catalog_connection_busy",
+            Self::Draining => "previous_workers_draining",
+            Self::ResidentCapacity => "project_capacity_busy",
+            Self::RestartBackoff => "project_restart_backoff",
+        }
+    }
+}
+impl std::fmt::Display for ConnectionSetupPending {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.code())
+    }
+}
+impl std::error::Error for ConnectionSetupPending {}
+
 struct ChildWorker {
     exiting: bool,
     catalog_gate: Option<crate::catalog_admission::NativeCatalogAdmission>,
@@ -867,13 +893,13 @@ fn start_worker(
         gate.require_worker_start(project)?;
     }
     if let Some(worker) = workers.get(&project) {
-        ensure!(!worker.exiting, "project owner resources are draining");
+        ensure!(!worker.exiting, ConnectionSetupPending::Draining);
         ensure!(worker.derived == derived, "project owner role is draining");
         return Ok(());
     }
     ensure!(
         drains.for_project(project).is_empty(),
-        "project owner resources are draining"
+        ConnectionSetupPending::Draining
     );
     let saved = ServiceRegistry::open_saved(root)?.recovery_budget(
         &project.to_string(),
@@ -894,7 +920,10 @@ fn start_worker(
     {
         backoff.remove(&project);
     }
-    ensure!(resources.may_start_resident(), "project capacity busy");
+    ensure!(
+        resources.may_start_resident(),
+        ConnectionSetupPending::ResidentCapacity
+    );
     if backoff
         .get(&project)
         .is_some_and(|(_, attempts)| *attempts >= 3)
@@ -903,12 +932,13 @@ fn start_worker(
         // This also covers an activated child that exited before accepting work.
         settle_failed_start(root, instance, project);
     }
-    ensure!(
-        backoff
-            .get(&project)
-            .is_none_or(|(until, attempts)| *attempts < 3 && Instant::now() >= *until),
-        "project restart backoff"
-    );
+    if let Some((until, attempts)) = backoff.get(&project) {
+        ensure!(*attempts < 3, "project restart circuit exhausted");
+        ensure!(
+            Instant::now() >= *until,
+            ConnectionSetupPending::RestartBackoff
+        );
+    }
     let spawn = || -> Result<ChildWorker> {
         if !derived && ServiceRegistry::open_saved(root)?.project_setup_pending(project)? {
             crate::service_registration::prepare_storage(root, project)?;

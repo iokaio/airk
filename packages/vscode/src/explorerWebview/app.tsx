@@ -15,6 +15,7 @@ import { WorkspaceView } from './workspaces';
 import type { NavigationFilters } from '../explorerDrafts';
 import { friendlyError } from '../explorerErrors';
 import { acceptSearchSession, selectSearchProject } from './searchStore';
+import { RuntimeUpgradeProgress } from './runtimeUpgrade';
 
 interface Persisted { route?: string; lens?: string; themed?: boolean }
 
@@ -138,7 +139,8 @@ export function App() {
                     {(route.workspace === 'overview' || route.workspace === 'manage') && <div class="project-context">
                         <ProjectPicker projects={state.projects} selected={state.selectedProject} loading={state.connection === 'connecting'} />
                     </div>}
-                    {state.startup&&!state.extensionUpdate&&<StartupProgress startup={state.startup} />}
+                    {state.runtimeUpgrade&&!state.extensionUpdate&&<RuntimeUpgradeProgress upgrade={state.runtimeUpgrade} />}
+                    {state.startup&&!state.runtimeUpgrade&&!state.extensionUpdate&&<StartupProgress startup={state.startup} />}
                     {state.extensionUpdate ? <section class="workspace"><article class="card" role="status">
                         <h1>Reload to finish the AIRK update</h1>
                         <p>AIRK {state.extensionUpdate.installedVersion} is installed. This window is still running AIRK {state.extensionUpdate.runningVersion}.</p>

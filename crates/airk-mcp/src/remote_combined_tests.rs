@@ -26,6 +26,7 @@ struct Retained {
     result: Value,
     calls: AtomicUsize,
     failed: AtomicBool,
+    typed_failure: AtomicBool,
     arguments: Mutex<Vec<(String, Map<String, Value>)>>,
 }
 struct Finalized {
@@ -108,6 +109,10 @@ impl RemoteTools for Retained {
         Box::pin(async move {
             self.calls.fetch_add(1, Ordering::SeqCst);
             self.arguments.lock().unwrap().push((tool, arguments));
+            if self.typed_failure.load(Ordering::SeqCst) {
+                return Err(anyhow::anyhow!("native publication admission")
+                    .context(airk_kernel::CurrentGateContention::Applying));
+            }
             if self.failed.load(Ordering::SeqCst) {
                 anyhow::bail!("private/transport/path");
             }
@@ -267,6 +272,7 @@ async fn native_composition() -> anyhow::Result<(tempfile::TempDir, Arc<Retained
             result,
             calls: AtomicUsize::new(0),
             failed: AtomicBool::new(false),
+            typed_failure: AtomicBool::new(false),
             arguments: Mutex::new(Vec::new()),
         }),
         first_binding.unwrap(),
@@ -361,7 +367,35 @@ async fn actual_combined_mcp_and_public_routes_preserve_complete_native_results(
         .await?;
     assert_eq!(bad["isError"], true);
     assert_eq!(drafts.0.lock().unwrap().len(), 1);
+    backend.typed_failure.store(true, Ordering::SeqCst);
+    let native_error = backend
+        .call("airk_help".into(), Map::new())
+        .await
+        .unwrap_err();
+    let expected =
+        serde_json::to_value(crate::response::typed_error_result(&native_error).unwrap())?;
+    for tool in ["help", "airk_help", "search", "airk_search"] {
+        let before = backend.calls.load(Ordering::SeqCst);
+        let actual = unified.call(tool.into(), Map::new()).await?;
+        assert_eq!(actual, expected, "complete typed {tool} refusal");
+        assert_eq!(
+            backend.calls.load(Ordering::SeqCst),
+            before + 1,
+            "no implicit replay"
+        );
+    }
+    backend.typed_failure.store(false, Ordering::SeqCst);
     backend.failed.store(true, Ordering::SeqCst);
+    for tool in ["help", "airk_help", "search", "airk_search"] {
+        let before = backend.calls.load(Ordering::SeqCst);
+        let actual = unified.call(tool.into(), Map::new()).await?;
+        let body = &actual["structuredContent"];
+        assert_eq!(body["error"]["code"], "combined_observation_unavailable");
+        assert_eq!(body["error"]["query_submitted"], Value::Null);
+        assert_eq!(body["error"]["query_replay_safe"], false);
+        assert!(!actual.to_string().contains("private/transport"));
+        assert_eq!(backend.calls.load(Ordering::SeqCst), before + 1);
+    }
     let lost = call_observed(backend.as_ref(), "airk_search".into(), Map::new()).await?;
     assert_eq!(lost["isError"], true);
     assert_eq!(

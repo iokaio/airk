@@ -13,11 +13,79 @@ import sys
 import tempfile
 import threading
 import time
+import uuid
 
 
 def digest(path):
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def reviewed_fixture(rpc, source, data):
+    """Explicitly set up one fictional Index and a one-Project grant natively."""
+    def key():
+        epoch = rpc("request_epoch")
+        return {"namespace": epoch["namespace"], "epoch": epoch["epoch"], "nonce": uuid.uuid4().hex}
+    context_key = uuid.uuid4().hex + uuid.uuid4().hex
+    descriptor = rpc({"catalog_host_context": {"key": context_key, "expected_catalog_revision": None}})["descriptor"]
+    selection = {"key": key(), "expected_catalog_revision": descriptor["catalog_revision"],
+                 "name": "Previous-version upgrade fixture", "primary_root": str(source),
+                 "data_root": str(data), "collection": "upgrade", "additional_roots": [], "setup_watch": False}
+    review = rpc({"catalog_index_setup_draft": {"selection": selection}})
+    setup = rpc({"catalog_index_setup_apply": {"draft": review["draft"]}})
+    if setup.get("status") != "catalog_index_setup_applied" or setup["receipt"]["stage"] != "ready":
+        raise RuntimeError("Reviewed predecessor fixture setup did not reach ready: " + json.dumps(setup))
+    receipt = setup["receipt"]
+    revision, index, project = receipt["catalog_revision"], receipt["index_id"], "prj_" + uuid.uuid4().hex
+    def apply(operation):
+        nonlocal revision
+        request = {"caller": uuid.uuid4().hex, "key": key(), "expected_catalog_revision": revision, "operation": operation}
+        preview = rpc({"catalog_preview": {"request": request}})
+        response = rpc({"catalog_apply": {"request": request, "preview_digest": preview["preview_digest"]}})
+        if response.get("status") != "catalog_applied":
+            raise RuntimeError("Reviewed predecessor metadata was not applied: " + json.dumps(response))
+        revision = response["receipt"]["catalog_revision"]
+    apply({"operation": "create_project", "id": project, "name": "Upgrade fixture Project"})
+    apply({"operation": "set_membership", "membership": {"project_id": project, "index_id": index, "revision": 1,
+           "scope": [{"source_root_id": receipt["source_ids"][0], "kind": "subtree", "path": ""}]},
+           "expected_scope_revision": 1, "expected_membership_revision": None})
+    descriptor = rpc({"catalog_host_context": {"key": context_key, "expected_catalog_revision": revision}})["descriptor"]
+    grant = rpc({"catalog_grant_draft": {"context_key": context_key, "selection": {"key": key(),
+        "expected_catalog_revision": revision, "project_ids": [project], "index_ids": [index]}}})["draft"]
+    granted = rpc({"catalog_apply": {"request": grant["request"], "preview_digest": grant["preview_digest"]}})
+    if granted.get("status") != "catalog_applied":
+        raise RuntimeError("Reviewed predecessor grant was not applied: " + json.dumps(granted))
+    selected = {"schema": 1, "context_key": context_key, "namespace": descriptor["namespace"],
+        "expected_catalog_revision": granted["receipt"]["catalog_revision"], "grant_id": grant["request"]["operation"]["grant"]["id"],
+        "expected_grant_revision": 1, "index_id": index, "project_ids": [project]}
+    detail = rpc({"catalog_detail": {"entity": {"kind": "index", "id": index}, "expected_catalog_revision": selected["expected_catalog_revision"]}})["detail"]
+    registration = detail["item"]["value"]["backing"]
+    if (not Path(registration["root"]).samefile(source) or not Path(registration["data_root"]).samefile(data)
+            or registration["collection"] != "upgrade"):
+        raise RuntimeError("Reviewed predecessor setup returned a different fictional registration")
+    return registration, selected
+
+
+def reviewed_snapshot(rpc, selected):
+    """Preserve complete exact catalog values, excluding only response capabilities."""
+    response = rpc({"catalog_host_context": {"key": selected["context_key"], "expected_catalog_revision": None}})
+    descriptor = response["descriptor"]
+    if descriptor["namespace"] != selected["namespace"]:
+        raise RuntimeError("Reviewed fixture namespace changed")
+    revision = descriptor["catalog_revision"]
+    result = {"namespace": descriptor["namespace"], "revision": revision}
+    for kind, identifier in [("index", selected["index_id"]), ("project", selected["project_ids"][0]), ("grant", selected["grant_id"])]:
+        detail = rpc({"catalog_detail": {"entity": {"kind": kind, "id": identifier}, "expected_catalog_revision": revision}})["detail"]
+        if detail["namespace"] != descriptor["namespace"] or detail["revision"] != revision or detail["item"]["kind"] != kind:
+            raise RuntimeError("Crossed reviewed fixture catalog snapshot")
+        result[kind] = detail["item"]["value"]
+    memberships = rpc({"catalog_page": {"request": {"kind": "memberships", "project_id": selected["project_ids"][0],
+        "index_id": selected["index_id"], "after": None, "expected_catalog_revision": revision, "limit": 16, "max_bytes": 48000}}})["page"]
+    if (memberships["namespace"] != descriptor["namespace"] or memberships["revision"] != revision
+            or memberships["continuation"] is not None or len(memberships["items"]) != 1):
+        raise RuntimeError("Reviewed fixture membership snapshot is incomplete or not singular")
+    result["memberships"] = memberships["items"]
+    return result, response.get("capabilities")
 
 
 def record_native_command(root, records, executable, arguments, *, input=None, timeout=180, flags=0, environment=None):
@@ -108,7 +176,11 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--source-state", choices=("indexed", "registered-unindexed"), default="indexed",
                         help="Indexed is a positive explicit old-fixture Index; registered-unindexed retains the original fail-closed recovery case")
+    parser.add_argument("--fixture-setup", choices=("legacy", "reviewed"), default="legacy",
+                        help="Legacy retains historical registration coverage; reviewed explicitly creates a current catalog Index, membership and grant")
     args = parser.parse_args()
+    if args.fixture_setup == "reviewed" and args.source_state != "indexed":
+        parser.error("Reviewed setup is only supported for the positive indexed upgrade fixture")
     if os.name != "nt" and not os.uname().sysname == "Linux":
         raise RuntimeError("Forced predecessor stop is implemented on Windows and Linux")
     name = "airk.exe" if os.name == "nt" else "airk"
@@ -145,7 +217,7 @@ def main():
     client_log = None
     completed = False
     primary_error = None
-    receipt = {"passed": False, "source_state": args.source_state, "fixture_root": str(root),
+    receipt = {"passed": False, "source_state": args.source_state, "fixture_setup": args.fixture_setup, "fixture_root": str(root),
                "qualification_scope": "explicit old-index positive upgrade" if args.source_state == "indexed"
                    else "registered never-indexed recovery observation; not positive upgrade qualification"}
     try:
@@ -155,13 +227,23 @@ def main():
                "--verification-basis", "organization-digest")
         invoke(old / name, "runtime", "activate", "--install-dir", install, "--runtime-sha256", old_identity)
         control = state / "control"
-        project = invoke(old / name, "--root", source, "--data-dir", data, "--collection", "upgrade",
-                         "service", "prepare-registration")
-        # Registration contains only the fictional paths created above.
-        result = command(old / name, "service", "rpc", "--runtime-dir", control, "--stdin",
-                         input=json.dumps({"register": {"project": project}}))
-        if result.returncode or json.loads(result.stdout).get("status") != "registered":
-            raise RuntimeError(f"Old fixture registration failed: {result.stdout[-4096:]} {result.stderr[-4096:]}")
+        def old_rpc(method):
+            response = invoke(old / name, "service", "rpc", "--runtime-dir", control, "--stdin", input=json.dumps(method))
+            if response.get("status") == "failure":
+                raise RuntimeError("Predecessor reviewed fixture refused: " + json.dumps(response))
+            return response
+        selected_scope = None
+        if args.fixture_setup == "reviewed":
+            invoke(old / name, "runtime", "ensure", "--install-dir", install)
+            project, selected_scope = reviewed_fixture(old_rpc, source, data)
+        else:
+            project = invoke(old / name, "--root", source, "--data-dir", data, "--collection", "upgrade",
+                             "service", "prepare-registration")
+            # Registration contains only the fictional paths created above.
+            result = command(old / name, "service", "rpc", "--runtime-dir", control, "--stdin",
+                             input=json.dumps({"register": {"project": project}}))
+            if result.returncode or json.loads(result.stdout).get("status") != "registered":
+                raise RuntimeError(f"Old fixture registration failed: {result.stdout[-4096:]} {result.stderr[-4096:]}")
         if args.source_state == "indexed":
             # This is an explicit action on the OLD fictional fixture, never a
             # migration assumption or inferred grant/configuration for missing state.
@@ -183,16 +265,21 @@ def main():
                     raise RuntimeError("Explicit old fixture Index deadline exhausted; no resubmission")
                 time.sleep(0.05)
             receipt["explicit_old_index_job"] = observed
+        if selected_scope is not None:
+            original_catalog, _ = reviewed_snapshot(old_rpc, selected_scope)
+            receipt["reviewed_scope_before"] = original_catalog
         database = control / "service-1.4.sqlite3"
         with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as connection:
             old_format = connection.execute("PRAGMA user_version").fetchone()[0]
+            if selected_scope is not None:
+                receipt["saved_contract_before"] = connection.execute(
+                    "SELECT authority_contract,policy_contract FROM index_catalog_meta WHERE id=1").fetchone()
         launcher = install / ("airk-launcher.exe" if os.name == "nt" else "airk-launcher")
         client_log_path = root / "client.stderr"
         client_log = client_log_path.open("wb")
-        client = subprocess.Popen([str(launcher), "runtime", "launch", "--install-dir", str(install), "--",
-                                   "--service-project", project["binding"],
-                                   "--root", project["root"], "--data-dir", project["data_root"],
-                                   "--collection", project["collection"], "mcp"],
+        client_scope = ["--catalog-session", json.dumps(selected_scope)] if selected_scope is not None else [
+            "--service-project", project["binding"], "--root", project["root"], "--data-dir", project["data_root"], "--collection", project["collection"]]
+        client = subprocess.Popen([str(launcher), "runtime", "launch", "--install-dir", str(install), "--", *client_scope, "mcp"],
                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=client_log,
                                   text=True, encoding="utf-8", creationflags=flags, env=environment)
         replies = queue.Queue()
@@ -252,11 +339,36 @@ def main():
         expected_version = json.loads((new / "airk-install.json").read_text(encoding="utf-8"))["version"]
         if health.get("version") != expected_version or health.get("runtime_sha256") != new_identity:
             raise RuntimeError("New service identity mismatch")
+        if selected_scope is not None:
+            def new_rpc(method):
+                response = invoke(binary, "service", "rpc", "--runtime-dir", control, "--stdin", input=json.dumps(method))
+                if response.get("status") == "failure":
+                    raise RuntimeError("Upgraded reviewed fixture refused: " + json.dumps(response))
+                return response
+            current_catalog, capabilities = reviewed_snapshot(new_rpc, selected_scope)
+            if current_catalog != original_catalog:
+                raise RuntimeError("Upgrade changed the complete reviewed Index, Project, membership or grant snapshot")
+            if not isinstance(capabilities, dict) or capabilities.get("policy_contract", 0) < 2:
+                raise RuntimeError("Upgraded native host context did not report split capability")
+            receipt.update(reviewed_scope_preserved=True, native_host_capabilities=capabilities,
+                           reviewed_scope_after=current_catalog)
+            split = new_rpc({"catalog_split_source_state": {"index_id": selected_scope["index_id"],
+                "expected_catalog_revision": current_catalog["revision"]}})
+            if (split.get("status") != "catalog_split_source_state"
+                    or split["state"]["index"]["id"] != selected_scope["index_id"]
+                    or split["capabilities"].get("policy_contract", 0) < 2):
+                raise RuntimeError("Upgraded existing Index did not support the canonical split baseline read")
+            receipt["existing_index_split_baseline"] = split
         with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as connection:
             version = connection.execute("PRAGMA user_version").fetchone()[0]
             saved = connection.execute("SELECT payload,registered FROM projects WHERE binding=?", (project["binding"],)).fetchone()
             if saved is None or len(saved[0]) > 65536 or saved[1] != 1 or json.loads(saved[0]) != project:
                 raise RuntimeError("Upgrade did not preserve the complete original project registration")
+            if selected_scope is not None:
+                receipt["saved_contract_after"] = connection.execute(
+                    "SELECT authority_contract,policy_contract FROM index_catalog_meta WHERE id=1").fetchone()
+                if receipt["saved_contract_after"] != receipt["saved_contract_before"]:
+                    raise RuntimeError("Capability discovery unexpectedly changed the existing source-policy contract")
         # Native catalog upgrade owner writes SQL registry version12. This is
         # independent of public state/version and authority/policy contracts.
         if version != 12:

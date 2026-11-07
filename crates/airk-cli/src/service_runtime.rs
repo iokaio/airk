@@ -27,6 +27,10 @@ fn connection_failure_code<'a>(error: &anyhow::Error, fallback: &'a str) -> &'a 
         .is_some()
     {
         "catalog_clock_pending"
+    } else if let Some(pending) =
+        error.downcast_ref::<crate::project_supervisor::ConnectionSetupPending>()
+    {
+        pending.code()
     } else if error.is::<airk_core::scoped_reads::ScopeReadRefused>() {
         "scoped_read_unavailable"
     } else {
@@ -800,6 +804,47 @@ mod connection_failure_tests {
             assert_eq!(
                 super::connection_failure_code(&anyhow::anyhow!("busy"), fallback),
                 fallback
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod connection_setup_contract_tests {
+    use super::*;
+    #[test]
+    fn only_known_typed_pre_query_pending_errors_become_busy_codes() {
+        use crate::project_supervisor::ConnectionSetupPending as Pending;
+        for pending in [
+            Pending::Queue,
+            Pending::Draining,
+            Pending::ResidentCapacity,
+            Pending::RestartBackoff,
+        ] {
+            let expected = pending.code();
+            let error = anyhow::Error::new(pending).context("connection admission");
+            assert_eq!(
+                connection_failure_code(&error, "scoped_connection_unavailable"),
+                expected
+            );
+            assert_eq!(
+                connection_failure_code(
+                    &anyhow::anyhow!(expected),
+                    "scoped_connection_unavailable"
+                ),
+                "scoped_connection_unavailable"
+            );
+        }
+        for message in [
+            "catalog native outcome unknown",
+            "native catalog exchange outcome unknown",
+            "project owner role is draining",
+            "project restart circuit exhausted",
+            "native scoped worker role changed",
+        ] {
+            assert_eq!(
+                connection_failure_code(&anyhow::anyhow!(message), "scoped_connection_unavailable"),
+                "scoped_connection_unavailable"
             );
         }
     }

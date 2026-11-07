@@ -459,13 +459,19 @@ impl CatalogControlHandle {
     fn call_with_timeout(&self, operation: Operation, budget: Duration) -> Result<Response> {
         let (reply, receive) = mpsc::sync_channel(1);
         let sender = self.sender.upgrade().context("catalog supervisor closed")?;
+        let connection_setup = matches!(&operation, Operation::Connect { .. });
         sender
             .try_send(Envelope::Catalog {
                 gate: self.gate.clone(),
                 operation: Box::new(operation),
                 reply,
             })
-            .map_err(|_| anyhow::anyhow!("catalog supervisor busy"))?;
+            .map_err(|error| match error {
+                mpsc::TrySendError::Full(_) if connection_setup => {
+                    anyhow::Error::new(ConnectionSetupPending::Queue)
+                }
+                _ => anyhow::anyhow!("catalog supervisor unavailable"),
+            })?;
         drop(sender);
         // Dropping this waiter never cancels accepted actor work or frees native
         // query/work capacity. A late exact ACK updates the shared fence ledger.
@@ -1180,9 +1186,10 @@ pub(super) fn execute(
             lifetime,
         } => {
             ensure!(
-                !lifetime.is_zero() && lifetime <= Duration::from_secs(300) && may_allocate,
-                "native scoped connection unavailable"
+                !lifetime.is_zero() && lifetime <= Duration::from_secs(300),
+                "invalid native scoped connection budget"
             );
+            ensure!(may_allocate, ConnectionSetupPending::Draining);
             let (namespace, catalog_revision, backing) = match &selection {
                 ConnectionSelection::Reviewed(selected) => (
                     selected.namespace,
@@ -1453,6 +1460,56 @@ mod tests {
             },
         };
         gate.close_request_admission(&request)?;
+        Ok(())
+    }
+    #[test]
+    fn actual_connection_queue_refusal_is_retryable_only_before_acceptance() -> Result<()> {
+        let (gate, worker, _, _) = fixture()?;
+        let (sender, receiver) = mpsc::sync_channel(0);
+        let owner = Arc::new(sender);
+        let handle = CatalogControlHandle {
+            sender: Arc::downgrade(&owner),
+            gate,
+            source: None,
+        };
+        let connect = || Operation::Connect {
+            selection: ConnectionSelection::Legacy(NativeLegacyAuthoritySelection {
+                namespace: Incarnation::from_bytes([4; 16]),
+                host: airk_core::identity::Sha256Digest::from_bytes([7; 32]),
+                catalog_revision: airk_core::index_catalog::CatalogRevision::INITIAL,
+                binding: worker.project,
+            }),
+            lifetime: Duration::from_secs(300),
+        };
+        let rejected = handle
+            .call(connect())
+            .err()
+            .context("full queue must reject")?;
+        assert!(rejected.is::<ConnectionSetupPending>());
+        assert_eq!(
+            rejected
+                .downcast_ref::<ConnectionSetupPending>()
+                .unwrap()
+                .code(),
+            "catalog_connection_busy"
+        );
+        let other = handle
+            .call(Operation::Attach)
+            .err()
+            .context("full queue must reject Attach")?;
+        assert!(
+            !other.is::<ConnectionSetupPending>(),
+            "other actor operations gain no replay permission"
+        );
+        drop(receiver);
+        let closed = handle
+            .call(connect())
+            .err()
+            .context("closed queue must reject")?;
+        assert!(
+            !closed.is::<ConnectionSetupPending>(),
+            "a disconnected owner is not known busy"
+        );
         Ok(())
     }
     #[test]

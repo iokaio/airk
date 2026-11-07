@@ -1,8 +1,40 @@
 # Native VS Code extension
 
-Current 1.8.8 setup uses the explicit index/grant review below; opening folders
-does not create indexing authority. Prior source `5d8912b1...` passed its final Windows and 10 selected broader stages. Its `same`, `different`, `multi` and `untrusted` editor scenarios passed on the original package; failed usage Stop and initial legacy scenarios remain recorded. New source `237f8969...` adds bounded native lifecycle installation-lock admission; fresh whole usage/legacy passed; current Windows native qualification also passed; manual acceptance and release promotion remain separate. See
-[the working-build record](releases/release-1.8.8.md) and [reviewed setup](service-project-setup.md).
+The 1.8.11 working build separates choosing what to search from managing stored
+indexes. See the [current working-build record](releases/release-1.8.11.md) and
+[setup and selection guide](service-project-setup.md). Opening folders alone
+never creates an index.
+
+**Retained P14 checkpoint (6 November 2026):** prior source `5d8912b1...` passed
+its final Windows and 10 selected broader stages. Its `same`, `different`, `multi`
+and `untrusted` editor scenarios passed on the original package; failed usage Stop
+and initial legacy scenarios remain recorded. Checkpoint source `237f8969...`
+added bounded native lifecycle installation-lock admission; its fresh whole
+usage/legacy and Windows native qualification passed on that source. These
+results retain their historical identity in the [1.8.8 record](releases/release-1.8.8.md);
+manual acceptance and release promotion remain separate.
+
+**Indexing in 1.8.11:**
+
+- **Search scope:** check local indexes and index sets, then choose **Apply selection**.
+  **Refresh choices** reads current choices. Opening the tab and editing checkboxes
+  do not apply a selection. There are no user-facing grant or saved-association steps.
+- **Index library:** create indexes and manage their sources, watching, settings
+  and splitting. **Delete index** opens **Delete this index?**; **Delete index and
+  stop maintenance** confirms retirement and cleanup of that index's derived data.
+  Source files, shared models and independent indexes remain untouched. Pending
+  cleanup is reported separately from removal from the active library.
+- **Index sets:** name reusable groups with **Create an index set** and **Open index set**.
+  A set organizes existing indexes or their selected source scopes; it does not
+  copy index data or imply the VS Code workspace is a separate AIRK project.
+
+Library and set metadata load automatically on entry. Failed reads retain an
+explicit retry. Recommendations under **Help me choose indexes**, recovery and
+complete catalog copies/exports remain secondary disclosures. Native APIs keep
+`Project` and grant terminology for compatibility; the local-user selection flow
+handles those details internally. MCP evidence tools remain read-only.
+See the [split walkthrough](index-splitting.md), [deletion details](service-project-retirement.md)
+and [setup guide](service-project-setup.md).
 
 **1.8.8 P12 accepted local development:** Workbench can review refresh of eligible
 references from one completed live result step and one index, then check the
@@ -32,7 +64,7 @@ The 1.8.0 candidate can expose an eligible saved selected project in Explorer an
 
 Workbench opens once after successful trusted setup. Its compact header provides history, settings and new-session icons; the composer’s **+** menu holds scope, recipes and tool forms. Explorer’s **Workbench** toolbar button, immediately left of Help, toggles secondary-sidebar visibility and shows a pressed state while visible. The project selector is available inside Overview and Management; its selection remains shared across Explorer screens. VS Code retains control of sidebar tab order and pending extension replacement may still require Reload Window.
 
-The [Workbench](workbench/implementation.md) adds a secondary-sidebar transcript, shared native `parse`, evidence recipes, copy/export and local sessions. Open it with **AIRK: Open Workbench**. Workbench was introduced in published 1.7.2; published 1.7.3 followed. The current manual-test working version is **1.8.8**, with [its record](releases/release-1.8.8.md) distinguishing implemented behavior from gated work toward 1.9.0.
+The [Workbench](workbench/implementation.md) adds a secondary-sidebar transcript, shared native `parse`, evidence recipes, copy/export and local sessions. Open it with **AIRK: Open Workbench**. Workbench was introduced in published 1.7.2; published 1.7.3 followed. The current manual-test working version is **1.8.11**, with [its record](releases/release-1.8.11.md) distinguishing implemented behavior from gated work toward 1.9.0.
 
 **Version 1.6.4 — runtime upgrades, project cleanup and responsive diagnostics.** This public release consolidates the unpublished 1.6.1–1.6.3 branch work. Supported runtimes upgrade before connection checks; uninstall removes owned executables and recorded agent entries while preserving index data. Trusted open folders register and index automatically, subject to saved opt-out, pause and manual-update settings. Removing a project drains its workers and deletes its AIRK index and saved settings while preserving source files.
 
@@ -97,7 +129,9 @@ Uninstall preserves index data; see [removing the terminal command and uninstall
 
 The bundled runtime corrects discovery followed by legacy MCP initialization. Separate assistants can connect to the same project with independent handshake styles. See [1.5.9](releases/release-1.5.9.md) for the reproduced failure, validation and limits.
 
-Updates in 1.5.8 show a single **Reload to finish update** action when VS Code exposes an installed extension version different from the loaded version. Explorer and the status bar retain that action after the toast is dismissed. Installing/updating the native runtime is labeled separately; success needs no completion-popup decision. See [1.5.8](releases/release-1.5.8.md) for detection limits and validation.
+The current working source also watches the installed extension’s flat JavaScript/CSS payload, so a UI-only same-version VSIX replacement is detected while Explorer remains open. Explorer and the status bar show **Reload to finish update**; choosing it reloads the window to run the updated host and UI together. Local install scripts verify every shipped JavaScript/CSS file against the VSIX. This follow-up still needs installed-editor acceptance.
+
+Historical introduction: updates in 1.5.8 show a single **Reload to finish update** action when VS Code exposes an installed extension version different from the loaded version. Explorer and the status bar retain that action after the toast is dismissed. Installing/updating the native runtime is labeled separately; success needs no completion-popup decision. See [1.5.8](releases/release-1.5.8.md) for detection limits and validation.
 
 Management now uses horizontal tabs and distinguishes queued work from a completed progress sample. Logs offers Generate/Open/Copy/Save report and a separate Save retained service logs export. Verified completed runtime installations reopen without repeating setup notifications, terminal installation or runtime cleanup; new folders still register. The native repeated-recovery and source-retry corrections, validation and remaining remote diagnostic uncertainty are recorded in [1.5.7](releases/release-1.5.7.md).
 
@@ -160,7 +194,7 @@ Each trusted window publishes a private attachment endpoint (a named pipe on Win
 
 **Open AIRK Tools** on each dashboard collection, or **AIRK: Open AIRK Tools** in the Command Palette, opens an interactive console in the Terminal panel. It launches the verified bundled helper directly with that collection's root and storage. Enter `list`, `help airk_search`, `call airk_status`, or `exit`. [Direct MCP tool access](mcp.md#call-tools-without-a-coding-agent) documents JSON/file arguments and standalone equivalents. Trust is required; the console does not trigger indexing. Existing consoles close when their collection bindings change or the extension shuts down.
 
-An independent thin native-helper extension is implemented under [packages/vscode](../packages/vscode). It wraps the Rust kernel and bundles the native helper in platform-specific VSIX packages. The checked-in manual-test working version is 1.8.8, unpublished; earlier 1.2/1.3 candidate records below retain their original scope. New collections default to Agent Lean; existing saved or published detail remains in effect. See [1.3.0 candidate changes](releases/release-1.3.0.md), [1.2.4 diagnosis and recovery](releases/release-1.2.4.md) and [1.2.3 defaults](releases/release-1.2.3.md). Local and ordinary CI candidates contain unsigned helpers; the separate GitHub release workflow signs Windows/macOS downloads. [Windows local build/review instructions](windows-local-build.md) provide the single PowerShell command and an isolated editor test.
+An independent thin native-helper extension is implemented under [packages/vscode](../packages/vscode). It wraps the Rust kernel and bundles the native helper in platform-specific VSIX packages. The checked-in manual-test working version is 1.8.11, unpublished; earlier 1.2/1.3 candidate records below retain their original scope. New collections default to Agent Lean; existing saved or published detail remains in effect. See [1.3.0 candidate changes](releases/release-1.3.0.md), [1.2.4 diagnosis and recovery](releases/release-1.2.4.md) and [1.2.3 defaults](releases/release-1.2.3.md). Local and ordinary CI candidates contain unsigned helpers; the separate GitHub release workflow signs Windows/macOS downloads. [Windows local build/review instructions](windows-local-build.md) provide the single PowerShell command and an isolated editor test.
 
 [Deployment and packaging](extension-deployment.md) adapts VCP's delivery practices; [CI](ci-and-builds.md) builds matching native and extension candidates on all three operating systems. Actual observed checks remain in [validation](validation.md).
 
@@ -168,7 +202,7 @@ An independent thin native-helper extension is implemented under [packages/vscod
 
 New vector-model setup asks the native helper for its CPU capabilities and pinned model catalog before installing its embedded assets offline. Version 1.6 selects unsigned INT8 on x64 without VNNI and signed INT8 on VNNI x64 and ARM64; prior semantic state is rebuilt. `airk model-catalog` inspects the choice offline without opening collection/model state. [CPU selection and offline provisioning](onnx-models.md) describe the implemented optimization.
 
-### Current first-use review (1.8.8 working build)
+### Current first-use review (1.8.11 working build)
 
 Before the first runtime installation on a machine, a trusted window asks **Set up AIRK on this computer?** and shows what setup will change:
 
@@ -186,7 +220,7 @@ The choices are:
 - **Not now** defers runtime/terminal setup; existing accepted native work is independent. Run **AIRK: Set Up** or **AIRK: Install or Repair CLI** when ready.
 - **Don't set up automatically** sets `airk.cli.autoInstall` to `false`.
 
-Existing or managed runtimes are reconciled through their authenticated native binding. All new indexes, including broad source locations, require **Indexing > Index library** review; opening or reordering folders does not register them. Review Project memberships and an access grant, then explicitly **Use Grant for this window**. Customize does not select or deselect workspace folders. See [reviewed setup](service-project-setup.md).
+Existing or managed runtimes are reconciled through their authenticated native binding. All new indexes, including broad source locations, require **Indexing > Index library** review; opening or reordering folders does not register them. In **Search scope**, check the indexes or index sets you want to search, then choose **Apply selection**. Customize does not select or deselect workspace folders. See [reviewed setup](service-project-setup.md).
 
 ### Terminal command
 

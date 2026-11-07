@@ -15,30 +15,50 @@ struct Session {
     input: ChildStdin,
     output: Receiver<String>,
 }
-fn assert_query_scope_metadata_tool(tools: &[Value], name: &str) {
+fn assert_query_scope_metadata_tool(tools: &[Value], name: &str, transport_project: bool) {
     let tool = tools
         .iter()
         .find(|tool| tool["name"] == name)
         .expect("query scope metadata tool");
+    let canonical_catalog = if transport_project {
+        airk_mcp::unified::tools()
+    } else {
+        airk_mcp::local::tools()
+    };
+    let canonical = canonical_catalog
+        .iter()
+        .find(|tool| tool.name == name)
+        .expect("canonical query scope metadata tool");
+    let canonical = serde_json::to_value(canonical).unwrap();
+    assert_eq!(tool["inputSchema"], canonical["inputSchema"]);
     assert_eq!(tool["annotations"]["readOnlyHint"], true);
-    assert_eq!(
-        tool["inputSchema"]["properties"],
-        airk_core::combined_reads::query_scope::schema()["properties"]
-    );
     assert_eq!(tool["inputSchema"]["additionalProperties"], false);
-    for field in [
-        "project",
-        "project_ids",
-        "index_ids",
-        "verification",
-        "response_mode",
-    ] {
+    let mut expected_schema = airk_core::combined_reads::query_scope::schema();
+    expected_schema["$schema"] = json!("https://json-schema.org/draft/2020-12/schema");
+    if transport_project {
+        let project = &tool["inputSchema"]["properties"]["project"];
+        assert_eq!(project["type"], "string");
+        assert_eq!(project["pattern"], "^[0-9a-f]{64}$");
+        assert!(
+            !tool["inputSchema"]["required"]
+                .as_array()
+                .is_some_and(|fields| fields.iter().any(|field| field == "project")),
+            "the configured transport binding must remain optional"
+        );
+        expected_schema["properties"]["project"] = project.clone();
+    } else {
+        assert!(tool["inputSchema"]["properties"].get("project").is_none());
+    }
+    // The optional configured transport binding is the complete public delta.
+    assert_eq!(tool["inputSchema"], expected_schema);
+    for field in ["project_ids", "index_ids", "verification", "response_mode"] {
         assert!(
             tool["inputSchema"]["properties"].get(field).is_none(),
             "discovery must not advertise {field}"
         );
     }
 }
+
 impl Session {
     fn start(root: &std::path::Path, state: &std::path::Path) -> anyhow::Result<Self> {
         // Existing rich-payload parity and publication tests explicitly use Full.
@@ -405,6 +425,47 @@ fn saved_source_verification_preserves_complete_results_through_cli_and_public_m
     assert!(off.get("source_verification").is_none());
     assert_eq!(off["publication"], native["publication"]);
     assert_eq!(off["content_hash"], native["content_hash"]);
+    // The actual CLI and public MCP paths share the same explicit terse
+    // capability projection. Full mode retains the canonical Workbench schemas.
+    for (ordinal, mode) in ["terse", "full"].into_iter().enumerate() {
+        let args = json!({"adapter":"markdown","response_mode":mode,"include_status":true});
+        let wire = session.read_retry(9000 + ordinal as u64, "capabilities", args.clone())?;
+        anyhow::ensure!(wire["result"]["isError"] != true, "capabilities: {wire}");
+        let mut native = payload(&wire["result"])?;
+        let tools = common::call(
+            root.path(),
+            state.path(),
+            "project-a",
+            &[
+                "tools",
+                "call",
+                "airk_capabilities",
+                "--args",
+                &serde_json::to_string(&args)?,
+            ],
+        )?;
+        let mut cli = payload(&tools)?;
+        if mode == "terse" {
+            assert!(native["workbench"].get("operations").is_none());
+            assert_eq!(native["workbench"]["operation_schemas"]["included"], false);
+            assert!(
+                native["workbench"]["operation_names"]
+                    .as_array()
+                    .is_some_and(|names| !names.is_empty())
+            );
+        } else {
+            assert_eq!(
+                native["workbench"],
+                airk_kernel::workbench::operation_catalog()
+            );
+        }
+        stable(&mut native);
+        stable(&mut cli);
+        assert_eq!(
+            cli, native,
+            "complete {mode} capabilities differ by transport"
+        );
+    }
     Ok(())
 }
 
@@ -895,6 +956,41 @@ fn default_terse_stdio_supports_full_and_requested_status_without_changing_revis
     let instructions = initialized["result"]["instructions"].as_str().unwrap();
     assert!(instructions.len() <= 512 && instructions.contains("response_mode=full"));
     session.send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
+    // Exercise unified stdio help without sending Explorer-only detail into the
+    // native selector; the canonical CLI helper retains the identical refusal.
+    let invalid_help = json!({"topic":"workbench","detail":"full"});
+    let refused = session.call(200, "help", invalid_help.clone())?;
+    let canonical = airk_mcp::help::call(invalid_help.clone());
+    // The pinned SDK omits this complete-result discriminator for the
+    // explicitly negotiated 2025 protocol. Assert its exact value before
+    // projecting that one documented transport field; keep every native field.
+    let mut legacy = serde_json::to_value(&canonical)?;
+    assert_eq!(
+        legacy.as_object_mut().unwrap().remove("resultType"),
+        Some(json!("complete"))
+    );
+    assert_eq!(refused["result"], legacy);
+    assert_eq!(refused["result"]["isError"], true);
+    assert!(refused["result"].get("resultType").is_none());
+    // 2026-07-28 uses per-request metadata rather than initialize. Asking for
+    // it through this legacy handshake negotiates the supported 2025 fallback
+    // and retains the identical complete native receipt under that envelope.
+    let mut fallback = Session::with_mode(root.path(), state.path(), None)?;
+    fallback.send(json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2026-07-28","capabilities":{},"clientInfo":{"name":"future-initialize-fallback","version":"1"}}}))?;
+    let initialized = fallback.receive(1)?;
+    assert_eq!(initialized["result"]["protocolVersion"], "2025-11-25");
+    fallback.send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
+    let fallback_refused = fallback.call(2, "help", invalid_help)?;
+    assert_eq!(fallback_refused["result"], legacy);
+    assert!(fallback_refused["result"].get("resultType").is_none());
+    assert_eq!(serde_json::to_value(canonical)?["resultType"], "complete");
+    drop(fallback);
+    let valid_help = session.call(
+        201,
+        "help",
+        json!({"topic":"workbench","response_mode":"full"}),
+    )?;
+    assert_ne!(valid_help["result"]["isError"], true);
     let mut values: Vec<Value> = Vec::new();
     for (id, args) in [
         (2, json!({"query":"response_fixture","mode":"lexical"})),
@@ -1085,7 +1181,7 @@ fn durable_key_reads_match_cli_and_mcp_and_reject_filter_combinations() -> anyho
     let catalog = session.receive(2)?;
     let tools = catalog["result"]["tools"].as_array().unwrap();
     assert_eq!(tools.len(), 29);
-    assert_query_scope_metadata_tool(tools, "query_scope");
+    assert_query_scope_metadata_tool(tools, "query_scope", true);
     session.wait_source_idle(30)?;
     for (id, command, option, tool, field, key) in [
         (
@@ -1485,14 +1581,18 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
         catalog["tools"],
         serde_json::to_value(airk_mcp::local::tools())?
     );
-    assert_query_scope_metadata_tool(catalog["tools"].as_array().unwrap(), "airk_query_scope");
+    assert_query_scope_metadata_tool(
+        catalog["tools"].as_array().unwrap(),
+        "airk_query_scope",
+        false,
+    );
     assert_eq!(tools.len(), 29);
     let names: std::collections::BTreeSet<_> = tools
         .iter()
         .map(|tool| tool["name"].as_str().unwrap())
         .collect();
     assert_eq!(names.len(), 29);
-    assert_query_scope_metadata_tool(tools, "query_scope");
+    assert_query_scope_metadata_tool(tools, "query_scope", true);
     for tool in catalog["tools"].as_array().unwrap() {
         let name = tool["name"]
             .as_str()

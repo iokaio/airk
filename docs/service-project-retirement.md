@@ -1,4 +1,25 @@
-# Guarded project retirement
+# Index deletion and native retirement
+
+## Delete an index in 1.8.11
+
+In **Indexing → Index library**, choose **Delete index**, inspect **Delete this
+index?**, then confirm **Delete index and stop maintenance**. The existing native
+retirement owner stops that index's maintenance, removes its current set
+memberships/default references and schedules cleanup of its owned derived data.
+The UI reports logical removal and physical cleanup separately. Pending cleanup
+is retained and must not be described as reclaimed disk space until confirmed.
+Original source files, independent indexes and shared models are preserved.
+
+A different independent index can cover some of the same source files without a
+split: use a fresh storage leaf, collection and backing identity in **Set up a new
+index**. Exact retired backing remains retired; deletion does not clear permanent
+source exclusions or authorize adoption of unknown storage. See
+[setup and selection](service-project-setup.md) and the
+[1.8.11 working-build record](releases/release-1.8.11.md).
+
+The native mechanics and dated qualification below remain inherited evidence.
+`Project`, context and grant terms describe native records; the 1.8.11 UI presents
+sets and handles native scope setup through **Search scope → Apply selection**.
 
 ## Missing files, source folders and index storage in the 1.8.8 working build
 
@@ -24,14 +45,15 @@ and the complete failed-member details. **Require** refuses an incomplete result
 Source verification and member availability are separate controls. Neither read
 path unregisters an index, recreates a missing folder or silently narrows a grant.
 
-To remove an unwanted index, select it in **Indexing > Index library** and use
-**Prepare native index-retirement review**. Inspect the native effect and apply
-that reviewed request explicitly. Retirement cancels the selected index's work,
+The earlier 1.8.8 UI exposed this as **Prepare native index-retirement review**
+inside the selected index. In 1.8.11 use **Delete index** and its confirmation.
+The same native reviewed request remains authoritative. Retirement cancels the selected index's work,
 disables its source authority and removes its current Project memberships and
 default references, including context defaults no longer backed by a Project membership. Other memberships,
 associations and independent indexes remain intact. Frozen grants and historical
 receipts remain unchanged: an old grant that names the retired index becomes
-stale; review and use a fresh grant for the desired remaining Project defaults.
+stale; apply a fresh **Search scope** selection for the desired remaining indexes
+and index sets.
 An active reviewed split can require its exact recovery to finish first.
 
 Logical retirement and physical cleanup are reported separately. Cleanup can

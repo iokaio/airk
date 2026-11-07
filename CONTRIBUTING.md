@@ -85,7 +85,7 @@ On Unix, inspect the test shell's descriptor limits with `ulimit -Sn` and `ulimi
 
 ## Candidate and release versions
 
-Follow [versioning](docs/versioning.md) before distributing a changed installable candidate or preparing a feature/fix PR. This branch uses **1.8.8** as the maintainer-requested working version for manual testing of the [1.9.0 plan](docs/research/plan-v190.md). The Rust workspace/local lock entries, extension manifest and npm lock entries agree; verify with `python scripts/release-version.py check --expected 1.8.8`. Promote to 1.9.0 after implementation and manual acceptance, rebuilding and validating the promoted artifacts. Do not repeat the working-version change for each phase or relabel tested binaries. Local/manual testing does not waive full main CI before publishing.
+Follow [versioning](docs/versioning.md) before distributing a changed installable candidate or preparing a feature/fix PR. This branch uses **1.8.11** as the maintainer-requested working version for manual testing of the [1.9.0 plan](docs/research/plan-v190.md). The Rust workspace/local lock entries, extension manifest and npm lock entries agree; verify with `python scripts/release-version.py check --expected 1.8.11`. Promote to 1.9.0 after implementation and manual acceptance, rebuilding and validating the promoted artifacts. Do not repeat the working-version change for each phase or relabel tested binaries. Local/manual testing does not waive full main CI before publishing.
 
 ## Submitting
 

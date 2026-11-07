@@ -106,6 +106,9 @@ pub struct CombinedReadResult {
     pub truncated: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<CombinedReadFailure>,
+    /// Safe only for the exact sole failed required member; all native detail remains inline.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_retry: Option<airk_core::combined_reads::read_retry::SingleRequiredMemberRetry>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -593,6 +596,7 @@ fn compose_inner(
         shared_values: None,
         partial,
         truncated,
+        read_retry: None,
         error: (partial && request.selection.member_availability == MemberAvailability::Require)
             .then(|| CombinedReadFailure {
                 code: "member_unavailable".into(),
@@ -642,6 +646,8 @@ fn compose_inner(
             });
     }
     result.publication_vector.validate()?;
+    result.read_retry =
+        airk_core::combined_reads::read_retry::proposed_retry(&serde_json::to_value(&result)?);
     encoded_size(&result, airk_core::MAX_RESPONSE_BYTES).map_err(|_| CombinedReplyBudget)?;
     Ok(result)
 }

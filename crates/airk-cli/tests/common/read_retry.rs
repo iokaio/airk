@@ -21,6 +21,20 @@ pub fn classify(envelope: &Value) -> Option<Retry> {
         return None;
     }
     let hint: Value = serde_json::from_str(content[0].get("text")?.as_str()?).ok()?;
+    if envelope
+        .get("structuredContent")
+        .is_some_and(|structured| structured != &hint)
+    {
+        return None;
+    }
+    if hint.get("schema").and_then(Value::as_str) == Some("airk.combined-read/1") {
+        let retry = airk_core::combined_reads::read_retry::validated_retry(&hint)?;
+        return Some(Retry {
+            delay: Duration::from_millis(retry.retry_after_ms),
+            fresh_brokerage: retry.fresh_brokerage_required,
+            publication: matches!(retry.code.as_str(), "publication_busy" | "selection_busy"),
+        });
+    }
     let (delay, fresh_brokerage, publication) = if hint.get("status") == Some(&Value::from("retry"))
     {
         if hint.get("retryable")? != true
@@ -60,6 +74,213 @@ pub fn within(envelope: &Value, deadline: Instant) -> Option<Retry> {
     classify(envelope).filter(|retry| Instant::now() + retry.delay < deadline)
 }
 
+fn evidence_read_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "airk_status"
+            | "airk_diagnostics"
+            | "airk_capabilities"
+            | "airk_search"
+            | "airk_list_files"
+            | "airk_read_file"
+            | "airk_file_info"
+            | "airk_symbols"
+            | "airk_code_facts"
+            | "airk_document_facts"
+            | "airk_references"
+            | "airk_relationships"
+            | "airk_context"
+            | "airk_outline"
+            | "airk_imports"
+            | "airk_changes"
+            | "airk_query_scope"
+            | "airk_recommendations"
+            | "airk_help"
+    )
+}
+
+/// A known setup refusal is safe only when tied to the caller's original,
+/// validated frozen selection. Generic callers do not infer this selection.
+pub fn classify_for_scope(
+    envelope: &Value,
+    expected: &airk_core::service::ScopedConnectRequest,
+) -> Option<Retry> {
+    expected.validate().ok()?;
+    if let Some(retry) = classify(envelope) {
+        return Some(retry);
+    }
+    if !envelope.get("isError")?.as_bool()? {
+        return None;
+    }
+    let content = envelope.get("content")?.as_array()?;
+    if content.len() != 1 || content[0].get("type")?.as_str()? != "text" {
+        return None;
+    }
+    let body: Value = serde_json::from_str(content[0].get("text")?.as_str()?).ok()?;
+    if envelope.get("structuredContent")? != &body {
+        return None;
+    }
+    let fields = body.as_object()?;
+    if fields
+        .keys()
+        .any(|key| !matches!(key.as_str(), "error" | "requested_scope"))
+    {
+        return None;
+    }
+    let requested = body.get("requested_scope")?;
+    if requested
+        .as_object()?
+        .keys()
+        .any(|key| !matches!(key.as_str(), "confirmed" | "selection"))
+        || requested.get("confirmed")?.as_bool()?
+    {
+        return None;
+    }
+    let mut observed: airk_core::service::ScopedConnectRequest =
+        serde_json::from_value(requested.get("selection")?.clone()).ok()?;
+    observed.validate().ok()?;
+    let mut expected = expected.clone();
+    // Native resolve_scoped may advance this metadata clock; every authority
+    // field and the caller's original command remain unchanged.
+    if observed.expected_catalog_revision < expected.expected_catalog_revision {
+        return None;
+    }
+    observed.expected_catalog_revision = expected.expected_catalog_revision;
+    expected.project_ids.sort();
+    observed.project_ids.sort();
+    if observed != expected {
+        return None;
+    }
+    let error = body.get("error")?;
+    if error.as_object()?.keys().any(|key| {
+        !matches!(
+            key.as_str(),
+            "code"
+                | "retryable"
+                | "query_submitted"
+                | "retry_after_ms"
+                | "fresh_brokerage_required"
+                | "query_replay_safe"
+                | "native_control_response"
+        )
+    }) || error.get("query_submitted")?.as_bool()?
+        || !error.get("retryable")?.as_bool()?
+        || !error.get("fresh_brokerage_required")?.as_bool()?
+        || error
+            .get("query_replay_safe")
+            .is_some_and(|value| value != true)
+    {
+        return None;
+    }
+    match error.get("code")?.as_str()? {
+        "scoped_status_prepare_timeout" => {
+            if error.get("native_control_response").is_some() {
+                return None;
+            }
+        }
+        "scoped_connection_unavailable" => {
+            let native = error.get("native_control_response")?;
+            if native
+                .as_object()?
+                .keys()
+                .any(|key| !matches!(key.as_str(), "status" | "code"))
+                || native.get("status")?.as_str()? != "failure"
+                || !matches!(
+                    native.get("code")?.as_str()?,
+                    "broker_busy"
+                        | "project_starting_or_unavailable"
+                        | "project_unavailable_or_busy"
+                        | "previous_workers_draining"
+                        | "catalog_revision_changed"
+                        | "catalog_clock_pending"
+                        | "catalog_connection_busy"
+                        | "project_capacity_busy"
+                        | "project_restart_backoff"
+                )
+            {
+                return None;
+            }
+        }
+        _ => return None,
+    }
+    let delay = error.get("retry_after_ms")?.as_u64()?;
+    (1..=1000).contains(&delay).then_some(Retry {
+        delay: Duration::from_millis(delay),
+        fresh_brokerage: true,
+        publication: false,
+    })
+}
+
+pub fn within_for_scope(
+    envelope: &Value,
+    expected: &airk_core::service::ScopedConnectRequest,
+    deadline: Instant,
+) -> Option<Retry> {
+    classify_for_scope(envelope, expected).filter(|retry| Instant::now() + retry.delay < deadline)
+}
+
+/// Only the test-owned `tools call` evidence-read form supplies an implicit
+/// expected scope. Mutation commands, mixed selectors and duplicate flags do not.
+pub fn original_cli_scope(
+    command: &std::process::Command,
+) -> Option<airk_core::service::ScopedConnectRequest> {
+    let arguments = command
+        .get_args()
+        .map(|value| value.to_str())
+        .collect::<Option<Vec<_>>>()?;
+    let mut offset = 0;
+    let mut selection = None;
+    let mut runtime = false;
+    while offset < arguments.len() && arguments[offset] != "tools" {
+        let value = arguments[offset];
+        if value == "--catalog-session" {
+            if selection.is_some() {
+                return None;
+            }
+            offset += 1;
+            selection = Some(
+                serde_json::from_str::<airk_core::service::ScopedConnectRequest>(
+                    arguments.get(offset)?,
+                )
+                .ok()?,
+            );
+        } else if let Some(value) = value.strip_prefix("--catalog-session=") {
+            if selection.is_some() {
+                return None;
+            }
+            selection =
+                Some(serde_json::from_str::<airk_core::service::ScopedConnectRequest>(value).ok()?);
+        } else if value == "--service-runtime-dir" {
+            if runtime {
+                return None;
+            }
+            runtime = true;
+            offset += 1;
+            if arguments.get(offset)?.is_empty() {
+                return None;
+            }
+        } else {
+            return None;
+        }
+        offset += 1;
+    }
+    let suffix = arguments.get(offset..)?;
+    if suffix.len() != 3 && suffix.len() != 5 {
+        return None;
+    }
+    if suffix[0] != "tools" || suffix[1] != "call" || !evidence_read_tool(suffix[2]) {
+        return None;
+    }
+    if suffix.len() == 5
+        && (suffix[3] != "--args" || !serde_json::from_str::<Value>(suffix[4]).ok()?.is_object())
+    {
+        return None;
+    }
+    let selection = selection?;
+    selection.validate().ok()?;
+    Some(selection)
+}
+
 pub fn from_output(output: &std::process::Output, deadline: Instant) -> Option<Retry> {
     // Tool rejection exits 1. A killed or otherwise failed process is not a reply.
     if !output.status.success() && output.status.code() != Some(1) {
@@ -81,7 +302,14 @@ pub fn output_until(
 ) -> std::io::Result<std::process::Output> {
     loop {
         let output = once_until(command, deadline)?;
-        let retry = from_output(&output, deadline);
+        let retry = from_output(&output, deadline).or_else(|| {
+            if output.status.code() != Some(1) {
+                return None;
+            }
+            let expected = original_cli_scope(command)?;
+            let envelope: Value = serde_json::from_slice(&output.stdout).ok()?;
+            within_for_scope(&envelope, &expected, deadline)
+        });
         let Some(retry) = retry else {
             return Ok(output);
         };
@@ -406,6 +634,38 @@ pub async fn backend(
     loop {
         let reply = backend.call(name.into(), arguments.clone()).await?;
         let Some(retry) = within(&reply, deadline) else {
+            return Ok(reply);
+        };
+        rejected(&reply);
+        tokio::time::sleep(retry.delay).await;
+    }
+}
+
+/// Explicit scope-bearing callers may repeat a known pre-query setup refusal;
+/// an uncertain exchange or a crossed/revoked scope remains terminal.
+pub async fn backend_for_scope(
+    backend: &dyn airk_mcp::remote::RemoteTools,
+    name: &str,
+    arguments: &Map<String, Value>,
+    expected: &airk_core::service::ScopedConnectRequest,
+    deadline: Instant,
+    mut rejected: impl FnMut(&Value),
+) -> Result<Value> {
+    expected.validate()?;
+    loop {
+        anyhow::ensure!(
+            Instant::now() < deadline,
+            "scoped read retry deadline exhausted"
+        );
+        let reply = tokio::time::timeout_at(
+            deadline.into(),
+            backend.call(name.into(), arguments.clone()),
+        )
+        .await??;
+        let retry = evidence_read_tool(name)
+            .then(|| within_for_scope(&reply, expected, deadline))
+            .flatten();
+        let Some(retry) = retry else {
             return Ok(reply);
         };
         rejected(&reply);

@@ -705,3 +705,55 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[tokio::test]
+async fn actual_native_parse_reports_nested_input_path_without_querying_sources()
+-> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let root = directory.path().join("source");
+    std::fs::create_dir(&root)?;
+    let kernel = airk_kernel::Kernel::open(&root, Some(directory.path().join("data")))?;
+    let mut tools = crate::local::LocalTools::new(kernel).await?;
+    let request = serde_json::json!({"schema":"airk.parse.request/1","mode":"prepare",
+        "verification":"off","plan":{"steps":"not an array"}});
+    let reply = tools
+        .call("airk_parse".into(), request.as_object().unwrap().clone())
+        .await?;
+    assert_eq!(reply.is_error, Some(true));
+    let body: serde_json::Value = serde_json::from_str(&reply.content[0].as_text().unwrap().text)?;
+    assert_eq!(body["error"]["code"], "invalid_arguments");
+    assert_eq!(body["error"]["field"], "plan.steps");
+    assert_eq!(body["error"]["retryable"], false);
+    assert_eq!(std::fs::read_dir(&root)?.count(), 0);
+    tools.close().await?;
+    Ok(())
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn actual_native_parse_bounds_oversized_malformed_field_diagnostics() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let root = directory.path().join("source");
+    std::fs::create_dir(&root)?;
+    let kernel = airk_kernel::Kernel::open(&root, Some(directory.path().join("data")))?;
+    let mut tools = crate::local::LocalTools::new(kernel).await?;
+    let oversized = format!("{}private-query-tail-sentinel", "x".repeat(50_000));
+    let mut step = serde_json::json!({"id":"s","tool":"status","args":{}});
+    step[oversized] = serde_json::json!(true);
+    let request = serde_json::json!({"schema":"airk.parse.request/1","verification":"off","plan":{"steps":[step]}});
+    let reply = tools
+        .call("airk_parse".into(), request.as_object().unwrap().clone())
+        .await?;
+    assert_eq!(reply.is_error, Some(true));
+    let body: serde_json::Value = serde_json::from_str(&reply.content[0].as_text().unwrap().text)?;
+    assert_eq!(body["error"]["code"], "invalid_arguments");
+    assert_eq!(body["error"]["field"], "plan.steps[0]");
+    assert_eq!(body["error"]["message_truncated"], true);
+    assert_eq!(body["error"]["field_truncated"], false);
+    assert!(!serde_json::to_string(&reply)?.contains("private-query-tail-sentinel"));
+    assert!(serde_json::to_vec(&reply)?.len() < 8192);
+    assert_eq!(std::fs::read_dir(&root)?.count(), 0);
+    tools.close().await?;
+    Ok(())
+}

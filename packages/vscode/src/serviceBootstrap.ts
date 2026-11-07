@@ -585,7 +585,7 @@ export class RuntimeHost {
             observedActive:current.runtimeSha256,expectedActive,target,version});
         if(!superseding)this.transitionReviews.add(review);return review;
     }
-    async transition(binding:RuntimeBinding,review:RuntimeTransitionReview,progress?:(message:string)=>void):Promise<RecordValue>{
+    async transition(binding:RuntimeBinding,review:RuntimeTransitionReview,progress?:(message:string,stage:'staging'|'activating')=>void):Promise<RecordValue>{
         this.active();
         if(!this.transitionReviews.has(review)||review.installDir!==binding.installDir||review.controlDir!==binding.controlDir
             ||review.observedActive!==binding.runtimeSha256)throw new ServiceError('runtime_transition_not_reviewed');
@@ -593,11 +593,11 @@ export class RuntimeHost {
         const bundle=await this.verified();
         if(review.action==='upgrade'){
             if(bundle.digest!==review.target)throw new ServiceError('reviewed_distribution_changed');
-            progress?.('Staging verified runtime files…');
+            progress?.('Staging verified runtime files…','staging');
             await this.invoke(bundle.main,['runtime','stage','--source',bundle.source,'--install-dir',binding.installDir,
                 '--approved-sha256',bundle.digest,'--verification-basis','trusted-distribution','--channel',this.options.channel],180000);
         }
-        progress?.('Stopping previous AIRK processes and activating runtime…');
+        progress?.('Stopping previous AIRK processes and activating runtime…','activating');
         const selected=await this.invoke(bundle.main,['runtime','activate','--install-dir',binding.installDir,
             '--runtime-sha256',review.target,'--expected-active',review.expectedActive],180000);
         if(selected.schema!==1||selected.active!==review.target)throw new ServiceError('crossed_runtime_activation_receipt',true);

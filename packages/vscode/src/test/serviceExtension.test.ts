@@ -165,6 +165,82 @@ test('service activation advertises reviewed bindings without indexing and prese
                 release();await assert.rejects(pending,/review_stopped/);assert.equal(mutations,0);
             }finally{release();await Promise.allSettled([pending]);scoped.dispose();}
         }
+        // Run the actual automatic installation owner with a previous-version
+        // active index. Native installation is the boundary mocked here; no
+        // reconnect, index setup or grant-selection command is invoked.
+        for(const outcome of ['ready','activation_failed','connection_unconfirmed']){
+            const failActivation=outcome==='activation_failed';
+            const scoped=new controller.constructor({...extensionContext,globalStorageUri:stub.Uri.file(root),extension:{packageJSON:{version:'1.8.9'}}});
+            const previous={...binding,version:'1.8.8'},next={...binding,version:'1.8.9',runtimeSha256:'de'.repeat(32)};
+            const indexBefore=JSON.stringify(registration),calls:string[]=[],progress:any[]=[];
+            let active=previous,connectionConfirmed=outcome!=='connection_unconfirmed';
+            const observed=()=>({bundle:{digest:next.runtimeSha256},installDir:root,installed:true,location:{user_paths:{launcher:root}},
+                inspection:{selection:{active:active.runtimeSha256},approval:{manifest_sha256:active.runtimeSha256,version:active.version,
+                    verification_basis:'trusted_distribution'},executable:active.executable,launcher:active.launcher,control_dir:active.controlDir}});
+            scoped.host={
+                discover:async()=>observed(),binding:()=>active,
+                supersedePending:async()=>false,
+                retirePrevious:async()=>{calls.push('retire');},
+                reviewTransition:async(current:any,action:string)=>{assert.equal(current,previous);assert.equal(action,'upgrade');calls.push('review');return {action};},
+                transition:async(current:any,_review:unknown,report:(message:string,stage:string)=>void)=>{
+                    assert.equal(current,previous);calls.push('transition');
+                    report('Staging verified runtime files…','staging');
+                    report('Stopping previous AIRK processes and activating runtime…','activating');
+                    if(failActivation)throw new Error('fixture_activation_failed');
+                    active=next;
+                },
+                ensure:async()=>{calls.push('ensure');assert.equal(active,next);return active;},
+                reconnect:async()=>{calls.push('reconnect');assert.equal(active,next);return active;},
+            };
+            const originalReport=scoped.reportUpgrade.bind(scoped);
+            context.mock.method(scoped,'reportUpgrade',(...args:any[])=>{originalReport(...args);progress.push(scoped.explorerHost().runtimeUpgrade());});
+            context.mock.method(scoped,'installCommandLine',async()=>{calls.push('install-cli');});
+            context.mock.method(scoped,'prepareWorkspaceProjects',async(current:any)=>{assert.equal(current,next);calls.push('prepare-existing');});
+            context.mock.method(scoped,'refresh',async()=>{calls.push('refresh');scoped.binding=connectionConfirmed?next:undefined;});
+            context.mock.method(scoped,'openWorkbenchAfterSetup',async()=>{});
+            context.mock.method(scoped,'reportLastUninstall',async()=>{});
+            context.mock.method(scoped,'withInstallProgress',async(action:()=>Promise<void>)=>action());
+            const remember=context.mock.method(require('../extensionUninstall'),'rememberUninstallTarget',async()=>{});
+            const originalConfiguration=stub.workspace.getConfiguration;
+            const configuration=context.mock.method(stub.workspace,'getConfiguration',(...args:any[])=>{
+                const current=originalConfiguration(...args);
+                return {...current,inspect:(key:string)=>key==='cli.autoInstall'?{globalValue:true}:current.inspect(key)};
+            });
+            try{
+                await scoped.automaticSetup(false,false);
+                assert.equal(JSON.stringify(registration),indexBefore,'upgrade preserves the active index registration');
+                assert.deepEqual(progress.map(value=>value.stage),failActivation
+                    ?['checking','draining','staging','activating','failed']
+                    :['checking','draining','staging','activating','reconnecting',outcome==='ready'?'ready':'failed']);
+                assert.ok(progress.every(value=>value.fromVersion==='1.8.8'&&value.toVersion==='1.8.9'));
+                assert.ok(progress.every(value=>value.startedAt===progress[0].startedAt&&value.updatedAt>=value.startedAt));
+                assert.deepEqual(calls,failActivation?['retire','review','transition']
+                    :['retire','review','transition','install-cli','ensure','prepare-existing','refresh']);
+                assert.equal(scoped.explorerHost().runtimeUpgrade().stage,outcome==='ready'?'ready':'failed');
+                if(failActivation)assert.match(scoped.explorerHost().runtimeUpgrade().message,/fixture_activation_failed/);
+                if(outcome==='connection_unconfirmed')assert.match(scoped.explorerHost().runtimeUpgrade().message,/connection could not be confirmed/);
+                if(outcome!=='ready'){
+                    assert.ok(!progress.some(value=>value.stage==='ready'),'unconfirmed installation must not report completion');
+                    // A later observation can find activation already completed.
+                    // The exact completed-install identity takes the existing
+                    // automatic reconnect path and clears retained failed state.
+                    active=next;connectionConfirmed=true;
+                    const key=`airk.installComplete.1.${next.installDir}`,prior=values.get(key);
+                    values.set(key,`1.8.9:${next.runtimeSha256}`);
+                    const beforeCalls=calls.length,beforeProgress=progress.length;
+                    try{
+                        await scoped.automaticSetup(false,false);
+                        assert.deepEqual(calls.slice(beforeCalls),['reconnect','prepare-existing','refresh']);
+                        assert.deepEqual(progress.slice(beforeProgress).map(value=>value.stage),['ready']);
+                        assert.equal(scoped.explorerHost().runtimeUpgrade().stage,'ready');
+                        assert.equal(JSON.stringify(registration),indexBefore);
+                    }finally{if(prior===undefined)values.delete(key);else values.set(key,prior);}
+                }
+                const completedProgress=progress.length;
+                scoped.setupSucceeded(next,scoped.generation+1);
+                assert.equal(progress.length,completedProgress,'a superseded setup generation cannot publish completion');
+            }finally{configuration.mock.restore();remember.mock.restore();scoped.dispose();}
+        }
         extension.deactivate();await assert.rejects(provider.resolveMcpServerDefinition(definitions[0]),(error:unknown)=>error instanceof ServiceError&&error.code==='runtime_client_no_longer_authorized');assert.equal(ensures,before);
     }finally{extension?.deactivate();loader._load=original;delete require.cache[require.resolve('../serviceExtension')];await fs.rm(root,{recursive:true,force:true});}
 });

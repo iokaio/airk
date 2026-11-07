@@ -25,12 +25,14 @@ export interface NativeHostContextDescriptor extends CatalogObject {
     schema: 1; namespace: string; host: string; key: string; catalog_revision: number; context: CatalogObject | null;
 }
 export interface CatalogView {
+    setEditor?:{id:string;name:string;indexIds:string[];complete:boolean;responses:CatalogObject[]};
+    searchScope?: { indexes:CatalogObject[];projects:CatalogObject[];selectedIndexIds:string[];selectedProjectIds:string[];managedProjectIds:string[];active:boolean;indexContinuation?:CatalogObject|null;projectContinuation?:CatalogObject|null;indexResponses?:CatalogObject[];projectResponses?:CatalogObject[];responses:CatalogObject[] };
     capabilities?:CatalogObject;
     canReviewSplit?:boolean; splitFormOpen?:boolean; splitReview?:SplitReview; submittedSplitReview?:SplitReview; splitSourceState?:CatalogObject;
     splitStatus?:CatalogObject; reviewedSplitStatus?:CatalogObject;
     recommendations?: CatalogObject;
     generation: number; busy: boolean; error?: string; namespace?: string; revision?: number;
-    page?: CatalogObject; detail?: CatalogObject; sources?: CatalogObject; memberships?: CatalogObject;
+    page?: CatalogObject; pageKind?: CatalogKind; detail?: CatalogObject; sources?: CatalogObject; memberships?: CatalogObject;
     review?: CatalogReview; outcome?: CatalogObject; pending?: readonly string[];
     submittedReview?: CatalogReview;
     windowDescriptor?: WindowContextDescriptor; context?: CatalogObject;

@@ -172,8 +172,10 @@ pub struct ChangesArgs {
     #[serde(default)]
     pub include_suggestions: bool,
     #[serde(default = "default_limit")]
+    #[schemars(range(min = 1, max = 100))]
     pub limit: usize,
     #[serde(default = "default_budget")]
+    #[schemars(range(min = 1, max = 65536))]
     pub max_bytes: usize,
     pub cursor: Option<String>,
 }
@@ -191,7 +193,7 @@ pub struct SearchArgs {
     pub verification: response::VerificationArgs,
     #[serde(flatten)]
     pub response: ResponseArgs,
-    /// Default hybrid retrieval; explicit lexical uses AND terms.
+    /// Default hybrid retrieval; lexical normalizes punctuation/quotes into AND terms, not phrase matching.
     pub query: String,
     /// Omit for the saved collection policy; pending vectors are disclosed in the response.
     pub mode: Option<SearchMode>,
@@ -207,8 +209,10 @@ pub struct SearchArgs {
     /// Optional literal collection-relative prefix to exclude; does not change source authorization.
     pub exclude_path_prefix: Option<String>,
     #[serde(default = "default_limit")]
+    #[schemars(range(min = 1, max = 100))]
     pub limit: usize,
     #[serde(default = "default_budget")]
+    #[schemars(range(min = 1, max = 65536))]
     pub max_bytes: usize,
     /// Return complete indexed chunks instead of focused snippets.
     pub full_chunks: Option<bool>,
@@ -276,6 +280,7 @@ pub struct ReadArgs {
     /// Last indexed line, 1-based and inclusive; keep extracted documents within one page/block/slide.
     pub end_line: usize,
     #[serde(default = "default_budget")]
+    #[schemars(range(min = 1, max = 65536))]
     pub max_bytes: usize,
 }
 
@@ -292,8 +297,10 @@ pub struct ListArgs {
     #[serde(default)]
     pub prefix: String,
     #[serde(default = "default_limit")]
+    #[schemars(range(min = 1, max = 100))]
     pub limit: usize,
     #[serde(default = "default_budget")]
+    #[schemars(range(min = 1, max = 65536))]
     pub max_bytes: usize,
 }
 
@@ -341,8 +348,10 @@ pub struct OutlineArgs {
     /// Exact collection-relative indexed file path, not a prefix or glob.
     pub path: String,
     #[serde(default = "default_limit")]
+    #[schemars(range(min = 1, max = 100))]
     pub limit: usize,
     #[serde(default = "default_budget")]
+    #[schemars(range(min = 1, max = 65536))]
     pub max_bytes: usize,
 }
 
@@ -370,10 +379,14 @@ pub struct FactArgs {
     #[serde(default)]
     pub include_count: bool,
     /// Optional indexed language/profile label; obtain the label from airk_file_info.
+    /// Exact indexed native or retained producer language/profile label; 1..128 UTF-8 bytes. JSON maxLength is a character bound; native validation enforces the byte bound.
+    #[schemars(length(min = 1, max = 128))]
     pub language: Option<String>,
     #[serde(default = "default_limit")]
+    #[schemars(range(min = 1, max = 100))]
     pub limit: usize,
     #[serde(default = "default_budget")]
+    #[schemars(range(min = 1, max = 65536))]
     pub max_bytes: usize,
 }
 
@@ -414,12 +427,18 @@ pub struct DocumentFactArgs {
     /// Optional case-insensitive substring of the fact's source statement or heading/date name.
     pub name: Option<String>,
     /// Optional indexed language/profile label from airk_file_info.
+    /// Exact indexed native or retained producer language/profile label; 1..128 UTF-8 bytes. JSON maxLength is a character bound; native validation enforces the byte bound.
+    #[schemars(length(min = 1, max = 128))]
     pub language: Option<String>,
-    /// Exact category: requirement, date, architecture, design, feature, decision, acceptance, section, table, table_row, table_cell, key or element.
+    /// Native category examples: requirement, date, architecture, design, feature, decision, acceptance, section, table, table_row, table_cell, key or element.
+    /// Exact native or retained producer kind label; 1..128 UTF-8 bytes. Labels are open, not an enum; native validation enforces the byte bound.
+    #[schemars(length(min = 1, max = 128))]
     pub kind: Option<String>,
     #[serde(default = "default_limit")]
+    #[schemars(range(min = 1, max = 100))]
     pub limit: usize,
     #[serde(default = "default_budget")]
+    #[schemars(range(min = 1, max = 65536))]
     pub max_bytes: usize,
 }
 
@@ -451,8 +470,10 @@ pub struct ReferenceArgs {
     #[serde(default)]
     pub include_count: bool,
     #[serde(default = "default_limit")]
+    #[schemars(range(min = 1, max = 100))]
     pub limit: usize,
     #[serde(default = "default_budget")]
+    #[schemars(range(min = 1, max = 65536))]
     pub max_bytes: usize,
 }
 
@@ -488,14 +509,27 @@ pub struct ContextArgs {
     /// 1-based indexed line from AIRK evidence; extracted document lines are not page/slide numbers.
     pub line: usize,
     #[serde(default = "default_radius")]
+    #[schemars(schema_with = "context_radius_schema")]
     pub before: usize,
     #[serde(default = "default_radius")]
+    #[schemars(schema_with = "context_radius_schema")]
     pub after: usize,
     #[serde(default = "default_budget")]
+    #[schemars(range(min = 1, max = 65536))]
     pub max_bytes: usize,
 }
+fn context_radius_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    serde_json::from_value(serde_json::json!({
+        "type":"integer","minimum":0,"maximum":airk_core::native_reads::CONTEXT_RADIUS_MAX
+    }))
+    .expect("static native context radius schema")
+}
+fn relationship_direction_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    serde_json::from_value(serde_json::json!({"type":"string","enum":["incoming","outgoing"]}))
+        .expect("static relationship direction schema")
+}
 fn default_radius() -> usize {
-    5
+    airk_core::native_reads::CONTEXT_RADIUS_DEFAULT
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -518,16 +552,22 @@ pub struct CodeFactArgs {
     /// Request bounded count precision; exact totals are returned only for a complete matching scan.
     #[serde(default)]
     pub include_count: bool,
-    /// Exact category: definition, import, call, inherits, reference, route_registration, route_annotation, database_call, dependency_injection, test_registration, test_declaration or exception_handler.
+    /// Native category examples: definition, import, call, inherits, reference, route_registration, route_annotation, database_call, dependency_injection, test_registration, test_declaration or exception_handler.
+    /// Exact native or retained producer kind label; 1..128 UTF-8 bytes. Labels are open, not an enum; native validation enforces the byte bound.
+    #[schemars(length(min = 1, max = 128))]
     pub kind: Option<String>,
+    /// Exact indexed native or retained producer language/profile label; 1..128 UTF-8 bytes. JSON maxLength is a character bound; native validation enforces the byte bound.
+    #[schemars(length(min = 1, max = 128))]
     pub language: Option<String>,
     #[serde(default)]
     pub path_prefix: String,
     /// Exact indexed file path; takes precedence over path_prefix.
     pub path: Option<String>,
     #[serde(default = "default_limit")]
+    #[schemars(range(min = 1, max = 100))]
     pub limit: usize,
     #[serde(default = "default_budget")]
+    #[schemars(range(min = 1, max = 65536))]
     pub max_bytes: usize,
 }
 
@@ -542,6 +582,7 @@ pub struct RelationshipArgs {
     pub symbol: String,
     /// incoming for callers/implementation candidates; outgoing for dependencies/containment. Defaults incoming.
     #[serde(default = "default_direction")]
+    #[schemars(schema_with = "relationship_direction_schema")]
     pub direction: String,
     /// Exact edge kind: call, contains, import, inherits, reference, implements, type_definition, definition or a framework category.
     pub kind: Option<String>,
@@ -549,10 +590,13 @@ pub struct RelationshipArgs {
     pub path_prefix: String,
     /// 1..3 graph hops; candidate impact is incomplete and references are not calls.
     #[serde(default = "default_hops")]
+    #[schemars(range(min = 1, max = 3))]
     pub hops: usize,
     #[serde(default = "default_limit")]
+    #[schemars(range(min = 1, max = 100))]
     pub limit: usize,
     #[serde(default = "default_budget")]
+    #[schemars(range(min = 1, max = 65536))]
     pub max_bytes: usize,
 }
 
@@ -648,9 +692,15 @@ impl AirkServer {
         &self,
         Parameters(args): Parameters<combined::QueryScopeParameters>,
     ) -> CallToolResult {
-        let arguments = serde_json::to_value(args).expect("query scope serialization");
-        serde_json::from_value(combined::legacy_discovery(arguments))
-            .expect("canonical legacy discovery envelope")
+        let _permit = match self.admission.admit(true).await {
+            Ok(permit) => permit,
+            Err(result) => return response::with_scope(&self.kernel, result),
+        };
+        match self.kernel.query_scope(&args.0) {
+            Ok(body) => serde_json::from_value(unified::success(body))
+                .expect("canonical installed discovery envelope"),
+            Err(error) => response::scoped_error_result(&self.kernel, &error),
+        }
     }
 
     #[tool(
@@ -703,7 +753,7 @@ impl AirkServer {
                     value["mode"] = serde_json::json!("prepare");
                 }
                 kernel.evidence_plan_with_reader(
-                    serde_json::from_value(value)?,
+                    airk_core::workbench::decode_request(value)?,
                     &observations,
                     Some(&|tool, args, revision| {
                         handle.block_on(reader.workbench_read(tool, args, revision))
@@ -814,7 +864,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_search",
-        description = "Find concepts, code or documents; prose/comments and source can rank together. For a named type/function, prefer airk_symbols first, scoped airk_references for textual uses, then bounded airk_read_file; search supplements that investigation. Scope by literal path_prefix, exact indexed language, metadata-based evidence_kind or exclude_path_prefix; documents alone do not prove application behavior. Omitted mode retains saved hybrid/vector policy; explicit lexical uses AND terms. Eligible Default search can return lexical evidence during a helper outage; execution records served mode and semantic incompleteness. Explicit vector/hybrid and saved RequireComplete refuse helper outages. Vector/hybrid need the indexed local model. semantic=true aliases vector. Bounded native-definition pointers may accompany identifiers without changing ranking. Focused cited snippets are default; full_chunks requests whole indexed chunks. Read guidance for returned limitations; empty matches alone establish no cause. Check readiness/truncation and use response_mode=full for provenance audits.",
+        description = "Find concepts, code or documents; prose/comments and source can rank together. For a named type/function, prefer airk_symbols first, scoped airk_references for textual uses, then bounded airk_read_file; search supplements that investigation. Scope by literal path_prefix, exact indexed language, metadata-based evidence_kind or exclude_path_prefix; documents alone do not prove application behavior. Omitted mode retains saved hybrid/vector policy; explicit lexical normalizes punctuation and quotes into AND terms; quotes do not enable phrase matching. Lexical candidates use stable-id order, not relevance ranking. Eligible Default search can return lexical evidence during a helper outage; execution records served mode and semantic incompleteness. Explicit vector/hybrid and saved RequireComplete refuse helper outages. Vector/hybrid need the indexed local model. semantic=true aliases vector. Bounded native-definition pointers may accompany identifiers without changing ranking. Focused cited snippets are default; full_chunks requests whole indexed chunks. Read guidance for returned limitations; empty matches alone establish no cause. Check readiness/truncation and use response_mode=full for provenance audits.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -1290,7 +1340,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_capabilities",
-        description = "Check native formats, explicitly provisioned local model/OCR/code-provider adapters and their limits before planning exploration. Works before indexing. Reports available capabilities, not whether optional providers or this collection are ready. read_guidance lists bounded reason/action vocabulary; its suggestions execute no tools. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+        description = "Check native formats, explicitly provisioned local model/OCR/code-provider adapters and their limits before planning exploration. Works before indexing. Reports available capabilities, not whether optional providers or this collection are ready. Terse replies summarize Workbench operation schemas; response_mode=full includes them. read_guidance lists bounded reason/action vocabulary; its suggestions execute no tools. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,

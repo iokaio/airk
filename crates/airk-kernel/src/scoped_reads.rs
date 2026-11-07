@@ -628,6 +628,23 @@ impl Kernel {
             projects,
         )))
     }
+    /// Bounded installed metadata only. Native admission/delivery checks remain
+    /// authoritative; this does not discover the machine catalog or restore grants.
+    pub fn query_scope(
+        &self,
+        args: &airk_core::combined_reads::query_scope::QueryScopeArgs,
+    ) -> Result<serde_json::Value> {
+        self.scoped_read_fingerprint()?;
+        let body = match self.scope_observation() {
+            Some(observation) => {
+                airk_core::combined_reads::query_scope::installed_body(args, observation)?
+            }
+            None => airk_core::combined_reads::query_scope::legacy_body(args)?,
+        };
+        self.scoped_read_fingerprint()?;
+        Ok(body)
+    }
+
     /// Frozen installed authorization identity, independent of live admission
     /// and publication. Safe to retain with refusals; never renews authority.
     pub fn scope_observation(&self) -> Option<&airk_core::scoped_reads::ScopeObservation> {

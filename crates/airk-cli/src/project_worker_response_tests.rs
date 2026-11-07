@@ -80,3 +80,20 @@ fn scoped_worker_errors_and_admission_preserve_canonical_receipts() -> Result<()
     );
     Ok(())
 }
+
+#[test]
+fn actual_unscoped_worker_boundary_redacts_unknown_internal_failure_and_preserves_typed_retry()
+-> Result<()> {
+    let sentinel = "private/source/secret-content-sentinel";
+    let reply = unscoped_worker_error(&anyhow::anyhow!(sentinel));
+    assert_eq!(reply["isError"], true);
+    assert_eq!(body(&reply)["error"]["code"], "read_failed");
+    assert_eq!(body(&reply)["error"]["retryable"], false);
+    assert!(!reply.to_string().contains(sentinel));
+    let typed = anyhow::Error::new(airk_store::quota::QuotaContention).context(sentinel);
+    let reply = unscoped_worker_error(&typed);
+    assert_eq!(body(&reply)["code"], "selection_busy");
+    assert_eq!(body(&reply)["action"], "repeat_same_request");
+    assert!(!reply.to_string().contains(sentinel));
+    Ok(())
+}

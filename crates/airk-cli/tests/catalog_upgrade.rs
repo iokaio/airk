@@ -856,10 +856,19 @@ fn exercise_native_catalog_transports(
         direct(host_context.clone())?,
         console(host_context.clone())?,
     )?;
-    let ControlResponse::CatalogHostContext { descriptor } = direct(host_context.clone())? else {
+    let ControlResponse::CatalogHostContext {
+        descriptor,
+        capabilities,
+    } = direct(host_context.clone())?
+    else {
         anyhow::bail!("native host context unavailable")
     };
     descriptor.validate()?;
+    ensure!(
+        capabilities == airk_store::service::registry::catalog::capabilities()
+            && capabilities.policy_contract >= 2,
+        "native host context lost the connected runtime's split capability"
+    );
     ensure!(
         descriptor.namespace == namespace
             && descriptor.catalog_revision == revision

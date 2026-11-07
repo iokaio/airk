@@ -1,10 +1,31 @@
 # Architecture
 
-The unpublished **1.8.8 working build** retains the existing crate and service
-owners. Current behavior and exact validation identities are recorded in the
-[working-build record](releases/release-1.8.8.md). Index retirement after source
-or storage loss stays with the catalog, native worker and storage owners;
-frozen grants remain unchanged and healthy indexes retain independent access.
+The unpublished **1.8.11 working build** retains the existing crate and service
+owners. Current behavior and validation identities are recorded in the
+[working-build record](releases/release-1.8.11.md). Earlier
+[1.8.10 evidence](releases/release-1.8.10.md) remains dated history.
+
+The Indexing UI separates **Search scope**, **Index library** and **Index sets**.
+The extension host turns the user's explicit checkbox selection into existing
+native catalog membership, scope and access operations. Direct-index selections
+can use an internally managed set; users do not create grants or maintain access
+records. Native `Project` and grant wire contracts remain compatible. Selection
+does not widen a coding agent's separately configured scope or bypass native
+revision, namespace, source/root or worker fences.
+
+**Delete index** prepares and confirms the existing native index-retirement
+request. Catalog/worker/storage owners cancel maintenance, remove current
+references and dispose of proven owned derived data. Logical retirement and
+physical cleanup remain separate observations. Sources, shared models and other
+indexes are preserved; a new independent index requires a distinct backing.
+No new crate, database, scheduler or source writer is introduced.
+
+Authenticated capability discovery stays with the native administrative
+host-context read. Explorer renders actual runtime upgrade stages and complete
+metadata responses, including bounded pages and continuations. Reading metadata
+or opening a tab creates no index or indexing job. Complete JSON/Markdown copies
+and exports preserve native response fields. CLI/MCP/Workbench evidence reads
+continue through their canonical scoped native handlers.
 
 ## Retained P14 checkpoint (6 November 2026)
 
@@ -290,7 +311,7 @@ The native CLI captures path-free process/build observations for `airk_status.ru
 
 Extension CLI installation removes obsolete terminal executable copies at its own fixed global-storage locations. Native CLI ownership remains responsible for retiring the previous runtime: it fences the active selection, journals inventory-bound cleanup, drains owners, clears rollback and restarts the selected runtime. Sources, indexes and settings remain outside executable retirement. Managed provider payloads are excluded. See [console installation](service-console.md).
 
-Trusted extension activation installs or reconnects the approved runtime and terminal forwarding command, then reconciles metadata for existing native registrations. Opening workspace folders does not create an index, scan sources or grant access. Missing indexes require explicit native setup through Indexing > Index library; source/storage/watching choices and accepted setup work are reviewed. Project memberships, access grants and Use Grant are separate authority steps. Existing storage, pause, Stop and watching preferences remain native. Runtime activation and schema migrations stay in CLI/Store; the dashboard renders metadata and does not open indexes. See [reviewed setup](service-project-setup.md).
+Trusted extension activation installs or reconnects the approved runtime and terminal forwarding command, then reconciles metadata for existing native registrations. Opening workspace folders does not create an index, scan sources or grant access. Missing indexes require explicit native setup through Indexing > Index library; source/storage/watching choices and accepted setup work are reviewed. In 1.8.11 **Search scope → Apply selection** handles native memberships and access records internally after the user chooses local indexes or index sets. Existing storage, pause, Stop and watching preferences remain native. Runtime activation and schema migrations stay in CLI/Store; the dashboard renders metadata and does not open indexes. See [reviewed setup](service-project-setup.md).
 
 Store classifies registry storage contention; the CLI applies the existing registry_busy response only to an explicit whitelist of read-only observations. Mutation and receipt recovery contracts remain unchanged, including RequestEpoch receipt pruning.
 

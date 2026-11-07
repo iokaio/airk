@@ -470,7 +470,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
                 const selected=card.indexId&&card.projectIds?.length?{project_ids:card.projectIds,index_ids:[card.indexId]}:undefined;
                 if(this.selectedSpec()?.combinedSession&&!selected)throw new Error('Choose an originating index from qualified evidence before following this location.');
                 if(message.type==='context'){
-                    const plan={schema:'airk.parse.plan/1',...(selected?{query_scope:selected}:{publication:card.publication}),steps:[{id:'context',tool:'context',args:{path:card.path,line:card.start,known_hash:card.hash,before:3,after:3,...(selected?{revision:card.publication}:{})}}]};
+                    const plan={schema:'airk.parse.plan/1',...(selected?{query_scope:selected}:{publication:card.publication}),steps:[{id:'context',tool:'context',args:{path:card.path,line:card.start,known_hash:card.hash,...(selected?{revision:card.publication}:{})}}]};
                     await this.run(`Context ${card.path}:${card.start}`,false,undefined,plan);
                 }else{
                     const generation=this.generation,native=await this.evidence().call('airk_file_info',{path:card.path,response_mode:'full',...(selected?{...selected,revision:card.publication,known_hash:card.hash}:{})}),payload=native.payload;

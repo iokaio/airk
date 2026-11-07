@@ -119,7 +119,7 @@ fn numeric_max(key: &str) -> u64 {
     match key {
         "limit" => 100,
         "hops" => 3,
-        "before" | "after" => 40,
+        "before" | "after" => airk_core::native_reads::CONTEXT_RADIUS_MAX as u64,
         "line" | "start_line" | "end_line" => u64::from(u32::MAX),
         _ => 65536,
     }
@@ -1133,7 +1133,15 @@ pub fn parse_text(text: &str) -> Result<(Vec<Step>, Vec<String>)> {
                         .context("unknown command option")?
                 }
             };
-            let schema = argument_schema(key);
+            let schema = if matches!(
+                tool,
+                "symbols" | "imports" | "code_facts" | "document_facts"
+            ) && matches!(key, "kind" | "language")
+            {
+                json!({"type":"string","minLength":1,"maxLength":128,"description":"Exact native or retained producer label; 1..128 UTF-8 bytes. JSON maxLength is a character bound; native validation enforces the byte bound. Labels are open, not an enum."})
+            } else {
+                argument_schema(key)
+            };
             if schema["type"] == "boolean"
                 || schema["type"]
                     .as_array()
@@ -1389,7 +1397,9 @@ pub fn operation_catalog() -> Value {
     let operations:Map<String,Value>=TOOLS.iter().map(|tool|{
         if *tool == "query_scope" {return (tool.to_string(),airk_core::combined_reads::query_scope::schema());}
         let properties:Map<String,Value>=fields(tool).iter().copied().chain(std::iter::once("reply_detail")).chain(verification_fields(tool).iter().copied()).map(|key|{
-            let schema = argument_schema(key);
+            let schema = if matches!(*tool,"symbols"|"imports"|"code_facts"|"document_facts") && matches!(key,"kind"|"language") {
+                json!({"type":"string","minLength":1,"maxLength":128,"description":"Exact native or retained producer label; 1..128 UTF-8 bytes. JSON maxLength is a character bound; native validation enforces the byte bound. Labels are open, not an enum."})
+            } else { argument_schema(key) };
             (key.to_string(),schema)
         }).collect();
         let required:Vec<&str>=match *tool {"search"=>vec!["query"],"references"=>vec!["name"],"read_file"=>vec!["path","start_line","end_line"],"file_info"|"outline"|"context"=>vec!["path"],"relationships"=>vec!["symbol"],_=>vec![]};
@@ -1424,9 +1434,12 @@ fn argument_schema(key: &str) -> Value {
             values.push(Value::Null);
             json!({"type":["string","null"],"enum":values,"description":"Lean/Rich projection of available evidence; independent of retention. Omit to preserve Workbench defaults. Conflicting compact flags reject. Search full_chunks is independent."})
         }
-        "limit" | "max_bytes" | "start_line" | "end_line" | "line" | "before" | "after"
-        | "hops" => {
-            json!({"type":"integer","minimum":if matches!(key,"before"|"after"){0}else{1},"maximum":numeric_max(key)})
+        "before" | "after" => json!({
+            "type":"integer","minimum":0,"maximum":airk_core::native_reads::CONTEXT_RADIUS_MAX,
+            "default":airk_core::native_reads::CONTEXT_RADIUS_DEFAULT
+        }),
+        "limit" | "max_bytes" | "start_line" | "end_line" | "line" | "hops" => {
+            json!({"type":"integer","minimum":1,"maximum":numeric_max(key)})
         }
         "compact" | "full_chunks" => json!({"type":["boolean","null"]}),
         "include_count"
@@ -2777,9 +2790,7 @@ impl Kernel {
             json!({"revision":revision,"known_hash":args.get("known_hash")}),
         )?;
         let mut value = match tool {
-            "query_scope" => airk_core::combined_reads::query_scope::legacy_body(
-                &serde_json::from_value(json!(args))?,
-            )?,
+            "query_scope" => self.query_scope(&serde_json::from_value(json!(args))?)?,
             "status" => self.status_summary()?,
             "diagnostics" => {
                 let mut value = serde_json::to_value(self.status()?)?;
@@ -2901,8 +2912,16 @@ impl Kernel {
             "context" => serde_json::to_value(self.context_conditional(
                 string(args, "path")?,
                 number(args, "line", 1),
-                number(args, "before", 3).min(40),
-                number(args, "after", 3).min(40),
+                number(
+                    args,
+                    "before",
+                    airk_core::native_reads::CONTEXT_RADIUS_DEFAULT,
+                ),
+                number(
+                    args,
+                    "after",
+                    airk_core::native_reads::CONTEXT_RADIUS_DEFAULT,
+                ),
                 max,
                 &evidence,
             )?)?,

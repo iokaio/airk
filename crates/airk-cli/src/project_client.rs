@@ -254,7 +254,7 @@ impl Connection {
             response if selection.is_some() => {
                 let retryable = matches!(&response, ControlResponse::Failure { code } if matches!(code.as_str(),
                     "broker_busy" | "project_starting_or_unavailable" | "project_unavailable_or_busy"
-                    | "previous_workers_draining" | "catalog_revision_changed" | "catalog_clock_pending"));
+                    | "previous_workers_draining" | "catalog_revision_changed" | "catalog_clock_pending" | "catalog_connection_busy" | "project_capacity_busy" | "project_restart_backoff"));
                 return Err(ScopedConnectionRefused {
                     response: serde_json::to_value(response)?,
                     retryable,
@@ -303,7 +303,7 @@ impl Connection {
         if selection.is_some() && !matches!(&response, ControlResponse::Connection { .. }) {
             let retryable = matches!(&response, ControlResponse::Failure { code } if matches!(code.as_str(),
                 "broker_busy" | "project_starting_or_unavailable" | "project_unavailable_or_busy"
-                | "previous_workers_draining" | "catalog_revision_changed" | "catalog_clock_pending"));
+                | "previous_workers_draining" | "catalog_revision_changed" | "catalog_clock_pending" | "catalog_connection_busy" | "project_capacity_busy" | "project_restart_backoff"));
             return Err(ScopedConnectionRefused {
                 response: serde_json::to_value(response)?,
                 retryable,
@@ -329,6 +329,9 @@ impl Connection {
                         | "previous_workers_draining"
                         | "catalog_revision_changed"
                         | "catalog_clock_pending"
+                        | "catalog_connection_busy"
+                        | "project_capacity_busy"
+                        | "project_restart_backoff"
                 ) =>
             {
                 return Err(RetrySetup("direct worker setup temporarily unavailable").into());

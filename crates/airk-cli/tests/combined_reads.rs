@@ -3,9 +3,14 @@
 //! component-format fixture. This is not Genesis or installer qualification.
 #[path = "common/read_retry.rs"]
 mod read_retry;
+#[path = "combined_reads/single_member_retry.rs"]
+mod single_member_retry;
 
 #[path = "combined_reads/permanent_trim.rs"]
 mod permanent_trim;
+
+#[path = "combined_reads/changes_verification.rs"]
+mod changes_verification;
 
 #[cfg(feature = "embedding-worker")]
 #[path = "combined_reads/reference_refresh.rs"]
@@ -1006,7 +1011,21 @@ impl McpSession {
             .arg(serde_json::to_string(selected)?)
             .arg("--service-runtime-dir")
             .arg(&f.control)
-            .arg("mcp")
+            .arg("mcp");
+        Self::start_command(f, command)
+    }
+    fn start_scoped(f: &Fixture, selected: &ScopedConnectRequest) -> Result<Self> {
+        let mut command = Command::new(&f.candidate);
+        command
+            .arg("--catalog-session")
+            .arg(serde_json::to_string(selected)?)
+            .arg("--service-runtime-dir")
+            .arg(&f.control)
+            .arg("mcp");
+        Self::start_command(f, command)
+    }
+    fn start_command(f: &Fixture, mut command: Command) -> Result<Self> {
+        command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::from(fs::File::create(
@@ -1441,6 +1460,21 @@ async fn all_native_read_families_keep_complete_results_through_cli_and_mcp() ->
             false,
         ),
         (
+            "airk_symbols",
+            json!({"language":"klingon","limit":4,"max_bytes":4096}),
+            false,
+        ),
+        (
+            "airk_code_facts",
+            json!({"kind":"bogus_kind","limit":4,"max_bytes":4096}),
+            false,
+        ),
+        (
+            "airk_document_facts",
+            json!({"kind":"bogus_kind","limit":4,"max_bytes":4096}),
+            false,
+        ),
+        (
             "airk_references",
             json!({"name":"boundaryneedle","limit":4,"max_bytes":4096}),
             false,
@@ -1481,6 +1515,11 @@ async fn all_native_read_families_keep_complete_results_through_cli_and_mcp() ->
         (
             "airk_relationships",
             json!({"symbol":"file:api/types.rs","direction":"outgoing","limit":4,"max_bytes":4096}),
+            true,
+        ),
+        (
+            "airk_relationships",
+            json!({"symbol":"file:api/types.rs","direction":"outgoing","limit":1,"max_bytes":4096}),
             true,
         ),
         (
@@ -2817,3 +2856,182 @@ fn comparison_normalizes_only_validated_member_verification_elapsed_windows() ->
 
 #[path = "combined_reads/profile_families.rs"]
 mod profile_families;
+
+#[tokio::test]
+async fn installed_single_index_scope_disclosure_matches_native_cli_mcp_and_workbench() -> Result<()>
+{
+    let f = Fixture::new(true)?;
+    let _service = f.start().await?;
+    let selected = ScopedConnectRequest {
+        schema: 1,
+        context_key: f.session.context_key,
+        namespace: f.session.namespace,
+        expected_catalog_revision: f.session.expected_catalog_revision,
+        grant_id: f.session.grant_id,
+        expected_grant_revision: f.session.expected_grant_revision,
+        index_id: f.indexes[0],
+        project_ids: vec![f.projects[0]],
+    };
+    let backend = airk_cli::project_client::scoped_tools(
+        f.control.clone(),
+        f.registrations[0].binding,
+        selected.clone(),
+    )?;
+    let mut mcp = McpSession::start_scoped(&f, &selected)?;
+    for (id, args) in (2200..).zip([
+        json!({"view":"projects"}),
+        json!({"view":"indexes","project_id":f.projects[0]}),
+        json!({"view":"sources","project_id":f.projects[0],"index_id":f.indexes[0]}),
+        json!({"view":"recommendations"}),
+    ]) {
+        let direct = native_read(backend.as_ref(), "airk_query_scope", &args).await?;
+        let canonical = body(&direct)?;
+        assert_eq!(canonical["grant"]["id"], json!(selected.grant_id));
+        assert_eq!(canonical["mode"], "frozen_single_index");
+        assert_eq!(
+            canonical["observed_selection"],
+            json!({"project_ids":selected.project_ids,"index_ids":[selected.index_id]})
+        );
+        let wire = mcp.call(id, "query_scope", args.clone())?;
+        assert_parity("installed scope MCP", &canonical, &body(&wire["result"])?)?;
+        for (tool, arguments) in [
+            ("airk_query_scope", args.clone()),
+            (
+                "airk_parse",
+                json!({"schema":"airk.parse.request/1",
+            "mode":"execute","verification":"off","plan":{"steps":[{"id":"scope","tool":"query_scope","args":args}]}}),
+            ),
+        ] {
+            let mut command = Command::new(&f.candidate);
+            command
+                .arg("--catalog-session")
+                .arg(serde_json::to_string(&selected)?)
+                .arg("--service-runtime-dir")
+                .arg(&f.control)
+                .args(["tools", "call", tool, "--args"])
+                .arg(arguments.to_string());
+            let output =
+                tokio::task::spawn_blocking(move || read_retry::output(&mut command)).await??;
+            ensure!(
+                output.status.success(),
+                "installed scope CLI refused: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let envelope: Value = serde_json::from_slice(&output.stdout)?;
+            let response = body(&envelope)?;
+            let actual = if tool == "airk_parse" {
+                response["steps"][0]["result"].clone()
+            } else {
+                response
+            };
+            assert_parity("installed scope CLI/Workbench", &canonical, &actual)?;
+        }
+    }
+    f.assert_sources_unchanged()?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn exposed_code_facts_preserve_retained_producer_kind_and_language_labels() -> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let root = owner.path().join("source");
+    fs::create_dir(&root)?;
+    let source = "pub struct ProducerRecord;\n";
+    fs::write(root.join("producer.rs"), source)?;
+    let kernel = airk_kernel::Kernel::open(&root, Some(owner.path().join("data")))?;
+    kernel.configure_vectors(false)?;
+    kernel.index()?;
+    let store = airk_store::FileStore::new(
+        kernel
+            .data_dir()
+            .join("collections-1.2")
+            .join(kernel.collection()),
+    );
+    let scope = store
+        .current_scope(kernel.root().to_str().unwrap(), kernel.collection())?
+        .context("current fixture scope")?;
+    let read = store.current_read(&scope)?;
+    let prior = read.artifact("producer.rs")?.context("retained fixture")?;
+    let configuration = read
+        .collection_state()?
+        .context("fixture collection configuration")?
+        .configuration;
+    let mut payload = store.load_extraction_payload(&prior)?;
+    let mut profile = prior
+        .retained
+        .as_ref()
+        .and_then(|retained| retained.profile.as_ref())
+        .context("fixture extraction profile")?
+        .clone();
+    drop(read);
+    ensure!(
+        !payload.facts.is_empty(),
+        "fixture native declaration missing"
+    );
+    for fact in &mut payload.facts {
+        fact.kind = "producer_marker".into();
+    }
+    profile.language = "producer_language".into();
+    let artifact = airk_core::binding::bind_payload(
+        &payload,
+        &profile,
+        airk_core::binding::ArtifactBinding {
+            path: &prior.path,
+            source_hash: prior.content_hash.parse()?,
+            source_bytes: prior.bytes,
+        },
+    )?;
+    let quota = airk_store::quota::Quota::for_store(&store)?;
+    let reservation = quota.reserve(kernel.collection(), 4 * 1024 * 1024)?;
+    let writer = store.lock()?;
+    let retained = store.retain_payload_with_budget_owned(
+        &writer,
+        &artifact,
+        &payload,
+        &profile,
+        Some(source.as_bytes()),
+        Some(&reservation),
+    )?;
+    airk_kernel::current::CurrentUpdater {
+        store: &store,
+        quota: &quota,
+        scope: &scope,
+        writer: &writer,
+        reservation: &reservation,
+        configuration: Some(&configuration),
+    }
+    .apply(
+        &[airk_store::current::ArtifactChange::Upsert(Box::new(
+            airk_store::current::CapturedInput::new(retained),
+        ))],
+        None,
+    )?;
+    drop(writer);
+    drop(reservation);
+    let args = json!({"kind":"producer_marker","language":"producer_language","compact":false,
+        "verification":"off","response_mode":"full","limit":10,"max_bytes":16384});
+    let mut tools = airk_mcp::local::LocalTools::new(kernel.clone()).await?;
+    let reply = tools
+        .call("airk_code_facts".into(), args.as_object().unwrap().clone())
+        .await?;
+    let actual: Value =
+        serde_json::from_str(&reply.content[0].as_text().context("MCP JSON body")?.text)?;
+    assert_ne!(reply.is_error, Some(true), "{actual}");
+    assert!(
+        actual["items"]
+            .as_array()
+            .is_some_and(|rows| !rows.is_empty()),
+        "{actual}"
+    );
+    assert!(
+        actual["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["kind"] == "producer_marker")
+    );
+    assert!(actual.get("filter_observations").is_none());
+    tools.close().await?;
+    assert_eq!(fs::read_to_string(root.join("producer.rs"))?, source);
+    Ok(())
+}

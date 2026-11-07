@@ -260,7 +260,7 @@ test('an unavailable registry never triggers automatic re-registration',async co
         assert.ok(f.calls.some(value=>value.includes('service_unavailable')));
     }finally{await f.close();}
 });
-for(const from of ['1.4.4','1.5.12','1.6.0']){
+for(const from of ['1.4.4','1.5.12','1.6.0','1.8.7','1.8.8']){
     const to=releaseVersion;
     test(`activation upgrades ${from} to ${to} before connecting and reopens quietly`,async context=>{
         const f=await serviceTestHost(context,{automatic:true,runtimeVersion:from,bundledVersion:to});
@@ -520,5 +520,41 @@ for(const change of ['size','mtime'] as const)test(`a same-version VSIX ${change
         assert.match(f.statusBar.text,/Reload to finish update/);
         assert.deepEqual(await f.api.getServerDefinitions(),[],'changed code cannot admit native MCP through the older interface');
         assert.equal(f.calls.includes('workbench.action.reloadWindow'),false,'reload remains an explicit user action');
+    }finally{await f.close();}
+});
+
+for(const asset of ['explorerWebview.js','explorerWebview.css','workbenchWebview.js','workbenchWebview.css'])test(`a same-version ${asset} replacement updates the open Explorer without refocusing`,async context=>{
+    const fs=await import('node:fs/promises');
+    const f=await serviceTestHost(context,{codeFile:true,automatic:true});
+    try{
+        await f.commands.get('airk.explorer.open')!();
+        const panel=f.panels.find(panel=>panel.viewType==='airk.explorer');assert.ok(panel);
+        await panel.send({v:1,type:'ready',requestId:'asset-ready'});
+        const hostFile=path.join(f.root,'out','serviceExtension.js'),before=await fs.stat(hostFile);
+        f.assetChanged();assert.equal(f.notices.length,0,'unchanged assets stay quiet');
+        await fs.writeFile(path.join(f.root,'out',asset),'// replacement UI with changed bytes\n');
+        f.assetChanged();f.assetCreated();
+        await new Promise(resolve=>setImmediate(resolve));
+        assert.equal((await fs.stat(hostFile)).mtimeMs,before.mtimeMs,'host code remains unchanged');
+        assert.equal(f.notices.length,1,'repeated asset events offer one reload');
+        assert.match(f.statusBar.text,/Reload to finish update/);
+        const state=panel.posted.filter((entry:any)=>entry.type==='state').at(-1)?.state;
+        assert.deepEqual(state.extensionUpdate,{runningVersion:'1.4.0',installedVersion:'1.4.0 (rebuilt)'});
+        assert.equal(f.panels.filter(panel=>panel.viewType==='airk.explorer').length,1,'the existing panel receives the update');
+        assert.equal(f.calls.includes('workbench.action.reloadWindow'),false,'replacement never reloads without a click');
+        assert.deepEqual(await f.api.getServerDefinitions(),[],'old host is fenced after UI replacement');
+    }finally{await f.close();}
+    assert.ok(f.assetWatchers.every(watcher=>watcher.disposed),'extension asset watchers are disposed');
+});
+
+test('an incomplete asset replacement waits for the complete payload before offering reload',async context=>{
+    const fs=await import('node:fs/promises');
+    const f=await serviceTestHost(context,{codeFile:true,automatic:true});
+    try{
+        const file=path.join(f.root,'out','explorerWebview.css'),original=await fs.readFile(file);
+        await fs.unlink(file);f.assetChanged();
+        assert.equal(f.notices.length,0,'temporarily missing assets do not label a rebuild');
+        await fs.writeFile(file,Buffer.concat([original,Buffer.from('/* replacement */')]));f.assetCreated();
+        assert.equal(f.notices.length,1,'creation of the complete replacement is observed');
     }finally{await f.close();}
 });

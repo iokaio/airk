@@ -717,10 +717,13 @@ impl StatusOwner {
             {
                 Ok(source_scope_superseded())
             }
-            Err(error) => {
-                Err(anyhow::Error::new(ObservationFailure(error))
-                    .context("status observation failed"))
-            }
+            Err(error) => match airk_mcp::response::typed_error_result(error.as_ref()) {
+                // Project the original typed cause before sharing hides its
+                // downcast identity. No accepted query is replayed.
+                Some(result) => Ok(serde_json::to_value(result)?),
+                None => Err(anyhow::Error::new(ObservationFailure(error))
+                    .context("status observation failed")),
+            },
         }
     }
     async fn materialize(
@@ -1289,6 +1292,52 @@ mod ownership_tests {
         assert!(matches!(*owner.state.lock().await, State::Closed));
         Ok(())
     }
+    #[tokio::test]
+    async fn shared_status_typed_admission_retains_retry_without_replaying_observer() -> Result<()>
+    {
+        let project = "ab".repeat(32).parse()?;
+        let owner = Arc::new(StatusOwner::default());
+        let key = Key {
+            project,
+            source: None,
+            expires: None,
+            args: serde_json::json!({}),
+        };
+        let (entered, started) = tokio::sync::oneshot::channel();
+        let (release, wait) = tokio::sync::oneshot::channel();
+        let first = owner.observe(key.clone(), None, |_| async move {
+            let _ = entered.send(());
+            let _ = wait.await;
+            Err(anyhow::Error::new(airk_store::quota::QuotaContention)
+                .context("private ledger admission"))
+        });
+        tokio::pin!(first);
+        tokio::select! {result=&mut first=>anyhow::bail!("premature result: {result:?}"),result=started=>{result?;}}
+        let second = owner.observe(key, None, |_| async {
+            panic!("duplicate typed-status producer")
+        });
+        tokio::pin!(second);
+        assert!(
+            std::future::poll_fn(|cx| std::task::Poll::Ready(second.as_mut().poll(cx)))
+                .await
+                .is_pending()
+        );
+        release
+            .send(())
+            .map_err(|_| anyhow::anyhow!("driver disappeared"))?;
+        let (first, second) = tokio::join!(first, second);
+        assert_eq!(first.as_ref().unwrap(), second.as_ref().unwrap());
+        let reply = first?;
+        let body: serde_json::Value =
+            serde_json::from_str(reply["content"][0]["text"].as_str().unwrap())?;
+        assert_eq!(body["code"], "selection_busy");
+        assert_eq!(body["retryable"], true);
+        assert_eq!(body["action"], "repeat_same_request");
+        assert!(!body.to_string().contains("private ledger"));
+        owner.shutdown().await?;
+        Ok(())
+    }
+
     #[tokio::test]
     async fn panic_fans_out_then_next_owned_observation_can_succeed() -> Result<()> {
         let project = "ab".repeat(32).parse()?;

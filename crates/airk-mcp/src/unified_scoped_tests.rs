@@ -47,6 +47,12 @@ impl RemoteTools for Native {
                         Some(json!({"failure":{"code":"grant_revoked","extra":{"complete":true}}})),
                     ));
                 }
+                6 => {
+                    return Err(self.kernel.observe_scoped_error(
+                        anyhow::anyhow!("native publication admission")
+                            .context(airk_kernel::CurrentGateContention::Applying),
+                    ));
+                }
                 _ => {}
             }
             if let Some(reply) = self.retained.lock().unwrap().clone() {
@@ -198,6 +204,49 @@ async fn selected_native_help_and_status_keep_actual_handler_scope_without_ui_en
     Ok(())
 }
 #[tokio::test]
+async fn selected_public_help_and_native_alias_preserve_typed_scope_receipts_without_replay()
+-> Result<()> {
+    let (_dir, unified, native, ui) = fixture()?;
+    native.mode.store(6, Ordering::SeqCst);
+    let arguments = json!({"tool":"search","response_mode":"full"});
+    let error = native
+        .call("airk_help".into(), arguments.as_object().unwrap().clone())
+        .await
+        .unwrap_err();
+    let expected = serde_json::to_value(crate::response::typed_error_result(&error).unwrap())?;
+    for name in ["help", "airk_help"] {
+        let before = native.calls.load(Ordering::SeqCst);
+        let actual = call(&unified, name, arguments.clone()).await?;
+        assert_eq!(actual, expected, "{name}");
+        assert_eq!(
+            native.calls.load(Ordering::SeqCst),
+            before + 1,
+            "no implicit retry"
+        );
+        let body = body(&actual).unwrap();
+        assert_eq!(body["code"], "publication_busy");
+        assert_eq!(body["action"], "repeat_same_request");
+        assert_eq!(
+            body["scope_observation"]["grant"]["id"],
+            json!(native.selection.grant_id)
+        );
+    }
+    native.mode.store(2, Ordering::SeqCst);
+    for name in ["help", "airk_help"] {
+        let before = native.calls.load(Ordering::SeqCst);
+        let actual = call(&unified, name, arguments.clone()).await?;
+        let body = body(&actual).unwrap();
+        assert_eq!(body["error"]["code"], "scoped_observation_unavailable");
+        assert_eq!(body["error"]["query_submitted"], Value::Null);
+        assert_eq!(body["error"]["query_replay_safe"], false);
+        assert!(!body.to_string().contains("private/path"));
+        assert_eq!(native.calls.load(Ordering::SeqCst), before + 1);
+    }
+    assert_eq!(ui.0.load(Ordering::SeqCst), 0);
+    Ok(())
+}
+
+#[tokio::test]
 async fn selected_public_help_tool_aliases_return_complete_successful_native_schema() -> Result<()>
 {
     let (_dir, unified, native, ui) = fixture()?;
@@ -258,6 +307,12 @@ async fn selected_status_setup_observation_failures_and_native_refusals_stay_dis
         let value = body(&reply).unwrap();
         assert_eq!(value["error"]["code"], code);
         assert_eq!(value["error"]["query_submitted"], submitted);
+        if submitted == false {
+            assert_eq!(value["error"]["retry_after_ms"], 100);
+            assert_eq!(value["error"]["fresh_brokerage_required"], true);
+        } else {
+            assert_eq!(value["error"]["query_replay_safe"], false);
+        }
         assert_eq!(value["requested_scope"]["confirmed"], false);
         assert_eq!(
             value["requested_scope"]["selection"],
@@ -272,5 +327,73 @@ async fn selected_status_setup_observation_failures_and_native_refusals_stay_dis
     let expected = native.call("airk_status".into(), Map::new()).await?;
     assert_eq!(call(&unified, "status", json!({})).await?, expected);
     assert_eq!(ui.0.load(Ordering::SeqCst), 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn selected_unified_query_scope_reaches_native_installed_authority() -> Result<()> {
+    let (_dir, unified, native, ui) = fixture()?;
+    let observed = serde_json::to_value(native.kernel.scope_observation())?;
+    let result = call(&unified, "query_scope", json!({"view":"projects"})).await?;
+    assert_ne!(result["isError"], true, "{result}");
+    let body: Value = serde_json::from_str(result["content"][0]["text"].as_str().unwrap())?;
+    assert_eq!(body["grant"], observed["grant"]);
+    assert_eq!(body["scope_observation"], observed);
+    assert_eq!(body["mode"], "frozen_single_index");
+    assert_eq!(native.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(ui.0.load(Ordering::SeqCst), 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn installed_scope_requires_unambiguous_transport_project_and_strips_it_before_native_validation()
+-> Result<()> {
+    let (_dir, _prior, native, ui) = fixture()?;
+    let binding = airk_core::service::ProjectRegistration::new(
+        native.kernel.root().to_str().unwrap().into(),
+        native.kernel.data_dir().to_str().unwrap().into(),
+        native.kernel.collection().into(),
+    )?
+    .binding
+    .to_string();
+    let unified = Unified::new(
+        vec![
+            Project {
+                binding: binding.clone(),
+                name: "first".into(),
+                collection: native.kernel.collection().into(),
+                backend: native.clone(),
+            },
+            Project {
+                binding: "ef".repeat(32),
+                name: "second".into(),
+                collection: native.kernel.collection().into(),
+                backend: native.clone(),
+            },
+        ],
+        None,
+        Some(ui),
+    )?;
+    let ambiguous = call(&unified, "query_scope", json!({"view":"projects"})).await?;
+    assert_eq!(ambiguous["isError"], true);
+    assert_eq!(native.calls.load(Ordering::SeqCst), 0);
+    let selected = call(
+        &unified,
+        "query_scope",
+        json!({"project":binding,"view":"projects"}),
+    )
+    .await?;
+    assert_ne!(selected["isError"], true, "{selected}");
+    let body: Value = serde_json::from_str(selected["content"][0]["text"].as_str().unwrap())?;
+    assert_eq!(body["mode"], "frozen_single_index");
+    assert_eq!(native.calls.load(Ordering::SeqCst), 1);
+    let invalid = call(
+        &unified,
+        "query_scope",
+        json!({"project":"aa".repeat(32),"view":"projects"}),
+    )
+    .await?;
+    assert_eq!(invalid["isError"], true);
+    assert_eq!(native.calls.load(Ordering::SeqCst), 1);
     Ok(())
 }

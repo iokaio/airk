@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 const {test}=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs'),path=require('node:path');
-const {formFillExpressions,privateEditorEnvironment,openUsageAdministration,retainUiDiagnostic}=require('../editor-ui.cjs');
+const {formFillExpressions,privateEditorEnvironment,openUsageAdministration,retainUiDiagnostic,beginUiDiagnostic,editorActionDeadline,editorRemainingBudget}=require('../editor-ui.cjs');
 const label='Optional index subset from this grant (1–32 IDs; blank includes all permitted members)';
 function fixture(specs){
     const writes=[],events=[];
@@ -88,4 +88,31 @@ test('oversized DOM diagnostic explicitly discloses unavailable observation with
     const samples=[];retainUiDiagnostic(samples,{text:'x'.repeat(65537)});
     assert.equal(samples[0].value.truncated,true);assert.ok(samples[0].value.observed_bytes>65536);assert.match(samples[0].value.observation_unavailable,/64KiB/);
     assert.ok(Buffer.byteLength(JSON.stringify(samples))<1024);
+});
+
+
+test('one UI action deadline precedes the driver receipt deadline and nested waits cannot renew it',()=>{
+    const started=10000,scenario=started+600000,deadline=editorActionDeadline(scenario,started);
+    assert.equal(deadline,started+120000);assert.ok(deadline<started+150000);
+    assert.equal(editorRemainingBudget(deadline,180000,started),120000);
+    assert.equal(editorRemainingBudget(deadline,180000,started+119000),1000,'nested catalog wait shares original deadline');
+    assert.throws(()=>editorRemainingBudget(deadline,180000,deadline),/deadline exhausted/);
+    assert.equal(editorActionDeadline(started+30000,started),started+30000,'scenario bound can only shorten an action');
+    assert.equal(editorRemainingBudget(deadline,2000,started),2000,'CDP call ceiling remains bounded');
+});
+
+test('action diagnostics preserve first/latest independent native and rendered samples within fixed memory bounds',()=>{
+    const actions=[],original={action:'page',sequence:1,native:[],rendered:[]};
+    const first=beginUiDiagnostic(actions,original);
+    for(let index=0;index<20;index++){
+        const entry=beginUiDiagnostic(actions,{action:'page',sequence:index+2,native:[],rendered:[]});
+        for(let sample=0;sample<10;sample++){
+            retainUiDiagnostic(entry.native,{generation:sample,retained_native:'x'.repeat(40000)});
+            retainUiDiagnostic(entry.rendered,{text:'y'.repeat(32768),notice:'actual local failure '+sample});
+        }
+        assert.equal(entry.native.length,4);assert.equal(entry.rendered.length,4);assert.equal(entry.native.at(-1).value.generation,9);
+    }
+    assert.equal(actions.length,8);assert.equal(actions[0],first);assert.equal(actions.at(-1).sequence,21);
+    assert.deepEqual(original.native,[]);assert.deepEqual(original.rendered,[]);
+    assert.ok(Buffer.byteLength(JSON.stringify(actions))<8*8*65536+8192);
 });

@@ -237,3 +237,300 @@ async fn symbols_matching_filters_and_reference_paging_reach_the_kernel() -> any
     );
     Ok(())
 }
+
+#[test]
+fn native_public_and_workbench_catalogs_share_evidence_limits() {
+    let native = local::tools();
+    let public = unified::tools();
+    let workbench = airk_kernel::workbench::operation_catalog();
+    for tool in [
+        "changes",
+        "search",
+        "read_file",
+        "list_files",
+        "outline",
+        "symbols",
+        "imports",
+        "document_facts",
+        "references",
+        "context",
+        "code_facts",
+        "relationships",
+    ] {
+        let native_name = format!("airk_{tool}");
+        for catalog in [&native, &public] {
+            let selected = catalog
+                .iter()
+                .find(|entry| entry.name == tool || entry.name == native_name)
+                .unwrap();
+            let schema = serde_json::to_value(&selected.input_schema).unwrap();
+            for (field, maximum) in [("limit", 100), ("max_bytes", 65536)] {
+                if schema["properties"].get(field).is_none() {
+                    continue;
+                }
+                assert_eq!(schema["properties"][field]["minimum"], 1, "{tool}.{field}");
+                assert_eq!(
+                    schema["properties"][field]["maximum"], maximum,
+                    "{tool}.{field}"
+                );
+                assert_eq!(
+                    workbench["operations"][tool]["properties"][field]["maximum"], maximum,
+                    "Workbench {tool}.{field}"
+                );
+            }
+            if tool == "context" {
+                for field in ["before", "after"] {
+                    assert_eq!(schema["properties"][field]["minimum"], 0);
+                    assert_eq!(
+                        schema["properties"][field]["maximum"],
+                        airk_core::native_reads::CONTEXT_RADIUS_MAX
+                    );
+                    assert_eq!(
+                        schema["properties"][field]["maximum"],
+                        workbench["operations"][tool]["properties"][field]["maximum"]
+                    );
+                    assert_eq!(
+                        schema["properties"][field]["default"],
+                        airk_core::native_reads::CONTEXT_RADIUS_DEFAULT
+                    );
+                    assert_eq!(
+                        schema["properties"][field]["default"],
+                        workbench["operations"][tool]["properties"][field]["default"]
+                    );
+                }
+            }
+            if tool == "relationships" {
+                assert_eq!(schema["properties"]["hops"]["minimum"], 1);
+                assert_eq!(schema["properties"]["hops"]["maximum"], 3);
+                assert_eq!(
+                    schema["properties"]["direction"]["enum"],
+                    json!(["incoming", "outgoing"])
+                );
+                assert_eq!(
+                    schema["properties"]["direction"]["enum"],
+                    workbench["operations"][tool]["properties"]["direction"]["enum"]
+                );
+            }
+            if matches!(
+                tool,
+                "symbols" | "imports" | "code_facts" | "document_facts"
+            ) {
+                for field in ["kind", "language"] {
+                    let Some(property) = schema["properties"].get(field) else {
+                        continue;
+                    };
+                    let spec = property
+                        .get("anyOf")
+                        .and_then(Value::as_array)
+                        .and_then(|variants| {
+                            variants
+                                .iter()
+                                .find(|variant| variant.get("minLength").is_some())
+                        })
+                        .unwrap_or(property);
+                    assert_eq!(spec["minLength"], 1, "{tool}.{field}");
+                    assert_eq!(spec["maxLength"], 128, "{tool}.{field}");
+                    assert!(
+                        spec.get("enum").is_none(),
+                        "retained producer labels remain open"
+                    );
+                    assert!(
+                        property["description"]
+                            .as_str()
+                            .unwrap()
+                            .contains("UTF-8 bytes")
+                    );
+                    assert_eq!(
+                        workbench["operations"][tool]["properties"][field]["minLength"],
+                        1
+                    );
+                    assert_eq!(
+                        workbench["operations"][tool]["properties"][field]["maxLength"],
+                        128
+                    );
+                }
+            }
+        }
+    }
+    // Help and parse keep their independent documented payload contracts.
+    let help = public.iter().find(|entry| entry.name == "help").unwrap();
+    let description = serde_json::to_value(&help.input_schema).unwrap()["properties"]["max_bytes"]
+        ["description"]
+        .clone();
+    assert!(description.as_str().unwrap().contains("4096..32768"));
+}
+
+#[tokio::test]
+async fn context_radius_100_reaches_workbench_and_native_handlers_without_clipping()
+-> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let state = tempfile::tempdir()?;
+    let text = (1..=240)
+        .map(|line| format!("line-{line:03}\n"))
+        .collect::<String>();
+    std::fs::write(root.path().join("lines.txt"), text)?;
+    let kernel = Kernel::open(root.path(), Some(state.path().into()))?;
+    kernel.configure_vectors(false)?;
+    kernel.index()?;
+    let server = AirkServer::new(kernel.clone());
+    fn stable(value: &mut Value) {
+        match value {
+            Value::Object(fields) => {
+                // Native transport identities and observation time are not evidence.
+                fields.remove("request_id");
+                fields.remove("observed_unix_ms");
+                for value in fields.values_mut() {
+                    stable(value);
+                }
+            }
+            Value::Array(values) => values.iter_mut().for_each(stable),
+            _ => {}
+        }
+    }
+    for selected_radius in [
+        None,
+        Some(0),
+        Some(40),
+        Some(airk_core::native_reads::CONTEXT_RADIUS_MAX),
+    ] {
+        let radius = selected_radius.unwrap_or(airk_core::native_reads::CONTEXT_RADIUS_DEFAULT);
+        let mut arguments =
+            json!({"path":"lines.txt","line":120,"max_bytes":65536,"verification":"off"});
+        if let Some(radius) = selected_radius {
+            arguments["before"] = json!(radius);
+            arguments["after"] = json!(radius);
+        }
+        let run = kernel.evidence_plan(serde_json::from_value(json!({
+            "schema":"airk.parse.request/1","mode":"execute","verification":"off",
+            "plan":{"steps":[{"id":"context","tool":"context","args":arguments}]}
+        }))?)?;
+        assert_eq!(run.status, "complete", "{run:?}");
+        assert_eq!(run.steps[0].status, "complete");
+        let expected = run.steps[0].result.clone().unwrap();
+        let mut args = run.steps[0].arguments.clone();
+        args["revision"] = json!(run.plan.publication);
+        args["response_mode"] = json!("full");
+        args["include_status"] = json!(true);
+        let mut actual = response_body(
+            server
+                .context(Parameters(serde_json::from_value(args)?))
+                .await,
+        )?;
+        // Reuse the transport decorator for its additional readiness observations;
+        // every canonical Workbench field remains in the full comparison.
+        let mut expected = response_body(
+            server
+                .execute_verified_response(
+                    UsageOperation::Context,
+                    ResponseArgs {
+                        response_mode: Some(response::ResponseMode::Full),
+                        include_status: true,
+                        reply_detail: None,
+                    },
+                    airk_core::verification::VerificationControls::off(),
+                    move |_| Ok(expected),
+                )
+                .await,
+        )?;
+        stable(&mut actual);
+        stable(&mut expected);
+        assert_eq!(actual, expected, "radius={radius}");
+        let encoded = serde_json::to_string(&actual)?;
+        assert!(encoded.contains(&format!("line-{:03}", 120 - radius)));
+        assert!(encoded.contains(&format!("line-{:03}", 120 + radius)));
+    }
+    let invalid = airk_core::native_reads::CONTEXT_RADIUS_MAX + 1;
+    assert!(kernel.evidence_plan(serde_json::from_value(json!({
+        "schema":"airk.parse.request/1","mode":"execute","plan":{"steps":[{"id":"context","tool":"context","args":{
+            "path":"lines.txt","line":120,"before":invalid,"after":0
+        }}]}
+    }))?).is_err());
+    let refused = server
+        .context(Parameters(serde_json::from_value(json!({
+            "path":"lines.txt","line":120,"before":invalid,"after":0,"verification":"off"
+        }))?))
+        .await;
+    assert!(refused.is_error.unwrap_or(false));
+    Ok(())
+}
+
+#[tokio::test]
+async fn annotated_evidence_budgets_reject_out_of_range_inputs_without_clamping()
+-> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let state = tempfile::tempdir()?;
+    std::fs::write(
+        root.path().join("one.rs"),
+        "pub struct Queue;\nfn leaf() {}\nfn entry() { leaf(); }\n",
+    )?;
+    let kernel = Kernel::open(root.path(), Some(state.path().into()))?;
+    kernel.configure_vectors(false)?;
+    kernel.index()?;
+    let catalog = local::tools();
+    let mut tools = local::LocalTools::new(kernel.clone()).await?;
+    for (tool, arguments) in [
+        ("search", json!({"query":"Queue","mode":"lexical"})),
+        (
+            "changes",
+            json!({"selectors":[{"kind":"path","path":"one.rs"}]}),
+        ),
+        (
+            "read_file",
+            json!({"path":"one.rs","start_line":1,"end_line":1}),
+        ),
+        ("list_files", json!({})),
+        ("outline", json!({"path":"one.rs"})),
+        ("symbols", json!({"name":"Queue"})),
+        ("imports", json!({"name":"Queue"})),
+        ("code_facts", json!({"name":"Queue"})),
+        ("document_facts", json!({"name":"Queue"})),
+        ("references", json!({"name":"Queue"})),
+        ("context", json!({"path":"one.rs","line":1})),
+        (
+            "relationships",
+            json!({"symbol":"leaf","direction":"incoming"}),
+        ),
+    ] {
+        let name = format!("airk_{tool}");
+        let schema = serde_json::to_value(
+            &catalog
+                .iter()
+                .find(|entry| entry.name == name)
+                .unwrap()
+                .input_schema,
+        )?;
+        for (field, invalid) in [
+            ("limit", 0),
+            ("limit", 101),
+            ("max_bytes", 0),
+            ("max_bytes", 65537),
+        ] {
+            if schema["properties"].get(field).is_none() {
+                continue;
+            }
+            let mut arguments = arguments.clone();
+            arguments[field] = json!(invalid);
+            arguments["verification"] = json!("off");
+            let result = tools
+                .call(name.clone(), arguments.as_object().unwrap().clone())
+                .await?;
+            assert!(
+                result.is_error.unwrap_or(false),
+                "{tool}.{field}={invalid} was accepted: {result:?}"
+            );
+            let text = &result.content[0].as_text().unwrap().text;
+            assert!(text.contains(field), "{tool}.{field}={invalid}: {text}");
+            assert!(
+                kernel
+                    .evidence_plan(serde_json::from_value(json!({
+                        "schema":"airk.parse.request/1","mode":"execute",
+                        "plan":{"steps":[{"id":"invalid","tool":tool,"args":arguments}]}
+                    }))?)
+                    .is_err(),
+                "Workbench {tool}.{field}={invalid} was accepted"
+            );
+        }
+    }
+    tools.close().await?;
+    Ok(())
+}

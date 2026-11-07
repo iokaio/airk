@@ -6,6 +6,7 @@ use super::{
     postings::Lookup,
 };
 use crate::FileStore;
+use airk_core::code::{RelationshipBounds, RelationshipTruncationReason as Stop};
 use airk_core::{Artifact, EvidenceBasis, RelationshipHit, RelationshipQuery};
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
@@ -20,6 +21,9 @@ const MAX_NAVIGATION_EVIDENCE_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Debug, Serialize)]
 pub struct CurrentRelationships {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub truncation_reasons: Vec<Stop>,
+    pub bounds: RelationshipBounds,
     pub revision: CurrentToken,
     pub collection: String,
     pub relationships: Vec<RelationshipHit>,
@@ -27,6 +31,15 @@ pub struct CurrentRelationships {
     pub suggested_targets: Vec<airk_core::RelationshipTargetSuggestion>,
     pub truncated: bool,
     pub coverage: &'static str,
+}
+
+impl CurrentRelationships {
+    fn mark_truncated(&mut self, reason: Stop) {
+        self.truncated = true;
+        if !self.truncation_reasons.contains(&reason) {
+            self.truncation_reasons.push(reason);
+        }
+    }
 }
 
 pub(crate) fn visit_edges(
@@ -167,6 +180,7 @@ impl CurrentRead {
         store: &FileStore,
         query: &RelationshipQuery,
     ) -> Result<CurrentRelationships> {
+        query.validate_direction()?;
         airk_core::validate_budget(query.limit, query.max_bytes)?;
         ensure!(
             !query.symbol.is_empty()
@@ -189,6 +203,17 @@ impl CurrentRead {
             None
         };
         let mut response = CurrentRelationships {
+            truncation_reasons: Vec::new(),
+            bounds: RelationshipBounds {
+                max_results: query.limit,
+                max_record_bytes: query.max_bytes,
+                max_candidate_files: Some(MAX_FILES),
+                max_symbols: MAX_SYMBOLS,
+                max_retained_evidence_bytes: Some(MAX_EVIDENCE_BYTES),
+                max_navigation_evidence_bytes: Some(MAX_NAVIGATION_EVIDENCE_BYTES),
+                max_navigation_facts: Some(navigation::MAX_FACTS),
+                deadline_ms: None,
+            },
             revision: self.token()?,
             collection: self.head().scope.collection.clone(),
             relationships: Vec::new(),
@@ -208,7 +233,9 @@ impl CurrentRead {
         let mut work = self.resource_reference("analysis")?.map_or(0, |r| r.bytes);
         let mut remaining = query.max_bytes;
         let navigation = self.type_navigation(store, query, private, &mut files, &mut work)?;
-        response.truncated |= navigation.truncated;
+        if navigation.truncated {
+            response.mark_truncated(Stop::TypeNavigationIncomplete);
+        }
         for _ in 0..query.hops {
             let mut next = BTreeSet::new();
             for symbol in pending {
@@ -216,7 +243,12 @@ impl CurrentRead {
                     continue;
                 }
                 if visited.len() == MAX_SYMBOLS || files == MAX_FILES {
-                    response.truncated = true;
+                    if visited.len() == MAX_SYMBOLS {
+                        response.mark_truncated(Stop::Symbols);
+                    }
+                    if files == MAX_FILES {
+                        response.mark_truncated(Stop::CandidateFiles);
+                    }
                     self.token()?;
                     return Ok(response);
                 }
@@ -228,7 +260,9 @@ impl CurrentRead {
                 };
                 let page =
                     self.lookup_paths(lookup, &query.path_prefix, None, MAX_FILES - files)?;
-                response.truncated |= page.next_after.is_some();
+                if page.next_after.is_some() {
+                    response.mark_truncated(Stop::CandidateFiles);
+                }
                 let mut paths = page.paths;
                 if symbol == query.symbol && !navigation.path.is_empty() {
                     paths.push(navigation.path.clone());
@@ -266,7 +300,7 @@ impl CurrentRead {
                 paths.dedup();
                 if paths.len() > MAX_FILES - files {
                     paths.truncate(MAX_FILES - files);
-                    response.truncated = true;
+                    response.mark_truncated(Stop::CandidateFiles);
                 }
                 for path in paths {
                     let compact = self
@@ -301,7 +335,7 @@ impl CurrentRead {
                             .context("current relationship evidence size overflow")?
                     };
                     if bytes > MAX_EVIDENCE_BYTES.saturating_sub(work) {
-                        response.truncated = true;
+                        response.mark_truncated(Stop::RetainedEvidenceBytes);
                         self.token()?;
                         return Ok(response);
                     }
@@ -431,7 +465,12 @@ impl CurrentRead {
                         }
                         if response.relationships.len() == query.limit || encoded.len() > remaining
                         {
-                            response.truncated = true;
+                            if response.relationships.len() == query.limit {
+                                response.mark_truncated(Stop::ResultLimit);
+                            }
+                            if encoded.len() > remaining {
+                                response.mark_truncated(Stop::ReplyBytes);
+                            }
                             self.token()?;
                             return Ok(response);
                         }
@@ -440,7 +479,7 @@ impl CurrentRead {
                         let endpoint = if incoming { &edge.source } else { &edge.target };
                         if !visited.contains(endpoint) && !next.contains(endpoint) {
                             if next.len() == MAX_SYMBOLS {
-                                response.truncated = true;
+                                response.mark_truncated(Stop::Symbols);
                             } else {
                                 next.insert(endpoint.clone());
                             }
@@ -465,7 +504,12 @@ impl CurrentRead {
             if response.relationships.len() + response.suggested_targets.len() == query.limit
                 || bytes > remaining
             {
-                response.truncated = true;
+                if response.relationships.len() + response.suggested_targets.len() == query.limit {
+                    response.mark_truncated(Stop::ResultLimit);
+                }
+                if bytes > remaining {
+                    response.mark_truncated(Stop::ReplyBytes);
+                }
                 break;
             }
             remaining -= bytes;

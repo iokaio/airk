@@ -114,3 +114,71 @@ fn multi_root_coverage_shares_budgets_and_failed_scan_retains_previous_evidence(
     );
     Ok(())
 }
+
+#[test]
+fn current_changes_verification_keeps_aliased_and_primary_source_locations_distinct() -> Result<()>
+{
+    use airk_core::{
+        changes::{ChangesRequest, RememberedSelector},
+        verification::{SourceCheckState, VerificationBudget, VerificationMode},
+    };
+    let primary = tempfile::tempdir()?;
+    let documents = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    fs::write(
+        primary.path().join("requirements.md"),
+        "Primary interface\n",
+    )?;
+    let document = "REQ-42: The external document retains its original source.\n";
+    fs::write(documents.path().join("requirements.md"), document)?;
+    let kernel =
+        Kernel::open_collection(primary.path(), Some(data.path().into()), "changes-roots")?;
+    kernel.configure_vectors(false)?;
+    kernel.add_root("docs", documents.path())?;
+    kernel.index()?;
+    let request = ChangesRequest {
+        selectors: vec![RememberedSelector::Path {
+            path: "@docs/requirements.md".into(),
+        }],
+        ..Default::default()
+    };
+    let value = serde_json::to_value(kernel.changes(&request)?)?;
+    let budget = VerificationBudget {
+        mode: VerificationMode::Require,
+        max_sources: 4,
+        max_bytes: 4096,
+        deadline_ms: 2000,
+    };
+    let receipt = kernel.verify_returned_sources(&value, budget)?;
+    assert_eq!(receipt.status, "verified", "{receipt:?}");
+    assert_eq!(receipt.counts.references, Some(1));
+    assert_eq!(receipt.counts.bytes_read, document.len() as u64);
+    assert_eq!(receipt.sources.len(), 1);
+    let checked = &receipt.sources[0];
+    assert_eq!(checked.path.as_deref(), Some("@docs/requirements.md"));
+    assert_eq!(
+        checked.source_relative_path.as_deref(),
+        Some("requirements.md")
+    );
+    assert_eq!(
+        checked.original_root.as_deref(),
+        Some(documents.path().canonicalize()?.to_str().unwrap())
+    );
+    assert_eq!(checked.state, SourceCheckState::Matched);
+    assert_eq!(checked.expected_hash, checked.observed_hash);
+    let mut forged = value;
+    forged["validations"][0]["resolved_path"] = serde_json::json!("requirements.md");
+    let refused = kernel.verify_returned_sources(&forged, budget)?;
+    assert_eq!(refused.status, "requirements_unmet");
+    assert_eq!(refused.counts.bytes_read, 0);
+    assert_eq!(refused.sources[0].state, SourceCheckState::Unsupported);
+    assert_eq!(
+        fs::read_to_string(documents.path().join("requirements.md"))?,
+        document
+    );
+    assert_eq!(
+        fs::read_to_string(primary.path().join("requirements.md"))?,
+        "Primary interface\n"
+    );
+    Ok(())
+}

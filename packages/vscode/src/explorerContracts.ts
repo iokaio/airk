@@ -1,5 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /** Complete host-captured native data; browser-safe DTO with no native client dependency. */
+export interface RuntimeUpgradeProgress {
+    readonly fromVersion: string;
+    readonly toVersion: string;
+    readonly stage: 'checking' | 'staging' | 'draining' | 'activating' | 'reconnecting' | 'ready' | 'failed';
+    readonly message: string;
+    readonly startedAt: number;
+    readonly updatedAt: number;
+}
 export interface CapturedLifecycleResponse {
     capturedAt:number; qualification:'historical_native_lifecycle_response';
     runtime:{installDir:string;controlDir:string;runtimeSha256:string}; namespace:string;
@@ -119,6 +127,7 @@ export interface ExplorerViewState {
     readonly extensionUpdate?: { readonly runningVersion: string; readonly installedVersion: string };
     readonly connectionCheck?: ConnectionCheck;
     readonly startup?: { readonly message: string; readonly startedAt: number; readonly failed?: boolean };
+    readonly runtimeUpgrade?: RuntimeUpgradeProgress;
     readonly trusted: boolean;
     /** Actual editor trust, separate from disposed/revoked client authority. Absent is unknown. */
     readonly workspaceTrusted?: boolean;
@@ -657,6 +666,10 @@ export const WEBVIEW_MESSAGES = {
     'indexing.create': { name: { kind: 'string', min: 1, max: 256 }, generation: { kind: 'int', min: 0, max: Number.MAX_SAFE_INTEGER } },
     'indexing.apply': { generation: { kind: 'int', min: 0, max: Number.MAX_SAFE_INTEGER } },
     'indexing.reconcile': {},
+    'indexing.scope.read': { kind:{kind:'enum',values:['indexes','projects'],optional:true},next:{kind:'bool',optional:true} },
+    'indexing.scope.apply': { selection:{kind:'json',max:4096},generation:{kind:'int',min:0,max:Number.MAX_SAFE_INTEGER} },
+    'indexing.set.read': { id:{kind:'string',max:36} },
+    'indexing.set.save': { selection:{kind:'json',max:8192},generation:{kind:'int',min:0,max:Number.MAX_SAFE_INTEGER} },
     'indexing.context.read': {},
     'indexing.context.preview': { selection: { kind:'json', max:4096 }, generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
     'indexing.context.delete': { generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
@@ -746,7 +759,7 @@ export type WebviewMessageType = keyof typeof WEBVIEW_MESSAGES;
  * A lost acknowledgement never authorizes replay of native or local writes.
  * Draft/preview and receipt reads stay reads even when they retain observations. */
 const UNCERTAIN_REQUESTS: ReadonlySet<WebviewMessageType> = new Set<WebviewMessageType>([
-    'indexing.apply', 'indexing.export', 'indexing.grant.use',
+    'indexing.apply', 'indexing.export', 'indexing.grant.use', 'indexing.scope.apply', 'indexing.set.save',
     'indexing.setup.apply', 'indexing.setup.resume', 'indexing.source.resolve',
     'indexing.policy.resume', 'indexing.split.apply', 'indexing.split.recover',
     'indexing.retirement.stopTracking', 'indexing.recommendations.use', 'indexing.recommendations.copy',

@@ -348,3 +348,32 @@ fn interactive_tools_show_help_and_recover_from_invalid_requests() {
     );
     assert!(String::from_utf8_lossy(&output.stderr).contains("JSON object"));
 }
+
+#[test]
+fn native_help_cli_reports_detail_selector_field_without_opening_a_workspace() {
+    let base = tempfile::tempdir().unwrap();
+    let root = base.path().join("missing root");
+    let state = base.path().join("missing state");
+    let args = json!({"topic":"workbench","detail":"full"});
+    let output = command(&root, &state)
+        .args(["tools", "call", "airk_help", "--args", &args.to_string()])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        result,
+        serde_json::to_value(airk_mcp::help::call(args)).unwrap()
+    );
+    let value: Value =
+        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(value["error"]["code"], "invalid_help_arguments");
+    assert_eq!(value["error"]["field"], "detail");
+    assert!(
+        value["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("query or topic_id")
+    );
+    assert!(!root.exists() && !state.exists());
+}

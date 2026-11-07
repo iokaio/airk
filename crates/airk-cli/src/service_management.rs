@@ -771,6 +771,7 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
             )?
             .descriptor()
             .clone(),
+            capabilities: airk_store::service::registry::catalog::capabilities(),
         },
         ControlMethod::CatalogGrantDraft {
             context_key,
@@ -1586,16 +1587,22 @@ impl Management {
     ) -> Result<crate::project_supervisor::ScopedConnectionDelivery> {
         let (sender, receiver) = oneshot::channel();
         self.pending.fetch_add(1, Ordering::AcqRel);
-        if self.sender.as_ref().is_none_or(|queue| {
-            queue
-                .try_send(Envelope::Request(
-                    Box::new(method),
-                    ManagementReply::Scoped(sender),
-                ))
-                .is_err()
-        }) {
-            self.pending.fetch_sub(1, Ordering::AcqRel);
-            anyhow::bail!("catalog_connection_busy");
+        let sent = self.sender.as_ref().map(|queue| {
+            queue.try_send(Envelope::Request(
+                Box::new(method),
+                ManagementReply::Scoped(sender),
+            ))
+        });
+        match sent {
+            Some(Ok(())) => {}
+            Some(Err(std::sync::mpsc::TrySendError::Full(_))) => {
+                self.pending.fetch_sub(1, Ordering::AcqRel);
+                return Err(crate::project_supervisor::ConnectionSetupPending::Queue.into());
+            }
+            _ => {
+                self.pending.fetch_sub(1, Ordering::AcqRel);
+                anyhow::bail!("catalog_connection_owner_closed");
+            }
         }
         tokio::time::timeout(Duration::from_secs(15), receiver)
             .await
@@ -1624,6 +1631,37 @@ mod tests {
         service::ProjectRegistration,
         service_console::{MAX_PAGE_BYTES, ObservationKind},
     };
+    #[tokio::test]
+    async fn actual_connection_queue_distinguishes_full_from_closed_before_acceptance() -> Result<()>
+    {
+        let (sender, receiver) = sync_channel(0);
+        let owner = Management {
+            sender: Some(Arc::new(sender)),
+            thread: None,
+            pending: Arc::new(AtomicUsize::new(0)),
+            plans: Arc::new(AtomicBool::new(false)),
+            missing: Arc::new(AtomicUsize::new(0)),
+        };
+        let request = || ControlMethod::Connect {
+            project: airk_core::identity::Sha256Digest::from_bytes([3; 32]),
+        };
+        let full = owner
+            .request_connection(request())
+            .await
+            .err()
+            .expect("full queue must reject");
+        assert!(full.is::<crate::project_supervisor::ConnectionSetupPending>());
+        assert_eq!(owner.pending.load(Ordering::Acquire), 0);
+        drop(receiver);
+        let closed = owner
+            .request_connection(request())
+            .await
+            .err()
+            .expect("closed queue must reject");
+        assert!(!closed.is::<crate::project_supervisor::ConnectionSetupPending>());
+        assert_eq!(owner.pending.load(Ordering::Acquire), 0);
+        Ok(())
+    }
     #[test]
     fn catalog_reads_do_not_activate_legacy_registry() -> Result<()> {
         use airk_core::catalog_management::{CatalogKind, CatalogPageRequest, MAX_PAGE_BYTES};

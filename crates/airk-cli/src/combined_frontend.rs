@@ -639,7 +639,7 @@ impl Backend {
     ) -> Result<Value> {
         args.remove("response_mode");
         args.remove("include_status");
-        let request: airk_core::workbench::Request = serde_json::from_value(Value::Object(args))?;
+        let request = airk_core::workbench::decode_request(Value::Object(args))?;
         let seconds = request
             .budgets
             .as_ref()

@@ -49,7 +49,7 @@ export function toolDefinitions(index: HelpIndex): object[] {
         airk_explorer_help_get: {
             description: 'Read one AIRK Explorer help topic by id: where it is in the UI, ordered steps, applicability for this installed version and related airk_help topics on AIRK Retrieval.',
             inputSchema: { type: 'object', additionalProperties: false, required: ['topic_id'], properties: {
-                topic_id: { type: 'string', pattern: TOPIC_ID },
+                topic_id: { type: 'string', pattern: TOPIC_ID, description: 'Exact topic_id returned by help search, for example explorer.code.symbols or role-developer. A bare area name is not a topic selector.' },
                 detail: { type: 'string', enum: DETAILS, default: 'full' },
             } }, annotations: READ_ONLY,
         },
@@ -79,7 +79,7 @@ export function toolDefinitions(index: HelpIndex): object[] {
                 template_id: { type: 'string', pattern: '^airk\\.core/[a-z][a-z0-9-]*$' }, objective: { type: 'string', maxLength: 4000 },
                 parameters: { type: 'object', additionalProperties: { type: 'string', maxLength: 512 }, maxProperties: 8 }, path_prefix: { type: 'string', maxLength: 1024 },
                 steps: { type: 'array', maxItems: 24, items: { type: 'object', additionalProperties: false, required: ['id', 'op', 'args'], properties: {
-                    id: { type: 'string', pattern: '^[a-z][a-z0-9-]{0,31}$' }, op: { type: 'string', enum: Object.keys(OPERATORS) }, args: { type: 'object' }, input: { type: 'string' } } } },
+                    id: { type: 'string', pattern: '^[a-z][a-z0-9-]{0,31}$' }, op: { type: 'string', enum: Object.entries(OPERATORS).filter(([, spec]) => !('unavailable' in spec)).map(([id]) => id) }, args: { type: 'object' }, input: { type: 'string' } } } },
                 evidence_budget_bytes: { type: 'integer', minimum: 1024, maximum: 262144 } } }, annotations: DRAFT,
         },
         airk_explorer_suggest_plan: {
@@ -166,6 +166,13 @@ export class AssistanceTools {
     }
 
     async call(name: string, args: unknown, client: Client = { name: 'unknown client', version: '' }): Promise<ToolResult> {
+        const result = await this.dispatch(name, args, client);
+        // The native adapter consumes this same result directly rather than the
+        // standalone MCP envelope. Preserve a useful diagnostic on both paths.
+        return result.ok || result.detail !== undefined ? result : { ...result, detail: EXPLORER_ERRORS[result.code].message };
+    }
+
+    private async dispatch(name: string, args: unknown, client: Client): Promise<ToolResult> {
         if (Object.hasOwn(DRAFT_KINDS, name)) { return this.suggest(DRAFT_KINDS[name], args, client); }
         switch (name) {
         case 'airk_explorer_help_search': return this.search(args);
@@ -205,7 +212,7 @@ export class AssistanceTools {
         const input = parse(args, { template_id: { kind: 'string', max: 80, pattern: /^airk\.core\/[a-z][a-z0-9-]*$/ } }, ['template_id']);
         if (typeof input === 'string') { return { ok: false, code: 'INVALID_SCHEMA', detail: input }; }
         const entry = CORE_PACK.find(item => item.strategy.id === input.template_id);
-        if (!entry) { return { ok: false, code: 'CAPABILITY_DISABLED', detail: 'Unknown template; use airk_explorer_templates_list.' }; }
+        if (!entry) { return { ok: false, code: 'TEMPLATE_UNKNOWN', detail: 'No installed core template has that template_id; list the installed templates first.' }; }
         return { ok: true, value: { ...this.identity(), ...entry, operators: Object.fromEntries([...new Set(entry.strategy.steps.map(step => step.op))].map(op => [op, OPERATORS[op]])) } };
     }
     private async validate(args: unknown): Promise<ToolResult> {
@@ -251,7 +258,7 @@ export class AssistanceTools {
         const input = parse(args, { topic_id: { kind: 'string', max: 64, pattern: new RegExp(TOPIC_ID) }, detail: { kind: 'string', max: 16, values: DETAILS } }, ['topic_id']);
         if (typeof input === 'string') { return { ok: false, code: 'INVALID_SCHEMA', detail: input }; }
         const topic = this.index.topic(input.topic_id as string);
-        if (!topic) { return { ok: false, code: 'HELP_TOPIC_UNKNOWN' }; }
+        if (!topic) { return { ok: false, code: 'HELP_TOPIC_UNKNOWN', detail: 'No help topic has that topic_id. Search bundled help first and use an exact returned topic_id, such as explorer.code.symbols or role-developer.' }; }
         const detail = (input.detail as Detail | undefined) ?? 'full';
         const shipped = topic.applicability === 'implemented';
         return { ok: true, value: {

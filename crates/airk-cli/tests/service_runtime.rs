@@ -1601,13 +1601,47 @@ fn probe_stdio_bridge(
             .iter()
             .find(|tool| tool["name"] == scope_name)
             .context("query scope metadata tool missing")?;
+        let canonical_catalog = if unified {
+            airk_mcp::unified::tools()
+        } else {
+            airk_mcp::local::tools()
+        };
+        let canonical = canonical_catalog
+            .iter()
+            .find(|tool| tool.name == scope_name)
+            .context("canonical query scope metadata tool missing")?;
+        let canonical = serde_json::to_value(canonical)?;
         ensure!(
             scope["annotations"]["readOnlyHint"] == true
                 && scope["inputSchema"]["additionalProperties"] == false
-                && scope["inputSchema"]["properties"]
-                    == airk_core::combined_reads::query_scope::schema()["properties"],
+                && scope["inputSchema"] == canonical["inputSchema"],
             "bridge query scope discovery diverged from its closed read-only metadata contract"
         );
+        let mut expected_schema = airk_core::combined_reads::query_scope::schema();
+        expected_schema["$schema"] =
+            serde_json::json!("https://json-schema.org/draft/2020-12/schema");
+        if unified {
+            let project = &scope["inputSchema"]["properties"]["project"];
+            ensure!(
+                project["type"] == "string"
+                    && project["pattern"] == "^[0-9a-f]{64}$"
+                    && !scope["inputSchema"]["required"]
+                        .as_array()
+                        .is_some_and(|fields| fields.iter().any(|field| field == "project")),
+                "public query scope must expose only an optional configured transport binding"
+            );
+            expected_schema["properties"]["project"] = project.clone();
+        }
+        ensure!(
+            scope["inputSchema"] == expected_schema,
+            "query scope must preserve the complete native schema plus only its public transport binding"
+        );
+        for field in ["project_ids", "index_ids", "verification", "response_mode"] {
+            ensure!(
+                scope["inputSchema"]["properties"].get(field).is_none(),
+                "query scope must not advertise {field}"
+            );
+        }
         if !unified {
             ensure!(
                 listed["result"]["tools"] == serde_json::to_value(airk_mcp::local::tools())?,

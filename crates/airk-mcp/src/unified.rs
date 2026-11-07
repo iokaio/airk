@@ -40,7 +40,7 @@ fn public_text(value: &mut Value) {
                 *text = text.replace(old, public);
             }
             *text = text
-                .replace("airk_explorer_ui_status", "status.explorer")
+                .replace("airk_explorer_ui_status", "diagnostics.explorer.ui")
                 .replace("airk_explorer_help_search", "help")
                 .replace("airk_explorer_help_get", "help")
                 .replace("airk_", "");
@@ -50,6 +50,92 @@ fn public_text(value: &mut Value) {
         _ => {}
     }
 }
+fn replace_diagnostic_tool(text: &str, old: &str, public: &str) -> String {
+    let identifier = |character: char| character.is_ascii_alphanumeric() || character == '_';
+    let mut result = String::with_capacity(text.len());
+    let mut cursor = 0;
+    for (start, _) in text.match_indices(old) {
+        let end = start + old.len();
+        if text[..start].chars().next_back().is_some_and(identifier)
+            || text[end..].chars().next().is_some_and(identifier)
+        {
+            continue;
+        }
+        result.push_str(&text[cursor..start]);
+        result.push_str(public);
+        cursor = end;
+    }
+    result.push_str(&text[cursor..]);
+    result
+}
+
+fn public_diagnostic_text(text: &str) -> String {
+    let mut text = text.to_owned();
+    for (public, old) in UI_NAMES {
+        text = replace_diagnostic_tool(&text, old, public);
+    }
+    for (old, public) in [
+        ("airk_explorer_ui_status", "diagnostics (explorer.ui)"),
+        ("airk_explorer_help_search", "help"),
+        ("airk_explorer_help_get", "help"),
+        ("airk_explorer_suggest_navigation", "suggest_view"),
+        ("airk_explorer_suggest_review", "suggest_view"),
+        ("airk_explorer_suggest_management", "suggest_view"),
+        ("airk_help", "help"),
+    ] {
+        text = replace_diagnostic_tool(&text, old, public);
+    }
+    text
+}
+
+/// Rewrite only adapter-authored diagnostics. Strategy operators, template
+/// bodies, shared handoff content, and evidence retain their exact bytes.
+fn public_ui_response(tool: &str, mut result: Value) -> Value {
+    let Some(mut value) = body(&result) else {
+        return result;
+    };
+    if let Some(error) = value.get_mut("error").and_then(Value::as_object_mut) {
+        for field in ["message", "detail"] {
+            if let Some(Value::String(text)) = error.get_mut(field) {
+                *text = public_diagnostic_text(text);
+            }
+        }
+    }
+    if value.get("valid") == Some(&Value::Bool(false))
+        && let Some(errors) = value.get_mut("errors").and_then(Value::as_array_mut)
+    {
+        for error in errors {
+            if let Some(Value::String(text)) = error.get_mut("message") {
+                *text = public_diagnostic_text(text);
+            }
+        }
+    }
+    if matches!(
+        tool,
+        "airk_explorer_help_get" | "airk_explorer_help_search" | "airk_explorer_ui_status"
+    ) && let Some(notes) = value.get_mut("notes").and_then(Value::as_array_mut)
+    {
+        for note in notes {
+            if let Value::String(text) = note {
+                *text = public_diagnostic_text(text);
+            }
+        }
+    }
+    // Both MCP representations must carry the same projected diagnostics.
+    if result.get("structuredContent").is_some() {
+        result["structuredContent"] = value.clone();
+    }
+    if let Some(Value::String(text)) = result
+        .get_mut("content")
+        .and_then(Value::as_array_mut)
+        .and_then(|items| items.first_mut())
+        .and_then(|item| item.get_mut("text"))
+    {
+        *text = value.to_string();
+    }
+    result
+}
+
 fn project_schema() -> Value {
     json!({"type":"string","pattern":"^[0-9a-f]{64}$","description":"Configured source scope from projects. Required when this connection has no single default; never follows the Explorer dropdown."})
 }
@@ -75,11 +161,7 @@ fn build_tools() -> Vec<Tool> {
             let mut value = serde_json::to_value(tool).expect("tool serialization");
             public_text(&mut value);
             let tool: Tool = serde_json::from_value(value).expect("public native tool");
-            if tool.name == "query_scope" {
-                tool
-            } else {
-                scoped(tool)
-            }
+            scoped(tool)
         })
         .collect();
     let legacy: Vec<Tool> = serde_json::from_str(include_str!("unified_explorer.json"))
@@ -126,12 +208,15 @@ fn build_tools() -> Vec<Tool> {
         .as_object_mut()
         .unwrap()
         .remove("project");
+    schema["properties"]["tool"]["description"] = json!(
+        "Exact public MCP tool name, for example search; returns its current description and input schema."
+    );
     for (key, property) in [
         ("query", json!({"type":"string","maxLength":256})),
         ("topic_id", json!({"type":"string","maxLength":64})),
         (
             "detail",
-            json!({"type":"string","enum":["summary","steps","full"]}),
+            json!({"type":"string","enum":["summary","steps","full"],"description":"Explorer guidance detail; valid only with query or topic_id. Omit for native topic, command and tool help."}),
         ),
         ("area", json!({"type":"string","maxLength":32})),
         ("limit", json!({"type":"integer","minimum":1,"maximum":20})),
@@ -316,9 +401,14 @@ impl Unified {
             );
         };
         let client = *self.client.lock().unwrap();
-        explorer.call(project, name.into(), args, client).await.unwrap_or_else(|_| failure("UI_UNAVAILABLE", "The verified Explorer adapter is unavailable. Check status and the installed extension; native retrieval remains available."))
+        let result = explorer.call(project, name.into(), args, client).await.unwrap_or_else(|_| failure("UI_UNAVAILABLE", "The verified Explorer adapter is unavailable. Check diagnostics and the installed extension; native retrieval remains available."));
+        public_ui_response(name, result)
     }
     async fn help(&self, mut args: Map<String, Value>) -> Value {
+        if let Err(error) = crate::help::validate_detail_selector(&args) {
+            return serde_json::to_value(crate::response::error_result(&error))
+                .expect("typed help argument refusal");
+        }
         let native_selector = !args.contains_key("query")
             && !args.contains_key("topic_id")
             && args.get("tool").is_none_or(|name| {
@@ -338,12 +428,17 @@ impl Unified {
                 }
                 return match backend.call("airk_help".into(), args).await {
                     Ok(result) => result,
-                    Err(_) => crate::remote::combined_observation_failure(
-                        backend
-                            .combined_selection()
-                            .expect("selected combined backend"),
-                        "combined_observation_unavailable",
-                    ),
+                    Err(error) => match crate::response::typed_error_result(&error) {
+                        Some(reply) => {
+                            serde_json::to_value(reply).expect("typed native help refusal")
+                        }
+                        None => crate::remote::combined_observation_failure(
+                            backend
+                                .combined_selection()
+                                .expect("selected combined backend"),
+                            "combined_observation_unavailable",
+                        ),
+                    },
                 };
             }
             let mut native_args = args.clone();
@@ -352,11 +447,16 @@ impl Unified {
             {
                 return match project.backend.call("airk_help".into(), native_args).await {
                     Ok(result) => result,
-                    Err(_) => crate::remote::scoped_observation_failure(
-                        selection,
-                        "scoped_observation_unavailable",
-                        true,
-                    ),
+                    Err(error) => match crate::response::typed_error_result(&error) {
+                        Some(reply) => {
+                            serde_json::to_value(reply).expect("typed native help refusal")
+                        }
+                        None => crate::remote::scoped_observation_failure(
+                            selection,
+                            "scoped_observation_unavailable",
+                            true,
+                        ),
+                    },
                 };
             }
         }
@@ -542,10 +642,29 @@ impl RemoteTools for Unified {
                 return Ok(self.help(args).await);
             }
             if matches!(tool.as_str(), "query_scope" | "airk_query_scope") {
-                return match self.combined_backend() {
-                    Some(backend) => backend.call("airk_query_scope".into(), args).await,
-                    None => Ok(crate::combined::legacy_discovery(Value::Object(args))),
+                if let Some(backend) = self.combined_backend() {
+                    return backend.call("airk_query_scope".into(), args).await;
+                }
+                if self.projects.is_empty() {
+                    return Ok(crate::combined::legacy_discovery(Value::Object(args)));
+                }
+                // Transport project selection is separate from native selectors.
+                // Ambiguity and invalid selections must not become legacy success.
+                let project = match self.select(&mut args) {
+                    Ok(project) => project,
+                    Err(error) => return Ok(error),
                 };
+                let valid = serde_json::from_value::<
+                    airk_core::combined_reads::query_scope::QueryScopeArgs,
+                >(Value::Object(args.clone()))
+                .map_err(anyhow::Error::from)
+                .and_then(|request| request.validate());
+                if valid.is_ok() {
+                    // The native single-index handler can disclose its installed
+                    // authority. It never invents current catalog metadata or grants.
+                    return project.backend.call("airk_query_scope".into(), args).await;
+                }
+                return Ok(crate::combined::legacy_discovery(Value::Object(args)));
             }
             if matches!(
                 tool.as_str(),
@@ -600,12 +719,17 @@ impl RemoteTools for Unified {
                     // Preserve its complete result without legacy/UI enrichment.
                     return match backend.call(native.name.to_string(), args).await {
                         Ok(result) => Ok(result),
-                        Err(_) => Ok(crate::remote::combined_observation_failure(
-                            backend
-                                .combined_selection()
-                                .expect("selected combined backend"),
-                            "combined_observation_unavailable",
-                        )),
+                        Err(error) => Ok(match crate::response::typed_error_result(&error) {
+                            Some(reply) => {
+                                serde_json::to_value(reply).expect("typed native read refusal")
+                            }
+                            None => crate::remote::combined_observation_failure(
+                                backend
+                                    .combined_selection()
+                                    .expect("selected combined backend"),
+                                "combined_observation_unavailable",
+                            ),
+                        }),
                     };
                 }
                 if ["project_ids", "index_ids", "member_availability"]
@@ -629,11 +753,15 @@ impl RemoteTools for Unified {
                                 .await
                             {
                                 Ok(result) => result,
-                                Err(_) => crate::remote::scoped_observation_failure(
-                                    selection,
-                                    "scoped_observation_unavailable",
-                                    true,
-                                ),
+                                Err(error) => match crate::response::typed_error_result(&error) {
+                                    Some(reply) => serde_json::to_value(reply)
+                                        .expect("typed native help refusal"),
+                                    None => crate::remote::scoped_observation_failure(
+                                        selection,
+                                        "scoped_observation_unavailable",
+                                        true,
+                                    ),
+                                },
                             },
                         );
                     }
@@ -655,6 +783,9 @@ impl RemoteTools for Unified {
                         {
                             Ok(Ok(())) => {}
                             Ok(Err(error)) => {
+                                if let Some(reply) = crate::response::typed_error_result(&error) {
+                                    return Ok(serde_json::to_value(reply)?);
+                                }
                                 return Ok(crate::remote::scoped_setup_failure(
                                     selection,
                                     if error.is::<crate::remote::PreparationExpired>() {
@@ -683,11 +814,17 @@ impl RemoteTools for Unified {
                             .await
                             {
                                 Ok(Ok(result)) => result,
-                                Ok(Err(_)) => crate::remote::scoped_observation_failure(
-                                    selection,
-                                    "scoped_status_unavailable",
-                                    true,
-                                ),
+                                Ok(Err(error)) => crate::response::typed_error_result(&error)
+                                    .map(|reply| {
+                                        serde_json::to_value(reply).expect("typed read receipt")
+                                    })
+                                    .unwrap_or_else(|| {
+                                        crate::remote::scoped_observation_failure(
+                                            selection,
+                                            "scoped_status_unavailable",
+                                            true,
+                                        )
+                                    }),
                                 Err(_) => crate::remote::scoped_observation_failure(
                                     selection,
                                     "scoped_status_timeout",
@@ -701,11 +838,17 @@ impl RemoteTools for Unified {
                     return Ok(
                         match project.backend.call(native.name.to_string(), args).await {
                             Ok(result) => result,
-                            Err(_) => crate::remote::scoped_observation_failure(
-                                selection,
-                                "scoped_observation_unavailable",
-                                true,
-                            ),
+                            Err(error) => crate::response::typed_error_result(&error)
+                                .map(|reply| {
+                                    serde_json::to_value(reply).expect("typed read receipt")
+                                })
+                                .unwrap_or_else(|| {
+                                    crate::remote::scoped_observation_failure(
+                                        selection,
+                                        "scoped_observation_unavailable",
+                                        true,
+                                    )
+                                }),
                         },
                     );
                 }
@@ -741,7 +884,10 @@ impl RemoteTools for Unified {
                         .await
                         {
                             Ok(Ok(result)) => result,
-                            Ok(Err(_)) => {
+                            Ok(Err(error)) => {
+                                if let Some(reply) = crate::response::typed_error_result(&error) {
+                                    return Ok(serde_json::to_value(reply)?);
+                                }
                                 return Ok(success(
                                     json!({"version":env!("CARGO_PKG_VERSION"),"health":"unknown","project":project.binding,"index_state":"unknown","files":null,"chunks":null,"publication":null,"index_error":{"code":"status_unavailable","stage":"observation","message":"Basic status could not be observed. Call diagnostics for troubleshooting."}}),
                                 ));
@@ -774,6 +920,9 @@ impl RemoteTools for Unified {
                         Ok(value) if value["isError"] == true => return Ok(value),
                         Ok(value) => value,
                         Err(error) => {
+                            if let Some(reply) = crate::response::typed_error_result(&error) {
+                                return Ok(serde_json::to_value(reply)?);
+                            }
                             let code = if error.to_string().contains("service_explicitly_stopped") {
                                 "service_explicitly_stopped"
                             } else {
@@ -1629,5 +1778,115 @@ mod tests {
                 .contains("airk_search")
         );
         assert!(native.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn native_help_detail_refuses_its_exact_field_before_native_or_ui_dispatch() {
+        let (u, native, _, ui) = fixture(false, true);
+        let reply = call(&u, "help", json!({"topic":"workbench","detail":"full"})).await;
+        assert_eq!(reply["isError"], true);
+        let value = body(&reply).unwrap();
+        assert_eq!(value["error"]["code"], "invalid_help_arguments");
+        assert_eq!(value["error"]["field"], "detail");
+        assert!(
+            value["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("query or topic_id")
+        );
+        assert!(native.calls.lock().unwrap().is_empty());
+        assert!(ui.calls.lock().unwrap().is_empty());
+        assert_ne!(
+            call(
+                &u,
+                "help",
+                json!({"topic":"workbench","response_mode":"full"})
+            )
+            .await["isError"],
+            true
+        );
+        call(&u, "help", json!({"query":"workbench","detail":"full"})).await;
+        assert_eq!(ui.calls.lock().unwrap().last().unwrap().2["detail"], "full");
+        let schema = serde_json::to_value(
+            &tools()
+                .into_iter()
+                .find(|tool| tool.name == "help")
+                .unwrap()
+                .input_schema,
+        )
+        .unwrap();
+        assert!(
+            schema["properties"]["detail"]["description"]
+                .as_str()
+                .unwrap()
+                .contains("query or topic_id")
+        );
+    }
+
+    #[test]
+    fn public_ui_diagnostics_use_advertised_tools_without_rewriting_user_content() {
+        let original = json!({
+            "valid":false,"errors":[{"field":"workspace_binding","message":"Read airk_explorer_ui_status again."}],
+            "strategy":{"instructions":["Call airk_help"],"steps":[{"op":"airk.status"}]},
+            "handoff":{"content":"User-authored airk_explorer_ui_status text"}
+        });
+        let projected =
+            public_ui_response("airk_explorer_validate_draft", success(original.clone()));
+        let value = body(&projected).unwrap();
+        assert_eq!(
+            value["errors"][0]["message"],
+            "Read diagnostics (explorer.ui) again."
+        );
+        assert_eq!(value["strategy"], original["strategy"]);
+        assert_eq!(value["handoff"], original["handoff"]);
+        assert_eq!(
+            serde_json::from_str::<Value>(projected["content"][0]["text"].as_str().unwrap())
+                .unwrap(),
+            projected["structuredContent"]
+        );
+        let error = body(&public_ui_response(
+            "airk_explorer_suggest_search",
+            failure(
+                "STALE_BINDING",
+                "Call airk_explorer_ui_status or airk_explorer_templates_list.",
+            ),
+        ))
+        .unwrap();
+        assert_eq!(
+            error["error"]["message"],
+            "Call diagnostics (explorer.ui) or list_templates."
+        );
+        assert_eq!(
+            public_diagnostic_text("Unknown field custom_airk_help_suffix"),
+            "Unknown field custom_airk_help_suffix"
+        );
+        let help = json!({"notes":["Call airk_help for CLI guidance."],"body":"Use airk_search in the native CLI."});
+        let public_help = body(&public_ui_response(
+            "airk_explorer_help_get",
+            success(help.clone()),
+        ))
+        .unwrap();
+        assert_eq!(public_help["notes"][0], "Call help for CLI guidance.");
+        assert_eq!(public_help["body"], help["body"]);
+        let catalog = tools();
+        let help = catalog.iter().find(|tool| tool.name == "help").unwrap();
+        let schema = serde_json::to_value(&help.input_schema).unwrap();
+        assert!(
+            !schema["properties"]["tool"]["description"]
+                .as_str()
+                .unwrap()
+                .contains("search or search")
+        );
+        let draft = catalog
+            .iter()
+            .find(|tool| tool.name == "draft_search")
+            .unwrap();
+        let schema = serde_json::to_value(&draft.input_schema).unwrap();
+        assert!(
+            schema["properties"]["workspace_binding"]["description"]
+                .as_str()
+                .unwrap()
+                .contains("diagnostics.explorer.ui")
+        );
     }
 }

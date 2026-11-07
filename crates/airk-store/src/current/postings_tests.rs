@@ -1522,3 +1522,124 @@ fn empty_fact_pages_make_bounded_progress_without_skipping_later_matches() -> Re
     assert!(!last.truncated && last.page.cursor.is_none());
     Ok(())
 }
+
+#[test]
+fn open_fact_filters_report_absence_and_preserve_retained_custom_labels() -> Result<()> {
+    let fixture = Fixture::new()?;
+    let input = retained_input_with_facts_language_budget(
+        &fixture,
+        "custom.txt",
+        "body",
+        vec![fact("Custom", "producer_marker")],
+        1024 * 1024,
+        "producer_language",
+    )?;
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    current.commit_artifact(&fixture.head.token()?, &input.artifact.path, Some(&input))?;
+    drop(current);
+    drop(writer);
+    let read = fixture.store.current_read(&fixture.scope)?;
+    let mut q = query();
+    q.limit = 10;
+    q.kind = Some("producer_marker".into());
+    q.language = Some("producer_language".into());
+    let valid = read.native_facts_page(&fixture.store, &q, false, &Default::default())?;
+    assert_eq!(valid.facts.len(), 1);
+    assert!(valid.page.filter_observations.is_empty());
+    for (kind, language, field) in [
+        (Some("bogus_kind"), Some("producer_language"), "kind"),
+        (Some("definition"), Some("klingon"), "language"),
+        (Some("definition"), None, "kind"),
+    ] {
+        q.kind = kind.map(str::to_owned);
+        q.language = language.map(str::to_owned);
+        let empty = read.native_facts_page(&fixture.store, &q, false, &Default::default())?;
+        assert!(empty.facts.is_empty() && !empty.truncated && empty.page.cursor.is_none());
+        assert!(
+            empty
+                .page
+                .filter_observations
+                .iter()
+                .any(|item| item.field == field && item.state == "not_observed_in_selected_query")
+        );
+        assert!(
+            empty
+                .page
+                .filter_observations
+                .iter()
+                .all(|item| item.message.contains("not globally unsupported"))
+        );
+    }
+    let object = fixture
+        .store
+        .directory()
+        .join("objects/artifacts")
+        .join(&input.artifact.retained.as_ref().unwrap().object);
+    fs::write(&object, "corrupt unrelated retained fixture")?;
+    q.kind = Some("producer_marker".into());
+    q.language = Some("klingon".into());
+    let absent = read.native_facts_page(&fixture.store, &q, false, &Default::default())?;
+    assert!(absent.facts.is_empty() && absent.page.cursor.is_none() && !absent.truncated);
+    q.language = Some("producer_language".into());
+    assert!(
+        read.native_facts_page(&fixture.store, &q, false, &Default::default())
+            .is_err(),
+        "matching sources must retain integrity checks"
+    );
+    Ok(())
+}
+
+#[test]
+fn native_relationships_report_actual_result_and_record_budgets() -> Result<()> {
+    use airk_core::code::RelationshipTruncationReason as Stop;
+    let fixture = Fixture::new()?;
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    let mut token = fixture.head.token()?;
+    for path in ["one.txt", "two.txt"] {
+        let input =
+            retained_input_with_facts(&fixture, path, "body", vec![written_call("target")])?;
+        token = current.commit_artifact(&token, path, Some(&input))?.token;
+    }
+    drop(current);
+    drop(writer);
+    let read = fixture.store.current_read(&fixture.scope)?;
+    let mut q = airk_core::RelationshipQuery {
+        symbol: "target".into(),
+        direction: "incoming".into(),
+        kind: Some("call".into()),
+        path_prefix: String::new(),
+        hops: 1,
+        limit: 1,
+        max_bytes: 65536,
+    };
+    let limited = read.native_relationships(&fixture.store, &q)?;
+    assert!(limited.truncated);
+    assert_eq!(limited.relationships.len(), 1);
+    assert!(limited.truncation_reasons.contains(&Stop::ResultLimit));
+    assert_eq!(limited.bounds.max_results, 1);
+    assert_eq!(limited.bounds.max_candidate_files, Some(256));
+    q.limit = 8;
+    q.max_bytes = 1;
+    let bytes = read.native_relationships(&fixture.store, &q)?;
+    assert!(bytes.truncated && bytes.relationships.is_empty());
+    assert!(bytes.truncation_reasons.contains(&Stop::ReplyBytes));
+    assert!(!bytes.truncation_reasons.contains(&Stop::ResultLimit));
+    q.direction = "sideways".into();
+    let error = read.native_relationships(&fixture.store, &q).unwrap_err();
+    assert_eq!(
+        error
+            .downcast_ref::<airk_core::read_arguments::ReadArgumentError>()
+            .unwrap()
+            .field,
+        "direction"
+    );
+    Ok(())
+}

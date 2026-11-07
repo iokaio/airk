@@ -343,7 +343,15 @@ impl RuntimeReadiness {
                 // identity. Keep this explicit deadline receipt recognizable.
                 anyhow::Error::new(airk_mcp::remote::PreparationExpired)
             } else {
-                anyhow::Error::new(SharedReadinessError(error))
+                // This is the original typed cause, before the sharing wrapper
+                // intentionally hides its root to preserve display chains.
+                let preserved =
+                    airk_mcp::response::PreservedReadFailure::from_error(error.as_ref());
+                let wrapped = anyhow::Error::new(SharedReadinessError(error));
+                match preserved {
+                    Some(receipt) => wrapped.context(receipt),
+                    None => wrapped,
+                }
             }
         })
     }
@@ -741,6 +749,9 @@ impl RemoteTools for Native {
                     {
                         Ok(Ok(())) => {}
                         Ok(Err(error)) => {
+                            if let Some(reply) = airk_mcp::response::typed_error_result(&error) {
+                                return Ok(serde_json::to_value(reply)?);
+                            }
                             return Ok(combined_status_unavailable(
                                 selection,
                                 if error.is::<airk_mcp::remote::PreparationExpired>() {
@@ -1465,6 +1476,44 @@ mod readiness_tests {
         ready.shutdown().await?;
         Ok(())
     }
+    #[tokio::test]
+    async fn readiness_prepare_and_ensure_modes_preserve_known_typed_cause_without_text_guessing()
+    -> Result<()> {
+        for status in [false, true] {
+            let ready = RuntimeReadiness::default();
+            let error = ready
+                .run_inner_status(
+                    |_| async { Err(airk_store::service::collection::SelectionContention.into()) },
+                    false,
+                    status,
+                )
+                .await
+                .unwrap_err();
+            let reply = airk_mcp::response::typed_error_result(&error)
+                .context("typed readiness receipt lost")?;
+            let body: Value = serde_json::from_str(&reply.content[0].as_text().unwrap().text)?;
+            assert_eq!(body["code"], "selection_busy");
+            assert_eq!(body["action"], "repeat_same_request");
+            assert_eq!(body["retryable"], true);
+            let error = ready
+                .run_inner_status(
+                    |_| async {
+                        anyhow::bail!("service incarnation selection is busy; retry after 25 ms")
+                    },
+                    false,
+                    status,
+                )
+                .await
+                .unwrap_err();
+            assert!(
+                airk_mcp::response::typed_error_result(&error).is_none(),
+                "lookalike text is never retry authority"
+            );
+            ready.shutdown().await?;
+        }
+        Ok(())
+    }
+
     #[test]
     fn shared_error_preserves_exact_plain_and_nested_chains() {
         for nested in [false, true] {

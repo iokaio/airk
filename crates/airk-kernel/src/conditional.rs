@@ -138,7 +138,8 @@ impl Kernel {
     ) -> Result<ConditionalRead<SearchResponse>> {
         validate_budget(1, max_bytes)?;
         ensure!(
-            before <= 100 && after <= 100,
+            before <= airk_core::native_reads::CONTEXT_RADIUS_MAX
+                && after <= airk_core::native_reads::CONTEXT_RADIUS_MAX,
             "context radius must be 0..100"
         );
         ensure!(line > 0, "line is outside indexed source");

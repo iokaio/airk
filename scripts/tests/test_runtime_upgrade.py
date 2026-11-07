@@ -12,6 +12,58 @@ UPGRADE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(UPGRADE)
 
 class UpgradeFixtureOwnershipTests(unittest.TestCase):
+    def test_reviewed_fixture_uses_only_explicit_native_setup_and_one_source_grant(self):
+        with tempfile.TemporaryDirectory() as parent:
+            source, data = Path(parent) / "source", Path(parent) / "data"
+            source.mkdir(); data.mkdir()
+            calls = []
+            registration = {"binding": "fixture", "root": str(source), "data_root": str(data), "collection": "upgrade"}
+            revision = 1
+            def rpc(method):
+                nonlocal revision
+                calls.append(method)
+                if method == "request_epoch": return {"namespace": "native", "epoch": 7}
+                name, body = next(iter(method.items()))
+                if name == "catalog_host_context": return {"descriptor": {"namespace": "native", "catalog_revision": revision}}
+                if name == "catalog_index_setup_draft": return {"draft": {"native": "unchanged"}}
+                if name == "catalog_index_setup_apply":
+                    self.assertEqual(body["draft"], {"native": "unchanged"}); revision += 1
+                    return {"status": "catalog_index_setup_applied", "receipt": {"stage": "ready", "catalog_revision": revision, "index_id": "idx_fixture", "source_ids": ["src_fixture"]}}
+                if name == "catalog_preview": return {"preview_digest": "native-preview"}
+                if name == "catalog_apply":
+                    self.assertEqual(body["preview_digest"], "native-preview"); revision += 1
+                    return {"status": "catalog_applied", "receipt": {"catalog_revision": revision}}
+                if name == "catalog_grant_draft": return {"draft": {"request": {"operation": {"grant": {"id": "grt_fixture"}}}, "preview_digest": "native-preview"}}
+                if name == "catalog_detail": return {"detail": {"item": {"value": {"backing": registration}}}}
+                self.fail(f"Unexpected fixture mutation: {method}")
+            actual, selected = UPGRADE.reviewed_fixture(rpc, source, data)
+            self.assertEqual(actual, registration)
+            setup = next(row["catalog_index_setup_draft"]["selection"] for row in calls if isinstance(row, dict) and "catalog_index_setup_draft" in row)
+            self.assertEqual((setup["primary_root"], setup["data_root"], setup["additional_roots"], setup["setup_watch"]), (str(source), str(data), [], False))
+            member = next(row["catalog_preview"]["request"]["operation"]["membership"] for row in calls if isinstance(row, dict) and "catalog_preview" in row and row["catalog_preview"]["request"]["operation"]["operation"] == "set_membership")
+            self.assertEqual(member["scope"], [{"source_root_id": "src_fixture", "kind": "subtree", "path": ""}])
+            grant = next(row["catalog_grant_draft"]["selection"] for row in calls if isinstance(row, dict) and "catalog_grant_draft" in row)
+            self.assertEqual(grant["index_ids"], ["idx_fixture"])
+            self.assertEqual(grant["project_ids"], selected["project_ids"])
+            self.assertEqual(len(selected["project_ids"]), 1)
+
+    def test_reviewed_snapshot_preserves_full_values_and_refuses_incomplete_membership(self):
+        selected = {"context_key": "context", "namespace": "native", "index_id": "index", "project_ids": ["project"], "grant_id": "grant"}
+        continuation = None
+        def rpc(method):
+            name, body = next(iter(method.items()))
+            if name == "catalog_host_context": return {"descriptor": {"namespace": "native", "catalog_revision": 9}, "capabilities": {"policy_contract": 3}}
+            if name == "catalog_detail": return {"detail": {"namespace": "native", "revision": 9, "item": {"kind": body["entity"]["kind"], "value": {"future": [1, 2], "id": body["entity"]["id"]}}}}
+            if name == "catalog_page": return {"page": {"namespace": "native", "revision": 9, "continuation": continuation, "items": [{"future_member": {"retained": True}}]}}
+            self.fail(str(method))
+        actual, capabilities = UPGRADE.reviewed_snapshot(rpc, selected)
+        self.assertEqual(actual["grant"], {"future": [1, 2], "id": "grant"})
+        self.assertEqual(actual["memberships"], [{"future_member": {"retained": True}}])
+        self.assertEqual(capabilities, {"policy_contract": 3})
+        continuation = {"next": "unread"}
+        with self.assertRaisesRegex(RuntimeError, "incomplete"):
+            UPGRADE.reviewed_snapshot(rpc, selected)
+
     def test_failure_cleanup_never_masks_original_refusal_or_deletes_fixture(self):
         with tempfile.TemporaryDirectory() as parent:
             temporary = UPGRADE.owned_temporary(Path(parent))

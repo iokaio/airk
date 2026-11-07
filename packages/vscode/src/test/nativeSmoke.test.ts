@@ -10,12 +10,12 @@ import * as path from 'node:path';
 import {McpStdioSession} from '../mcpStdioSession';
 import {assertQuickStatusTimeout,observeQuickStatus,requestWithReadRetry,readRetryReceipt,ReadRetryReceipt,QuickStatusObservation,QuickStatusObserver} from './nativeReadRetry';
 
-async function quickStatus(session:McpStdioSession,observer?:QuickStatusObserver):Promise<any>{
+async function quickStatus(session:McpStdioSession,observer?:QuickStatusObserver,expectedScope?:LaunchSpec['catalogSession']):Promise<any>{
     return observeQuickStatus(async deadline=>{
         // native read: observeQuickStatus applies the typed retry contract to this reply.
         const result=await session.request('tools/call',{name:'status',arguments:{}},Math.max(1,deadline-performance.now()));
         return result.isError===true?result:JSON.parse(result.content[0].text);
-    },undefined,observer);
+    },undefined,observer,expectedScope);
 }
 
 function assertSelectedScope(status:any,spec:LaunchSpec):void{
@@ -88,7 +88,7 @@ test('pinned MCP quick status completes cold verification without diagnostics or
     try{
         const spec=await fixture.register('pinned-status');const {launchArgs}=await import('../model');
         session=(await McpStdioSession.open({command:spec.command,args:launchArgs(spec,'mcp',true),cwd:fixture.owner,clientName:'pinned-status-test',clientVersion:'1.6.4'},60000)).session;
-        const status=await quickStatus(session,observe);assertSelectedScope(status,spec);
+        const status=await quickStatus(session,observe,spec.catalogSession);assertSelectedScope(status,spec);
         assertEmptySetupStatus(status);
         const embedding=await fixture.embedding();assert.equal(embedding.loads,0);assert.equal(embedding.sessions,0);
     }catch(error){await fixture.retainFailure(error,session?[session]:[]);throw error;}finally{
@@ -105,11 +105,11 @@ test('scoped status revalidates authority and keeps complete provenance across a
         const {launchArgs}=await import('../model');
         session=(await McpStdioSession.open({command:spec.command,args:launchArgs(spec),cwd:fixture.owner,clientName:'status-cache-test',clientVersion:'1.6.1'},60000)).session;
         const read=async(name:string,args:Record<string,unknown>={})=>{
-            const result=await requestWithReadRetry(session!,name,args,name.endsWith('diagnostics')?60000:15000);
+            const result=await requestWithReadRetry(session!,name,args,name.endsWith('diagnostics')?60000:15000,undefined,spec.catalogSession);
             const value=JSON.parse(result.content[0].text);assert.deepEqual(result.structuredContent,value,JSON.stringify(result));return value;
         };
         const expectedVersion=JSON.parse(await fs.readFile(path.resolve(__dirname,'../../package.json'),'utf8')).version;
-        const first=await quickStatus(session);assert.equal(first.version,expectedVersion);assert.ok(['ok','updating','paused','unknown','needs_attention'].includes(first.health));
+        const first=await quickStatus(session,undefined,spec.catalogSession);assert.equal(first.version,expectedVersion);assert.ok(['ok','updating','paused','unknown','needs_attention'].includes(first.health));
         assert.equal(first.files,1);assert.equal(first.cached,false);assert.ok(first.observed_unix_ms>0);
         const primedTerse=await read('status',{response_mode:'terse'});
         assert.equal(primedTerse.generation,undefined);assert.equal(primedTerse.publication.token,first.publication.token);
@@ -151,7 +151,7 @@ for(const binding of ['pinned','source'] as const){
                 const result=await session.request('tools/call',{name:'projects',arguments:{}},10000);
                 return JSON.parse(result.content[0].text).default_project;
             }));
-            const observations=await Promise.all(sessions.map(session=>quickStatus(session)));
+            const observations=await Promise.all(sessions.map(session=>quickStatus(session,undefined,binding==='pinned'?spec.catalogSession:undefined)));
             for(const [index,observation] of observations.entries()){
                 if(binding==='pinned'){assertSelectedScope(observation,spec);assertEmptySetupStatus(observation);}
                 else{assert.equal(observation.project,expected[index]);assert.equal(observation.index_state,'unavailable');assert.equal(observation.files,null);assert.equal(observation.publication,null);}
@@ -178,7 +178,7 @@ test('mixed four-call batches honor status snapshots and typed read admission',{
             const session=(await McpStdioSession.open({command:fixture.launcher,args,cwd:fixture.owner,
                 clientName:`mixed-${binding}-status`,clientVersion:expectedVersion},60000)).session;
             sessions.push(session);
-            const first=await quickStatus(session);assert.equal(first.version,expectedVersion);
+            const first=await quickStatus(session,undefined,spec.catalogSession);assert.equal(first.version,expectedVersion);
             if(binding==='source'){
                 assert.equal(first.index_state,'unavailable');assert.equal(first.publication,null);
                 // native read: observe absent imported compatibility authority exactly once; no retry.
@@ -192,7 +192,7 @@ test('mixed four-call batches honor status snapshots and typed read admission',{
             // still be superseded before submission, even on a warm channel.
             // Measured reads below retain those refusals and use only the shared
             // safe-retry contract; submitted status errors remain fatal.
-            const warmup=await requestWithReadRetry(session,'read_file',{path:'session.rs',start_line:1,end_line:3},30000);
+            const warmup=await requestWithReadRetry(session,'read_file',{path:'session.rs',start_line:1,end_line:3},30000,undefined,spec.catalogSession);
             assert.notEqual(warmup.isError,true,JSON.stringify(warmup));
             assert.equal(JSON.parse(warmup.content[0].text).publication.token,first.publication.token,JSON.stringify(warmup));
             for(let round=0;round<3;round++){
@@ -205,8 +205,8 @@ test('mixed four-call batches honor status snapshots and typed read admission',{
                 for(const workload of workloads){
                     const replies=await Promise.allSettled(workload.map(([name,arguments_])=>requestWithReadRetry(session,name,arguments_,30000,reply=>{
                         if(reply.isError!==true)return;
-                        refusals.push({binding,round,tool:name,...readRetryReceipt(reply)});
-                    })));
+                        refusals.push({binding,round,tool:name,...readRetryReceipt(reply,spec.catalogSession)});
+                    },spec.catalogSession)));
                     for(const [index,reply]of replies.entries()){
                         assert.equal(reply.status,'fulfilled',`${binding} round ${round} ${workload[index][0]}: ${reply.status==='rejected'?String(reply.reason):''}`);
                         assert.notEqual(reply.value.isError,true,`${binding} round ${round} ${workload[index][0]}: ${JSON.stringify(reply.value)}`);

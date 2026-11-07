@@ -69,10 +69,17 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $installed = Join-Path $ExtensionsDir "$id-$($package.version)"
-$file = Join-Path $installed 'out\serviceExtension.js'
-if (-not (Test-Path -LiteralPath $file)) { throw "Installed extension code not found at $file" }
-$expected = EntryHash $Vsix 'extension/out/serviceExtension.js'
-$actual = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash
-if ($expected -ne $actual) { throw "The installed code at $installed does not match the VSIX. Close all VS Code windows and run this script again." }
+$zip = [IO.Compression.ZipFile]::OpenRead($Vsix)
+try {
+    $codeEntries = @($zip.Entries | Where-Object { $_.FullName -match '^extension/out/[^/]+\.(js|css)$' } | ForEach-Object { $_.FullName })
+} finally { $zip.Dispose() }
+if ($codeEntries -notcontains 'extension/out/serviceExtension.js' -or $codeEntries -notcontains 'extension/out/explorerWebview.js' -or $codeEntries -notcontains 'extension/out/explorerWebview.css') { throw 'VSIX is missing required host or Explorer UI code.' }
+foreach ($entry in $codeEntries) {
+    $file = Join-Path $installed $entry.Substring('extension/'.Length)
+    if (-not (Test-Path -LiteralPath $file)) { throw "Installed extension code not found at $file" }
+    $expected = EntryHash $Vsix $entry
+    $actual = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash
+    if ($expected -ne $actual) { throw "The installed code at $file does not match the VSIX. Close all VS Code windows and run this script again." }
+}
 Write-Host "Verified: $installed matches the VSIX."
 Write-Host 'Reload each open VS Code window (Developer: Reload Window, or AIRK''s "Reload to finish update" action) to run the new code.'
