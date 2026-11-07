@@ -48,8 +48,8 @@ SHA-256 independently.
 
 Earlier 1.8.10 package and test results do not qualify this candidate. The
 current qualification record follows. Native and extension source checks are
-complete. The optimized runtime and its model/client smokes have passed; local
-archive verification remains in progress until its results are recorded. Installed-editor acceptance,
+complete. The optimized runtime, model/client smokes, native archive and Windows
+VSIX verification passed. Exact artifact identities are recorded below. Installed-editor acceptance,
 macOS/Linux qualification and publication remain separate unless explicitly
 recorded below.
 
@@ -240,3 +240,43 @@ inline/reconnect/same-index reads, failure receipts/log details and source
 preservation. These are native runtime smokes, separate from installed-editor,
 macOS/Linux or publication qualification. Local Node was **24.21.0**; this is not
 an assertion of testing under CI's separately pinned Node version.
+
+
+## Verified local Windows package
+
+Native packaging passed in **15.563 seconds** and VSIX packaging in
+**17.724 seconds**, with no package-gate rerun. Both package manifests identify
+corrected extension commit **`e03d56e7b7c5d3bf490e7a95fa16bdbf7426ff83`**, tree
+**`a5d3b22bd82e84a103b3e00ac2650fb70eed8e22`**, and a clean checkout. The exact
+native input seal still matches its original fresh producer; its original
+`f1ec799` build origin is retained separately.
+
+- Artifact: `artifacts/local/1.8.11-indexing-20261107/vscode/publish/airk-1.8.11-win32-x64.vsix`
+- Platform/version: **win32-x64 / 1.8.11**.
+- Size: **77,659,089 bytes**, **777 archive entries**.
+- SHA-256: `0e2dc5f4de1143fc73c7b36cffa2c3ad6fdd4686712f394d5398633fc93e4866`.
+
+The primary independently verified the archive hash, native/extension manifest
+version and commit/tree agreement, native executable hashes and install
+inventory, the packaged host/scope/UI/style/route bytes against the corrected
+compiled output, and the four requested labels. The corrected default-preserving
+host code is present. Build/test/private-index directories are absent from the
+archive. Ad hoc archive inspection initially assumed different native paths or
+helper filenames; those lookups were corrected to the actual allowlisted
+`native/runtime/airk.exe` and `native/runtime/airk-embed.exe` paths. This required
+no archive or product correction, and the canonical package gates passed on their
+first run.
+
+The final packaging compile of the exact committed source passed, including host,
+webview, Assistance and bundle/catalog checks. The evidence directory retains
+**15 native/build/package stage receipts**, JUnit and **11 Cargo timing reports**,
+plus `native-validation-summary.json`, `vsix-verification.json` and the separate
+`primary-vsix-verification.json`. The final documentation commit records these
+outputs; it does not relabel or rebuild the already sealed candidate.
+
+This is an unpublished local Windows manual-test VSIX. Source/activation
+regressions verify the no-auto-index behavior, but a separate installed-VSIX
+editor run was not performed for this candidate. macOS/Linux acceptance, fresh
+online advisory qualification, manual UI acceptance and publication remain
+separate. No PR, merge, Marketplace or GitHub release publication is part of this
+work.
