@@ -1,6 +1,8 @@
 # Release records
 
-- [1.8.8 manual-test working build](release-1.8.8.md): current branch identity and validation before manual acceptance and later promotion.
+- [1.8.12 manual-test working build](release-1.8.12.md): persistent Explorer notice dismissal, automatic AIRK extension replacement and current local qualification.
+- [1.8.11 manual-test working build](release-1.8.11.md): simplified Indexing, index deletion and its original Windows package evidence.
+- [1.8.8 manual-test checkpoint](release-1.8.8.md): retained phase identities and validation before later manual acceptance and promotion.
 - [Planned 1.9.0](release-1.9.0.md): release target, original development checkpoints and performance/relevance controls; historical tested identities remain unchanged.
 - [1.8.7](release-1.8.7.md): all unpublished 1.8.0-1.8.6 changes, complete CLI/MCP/Workbench read results, configured concurrency and dated validation.
 

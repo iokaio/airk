@@ -46,6 +46,7 @@ test('revision notifications reserve no pending slot; closed bridges and request
 test('new native and local writes keep outcome uncertainty after timeout or bridge closure without replay', async () => {
     const c = client();
     const actions: Array<[string, Record<string, unknown>]> = [
+        ['notice.dismiss', { key: 'runtime:1.8.11:1.8.12:ready' }],
         ['indexing.setup.apply', { generation: 1 }], ['indexing.setup.resume', { id: 'a'.repeat(32), generation: 1 }],
         ['indexing.source.resolve', { generation: 1 }], ['indexing.policy.resume', { generation: 1 }],
         ['indexing.split.apply', { generation: 1 }], ['indexing.split.recover', { action: 'cancel', generation: 1 }],

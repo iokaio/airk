@@ -6,6 +6,7 @@ import * as vm from 'node:vm';
 import test from 'node:test';
 import { buildSync } from 'esbuild';
 import type { ExplorerViewState } from '../explorerContracts';
+import { ROUTE_KEYS, parseRoute } from '../explorerRoutes';
 
 type Upgrade = NonNullable<ExplorerViewState['runtimeUpgrade']>;
 const upgrade: Upgrade = { fromVersion: '1.8.7', toVersion: '1.8.9', stage: 'activating', message: 'Native activation is running.', startedAt: Date.now() - 3000, updatedAt: Date.now() };
@@ -50,13 +51,15 @@ function renderedText(node: any): string {
     return renderedText(node.props?.children);
 }
 
-test('the actual App keeps upgrade progress above Overview, Indexing and Management routes', () => {
+test('the actual App shares upgrade progress and persisted notice preferences on every Explorer screen', () => {
     const state = { revision: 1, extensionVersion: '1.8.9', trusted: true, projects: [], features: {}, connection: 'ready', runtimeUpgrade: upgrade };
-    for (const workspace of ['overview', 'indexing', 'manage']) {
-        const app = browserModule('app.tsx', state, { workspace }), tree = app.App();
+    const dismissed = ['dismissed-update'];
+    for (const key of ROUTE_KEYS) {
+        const app = browserModule('app.tsx', { ...state, dismissedNotices: dismissed }, parseRoute(key)), tree = app.App();
         const banners = children(tree).filter(node => node.type?.name === 'RuntimeUpgradeProgress');
-        assert.equal(banners.length, 1, workspace);
-        assert.equal(banners[0].props.upgrade, upgrade, workspace);
+        assert.equal(banners.length, 1, key);
+        assert.equal(banners[0].props.upgrade, upgrade, key);
+        assert.equal(tree.props.value.dismissed, dismissed, key);
     }
     const app = browserModule('app.tsx', { ...state, runtimeUpgrade: undefined }, { workspace: 'indexing' });
     assert.equal(children(app.App()).filter(node => node.type?.name === 'RuntimeUpgradeProgress').length, 0);
@@ -86,11 +89,41 @@ test('split text distinguishes a real upgrade from unconfirmed or unsupported ca
     const pending = renderedText(ui.SplitAvailability({ view, upgrade }));
     assert.match(pending, /upgrading the runtime for this index to 1\.8\.9/);
     assert.match(pending, /automatically/);
-    assert.match(pending, /Overview, Indexing and Management/);
+    assert.match(pending, /Management → Service and the installation log/);
+    assert.doesNotMatch(pending, /details above|progress is shown/);
     const unknown = renderedText(ui.SplitAvailability({ view }));
     assert.match(unknown, /not yet been confirmed/); assert.doesNotMatch(unknown, /is upgrading/);
     const unsupported = renderedText(ui.SplitAvailability({ view: { ...view, capabilities: { policy_contract: 1 } } }));
     assert.match(unsupported, /does not support splitting/); assert.doesNotMatch(unsupported, /is upgrading/);
     assert.equal(ui.upgradePending({ ...upgrade, stage: 'ready' }), false);
     assert.equal(ui.upgradePending({ ...upgrade, stage: 'failed' }), true);
+});
+
+test('upgrade notice identity ignores progress churn but separates completion, failures and later versions', () => {
+    const ui = browserModule('runtimeUpgrade.tsx');
+    const key = (value: Upgrade) => ui.RuntimeUpgradeProgress({ upgrade: value }).props.noticeKey;
+    const active = key(upgrade);
+    assert.equal(key({ ...upgrade, stage: 'reconnecting', message: 'Checking the connection.', updatedAt: Date.now() + 60000 }), active);
+    const ready = key({ ...upgrade, stage: 'ready' });
+    assert.notEqual(ready, active);
+    assert.equal(key({ ...upgrade, stage: 'ready', startedAt: 1, updatedAt: 2, message: 'Connected again.' }), ready);
+    assert.notEqual(key({ ...upgrade, stage: 'failed', message: 'Activation failed.' }), active);
+    assert.notEqual(key({ ...upgrade, stage: 'failed', message: 'Activation failed.' }), key({ ...upgrade, stage: 'failed', message: 'Connection failed.' }));
+    assert.notEqual(key({ ...upgrade, stage: 'ready', toVersion: '1.8.12' }), ready);
+});
+
+test('global error and permission notices use the same keys on all screens and do not replace their content', () => {
+    const state = { revision: 1, extensionVersion: '1.8.12', trusted: false, workspaceTrusted: true,
+        nativeExecutionEnabled: false, projects: [], features: {}, connection: 'disconnected',
+        notice: { code: 'HOST_UNAVAILABLE', message: 'The local service could not be reached.' } };
+    let prior: string[] | undefined;
+    for (const key of ROUTE_KEYS) {
+        const app = browserModule('app.tsx', state, parseRoute(key)), tree = app.App();
+        const notices = children(tree).filter(node => node.type?.name === 'Notice');
+        assert.equal(notices.length, 3, key);
+        const identities = notices.map(node => node.props.noticeKey);
+        if (prior) { assert.deepEqual(identities, prior, key); }
+        prior = identities;
+        assert.ok(children(tree).some(node => node.type?.name === (key === 'overview' ? 'Overview' : 'WorkspaceView')), key);
+    }
 });

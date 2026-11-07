@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { Notice, noticeKey } from './notices';
 import { ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import { appendFactPage, FactItemView, FactListView, OpenSourceResult } from '../explorerContracts';
@@ -87,7 +88,7 @@ export function FactList(props: { list: FactListView; empty: string; actions?: (
             </ol>
             {list.more && <button type="button" class="ghost" disabled={loading} onClick={() => { void more(); }}>{loading ? 'Loading…' : 'Load more'}</button>}
             {!list.more && list.truncated && <p class="muted">This tool has no continuation cursor. Raise the limit or narrow the query.</p>}
-            {error && <p class="callout" role="alert">{error}</p>}
+            {error && <Notice noticeKey={noticeKey("facts-error", error)} role="alert"><p>{error}</p></Notice>}
             {list.provenance.length > 0 && (
                 <details><summary>Producers and coverage</summary>
                     <ul>{list.provenance.map((entry, index) => <li key={index}><code>{entry.producer}</code>{entry.basis ? ` · ${entry.basis}` : ''}{entry.coverage ? ` — ${entry.coverage}` : ''}</li>)}</ul>

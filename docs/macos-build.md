@@ -1,118 +1,138 @@
-# Building AIRK for macOS
+# Building and checking AIRK for macOS
 
-Native builds embed the two pinned INT8 MiniLM exports. Before Cargo checks/builds, run `python scripts/provision-local-model.py --destination target/local-vector-model --download`, or supply verified offline assets there (or through `AIRK_BUNDLED_MODEL_DIR`). Also prepare native CPU libraries with `python scripts/provision-onnx-runtime.py --download`. Cargo never downloads model assets or runtime libraries. See [model provisioning](onnx-models.md).
+The current unpublished working version is **1.8.12**. Build the native pair and
+platform VSIX on the intended Mac architecture. A Windows package, an Apple
+Silicon result, or an unsigned archive alone does not qualify installation on
+both Mac architectures. The [working-build record](releases/release-1.8.12.md)
+records the current source, artifacts, completed checks and remaining limits.
 
-Build the native Rust executable on a Mac or macOS CI runner. Docker is optional and is not needed for this workflow. Local Apple Silicon build/tests and signing/notarization were observed on 14 October 2026; see the [validation record](validation.md) for exact scope and remaining qualification.
+## Prerequisites and native layout
 
-## Prerequisites
+Use the repository-pinned Rust **1.98.0**, Xcode Command Line Tools, Python
+**3.11+**, and Node.js **24.15.0** with the locked extension dependencies.
+PowerShell 7 runs the repository hygiene check. Inspect the existing Xcode
+selection with `xcrun --find clang` and `xcrun --sdk macosx --show-sdk-path`.
+Do not change the machine-wide tool selection merely to make a fixture pass.
 
-- Git and a checkout of this repository.
-- Rust installed through rustup. The repository pins Rust 1.98.0, rustfmt and clippy in [rust-toolchain.toml](../rust-toolchain.toml).
-- Xcode Command Line Tools, including Clang and the macOS SDK/linker. Native Tree-sitter grammars need a C/C++ toolchain during compilation.
-- Internet access for initial compiler/dependency downloads, or a prepared cache.
+The native builder enforces `MACOSX_DEPLOYMENT_TARGET=13.3`, matching the bundled
+ONNX Runtime library and `AIRK.app` minimum. That declaration is a build baseline;
+oldest-supported-OS acceptance remains a separate observation.
 
-Install Apple's build tools and complete the installation dialog:
+| Host | Rust target | VSIX platform |
+| --- | --- | --- |
+| Apple Silicon | `aarch64-apple-darwin` | `darwin-arm64` |
+| Intel | `x86_64-apple-darwin` | `darwin-x64` |
+
+Both packages contain the lightweight main and inference helper under
+`AIRK.app/Contents/MacOS/`. Since 1.8.8, the app also carries a separate
+`airk-launcher-image`. The installer copies that independently inventoried image
+to the stable launcher location. Copying the app's main image after sealing the
+outer app is not the supported standalone-launcher path. The helper and its
+library remain in the approved app layout; non-code ONNX notices live under
+`Contents/Resources/onnxruntime`. See [Mac login and ownership](service-macos-login.md).
+
+## Build and exercise a local candidate
+
+Provision or supply the verified offline inputs first. Cargo does not download
+model assets or inference libraries during compilation:
 
 ```sh
-xcode-select --install
-```
-
-Install rustup using the [official Rust installation instructions](https://doc.rust-lang.org/book/ch01-01-installation.html). Then open a new terminal so its Cargo tools are on PATH. From the AIRK checkout:
-
-```sh
-rustup show
-rustc --version
-cargo --version
-xcrun --find clang
-xcrun --sdk macosx --show-sdk-path
-```
-
-Running rustup/Cargo inside the checkout selects the repository's pinned toolchain. Confirm that rustc reports 1.98.0 before collecting build evidence.
-
-## Build and test the host architecture
-
-Run from the repository root:
-
-```sh
+python3 scripts/provision-local-model.py --destination target/local-vector-model --download
+python3 scripts/provision-onnx-runtime.py --download
+npm ci --ignore-scripts --no-audit --no-fund --prefix packages/vscode
 cargo fmt --all --check
-cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --locked
-cargo build --release --locked -p airk-cli
-./target/release/airk --version
-./target/release/airk --help
+python3 scripts/dev-check.py -p airk-cli --all-features --target-dir target
+python3 scripts/build-service-runtime.py --profile release --destination artifacts/local/macos-1.8.12/runtime
+python3 scripts/check-service-clients.py --runtime-dir artifacts/local/macos-1.8.12/runtime --files 16 --model
+python3 scripts/check-service-install.py --runtime artifacts/local/macos-1.8.12/runtime
+npm test --prefix packages/vscode
 ```
 
-The executable is `target/release/airk`. Cargo builds for the active Rust host architecture. A successful compile is only the first check; retain test results and any platform-specific failures.
+The runtime builder selects the native host architecture; cross-compilation is
+not an execution or installation result for the other architecture. Keep one
+persistent Cargo target per checkout and one Cargo owner. Retain the actual
+commands, source seal, result logs and Cargo timing reports. Development Clippy
+uses incremental compilation off on macOS by default; release builds retain
+Cargo release-profile defaults. See [required qualification](../CONTRIBUTING.md#required-qualification)
+for the broader gates and [CI selection](ci-and-builds.md#checks-selected-by-the-change)
+for routine versus opt-in campaigns.
 
-The built executable needs neither Rust nor Python installed to run. Python 3.9+ is needed only for dependency notice generation, and PowerShell 7 only for the repository hygiene script:
+For the space-limited **Mac Neo**, batch its necessary checks over the existing
+SSH setup, retain every result and timing report outside the target, then run
+`cargo clean` there after the batch, including a failed batch. This Neo-specific
+rule does not call for routine cleanup on other development Macs.
+
+Package on the matching host, substituting the target from the table:
 
 ```sh
-pwsh -NoProfile -File scripts/check-repo.ps1
-python3 scripts/license-notices.py --output target/notices
-git diff --check
+python3 scripts/package-native.py --target aarch64-apple-darwin --runtime-dir artifacts/local/macos-1.8.12/runtime --output artifacts/local/macos-1.8.12/native
+python3 scripts/package-extension.py --target aarch64-apple-darwin --native-dir artifacts/local/macos-1.8.12/native/publish --output artifacts/local/macos-1.8.12/vscode
 ```
 
-Inspect notice-generation warnings before publishing. The current dependency attribution gaps are documented in [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
+These scripts verify the complete native payload, executable permissions,
+platform/version identity, source and lock receipts, extension files and loader
+inventory. Development signing is ad hoc and permits the development helper to
+load its ad-hoc signed library. It establishes neither Developer ID trust nor
+notarization. A clean installed-editor run with the resulting platform VSIX is
+separate from native client or archive verification.
 
-## Smoke-test indexing and native MCP setup
+## Signed distribution and CI installation gates
 
-Use the original public fixture and a separate derived-state directory:
+Current CI builds Linux, Windows and Apple Silicon on pull requests. Main builds
+Intel and may promote the other three identical-tree PR candidates; changed
+build inputs or failed producer authentication restore all four main builds.
+Manual and qualification runs cover all four hosts. Each Mac has native
+ownership/retrieval regressions, a fresh release pair, verified same-run payload
+transfer, model/direct-client and installed-process checks, cold-client MCP
+observations, native packaging and platform VSIX verification. Full Mac workspace
+and extended campaigns remain opt-in. See the [CI policy](ci-and-builds.md).
 
-```sh
-./target/release/airk --root examples/workspaces/project-a --data-dir target/macos-smoke-state --collection macos-smoke setup --client vscode
-./target/release/airk --root examples/workspaces/project-a --data-dir target/macos-smoke-state --collection macos-smoke symbol authenticate
-./target/release/airk --root examples/workspaces/project-a --data-dir target/macos-smoke-state --collection macos-smoke status
-./target/release/airk --data-dir target/macos-smoke-state collections list
-```
+GitHub release signing restores the authenticated tested native and compiled
+VSIX artifacts. On both Mac architectures it signs and notarizes a fresh copy
+using the protected `macos-signing` environment, verifies the exact Developer ID
+team, hardened runtime and timestamps, seals the outer app after its components,
+and verifies the exact standalone launcher bytes after copying them outside the
+app. [Native signing](native-signing.md) describes credential handling, strict
+verification and cleanup. No compiler or Docker is required on an end user's Mac.
 
-Setup prints a configuration fragment; it does not overwrite editor settings. Merge its entry into the selected client's configuration, then verify that the agent connects and can call `airk_status`, `airk_symbols` and `airk_search`. Use `--client codex`, `claude` or another supported renderer as appropriate; [agent integration](agent-integration.md) explains the formats and client steps.
+Signed VSIX promotion replaces the native payload and wrapper without rebuilding
+the host or UI. The loader inventory must then change only the native-wrapper
+digest: every host/UI/parser digest and the reviewed package manifest remain
+unchanged. `verify_vsix` checks that complete inventory for unsigned candidates
+and promoted signed packages, so stale wrapper hashes fail the existing routine
+package/release gates. Marketplace publication reauthenticates and reuses those
+exact signed release packages rather than assembling a separate unsigned set.
 
-The Cargo test suite also exercises real stdio initialization and all sixteen tools in the unreleased source through the native binary. Confirm extraction fixtures, collection isolation, source-preserving removal and Unix symlink tests pass on the Mac.
+VS Code adds its own top-level `__metadata` and may reformat installed
+`package.json`. The 1.8.12 loader compares all reviewed product fields while
+allowing only that platform metadata rewrite. Archive verification still checks
+the exact reviewed source bytes. This is separate from Apple trust, quarantine,
+notarization and actual installed-editor acceptance.
 
-When finished, disconnect the fixture's MCP worker and remove only its derived collection:
+The optional legacy `check-native-editor.cjs` selection journeys still target
+controls removed by the 1.8.11 Indexing redesign. They need the bounded current-UI
+follow-up described in [CI's installed-editor limit](ci-and-builds.md#native-build-reuse-and-darwin-failure-diagnostics).
+Bootstrap/tab-handoff checks, Restricted Mode and native installer checks must
+not be reported as a passing full Indexing or multi-window GUI journey.
 
-```sh
-./target/release/airk --data-dir target/macos-smoke-state collections remove macos-smoke
-```
+## Prior failures and remaining evidence
 
-## Apple Silicon and Intel builds
+The earlier Intel cold-client failures remain identifiable as CI 41380069062,
+attempts 1 and 2. The later `c899eca6...` correction preserved setup-deadline
+expiry for late waiters instead of turning it into a generic connection failure.
+Subsequent main CI 41398425043 and 41551033290 passed both Mac runtime jobs,
+including their cold-client repetitions and native/VSIX packaging. Those runs
+qualify their own source and artifacts, not the current unpublished working tree.
+See the [dated 1.8.7 follow-up](releases/release-1.8.7.md#cold-setup-deadline-follow-up-november-2-utc).
 
-Provide separate release binaries for both targets:
+Earlier Neo Developer ID, copied-launcher and isolated native installation
+observations retain their source identities in the [implementation ledger](research/implementation-v190.md).
+A new local Neo pass does not establish Intel execution, fresh hosted CI,
+notarization, an oldest-OS result or publication unless those checks are actually
+run and recorded. Current evidence belongs in the 1.8.12 working-build record.
 
-| Hardware | Rust target | Explicit-target executable |
-|---|---|---|
-| Apple Silicon | aarch64-apple-darwin | target/aarch64-apple-darwin/release/airk |
-| Intel Mac | x86_64-apple-darwin | target/x86_64-apple-darwin/release/airk |
-
-On a Mac with the Apple SDK/toolchain available:
-
-```sh
-rustup target add --toolchain 1.98.0 aarch64-apple-darwin x86_64-apple-darwin
-cargo build --release --locked -p airk-cli --target aarch64-apple-darwin
-cargo build --release --locked -p airk-cli --target x86_64-apple-darwin
-```
-
-Cross-building also compiles native grammar code and requires a matching Clang/SDK configuration. Adding a Rust target on Windows or Linux alone does not supply the Apple linker and SDK. Prefer macOS runners, and test each binary on its intended architecture. [Rust's macOS target documentation](https://doc.rust-lang.org/rustc/platform-support/apple-darwin.html) describes the targets, SDK discovery and cross-compilation requirements.
-
-The 1.6 runtime builder fixes `MACOSX_DEPLOYMENT_TARGET=13.3` for both architectures and declares that minimum in its GUI-less app bundle. The bundled ONNX Runtime library declares macOS 13.3 as its minimum. Set the same value for native Cargo checks. The two existing executables, static login plists, signing and ownership contract are described in [Mac service login](service-macos-login.md). Qualification on the oldest claimed OS and both architectures remains pending; compiler support alone does not establish that support range. Earlier native records describe their original artifacts.
-
-## CI candidates and release work still required
-
-The current [CI workflow](../.github/workflows/ci.yml) explicitly builds and tests Apple Silicon on `macos-15` and Intel on `macos-15-intel`, then uploads verified native ZIPs and matching platform VSIX packages with notices, manifests and SHA-256 checksums. These are unsigned candidates, retained for seven days. No Apple credentials are required. See [CI artifacts and spending controls](ci-and-builds.md). Check the candidate's actual CI run for both architecture results; hosted checks do not qualify signing, installed services or the full editor/client matrix.
-
-For macOS delivery:
-
-1. Collect successful hosted results and native candidates for both architectures.
-2. Test actual MCP client links, Unicode/case-sensitive paths, file locking, SQLite WAL transactions/migration, collection isolation and state on a user-selected drive.
-3. Review the generated candidate's dependency notices and checksums before releasing. Users should not need a compiler or Docker to install a release.
-4. For signed distribution, use AIRK's separate keychain and `airk-notary` profile with the existing company Developer ID identity, or the manual hosted workflow described in [native signing/notarization](native-signing.md). The public certificate alone cannot sign; the matching private key is required. Signing creates a fresh artifact copy and does not publish it. See [Apple's Developer ID guidance](https://developer.apple.com/help/account/certificates/create-developer-id-certificates/).
-5. Review the generated Mac VSIX and verify clean installation on its intended architecture. CI bundles the matching helper in each platform package; local packaging needs Node/npm for the pinned extension build tools. See [extension deployment](extension-deployment.md).
-
-DiskANN uses AIRK's portable disk provider; local embeddings support explicitly provisioned static word vectors and CPU ONNX transformer inference. Their disk-I/O, locking, memory-mapping, CPU and model behavior must still be qualified on both Mac architectures. Windows tests do not establish that compatibility or representative semantic quality; see [local models](local-models.md), [ONNX qualification](onnx-models.md) and the [release checklist](releases/release-1.1.0.md).
-
-## Troubleshooting
-
-- Missing Clang/linker/SDK: finish the Command Line Tools installation and check the xcrun commands above. If a custom Xcode selection is in use, verify its SDK rather than changing system-wide configuration blindly.
-- Wrong architecture: compare `rustc -vV` and `file` output for the executable; build the intended explicit target and test on that architecture.
-- Unsupported Rust version: work from this checkout, inspect its toolchain file and use rustup to install the pinned compiler/components.
-- A failed parser, persistence or MCP test: retain the failure and fix it before describing macOS as qualified. Do not disable tests to obtain a green build.
+The single-executable `target/release/airk --root ... --data-dir ... setup`
+examples formerly on this page described pre-1.4 operation. They are historical
+and do not describe the current service-owned runtime pair or explicit index
+setup. For current user actions, use [reviewed index setup](service-project-setup.md)
+and the [VS Code extension guide](vscode-extension.md).

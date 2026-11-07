@@ -3,7 +3,7 @@
 # Install a locally built AIRK VSIX, replacing an installed copy with the same version.
 # VS Code skips a VSIX whose version is already installed; --force replaces it. The
 # installed code is then verified against the VSIX. A forced reinstall is an update, not
-# an uninstall, so AIRK's uninstall cleanup does not run. Reload VS Code windows afterwards.
+# an uninstall, so AIRK's uninstall cleanup does not run. Guidance follows the package's loader inventory.
 # Usage: scripts/install-local-vsix.sh [path/to.vsix] [code|code-insiders]
 set -eu
 cd "$(dirname "$0")/.."
@@ -25,5 +25,9 @@ with zipfile.ZipFile(sys.argv[1]) as archive:
     for name in names:
         file=Path(sys.argv[2])/name[len("extension/"):]
         if not file.is_file() or hashlib.sha256(archive.read(name)).digest()!=hashlib.sha256(file.read_bytes()).digest():
-            sys.exit("The installed code at "+str(file)+" does not match the VSIX; close all VS Code windows and retry.")' "$vsix" "$extensions/$id_version"
-echo "Verified: $extensions/$id_version matches the VSIX. Reload each open VS Code window to run the new code."
+            sys.exit("The installed code at "+str(file)+" does not match the VSIX; close all VS Code windows and retry.")
+    print("Verified: "+sys.argv[2]+" matches the VSIX.")
+    if "extension/airk-update.json" in archive.namelist():
+        print("An active AIRK update loader refreshes AIRK automatically. If this window is still running AIRK 1.8.11 or older, use \"Restart Extensions\" in the VS Code Extensions pane once to activate the new loader.")
+    else:
+        print("Reload each open VS Code window to run the new code.")' "$vsix" "$extensions/$id_version"

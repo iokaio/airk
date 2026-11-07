@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { Notice, noticeKey } from './notices';
 import { useEffect, useState } from 'preact/hooks';
 import { FactItemView, FactListView } from '../explorerContracts';
 import { request } from './api';
@@ -22,7 +23,7 @@ function Relationships(props: { symbol: string }) {
                     <option value="1">1</option><option value="2">2</option><option value="3">3</option></select></label>
                 <button type="button" disabled={edges.busy} onClick={() => { void load(); }}>{edges.busy ? 'Loading…' : 'Show candidates'}</button>
             </div>
-            {edges.error && <p class="callout" role="alert">{edges.error}</p>}
+            {edges.error && <Notice noticeKey={noticeKey("code-error", edges.error)} role="alert"><p>{edges.error}</p></Notice>}
             {edges.value && <FactList list={edges.value} empty="No candidate edges were found. Absence of an edge proves nothing."
                 actions={item => item.symbolRef ? <Relationships symbol={item.symbolRef} /> : null} />}
         </div>
@@ -58,7 +59,7 @@ export function SymbolsScreen(props: ScreenProps) {
                 <button type="submit" disabled={result.busy}>{result.busy ? 'Searching…' : 'Find'}</button>
             </form>
             <p class="muted">Names are exact native definitions. A written call is not a resolved cross-file binding; relationships are candidates.</p>
-            {result.error && <p class="callout" role="alert">{result.error}</p>}
+            {result.error && <Notice noticeKey={noticeKey("code-error", result.error)} role="alert"><p>{result.error}</p></Notice>}
             {result.value && <FactList list={result.value} inspect={props.inspect} empty="No indexed definition has that exact name." actions={item => <SymbolActions item={item} />} />}
         </div>
     );
@@ -77,7 +78,7 @@ export function ReferencesScreen(props: ScreenProps) {
                 <button type="submit" disabled={result.busy}>{result.busy ? 'Searching…' : 'Find occurrences'}</button>
             </form>
             <p class="muted">Textual occurrences include comments, strings and definitions. They are not resolved references and not calls.</p>
-            {result.error && <p class="callout" role="alert">{result.error}</p>}
+            {result.error && <Notice noticeKey={noticeKey("code-error", result.error)} role="alert"><p>{result.error}</p></Notice>}
             {result.value && <FactList list={result.value} inspect={props.inspect} empty="No indexed occurrence of that identifier." />}
         </div>
     );
@@ -94,7 +95,7 @@ export function OutlineScreen(props: ScreenProps) {
                 <button type="button" class="ghost" disabled={result.busy || !props.state.sourceFile} onClick={() => { void load(); }}>Refresh outline</button>
             </div>
             {!props.state.sourceFile && <p class="callout">Choose a source file above to see its indexed outline. You can keep Explorer open while choosing.</p>}
-            {result.error && <p class="callout" role="alert">{result.error}</p>}
+            {result.error && <Notice noticeKey={noticeKey("code-error", result.error)} role="alert"><p>{result.error}</p></Notice>}
             {result.value && <FactList list={result.value} inspect={props.inspect} empty="The index holds no outline facts for this file." actions={item => <SymbolActions item={item} />} />}
         </div>
     );

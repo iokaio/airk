@@ -4,6 +4,7 @@ import Module from 'node:module';
 import * as path from 'node:path';
 import { test } from 'node:test';
 import type { ExplorerViewState } from '../explorerContracts';
+import { parseWebviewMessage } from '../explorerContracts';
 import { FEATURES } from '../explorerFeatures';
 import { HandoffStore } from '../explorerHandoffs';
 import { IndexingCatalogController } from '../indexingCatalogController';
@@ -101,6 +102,77 @@ function controller(trusted = true, stored = new Map<string, unknown>(), handoff
     return { explorer: new TestController(host as any), statusBar, runs, suggestions, host,fireSpecs:()=>specsListener() };
 }
 const flush = () => new Promise(resolve => setTimeout(resolve, 5));
+
+test('notice dismissal accepts only exact bounded UTF-8 keys', () => {
+    const message = { v: 1, type: 'notice.dismiss', requestId: 'dismiss', key: 'é'.repeat(4096) };
+    assert.ok(parseWebviewMessage(message));
+    for (const key of ['', 'é'.repeat(4097), 'x'.repeat(8193), '\u0000', 12, undefined]) {
+        assert.equal(parseWebviewMessage({ ...message, key }), undefined);
+    }
+    assert.equal(parseWebviewMessage({ ...message, extra: true }), undefined);
+});
+
+test('notice dismissal persists across controllers and remains available without workspace trust', async () => {
+    const stored = new Map<string, unknown>(), key = 'airk.explorer.dismissedNotices';
+    const f = controller(false, stored), commandCount = executedCommands.length;
+    try {
+        await (f.explorer as any).dispatch({ type: 'notice.dismiss', key: 'runtime:1.8.10:1.8.11:ready' });
+        await (f.explorer as any).dispatch({ type: 'notice.dismiss', key: 'runtime:1.8.10:1.8.11:ready' });
+        assert.deepEqual(stored.get(key), ['runtime:1.8.10:1.8.11:ready']);
+        assert.deepEqual(f.explorer.snapshot().dismissedNotices, stored.get(key));
+        assert.equal(f.explorer.snapshot().trusted, false);
+        assert.deepEqual(f.runs, [], 'presentation preferences submit no native work');
+        assert.equal(executedCommands.length, commandCount);
+    } finally { f.explorer.dispose(); }
+    const reopened = controller(false, stored);
+    try { assert.deepEqual(reopened.explorer.snapshot().dismissedNotices, stored.get(key)); }
+    finally { reopened.explorer.dispose(); }
+});
+
+test('rapid notice dismissals retain every key and failed persistence is reported without hiding the notice', async () => {
+    const stored = new Map<string, unknown>(), key = 'airk.explorer.dismissedNotices', f = controller(false, stored);
+    const writes: string[][] = [];
+    let release!: () => void, fail = false;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    f.host.workspaceState.update = async (_key: string, value: unknown) => {
+        writes.push(value as string[]);
+        if (writes.length === 1) { await gate; }
+        if (fail) { throw new Error('Preference storage failed'); }
+        stored.set(_key, value);
+    };
+    try {
+        const first = (f.explorer as any).dispatch({ type: 'notice.dismiss', key: 'first' });
+        const second = (f.explorer as any).dispatch({ type: 'notice.dismiss', key: 'second' });
+        await Promise.resolve();
+        assert.deepEqual(f.explorer.snapshot().dismissedNotices, [], 'pending storage is not a successful dismissal');
+        release(); await Promise.all([first, second]);
+        assert.deepEqual(stored.get(key), ['first', 'second']);
+        assert.deepEqual(writes, [['first'], ['first', 'second']]);
+        fail = true;
+        await assert.rejects((f.explorer as any).dispatch({ type: 'notice.dismiss', key: 'failed' }), /Preference storage failed/);
+        assert.deepEqual(f.explorer.snapshot().dismissedNotices, ['first', 'second']);
+        fail = false;
+        await (f.explorer as any).dispatch({ type: 'notice.dismiss', key: 'after-failure' });
+        assert.deepEqual(stored.get(key), ['first', 'second', 'after-failure']);
+    } finally { release(); f.explorer.dispose(); }
+});
+
+test('notice preferences validate stored keys and reject capacity exhaustion without evicting dismissals', async () => {
+    const key = 'airk.explorer.dismissedNotices', stored = new Map<string, unknown>([[key, ['kept', null, '', '\u0000', 'é'.repeat(4097), 'kept']]]);
+    const f = controller(false, stored);
+    try {
+        assert.deepEqual(f.explorer.snapshot().dismissedNotices, ['kept']);
+        for (const invalid of ['', 'é'.repeat(4097), '\u0000']) {
+            await assert.rejects((f.explorer as any).dispatch({ type: 'notice.dismiss', key: invalid }), /1–8192 UTF-8 bytes/);
+        }
+        const full = Array.from({ length: 512 }, (_, index) => `notice-${index}`); stored.set(key, full);
+        await assert.rejects((f.explorer as any).dispatch({ type: 'notice.dismiss', key: 'new' }), /limit of 512/);
+        assert.deepEqual(stored.get(key), full);
+        await (f.explorer as any).dispatch({ type: 'notice.dismiss', key: 'notice-1' });
+        assert.deepEqual(stored.get(key), full, 'already dismissed keys stay idempotent at capacity');
+    } finally { f.explorer.dispose(); }
+});
+
 async function contextMicrotasks() { for (let index = 0; index < 12; index++) { await Promise.resolve(); } }
 function automaticContextFixture() {
     const f = controller(), host = f.host as any, instance = f.explorer as any;

@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parent.parent
 EXTENSION = ROOT / "packages" / "vscode"
 TARGETS = {"x86_64-pc-windows-msvc": "win32-x64", "x86_64-unknown-linux-gnu": "linux-x64",
            "aarch64-apple-darwin": "darwin-arm64", "x86_64-apple-darwin": "darwin-x64"}
-MODULES = ("extension.js", "extensionUninstall.js", "uninstallHook.js", "diagnosticLogs.js", "diagnosticCaptures.js", "serviceExtension.js", "serviceDashboard.js", "serviceWorkspace.js", "model.js", "native.js", "nativeGate.js", "cliInstall.js", "cliRemove.js", "privateDirectory.js",
+MODULES = ("extension.js", "extensionUpdateLoader.js", "extensionUninstall.js", "uninstallHook.js", "diagnosticLogs.js", "diagnosticCaptures.js", "serviceExtension.js", "serviceDashboard.js", "serviceWorkspace.js", "model.js", "native.js", "nativeGate.js", "cliInstall.js", "cliRemove.js", "privateDirectory.js",
            "usagePanel.js", "usageReport.js", "report.js", "readRetry.js",
            "agentConnections.js", "agentConfig.js", "agentMigration.js", "unifiedAgentConfig.js", "agentSetup.js", "serviceBootstrap.js", "runtimeLegacyRetirement.js", "serviceClient.js",
            "serviceConsole.js", "serviceConsoleController.js", "serviceConsoleView.js", "serviceIntents.js",
@@ -72,6 +72,86 @@ def runtime_package(package):
         raise ValueError("Expected the packaged AIRK uninstall hook")
     package["scripts"] = {"vscode:uninstall": "node ./out/uninstallHook.js"}
     return package
+
+
+def update_inventory_paths():
+    """The complete graph consumed by the current isolated extension loader."""
+    paths = ["package.json", "native/manifest.json", "images/airk.svg"]
+    paths += ["out/" + name for name in MODULES + BUNDLES]
+    paths += ["node_modules/jsonc-parser/" + name for name in JSONC_FILES
+              if name.endswith((".js", ".json"))]
+    return sorted(paths)
+
+
+def encode_update_inventory(files, version, package_manifest):
+    reviewed = json.loads(package_manifest)
+    if not isinstance(reviewed, dict) or "__metadata" in reviewed or len(package_manifest.encode("utf-8")) > 131_072:
+        raise ValueError("Invalid reviewed extension package manifest")
+    encoded = json.dumps({
+        "schema": "airk-extension-update/1", "version": version, "files": files,
+        "package_manifest": package_manifest
+    }, indent=2) + "\n"
+    inventory_bytes = encoded.encode("utf-8")
+    if len(inventory_bytes) > 262_144:
+        raise ValueError("Extension update inventory exceeds its reader budget")
+    return inventory_bytes
+
+
+def write_update_inventory(stage, version):
+    """Seal the exact staged host/UI graph for isolated in-process AIRK handoff."""
+    files = {name: digest((stage / name).read_bytes()) for name in update_inventory_paths()}
+    package_manifest = (stage / "package.json").read_bytes().decode("utf-8")
+    (stage / "airk-update.json").write_bytes(encode_update_inventory(files, version, package_manifest))
+
+
+def read_update_inventory(zipped, version=None, platform=None):
+    """Verify the loader's complete graph before accepting or promoting a VSIX.
+
+    Historical VSIXs predate the loader. Current versions, or archives containing
+    its entry module, must have an inventory. Archive bytes are checked exactly;
+    VS Code's installed __metadata rewrite is separately allowed by the loader.
+    """
+    names = set(zipped.namelist())
+    inventory_name = "extension/airk-update.json"
+    if inventory_name not in names:
+        modern = isinstance(version, str) and re.fullmatch(r"\d+\.\d+\.\d+", version) and tuple(map(int, version.split("."))) >= (1, 8, 12)
+        if modern or "extension/out/extensionUpdateLoader.js" in names:
+            raise ValueError("VSIX is missing its extension update inventory")
+        return None
+    if zipped.getinfo(inventory_name).file_size > 262_144:
+        raise ValueError("Extension update inventory exceeds its reader budget")
+    inventory = json.loads(zipped.read(inventory_name).decode("utf-8"))
+    if (not isinstance(inventory, dict) or set(inventory) != {"schema", "version", "files", "package_manifest"}
+            or inventory.get("schema") != "airk-extension-update/1"
+            or not isinstance(inventory.get("version"), str)
+            or not isinstance(inventory.get("files"), dict)
+            or set(inventory["files"]) != set(update_inventory_paths())
+            or not isinstance(inventory.get("package_manifest"), str)):
+        raise ValueError("Invalid or incomplete extension update inventory")
+    snapshot = inventory["package_manifest"].encode("utf-8")
+    if len(snapshot) > 131_072 or digest(snapshot) != inventory["files"]["package.json"]:
+        raise ValueError("Reviewed extension manifest does not match its update inventory")
+    manifest = json.loads(snapshot)
+    if (not isinstance(manifest, dict) or "__metadata" in manifest
+            or manifest.get("name") != "airk" or manifest.get("publisher") != "iokaio"
+            or manifest.get("version") != inventory["version"]
+            or (version is not None and inventory["version"] != version)):
+        raise ValueError("Extension update inventory manifest identity differs")
+    total = 0
+    for name, expected in inventory["files"].items():
+        if not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected):
+            raise ValueError("Invalid extension update inventory digest")
+        entry = "extension/" + name
+        if entry not in names or zipped.getinfo(entry).file_size > 8_388_608:
+            raise ValueError("Missing or oversized extension update asset: " + name)
+        total += zipped.getinfo(entry).file_size
+        if total > 33_554_432 or digest(zipped.read(entry)) != expected:
+            raise ValueError("Extension update inventory differs from archive asset: " + name)
+    native = json.loads(zipped.read("extension/native/manifest.json"))
+    if (not isinstance(native, dict) or native.get("version") != inventory["version"]
+            or (platform is not None and native.get("vsix_target") != platform)):
+        raise ValueError("Extension update inventory native identity differs")
+    return inventory
 
 
 def safe_name(name):
@@ -208,6 +288,7 @@ def verify_vsix(archive, expected, executable, platform=None, version=None, pre_
         normalized = {("readme.md" if name == "README.md" else "LICENSE.txt" if name == "LICENSE" else name): value for name, value in expected.items()}
         if payload != normalized or set(names) != {"extension/" + name for name in normalized} | generated:
             raise ValueError("VSIX payload differs from the allowlisted stage")
+        read_update_inventory(zipped, version, platform)
         for name in expected:
             if name in ("native/airk", "native/runtime/airk", "native/runtime/airk-embed", "native/runtime/AIRK.app/Contents/MacOS/airk", "native/runtime/AIRK.app/Contents/MacOS/airk-embed", "native/runtime/AIRK.app/Contents/MacOS/airk-launcher-image") and not (zipped.getinfo("extension/" + name).external_attr >> 16) & stat.S_IXUSR:
                 raise ValueError("VSIX lost native executable permission: " + name)
@@ -340,6 +421,7 @@ def main():
     (stage / "README.md").write_text(listing, encoding="utf-8")
     for name in ("LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"):
         shutil.copyfile(ROOT / name, stage / name)
+    write_update_inventory(stage, package["version"])
     expected = {file.relative_to(stage).as_posix(): digest(file.read_bytes()) for file in stage.rglob("*") if file.is_file()}
     if args.stage_only:
         (output / "stage-receipt.json").write_text(json.dumps({

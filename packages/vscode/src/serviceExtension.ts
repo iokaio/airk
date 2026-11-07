@@ -163,6 +163,9 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
 
     checkForExtensionUpdate():boolean{
         if(this.disposed)return false;
+        // Packaged activation is owned by the stable loader, which replaces the
+        // entire AIRK context and UI after verifying a complete installed payload.
+        if(Reflect.get(this.context,Symbol.for('iokaio.airk.managedExtensionContext'))===true)return false;
         const extension=vscode.extensions?.getExtension(this.context.extension.id??'iokaio.airk');
         let installed=extension?.packageJSON.version;
         // A rebuilt VSIX with the same version replaces the code on disk without a version change.
@@ -1314,6 +1317,8 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         void this.console.run('refresh').catch(error=>{if(!this.disposed)this.output.appendLine(String(error));});
     }
     /** The AIRK Explorer is loaded on first use; it shares this extension's console and registrations. */
+    explorerHandoff():{open:boolean;route?:string}{return {open:this.explorerLoaded?.panelOpen??false,route:this.explorerLoaded?.assistanceStatus.active_route};}
+    async prepareForUpdate():Promise<void>{const explorer=this.explorerLoaded;this.dispose();await Promise.all([this.workbench?.finishPendingSaves(),explorer?.finishPendingNoticeWrites()]);}
     explorerController():Promise<ExplorerController>{
         this.explorer??=Promise.all(['explorerController.js','explorerWebview.js','explorerWebview.css'].map(name=>fs.access(path.join(this.context.extensionUri.fsPath,'out',name))))
         .then(()=>import('./explorerController')).then(({ExplorerController})=>{
@@ -1388,7 +1393,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         this.assistanceHost?.dispose();this.assistanceHost=undefined;
         if(!this.assistanceEnabled())return;
         const storage=this.context.globalStorageUri.fsPath,version=this.runningVersion;
-        try{await writeLaunchDescriptor(storage,this.context.extensionPath,version,undefined,
+        try{await writeLaunchDescriptor(storage,Reflect.get(this.context,Symbol.for('iokaio.airk.managedAssetRoot'))??this.context.extensionPath,version,undefined,
             ()=>generation===this.assistanceGeneration&&this.assistanceEnabled());}
         catch(error){this.output.appendLine(`Explorer Assistance launch descriptor was not written: ${error instanceof Error?error.message:String(error)}`);}
         if(generation!==this.assistanceGeneration||!this.assistanceEnabled())return;
@@ -1442,7 +1447,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     async verifyAssistance(spec:LaunchSpec):Promise<string[]>{
         this.trusted();
         const entry=this.connectionEntries(spec)[0];
-        await writeLaunchDescriptor(this.context.globalStorageUri.fsPath,this.context.extensionPath,this.runningVersion,undefined,()=>this.assistanceEnabled());
+        await writeLaunchDescriptor(this.context.globalStorageUri.fsPath,Reflect.get(this.context,Symbol.for('iokaio.airk.managedAssetRoot'))??this.context.extensionPath,this.runningVersion,undefined,()=>this.assistanceEnabled());
         const result=await probeMcp(spec,UNIFIED_TOOLS.length,this.runningVersion,entry);this.trusted();
         return result.tools;
     }
@@ -1468,7 +1473,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
 let active:ServiceExtension|undefined;
 export function deactivate():void{active?.dispose();active=undefined;}
 /** Activated by the final 1.4 adapter cutover, after native/package contract checks. */
-export async function activate(context:vscode.ExtensionContext):Promise<{getServerDefinitions():Promise<vscode.McpStdioServerDefinition[]>;whenReady():Promise<void>}>{
+export async function activate(context:vscode.ExtensionContext):Promise<{getServerDefinitions():Promise<vscode.McpStdioServerDefinition[]>;whenReady():Promise<void>;explorerHandoff():{open:boolean;route?:string};prepareForUpdate():Promise<void>}>{
     setNativeExecutionGate(nativeExecutionSetting);
     const controller=new ServiceExtension(context);active=controller;context.subscriptions.push(controller);
     const explorerOpen=(route?:unknown)=>controller.explorerController().then(explorer=>explorer.open(typeof route==='string'?route:undefined));
@@ -1564,5 +1569,6 @@ export async function activate(context:vscode.ExtensionContext):Promise<{getServ
     controller.checkForExtensionUpdate();
     void controller.startAssistance();
     const ready=controller.start();
-    return {getServerDefinitions:async()=>{await ready;return controller.provideDefinitions();},whenReady:()=>ready};
+    return {getServerDefinitions:async()=>{await ready;return controller.provideDefinitions();},whenReady:()=>ready,
+        explorerHandoff:()=>controller.explorerHandoff(),prepareForUpdate:()=>controller.prepareForUpdate()};
 }

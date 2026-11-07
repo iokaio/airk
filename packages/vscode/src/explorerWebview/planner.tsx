@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { Notice, noticeKey } from './notices';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { CitationCheckView } from '../explorerContracts';
 import { compilePrompt, effectiveState, handoffPrompt, Plan, PLAN_SCHEMA, PlanTask, renderPlan, StoredTaskState, TASK_STATES, TaskState, validatePlan } from '../explorerStrategies';
@@ -86,7 +87,7 @@ export function PlannerScreen(props: ScreenProps) {
                         })}>Start from the Studio strategy</button>}
                     </div>
                     <p class="muted">Load validated plan JSON or AIRK-saved Markdown from <code>.airk/plans</code> or another file you choose.</p>
-                    {error && <p class="callout" role="alert">{error}</p>}
+                    {error && <Notice noticeKey={noticeKey("planner-error", error)} role="alert"><p>{error}</p></Notice>}
                 </article>
                 <FileBrowser kind="plans" trusted={props.state.trusted} disabled={busy} load={loadPlan} />
             </div>
@@ -202,8 +203,8 @@ export function PlannerScreen(props: ScreenProps) {
                 </div>
                 {saved ? <p class="muted" role="status">Saved as <code>{saved.path}</code> (sha256 {saved.hash.slice(0, 12)}).</p>
                     : draft.saved ? <p class="muted">The plan changed since it was saved as <code>{draft.saved.path}</code>; save again before handing it off.</p> : null}
-                {notice && <p class="muted" role="status">{notice}</p>}
-                {error && <p class="callout" role="alert">{error}</p>}
+                {notice && <Notice noticeKey={noticeKey("planner-outcome", notice)}><p>{notice}</p></Notice>}
+                {error && <Notice noticeKey={noticeKey("planner-error", error)} role="alert"><p>{error}</p></Notice>}
                 <details><summary>Markdown preview</summary><pre class="log">{markdown}</pre></details>
             </section>
             {saved && !projectMismatch && (

@@ -85,6 +85,47 @@ The public `.cer` file cannot replace the PKCS#12 private key. Export the exact 
 
 The workflow exposes secrets only to [the CI signing helper](../scripts/ci-macos-sign.py), after build/test steps finish. It uses a private directory under `RUNNER_TEMP`, a fresh random keychain password, and explicit `--keychain` selection. It also adds the temporary keychain to the user's search list for certificate-chain resolution, preserving the existing entries and restoring the original list when signing exits. Passwords reach `security` through standard input and `notarytool` through its password prompt. Credential-tool diagnostics are suppressed to prevent accidental disclosure. The helper clears secrets from child-process environments, validates the imported identity and notary credentials, requires notarization `Accepted`, and deletes the temporary keychain on success or failure. An additional always-run cleanup step handles an interrupted signer. No compiler cache or artifact contains the credentials.
 
+### Verify the exact Mac signing certificate
+
+CI intentionally creates a different temporary keychain file on each runner.
+The reproducible check is the certificate and matching private-key identity,
+not equality with Neo's keychain path. The working source pins this public leaf
+certificate SHA-256 in `ci-macos-sign.py`:
+
+```text
+4260bd90b8623e45da6d67144a2bff4fd8fa0a8186c7281c0125e39877c3f5c1
+```
+
+That exact leaf, SHA-1 identity selector
+`4d8496dcab73794378194d040d9177fb28a0f982`, and public key were observed on
+Neo's signed 1.8.12 app/launcher and on the authenticated published 1.8.7 ARM
+artifact from GitHub release run 41405017894. Historical artifact equality and
+the environment secret's update timestamp support continuity; they do not
+reveal or independently prove the present GitHub secret value.
+
+The guard reads only public certificates from the imported temporary keychain,
+requires one pinned leaf and its unambiguous valid private-key identity, then
+passes the derived exact SHA-1 selector to `codesign`. Apple documents
+[exact hash selection when identities share a name](https://developer.apple.com/documentation/xcode/creating-distribution-signed-code-for-the-mac).
+The SHA-256 pin is the policy check; SHA-1 is Apple's identity selector. A same-name
+certificate alone cannot satisfy the guard. Verification retains Developer ID,
+team, hardened-runtime and timestamp requirements and adds the exact leaf
+requirement for hash-selected identities.
+
+After signing, the helper independently checks the public leaf SHA-256 on the
+actual app and every signed component. It writes a public
+`certificate-identity.json` beside `signing.json`, outside the signed runtime,
+and prints the public fingerprints to the job log. A mismatch fails the step,
+restores the original search list and removes the temporary keychain. This check
+exports no private key and changes no signed payload or installer inventory.
+
+These guard changes are local until an authorized source update and CI run.
+The next authorized signing run must execute them to prove that its effective
+`macos-signing/MACOS_CERTIFICATE_P12` import uses the pinned certificate and key
+pair. Renewal or rotation requires a separately reviewed public fingerprint
+change and the corresponding protected P12 update; a new certificate with the
+same name or team must fail until reviewed. Do not bypass the pin during rotation.
+
 Once the workflow change is merged to `main` and environment secrets are configured, use **Actions → Signed macOS candidates → Run workflow** on `main`. A failed signing or notarization step prevents candidate upload. Download `airk-signed-native-…` and `airk-signed-vsix-…` from that run; the native manifest includes the verified signature and Apple's submission ID. A local signing result does not establish that the hosted workflow has passed.
 
 The environment, main-only deployment policy and four secrets were configured on 14 October 2026. See the [validation record](validation.md) for the accepted local Apple Silicon notarization and hosted-run limitations.

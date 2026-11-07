@@ -68,6 +68,7 @@ def promote(vsix_directory, original_directory, native_directory, output, target
                 for name, value in receipt["payload"].items()}
     with zipfile.ZipFile(archive) as original_zip, zipfile.ZipFile(native_archive) as native_zip, \
             zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED) as result:
+        update_inventory = release.extension.package.read_update_inventory(original_zip, version, receipt["platform"])
         def write(info, source, name=None):
             emitted = copy.copy(info)
             emitted.filename = name or info.filename
@@ -85,6 +86,12 @@ def promote(vsix_directory, original_directory, native_directory, output, target
         for info in original_zip.infolist():
             name = info.filename
             if signed and name.startswith("extension/native/"):
+                continue
+            if signed and update_inventory is not None and name == "extension/airk-update.json":
+                if release.extension.package.digest(original_zip.read(info)) != expected["airk-update.json"]:
+                    raise ValueError("CI extension update inventory changed during promotion")
+                # The signed native wrapper is the only loader-consumed asset
+                # replaced below. Preserve every reviewed host/UI/parser digest.
                 continue
             if name == "extension.vsixmanifest" and receipt["pre_release"] != (channel == "preview"):
                 metadata = ET.fromstring(original_zip.read(info))
@@ -117,6 +124,14 @@ def promote(vsix_directory, original_directory, native_directory, output, target
             for name, data in (("extension/native/manifest.json", json.dumps(wrapper).encode()),
                                ("extension/native/candidate.json", (native_directory / "manifest.json").read_bytes())):
                 info = zipfile.ZipInfo(name)
+                info.external_attr = (stat.S_IFREG | 0o644) << 16
+                write(info, io.BytesIO(data))
+            if update_inventory is not None:
+                updated_files = dict(update_inventory["files"])
+                updated_files["native/manifest.json"] = payload["native/manifest.json"]
+                data = release.extension.package.encode_update_inventory(
+                    updated_files, update_inventory["version"], update_inventory["package_manifest"])
+                info = zipfile.ZipInfo("extension/airk-update.json")
                 info.external_attr = (stat.S_IFREG | 0o644) << 16
                 write(info, io.BytesIO(data))
     executable = "airk.exe" if "windows" in target else "airk"

@@ -10,8 +10,10 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+import time
 import tomllib
 import zipfile
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -63,13 +65,13 @@ def api(path, payload=None, paginate=False, missing=False):
     return json.loads(result.stdout)
 
 
-def marketplace():
+def marketplace(*, timeout=60):
     body = {"filters": [{"criteria": [{"filterType": 7, "value": "iokaio.airk"}],
                          "pageNumber": 1, "pageSize": 10}], "assetTypes": [], "flags": 147}
     request = Request("https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery",
                       data=json.dumps(body).encode(), headers={"Content-Type": "application/json",
                       "Accept": "application/json;api-version=7.2-preview.1"})
-    with urlopen(request, timeout=60) as response:
+    with urlopen(request, timeout=timeout) as response:
         catalog = json.load(response)
     extensions = [e for result in catalog["results"] for e in result["extensions"]
                   if e["publisher"]["publisherName"] == "iokaio" and e["extensionName"] == "airk"]
@@ -166,7 +168,7 @@ def verify_published_payload(archive, receipt):
             raise ValueError("Already-published platform differs from this candidate; use the original candidate")
 
 
-def download_vsix(response, archive):
+def download_vsix(response, archive, *, deadline=None):
     encoding = response.headers.get("Content-Encoding", "identity").lower()
     if encoding not in ("identity", "gzip"):
         raise ValueError("Unsupported Marketplace download encoding")
@@ -175,6 +177,8 @@ def download_vsix(response, archive):
     total = 0
     try:
         while chunk := stream.read(1024 * 1024):
+            if deadline is not None and time.monotonic() >= deadline:
+                raise RuntimeError("Marketplace propagation verification exceeded its time limit")
             total += len(chunk)
             if total > 536_870_912:
                 raise ValueError("Published VSIX download exceeds 512 MiB")
@@ -185,25 +189,64 @@ def download_vsix(response, archive):
     archive.seek(0)
 
 
-def pending_packages(inventory, version, channel, entries):
+def package_inventory(inventory, version):
     paths = json.loads(inventory.read_text(encoding="utf-8"))
     expected = {f"airk-{version}-{platform}.vsix": platform for platform in PLATFORMS}
     if not isinstance(paths, list) or len(paths) != 4 or {Path(p).name for p in paths} != set(expected):
         raise ValueError("Expected the verified four-platform VSIX inventory")
+    return {expected[Path(path).name]: path for path in paths}
+
+
+def verify_marketplace_package(path, platform, version, *, timeout=60, deadline=None):
+    receipt = json.loads(Path(path).with_name("manifest.json").read_text(encoding="utf-8"))
+    url = (f"https://marketplace.visualstudio.com/_apis/public/gallery/publishers/iokaio/vsextensions/airk/"
+           f"{version}/vspackage?targetPlatform={platform}")
+    with urlopen(url, timeout=timeout) as response, tempfile.TemporaryFile() as archive:
+        download_vsix(response, archive, deadline=deadline)
+        verify_published_payload(archive, receipt)
+
+
+def pending_packages(inventory, version, channel, entries):
+    paths = package_inventory(inventory, version)
     existing = market_platforms(entries, version, channel)
     pending = []
-    for path in paths:
-        platform = expected[Path(path).name]
+    for platform, path in paths.items():
         if platform not in existing:
             pending.append(path)
             continue
-        receipt = json.loads(Path(path).with_name("manifest.json").read_text(encoding="utf-8"))
-        url = (f"https://marketplace.visualstudio.com/_apis/public/gallery/publishers/iokaio/vsextensions/airk/"
-               f"{version}/vspackage?targetPlatform={platform}")
-        with urlopen(url, timeout=60) as response, tempfile.TemporaryFile() as archive:
-            download_vsix(response, archive)
-            verify_published_payload(archive, receipt)
+        verify_marketplace_package(path, platform, version)
     return pending
+
+
+def verify_marketplace_publication(inventory, version, channel, *, attempts=7, delay=10, timeout=180):
+    """Read back all four served packages; retry only absent catalog/package entries."""
+    paths = package_inventory(inventory, version)
+    deadline = time.monotonic() + timeout
+    verified = set()
+    for attempt in range(attempts):
+        def remaining():
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise RuntimeError("Marketplace propagation verification exceeded its time limit")
+            return min(20, left)
+
+        present = market_platforms(marketplace(timeout=remaining()), version, channel)
+        for platform in sorted(present - verified):
+            try:
+                verify_marketplace_package(paths[platform], platform, version, timeout=remaining(), deadline=deadline)
+            except HTTPError as error:
+                if error.code != 404:
+                    raise
+            else:
+                verified.add(platform)
+        if verified == PLATFORMS:
+            print(f"Verified Marketplace served payloads for all four platforms: {version} ({channel})")
+            return
+        if attempt + 1 < attempts:
+            print("Waiting for Marketplace propagation: " + ", ".join(sorted(PLATFORMS - verified)))
+            time.sleep(min(delay, remaining()))
+    raise RuntimeError("Marketplace packages did not propagate within the verification bound: "
+                       + ", ".join(sorted(PLATFORMS - verified)))
 
 
 def prepare_pr(decision, commit):
@@ -250,7 +293,7 @@ def prepare_pr(decision, commit):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("check", "plan", "prepare-pr", "pending"))
+    parser.add_argument("command", choices=("check", "plan", "prepare-pr", "pending", "verify-published"))
     parser.add_argument("--destination", choices=("marketplace", "github"))
     parser.add_argument("--expected", help="Offline check of the exact requested source version")
     parser.add_argument("--channel", choices=("stable", "preview"), default="stable")
@@ -275,6 +318,11 @@ def main():
     version = source_version()
     if os.environ.get("AIRK_VERSION", version) != version:
         raise ValueError("Requested version differs from the checked-in version")
+    if args.command == "verify-published":
+        if not args.publish or args.destination != "marketplace" or not args.inventory:
+            raise ValueError("Published-package verification requires Marketplace publication and inventory")
+        verify_marketplace_publication(args.inventory, version, args.channel)
+        return
     if args.command == "pending":
         if not args.publish or args.destination != "marketplace" or not args.inventory or not args.output:
             raise ValueError("Pending-package verification requires Marketplace publication and inventory/output paths")

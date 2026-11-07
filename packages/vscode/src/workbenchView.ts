@@ -512,7 +512,9 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
             }
         }
     }
-    dispose():void{this.visibilityChanged.dispose();this.stop();this.disposed=true;this.display.clear();this.metadata.clear();this.capabilityDisplay.clear();this.releaseClient();for(const sub of this.subscriptions){sub.dispose();}}
+    /** Fence requests, then finish local saves before a replacement graph reads them. */
+    async finishPendingSaves():Promise<void>{this.dispose();await this.saveQueue;}
+    dispose():void{if(this.disposed)return;this.visibilityChanged.dispose();this.stop();this.disposed=true;this.display.clear();this.metadata.clear();this.capabilityDisplay.clear();this.releaseClient();for(const sub of this.subscriptions){sub.dispose();}}
     async removeProject(project:string):Promise<void>{
         if(this.session?.project===project){this.sessionEpoch++;this.stop();this.releaseClient();this.session=undefined;this.status=undefined;}
         await this.saveQueue;await this.store.remove(project);this.send();

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { Notice, noticeKey } from './notices';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { request } from './api';
 import { shortToken } from './format';
@@ -37,7 +38,7 @@ function Frame(props: { busy: boolean; error?: string; reload(): void; connected
         <div class="review-screen" aria-busy={props.busy}>
             <div class="actions"><button class="ghost" disabled={props.busy || !props.connected} onClick={props.reload}>{props.busy ? 'Reading…' : 'Refresh'}</button></div>
             {!props.connected && <p class="callout">Review needs a connected AIRK service and a published index.</p>}
-            {props.error && <p class="callout" role="alert">{props.error}</p>}
+            {props.error && <Notice noticeKey={noticeKey("review-error", props.error)} role="alert"><p>{props.error}</p></Notice>}
             {props.connected && props.children}
         </div>
     );
@@ -111,7 +112,7 @@ export function ReviewTestsScreen(props: ScreenProps) {
             {data && <>
                 <p class="result-meta">{data.declarations === null ? 'Indexed analysis unavailable' : `${data.declarations} sampled declarations examined`}{data.analysis === 'partial' ? ' · partial candidate list' : ''}
                     {data.publication && <> · publication <span title={data.publication}>{shortToken(data.publication)}</span></>}</p>
-                {data.analysisError && <p class="callout" role="alert">{data.analysisError}</p>}
+                {data.analysisError && <Notice noticeKey={noticeKey("review-error", data.analysisError)} role="alert"><p>{data.analysisError}</p></Notice>}
                 {(['changed_test_file', 'identifier_reference'] as const).map(reason => {
                     const items = data.candidates.filter(candidate => candidate.reason === reason);
                     const files = new Set(items.map(item => item.path)).size;

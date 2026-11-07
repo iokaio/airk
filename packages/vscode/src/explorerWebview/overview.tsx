@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { Notice, noticeKey } from './notices';
 import { useState } from 'preact/hooks';
 import { ExplorerViewState, ProjectSummary } from '../explorerContracts';
 import { Route } from '../explorerRoutes';
@@ -53,9 +54,9 @@ export function Overview(props: { state: ExplorerViewState; project?: ProjectSum
         <section class="workspace">
             <div class="workspace-heading"><div><p class="eyebrow">Local evidence. Clear provenance.</p><h1>{project?.name ?? 'Your workspace'}</h1>
                 <p>{project && status?.indexState === 'available' ? 'Your published index is available. Current indexing work is shown separately below.' : 'Review project health, indexing progress and published search availability.'}</p></div></div>
-            {first && <p class="callout">{first}</p>}
-            {actions.outcome && <p class="callout" role="status">{actions.outcome}</p>}
-            {management?.message && !actions.outcome && <p class="muted" role="status">Last control outcome: {management.message}</p>}
+            {first && <Notice noticeKey={noticeKey("overview-connection", first)}><p>{first}</p></Notice>}
+            {actions.outcome && <Notice noticeKey={noticeKey("control-outcome", actions.outcome)}><p>{actions.outcome}</p></Notice>}
+            {management?.message && !actions.outcome && <Notice noticeKey={noticeKey("control-outcome", management.message)}><p>Last control outcome: {management.message}</p></Notice>}
             {project&&<IndexContents project={project} status={status} connected={management?.connected??state.connection==='ready'}/>}
             {managed && management && <>
                 <ProjectHealth entry={managed} view={management} actions={actions} go={props.go} compact />

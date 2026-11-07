@@ -61,7 +61,8 @@ class VsixContracts(unittest.TestCase):
                 manifest = json.loads((package.EXTENSION / "package.json").read_text(encoding="utf-8"))
                 (root / "package.json").write_text(json.dumps({"name": "airk", "publisher": "iokaio", "version": "1.1.2",
                     "engines": {"vscode": "^1.99.0"}, "repository": {"type": "git", "url": "https://github.com/iokaio/airk"},
-                    "license": "Apache-2.0", "files": manifest["files"], "dependencies": manifest["dependencies"]}), encoding="utf-8")
+                    "license": "Apache-2.0", "files": [name for name in manifest["files"] if name != "airk-update.json"],
+                    "dependencies": manifest["dependencies"]}), encoding="utf-8")
                 (root / "README.md").write_text("AIRK packaging fixture", encoding="utf-8")
                 (root / "LICENSE").write_text("Fixture legal file", encoding="utf-8")
                 for name in ("out/fixture.js", "out/fixture.css", "native/airk.exe", "images/fixture.png", "images/fixture.svg", "NOTICE", "THIRD_PARTY_NOTICES.md"):
@@ -76,6 +77,83 @@ class VsixContracts(unittest.TestCase):
             source.write_text('require("./missing");', encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "Unpackaged jsonc-parser dependency"):
                 package.stage_jsonc_parser(stage, root / "rejected")
+
+    def test_update_inventory_seals_the_complete_staged_host_ui_and_parser_graph(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            stage = Path(temporary)
+            expected_paths = {"package.json", "native/manifest.json", "images/airk.svg"}
+            expected_paths.update("out/" + name for name in package.MODULES + package.BUNDLES)
+            expected_paths.update("node_modules/jsonc-parser/" + name for name in package.JSONC_FILES
+                                  if name.endswith((".js", ".json")))
+            for name in expected_paths:
+                file = stage / name
+                file.parent.mkdir(parents=True, exist_ok=True)
+                file.write_text("fictional staged bytes: " + name, encoding="utf-8")
+            manifest_bytes = b'{"name":"airk","publisher":"iokaio","version":"1.8.12","floating":1e-7,"unicode":"\\u00e9"}\n'
+            (stage / "package.json").write_bytes(manifest_bytes)
+            package.write_update_inventory(stage, "1.8.12")
+            inventory = json.loads((stage / "airk-update.json").read_text(encoding="utf-8"))
+            self.assertEqual(inventory["schema"], "airk-extension-update/1")
+            self.assertEqual(inventory["version"], "1.8.12")
+            self.assertEqual(inventory["package_manifest"].encode("utf-8"), manifest_bytes)
+            self.assertEqual(package.digest(inventory["package_manifest"].encode("utf-8")), inventory["files"]["package.json"])
+            self.assertEqual(set(inventory["files"]), expected_paths)
+            self.assertEqual(inventory["files"], {name: package.digest((stage / name).read_bytes())
+                                                 for name in expected_paths})
+            before = inventory["files"]["out/explorerWebview.css"]
+            (stage / "out/explorerWebview.css").write_text("fictional replacement", encoding="utf-8")
+            package.write_update_inventory(stage, "1.8.12")
+            self.assertNotEqual(json.loads((stage / "airk-update.json").read_text())["files"]["out/explorerWebview.css"], before)
+            (stage / "out/serviceExtension.js").unlink()
+            with self.assertRaises(FileNotFoundError):
+                package.write_update_inventory(stage, "1.8.12")
+
+    def test_finished_vsix_checks_the_loader_inventory_even_when_outer_hashes_are_resealed(self):
+        version, platform = "1.8.12", "darwin-arm64"
+        bodies = {name: b"fictional sealed interface asset" for name in package.update_inventory_paths()}
+        bodies["package.json"] = json.dumps({"name": "airk", "publisher": "iokaio", "version": version}).encode()
+        bodies["native/manifest.json"] = json.dumps({"version": version, "vsix_target": platform}).encode()
+        def sealed(values):
+            values = dict(values)
+            values["airk-update.json"] = package.encode_update_inventory(
+                {name: package.digest(values[name]) for name in package.update_inventory_paths()},
+                version, values["package.json"].decode())
+            return values
+        original = sealed(bodies)
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / "fixture.vsix"
+            for mutation in (None, "signed_wrapper", "ui", "missing", "incomplete", "snapshot", "metadata"):
+                with self.subTest(mutation=mutation):
+                    values = dict(original)
+                    if mutation == "signed_wrapper":
+                        values["native/manifest.json"] = json.dumps({"version": version, "vsix_target": platform, "signed": True}).encode()
+                    elif mutation == "ui":
+                        values["out/explorerWebview.js"] += b" changed"
+                    elif mutation == "missing":
+                        del values["airk-update.json"]
+                    elif mutation in ("incomplete", "snapshot"):
+                        inventory = json.loads(values["airk-update.json"])
+                        if mutation == "incomplete":
+                            del inventory["files"]["out/explorerController.js"]
+                        else:
+                            inventory["package_manifest"] += " "
+                        values["airk-update.json"] = json.dumps(inventory).encode()
+                    elif mutation == "metadata":
+                        # Archives seal source bytes. Only the installed loader,
+                        # after VS Code installation, accepts __metadata rewrites.
+                        manifest = json.loads(values["package.json"])
+                        values["package.json"] = json.dumps({**manifest, "__metadata": {"installedTimestamp": 1}}).encode()
+                    with zipfile.ZipFile(archive, "w") as zipped:
+                        for name, data in values.items():
+                            zipped.writestr("extension/" + name, data)
+                        zipped.writestr("[Content_Types].xml", "<Types/>")
+                        zipped.writestr("extension.vsixmanifest", f'<PackageManifest><Identity Id="airk" Publisher="iokaio" Version="{version}" TargetPlatform="{platform}"/></PackageManifest>')
+                    expected = {name: package.digest(data) for name, data in values.items()}
+                    if mutation is None:
+                        package.verify_vsix(archive, expected, "airk", platform, version)
+                    else:
+                        with self.assertRaisesRegex(ValueError, "update inventory|Reviewed extension"):
+                            package.verify_vsix(archive, expected, "airk", platform, version)
 
     def test_listing_product_screenshots_are_explicit_bounded_public_assets(self):
         listing = (package.EXTENSION / "README.md").read_text(encoding="utf-8")

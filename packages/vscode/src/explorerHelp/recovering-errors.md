@@ -40,6 +40,10 @@ The UI checks uncertain job/configuration acknowledgements through their read-on
 
 Help search and bundled engine guides work offline. If Live reference fails, choose Back to the bundled topic. About AIRK links to the Ioka Discord community, GitHub Issues and the contribution guide. Review diagnostics for private paths, source content and tokens before sharing them.
 
-## Finish an extension update
+## Extension updates and notices
 
-Click **Reload to finish update** if AIRK shows that action. It lists the installed and running versions and remains in Explorer and the status bar after dismissal. Accepted native indexing work is retained. Runtime installation/update progress is separate; success completes quietly. Agent connections have their own guidance in Management > Agents. VS Code owns loading the new extension; older running versions cannot gain this guidance until reloaded.
+AIRK 1.8.12 and later replace their running interface automatically after verifying an installed update. An open Explorer closes and reopens on its previous screen, with one Explorer per VS Code window. A closed Explorer stays closed. Native runtime installation and accepted indexing work have their own lifecycle.
+
+For the first transition from a running 1.8.11 or older version, use **Restart Extensions** in VS Code's Extensions pane once to activate the new loader. Older running code cannot acquire it until VS Code loads the replacement.
+
+Use **Dismiss notice** (**×**) to remove an update or connection banner, error notice or action outcome. The saved dismissal applies across Explorer screens and survives reopening. Different updates and outcomes can still appear. Dismissing a notice does not cancel work or change permissions; service details and logs remain available. Agent connections have separate guidance in Management > Agents.

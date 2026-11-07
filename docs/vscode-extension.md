@@ -1,7 +1,7 @@
 # Native VS Code extension
 
-The 1.8.11 working build separates choosing what to search from managing stored
-indexes. See the [current working-build record](releases/release-1.8.11.md) and
+The 1.8.12 working build separates choosing what to search from managing stored
+indexes. See the [current working-build record](releases/release-1.8.12.md) and
 [setup and selection guide](service-project-setup.md). Opening folders alone
 never creates an index.
 
@@ -14,7 +14,7 @@ usage/legacy and Windows native qualification passed on that source. These
 results retain their historical identity in the [1.8.8 record](releases/release-1.8.8.md);
 manual acceptance and release promotion remain separate.
 
-**Indexing in 1.8.11:**
+**Indexing in 1.8.12:**
 
 - **Search scope:** check local indexes and index sets, then choose **Apply selection**.
   **Refresh choices** reads current choices. Opening the tab and editing checkboxes
@@ -62,9 +62,9 @@ qualification remains separate.
 
 The 1.8.0 candidate can expose an eligible saved selected project in Explorer and Workbench while other workspace roots finish preparation. A native metadata observation confirms that selection; saved editor state alone is insufficient. Complete workspace MCP declarations remain atomic, including explicit project selection in multi-root workspaces. Healthy authenticated discovery can finish before optional diagnostics, and Windows Assistance permission checks run asynchronously. Stop, updates, managed ownership, trust and native-execution settings retain their gates. See [F09 validation and limits](optimizations.md#f09-selected-binding-and-asynchronous-editor-setup); installed-editor latency is not yet measured.
 
-Workbench opens once after successful trusted setup. Its compact header provides history, settings and new-session icons; the composer’s **+** menu holds scope, recipes and tool forms. Explorer’s **Workbench** toolbar button, immediately left of Help, toggles secondary-sidebar visibility and shows a pressed state while visible. The project selector is available inside Overview and Management; its selection remains shared across Explorer screens. VS Code retains control of sidebar tab order and pending extension replacement may still require Reload Window.
+Workbench opens once after successful trusted setup. Its compact header provides history, settings and new-session icons; the composer’s **+** menu holds scope, recipes and tool forms. Explorer’s **Workbench** toolbar button, immediately left of Help, toggles secondary-sidebar visibility and shows a pressed state while visible. The project selector is available inside Overview and Management; its selection remains shared across Explorer screens. VS Code retains control of sidebar tab order. For the initial transition from older AIRK code, use **Restart Extensions** in VS Code’s Extensions pane to activate the new loader.
 
-The [Workbench](workbench/implementation.md) adds a secondary-sidebar transcript, shared native `parse`, evidence recipes, copy/export and local sessions. Open it with **AIRK: Open Workbench**. Workbench was introduced in published 1.7.2; published 1.7.3 followed. The current manual-test working version is **1.8.11**, with [its record](releases/release-1.8.11.md) distinguishing implemented behavior from gated work toward 1.9.0.
+The [Workbench](workbench/implementation.md) adds a secondary-sidebar transcript, shared native `parse`, evidence recipes, copy/export and local sessions. Open it with **AIRK: Open Workbench**. Workbench was introduced in published 1.7.2; published 1.7.3 followed. The current manual-test working version is **1.8.12**, with [its record](releases/release-1.8.12.md) distinguishing implemented behavior from gated work toward 1.9.0.
 
 **Version 1.6.4 — runtime upgrades, project cleanup and responsive diagnostics.** This public release consolidates the unpublished 1.6.1–1.6.3 branch work. Supported runtimes upgrade before connection checks; uninstall removes owned executables and recorded agent entries while preserving index data. Trusted open folders register and index automatically, subject to saved opt-out, pause and manual-update settings. Removing a project drains its workers and deletes its AIRK index and saved settings while preserving source files.
 
@@ -129,7 +129,9 @@ Uninstall preserves index data; see [removing the terminal command and uninstall
 
 The bundled runtime corrects discovery followed by legacy MCP initialization. Separate assistants can connect to the same project with independent handshake styles. See [1.5.9](releases/release-1.5.9.md) for the reproduced failure, validation and limits.
 
-The current working source also watches the installed extension’s flat JavaScript/CSS payload, so a UI-only same-version VSIX replacement is detected while Explorer remains open. Explorer and the status bar show **Reload to finish update**; choosing it reloads the window to run the updated host and UI together. Local install scripts verify every shipped JavaScript/CSS file against the VSIX. This follow-up still needs installed-editor acceptance.
+The 1.8.12 loader watches installed extension changes and replaces AIRK's own running extension automatically after detecting a new payload. If Explorer was open, AIRK disposes its old singleton panel and reopens one panel with the updated host and UI. This does not reload the whole VS Code window. Native runtime activation and accepted indexing work remain under the native owners. Local installation scripts verify shipped JavaScript/CSS against the VSIX. The first transition from an older running extension still needs VS Code to activate this loader; use **Restart Extensions** in VS Code’s Extensions pane for that one-time transition. Current validation and installed-editor limits are in the [1.8.12 record](releases/release-1.8.12.md).
+
+Explorer update/connection banners and action-result notices have an accessible **Dismiss notice** (**×**) control. Dismissing removes the notice from the layout on every screen where that notice appears. The extension saves the exact dismissal in workspace storage before hiding it, so it survives route changes, closing/reopening Explorer and window reload. The same notice stays hidden; a different update, outcome or failure can appear separately. Dismissal does not approve work, clear a native failure or change trust, execution or upgrade restrictions. Logs and service details remain available. A failed preference write keeps the notice visible with an error. Up to 512 distinct dismissals are retained without evicting older choices; reaching that limit reports a storage-limit error instead of falsely claiming dismissal. Required input validation, empty states, evidence qualifications and confirmation dialogs retain their own behavior.
 
 Historical introduction: updates in 1.5.8 show a single **Reload to finish update** action when VS Code exposes an installed extension version different from the loaded version. Explorer and the status bar retain that action after the toast is dismissed. Installing/updating the native runtime is labeled separately; success needs no completion-popup decision. See [1.5.8](releases/release-1.5.8.md) for detection limits and validation.
 
@@ -194,7 +196,7 @@ Each trusted window publishes a private attachment endpoint (a named pipe on Win
 
 **Open AIRK Tools** on each dashboard collection, or **AIRK: Open AIRK Tools** in the Command Palette, opens an interactive console in the Terminal panel. It launches the verified bundled helper directly with that collection's root and storage. Enter `list`, `help airk_search`, `call airk_status`, or `exit`. [Direct MCP tool access](mcp.md#call-tools-without-a-coding-agent) documents JSON/file arguments and standalone equivalents. Trust is required; the console does not trigger indexing. Existing consoles close when their collection bindings change or the extension shuts down.
 
-An independent thin native-helper extension is implemented under [packages/vscode](../packages/vscode). It wraps the Rust kernel and bundles the native helper in platform-specific VSIX packages. The checked-in manual-test working version is 1.8.11, unpublished; earlier 1.2/1.3 candidate records below retain their original scope. New collections default to Agent Lean; existing saved or published detail remains in effect. See [1.3.0 candidate changes](releases/release-1.3.0.md), [1.2.4 diagnosis and recovery](releases/release-1.2.4.md) and [1.2.3 defaults](releases/release-1.2.3.md). Local and ordinary CI candidates contain unsigned helpers; the separate GitHub release workflow signs Windows/macOS downloads. [Windows local build/review instructions](windows-local-build.md) provide the single PowerShell command and an isolated editor test.
+An independent thin native-helper extension is implemented under [packages/vscode](../packages/vscode). It wraps the Rust kernel and bundles the native helper in platform-specific VSIX packages. The checked-in manual-test working version is 1.8.12, unpublished; earlier 1.2/1.3 candidate records below retain their original scope. New collections default to Agent Lean; existing saved or published detail remains in effect. See [1.3.0 candidate changes](releases/release-1.3.0.md), [1.2.4 diagnosis and recovery](releases/release-1.2.4.md) and [1.2.3 defaults](releases/release-1.2.3.md). Local and ordinary CI candidates contain unsigned helpers; the separate GitHub release workflow signs Windows/macOS downloads. [Windows local build/review instructions](windows-local-build.md) provide the single PowerShell command and an isolated editor test.
 
 [Deployment and packaging](extension-deployment.md) adapts VCP's delivery practices; [CI](ci-and-builds.md) builds matching native and extension candidates on all three operating systems. Actual observed checks remain in [validation](validation.md).
 
@@ -202,7 +204,7 @@ An independent thin native-helper extension is implemented under [packages/vscod
 
 New vector-model setup asks the native helper for its CPU capabilities and pinned model catalog before installing its embedded assets offline. Version 1.6 selects unsigned INT8 on x64 without VNNI and signed INT8 on VNNI x64 and ARM64; prior semantic state is rebuilt. `airk model-catalog` inspects the choice offline without opening collection/model state. [CPU selection and offline provisioning](onnx-models.md) describe the implemented optimization.
 
-### Current first-use review (1.8.11 working build)
+### Current first-use review (1.8.12 working build)
 
 Before the first runtime installation on a machine, a trusted window asks **Set up AIRK on this computer?** and shows what setup will change:
 

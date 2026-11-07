@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { Notice, noticeKey } from './notices';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { SuggestionCard, SuggestionsView } from '../explorerContracts';
 import { appendTasks, type DraftBody, type DraftEvidence, MANAGEMENT_INTENTS } from '../explorerDrafts';
@@ -124,7 +125,7 @@ export function Inbox(props: InboxProps) {
                         <button class="ghost" onClick={() => setConfirmDiscard(false)}>Keep them</button></div>
                 </div>
             )}
-            {error && <p class="callout" role="alert">{error}</p>}
+            {error && <Notice noticeKey={noticeKey("inbox-error", error)} role="alert"><p>{error}</p></Notice>}
             {choice && (
                 <div class="callout" role="alertdialog" aria-label="Apply suggestion">
                     {choice.reasons.map(reason => <p key={reason}>{reason}</p>)}

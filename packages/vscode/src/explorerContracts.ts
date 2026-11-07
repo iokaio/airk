@@ -143,6 +143,8 @@ export interface ExplorerViewState {
     readonly status?: StatusSummary;
     readonly features: Readonly<Record<string, Availability>>;
     readonly notice?: ExplorerError;
+    /** Exact notices hidden by this workspace's local presentation preference. */
+    readonly dismissedNotices?: readonly string[];
     /** Last outcome code from the shared control plane (native ServiceError codes pass through). */
     readonly controlMessage?: string;
     /** More registered projects exist beyond the cached page shown. */
@@ -598,7 +600,7 @@ export function parseCitations(text: string, limit = 50): { citations: ParsedCit
 
 // ---- Webview → host messages. Each field is validated strictly; unknown keys are rejected.
 type FieldSpec =
-    | { readonly kind: 'string'; readonly max: number; readonly min?: number; readonly pattern?: RegExp; readonly optional?: boolean }
+    | { readonly kind: 'string'; readonly max: number; readonly min?: number; readonly maxBytes?: number; readonly pattern?: RegExp; readonly optional?: boolean }
     | { readonly kind: 'int'; readonly min: number; readonly max: number; readonly optional?: boolean }
     | { readonly kind: 'bool'; readonly optional?: boolean }
     | { readonly kind: 'enum'; readonly values: readonly string[]; readonly optional?: boolean }
@@ -615,6 +617,7 @@ export const WEBVIEW_MESSAGES = {
     'project.select': { project: PROJECT },
     'status.refresh': {},
     'extension.reload': {},
+    'notice.dismiss': { key: { kind: 'string', min: 1, max: 8192, maxBytes: 8192 } },
     'workspace.manageTrust': {},
     'workbench.toggle': {},
     'details.copy': { section: { kind: 'enum', values: ['index', 'health', 'progress', 'activity', 'semantic', 'service', 'storage', 'recovery'] }, project: { kind: 'string', min: 64, max: 64, pattern: /^[a-f0-9]{64}$/, optional: true } },
@@ -759,6 +762,7 @@ export type WebviewMessageType = keyof typeof WEBVIEW_MESSAGES;
  * A lost acknowledgement never authorizes replay of native or local writes.
  * Draft/preview and receipt reads stay reads even when they retain observations. */
 const UNCERTAIN_REQUESTS: ReadonlySet<WebviewMessageType> = new Set<WebviewMessageType>([
+    'notice.dismiss',
     'indexing.apply', 'indexing.export', 'indexing.grant.use', 'indexing.scope.apply', 'indexing.set.save',
     'indexing.setup.apply', 'indexing.setup.resume', 'indexing.source.resolve',
     'indexing.policy.resume', 'indexing.split.apply', 'indexing.split.recover',
@@ -790,6 +794,7 @@ const REQUEST_ID = /^[A-Za-z0-9_-]{1,64}$/;
 function valid(spec: FieldSpec, value: unknown): boolean {
     switch (spec.kind) {
         case 'string': return typeof value === 'string' && value.length >= (spec.min ?? 0) && value.length <= spec.max
+            && (spec.maxBytes === undefined || new TextEncoder().encode(value).length <= spec.maxBytes)
             && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value) && (!spec.pattern || spec.pattern.test(value));
         case 'int': return typeof value === 'number' && Number.isSafeInteger(value) && value >= spec.min && value <= spec.max;
         case 'bool': return typeof value === 'boolean';

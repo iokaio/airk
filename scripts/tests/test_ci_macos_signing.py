@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 import base64
+import hashlib
 import importlib.util
 import os
+import json
 from pathlib import Path
 import shlex
 import subprocess
@@ -15,6 +17,15 @@ spec.loader.exec_module(signing)
 builder_spec = importlib.util.spec_from_file_location("signing_runtime_builder", signing.ROOT / "scripts/build-service-runtime.py")
 builder = importlib.util.module_from_spec(builder_spec)
 builder_spec.loader.exec_module(builder)
+
+PUBLIC_DER = b"fictional public leaf certificate for guard tests"
+PUBLIC_SHA256 = hashlib.sha256(PUBLIC_DER).hexdigest()
+PUBLIC_SHA1 = hashlib.sha1(PUBLIC_DER).hexdigest()
+PUBLIC_PEM = "-----BEGIN CERTIFICATE-----\n" + base64.b64encode(PUBLIC_DER).decode() + "\n-----END CERTIFICATE-----\n"
+
+
+def valid_identities(*rows):
+    return "\n".join(f'  {at}) {sha1.upper()} "{name}"' for at, (sha1, name) in enumerate(rows, 1)) + f"\n  {len(rows)} valid identities found\n"
 
 
 class HostedSigningContracts(unittest.TestCase):
@@ -64,7 +75,7 @@ class HostedSigningContracts(unittest.TestCase):
                   "MACOS_CERTIFICATE_PASSWORD": "fixture", "APPLE_ID": "fixture@example.invalid",
                   "APPLE_APP_SPECIFIC_PASSWORD": "fixture-notary"}
         original = ["/Users/runner/Library/Keychains/login.keychain-db", "/tmp/existing keychain"]
-        for failure in (None, "notary", "signer", "search-list"):
+        for failure in (None, "notary", "signer", "search-list", "certificate"):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary:
                 directory = Path(temporary) / "credentials"
                 keychain = str(directory / "signing.keychain-db")
@@ -80,7 +91,9 @@ class HostedSigningContracts(unittest.TestCase):
                         if failure == "search-list" and keychain in search_list:
                             raise RuntimeError("search-list failed")
                     elif args[0] == "find-identity":
-                        return signing.IDENTITY
+                        return valid_identities((PUBLIC_SHA1, signing.IDENTITY))
+                    elif args[0] == "find-certificate":
+                        return PUBLIC_PEM
                     return ""
 
                 def notary(*args, **kwargs):
@@ -92,20 +105,25 @@ class HostedSigningContracts(unittest.TestCase):
                     self.assertEqual(search_list[1:], original)
                     self.assertTrue(Path(keychain).exists())
                     self.assertFalse(any(name in os.environ for name in signing.SECRET_NAMES))
+                    command = args[0]
+                    self.assertEqual(command[command.index("--identity") + 1], PUBLIC_SHA1)
                     if failure == "signer":
                         raise RuntimeError("signer failed")
 
                 with patch.dict(os.environ, values), \
+                        patch.object(signing, "CERTIFICATE_SHA256", PUBLIC_SHA256), \
                         patch.object(signing, "runner_directory", return_value=directory), \
                         patch.object(signing, "security", side_effect=security), \
                         patch.object(signing, "private_run", side_effect=notary), \
-                        patch.object(signing.subprocess, "run", side_effect=signer) as run:
+                        patch.object(signing.subprocess, "run", side_effect=signer) as run, \
+                        patch.object(signing, "verify_signed_output", side_effect=RuntimeError("certificate failed") if failure == "certificate" else None) as audit:
                     if failure:
                         with self.assertRaisesRegex(RuntimeError, failure + " failed"):
                             signing.sign("aarch64-apple-darwin")
                     else:
                         signing.sign("aarch64-apple-darwin")
-                    self.assertEqual(run.call_count, int(failure in (None, "signer")))
+                    self.assertEqual(run.call_count, int(failure in (None, "signer", "certificate")))
+                    self.assertEqual(audit.call_count, int(failure in (None, "certificate")))
                     self.assertEqual(search_list, original)
                     self.assertFalse(directory.exists())
 
@@ -154,9 +172,12 @@ class HostedSigningContracts(unittest.TestCase):
                 if args[0] == "create-keychain":
                     Path(args[-1]).touch()
                 if args[0] == "find-identity":
-                    return signing.IDENTITY
+                    return valid_identities((PUBLIC_SHA1, signing.IDENTITY))
+                if args[0] == "find-certificate":
+                    return PUBLIC_PEM
                 return ""
             with patch.dict(os.environ, values), patch.object(signing, "runner_directory", return_value=directory), \
+                    patch.object(signing, "CERTIFICATE_SHA256", PUBLIC_SHA256), \
                     patch.object(signing, "security", side_effect=security) as security_call, \
                     patch.object(signing, "private_run", side_effect=RuntimeError("notary rejected")), \
                     patch.object(signing.subprocess, "run") as run:
@@ -166,6 +187,106 @@ class HostedSigningContracts(unittest.TestCase):
                 self.assertEqual(security_call.call_args.args[0], "delete-keychain")
                 run.assert_not_called()
                 self.assertFalse(any(name in os.environ for name in signing.SECRET_NAMES))
+
+    def test_imported_public_pin_requires_the_matching_unique_private_key_identity(self):
+        good = valid_identities((PUBLIC_SHA1, signing.IDENTITY))
+        cases = [
+            (PUBLIC_PEM, good, None),
+            (PUBLIC_PEM, valid_identities((PUBLIC_SHA1, signing.IDENTITY), ("b" * 40, "Other signing identity")), None),
+            ("", good, "missing or ambiguous"),
+            (PUBLIC_PEM + PUBLIC_PEM, good, "missing or ambiguous"),
+            (PUBLIC_PEM.replace(base64.b64encode(PUBLIC_DER).decode(), base64.b64encode(b"other public certificate").decode()), good, "SHA-256 pin"),
+            (PUBLIC_PEM, valid_identities(), "unambiguous valid"),
+            (PUBLIC_PEM, valid_identities(("b" * 40, signing.IDENTITY)), "unambiguous valid"),
+            (PUBLIC_PEM, valid_identities((PUBLIC_SHA1, signing.IDENTITY), ("b" * 40, signing.IDENTITY)), "unambiguous valid"),
+            (PUBLIC_PEM, valid_identities((PUBLIC_SHA1, "Other signing identity")), "unambiguous valid"),
+            (PUBLIC_PEM, good.replace("1 valid", "2 valid"), "unambiguous valid"),
+        ]
+        for pem, identities, error in cases:
+            with self.subTest(error=error, identities=identities), patch.object(signing, "CERTIFICATE_SHA256", PUBLIC_SHA256), \
+                    patch.object(signing, "security", side_effect=[pem, identities]) as command:
+                if error:
+                    with self.assertRaisesRegex(ValueError, error):
+                        signing.imported_identity(Path("fictional.keychain-db"))
+                else:
+                    self.assertEqual(signing.imported_identity(Path("fictional.keychain-db")), PUBLIC_SHA1)
+                self.assertTrue(all(call.args[0] in {"find-certificate", "find-identity"} for call in command.call_args_list),
+                                "the guard reads public certificates and identity metadata, never exports private keys")
+
+    def test_actual_signed_leaf_must_match_the_public_sha256_pin(self):
+        prefixes = []
+        for der, expected_error in ((PUBLIC_DER, None), (b"another actual signing leaf", "differs from")):
+            with self.subTest(expected_error=expected_error):
+                def extract(command, **kwargs):
+                    self.assertEqual(command[:2], ["/usr/bin/codesign", "--display"])
+                    self.assertEqual(len(command), 4)
+                    self.assertTrue(command[2].startswith("--extract-certificates="))
+                    prefix = Path(command[2].split("=", 1)[1]); prefixes.append(prefix)
+                    Path(str(prefix) + "0").write_bytes(der)
+                with patch.object(signing, "CERTIFICATE_SHA256", PUBLIC_SHA256), patch.object(signing, "private_run", side_effect=extract):
+                    if expected_error:
+                        with self.assertRaisesRegex(ValueError, expected_error):
+                            signing.verify_signed_certificate(Path("fictional signed binary"), PUBLIC_SHA1)
+                    else:
+                        signing.verify_signed_certificate(Path("fictional signed binary"), PUBLIC_SHA1)
+        self.assertTrue(all(not prefix.parent.exists() for prefix in prefixes))
+
+    def test_wrong_or_ambiguous_import_cleans_up_before_notary_or_signing(self):
+        values = {"MACOS_CERTIFICATE_P12": base64.b64encode(b"fictional p12").decode(),
+                  "MACOS_CERTIFICATE_PASSWORD": "fixture-password", "APPLE_ID": "fixture@example.invalid",
+                  "APPLE_APP_SPECIFIC_PASSWORD": "fixture-notary-password"}
+        for ambiguous in (False, True):
+            with self.subTest(ambiguous=ambiguous), tempfile.TemporaryDirectory() as temporary:
+                directory = Path(temporary) / "credentials"
+                original = ["/tmp/original.keychain-db"]
+                search = original.copy()
+                def security(*args):
+                    if args[0] == "create-keychain":
+                        Path(args[-1]).touch()
+                    if args[0] == "list-keychains":
+                        if "-s" not in args:
+                            return shlex.join(search)
+                        search[:] = map(str, args[4:])
+                    if args[0] == "find-certificate":
+                        return PUBLIC_PEM if ambiguous else PUBLIC_PEM.replace(base64.b64encode(PUBLIC_DER).decode(), base64.b64encode(b"wrong public leaf").decode())
+                    if args[0] == "find-identity":
+                        return valid_identities((PUBLIC_SHA1, signing.IDENTITY), ("b" * 40, signing.IDENTITY))
+                    return ""
+                with patch.dict(os.environ, values), patch.object(signing, "runner_directory", return_value=directory), \
+                        patch.object(signing, "CERTIFICATE_SHA256", PUBLIC_SHA256), patch.object(signing, "security", side_effect=security), \
+                        patch.object(signing, "private_run") as notary, patch.object(signing.subprocess, "run") as signer:
+                    with self.assertRaises(ValueError) as failure:
+                        signing.sign("aarch64-apple-darwin", paired=True)
+                    self.assertTrue(all(value not in str(failure.exception) for value in values.values()))
+                    notary.assert_not_called(); signer.assert_not_called()
+                    self.assertEqual(search, original)
+                    self.assertFalse(directory.exists())
+
+    def test_public_certificate_audit_checks_the_app_and_all_components_without_changing_payload(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            names = ["AIRK.app/Contents/MacOS/" + name for name in ("airk", "airk-embed", "airk-launcher-image", "libonnxruntime.dylib")]
+            for name in names:
+                path = output / "runtime" / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"fictional immutable signed bytes")
+            receipt = {"schema": "airk-service-pair-signing/1", "components": {name: {} for name in names}}
+            (output / "signing.json").write_text(json.dumps(receipt), encoding="utf-8")
+            before = {path.relative_to(output): path.read_bytes() for path in output.rglob("*") if path.is_file()}
+            with patch.object(signing, "CERTIFICATE_SHA256", PUBLIC_SHA256), \
+                    patch.object(signing, "verify_signed_certificate") as verify, patch("builtins.print") as log:
+                audit = signing.verify_signed_output(output, True, PUBLIC_SHA1)
+                self.assertEqual(len(verify.call_args_list), 5)
+                self.assertEqual(verify.call_args_list[-1].args, (output / "runtime/AIRK.app", PUBLIC_SHA1))
+                self.assertNotIn("MACOS_CERTIFICATE", str(log.call_args))
+            self.assertEqual(audit["certificate_sha256"], PUBLIC_SHA256)
+            self.assertTrue((output / "certificate-identity.json").is_file())
+            self.assertEqual(before, {name: (output / name).read_bytes() for name in before})
+            receipt["components"] = {"../outside": {}}
+            (output / "signing.json").write_text(json.dumps(receipt), encoding="utf-8")
+            with patch.object(signing, "verify_signed_certificate") as verify, self.assertRaisesRegex(ValueError, "audit component"):
+                signing.verify_signed_output(output, True, PUBLIC_SHA1)
+            verify.assert_not_called()
 
 
 if __name__ == "__main__":

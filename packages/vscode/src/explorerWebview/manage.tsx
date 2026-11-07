@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { Notice, noticeKey } from './notices';
 import { ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import { AGENT_INSTRUCTION_FILES, AIRK_AGENT_INSTRUCTIONS, FactRow, MANAGE_ACTIONS, MANAGE_COMMANDS, ManagedProject, ManagementView, ProjectSummary, StatusSummary } from '../explorerContracts';
@@ -46,8 +47,8 @@ function Frame(props: { view?: ManagementView; trusted: boolean; actions: Return
     return (
         <div class="manage">
             <p class="muted">{props.intro} {props.view.authority} · {props.view.connected ? 'connected' : props.view.busy?'connecting':'disconnected'}{props.view.busy&&props.view.connected ? ' · checking status' : ''} · Last service check: {ago(props.view.checkedAt)}</p>
-            {props.actions.outcome && <p class="callout" role="status">{props.actions.outcome}</p>}
-            {props.view.message && !props.actions.outcome && <p class="muted" role="status">Last control outcome: <code>{props.view.message}</code></p>}
+            {props.actions.outcome && <Notice noticeKey={noticeKey("control-outcome", props.actions.outcome)}><p>{props.actions.outcome}</p></Notice>}
+            {props.view.message && !props.actions.outcome && <Notice noticeKey={noticeKey("control-outcome", props.view.message)}><p>Last control outcome: <code>{props.view.message}</code></p></Notice>}
             {props.children}
         </div>
     );
@@ -63,7 +64,7 @@ function RuntimeVersions(props: { state: ScreenProps['state']; view: ManagementV
             ...(props.state.status?.runtimeVersions ?? [['MCP frontend (airk)', 'not observed'], ['Index worker (airk)', 'not observed']] as FactRow[]),
         ]} hideUnobserved />
         <p class="muted">CLI and helper versions describe the selected installation. Process observations describe the service and the selected project’s MCP connection and worker; they may differ during an upgrade. {(props.state.status?.runtimeVersions || props.state.status?.versionsMatch !== undefined) ? `Project runtime details observed ${ago(props.state.status.detailsObservedAt ?? props.state.status.observedAt)}.` : 'Connect to the selected project to observe its processes.'} {!props.view.connected && 'Disconnected: observations may be stale.'}</p>
-        {props.state.status?.versionsMatch === false && <p class="callout" role="alert">The observed runtime versions do not match. Review Service before relying on the new version’s behavior.</p>}
+        {props.state.status?.versionsMatch === false && <Notice noticeKey={noticeKey("runtime-versions", props.state.extensionVersion)} role="alert"><p>The observed runtime versions do not match. Review Service before relying on the new version’s behavior.</p></Notice>}
     </section>;
 }
 
@@ -446,7 +447,7 @@ function AgentInstructions(props: ScreenProps) {
                 {busy === agent ? 'Opening…' : `Open ${AGENT_INSTRUCTION_FILES[agent].name} instructions`}</button>)}
         </div>
         {busy && <p role="status">{busy === 'copy' ? 'Copying instructions…' : `Opening ${AGENT_INSTRUCTION_FILES[busy as keyof typeof AGENT_INSTRUCTION_FILES].file}…`}</p>}
-        {result && <p class="callout" role="status">{result}</p>}
+        {result && <Notice noticeKey={noticeKey("agent-result", result)}><p>{result}</p></Notice>}
         <p class="muted">Claude Code: <code>CLAUDE.md</code> · Codex: <code>AGENTS.md</code> · Copilot: <code>.github/copilot-instructions.md</code>. Existing files open without changes; missing files open as unsaved drafts. Review with your existing rules before saving. Other assistants can use the copied text in their supported project instruction or rules file. Instructions guide the agent; they do not configure MCP or guarantee tool access.</p>
     </article>;
 }
@@ -469,7 +470,7 @@ export function AgentsScreen(props: ScreenProps) {
                             <button type="button" class="ghost" disabled={checking||!props.state.selectedProject} onClick={() => { void actions.command('airk.verifyMcp'); }}>{checking?'Checking AIRK…':'Check AIRK connection'}</button>
                             <button type="button" class="ghost" onClick={() => { void actions.command('airk.manageVscodeMcp'); }}>VS Code / Copilot MCP controls</button>
                         </div>
-                        {check&&<div class="callout" role="status">
+                        {check&&<Notice noticeKey={noticeKey("connection-check", check.project, checking ? "checking" : check.phase, checking ? undefined : check.message ?? check.error)}>
                             <strong>{checking?'Checking connection':check.phase==='verified'?'AIRK connection verified':'AIRK connection check failed'}</strong>
                             {check.project&&<p>Project: {props.state.projects.find(project=>project.project===check.project)?.name??check.project}</p>}
                             <p>{check.message??check.error}</p>
@@ -477,7 +478,7 @@ export function AgentsScreen(props: ScreenProps) {
                             {check.checkedAt&&<p>Checked: {new Date(check.checkedAt).toLocaleString()}</p>}
                             <button class="ghost" onClick={async()=>{try{await request('clipboard.write',{text:`AIRK ${props.state.extensionVersion} — MCP connection check\n${JSON.stringify(check,null,2)}`});setCopied('Details copied.');}catch(error){setCopied(String(error));}}}>Copy connection details</button>
                             {copied&&<p>{copied}</p>}
-                        </div>}
+                        </Notice>}
                         <p class="muted">This checks the installed launcher, MCP handshake, tool list and index status. It does not establish that Claude Code, Codex or Copilot loaded their configuration. If AIRK passes but an agent has no tools, inspect that agent’s MCP connection error.</p></article>
                     <article class="card"><h2>Responses and terminal</h2>
                         <p>MCP response mode: <strong>{view.responseMode}</strong>.</p>

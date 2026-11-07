@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { Notice, noticeKey } from './notices';
 import { useEffect, useState } from 'preact/hooks';
 import { ChangesView, CitationCheckView, InspectView } from '../explorerContracts';
 import { request } from './api';
@@ -47,7 +48,7 @@ export function InspectorScreen(props: ScreenProps) {
             {target && <p class="muted">{ref ? 'Inspecting a citation selected from a result. To return to the header’s file, use Inspect selected file.' : 'Inspecting the source file selected in the header.'}</p>}
             {!target && <p class="callout">Choose a source file above to inspect its indexed record, or go to Search and choose Inspect on a result.</p>}
             {view.busy && <p class="muted">Reading the indexed record…</p>}
-            {view.error && <p class="callout" role="alert">{view.error}</p>}
+            {view.error && <Notice noticeKey={noticeKey("evidence-error", view.error)} role="alert"><p>{view.error}</p></Notice>}
             {view.target === target && view.value && (
                 <article class="card">
                     <div class="hit-head">
@@ -90,7 +91,7 @@ export function CheckerScreen(props: ScreenProps) {
                 <button type="submit" disabled={view.busy || !text.trim()}>{view.busy ? 'Checking…' : 'Check citations'}</button>
             </form>
             <p class="muted">Supported forms: <code>path:line</code>, <code>path:start-end</code>, <code>path#Lx-Ly</code>. Prose without citations is unsupported, never a pass.</p>
-            {view.error && <p class="callout" role="alert">{view.error}</p>}
+            {view.error && <Notice noticeKey={noticeKey("evidence-error", view.error)} role="alert"><p>{view.error}</p></Notice>}
             {view.value && !view.value.supported && <p class="callout">No supported citation was found. Nothing was verified.</p>}
             {view.value && view.value.supported && (
                 <div class="table-wrap">
@@ -132,7 +133,7 @@ export function ChangesScreen(props: ScreenProps) {
                 ))}</p>
             )}
             <p class="muted">Changes are bounded observations between two publications; they do not prove filesystem intent, and unavailable baselines are reported as such.</p>
-            {view.error && <p class="callout" role="alert">{view.error}</p>}
+            {view.error && <Notice noticeKey={noticeKey("evidence-error", view.error)} role="alert"><p>{view.error}</p></Notice>}
             {view.value && (
                 <section>
                     <p class="result-meta"><strong>{view.value.items.length} changes{view.value.truncated ? ' · more may exist' : ''}</strong> · baseline {view.value.baseline.replaceAll('_', ' ')}

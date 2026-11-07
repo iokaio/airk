@@ -51,7 +51,7 @@ Jobs install the repository-pinned Rust compiler/components, Python 3.11 and Nod
 
 - Linux runs workspace Clippy, all-feature workspace tests with the `ci` default filter, and doctests once. The separate extension job runs its mocked contracts; Python packaging/protocol contracts run on each host.
 - Every native host runs the short `airk-process` ownership regressions. Windows and both Macs compile only the CLI library plus `native_read_retry`, `legacy_native`, `pdf_worker`, `unix_guardian`, `native_worker_storage` and `combined_reads` integration binaries, plus the lightweight `explorer_assistance` adapter tests. These use the default lightweight-main features and at most two test processes. The selected targets do not require inference/model features; the earlier Windows inventory before the new storage worker fixture contained the same 157 default/all-feature test identities (156 runnable, one ignored). These cover installer behavior, typed contention, source preservation and the native process regressions without compiling the entire workspace test matrix.
-- All four hosts build the release executable pair, exercise short direct-client/shared offline-model and DOCX/XLSX smoke, verify managed installation and registered MCP before first publication, and verify native archives and platform VSIX packages. The VSIX includes digest-verified listing illustrations. The managed-install/MCP smoke runs once per host, followed by two extra cold-client regression passes while the Intel connection failure remains unresolved. Qualification runs three full passes; no failed pass is retried.
+- All four hosts build the release executable pair, exercise short direct-client/shared offline-model and DOCX/XLSX smoke, verify managed installation and registered MCP before first publication, and verify native archives and platform VSIX packages. The VSIX includes digest-verified listing illustrations. The managed-install/MCP smoke runs once per host, followed by two extra cold-client regression passes retained after the earlier Intel setup-deadline regression. Qualification runs three full passes; no failed pass is retried.
 - PR CI runs the Linux x64, Windows x64 and Apple Silicon native jobs. macOS Intel runs on main after merge. The [plan script](../scripts/ci-plan.py) emits the native matrix; manual and qualification dispatches always cover all four hosts.
 - The Linux container job builds the runtime image and runs the one-container collection smoke. It does not repeat workspace compilation/tests in routine builds. Container timing reports explicitly record this scope and contain no synthetic test results.
 
@@ -71,13 +71,55 @@ A failed validation job can rerun against the retained build without compiling a
 
 CI dev/test compilation sets `CARGO_PROFILE_DEV_DEBUG=0` and `CARGO_PROFILE_TEST_DEBUG=0`, with a separate `debug0` native dependency-cache key. This omits debug information while preserving the test selection and symbol-based backtraces; release settings are unchanged. Build and validation jobs retain separate timing artifacts. This is a build-cost trial, not a measured Darwin speedup.
 
-Routine validation runs one full seven-test MCP smoke and two additional passes of the two four-cold-client tests. The extra cold-client observations preserve the failure-sensitive coverage until the Intel failure is diagnosed; this temporarily saves less work than moving every repetition to qualification. Explicit qualification runs the full installed-runtime extension suite (which supplies its first MCP pass), followed by two full MCP passes, for three in total. Every pass is independent, stops on failure and retains the original first-status and typed-retry assertions.
+Routine validation runs one full seven-test MCP smoke and two additional passes of the two four-cold-client tests. The extra cold-client observations preserve the failure-sensitive coverage introduced for the earlier Intel failure; the current selection retains them after the later correction rather than moving every repetition to qualification. Explicit qualification runs the full installed-runtime extension suite (which supplies its first MCP pass), followed by two full MCP passes, for three in total. Every pass is independent, stops on failure and retains the original first-status and typed-retry assertions.
 
-The motivating Intel run [41380069062, attempt 1](https://github.com/iokaio/airk/actions/runs/41380069062/job/125069025091) passed 311 platform regressions (382.1 seconds including compilation) and its release build (812.3 seconds), then failed the four cold source-client test in smoke pass three. The first two full passes passed; Apple Silicon passed its native job. The reported error was a generic direct-project connection failure, not an observed OOM, disk exhaustion or job timeout. The root cause remains unresolved; a passing rerun does not erase that observation. In [attempt 2](https://github.com/iokaio/airk/actions/runs/41380069062/job/125080184647), both pinned and source-bound four-cold-client tests failed in the first full smoke pass with the same generic connection error; the other native hosts passed. This is recurring failure evidence, not a diagnosed runner limit.
+The motivating Intel run [41380069062, attempt 1](https://github.com/iokaio/airk/actions/runs/41380069062/job/125069025091) passed 311 platform regressions (382.1 seconds including compilation) and its release build (812.3 seconds), then failed the four cold source-client test in smoke pass three. The first two full passes passed; Apple Silicon passed its native job. The reported error was a generic direct-project connection failure, not an observed OOM, disk exhaustion or job timeout. At that failed checkpoint the cause was unresolved; later passing results do not erase that observation. In [attempt 2](https://github.com/iokaio/airk/actions/runs/41380069062/job/125080184647), both pinned and source-bound four-cold-client tests failed in the first full smoke pass with the same generic connection error; the other native hosts passed. This is recurring failure evidence, not a diagnosed runner limit.
+
+**Later correction and hosted evidence (2–3 November 2026 UTC):** PR #56,
+`c899eca6...`, reproduced a late status waiter losing the explicit shared setup
+expiry cause. The correction retains typed `status_timeout`/preparation expiry
+without replaying accepted or uncertain work, as recorded in the
+[1.8.7 follow-up](releases/release-1.8.7.md#cold-setup-deadline-follow-up-november-2-utc).
+Main CI [41398425043](https://github.com/iokaio/airk/actions/runs/41398425043)
+(`0dbd2f0...`) and [41551033290](https://github.com/iokaio/airk/actions/runs/41551033290)
+(`b624b31c...`) subsequently passed both Apple Silicon and Intel native build and
+runtime jobs. Each runtime job passed its full seven-test MCP smoke and both
+additional two-test cold-client passes, plus native/VSIX packaging. The exact
+PR-tip and first main source trees agree. These are results for those recorded
+sources; they do not qualify the current unpublished 1.8.12 tree or establish a
+runner-capacity diagnosis. The current repetition and release gates remain.
+
+The same recorded `0dbd2f0...` source passed both Mac signing jobs in
+[GitHub release 41405017894](https://github.com/iokaio/airk/actions/runs/41405017894),
+including the pair signing/notarization command and verified signed native/VSIX
+outputs. [Marketplace rehearsal 41405848046](https://github.com/iokaio/airk/actions/runs/41405848046)
+kept publication skipped; [41406112490](https://github.com/iokaio/airk/actions/runs/41406112490)
+then completed publication. This historical 1.8.7 distribution evidence predates
+the new loader inventory and does not qualify its 1.8.12 signed-promotion fix.
+
+**Installed-editor journey limit (7 November 2026):** the optional local
+`scripts/check-native-editor.cjs` harness still contains the earlier saved-window
+association and explicit-grant UI actions. Those controls were removed from the
+inherited 1.8.11 Indexing screen in favor of **Search scope**, **Index library**
+and **Index sets**. Its `same`, `different`, `multi` and other trusted journeys
+that reuse those actions therefore need a current-UI rewrite; changing button
+labels alone would not preserve their scope and reload assertions. This mismatch
+is present in the inherited source and is not a completed 1.8.12 GUI result.
+
+No hosted workflow currently invokes that desktop-editor harness, including
+`ci.yml` with `qualification` enabled. `npm test` and the native installed-process,
+MCP/client and package gates remain separate checks. The new installed Explorer
+bootstrap/tab-handoff preflight and the Restricted Mode scenario do not qualify
+the full index-creation, selection or multi-window GUI journeys. A bounded
+follow-up should exercise visible checkbox selection and **Apply selection**,
+explicit index setup and index-set editing, retaining real native isolation,
+stale-selection and withdrawal assertions. Native grant API regressions remain
+necessary but cannot substitute for those user-visible journeys.
+
 
 When both `AIRK_PROCESS_DIAGNOSTICS=1` and `AIRK_NATIVE_DIAGNOSTIC_DIR` are set for disposable fixtures, project/derived worker stderr is continuously drained into a 4 KiB tail, with dropped-byte counts, an explicit stderr-EOF observation and the observed exit status after the existing owner drains the child. An inherited diagnostic descriptor never extends native shutdown; incomplete stderr drain remains visible. The MCP frontend records a bounded underlying connection error chain on stderr without changing its public result or retry authority. Failed smoke fixtures retain bounded frontend stderr, child PID/exit/signal, the original failure and numeric memory/disk observations before cleanup. Native build/validation jobs also retain runner memory, disk and process-count snapshots; unavailable observations remain explicit. No service databases, source trees, full command lines or environment values are uploaded. These diagnostics are opt-in and may contain fictional fixture paths. They do not warm the first status call or authorize another read.
 
-The worker exit text uses the host's native `ExitStatus` display, whose wording differs between Windows and Unix. The collector regression independently requires numeric exit code 7 and an exact match with that child's displayed status; it does not assume Windows wording on macOS/Linux. PR #56's first Apple Silicon build exposed that assertion portability bug (312 passed, one failed), before release-pair construction or runtime validation. That failure is separate from the Intel cold-client connection failure.
+The worker exit text uses the host's native `ExitStatus` display, whose wording differs between Windows and Unix. The collector regression independently requires numeric exit code 7 and an exact match with that child's displayed status; it does not assume Windows wording on macOS/Linux. PR #56's first Apple Silicon build exposed that assertion portability bug (312 passed, one failed), before release-pair construction or runtime validation. That assertion failure is separate from the later-corrected Intel setup-deadline failure described above.
 
 The related process-return/error-message audit covers native adapters/tests, extension process helpers/tests and CI scripts. Numeric exit codes and typed OS error kinds remain the comparison boundary; AIRK-owned display strings have their own stable contracts. OS-specific service command output stays within its platform branch. No other confirmed Windows return-wording assumption was found in that scoped audit.
 

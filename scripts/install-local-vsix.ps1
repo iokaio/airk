@@ -57,6 +57,7 @@ function EntryHash([string]$Archive, [string]$Name) {
 }
 $zip = [IO.Compression.ZipFile]::OpenRead($Vsix)
 try {
+    $hasUpdateLoader = $null -ne $zip.GetEntry('extension/airk-update.json')
     $reader = New-Object IO.StreamReader($zip.GetEntry('extension/package.json').Open())
     $package = $reader.ReadToEnd() | ConvertFrom-Json
     $reader.Dispose()
@@ -82,4 +83,8 @@ foreach ($entry in $codeEntries) {
     if ($expected -ne $actual) { throw "The installed code at $file does not match the VSIX. Close all VS Code windows and run this script again." }
 }
 Write-Host "Verified: $installed matches the VSIX."
-Write-Host 'Reload each open VS Code window (Developer: Reload Window, or AIRK''s "Reload to finish update" action) to run the new code.'
+if ($hasUpdateLoader) {
+    Write-Host 'An active AIRK update loader refreshes AIRK automatically. If this window is still running AIRK 1.8.11 or older, use "Restart Extensions" in VS Code''s Extensions pane once to activate the new loader.'
+} else {
+    Write-Host 'Reload each open VS Code window (Developer: Reload Window, or AIRK''s "Reload to finish update" action) to run the new code.'
+}

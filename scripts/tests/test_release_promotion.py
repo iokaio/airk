@@ -33,6 +33,34 @@ def producer():
 
 
 class PromotionContracts(unittest.TestCase):
+    def seal_loader_fixture(self, directory):
+        """Add the actual loader graph contract to fictional signed-layout bytes."""
+        receipt = json.loads((directory / "manifest.json").read_text())
+        archive = directory / receipt["archive"]
+        with zipfile.ZipFile(archive) as zipped:
+            entries = {info.filename: (info, zipped.read(info)) for info in zipped.infolist()}
+        package = release.extension.package
+        for name in package.update_inventory_paths():
+            key = "extension/" + name
+            if name == "package.json":
+                data = json.dumps({"name": "airk", "publisher": "iokaio", "version": VERSION}).encode()
+            elif key in entries:
+                continue
+            else:
+                data = b"fictional captured interface bytes"
+            entries[key] = (zipfile.ZipInfo(key), data)
+        files = {name: package.digest(entries["extension/" + name][1]) for name in package.update_inventory_paths()}
+        snapshot = entries["extension/package.json"][1].decode()
+        key = "extension/airk-update.json"
+        entries[key] = (zipfile.ZipInfo(key), package.encode_update_inventory(files, VERSION, snapshot))
+        with zipfile.ZipFile(archive, "w") as zipped:
+            for info, data in entries.values():
+                zipped.writestr(info, data)
+        receipt["archive_sha256"] = release.digest(archive)
+        receipt["payload"] = {name.removeprefix("extension/"): package.digest(data)
+                              for name, (_, data) in entries.items() if name.startswith("extension/")}
+        fixtures.write_receipt(directory, receipt)
+
     def signed_bundle(self, root):
         record = producer()
         for target in release.native.TARGETS:
@@ -233,6 +261,31 @@ class PromotionContracts(unittest.TestCase):
                     self.assertEqual(embedded, signed)
                 native = release.native.runtime_builder().runtime_names("windows" if "windows" in target else "macos")[0]
                 self.assertNotEqual(original["payload"][native], signed["payload"][native])
+
+    def test_signed_promotion_refreshes_only_the_native_wrapper_in_the_loader_inventory(self):
+        for target in sorted(release.SIGNED_TARGETS):
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                files, original, executables = fixtures.pair_fixture(root / "original", target)
+                fixtures.pair_vsix(root / "vsix", root / "original", files, original, executables)
+                self.seal_loader_fixture(root / "vsix")
+                fixtures.pair_fixture(root / "signed", target, True)
+                result = promotion.promote(root / "vsix", root / "original", root / "signed", root / "out",
+                                           target, COMMIT, VERSION, "stable")
+                with zipfile.ZipFile(root / "vsix" / result["archive"]) as before, \
+                        zipfile.ZipFile(root / "out" / result["archive"]) as after:
+                    old = release.extension.package.read_update_inventory(before, VERSION, result["platform"])
+                    new = release.extension.package.read_update_inventory(after, VERSION, result["platform"])
+                    self.assertEqual(new["package_manifest"], old["package_manifest"])
+                    changed = {name for name in old["files"] if old["files"][name] != new["files"][name]}
+                    self.assertEqual(changed, {"native/manifest.json"})
+                    self.assertEqual(new["files"]["native/manifest.json"],
+                                     release.extension.package.digest(after.read("extension/native/manifest.json")))
+                    for name in before.namelist():
+                        if not name.startswith("extension/native/") and name != "extension/airk-update.json":
+                            self.assertEqual(before.read(name), after.read(name), name)
+                    self.assertEqual(json.loads(after.read("extension/native/candidate.json"))["signed_distribution"], True)
+
 
     def test_signed_promotion_refuses_a_different_tested_source_before_writing(self):
         target = "x86_64-pc-windows-msvc"

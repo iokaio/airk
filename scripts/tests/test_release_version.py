@@ -107,6 +107,96 @@ class VersionContracts(unittest.TestCase):
             version.download_vsix(response, output)
             self.assertEqual(output.read(), data)
 
+    def publication_fixture(self, root):
+        paths = []
+        for platform in sorted(version.PLATFORMS):
+            parent = root / platform
+            parent.mkdir()
+            path = parent / f"airk-0.1.0-{platform}.vsix"
+            paths.append(str(path))
+            (parent / "manifest.json").write_text(json.dumps({"payload": {
+                "native/image": version.hashlib.sha256(platform.encode()).hexdigest()}}))
+        inventory = root / "inventory.json"
+        inventory.write_text(json.dumps(paths))
+        return inventory
+
+    def test_postpublish_reads_all_served_platforms_and_allows_store_signature_metadata(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            inventory = self.publication_fixture(Path(temporary))
+            def response(url, **kwargs):
+                platform = url.split("targetPlatform=")[1]
+                archive = io.BytesIO()
+                with zipfile.ZipFile(archive, "w") as zipped:
+                    zipped.writestr("extension/native/image", platform.encode())
+                    zipped.writestr("marketplace.signature", b"new store metadata")
+                archive.seek(0)
+                archive.headers = {}
+                return archive
+            with patch.object(version, "marketplace", side_effect=[entries()[:2], entries()]), \
+                    patch.object(version, "urlopen", side_effect=response) as downloads, \
+                    patch.object(version.time, "sleep") as sleep:
+                version.verify_marketplace_publication(inventory, "0.1.0", "stable")
+            self.assertEqual(downloads.call_count, 4)
+            sleep.assert_called_once_with(10)
+            def corrupted_response(url, **kwargs):
+                archive = io.BytesIO()
+                with zipfile.ZipFile(archive, "w") as zipped:
+                    zipped.writestr("extension/native/image", b"wrong native build")
+                archive.seek(0)
+                archive.headers = {}
+                return archive
+            with patch.object(version, "marketplace", return_value=entries()) as catalog, \
+                    patch.object(version, "urlopen", side_effect=corrupted_response) as downloads, \
+                    patch.object(version.time, "sleep") as sleep:
+                with self.assertRaisesRegex(ValueError, "differs"):
+                    version.verify_marketplace_publication(inventory, "0.1.0", "stable")
+                self.assertEqual((catalog.call_count, downloads.call_count), (1, 1))
+                sleep.assert_not_called()
+
+    def test_postpublish_missing_is_bounded_but_payload_or_channel_mismatch_never_retries(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            inventory = self.publication_fixture(Path(temporary))
+            with patch.object(version, "marketplace", return_value=entries("0.0.9")) as catalog, \
+                    patch.object(version.time, "sleep") as sleep:
+                with self.assertRaisesRegex(RuntimeError, "did not propagate"):
+                    version.verify_marketplace_publication(inventory, "0.1.0", "stable", attempts=3)
+            self.assertEqual((catalog.call_count, sleep.call_count), (3, 2))
+            for error in (ValueError("payload differs"), version.HTTPError("url", 403, "denied", {}, None)):
+                with patch.object(version, "marketplace", return_value=entries()) as catalog, \
+                        patch.object(version, "verify_marketplace_package", side_effect=error), \
+                        patch.object(version.time, "sleep") as sleep:
+                    with self.assertRaises(type(error)):
+                        version.verify_marketplace_publication(inventory, "0.1.0", "stable")
+                self.assertEqual(catalog.call_count, 1)
+                sleep.assert_not_called()
+            with patch.object(version, "marketplace", return_value=entries()), \
+                    patch.object(version.time, "sleep") as sleep:
+                with self.assertRaisesRegex(ValueError, "channel"):
+                    version.verify_marketplace_publication(inventory, "0.1.0", "preview")
+                sleep.assert_not_called()
+
+    def test_postpublish_retries_package_404_only_and_stops_at_time_deadline(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            inventory = self.publication_fixture(Path(temporary))
+            with patch.object(version, "marketplace", return_value=entries()), \
+                    patch.object(version, "verify_marketplace_package", side_effect=[
+                        version.HTTPError("url", 404, "missing", {}, None), None, None, None, None]) as downloads, \
+                    patch.object(version.time, "sleep") as sleep:
+                version.verify_marketplace_publication(inventory, "0.1.0", "stable")
+                self.assertEqual(downloads.call_count, 5)
+                sleep.assert_called_once_with(10)
+            with patch.object(version.time, "monotonic", side_effect=[0, 181]), \
+                    patch.object(version, "marketplace") as catalog:
+                with self.assertRaisesRegex(RuntimeError, "time limit"):
+                    version.verify_marketplace_publication(inventory, "0.1.0", "stable")
+                catalog.assert_not_called()
+
+    def test_postpublish_workflow_uses_authenticated_inventory_after_upload(self):
+        workflow = (version.ROOT / ".github/workflows/extension-release.yml").read_text()
+        self.assertLess(workflow.index("node packages/vscode/scripts/publish.cjs"),
+                        workflow.index("scripts/release-version.py verify-published"))
+        self.assertIn('--publish --inventory artifacts/verified-vsix.json', workflow)
+
     def test_new_main_version_wins_over_a_stale_dispatch(self):
         with patch.object(version, "api", return_value={"object": {"sha": "b" * 40}}) as api:
             with self.assertRaisesRegex(ValueError, "Main changed"):

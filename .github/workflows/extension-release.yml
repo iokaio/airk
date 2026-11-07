@@ -212,3 +212,8 @@ jobs:
         run: |
           python scripts/release-version.py pending --destination marketplace --channel "$AIRK_CHANNEL" --publish --inventory artifacts/verified-vsix.json --output artifacts/unpublished-vsix.json
           node packages/vscode/scripts/publish.cjs artifacts/unpublished-vsix.json "$AIRK_CHANNEL"
+      - name: Verify all four Marketplace downloads match the authenticated signed packages
+        env:
+          AIRK_CHANNEL: ${{ inputs.channel }}
+          AIRK_VERSION: ${{ inputs.version }}
+        run: python scripts/release-version.py verify-published --destination marketplace --channel "$AIRK_CHANNEL" --publish --inventory artifacts/verified-vsix.json

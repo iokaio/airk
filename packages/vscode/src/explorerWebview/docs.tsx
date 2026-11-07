@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { Notice, noticeKey } from './notices';
 import { useState } from 'preact/hooks';
 import { FactListView } from '../explorerContracts';
 import { request } from './api';
@@ -33,7 +34,7 @@ export function DocumentFactsScreen(props: ScreenProps) {
                 <button type="submit" disabled={result.busy}>{result.busy ? 'Searching…' : 'Find facts'}</button>
             </form>
             <p class="muted">Facts come from Markdown, PDF, Word, Excel and PowerPoint extraction with their original locations. They are candidates found by document cues, not verified requirements or live code behavior.</p>
-            {result.error && <p class="callout" role="alert">{result.error}</p>}
+            {result.error && <Notice noticeKey={noticeKey("docs-error", result.error)} role="alert"><p>{result.error}</p></Notice>}
             {result.value && <FactList list={result.value} inspect={props.inspect} empty="No indexed document fact of this kind matched." />}
         </div>
     );

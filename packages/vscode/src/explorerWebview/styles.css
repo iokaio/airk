@@ -104,6 +104,9 @@ input[type='checkbox'] { accent-color: var(--airk-accent); flex: none; }
 .source-context code { min-width: 0; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--airk-muted); }
 .source-context small { flex-basis: 100%; color: var(--airk-muted); font-size: 0.85rem; }
 .notice { margin: 0; padding: 0.4rem var(--airk-gap); border-bottom: 1px solid var(--airk-warn); }
+aside.dismissible-notice { position: relative; padding-right: 3.5rem; }
+.notice-dismiss { position: absolute; top: 0.4rem; right: 0.4rem; min-width: 2rem; font-size: 1.25rem; line-height: 1; }
+.notice-body { min-width: 0; overflow-wrap: anywhere; }
 .frame { display: grid; grid-template-columns: 190px minmax(0, 1fr); flex: 1; min-height: 0; }
 .rail { border-right: 1px solid var(--airk-border); padding: 1rem 0.65rem; display: flex; flex-direction: column; min-height: 0; overflow-y: auto; background: var(--airk-sidebar); }
 .rail-caption, .eyebrow { color: var(--airk-muted); text-transform: uppercase; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.12em; }

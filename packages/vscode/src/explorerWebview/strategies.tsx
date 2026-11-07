@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { Notice, noticeKey } from './notices';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import {
     CATEGORIES, CatalogEntry, compilePrompt, CORE_PACK, estimateTokens, operator, OPERATORS, OperatorId, PromptProfile, RunResult, Strategy, StrategyStep,
@@ -42,7 +43,7 @@ export function LibraryScreen(props: ScreenProps) {
     };
     return (
         <div class="strategies" ref={root}>
-            {notice && <p class="callout" role="status">{notice}</p>}
+            {notice && <Notice noticeKey={noticeKey("strategy-outcome", notice)}><p>{notice}</p></Notice>}
             <p class="muted">25 templates in the AIRK core pack. A strategy gathers bounded, cited evidence and compiles a prompt; the Explorer never runs an agent.</p>
             <div class="search-form">
                 <label>Category
@@ -124,7 +125,7 @@ export function StudioScreen(props: ScreenProps) {
                         <button onClick={() => props.go({ workspace: 'strategies', tab: 'library' })}>Open the Library</button>
                         <button class="ghost" onClick={() => void importFile()}>Import strategy…</button>
                     </div>
-                    {error && <p class="callout" role="alert">{error}</p>}
+                    {error && <Notice noticeKey={noticeKey("strategies-error", error)} role="alert"><p>{error}</p></Notice>}
                 </article>
                 <FileBrowser kind="strategies" trusted={props.state.trusted} load={importFile} />
             </div>
@@ -208,8 +209,8 @@ export function StudioScreen(props: ScreenProps) {
                 </div>
                 <p class="muted" role="status">{savedCurrent ? `Saved: ${draft.saved!.path}` : 'Unsaved changes'} · Saves to this project’s <code>.airk/strategies/</code>. Change the name to save a copy. Export saves only the strategy definition.</p>
             </header>
-            {error && <p class="callout" role="alert">{error}</p>}
-            {notice && <p class="muted" role="status">{notice}</p>}
+            {error && <Notice noticeKey={noticeKey("strategies-error", error)} role="alert"><p>{error}</p></Notice>}
+            {notice && <Notice noticeKey={noticeKey("strategy-outcome", notice)}><p>{notice}</p></Notice>}
             {blocked && <p class="muted">Preview: {blocked} You can still edit the steps and compile a prompt without evidence.</p>}
             <section class="card">
                 <h3>Objective and scope</h3>

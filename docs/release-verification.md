@@ -40,6 +40,46 @@ The check does **not** prove that rebuilding the source reproduces the same byte
 
 5. Record the result, including which install, upgrade and uninstall tests actually ran on that platform. A source test, a CI candidate test and a test of the signed installed artifact are separate kinds of evidence.
 
+## Mac installed-artifact and channel acceptance
+
+Bundle verification alone does not qualify the installed launcher. The
+[issue 66 review](https://github.com/iokaio/airk/issues/66#issuecomment-6710990197)
+identifies a signed 1.8.7 main executable that verifies inside `AIRK.app` but
+fails after the installer copies it outside the bundle. Current layouts use a
+separately signed `AIRK.app/Contents/MacOS/airk-launcher-image`; service and worker
+processes keep using the sealed app executables. Changing certificates does not
+repair the historical copy defect.
+
+Before declaring the corrected Mac release accepted, retain these additional
+results for Apple Silicon and Intel separately:
+
+- Verify the final downloaded app's strict Developer ID signature, notarization
+  assessment and stapled ticket. Check the standalone launcher's exact digest
+  against the approved native and VSIX inventories.
+- In a separate execution test of the approved package, copy the approved
+  standalone image outside the app, verify its strict signature and run
+  `--version`. Preserve a negative check showing that copying the sealed app
+  main is rejected. `scripts/sign-native.py::verify_copied_launcher` performs
+  the positive post-seal copy check during signing and native packaging.
+- Install the actual signed/notarized VSIX on a clean standard-user account.
+  Exercise setup, service health, indexing/search, collection status and an MCP
+  handshake. Upgrade or repair a reproduction of the failing signed 1.8.7
+  installation, reopen the editor, and verify that the invalid launcher is not
+  recreated. A same-version payload-switch smoke is a different observation.
+- Download both GitHub and Marketplace packages for the same version and
+  architecture. Compare their native file inventories, executable permissions,
+  digests and Apple signing identity. Record which published release and
+  producer each download matches. Whole-VSIX hashes alone do not establish
+  native payload equality; Marketplace extension signing is separate from Apple
+  native signing. [Issue 67](https://github.com/iokaio/airk/issues/67) reports
+  different native payloads for the historical 1.8.7 downloads.
+
+The read-only procedure above does not execute these acceptance scenarios.
+The [1.8.12 working-build record](releases/release-1.8.12.md) distinguishes
+completed local Developer ID tests from outstanding notarized distributed-package,
+historical upgrade, Intel and publication checks. Keep the issue open until its
+required release evidence exists.
+
 ## Recorded result: 1.7.6, Windows x64 and Linux x64 (2026-10-31)
 
 | Item | Observed |

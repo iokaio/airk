@@ -80,6 +80,12 @@ export interface ExplorerHost {
 }
 
 const RECIPES_KEY = 'airk.explorer.searchRecipes';
+const DISMISSED_NOTICES_KEY = 'airk.explorer.dismissedNotices';
+const DISMISSED_NOTICES_LIMIT = 512;
+function validNoticeKey(key: unknown): key is string {
+    return typeof key === 'string' && key.length > 0 && key.length <= 8192
+        && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(key) && new TextEncoder().encode(key).length <= 8192;
+}
 export interface EmbeddedUsage {
     view(): { html: string };
     action(message: unknown): Promise<{ html: string }>;
@@ -130,6 +136,7 @@ export class ExplorerController implements vscode.Disposable {
     private statusLoadingKind?: 'scalar' | 'details';
     private retainedDetails?: { project: string; binding: string; identity?: string; summary: StatusSummary; settings?: string };
     private notice?: ExplorerError;
+    private noticeWrites: Promise<void> = Promise.resolve();
     private revision = 0;
     private route = '#overview';
     private retained?: { dispose(): void };
@@ -225,11 +232,33 @@ export class ExplorerController implements vscode.Disposable {
             features: FEATURES,
             indexing: this.indexing.snapshot(),
             ...(this.notice ? { notice: this.notice } : {}),
+            dismissedNotices: this.dismissedNotices(),
             ...(this.control.message() ? { controlMessage: this.control.message()!.slice(0, 600) } : {}),
             ...(this.control.morePages() ? { moreProjects: true } : {}),
             ...(this.managementOpen && this.host.trusted() ? { management: managementView(this.control.state) } : {}),
             ...(this.host.trusted() ? { suggestions: suggestionsView(this.host.suggestions.list()) } : {}),
         };
+    }
+
+    private dismissedNotices(): string[] {
+        const stored = this.host.workspaceState.get<unknown>(DISMISSED_NOTICES_KEY);
+        return Array.isArray(stored) ? [...new Set(stored.filter(validNoticeKey))] : [];
+    }
+
+    /** Serialize preference writes so rapid dismissals cannot overwrite each other. */
+    private dismissNotice(key: string): Promise<void> {
+        const write = this.noticeWrites.then(async () => {
+            if (this.disposed) { throw new EvidenceFailure(explorerError('CLIENT_NOT_AUTHORIZED')); }
+            if (!validNoticeKey(key)) { throw new Error('Notice dismissal key must contain 1–8192 UTF-8 bytes.'); }
+            const keys = this.dismissedNotices();
+            if (!keys.includes(key)) {
+                if (keys.length >= DISMISSED_NOTICES_LIMIT) { throw new Error('Explorer has reached its limit of 512 dismissed notices. This notice was not dismissed.'); }
+                await this.host.workspaceState.update(DISMISSED_NOTICES_KEY, [...keys, key]);
+            }
+            this.publish();
+        });
+        this.noticeWrites = write.catch(() => undefined);
+        return write;
     }
 
     private publish(): void {
@@ -545,6 +574,7 @@ export class ExplorerController implements vscode.Disposable {
         if(this.disposed)throw new EvidenceFailure(explorerError('CLIENT_NOT_AUTHORIZED'));
         if(message.type.startsWith('indexing.'))this.requireAuthorization(message.type!=='indexing.export');
         switch (message.type) {
+            case 'notice.dismiss': return this.dismissNotice(message.key);
             case 'indexing.recommendations':
                 return this.indexing.recommendations(async()=> (await this.session().call('airk_query_scope',{...message.arguments,view:'recommendations',max_bytes:65536},{supersede:'recommendations'})).payload);
             case 'indexing.recommendations.dismiss': return this.indexing.dismissRecommendations();
@@ -1057,6 +1087,8 @@ export class ExplorerController implements vscode.Disposable {
             ...(this.publication ? { currentPublication: this.publication } : {}) });
     }
 
+    /** Pending UI preferences finish before a replacement controller reads them. */
+    async finishPendingNoticeWrites(): Promise<void> { this.dispose(); await this.noticeWrites; }
     dispose(): void {
         void this.usageSession?.value.then(session => session.dispose(), () => undefined);
         if (this.disposed) { return; }

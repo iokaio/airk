@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { Notice, noticeKey } from './notices';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { WorkspaceFileKind, WorkspaceFilesView } from '../explorerContracts';
 import { request } from './api';
@@ -54,7 +55,7 @@ export function FileBrowser(props: { kind: WorkspaceFileKind; trusted: boolean; 
             </>}
             {busy && <p class="muted" role="status">Reading saved files…</p>}
             {loading && <p class="muted" role="status">Loading file…</p>}
-            {error && <p class="callout" role="alert">{error}</p>}
+            {error && <Notice noticeKey={noticeKey("fileBrowser-error", error)} role="alert"><p>{error}</p></Notice>}
         </>}
     </section>;
 }

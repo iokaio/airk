@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { Notice, noticeKey } from './notices';
 import catalog from 'airk-explorer-help';
 import { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
@@ -106,7 +107,7 @@ export function HelpScreen(props: ScreenProps) {
                 {showEngine ? (
                     <section>
                         {engine.busy && <p class="muted">Reading airk_help…</p>}
-                        {engine.error && <p class="callout" role="alert">{engine.error} Bundled guidance remains available below.</p>}
+                        {engine.error && <Notice noticeKey={noticeKey("help-error", engine.error)} role="alert"><p>{engine.error} Bundled guidance remains available below.</p></Notice>}
                         {engine.value && <>
                             <p class="muted">AIRK engine help · {engine.value.topic}{engine.value.version ? ` · runtime ${engine.value.version}` : ''}</p>
                             <h2>{engine.value.title}</h2>

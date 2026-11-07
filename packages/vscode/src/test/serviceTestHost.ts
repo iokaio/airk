@@ -174,14 +174,14 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
     test.mock.method(native,'prepareHelper',async()=>{throw new Error('Legacy helper preparation is forbidden');});
     test.mock.method(native,'runJson',async()=>{throw new Error('Direct collection command is forbidden');});
     const loader=Module as unknown as {_load:(...args:any[])=>any},original=loader._load;
-    const modules=['../extension','../serviceExtension','../serviceConsole','../agentSetup','../explorerController','../explorerPanel','../workbenchView','../usagePanel'];
+    const modules=['../extension','../extensionUpdateLoader','../serviceExtension','../serviceConsole','../agentSetup','../explorerController','../explorerPanel','../workbenchView','../usagePanel'];
     const clear=()=>{for(const name of modules)delete require.cache[require.resolve(name)];};clear();
     loader._load=function(request:string,...args:any[]){return request==='vscode'?stub:original.call(this,request,...args);};
     if(options.workspaceFile){const workspaceFile=path.join(root,'fixture.code-workspace');await fs.writeFile(workspaceFile,JSON.stringify({folders:folders.map(folder=>({path:folder.uri.fsPath}))}));stub.workspace.workspaceFile=stub.Uri.file(workspaceFile);}
     let extension:any;
     // Real installations carry compiled code; same-version rebuild detection stats it.
     if(options.codeFile){await fs.mkdir(path.join(root,'out'),{recursive:true});for(const name of ['serviceExtension.js','explorerWebview.js','explorerWebview.css','workbenchWebview.js','workbenchWebview.css'])await fs.writeFile(path.join(root,'out',name),'// fixture build 1\n');}
-    try{extension=require('../extension');const context:any={extensionPath:root,extensionUri:{scheme:'file',fsPath:path.resolve(__dirname,'../..')},extension:{id:'iokaio.airk',packageJSON:{version:bundledVersion}},globalState:storage,workspaceState:storage,
+    try{extension=require('../extension');const context:any={extensionMode:2,extensionPath:root,extensionUri:{scheme:'file',fsPath:path.resolve(__dirname,'../..')},extension:{id:'iokaio.airk',packageJSON:{version:bundledVersion}},globalState:storage,workspaceState:storage,
         globalStorageUri:{fsPath:path.join(root,'editor-storage')},subscriptions:[],environmentVariableCollection:{persistent:false,prepend(){}}};
         const api=await extension.activate(context);
         if(!options.deferStartup)await api.whenReady();

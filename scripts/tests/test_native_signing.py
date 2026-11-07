@@ -223,6 +223,36 @@ class SigningContracts(unittest.TestCase):
             self.assertEqual(receipt["notarization"]["status"], "Accepted")
             self.assertNotIn("keychain", receipt)
 
+    def test_exact_apple_certificate_sha1_selects_and_verifies_the_leaf(self):
+        identity = "4d8496dcab73794378194d040d9177fb28a0f982"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "target/aarch64-apple-darwin/release/airk"
+            source.parent.mkdir(parents=True)
+            source.write_bytes(b"fictional executable")
+            (root / "Cargo.lock").write_bytes(b"fictional lock")
+            output = root / "artifacts/signed"
+            def command(args, **kwargs):
+                if args[0] == "/usr/bin/codesign":
+                    self.assertEqual(args[args.index("--sign") + 1], identity)
+                    args[-1].write_bytes(b"fictional exact-identity signature")
+                return "fixture-commit"
+            arguments = ["sign-native.py", "--target", "aarch64-apple-darwin", "--output", str(output),
+                         "--identity", identity, "--team-id", "ABCDEFGHIJ"]
+            with patch.object(signing, "ROOT", root), patch.object(signing.platform, "system", return_value="Darwin"), \
+                    patch.object(sys, "argv", arguments), patch.object(signing, "verify", return_value={}), \
+                    patch.object(signing, "run", side_effect=command):
+                signing.main()
+            receipt = json.loads((output / "signing.json").read_text())
+            self.assertEqual(receipt["identity"], identity)
+            details = "Authority=Developer ID Application: Fixture\nflags=0x10000(runtime)\nTeamIdentifier=ABCDEFGHIJ\nTimestamp=fixture\n"
+            with patch.object(signing.platform, "system", return_value="Darwin"), patch.object(signing, "run") as run, \
+                    patch.object(signing.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", details)):
+                signing.verify(output / "airk", receipt)
+                requirement = run.call_args.args[0][run.call_args.args[0].index("-R") + 1]
+                self.assertTrue(requirement.startswith("=anchor apple generic"))
+                self.assertTrue(requirement.endswith(f'certificate leaf = H"{identity}"'))
+
     def test_altered_binary_and_source_receipt_fail_before_trust_probe(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

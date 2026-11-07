@@ -1,12 +1,12 @@
 # Build and review the Windows app and VS Code extension
 
-The current local manual-test working version is **1.8.11**. Its [working-build record](releases/release-1.8.11.md) records native and extension identities, selected validation, failures and the local Windows package. Manual installed-editor acceptance and later 1.9.0 promotion remain separate.
+The current local manual-test working version is **1.8.12**. Its [working-build record](releases/release-1.8.12.md) records notice dismissal, automatic extension replacement, current validation and local Windows package evidence as it is collected. Manual installed-editor acceptance and later 1.9.0 promotion remain separate.
 
 The [1.8.7 predecessor record](releases/release-1.8.7.md) consolidates the earlier unpublished 1.8.0-1.8.6 work and retains its dated preparation and publication evidence. At that preparation checkpoint, the stable version was [1.7.6](releases/release-1.7.6.md). These and the prior 1.4.x build records retain their original scope.
 
 Trusted VSIX installation and **Install or Repair CLI** refresh recognized existing workspace AIRK connections in Codex (`.codex/config.toml`), Claude Code (`.mcp.json`) and GitHub Copilot (`.vscode/mcp.json`) to the installed stable launcher and configured source-root scope. Other servers, environment and tool policies remain intact; missing entries do not enable an agent. Foreign/custom launches, unsupported TOML, unsaved edits and unsafe files remain for manual review with a visible warning. Restart connected agents after installation. The current installer harness checks the 29-tool catalog, source-bound entries and detailed runtime observations through diagnostics. It resolves fixture registration/control metadata natively rather than expecting internal data/project selectors in managed agent files. Actual installed-editor acceptance and broader platform qualification must be recorded separately for each candidate.
 
-Historical October 25 manual-test checkpoint: cleanup, help and live-status changes used 1.4.0. The later 1.4.1 installer candidate is also historical; follow [versioning](versioning.md) and [current candidate notes](releases/release-1.8.11.md). Those earlier Windows checks do not replace installed-editor acceptance or native macOS/Linux qualification. The unified source catalog now advertises 29 tools; see [the MCP catalog](unified-mcp.md).
+Historical October 25 manual-test checkpoint: cleanup, help and live-status changes used 1.4.0. The later 1.4.1 installer candidate is also historical; follow [versioning](versioning.md) and [current candidate notes](releases/release-1.8.12.md). Those earlier Windows checks do not replace installed-editor acceptance or native macOS/Linux qualification. The unified source catalog now advertises 29 tools; see [the MCP catalog](unified-mcp.md).
 
 Historical October 25 onboarding follow-up: automatic trusted-workspace setup was covered by extension regressions and package closure checks. The current working build uses [explicit index setup and search selection](service-project-setup.md); opening a trusted folder does not register or index it. Earlier installed-editor receipts and the manual-dialog harness below retain their original VSIX scope.
 
@@ -92,17 +92,37 @@ pwsh -NoProfile -File scripts/build-windows.ps1 -OpenReview
 
 This installs the generated VSIX in a separate extensions directory and opens a private VS Code profile with a copy of the public project-a fixture, its own native installation and separate index data. It does not install into or alter your normal profile. Grant that fixture workspace trust, then select the AIRK status item. Try Index Now, Reindex, indexing modes, pause/resume, storage selection, collection status and Verify Native MCP.
 
-To install the reviewed package into your normal profile later, use **Extensions: Install from VSIX** and choose the printed VSIX path. Installation is not performed in the normal profile by this script. VS Code skips a VSIX whose version is already installed, so a rebuilt package with an unchanged version looks installed while the old code keeps running. Use `scripts/install-local-vsix.ps1` (or `scripts/install-local-vsix.sh`) instead. It runs `code --install-extension <vsix> --force` and verifies that the installed code matches the VSIX. A forced reinstall is an update, not an uninstall, so AIRK's uninstall cleanup does not run. A running VS Code on Windows locks the installed folder, so close every VS Code window before a same-version reinstall; a higher version installs beside the running one without closing it. Reload open windows afterwards; since 1.7.6, AIRK also offers **Reload to finish update** when it detects a same-version rebuild.
+To install the reviewed package into your normal profile later, use **Extensions: Install from VSIX** and choose the printed VSIX path. Installation is not performed in the normal profile by this script. VS Code skips a VSIX whose version is already installed, so a rebuilt package with an unchanged version looks installed while the old code keeps running. Use `scripts/install-local-vsix.ps1` (or `scripts/install-local-vsix.sh`) instead. It runs `code --install-extension <vsix> --force` and verifies that the installed code matches the VSIX. A forced reinstall is an update, not an uninstall, so AIRK's uninstall cleanup does not run. A running VS Code on Windows locks the installed folder, so close every VS Code window before a same-version reinstall; a higher version installs beside the running one without closing it. The active 1.8.12 loader handles later detected replacements by reloading AIRK and reopening its singleton Explorer automatically. A window still running an older extension needs VS Code to activate the new loader first; use **Restart Extensions** in VS Code’s Extensions pane for that one-time transition.
 
 ## Automated packaged-editor smoke
+
+**Current 1.8.12 limit:** `-RunEditorTests` invokes the older
+`check-native-editor.cjs` selection journeys. Their saved-association and
+explicit-grant controls are absent from the inherited 1.8.11 checkbox UI, so the
+trusted journeys need a current-UI fixture update. They are not a completed
+1.8.12 Indexing or multi-window GUI qualification. Native installer/client/MCP
+checks remain separate, and their assertions are not bypassed by this limit.
+See [the recorded CI distinction](ci-and-builds.md#native-build-reuse-and-darwin-failure-diagnostics).
 
 ```powershell
 pwsh -NoProfile -File scripts/build-windows.ps1 -RunEditorTests
 ```
 
-The test installs the verified VSIX into isolated profiles, using the installed Code.exe and its matching CLI identified by code.cmd. It exercises reviewed native registration, stable-launcher MCP definitions, indexing, the real sixteen-tool stdio handshake, citation hashes and separately reviewed storage rebinding that retains the old index. It runs the same five scenarios described below. Only generated fixtures and private profiles are used; the normal user's settings and trust are untouched.
+The legacy test installs the verified VSIX into isolated profiles, using the installed Code.exe and its matching CLI identified by code.cmd. It was designed to exercise reviewed native registration, stable-launcher MCP definitions, indexing, stdio handshakes, citation hashes and separately reviewed storage rebinding that retains the old index. Its earlier scenario descriptions below retain that intended scope; the current UI mismatch above must be resolved before treating a new run as acceptance. Only generated fixtures and private profiles are used; the normal user's settings and trust are untouched.
 
-This is isolated installed-VSIX acceptance. Marketplace, remote-host, upgrade/rollback and clean-machine qualification remain separate. It does not exercise any paid coding model. VS Code startup may show a temporary test window even though the process is launched with its console hidden.
+A passing run of a matching fixture is isolated installed-VSIX acceptance. Marketplace, remote-host, upgrade/rollback and clean-machine qualification remain separate. It does not exercise any paid coding model. VS Code startup may show a temporary test window even though the process is launched with its console hidden.
+
+The current production bootstrap and tab-handoff preflight is narrower:
+
+```console
+node scripts/check-installed-explorer.cjs "<Code.exe>" "<resources/app/out/cli.js>" "<verified Windows VSIX>"
+```
+
+It exercises the actual installed product API/controller with native execution
+disabled: platform manifest metadata, one Explorer after repeated opens,
+close/reopen and same-version interface replacement. It does not claim index
+creation, checkbox selection, native service installation or the broader legacy
+journeys. The working-build release record retains its actual results.
 
 `-RunEditorTests -OpenReview` runs acceptance first, then opens a separate private profile for review. The review-dialog scenarios explicitly set `airk.cli.autoInstall: false` and select manual native indexing. Automatic onboarding and agent-entry migration are covered separately by `check-agent-install.cjs`; the review fixture must not assume that default trusted activation leaves projects unregistered.
 

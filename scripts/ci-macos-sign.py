@@ -7,19 +7,26 @@ Neither secret values nor captured credential-tool diagnostics are logged.
 """
 import argparse
 import base64
+import hashlib
+import json
 import os
 from pathlib import Path
 import secrets
+import re
 import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 
 ROOT = Path(__file__).resolve().parent.parent
 SECRET_NAMES = ("MACOS_CERTIFICATE_P12", "MACOS_CERTIFICATE_PASSWORD",
                 "APPLE_ID", "APPLE_APP_SPECIFIC_PASSWORD")
 IDENTITY = "Developer ID Application: Ioka LLC (5PX7D99PXA)"
 TEAM = "5PX7D99PXA"
+# Public leaf certificate observed on the independently verified Neo app and
+# standalone launcher. Renewal/rotation requires a reviewed pin and P12 update.
+CERTIFICATE_SHA256 = "4260bd90b8623e45da6d67144a2bff4fd8fa0a8186c7281c0125e39877c3f5c1"
 
 
 def runner_directory():
@@ -62,6 +69,75 @@ def cleanup(directory):
         shutil.rmtree(directory)
 
 
+def imported_identity(keychain):
+    """Match a public certificate to its valid private-key identity, not its CN alone."""
+    pem = security("find-certificate", "-a", "-c", IDENTITY, "-p", keychain)
+    if len(pem) > 262_144:
+        raise ValueError("Imported signing certificate is missing or ambiguous")
+    certificates = re.findall(r"-----BEGIN CERTIFICATE-----\s+([A-Za-z0-9+/=\s]+?)\s+-----END CERTIFICATE-----", pem)
+    if len(certificates) != 1:
+        raise ValueError("Imported signing certificate is missing or ambiguous")
+    der = base64.b64decode(re.sub(r"\s+", "", certificates[0]), validate=True)
+    if len(der) > 65_536 or hashlib.sha256(der).hexdigest() != CERTIFICATE_SHA256:
+        raise ValueError("Imported signing certificate does not match the reviewed SHA-256 pin")
+    # Apple uses the full SHA-1 certificate hash as an unambiguous identity
+    # selector. The policy pin and post-sign leaf check use SHA-256.
+    sha1 = hashlib.sha1(der).hexdigest()
+    identities = security("find-identity", "-v", "-p", "codesigning", keychain)
+    rows = re.findall(r'^\s*\d+\)\s+([A-Fa-f0-9]{40})\s+"([^"\r\n]+)"\s*$', identities, re.MULTILINE)
+    counts = re.findall(r'^\s*(\d+) valid identities found\s*$', identities, re.MULTILINE)
+    matching = [(value.lower(), name) for value, name in rows if name == IDENTITY or value.lower() == sha1]
+    if (len(identities) > 262_144 or len(counts) != 1 or int(counts[0]) != len(rows)
+            or matching != [(sha1, IDENTITY)]):
+        raise ValueError("The pinned certificate lacks one unambiguous valid signing identity")
+    return sha1
+
+
+def verify_signed_certificate(binary, sha1):
+    """Read only the public leaf of the actual signed output; export no private key."""
+    with tempfile.TemporaryDirectory(prefix="airk-ci-public-certificate-") as temporary:
+        prefix = Path(temporary) / "certificate"
+        private_run(["/usr/bin/codesign", "--display", "--extract-certificates=" + str(prefix), str(binary)])
+        leaf = Path(str(prefix) + "0")
+        if leaf.is_symlink() or not leaf.is_file() or leaf.stat().st_size > 65_536:
+            raise ValueError("Signed output lacks a bounded public leaf certificate")
+        der = leaf.read_bytes()
+        if (hashlib.sha256(der).hexdigest() != CERTIFICATE_SHA256
+                or hashlib.sha1(der).hexdigest() != sha1):
+            raise ValueError("Signed output certificate differs from the reviewed signing identity")
+
+
+def verify_signed_output(output, paired, sha1):
+    receipt_path = output / "signing.json"
+    if receipt_path.is_symlink() or receipt_path.stat().st_size > 65_536:
+        raise ValueError("Invalid signed-output receipt")
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    if paired:
+        components = receipt.get("components")
+        if receipt.get("schema") != "airk-service-pair-signing/1" or not isinstance(components, dict) or not 1 <= len(components) <= 8:
+            raise ValueError("Invalid signed-pair certificate audit input")
+        if any(not isinstance(name, str) or not re.fullmatch(
+                r"AIRK\.app/Contents/MacOS/(?:airk|airk-embed|airk-launcher-image|libonnxruntime\.dylib)", name)
+                for name in components):
+            raise ValueError("Invalid signed-pair certificate audit component")
+        paths = ["runtime/" + name for name in components] + ["runtime/AIRK.app"]
+    else:
+        paths = ["airk"]
+    root = output.resolve(strict=True)
+    for name in paths:
+        binary = output / name
+        if binary.is_symlink() or not binary.resolve(strict=True).is_relative_to(root):
+            raise ValueError("Signed certificate audit path escapes its output")
+        verify_signed_certificate(binary, sha1)
+    audit = {"schema": "airk-macos-certificate-identity/1", "identity": IDENTITY, "team_id": TEAM,
+             "certificate_sha256": CERTIFICATE_SHA256, "certificate_sha1": sha1, "signed_paths": paths}
+    # Keep this public audit outside runtime/: no signed payload or installer
+    # inventory changes, and no credentials or private key material are retained.
+    (output / "certificate-identity.json").write_text(json.dumps(audit, indent=2) + "\n", encoding="utf-8")
+    print("Verified CI signing certificate: " + json.dumps(audit, sort_keys=True))
+    return audit
+
+
 def sign(target, paired=False):
     directory = runner_directory()
     values = {name: os.environ.pop(name, "") for name in SECRET_NAMES}
@@ -88,18 +164,17 @@ def sign(target, paired=False):
         # codesign's --keychain restricts identity lookup, but certificate-chain
         # resolution also needs the keychain in the user's search list.
         security("list-keychains", "-d", "user", "-s", keychain, *original_keychains)
-        identities = security("find-identity", "-v", "-p", "codesigning", keychain)
-        if IDENTITY not in identities:
-            raise ValueError("The imported keychain lacks the expected Ioka Developer ID identity")
+        identity_sha1 = imported_identity(keychain)
         private_run(["/usr/bin/xcrun", "notarytool", "store-credentials", "airk-ci",
                      "--apple-id", values["APPLE_ID"], "--team-id", TEAM, "--keychain", str(keychain)],
                     input=values["APPLE_APP_SPECIFIC_PASSWORD"] + "\n")
         values.clear()
         subprocess.run([sys.executable, str(ROOT / "scripts/sign-native.py"),
                         *(["--runtime-dir", f"artifacts/runtime/{target}"] if paired else []),
-                        "--target", target, "--identity", IDENTITY, "--team-id", TEAM,
+                        "--target", target, "--identity", identity_sha1, "--team-id", TEAM,
                         "--notarize", "--keychain-profile", "airk-ci", "--keychain", str(keychain),
                         "--output", f"artifacts/signed/{target}"], cwd=ROOT, check=True)
+        verify_signed_output(ROOT / "artifacts/signed" / target, paired, identity_sha1)
     finally:
         try:
             security("list-keychains", "-d", "user", "-s", *original_keychains)

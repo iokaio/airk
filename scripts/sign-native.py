@@ -60,8 +60,11 @@ def verify(binary, receipt, signtool="signtool"):
         team = receipt["team_id"]
         if not re.fullmatch(r"[A-Z0-9]{10}", team):
             raise ValueError("Expected exact Apple team identifier")
-        run(["/usr/bin/codesign", "--verify", "--strict", "--verbose=2", "-R",
-             f'=anchor apple generic and certificate leaf[subject.OU] = "{team}" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists', binary])
+        requirement = f'=anchor apple generic and certificate leaf[subject.OU] = "{team}" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists'
+        identity = receipt.get("identity", "")
+        if isinstance(identity, str) and re.fullmatch(r"[0-9a-fA-F]{40}", identity):
+            requirement += f' and certificate leaf = H"{identity}"'
+        run(["/usr/bin/codesign", "--verify", "--strict", "--verbose=2", "-R", requirement, binary])
         result = subprocess.run(["/usr/bin/codesign", "--display", "--verbose=4", str(binary)],
                                 capture_output=True, text=True, encoding="utf-8", timeout=30, check=True)
         details = result.stderr
@@ -317,7 +320,7 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--runtime-dir", type=Path, help="Sign both executables from one tested native pair")
     parser.add_argument("--source-file", type=Path, help=argparse.SUPPRESS)
-    parser.add_argument("--identity", required=True, help="Windows certificate thumbprint or Apple Developer ID Application identity")
+    parser.add_argument("--identity", required=True, help="Windows certificate thumbprint or Apple Developer ID Application name/exact certificate SHA-1")
     parser.add_argument("--signtool", default="signtool")
     parser.add_argument("--timestamp-url")
     parser.add_argument("--team-id")
@@ -334,8 +337,8 @@ def main():
             parser.error("Windows signing requires an exact certificate thumbprint and explicit RFC3161 timestamp URL")
         if args.notarize or args.keychain_profile or args.team_id or args.keychain:
             parser.error("Apple signing options do not apply to Windows")
-    elif not args.identity.startswith("Developer ID Application:") or not re.fullmatch(r"[A-Z0-9]{10}", args.team_id or ""):
-        parser.error("Apple signing requires a Developer ID Application identity and exact team ID")
+    elif not (args.identity.startswith("Developer ID Application:") or re.fullmatch(r"[0-9a-fA-F]{40}", args.identity)) or not re.fullmatch(r"[A-Z0-9]{10}", args.team_id or ""):
+        parser.error("Apple signing requires a Developer ID Application name or exact certificate SHA-1 and exact team ID")
     if args.notarize and not args.keychain_profile:
         parser.error("Notarization requires an existing notarytool keychain profile")
     if args.runtime_dir:

@@ -2,7 +2,7 @@
   "name": "airk",
   "displayName": "AIRK: Local Search for Coding Agents",
   "description": "Local code and document search for agents and AIRK Workbench, with complete cited results and configurable concurrent retrieval.",
-  "version": "1.8.11",
+  "version": "1.8.12",
   "icon": "images/icon.png",
   "publisher": "iokaio",
   "license": "Apache-2.0",
@@ -45,6 +45,7 @@
   ],
   "main": "./out/extension.js",
   "files": [
+    "airk-update.json",
     "out/*.js",
     "out/*.css",
     "native/**",

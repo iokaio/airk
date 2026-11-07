@@ -1,9 +1,18 @@
 # Architecture
 
-The unpublished **1.8.11 working build** retains the existing crate and service
+The unpublished **1.8.12 working build** retains the existing crate and service
 owners. Current behavior and validation identities are recorded in the
-[working-build record](releases/release-1.8.11.md). Earlier
-[1.8.10 evidence](releases/release-1.8.10.md) remains dated history.
+[working-build record](releases/release-1.8.12.md). Earlier
+[1.8.11 evidence](releases/release-1.8.11.md) remains dated history.
+
+Explorer notice dismissal is a host-owned workspace presentation preference.
+Validated exact notice keys are persisted before the webview hides a notice;
+serialized writes preserve rapid dismissals and storage failures remain visible.
+The preference does not alter native state, evidence or authorization. The
+extension's loader owns replacement of AIRK's JavaScript modules after an
+installed-payload change and restores the single Explorer panel if it was open.
+Native service/index ownership remains independent of extension disposal. Older
+already loaded code cannot acquire the loader until VS Code activates it.
 
 The Indexing UI separates **Search scope**, **Index library** and **Index sets**.
 The extension host turns the user's explicit checkbox selection into existing
@@ -311,7 +320,7 @@ The native CLI captures path-free process/build observations for `airk_status.ru
 
 Extension CLI installation removes obsolete terminal executable copies at its own fixed global-storage locations. Native CLI ownership remains responsible for retiring the previous runtime: it fences the active selection, journals inventory-bound cleanup, drains owners, clears rollback and restarts the selected runtime. Sources, indexes and settings remain outside executable retirement. Managed provider payloads are excluded. See [console installation](service-console.md).
 
-Trusted extension activation installs or reconnects the approved runtime and terminal forwarding command, then reconciles metadata for existing native registrations. Opening workspace folders does not create an index, scan sources or grant access. Missing indexes require explicit native setup through Indexing > Index library; source/storage/watching choices and accepted setup work are reviewed. In 1.8.11 **Search scope → Apply selection** handles native memberships and access records internally after the user chooses local indexes or index sets. Existing storage, pause, Stop and watching preferences remain native. Runtime activation and schema migrations stay in CLI/Store; the dashboard renders metadata and does not open indexes. See [reviewed setup](service-project-setup.md).
+Trusted extension activation installs or reconnects the approved runtime and terminal forwarding command, then reconciles metadata for existing native registrations. Opening workspace folders does not create an index, scan sources or grant access. Missing indexes require explicit native setup through Indexing > Index library; source/storage/watching choices and accepted setup work are reviewed. In 1.8.12 **Search scope → Apply selection** handles native memberships and access records internally after the user chooses local indexes or index sets. Existing storage, pause, Stop and watching preferences remain native. Runtime activation and schema migrations stay in CLI/Store; the dashboard renders metadata and does not open indexes. See [reviewed setup](service-project-setup.md).
 
 Store classifies registry storage contention; the CLI applies the existing registry_busy response only to an explicit whitelist of read-only observations. Mutation and receipt recovery contracts remain unchanged, including RequestEpoch receipt pruning.
 

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { Notice, noticeKey } from './notices';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { OpenSourceResult, PassageView, SearchMode, SearchForm } from '../explorerContracts';
 import { RECIPE_SCHEMA, SearchRecipe } from '../explorerStrategies';
@@ -95,7 +96,7 @@ export function SearchScreen(props: ScreenProps) {
             {status?.detailsObservedAt !== undefined && (status.vectorsEnabled !== undefined || status.localModelReady !== undefined) && <p class="muted">Saved policy details observed {ago(status.detailsObservedAt)}.</p>}
             <SaveRecipe form={form} />
             {!canSearch && <p class="callout">Search needs a connected AIRK service and a published index ({props.state.connection}).</p>}
-            {error && <p class="callout" role="alert">{error}</p>}
+            {error && <Notice noticeKey={noticeKey("search-error", error)} role="alert"><p>{error}</p></Notice>}
             <CompleteNativeResponse value={nativeFailure} />
             {result && (
                 <section aria-label="Search results">
@@ -211,7 +212,7 @@ export function RecipesScreen(props: ScreenProps) {
             <h2>Saved Searches</h2>
             <p class="muted">Saved searches keep the query and search options for this workspace. Run fills the Search form and submits it; saving never changes the index.</p>
             <div class="actions"><button class="ghost" disabled={busy || !props.state.trusted} onClick={() => void loadFile()}>Import search…</button></div>
-            {error && <p class="callout" role="alert">{error}</p>}{notice && <p class="muted" role="status">{notice}</p>}
+            {error && <Notice noticeKey={noticeKey("search-error", error)} role="alert"><p>{error}</p></Notice>}{notice && <Notice noticeKey={noticeKey("search-outcome", notice)}><p>{notice}</p></Notice>}
             {pending && <section class="card" role="alertdialog" aria-label="Import saved search"><h2>Import {pending.recipe.name}?</h2>
                 <p>{pending.expected === 'null' ? 'Add this search to this workspace.' : 'Replace the same-named saved search.'} Loading never runs a search.</p>
                 <pre class="excerpt">{pending.recipe.query}</pre><p class="muted">Mode: {pending.recipe.mode} · Scope: {pending.recipe.pathPrefix ?? '(all)'}</p>

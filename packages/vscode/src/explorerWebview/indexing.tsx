@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { Notice, noticeKey } from './notices';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { CatalogObject, CatalogView, catalogExport, catalogItems, catalogObject, catalogReviewPreview, sourceChangeObservation } from '../indexingCatalog';
 import type { ScreenProps } from './workspaces';
@@ -78,10 +79,10 @@ export function IndexingScreen(props: ScreenProps) {
     useEffect(()=>{if(project)void run(()=>request('indexing.set.read',{id:String(project.id)}));},[project?.id]);
     return <section class="indexing-screen">
         <p class="indexing-intro">{tab==='window'?'Choose the indexes and index sets to search in this VS Code window.':tab==='projects'?'Save reusable sets of indexes without copying index data.':'Create and manage local indexes. Change sources, split an index, or delete an index you no longer need.'}</p>
-        {(error||view.error)&&<p class="notice" role="alert">{error||view.error}</p>}
+        {(error||view.error)&&<Notice noticeKey={noticeKey("indexing-error", error||view.error)} class="notice" role="alert"><p>{error||view.error}</p></Notice>}
         {view.busy&&<p role="status">Loading native catalog details…</p>}
-        {!props.state.trusted&&<p class="notice">Trust this workspace to load and manage indexes.</p>}
-        {props.state.nativeExecutionEnabled===false&&<p class="notice">Enable native execution in AIRK settings to load and manage indexes.</p>}
+        {!props.state.trusted&&<Notice global noticeKey="workspace-restricted" class="notice"><p>Trust this workspace to load and manage indexes.</p></Notice>}
+        {props.state.nativeExecutionEnabled===false&&<Notice global noticeKey="native-execution-disabled" class="notice"><p>Enable native execution in AIRK settings to load and manage indexes.</p></Notice>}
         {connectionPending&&props.state.trusted&&<p role="status">{props.state.connection==='connecting'?'Connecting to the native service before loading the catalog…':'The native service is unavailable. Reconnect in Management → Service; the catalog will load when the connection is ready.'}</p>}
         {props.route.tab==='window'?<><article class="card"><h2>Search scope</h2>
             <p>Check the indexes and index sets you want to search, then apply your selection. Shared indexes are searched once.</p>
@@ -200,7 +201,7 @@ export function IndexingScreen(props: ScreenProps) {
                     </form>
                     {view.policyStatus&&<><p>{policyStatusLabels(view.policyStatus).join(' ')}</p>
                         {view.policyStatus.job&&<p>Recorded cleanup job: {String(catalogObject(view.policyStatus.job).state)}.</p>}
-                        {policySnapshot?.last_error!==null&&policySnapshot?.last_error!==undefined&&<p class="notice">{String(policySnapshot.last_error)}</p>}
+                        {policySnapshot?.last_error!==null&&policySnapshot?.last_error!==undefined&&<Notice noticeKey={noticeKey("index-policy-error", policySnapshot.last_error)} class="notice" role="alert"><p>{String(policySnapshot.last_error)}</p></Notice>}
                         {view.canResumePolicy&&selectedIndex.tombstone!==true&&view.policyStatus.job&&(['failed','canceled'].includes(String(catalogObject(view.policyStatus.job).state))||catalogObject(view.policyStatus.job).state==='succeeded'&&policyApplication?.physical_cleanup_pending===true)&&<button disabled={disabled||!!view.pending?.length} onClick={()=>void run(()=>request('indexing.policy.resume',{generation:view.generation}))}>Review resuming recorded cleanup</button>}
                         {!!policyDenies.length&&<form onSubmit={event=>{event.preventDefault();void run(()=>request('indexing.source.draft',{generation:view.generation,change:{operation:'unblock_path',rule_id:unblockRule}}));}}>
                             <label>Exclusion to unblock<select required value={unblockRule} onChange={event=>setUnblockRule(event.currentTarget.value)}><option value="">Choose a recorded exclusion</option>{policyDenies.filter(rule=>rule.reason==='trim').map(rule=><option key={String(rule.rule_id)} value={String(rule.rule_id)}>{String(rule.kind)}: {String(rule.path)||'(entire source root)'} · {String(rule.source_root_id)}</option>)}</select></label>
