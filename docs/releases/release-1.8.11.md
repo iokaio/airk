@@ -48,8 +48,8 @@ SHA-256 independently.
 
 Earlier 1.8.10 package and test results do not qualify this candidate. The
 current qualification record follows. Native and extension source checks are
-complete; the optimized runtime and package steps remain in progress until their
-results are recorded. Installed-editor acceptance,
+complete. The optimized runtime and its model/client smokes have passed; local
+archive verification remains in progress until its results are recorded. Installed-editor acceptance,
 macOS/Linux qualification and publication remain separate unless explicitly
 recorded below.
 
@@ -86,11 +86,11 @@ races and failed-save status before packaging.
 ## Selected current validation
 
 - `npm test --prefix packages/vscode`: host, webview and Assistance compilation,
-  bundle/catalog drift check and **878 passed / 0 failed / 21 optional cases
+  bundle/catalog drift check and **881 passed / 0 failed / 21 optional cases
   skipped**. The separately exercised native scope case is one of those optional
   default-suite skips.
 - Actual matched-debug native scope preflight: **1 passed / 0 failed** in
-  **41.360 seconds**, including four actual CLI scope reads for direct indexes,
+  **41.718 seconds**, including four actual CLI scope reads for direct indexes,
   named sets, mixed selections and a renamed set. It also checks full-source
   memberships, native setup/publication and explicit empty scope without catalog
   writes. This is an actual native transport test, separate from renderer mocks.
@@ -180,3 +180,63 @@ its command summary rather than emitted as JUnit cases.
 
 Serial workspace doctests passed in **35.607 seconds** across **8 crate targets**.
 There were **zero eligible examples**, not eight executed examples.
+
+
+## Preserved defaults and unindexed-window verification
+
+A final compatibility review found that saving an existing index set could
+replace its independent default-index preference with every membership, even
+for a name-only rename. The extension now initializes defaults only for new
+sets. Existing edits preserve native defaults; native membership removal already
+prunes references to removed indexes. Unit and actual native catalog/CLI
+regressions verify that an independently saved empty default selection and its
+revision survive a rename. The final native scope preflight passed in
+**41.718 seconds**. The earlier successful **41.360-second** run remains its
+own observation.
+
+Opening a new unindexed **folder**, saved **single-root .code-workspace**, or
+saved **multi-root .code-workspace** creates no index. Three added activation
+regressions run with automatic runtime setup enabled and assert zero native
+registrations, source/index/watch/planning mutations, invented editor
+registrations and automatic MCP scopes through activation, focus and refresh.
+The focused onboarding suite passed **46 / 46**; the complete final extension
+suite passed **881 tests / 0 failures / 21 optional skips**. These exercise the
+actual activation implementation with a native-metadata fixture; they are not
+claims of a separate installed-VSIX window test. Runtime installation/connection
+may occur independently; new index creation still requires explicit reviewed
+setup in **Index library**.
+
+An exploratory workspace test incorrectly expected an Explorer context while
+no evidence/control connection had been selected. That unrelated fixture
+expectation failed and was removed; the final workspace-file and zero-mutation
+assertions passed. Original outputs are retained separately from the final pass.
+
+## Fresh optimized native producer
+
+`python scripts/build-service-runtime.py --profile release --destination
+artifacts/local/1.8.11-indexing-20261107/runtime` passed in **831.818 seconds**,
+including the **5m07s helper** and **8m32s lightweight main**. The persistent target
+remained `artifacts/v190/p10-target`; the development `CARGO_INCREMENTAL` override
+was removed, so Cargo release profile defaults applied. Both Cargo timing reports
+and release notices for **366 third-party packages** are retained.
+
+The native producer started at implementation commit
+`f1ec799af5a56d1db55cb0acfa82f3c82f215fcb`. The subsequent defaults correction and
+unindexed-window regressions change extension/test inputs only. All **978 native
+build inputs** still match the exact compiled-source seal above; the native
+producer identity and original build receipt are retained, rather than relabeled
+as a rebuild of the later extension commit.
+
+| Native image | SHA-256 |
+| --- | --- |
+| Main | `90e8b5b7cbcd01e7bc9c3186cda18fc32930ee127cac34037204576b10d8a73a` |
+| Inference helper | `51cf8c1355866ee7233c93a8a5acdb872e02bc5889f74748ba83336d68fbeebd` |
+
+The actual optimized bundled-model/vector campaign passed in **19.438 seconds**:
+helper inference, persistent DiskANN, default/vector/hybrid reads,
+opt-out/re-enable, invalid-model refusal and source preservation. The optimized
+service-client/model campaign passed in **26.414 seconds**, including
+inline/reconnect/same-index reads, failure receipts/log details and source
+preservation. These are native runtime smokes, separate from installed-editor,
+macOS/Linux or publication qualification. Local Node was **24.21.0**; this is not
+an assertion of testing under CI's separately pinned Node version.

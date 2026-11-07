@@ -60,6 +60,8 @@ test('saving a renamed index set retains existing partial-folder membership',asy
     const f=fixture();f.projects.set(set,f.project(set));const member={project_id:set,index_id:index,revision:1,scope:[{source_root_id:source,kind:'subtree',path:'src/backend'}]};f.members.set(`${set}:${index}`,member);
     await saveLocalIndexSet(f.adapter,{id:set,name:'Backend',index_ids:[index]});
     assert.deepEqual(f.members.get(`${set}:${index}`),member);assert.ok(!f.operations.some(op=>op.operation==='set_membership'));assert.equal(f.projects.get(set)!.name,'Backend');
+    assert.deepEqual(f.projects.get(set)!.default_indexes,[],'renaming keeps an independently saved empty default selection');
+    assert.ok(!f.operations.some(op=>op.operation==='set_project_defaults'),'rename does not rewrite defaults');
 });
 
 test('uncertain native write stops orchestration without replay or grant activation',async()=>{
@@ -92,7 +94,15 @@ test('local scope orchestration uses the actual native catalog and CLI transport
         const setOnly=await native.tool(selectedSpec(),'airk_query_scope',{view:'projects',max_bytes:65536,response_mode:undefined});assert.equal((setOnly.items as unknown[]).length,1);
         await applyLocalSearchScope(adapter,{index_ids:[spec.catalogSession!.index_id],project_ids:[group]});
         const mixed=await native.tool(selectedSpec(),'airk_query_scope',{view:'projects',max_bytes:65536,response_mode:undefined});assert.equal((mixed.items as unknown[]).length,2);
-        const renamed=await saveLocalIndexSet(adapter,{id:group,name:'Renamed index set',index_ids:[spec.catalogSession!.index_id]});assert.ok(!(renamed.steps as {review:CatalogReview}[]).some(step=>step.review.request.operation.operation==='set_membership'),'rename retains existing native membership');
+        const groupDetail=await client.rpc({catalog_detail:{entity:{kind:'project',id:group},expected_catalog_revision:context.catalog_revision}},'catalog_detail');
+        const groupValue=record(record(record(groupDetail.detail).item).value);
+        const defaults=await control.catalogPrepare({operation:'set_project_defaults',project_id:group,expected_defaults_revision:groupValue.defaults_revision,index_ids:[]},Number(context.catalog_revision));
+        await control.catalogApply(defaults,()=>true);await adapter.refreshContext();
+        const renamed=await saveLocalIndexSet(adapter,{id:group,name:'Renamed index set',index_ids:[spec.catalogSession!.index_id]});assert.ok(!(renamed.steps as {review:CatalogReview}[]).some(step=>['set_membership','set_project_defaults'].includes(String(step.review.request.operation.operation))),'rename retains existing native membership and independent defaults');
+        const renamedDetail=await client.rpc({catalog_detail:{entity:{kind:'project',id:group},expected_catalog_revision:context.catalog_revision}},'catalog_detail');
+        const renamedValue=record(record(record(renamedDetail.detail).item).value);
+        assert.deepEqual(renamedValue.default_indexes,[],'actual native empty defaults survive the rename');
+        assert.equal(renamedValue.defaults_revision,Number(groupValue.defaults_revision)+1,'only the explicit preference change advances defaults');
         const stillValid=await native.tool(selectedSpec(),'airk_query_scope',{view:'projects',max_bytes:65536,response_mode:undefined});assert.equal(stillValid.schema,'airk.query-scope/1');
         const before=context.catalog_revision;await applyLocalSearchScope(adapter,{index_ids:[],project_ids:[]});await adapter.refreshContext();assert.equal(context.catalog_revision,before,'deselect all does not mutate native catalog');
     }catch(error){await native.retainFailure(error);throw error;}finally{await native.dispose();}

@@ -558,3 +558,28 @@ test('an incomplete asset replacement waits for the complete payload before offe
         assert.equal(f.notices.length,1,'creation of the complete replacement is observed');
     }finally{await f.close();}
 });
+
+
+for(const [kind,roots,workspaceFile] of [['folder',1,false],['single-root workspace',1,true],['multi-root workspace',2,true]] as const){
+    test(`opening a new unindexed ${kind} never creates or maintains an index`,async context=>{
+        const f=await serviceTestHost(context,{automatic:true,registered:false,roots,workspaceFile});
+        try{
+            assert.equal(f.folders.length,roots);
+            assert.equal(Boolean(f.stub.workspace.workspaceFile),workspaceFile,'activation receives a saved workspace file for workspace cases');
+            if(workspaceFile)assert.match(f.stub.workspace.workspaceFile.fsPath,/\.code-workspace$/);
+            assert.ok(f.state.ensured>0,'runtime setup can complete independently of index creation');
+            const untouched=()=>{
+                assert.equal(f.registrations.size,0,'opening sources cannot reserve a native index');
+                assert.equal(f.writes.length,0,'opening sources cannot enqueue work, configure watching or plan index work');
+                assert.deepEqual(f.nativeMethods.filter(name=>/^(reserve_project|enqueue|configure_watch|catalog_prepare|catalog_apply|catalog_index_setup_apply|catalog_index_setup_draft)$/.test(name)),[],'no index-creation or source-maintenance transport is called');
+                assert.equal([...f.values.keys()].some(key=>key.startsWith('airk.service.workspace.1.')),false,'no editor registration is invented');
+            };
+            untouched();
+            assert.deepEqual(await f.api.getServerDefinitions(),[],'no automatic MCP evidence scope is fabricated');
+            f.focus();f.extensionsChanged();await f.refreshFolders();
+            untouched();
+            assert.deepEqual(await f.api.getServerDefinitions(),[]);
+            assert.ok(f.calls.some(line=>line.includes('Opening folders does not create indexes.')));
+        }finally{await f.close();}
+    });
+}

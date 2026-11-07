@@ -189,7 +189,9 @@ export async function saveLocalIndexSet(adapter:LocalScopeAdapter,input:unknown)
         await mutate({operation:'set_membership',expected_scope_revision:value.scope_revision,expected_membership_revision:null,membership:{project_id:id,index_id:index,revision:1,scope:sources.map(root=>({source_root_id:catalogId(root.id,'src_'),kind:'subtree',path:''}))}});value=await project();
     }
     const priorDefaults=value.default_indexes;
-    if(!sameCatalogValue(priorDefaults,chosen.index_ids))await mutate({operation:'set_project_defaults',project_id:id,expected_defaults_revision:value.defaults_revision,index_ids:chosen.index_ids});
+    // Existing defaults are an independent preference. Membership removal
+    // already prunes invalid references natively; a rename must not widen them.
+    if(!existing&&!sameCatalogValue(priorDefaults,chosen.index_ids))await mutate({operation:'set_project_defaults',project_id:id,expected_defaults_revision:value.defaults_revision,index_ids:chosen.index_ids});
     await adapter.refreshContext();adapter.current();
     return {status:'index_set_saved',id,selected_index_ids:chosen.index_ids,steps,observations};
 }

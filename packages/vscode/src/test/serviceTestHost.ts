@@ -13,7 +13,7 @@ import { ServiceWorkspace } from '../serviceWorkspace';
 import * as native from '../native';
 import * as cliInstall from '../cliInstall';
 
-export async function serviceTestHost(test:TestContext,options:{trusted?:boolean;roots?:number;registered?:boolean;automatic?:boolean;upgrade?:boolean;assistance?:boolean;installedVersion?:string;runtimeVersion?:string;bundledVersion?:string;discoveryGate?:Promise<void>;deferStartup?:boolean;nativeExecution?:boolean;fresh?:boolean;codeFile?:boolean;nativeSourceScope?:{binding:RuntimeBinding;source:string;collection:string}}={}){
+export async function serviceTestHost(test:TestContext,options:{trusted?:boolean;roots?:number;workspaceFile?:boolean;registered?:boolean;automatic?:boolean;upgrade?:boolean;assistance?:boolean;installedVersion?:string;runtimeVersion?:string;bundledVersion?:string;discoveryGate?:Promise<void>;deferStartup?:boolean;nativeExecution?:boolean;fresh?:boolean;codeFile?:boolean;nativeSourceScope?:{binding:RuntimeBinding;source:string;collection:string}}={}){
     const bundledVersion=options.bundledVersion??(options.upgrade?'1.4.1':'1.4.0');
     // The fixture must honor the production receipt guard's canonical directory
     // identity, including macOS's /var -> /private/var temporary-path alias.
@@ -47,6 +47,7 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
         const workspace=new ServiceWorkspace(storage,{reviewProject:review,registerProject:register},()=>true);
         for(const folder of folders)await workspace.register(binding,folder.uri.fsPath,data,folder.name.replaceAll(' ','-'),async()=>true);
     }
+    const nativeMethods:string[]=[];
     const state={down:false,stopped:false,ackLost:false,confirm:true,discovered:0,ensured:0,picks:0,installedVersion:options.installedVersion??bundledVersion,
         hostContextKeys:[] as string[],hostContextReply:undefined as undefined|((key:string)=>unknown|Promise<unknown>),
         catalogDetailReply:undefined as undefined|((entity:Record<string,unknown>)=>unknown|Promise<unknown>),
@@ -102,6 +103,7 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
     McpStdioServerDefinition:class{cwd:unknown;constructor(public label:string,public command:string,public args:string[],public env:unknown,public version:string){}}};
     const transport={dispose(){},async request(method:unknown):Promise<any>{
         const name=typeof method==='string'?method:Object.keys(record(method))[0];
+        nativeMethods.push(name);
         if(state.down)throw new ServiceError('service_unavailable');
         if(['enqueue','configure_watch','pause','plan_create','plan_execute'].includes(name))writes.push(structuredClone(method));
         switch(name){
@@ -175,6 +177,7 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
     const modules=['../extension','../serviceExtension','../serviceConsole','../agentSetup','../explorerController','../explorerPanel','../workbenchView','../usagePanel'];
     const clear=()=>{for(const name of modules)delete require.cache[require.resolve(name)];};clear();
     loader._load=function(request:string,...args:any[]){return request==='vscode'?stub:original.call(this,request,...args);};
+    if(options.workspaceFile){const workspaceFile=path.join(root,'fixture.code-workspace');await fs.writeFile(workspaceFile,JSON.stringify({folders:folders.map(folder=>({path:folder.uri.fsPath}))}));stub.workspace.workspaceFile=stub.Uri.file(workspaceFile);}
     let extension:any;
     // Real installations carry compiled code; same-version rebuild detection stats it.
     if(options.codeFile){await fs.mkdir(path.join(root,'out'),{recursive:true});for(const name of ['serviceExtension.js','explorerWebview.js','explorerWebview.css','workbenchWebview.js','workbenchWebview.css'])await fs.writeFile(path.join(root,'out',name),'// fixture build 1\n');}
@@ -182,7 +185,7 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
         globalStorageUri:{fsPath:path.join(root,'editor-storage')},subscriptions:[],environmentVariableCollection:{persistent:false,prepend(){}}};
         const api=await extension.activate(context);
         if(!options.deferStartup)await api.whenReady();
-        return {views,root,folders,binding,registrations,inactiveRegistrations,values,settings,commands,commandContexts,writes,calls,warnings,clipboard,panels,openedDocuments,state,stub,api,context,providers:events,assistance,notices,progressRuns,statusBar,
+        return {nativeMethods,views,root,folders,binding,registrations,inactiveRegistrations,values,settings,commands,commandContexts,writes,calls,warnings,clipboard,panels,openedDocuments,state,stub,api,context,providers:events,assistance,notices,progressRuns,statusBar,
             assetWatchers,assetChanged(){for(const watcher of assetWatchers)if(!watcher.disposed)watcher.change();},assetCreated(){for(const watcher of assetWatchers)if(!watcher.disposed)watcher.create();},
             extensionsChanged(){extensionsChanged!();},focus(){windowFocused!({focused:true});},
             async refreshFolders(){await foldersChanged!();},
