@@ -34,7 +34,7 @@ retry. No parallel Cargo runners are authorized in this checkout.
 | C7 checkpoint/activation | in_progress | Typed terminal-receipt classification passed 39 checkpoint tests and five actual split cases. The actual ignored checkpoint owner test passed; sealed Windows debug r8 passed installed upgrade/rollback and genuine 1.8.12 semantic upgrade r13. Remaining predecessor/platform qualification is pending. |
 | C8 all consumers | in_progress | Latest enabled-native suite ran 1,044: 1,039 passed, two failed, three skipped. Reviewed harness corrections passed their actual focused Assistance/provider-stop cases; the complete enabled suite is not yet a pass. Actual enrollment passed three cases. Editor acceptance remains pending. |
 | C9 predecessor retirement | in_progress | Genuine 1.8.12 upgrade passed its recorded Windows scope. Sealed r17 positive adoption r20 passed both authentic 1.3.1 and 1.0.0-build.7 cases; the real corrupt-copy/restoration negative campaign also passed. These establish the tested formats/paths, not every predecessor or other platform; final qualification remains pending. |
-| C10 distribution/docs | in_progress | Earlier Windows full/optimized results retain their recorded identities. Current r20 full campaign is running; a late schema-13 storage-retirement correction still awaits validation and retrieval r5 is pending. Neo r10, current-source editor/signed acceptance and final VSIX remain pending. |
+| C10 distribution/docs | in_progress | Windows r20 workspace campaign passed 3,224 tests and doctests; retrieval r6 passed two workloads/nine cases. The later schema-13 correction passed 14 focused tests; the corrected storage lifecycle gate passed on reused, sealed r21. Neo r10, current-source editor/signed acceptance and final VSIX remain pending. |
 
 ## Required final evidence
 
@@ -1402,6 +1402,42 @@ exit before changing native behavior or the acceptance test. Current-source
 complete extension, Mac, signed installation and final VSIX qualification remain
 outstanding. This is an unpublished implementation checkpoint, not release
 acceptance.
+
+### r21 removal diagnosis and acceptance correction
+
+The preserved storage-r3 fixture was inspected read-only under its existing
+owner protection. Its schema-13 registry retained the original registration
+with `registered=0`, `cleanup_guard=NULL` and its exact
+`service_removed_projects` marker; its collection directory was absent. The
+fixture's final instance-fenced Stop receipt was complete. That final Stop means
+current process absence alone cannot prove the worker's state at the timeout.
+
+The timeout came from an obsolete acceptance requirement: `inactive_console`
+includes retained retirement identities, whereas the storage gate required it
+to become empty. The scoped harness correction preserves the exact binding and
+no-continuation checks, collection deletion and actual native worker absence.
+For a retained modern identity it additionally reads only the owner-contained
+fixture registry to prove the final cleanup transaction committed; legacy
+removal still requires no inactive row. Native behavior and read DTOs are
+unchanged. Eight focused authority regressions passed, and a separate agent
+review found no blocking issues. The actual storage-r4 rerun uses the original
+r21 debug executable, not a fresh build: all **811** sealed payload files and
+all **1,114** production source inputs were revalidated. Compiled source remains
+`27981a7de44b31570f83d58a67255db2ece5eb7cecab27bcb16b7c4c0b79ea90`;
+the separate corrected test identities are in
+`windows-debug-storage-r4-reuse.json`.
+
+The complete actual storage-r4 gate **passed in 321.351 s** in its subprocess
+receipt (**321.364 s** including its runner). This includes quota wait/resumption,
+maintenance, source preservation, full physical removal, exact permanent
+retirement evidence, denied stale authority and fresh reviewed replacement
+registration/indexing. Receipt and output are
+`windows-debug-storage-lifecycle-r4.{json,log}`. The successful fixture cleaned
+up normally; the failed r3 fixture remains preserved. No new Cargo run was
+needed for this test-only correction. Repository and whitespace checks passed.
+The checkpoint commit is `7037cae`, with the configured human DCO trailer; it
+was not pushed. The storage correction and this subsequent evidence update are
+separate working-tree changes.
 
 ## Initial observations
 

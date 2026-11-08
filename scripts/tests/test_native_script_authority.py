@@ -6,6 +6,7 @@ import importlib.util
 import io
 import json
 from pathlib import Path
+import sqlite3
 from types import SimpleNamespace
 import tempfile
 import unittest
@@ -24,6 +25,37 @@ storage, usage = load('check-storage-lifecycle'), load('check-usage-inputs')
 
 
 class NativeScriptAuthorityTests(unittest.TestCase):
+    def test_removal_requires_physical_exit_and_committed_retained_cleanup(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            owner = Path(temporary).resolve()
+            control = owner/'control'; control.mkdir()
+            collection = owner/'collection'
+            fixture = SimpleNamespace(owner=owner, control=control, single_image=True)
+            inactive = {'projects': [{'project': {'registration': {'binding': 'original'}}}], 'after': None}
+            worker = {'identity': None}
+            with contextlib.closing(sqlite3.connect(control/'service-1.4.sqlite3')) as connection:
+                connection.executescript('CREATE TABLE projects(binding TEXT, registered INTEGER, cleanup_guard TEXT); '
+                                         'CREATE TABLE service_removed_projects(binding TEXT); '
+                                         "INSERT INTO projects VALUES('original',0,'pending');")
+                self.assertFalse(storage.removal_complete(fixture, 'original', collection, inactive, worker))
+                connection.execute('UPDATE projects SET cleanup_guard=NULL'); connection.commit()
+                self.assertFalse(storage.removal_complete(fixture, 'original', collection, inactive, worker))
+                connection.execute("INSERT INTO service_removed_projects VALUES('original')"); connection.commit()
+                self.assertTrue(storage.removal_complete(fixture, 'original', collection, inactive, worker))
+                collection.mkdir()
+                self.assertFalse(storage.removal_complete(fixture, 'original', collection, inactive, worker))
+                collection.rmdir()
+                self.assertFalse(storage.removal_complete(fixture, 'original', collection, inactive, {'identity': {'pid': 1}}))
+                fixture.single_image = False
+                self.assertFalse(storage.removal_complete(fixture, 'original', collection, inactive, worker))
+                self.assertTrue(storage.removal_complete(fixture, 'original', collection, {'projects': [], 'after': None}, worker))
+            for unexpected in [
+                {'projects': [{'project': {'registration': {'binding': 'foreign'}}}], 'after': None},
+                {**inactive, 'after': 'cursor'},
+            ]:
+                with self.assertRaisesRegex(AssertionError, 'Unexpected inactive'):
+                    storage.removal_complete(fixture, 'original', collection, unexpected, worker)
+
     def test_usage_fixture_honors_private_base_and_retains_uncertain_stop_evidence(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary).resolve(); original = base/'preserve'; original.write_bytes(b'original')

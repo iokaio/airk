@@ -10,6 +10,15 @@ after successful quota recovery; its preserved fixture requires diagnosis.
 These results retain their individual source identities. Final extension,
 Mac, signed installation and VSIX acceptance remain outstanding; see the
 [ledger checkpoint](../research/one-airk-implementation.md#8-november-commit-checkpoint-and-remaining-storage-blocker).
+
+**Subsequent storage acceptance:** the r21 timeout was a harness expectation
+error: completed native cleanup intentionally retains the inactive retirement
+identity. The corrected gate still requires collection deletion, worker exit
+and committed cleanup metadata; it passed the complete lifecycle and replacement
+campaign on the unchanged, seal-verified r21 executable in **321.351 s**. Eight
+focused harness tests passed and a separate review found no blocking issues.
+Native cleanup behavior is unchanged. This supersedes that storage blockage,
+not the remaining platform/editor/package qualification requirements.
 The user authorized implementation of [One AIRK](../one-airk.md), including its
 section 12.2 version adjustment to **1.8.14**. This record begins with C0 source
 metadata preparation. It does not claim that the planned architecture or its

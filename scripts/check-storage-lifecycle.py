@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """Native service smoke for aliases, quota refusal, maintenance and complete project removal."""
 import argparse
-from contextlib import ExitStack
+from contextlib import ExitStack, closing
 import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import sqlite3
 import time
 
 SPEC = importlib.util.spec_from_file_location("airk_storage_fixture", Path(__file__).with_name("check-service-clients.py"))
@@ -18,6 +19,28 @@ SOURCE_SPEC.loader.exec_module(reviewed_source)
 
 def owner_arguments(fixture, name):
     return fixture.management_arguments(name)
+
+
+def removal_complete(fixture, binding, collection, inactive, worker):
+    """Retired catalog identities can survive completed physical cleanup."""
+    bindings = [row["project"]["registration"]["binding"] for row in inactive["projects"]]
+    assert bindings in ([binding], []) and inactive["after"] is None, "Unexpected inactive registrations"
+    if collection.exists() or worker["identity"] is not None:
+        return False
+    if not bindings:
+        return True
+    if not fixture.single_image:
+        return False
+    # This is fixture-only observation, never management authority. A retained
+    # inactive row alone does not prove the final cleanup transaction committed.
+    registry = (fixture.control / "service-1.4.sqlite3").resolve(strict=True)
+    assert registry.is_relative_to(fixture.owner.resolve(strict=True)), "Registry escaped fixture owner"
+    with closing(sqlite3.connect(registry.as_uri() + "?mode=ro", uri=True, timeout=1)) as connection:
+        row = connection.execute(
+            "SELECT registered,cleanup_guard,EXISTS(SELECT 1 FROM service_removed_projects WHERE binding=?1) "
+            "FROM projects WHERE binding=?1", (binding,)
+        ).fetchone()
+    return row == (0, None, 1)
 
 
 def settings_arguments(fixture, name, view):
@@ -225,11 +248,13 @@ def main():
         deadline = time.monotonic() + 90
         while True:
             inactive = fixture.rpc({"inactive_console": {"after": None, "revision": None, "limit": 16}})["page"]
-            pending = [row["project"]["registration"]["binding"] for row in inactive["projects"]]
-            assert pending in ([binding], []) and inactive["after"] is None
-            if not collection.exists() and not pending and fixture.rpc({"worker": {"project": binding}})["identity"] is None:
+            worker = fixture.rpc({"worker": {"project": binding}})
+            if removal_complete(fixture, binding, collection, inactive, worker):
                 break
-            assert time.monotonic() < deadline, "Full removal did not finish"
+            assert time.monotonic() < deadline, (
+                "Full removal did not finish: "
+                f"collection_exists={collection.exists()}, inactive={inactive}, worker={worker}"
+            )
             time.sleep(0.05)
         proof = fixture.rpc(receipt_query)
         if retirement is not None:
