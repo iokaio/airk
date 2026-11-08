@@ -20,6 +20,8 @@ pub const MAX_METADATA_BYTES: usize = 16 * 1024 * 1024;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProjectionOmission {
+    LegacySavedEvidence,
+    MixedLegacyBatch,
     Budget,
     PreparationLimit,
 }
@@ -114,14 +116,18 @@ impl IndexedLinesWitness {
             .retained
             .as_ref()
             .context("line witness extraction missing")?;
+        let profile = if let Some(origin) = &retained.legacy_origin {
+            origin.identity()?
+        } else {
+            retained
+                .profile
+                .as_ref()
+                .context("line witness profile missing")?
+                .identity()?
+        };
         Ok(self.source == artifact.content_hash.parse()?
             && self.payload == retained.object.parse()?
-            && self.profile
-                == retained
-                    .profile
-                    .as_ref()
-                    .context("line witness profile missing")?
-                    .identity()?)
+            && self.profile == profile)
     }
 }
 
@@ -159,14 +165,19 @@ impl FileScalars {
             .retained
             .as_ref()
             .context("current scalar extraction missing")?;
-        let expected = Self::binding(
-            artifact.content_hash.parse()?,
-            retained.object.parse()?,
+        let profile = if let Some(origin) = &retained.legacy_origin {
+            origin.identity()?
+        } else {
             retained
                 .profile
                 .as_ref()
                 .context("current scalar profile missing")?
-                .identity()?,
+                .identity()?
+        };
+        let expected = Self::binding(
+            artifact.content_hash.parse()?,
+            retained.object.parse()?,
+            profile,
         );
         ensure!(
             self.version == 1 && self.binding == expected,
@@ -181,6 +192,24 @@ fn verify_indexed_lines(
     artifact: &airk_core::Artifact,
     scalars: &FileScalars,
 ) -> Result<()> {
+    if artifact
+        .retained
+        .as_ref()
+        .is_some_and(|retained| retained.legacy_origin.is_some())
+    {
+        let full = store.load_legacy_saved_artifact(artifact)?;
+        ensure!(
+            scalars.indexed_lines
+                == full
+                    .chunks
+                    .iter()
+                    .map(|chunk| chunk.end_line)
+                    .max()
+                    .unwrap_or(0),
+            "legacy scalar indexed line count mismatch"
+        );
+        return Ok(());
+    }
     let profile = artifact
         .retained
         .as_ref()
@@ -685,15 +714,19 @@ pub(crate) fn verify(
         .retained
         .as_ref()
         .context("current metadata extraction missing")?;
+    let profile_id = if let Some(origin) = &retained.legacy_origin {
+        origin.identity()?
+    } else {
+        retained
+            .profile
+            .as_ref()
+            .context("current metadata profile missing")?
+            .identity()?
+    };
     ensure!(
         file.state.source_hash.to_string() == artifact.content_hash
             && file.state.payload_digest.to_string() == retained.object
-            && file.state.profile_id
-                == retained
-                    .profile
-                    .as_ref()
-                    .context("current metadata profile missing")?
-                    .identity()?
+            && file.state.profile_id == profile_id
             && file.source_bytes == artifact.bytes
             && file.chunks == retained.chunks
             && file.facts == retained.facts,

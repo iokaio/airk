@@ -201,7 +201,7 @@ async fn opted_file_family_report_keeps_full_native_cli_console_mcp_and_input_ca
         .as_array()
         .context("CLI tool catalog absent")?
         .iter()
-        .find(|tool| tool["name"] == "airk_file_info")
+        .find(|tool| tool["name"] == "file_info")
         .context("CLI FileInfo absent")?;
     assert_eq!(
         cli_info["inputSchema"]["properties"]["include_profile_families"],
@@ -227,6 +227,10 @@ async fn opted_file_family_report_keeps_full_native_cli_console_mcp_and_input_ca
                 .iter()
                 .find(|tool| tool["name"] == "file_info")
                 .context("MCP FileInfo absent")?;
+            assert_eq!(
+                cli_info, public,
+                "actual CLI and MCP must retain the complete public FileInfo definition"
+            );
             let native = serde_json::to_value(
                 backend
                     .catalog()

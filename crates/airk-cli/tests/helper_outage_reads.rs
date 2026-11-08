@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Actual native CLI/MCP reads retain policy-qualified helper outage receipts.
-#![cfg(feature = "embedding-worker")]
+//! Actual current-image CLI/HTTPS MCP reads retain policy-qualified provider
+//! outage receipts. The public helper_unavailable code is retained for compatibility.
+#![cfg(feature = "local-inference")]
 mod common;
+#[allow(dead_code)] // Shared fixture adapter; this binary uses only the pause boundary.
+#[path = "mcp/source_runtime.rs"]
+mod source_runtime;
 
 use airk_core::{
     identity::Sha256Digest,
@@ -14,10 +18,10 @@ use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
 use std::{
     fs,
-    io::{BufRead, BufReader, Read, Write},
+    io::{Read, Write},
     path::PathBuf,
-    process::{Child, ChildStdin, Command, Output, Stdio},
-    sync::mpsc::{self, Receiver},
+    process::{Child, Command, Output, Stdio},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -25,7 +29,7 @@ const COLLECTION: &str = "outage-parity";
 const SOURCE: &[u8] = b"authenticate stable original evidence\n";
 
 struct Fixture {
-    child: Child,
+    service: Arc<common::Service>,
     owner: tempfile::TempDir,
     root: PathBuf,
     data: PathBuf,
@@ -38,79 +42,35 @@ impl Fixture {
         let owner = tempfile::tempdir_in(std::env::temp_dir().canonicalize()?)?;
         let root = owner.path().join("source");
         let data = owner.path().join("data");
-        let control = owner.path().join("control");
-        let pair = owner.path().join("pair");
-        for path in [&root, &data, &pair] {
-            fs::create_dir(path)?;
-        }
+        fs::create_dir(&root)?;
+        fs::create_dir(&data)?;
         fs::write(root.join("evidence.txt"), SOURCE)?;
-        airk_cli::local_ipc::prepare_root(&control)?;
-        let mut registry = airk_store::service::registry::ServiceRegistry::open(
-            &control,
-            airk_kernel::service_broker::new_instance_id()?,
-        )?;
-        airk_store::service::data_scope::bind(&data, &control, registry.incarnation()?)?;
-        let project = airk_kernel::service_projects::registration(&root, &data, COLLECTION)?;
-        registry.register(&project)?;
-        // There is no public native policy mutation yet. Seed the saved policy
-        // through its canonical API before any service/worker owns this index.
-        let kernel =
-            airk_kernel::Kernel::open_service_collection(&root, Some(data.clone()), COLLECTION)?;
-        kernel.index()?;
-        kernel.set_default_semantic_search_policy(policy)?;
-        drop(kernel);
-        drop(registry);
-
-        let main = airk_cli::runtime_install::main_name();
-        let helper = std::path::Path::new(main).with_file_name(if cfg!(windows) {
-            "airk-embed.exe"
-        } else {
-            "airk-embed"
-        });
-        fs::create_dir_all(pair.join(main).parent().context("paired main parent")?)?;
-        fs::copy(env!("CARGO_BIN_EXE_airk"), pair.join(main))?;
-        fs::copy(env!("CARGO_BIN_EXE_airk-embed"), pair.join(&helper))?;
-        fs::write(
-            pair.join("airk-runtime.json"),
-            serde_json::to_vec(&json!({
-                "schema":1,"version":env!("CARGO_PKG_VERSION"),
-                "os":std::env::consts::OS,"arch":std::env::consts::ARCH,
-                "airk_sha256":airk_cli::runtime_pair::digest_file(&pair.join(main))?,
-                "embed_sha256":airk_cli::runtime_pair::digest_file(&pair.join(helper))?
-            }))?,
-        )?;
-        let mut command = Command::new(pair.join(main));
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            command.creation_flags(0x08000000);
-        }
-        let child = command
-            .args(["serve", "--runtime-dir"])
-            .arg(&control)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(fs::File::create(owner.path().join("service.stderr"))?)
-            .spawn()?;
-        let mut fixture = Self {
-            child,
+        let service = common::Service::reviewed(&root, &data, COLLECTION);
+        service.settle_reviewed_index(&root, &data, Instant::now() + Duration::from_secs(90))?;
+        // The saved default search policy has no public mutation endpoint.
+        // Use its canonical API only under verified service/worker exclusion.
+        service.with_stopped_owner(|project| {
+            let kernel = airk_cli::bundled_assets::bind_service_models(
+                airk_kernel::Kernel::open_service_collection(
+                    std::path::Path::new(&project.root),
+                    Some(project.data_root.clone().into()),
+                    &project.collection,
+                )?,
+                &service.control,
+            )?;
+            kernel.set_default_semantic_search_policy(policy)
+        })?;
+        let project = service.project.clone();
+        let control = service.control.clone();
+        let data = PathBuf::from(&project.data_root);
+        let fixture = Self {
+            service,
             owner,
             root,
             data,
             control,
             project,
         };
-        let deadline = Instant::now() + Duration::from_secs(60);
-        loop {
-            if matches!(fixture.rpc(Method::Health), Ok(Response::Health { .. })) {
-                break;
-            }
-            ensure!(
-                fixture.child.try_wait()?.is_none() && Instant::now() < deadline,
-                "owned outage fixture startup failed"
-            );
-            std::thread::sleep(Duration::from_millis(25));
-        }
         let response = fixture.rpc(Method::ConfigureWatch {
             project: fixture.project.binding,
             enabled: false,
@@ -140,7 +100,7 @@ impl Fixture {
             serde_json::to_vec(&json!({"operation":"install_model","directory":model}))?,
         )?;
         let output = fixture
-            .command()
+            .admin_command()
             .args(["configure", "--file"])
             .arg(draft)
             .output()?;
@@ -171,24 +131,7 @@ impl Fixture {
             );
             std::thread::sleep(Duration::from_millis(25));
         }
-        let response = fixture.rpc(Method::Pause {
-            project: fixture.project.binding,
-            paused: true,
-        })?;
-        ensure!(
-            matches!(&response, Response::Registered { project } if project.paused),
-            "{}",
-            json!(response)
-        );
-        let deadline = Instant::now() + Duration::from_secs(30);
-        loop {
-            let status = fixture.tool("airk_status", json!({"response_mode":"full"}))?;
-            if status["freshness"]["state"] == "paused" {
-                break;
-            }
-            ensure!(Instant::now() < deadline, "source did not pause: {status}");
-            std::thread::sleep(Duration::from_millis(25));
-        }
+        source_runtime::pause_and_wait(&fixture.service)?;
         Ok(fixture)
     }
 
@@ -200,19 +143,10 @@ impl Fixture {
     }
 
     fn command(&self) -> Command {
-        let mut command = common::native_command();
-        command
-            .arg("--root")
-            .arg(&self.root)
-            .arg("--data-dir")
-            .arg(&self.data)
-            .args(["--collection", COLLECTION, "--service-runtime-dir"])
-            .arg(&self.control)
-            .arg("--service-project")
-            .arg(self.project.binding.to_string())
-            .env("AIRK_MCP_RESPONSE_MODE", "full")
-            .env("AIRK_USAGE_MODE", "disabled");
-        command
+        common::scoped_command(&self.root, &self.data, COLLECTION)
+    }
+    fn admin_command(&self) -> Command {
+        common::command(&self.root, &self.data, COLLECTION)
     }
 
     fn enqueue(&self, kind: JobKind) -> Result<()> {
@@ -275,23 +209,81 @@ impl Fixture {
     }
 
     fn stop_helper(&self) -> Result<()> {
+        let health = self.rpc(Method::Health)?;
+        let Response::Health {
+            observation: before,
+        } = &health
+        else {
+            anyhow::bail!("missing native health: {}", json!(health));
+        };
         let response = self.rpc(Method::EmbeddingStatus)?;
         let Response::EmbeddingStatus {
             available: true,
             worker: Some(worker),
+            process_id: None,
+            provider: Some(provider),
             ..
         } = response
         else {
-            anyhow::bail!("helper was not ready: {}", json!(response))
+            anyhow::bail!("in-process provider not ready: {}", json!(response));
         };
+        ensure!(
+            provider.provider.service_instance == before.instance
+                && provider.provider.provider_generation == worker,
+            "crossed native provider identity"
+        );
+        provider.validate()?;
         let stopped = self.rpc(Method::StopEmbedding {
             worker,
             force: true,
         })?;
         ensure!(
-            matches!(&stopped, Response::EmbeddingStopped { worker: exact } if *exact == worker),
+            matches!(&stopped,Response::EmbeddingStopped{worker:exact} if *exact==worker)
+                || matches!(&stopped,Response::Failure{code} if code=="embedding_stop_outcome_unknown"),
             "{}",
             json!(stopped)
+        );
+        fs::write(
+            self.owner.path().join("native-stop-once.json"),
+            serde_json::to_vec(&json!({"before":health,"provider":provider,"response":stopped}))?,
+        )?;
+        // Observe native completion; a pending stop never authorizes a second
+        // force/stop mutation, a numerical PID signal, or an owner restart.
+        let end = Instant::now() + Duration::from_secs(60);
+        loop {
+            let observed = self.rpc(Method::EmbeddingStatus)?;
+            let settled = matches!(
+                &observed,
+                Response::EmbeddingStatus {
+                    available: false,
+                    worker: None,
+                    process_id: None,
+                    provider: None,
+                    ..
+                }
+            );
+            fs::write(
+                self.owner.path().join("native-stop-observed.json"),
+                serde_json::to_vec(&observed)?,
+            )?;
+            if settled {
+                break;
+            }
+            ensure!(
+                Instant::now() < end,
+                "native provider drain did not complete: {}",
+                json!(observed)
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let Response::Health { observation: after } = self.rpc(Method::Health)? else {
+            anyhow::bail!("service exited during provider stop")
+        };
+        ensure!(
+            after.instance == before.instance
+                && after.runtime_sha256 == before.runtime_sha256
+                && after.executable_sha256 == before.executable_sha256,
+            "provider stop restarted/replaced service"
         );
         Ok(())
     }
@@ -299,101 +291,42 @@ impl Fixture {
 
 impl Drop for Fixture {
     fn drop(&mut self) {
-        let _ = self.rpc(Method::Shutdown);
-        let deadline = Instant::now() + Duration::from_secs(15);
-        while self.child.try_wait().ok().flatten().is_none() {
-            if Instant::now() >= deadline {
-                let _ = self.child.kill();
-                let _ = self.child.wait();
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(25));
+        if let Err(error) = self.service.shutdown_reviewed() {
+            self.owner.disable_cleanup(true);
+            eprintln!(
+                "outage fixture Stop uncertain; retained {}: {error:#}",
+                self.owner.path().display()
+            );
         }
     }
 }
 
-struct Session {
-    child: Child,
-    input: Option<ChildStdin>,
-    output: Receiver<String>,
-}
+struct Session(common::http::HttpMcpSession);
 impl Session {
     fn start(fixture: &Fixture, terse: bool) -> Result<Self> {
-        let mut command = fixture.command();
-        command.arg("mcp").env(
-            "AIRK_MCP_RESPONSE_MODE",
-            if terse { "terse" } else { "full" },
-        );
-        let mut child = command
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()?;
-        let input = child.stdin.take().context("MCP stdin")?;
-        let stdout = child.stdout.take().context("MCP stdout")?;
-        let (sender, output) = mpsc::channel();
-        std::thread::spawn(move || {
-            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-                if sender.send(line).is_err() {
-                    break;
-                }
-            }
-        });
-        let mut session = Self {
-            child,
-            input: Some(input),
-            output,
-        };
-        session.send(json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"helper-outage-parity","version":"1"}}}))?;
-        let initialized = session.receive(1)?;
+        let mut inner = common::http::HttpMcpSession::start_with_mode(
+            &fixture.control,
+            fixture.service.http_selection(),
+            airk_core::usage::ClientFamily::Unknown,
+            Some(if terse { "terse" } else { "full" }),
+        )?;
+        inner.send(json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"provider-outage-parity","version":"1"}}}))?;
+        let initialized = inner.receive(1)?;
         ensure!(initialized.get("error").is_none(), "{initialized}");
-        session.send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
-        Ok(session)
-    }
-    fn send(&mut self, value: Value) -> Result<()> {
-        let input = self.input.as_mut().context("MCP input closed")?;
-        writeln!(input, "{value}")?;
-        input.flush()?;
-        Ok(())
-    }
-    fn receive(&self, id: u64) -> Result<Value> {
-        let deadline = Instant::now() + Duration::from_secs(60);
-        for _ in 0..16 {
-            let line = self
-                .output
-                .recv_timeout(deadline.saturating_duration_since(Instant::now()))?;
-            let value: Value = serde_json::from_str(&line)?;
-            if value["id"] == id {
-                return Ok(value);
-            }
-        }
-        anyhow::bail!("MCP response missing")
+        inner.send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
+        Ok(Self(inner))
     }
     fn read(&mut self, id: u64, name: &str, args: Value) -> Result<Value> {
         let deadline = Instant::now() + Duration::from_secs(60);
         loop {
-            self.send(json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{"name":name.trim_start_matches("airk_"),"arguments":args}}))?;
-            let reply = self.receive(id)?;
+            self.0.send(json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{"name":name.trim_start_matches("airk_"),"arguments":args}}))?;
+            let reply = self.0.receive(i64::try_from(id)?)?;
             ensure!(reply.get("error").is_none(), "{reply}");
             if let Some(retry) = common::read_retry::within(&reply["result"], deadline) {
                 std::thread::sleep(retry.delay);
             } else {
                 return Ok(reply["result"].clone());
             }
-        }
-    }
-}
-impl Drop for Session {
-    fn drop(&mut self) {
-        self.input.take();
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while self.child.try_wait().ok().flatten().is_none() {
-            if Instant::now() >= deadline {
-                let _ = self.child.kill();
-                let _ = self.child.wait();
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(25));
         }
     }
 }

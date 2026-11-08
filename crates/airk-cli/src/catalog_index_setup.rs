@@ -25,6 +25,8 @@ pub(crate) struct NativeSetupReview {
     sources: Vec<DirectoryPin>,
     storage_action: SetupStorageAction,
     metadata_plan: Sha256Digest,
+    legacy_adoption: Option<Sha256Digest>,
+    saved_adoption: Option<airk_store::service::registry::catalog::setup::SavedAdoptionSources>,
 }
 impl NativeSetupReview {
     pub(crate) fn storage_action(&self) -> SetupStorageAction {
@@ -48,7 +50,7 @@ impl NativeSetupReview {
                 pin.identity()
             })
             .collect::<Result<Vec<_>>>()?;
-        Ok(framed_digest(
+        let digest = framed_digest(
             b"airk/catalog-native-setup-review/1",
             &[&serde_json::to_vec(&(
                 self.request.identity()?,
@@ -58,7 +60,14 @@ impl NativeSetupReview {
                 data,
                 sources,
             ))?],
-        ))
+        );
+        Ok(match self.legacy_adoption {
+            None => digest,
+            Some(plan) => framed_digest(
+                b"airk/catalog-native-legacy-adoption-review/1",
+                &[digest.as_bytes(), plan.as_bytes()],
+            ),
+        })
     }
 }
 
@@ -73,11 +82,32 @@ impl PreparedIndexSetup {
             Self::Anchored(storage) => storage.record(registry),
         }
     }
+    pub(crate) fn record_legacy_adoption(
+        self,
+        registry: &mut ServiceRegistry,
+        plan: &airk_core::catalog_legacy_adoption::LegacyAdoptionPlan,
+    ) -> Result<IndexSetupReceipt> {
+        match self {
+            Self::Anchored(storage) => storage.record_legacy_adoption(registry, plan),
+        }
+    }
 }
 
 /// Read-only review. New custom storage requires an existing canonical parent;
 /// only its explicitly selected leaf can be created by `prepare`.
 pub(crate) fn review(control: &Path, request: &IndexSetupRequest) -> Result<NativeSetupReview> {
+    review_inner(control, request, None)
+}
+#[path = "catalog_legacy_adoption.rs"]
+mod legacy_adoption;
+pub(crate) use legacy_adoption::review as review_legacy_adoption;
+pub(crate) use legacy_adoption::validate_origin as validate_legacy_adoption_origin;
+pub(crate) use legacy_adoption::validate_scope as validate_legacy_adoption_origin_scope;
+fn review_inner(
+    control: &Path,
+    request: &IndexSetupRequest,
+    legacy_adoption: Option<Sha256Digest>,
+) -> Result<NativeSetupReview> {
     crate::runtime_install::validate_control_root(control)?;
     let control = control.canonicalize()?;
     validate_request(&control, request)?;
@@ -92,7 +122,7 @@ pub(crate) fn review(control: &Path, request: &IndexSetupRequest) -> Result<Nati
     let previous = registry.index_setup_receipt(request.caller, &request.key)?;
     if let Some(previous) = &previous {
         ensure!(
-            previous.request == *request,
+            previous.request == *request && previous.legacy_adoption == legacy_adoption,
             "native setup request key conflict"
         );
         ensure!(
@@ -105,7 +135,9 @@ pub(crate) fn review(control: &Path, request: &IndexSetupRequest) -> Result<Nati
             "native setup review is stale"
         );
     }
-    review_filesystem(control, request, previous.is_some())
+    let mut review = review_filesystem(control, request, previous.is_some())?;
+    review.legacy_adoption = legacy_adoption;
+    Ok(review)
 }
 
 /// Split review pins the same physical inputs, while its distinct native intent
@@ -259,6 +291,8 @@ fn review_filesystem(
         sources,
         storage_action,
         metadata_plan,
+        legacy_adoption: None,
+        saved_adoption: None,
     })
 }
 
@@ -275,7 +309,7 @@ pub(crate) fn prepare(
         .index_setup_receipt(review.request.caller, &review.request.key)?
         .context("native setup requires its saved reservation before filesystem preparation")?;
     ensure!(
-        receipt.request == review.request,
+        receipt.request == review.request && receipt.legacy_adoption == review.legacy_adoption,
         "native setup reservation request changed"
     );
     review.review_digest()?;
@@ -305,11 +339,17 @@ pub(crate) fn prepare(
             .collect();
         airk_store::service::registry::catalog::setup::storage::NativeSetupPins::from_native_review_with_ancestors(review.parent.file,data,sources,ancestors)
     };
-    Ok(PreparedIndexSetup::Anchored(
-        airk_store::service::registry::catalog::setup::storage::prepare_index_storage(
+    let storage = match review.saved_adoption {
+        Some(saved) => {
+            airk_store::service::registry::catalog::setup::storage::prepare_saved_adoption_storage(
+                registry, control, &receipt, pins, saved,
+            )?
+        }
+        None => airk_store::service::registry::catalog::setup::storage::prepare_index_storage(
             registry, control, &receipt, pins,
         )?,
-    ))
+    };
+    Ok(PreparedIndexSetup::Anchored(storage))
 }
 
 fn validate_request(
@@ -623,6 +663,65 @@ impl DirectoryPin {
         self.check()?;
         Ok(())
     }
+}
+
+/// Retains native parent/child identities while an installer uses its private
+/// derived-data container. The shared parent is never chmodded or adopted.
+pub(crate) struct PrivateDirectoryPin {
+    parent: DirectoryPin,
+    child: DirectoryPin,
+}
+impl PrivateDirectoryPin {
+    pub(crate) fn check(&self) -> Result<()> {
+        self.parent.check()?;
+        self.child.check()?;
+        crate::local_ipc::require_existing_root(&self.child.path)
+    }
+}
+pub(crate) fn pin_private_directory(path: &Path, create: bool) -> Result<PrivateDirectoryPin> {
+    let parent = DirectoryPin::open(path.parent().context("private data parent missing")?)?;
+    #[cfg(unix)]
+    let name = path.file_name().context("private data leaf missing")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        // SAFETY: geteuid has no arguments or failure mode.
+        let uid = unsafe { libc::geteuid() };
+        for ancestor in parent.path.ancestors() {
+            let metadata = fs::symlink_metadata(ancestor)?;
+            ensure!(
+                metadata.is_dir()
+                    && !metadata.file_type().is_symlink()
+                    && (metadata.uid() == uid || metadata.uid() == 0)
+                    && (metadata.mode() & 0o022 == 0
+                        || (metadata.uid() == 0 && metadata.mode() & 0o1000 != 0)),
+                "unsafe adopted-data parent"
+            );
+        }
+    }
+    if create {
+        #[cfg(unix)]
+        {
+            use std::os::{fd::AsRawFd, unix::ffi::OsStrExt};
+            let name = std::ffi::CString::new(name.as_bytes())?;
+            // SAFETY: pinned parent and a single terminated native leaf name.
+            ensure!(
+                unsafe { libc::mkdirat(parent.file.as_raw_fd(), name.as_ptr(), 0o700) } == 0,
+                "create private adopted-data root: {}",
+                std::io::Error::last_os_error()
+            );
+        }
+        #[cfg(windows)]
+        {
+            crate::local_ipc::create_root(path)?;
+        }
+    }
+    parent.check()?;
+    crate::local_ipc::require_existing_root(path)?;
+    let child = DirectoryPin::open(path)?;
+    let pin = PrivateDirectoryPin { parent, child };
+    pin.check()?;
+    Ok(pin)
 }
 
 #[cfg(windows)]

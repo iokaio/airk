@@ -57,6 +57,22 @@ reports them and never rewrites the baseline.
 
 ## Existing coverage and remaining backlog
 
+The following counts describe the **3 November 2026 adoption baseline**, not
+the current 1.8.14 dependency graph. The later [7 November native HTTPS source
+review](reviews/native-https-2026-11-07.md) admits 54 exact source identities and
+54 explicitly limited reviewed exceptions, with per-package rationale and
+evidence. It does not turn baseline exemptions into audits or certify current
+advisory/platform qualification.
+
+The [original-configuration TOML review](reviews/toml-config-2026-11-07.md)
+records six further exact-version exceptions and their targeted parser/cache
+evidence. Primary independent acceptance is pending; these are not full audits
+or a replacement for advisory and actual native parser qualification.
+The later [rustls 0.23.46 security-patch delta review](reviews/rustls-0.23.46-2026-11-07.md)
+replaces only its active 0.23.45 source identity and limited exception after four
+fresh advisories were found. The initial 54-package record remains historical;
+the patch review does not waive advisory or runtime validation gates.
+
 The actual default cargo-vet graph has **374 nodes**: eight first-party workspace
 packages and **366 third-party package versions** (364 registry, two Git).
 The locked baseline result is:
@@ -85,7 +101,7 @@ exemptions, not silently excluded as first-party:
 Their `audit-as-crates-io = true` setting requests cargo-vet's exact Git delta
 enforcement; it does not assert that the forks equal published crates. A registry
 audit alone cannot qualify the changed source. The independent source guard also
-binds the complete `git+https://github.com/rusqlite/rusqlite?rev=…#…` lock identity,
+binds the complete `git+https://github.com/rusqlite/rusqlite?rev=â€¦#â€¦` lock identity,
 including the URL and commit even when the crate version stays unchanged.
 See [cargo-vet's Git dependency semantics](https://mozilla.github.io/cargo-vet/first-party-code.html).
 

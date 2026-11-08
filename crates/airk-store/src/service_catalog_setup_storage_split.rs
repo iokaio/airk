@@ -81,6 +81,7 @@ fn format_context(state: &NativeSplitState) -> Result<IndexSetupReceipt> {
         setup_watch: false,
     };
     let receipt = IndexSetupReceipt {
+        legacy_adoption: None,
         schema: 1,
         operation_id: split.operation_id()?,
         request_digest: request.identity()?,
@@ -161,7 +162,7 @@ pub fn prepare_split_storage(
     pins: NativeSetupPins,
 ) -> Result<PreparedSplitStorage> {
     let context = format_context(state)?;
-    let storage = prepare_authorized(registry, control, &context, pins, Some(state), || {})?;
+    let storage = prepare_authorized(registry, control, &context, pins, Some(state), None, || {})?;
     Ok(PreparedSplitStorage { storage })
 }
 #[cfg(test)]
@@ -342,6 +343,7 @@ mod tests {
             &context,
             captured,
             Some(&state),
+            None,
             || {
                 std::fs::rename(root, &retained).unwrap();
                 std::fs::create_dir(root).unwrap();

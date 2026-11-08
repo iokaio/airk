@@ -29,8 +29,9 @@ impl VerifiedManagedReservation {
             None => airk_kernel::service_broker::new_instance_id()?,
         };
         let (main, _, inventory) = policy.verify_inventory()?;
+        let (_, _, pair) = runtime_pair::read_installed_pair(&main, &inventory.version)?;
         let origin = ManagedGenesisOrigin {
-            schema: 1,
+            schema: pair.schema,
             install: authority.root.canonicalize()?,
             state: state.to_path_buf(),
             control: state.join("control"),
@@ -44,9 +45,26 @@ impl VerifiedManagedReservation {
             policy_lifecycle: serde_json::from_value(serde_json::to_value(policy.lifecycle)?)?,
             source: policy.source.clone(),
             runtime_sha256: policy.approval.manifest_sha256.parse()?,
-            main_sha256: inventory.files[main_name()].parse()?,
-            helper_sha256: inventory.files[helper_name()].parse()?,
-            installer_identity: runtime_pair::engine_identity_at(&main)?,
+            main_sha256: inventory
+                .files
+                .get(main_name())
+                .context("managed main identity missing")?
+                .parse()?,
+            helper_sha256: if pair.is_single_executable() {
+                None
+            } else {
+                Some(
+                    inventory
+                        .files
+                        .get(helper_name())
+                        .context("legacy managed helper identity missing")?
+                        .parse()?,
+                )
+            },
+            installer_identity: runtime_pair::engine_identity_at_version(
+                &main,
+                &policy.approval.version,
+            )?,
         };
         origin.validate()?;
         genesis::preflight_managed_origin(&origin)?;
@@ -106,6 +124,22 @@ pub(super) fn saved_policy(root: &Path) -> Result<Option<Managed>> {
     Ok(Some(policy))
 }
 
+/// Detachment preserves the immutable reservation and its catalog. Only a
+/// positively settled original operation can release the user references; no
+/// provider file needs to remain available merely to stop its saved identity.
+pub(super) fn require_detach_policy(root: &Path, policy: &Managed) -> Result<()> {
+    if let Some(origin) = layout::managed_origin(root)? {
+        genesis::require_managed_settled(&origin.control, &origin)
+            .context("managed_catalog_detach_requires_supported_transition")?;
+        require_policy_identity(policy, &origin)?;
+        ensure!(
+            layout::saved_control(root)? == origin.control,
+            "managed detach control binding changed"
+        );
+    }
+    Ok(())
+}
+
 fn require_policy_identity(policy: &Managed, origin: &ManagedGenesisOrigin) -> Result<()> {
     origin.validate()?;
     ensure!(
@@ -150,16 +184,24 @@ pub(in crate::runtime_install) fn verify_origin(
     policy.metadata_approval()?;
     let inventory = approved_inventory_metadata(&policy.source, &policy.approval)?;
     let main = policy.saved_executable();
+    let (_, helper, pair) = runtime_pair::read_installed_pair(&main, &inventory.version)?;
+    let helper_matches = match (pair.schema, origin.schema, origin.helper_sha256) {
+        (2, 2, None) => !inventory.files.contains_key(helper_name()),
+        (1, 1, Some(expected)) => {
+            inventory.files.get(helper_name()) == Some(&expected.to_string())
+                && runtime_pair::digest_file(&helper)? == expected.to_string()
+        }
+        _ => false,
+    };
     ensure!(
         policy.source == origin.source
             && policy.approval.manifest_sha256 == origin.runtime_sha256.to_string()
-            && inventory.files[main_name()] == origin.main_sha256.to_string()
-            && inventory.files[helper_name()] == origin.helper_sha256.to_string()
+            && inventory.files.get(main_name()) == Some(&origin.main_sha256.to_string())
+            && helper_matches
             && runtime_pair::digest_file(&main)? == origin.main_sha256.to_string()
-            && runtime_pair::digest_file(&policy.source.join(helper_name()))?
-                == origin.helper_sha256.to_string()
-            && runtime_pair::engine_identity_at(&main)? == origin.installer_identity,
-        "managed catalog approved native pair changed"
+            && runtime_pair::engine_identity_at_version(&main, &policy.approval.version)?
+                == origin.installer_identity,
+        "managed catalog approved executable contract changed"
     );
     ensure!(
         layout::saved_control(authority.root)? == origin.control,

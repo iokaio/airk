@@ -34,8 +34,10 @@ jobs:
       matrix:
         include:
           - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
             executable: airk
           - os: windows-2025
+            target: x86_64-pc-windows-msvc
             executable: airk.exe
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
@@ -48,9 +50,9 @@ jobs:
           python-version: '3.11'
       - name: Prepare pinned bundled model build inputs
         run: python scripts/provision-local-model.py --destination target/local-vector-model --download
-      - name: Prepare pinned offline inference libraries
-        run: python scripts/provision-onnx-runtime.py --download
-      - name: Build the verified separate native runtime pair
+      - name: Prepare pinned static CPU inference inputs
+        run: python scripts/provision-static-onnx-runtime.py --destination target/static-onnx-runtime/${{ matrix.target }} --target ${{ matrix.target }} --download --download-tools --build --parallel 2 --github-env
+      - name: Build the verified single-executable native runtime
         run: python scripts/build-service-runtime.py --destination artifacts/qualification/runtime --profile release
       - name: Fixed corpus scale and optional pinned public repository
         shell: pwsh

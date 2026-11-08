@@ -33,6 +33,8 @@ pub struct Access {
     pub runtime: PathBuf,
     pub role: String,
     pub grant: Grant,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub in_process: bool,
 }
 
 pub const MAX_PROVIDER_DRAINS: usize = 32;

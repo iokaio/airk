@@ -15,10 +15,10 @@ mod platform;
 pub(crate) use platform::require_existing_root;
 pub use platform::{Listener, Stream, connect, current_user, prepare_root};
 #[cfg(windows)]
-pub(crate) use platform::{
-    create_root, process_user, require_job_user, require_owner_private,
-    with_current_user_job_security,
-};
+pub(crate) use platform::{create_root, process_user, require_job_user, require_owner_private};
+
+#[cfg(all(windows, any(not(feature = "local-inference"), test)))]
+pub(crate) use platform::with_current_user_job_security;
 
 /// Stable counter identity for the OS-authenticated user; not a bearer credential.
 pub fn caller_identity() -> Result<airk_core::identity::Incarnation> {

@@ -164,6 +164,9 @@ impl Kernel {
             self.store.installed_model(&objects)?;
             let mut policy = self.vector_policy()?;
             policy.model = Some(objects);
+            if let Some(objects) = &policy.model {
+                self.require_embedded_default_write(objects)?;
+            }
             self.store.configure_vector_policy_bytes(
                 &_writer,
                 &quota,
@@ -203,9 +206,12 @@ impl Kernel {
                     .is_some_and(|default| *default == objects.local_set()),
             "shared helper default model differs from paired metadata"
         );
-        self.store.installed_model(&objects)?;
+        self.store.validate_model_reference(&objects, 0)?;
         let mut policy = self.vector_policy()?;
         policy.model = Some(objects);
+        if let Some(objects) = &policy.model {
+            self.require_embedded_default_write(objects)?;
+        }
         self.store.configure_vector_policy_bytes(
             &writer,
             &self.collection_quota()?,
@@ -249,6 +255,9 @@ impl Kernel {
         let writer = self.store.lock()?;
         let mut policy = self.vector_policy()?;
         policy.model = None;
+        if let Some(objects) = &policy.model {
+            self.require_embedded_default_write(objects)?;
+        }
         self.store.configure_vector_policy_bytes(
             &writer,
             &self.collection_quota()?,
@@ -386,6 +395,9 @@ impl Kernel {
             model: policy.model.clone(),
             selection: policy.selection.clone(),
         })?;
+        if let Some(objects) = &policy.model {
+            self.require_embedded_default_write(objects)?;
+        }
         self.store.configure_vector_policy_bytes(
             &writer,
             &self.collection_quota()?,
@@ -509,6 +521,9 @@ impl Kernel {
         let mut policy = self.vector_policy()?;
         policy.selection = Some(selection.clone());
         let status = self.selection_status(selection, "explicit")?;
+        if let Some(objects) = &policy.model {
+            self.require_embedded_default_write(objects)?;
+        }
         self.store.configure_vector_policy_bytes(
             &writer,
             &self.collection_quota()?,

@@ -579,8 +579,13 @@ export class ServiceClient {
         if(!Array.isArray(providers)||providers.length!==workers.length)throw new ServiceError('incomplete_catalog_provider_census',true);
         providers.forEach((input,index)=>{const provider=record(input),history=record(provider.history);
             if(!sameCatalogValue(provider.worker,workers[index]))throw new ServiceError('crossed_catalog_provider_identity',true);
-            if(history.kind==='helpers'){
-                if(!Array.isArray(history.generations)||!history.generations.length||history.generations.length>32)throw new ServiceError('invalid_catalog_provider_generations',true);
+            if(history.kind==='helpers'||history.kind==='in_process'){
+                if(history.kind==='in_process'&&history.completed_authorizations!=null){
+                    const completed=record(history.completed_authorizations);
+                    if(Buffer.byteLength(JSON.stringify(completed),'utf8')>2048||completed.schema!==1||identifier(completed.service_instance,16)!==service||identifier(completed.namespace,16)!==request.key.namespace||count(completed.completed_owners)<1)throw new ServiceError('invalid_catalog_completion_ledger',true);
+                    identifier(completed.factory_generation,16);catalogHex(completed.approved_execution_sha256,64);catalogHex(completed.head_sha256,64);count(completed.admitted_high_water);
+                }
+                if(!Array.isArray(history.generations)||(!history.generations.length&&(history.kind==='helpers'||history.completed_authorizations==null))||history.generations.length>32)throw new ServiceError('invalid_catalog_provider_generations',true);
                 history.generations.forEach((generation,index,all)=>{identifier(generation,16);if(index&&String(all[index-1])>=String(generation))throw new ServiceError('invalid_catalog_provider_generations',true);});
             }else if(history.kind!=='native_never_authorized')throw new ServiceError('invalid_catalog_provider_history',true);
         });return workers;

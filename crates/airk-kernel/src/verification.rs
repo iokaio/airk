@@ -274,7 +274,23 @@ impl Kernel {
         value: &Value,
         budget: VerificationBudget,
     ) -> Result<VerificationReceipt> {
-        self.verify_returned_sources_before(value, budget, None, receipt_budget_for_reply(value)?)
+        self.verify_returned_sources_with_deadline(value, budget, None)
+    }
+
+    /// Preserve an original transport-independent read deadline through source
+    /// verification; queue/selection waiting must not restart its allowance.
+    pub fn verify_returned_sources_with_deadline(
+        &self,
+        value: &Value,
+        budget: VerificationBudget,
+        outer_deadline: Option<Instant>,
+    ) -> Result<VerificationReceipt> {
+        self.verify_returned_sources_before(
+            value,
+            budget,
+            outer_deadline,
+            receipt_budget_for_reply(value)?,
+        )
     }
 
     pub(crate) fn verify_returned_sources_before(

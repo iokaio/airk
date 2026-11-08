@@ -26,6 +26,8 @@ pub struct RepackReport {
     pub next_after: Option<String>,
     pub generation: u64,
     pub skipped_large: usize,
+    /// Original saved evidence is preserved, never reinterpreted as a current payload.
+    pub skipped_legacy: usize,
 }
 
 impl Kernel {
@@ -138,6 +140,7 @@ impl Kernel {
             next_after: None,
             generation: base.sequence,
             skipped_large: 0,
+            skipped_legacy: 0,
         };
         let mut inputs = Vec::new();
         let mut admitted = 0usize;
@@ -164,6 +167,13 @@ impl Kernel {
                 break;
             }
             admitted += bytes;
+            if reference.legacy_origin.is_some() {
+                self.store.load_legacy_saved_artifact(artifact)?;
+                report.skipped_legacy += 1;
+                report.examined += 1;
+                report.next_after = Some(path.clone());
+                continue;
+            }
             let retained = self.store.load_retrieval_artifact(artifact)?;
             let source = self.store.read_retained_source(artifact)?;
             let updated = self.store.retain_payload_encoded_owned(

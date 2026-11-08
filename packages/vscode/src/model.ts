@@ -3,13 +3,16 @@ import { createHash } from 'node:crypto';
 import * as path from 'node:path';
 import type { VectorStatus } from './vectorModel';
 import { validateCatalogSession, validateCombinedCatalogSession, type CatalogSessionSelector, type CombinedCatalogSessionSelector } from './catalogSession';
+import { HttpConnectionInfo, credentialEnvironment, validateHttpConnection, vscodeCredentialInput, vscodeCredentialInputId } from './serviceHttp';
 
 export interface LaunchSpec { command: string; root: string; dataDir: string; collection: string; name: string;
+    /** Protected native enrollment; command remains the interactive CLI image only. */
+    http?:HttpConnectionInfo;
     /** Explicit native-reviewed selection; display origins remain native Index metadata. */
     catalogSession?: CatalogSessionSelector;
     combinedSession?: CombinedCatalogSessionSelector;
     /** `universal`: `command` is the version-free universal launcher, which finds the install root itself. */
-    service?: { installDir: string; project: string; universal?: boolean } }
+    service?: { installDir: string; project: string; universal?: boolean; direct?: boolean } }
 export interface Usage { collection: string; disk_bytes: number; indexed_files: number | null; generation: number | null; status: string }
 export interface IndexReport { generation: number; indexed: number; reused: number; removed: number; source_bytes?: number; skipped_truncated?: number;
     repaired_retained_artifacts?: number; retained_repair_retries?: number; skipped: { path: string; reason: string }[];
@@ -33,18 +36,18 @@ export function launchArgs(spec: LaunchSpec, command = 'mcp', pinProject = false
         if(spec.catalogSession!==undefined)throw new Error('Cannot mix catalog session selectors.');
         if(!spec.service||!path.isAbsolute(spec.service.installDir))throw new Error('Invalid trusted combined catalog launch binding.');
         const selected=['--combined-session',JSON.stringify(validateCombinedCatalogSession(spec.combinedSession)),command];
-        return spec.service.universal?selected:['runtime','launch','--install-dir',spec.service.installDir,'--',...selected];
+        return spec.service.direct&&command!=='mcp'?['--service-install-dir',spec.service.installDir,...selected]:spec.service.universal?selected:['runtime','launch','--install-dir',spec.service.installDir,'--',...selected];
     }
     if(spec.catalogSession!==undefined){
         if(!spec.service||!path.isAbsolute(spec.service.installDir)||!/^[a-f0-9]{64}$/.test(spec.service.project))throw new Error('Invalid trusted catalog launch binding.');
         const selected=['--catalog-session',JSON.stringify(validateCatalogSession(spec.catalogSession)),command];
-        return spec.service.universal?selected:['runtime','launch','--install-dir',spec.service.installDir,'--',...selected];
+        return spec.service.direct&&command!=='mcp'?['--service-install-dir',spec.service.installDir,...selected]:spec.service.universal?selected:['runtime','launch','--install-dir',spec.service.installDir,'--',...selected];
     }
     if(spec.service){
         if(!path.isAbsolute(spec.service.installDir)||!/^[a-f0-9]{64}$/.test(spec.service.project))throw new Error('Invalid trusted service launch binding.');
         const scoped=command==='mcp'&&!pinProject?['--root',spec.root,'mcp']
             :['--root',spec.root,'--data-dir',spec.dataDir,'--collection',spec.collection,'--service-project',spec.service.project,command];
-        return spec.service.universal?scoped:['runtime','launch','--install-dir',spec.service.installDir,'--',...scoped];
+        return spec.service.direct&&command!=='mcp'?['--service-install-dir',spec.service.installDir,...scoped]:spec.service.universal?scoped:['runtime','launch','--install-dir',spec.service.installDir,'--',...scoped];
     }
     return ['--root', spec.root, '--data-dir', spec.dataDir, '--collection', spec.collection, command];
 }
@@ -62,7 +65,7 @@ export function eligibleEvent(file: string, root: string, dataDir: string): bool
 }
 
 /** One MCP server in an agent configuration. Legacy entries exist only for migration. */
-export interface ServerEntry { readonly key: string; readonly command: string; readonly args: readonly string[]; readonly label: string }
+export interface ServerEntry { readonly key: string; readonly command: string; readonly args: readonly string[]; readonly label: string; readonly http?:HttpConnectionInfo }
 export const ASSISTANCE_KEY = 'airk_explorer';
 export const UNIFIED_KEY = 'airk';
 export const RETRIEVAL_TOOLS = ['capabilities','changes','code_facts','context','document_facts','file_info','help','imports','list_files','outline','query_scope','read_file','references','relationships','search','status','diagnostics','symbols'] as const;
@@ -77,6 +80,7 @@ export const EXPLORER_TOOL_RENAMES: Readonly<Record<string,string>> = {
 
 /** One public endpoint; editor attachment never chooses the retrieval binding. */
 export function unifiedEntry(spec: LaunchSpec, descriptor?: string, additional: readonly LaunchSpec[] = []): ServerEntry {
+    if(spec.http){if(additional.length)throw new Error('Explicit combined HTTP selection required.');return {key:'airk',command:spec.command,args:[],label:'AIRK',http:validateHttpConnection(spec.http)};}
     if(additional.length&&(spec.catalogSession!==undefined||spec.combinedSession!==undefined||additional.some(value=>value.catalogSession!==undefined||value.combinedSession!==undefined)))throw new Error('Catalog sessions support one explicit native selection; a legacy catalog session supports one selected Index.');
     const args = launchArgs(spec);
     if (descriptor) {
@@ -110,7 +114,23 @@ export function assistanceEntry(spec: LaunchSpec, descriptor: string): ServerEnt
 }
 
 /** Serialize entries in the selected client's configuration format. */
+export function httpServerFields(client:Client,info:HttpConnectionInfo):Record<string,unknown>{
+    info=validateHttpConnection(info);const environment=credentialEnvironment(info),url=info.endpoint.url;
+    if(client==='codex')return {url,bearer_token_env_var:environment,http_headers:{'X-AIRK-Response-Mode':'terse'}};
+    if(client==='vscode')return {type:'http',url,headers:{Authorization:`Bearer \${input:${vscodeCredentialInputId(info)}}`,'X-AIRK-Response-Mode':'terse'}};
+    if(client==='claude')return {type:'http',url,headers:{Authorization:`Bearer \${${environment}}`,'X-AIRK-Response-Mode':'terse'}};
+    throw new Error(`http_client_compatibility_unverified: ${client}`);
+}
 export function serializeServers(client: Client, entries: readonly ServerEntry[]): string {
+    if(entries.some(entry=>entry.http)){
+        if(entries.some(entry=>!entry.http)||entries.length!==1)throw new Error('One explicitly enrolled HTTP endpoint required.');
+        const info=validateHttpConnection(entries[0].http),name=entries[0].key,fields=httpServerFields(client,info);
+        // These formats have explicit URL + host-environment references. Other
+        // clients remain compatibility blockers until their real schema is qualified.
+        if(client==='codex')return `[mcp_servers.${name}]\n`+Object.entries(fields).filter(([,value])=>typeof value!=='object').map(([key,value])=>`${key} = ${JSON.stringify(value)}\n`).join('')+
+            Object.entries(fields).filter(([,value])=>typeof value==='object').map(([key,value])=>`\n[mcp_servers.${name}.${key}]\n`+Object.entries(value as Record<string,unknown>).map(([name,value])=>`${JSON.stringify(name)} = ${JSON.stringify(value)}\n`).join('')).join('');
+        return JSON.stringify({[client==='vscode'?'servers':'mcpServers']:{[name]:fields},...(client==='vscode'?{inputs:[vscodeCredentialInput(info)]}:{})},null,2)+'\n';
+    }
     if (client === 'amazon-q' || client === 'windsurf') {
         // Connection details only: these clients' agent/version-specific schemas differ.
         const details = (entry: ServerEntry) => ({ transport: 'stdio', command: entry.command, args: entry.args });

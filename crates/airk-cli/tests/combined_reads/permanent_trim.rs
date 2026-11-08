@@ -1096,11 +1096,11 @@ async fn permanent_trim_quota_failure_supports_exact_resume_or_retirement() -> R
     Ok(())
 }
 
-#[cfg(feature = "embedding-worker")]
+#[cfg(feature = "local-inference")]
 #[tokio::test]
 async fn permanent_trim_keeps_allowed_occurrences_of_a_shared_native_vector() -> Result<()> {
     use airk_core::{readiness::DefaultSearchPolicy, service::JobKind};
-    let mut f = Fixture::with_helper()?;
+    let mut f = Fixture::with_inference()?;
     f.session.project_ids = vec![f.projects[2]];
     f.session.index_ids = Some(vec![f.indexes[2]]);
     let registration = f.registrations[2].clone();

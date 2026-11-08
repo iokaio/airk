@@ -7,7 +7,9 @@ compile_error!("the guarded provider fixture must be built as its explicit test 
 mod embed_request;
 use embed_request::handle;
 mod embed_pool {
+    include!("../../src/embed_pool_legacy_context.rs");
     include!("../../src/embed_pool_core.rs");
+    include!("../../src/embed_pool_legacy_entry.rs");
     mod retirement {
         include!("../../src/embed_pool_retirement.rs");
     }

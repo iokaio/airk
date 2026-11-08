@@ -51,7 +51,7 @@ export interface DiscoveryStepDetails {
     profileFamilies?:Value;
     recommendations?:Value;
     sourceVerification?:Value;
-    execution?:Value;semanticReadiness?:Value;discoveryReadiness?:Value;readError?:Value;scopeObservation?:Value;
+    execution?:Value;semanticReadiness?:Value;legacyAdoption?:Value;discoveryReadiness?:Value;readError?:Value;scopeObservation?:Value;
     requestedMode?:string;publication?:unknown;
     coverage?:Value;countUnit?:string;
     more:boolean;incompleteReason?:string;suggestions:{target:string;symbolId?:string;path?:string;coverage?:string}[];
@@ -126,6 +126,7 @@ function resultMetadata(raw:unknown):Value {
         source_verification:nativeVerification(source.source_verification),
         execution:source.execution??evidence.execution,
         semantic_readiness:source.semantic_readiness??evidence.semantic_readiness,
+        legacy_adoption:source.legacy_adoption??evidence.legacy_adoption,
         discovery_readiness:source.discovery_readiness??evidence.discovery_readiness,
         error:source.error??evidence.error,requested_mode:source.requested_mode??evidence.requested_mode,
         publication:source.publication??evidence.publication,
@@ -157,6 +158,7 @@ export function discoveryDetails(envelope:Value):DiscoveryStepDetails[]{
             ...(metadata.source_verification?{sourceVerification:object(metadata.source_verification)}:{}),
             ...(Object.keys(object(metadata.execution)).length?{execution:object(metadata.execution)}:{}),
             ...(Object.keys(object(metadata.semantic_readiness)).length?{semanticReadiness:object(metadata.semantic_readiness)}:{}),
+            ...(Object.keys(object(metadata.legacy_adoption)).length?{legacyAdoption:object(metadata.legacy_adoption)}:{}),
             ...(Object.keys(object(metadata.discovery_readiness)).length?{discoveryReadiness:object(metadata.discovery_readiness)}:{}),
             ...(Object.keys(object(metadata.error)).length?{readError:object(metadata.error)}:{}),
             ...(Object.keys(object(metadata.scope_observation)).length?{scopeObservation:object(metadata.scope_observation)}:{}),
@@ -306,7 +308,7 @@ function selectedSourceCoverage(turn:WorkbenchTurn,selected:Set<string>):Value[]
         // These observations qualify the selected evidence's original request,
         // not merely its saved bytes. Retain complete native objects, including
         // unknown future fields, without deriving a fresh availability claim.
-        for(const key of ['execution','semantic_readiness','discovery_readiness','error','requested_mode','publication','read_guidance','profile_families','scope_observation']){
+        for(const key of ['execution','semantic_readiness','legacy_adoption','discovery_readiness','error','requested_mode','publication','read_guidance','profile_families','scope_observation']){
             if(metadata[key]!==undefined)qualification[key]=metadata[key];
         }
         return Object.keys(qualification).length?[{step:report.id,tool:typeof report.tool==='string'?report.tool:'',scope:'original_source_request',...qualification}]:[];

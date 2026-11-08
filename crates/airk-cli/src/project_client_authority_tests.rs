@@ -213,6 +213,7 @@ impl OwnedIpc {
                         let gate=observed.hold_reply.lock().unwrap().take();
                         if let Some(gate)=gate { gate.hold().await; }
                         local_ipc::write_message(&mut stream,&protocol::QueryResult {
+                            read_admission: None,
                             result:airk_mcp::unified::success(serde_json::json!({"index_state":"available","publication":{"token":worker_publication(identity)}})),
                             status_receipt:worker_receipt(identity),rebind:false,
                         },Duration::from_secs(5)).await?;

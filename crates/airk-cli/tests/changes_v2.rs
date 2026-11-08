@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use std::{fs, path::Path, process::Output};
 
 fn run(root: &Path, state: &Path, args: &[&str]) -> Result<Output> {
-    Ok(common::command(root, state, "default")
+    Ok(common::evidence_command(root, state, "default")
         .args(args)
         .output()?)
 }
@@ -19,11 +19,11 @@ fn call(root: &Path, state: &Path, args: &[&str]) -> Result<Value> {
 fn four_conditional_reads_and_remembered_paths_preserve_exact_identity() -> Result<()> {
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
-    let _service = common::Service::start(root.path(), state.path(), "default");
     fs::write(
         root.path().join("weather.py"),
         "def aurora_temperature():\n    return 17\n",
     )?;
+    let _service = common::Service::reviewed(root.path(), state.path(), "default");
     call(root.path(), state.path(), &["index"])?;
     let info = call(root.path(), state.path(), &["info", "weather.py"])?;
     let source_hash = info["content_hash"].as_str().context("source hash")?;
@@ -121,11 +121,11 @@ fn four_conditional_reads_and_remembered_paths_preserve_exact_identity() -> Resu
 fn changes_rejects_invalid_scope_and_bounds_and_preserves_selector_ordinals() -> Result<()> {
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
-    let _service = common::Service::start(root.path(), state.path(), "default");
     fs::write(
         root.path().join("scope.txt"),
         "Original northern observatory evidence.\n",
     )?;
+    let _service = common::Service::reviewed(root.path(), state.path(), "default");
     call(root.path(), state.path(), &["index"])?;
     for args in [
         vec!["changes"],
@@ -161,12 +161,12 @@ fn equal_generation_foreign_and_forked_tokens_are_rejected() -> Result<()> {
     let root = tempfile::tempdir()?;
     let first_state = tempfile::tempdir()?;
     let second_state = tempfile::tempdir()?;
-    let _first = common::Service::start(root.path(), first_state.path(), "default");
-    let _second = common::Service::start(root.path(), second_state.path(), "default");
     fs::write(
         root.path().join("identity.txt"),
         "Independent original polar evidence.\n",
     )?;
+    let _first = common::Service::reviewed(root.path(), first_state.path(), "default");
+    let _second = common::Service::reviewed(root.path(), second_state.path(), "default");
     call(root.path(), first_state.path(), &["index"])?;
     call(root.path(), second_state.path(), &["index"])?;
     let first = call(

@@ -1,19 +1,64 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Real stdio protocol lifecycle and collection-scoped tools through the shipped binary.
+//! Real HTTPS MCP lifecycle and canonical collection-scoped tool parity.
 mod common;
+#[path = "mcp/source_runtime.rs"]
+mod source_runtime;
 use serde_json::{Value, json};
 use std::{
     fs,
-    io::{BufRead, BufReader, Write},
-    process::{Child, ChildStdin, Command, Stdio},
-    sync::mpsc::{self, Receiver},
+    io::Write,
+    process::{Command, Stdio},
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
 struct Session {
-    child: Child,
-    input: ChildStdin,
-    output: Receiver<String>,
+    transport: Mutex<common::http::HttpMcpSession>,
+    _service: Arc<common::Service>,
+}
+fn cli_call(
+    root: &std::path::Path,
+    data: &std::path::Path,
+    collection: &str,
+    args: &[&str],
+) -> anyhow::Result<Value> {
+    if args.first() == Some(&"index") {
+        common::call(root, data, collection, args)
+    } else {
+        let result = common::scoped_call(root, data, collection, args)?;
+        // Match the existing unscoped fixture adapter's convenience contract;
+        // tools call retains its complete wire envelope for explicit comparison.
+        if args.first() != Some(&"tools") && result.get("content").is_some() {
+            native_payload(&result)
+        } else {
+            Ok(result)
+        }
+    }
+}
+fn native_payload(envelope: &Value) -> anyhow::Result<Value> {
+    anyhow::ensure!(
+        envelope["isError"] != true,
+        "native read refused: {envelope}"
+    );
+    let content = envelope["content"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("missing native content: {envelope}"))?;
+    anyhow::ensure!(
+        content.len() == 1 && content[0]["type"] == "text",
+        "unexpected native content inventory: {envelope}"
+    );
+    let body: Value = serde_json::from_str(
+        content[0]["text"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing native JSON: {envelope}"))?,
+    )?;
+    if let Some(structured) = envelope.get("structuredContent") {
+        anyhow::ensure!(
+            structured == &body,
+            "native text and structured results disagree: {envelope}"
+        );
+    }
+    Ok(body)
 }
 fn assert_query_scope_metadata_tool(tools: &[Value], name: &str, transport_project: bool) {
     let tool = tools
@@ -69,64 +114,56 @@ impl Session {
         state: &std::path::Path,
         mode: Option<&str>,
     ) -> anyhow::Result<Self> {
-        let mut command = common::command(root, state, "project-a");
-        if let Some(mode) = mode {
-            command.env("AIRK_MCP_RESPONSE_MODE", mode);
-        } else {
-            command.env_remove("AIRK_MCP_RESPONSE_MODE");
-        }
-        let mut child = command
-            .arg("mcp")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()?;
-        let input = child.stdin.take().expect("stdin");
-        let stdout = child.stdout.take().expect("stdout");
-        let (sender, output) = mpsc::channel();
-        std::thread::spawn(move || {
-            for line in BufReader::new(stdout).lines() {
-                let Ok(line) = line else { break };
-                if sender.send(line).is_err() {
-                    break;
-                }
-            }
-        });
+        let service = common::http_fixture(root, state, "project-a");
+        let transport = common::http::HttpMcpSession::start_with_mode(
+            &service.control,
+            service.http_selection(),
+            airk_core::usage::ClientFamily::Unknown,
+            mode,
+        )?;
         Ok(Self {
-            child,
-            input,
-            output,
+            transport: Mutex::new(transport),
+            _service: service,
         })
     }
     fn send(&mut self, value: Value) -> anyhow::Result<()> {
-        writeln!(self.input, "{value}")?;
-        self.input.flush()?;
-        Ok(())
+        self.transport.get_mut().unwrap().send(value)
     }
     fn receive(&self, id: u64) -> anyhow::Result<Value> {
         self.receive_until(id, std::time::Instant::now() + Duration::from_secs(60))
     }
     fn receive_until(&self, id: u64, deadline: std::time::Instant) -> anyhow::Result<Value> {
-        for _ in 0..10 {
-            let remaining = deadline
-                .checked_duration_since(std::time::Instant::now())
-                .ok_or_else(|| anyhow::anyhow!("stdio observation deadline exhausted"))?;
-            let line = self.output.recv_timeout(remaining)?;
-            anyhow::ensure!(
-                std::time::Instant::now() < deadline,
-                "stdio observation deadline exhausted"
-            );
-            let value: Value = serde_json::from_str(&line)?;
-            if value["id"] == id {
-                return Ok(value);
-            }
-        }
-        anyhow::bail!("response not received")
+        anyhow::ensure!(
+            std::time::Instant::now() < deadline,
+            "HTTPS observation deadline exhausted"
+        );
+        self.transport
+            .lock()
+            .unwrap()
+            .receive_until(i64::try_from(id)?, deadline)
     }
     fn call(&mut self, id: u64, name: &str, arguments: Value) -> anyhow::Result<Value> {
+        self.call_until(
+            id,
+            name,
+            arguments,
+            std::time::Instant::now() + Duration::from_secs(60),
+        )
+    }
+    fn call_until(
+        &mut self,
+        id: u64,
+        name: &str,
+        arguments: Value,
+        deadline: std::time::Instant,
+    ) -> anyhow::Result<Value> {
         let name = name.strip_prefix("airk_").unwrap_or(name);
-        self.send(json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{"name":name,"arguments":arguments}}))?;
-        self.receive(id)
+        self.transport.get_mut().unwrap().request_until(
+            i64::try_from(id)?,
+            "tools/call",
+            json!({"name":name,"arguments":arguments}),
+            deadline,
+        )
     }
     fn published_status(&mut self, id: u64, project: &str) -> anyhow::Result<Value> {
         let deadline = std::time::Instant::now() + Duration::from_secs(60);
@@ -135,8 +172,12 @@ impl Session {
                 std::time::Instant::now() < deadline,
                 "publication observation deadline exhausted"
             );
-            self.send(json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{"name":"airk_diagnostics","arguments":{"response_mode":"full"}}}))?;
-            let reply = self.receive_until(id, deadline)?;
+            let reply = self.call_until(
+                id,
+                "airk_diagnostics",
+                json!({"response_mode":"full"}),
+                deadline,
+            )?;
             if let Some(retry) = common::read_retry::within(&reply["result"], deadline) {
                 std::thread::sleep(retry.delay);
                 continue;
@@ -153,50 +194,27 @@ impl Session {
             if !common::read_retry::publication_pending(&value, "project-a", project)? {
                 return Ok(reply);
             }
-            std::thread::sleep(Duration::from_millis(25));
+            std::thread::sleep(
+                Duration::from_millis(25)
+                    .min(deadline.saturating_duration_since(std::time::Instant::now())),
+            );
         }
     }
     fn read_retry(&mut self, id: u64, name: &str, arguments: Value) -> anyhow::Result<Value> {
         let until = std::time::Instant::now() + Duration::from_secs(5);
         loop {
-            let reply = self.call(id, name, arguments.clone())?;
+            let reply = self.call_until(id, name, arguments.clone(), until)?;
             let Some(retry) = common::read_retry::within(&reply["result"], until) else {
                 return Ok(reply);
             };
             std::thread::sleep(retry.delay);
         }
     }
-    fn wait_source_idle(&mut self, id: u64) -> anyhow::Result<()> {
-        self.wait_source_state(id, "idle")
+    fn wait_source_idle(&self) -> anyhow::Result<()> {
+        self.wait_source_state("idle")
     }
-    fn wait_source_state(&mut self, id: u64, state: &str) -> anyhow::Result<()> {
-        let deadline = std::time::Instant::now() + Duration::from_secs(30);
-        loop {
-            let reply = self.read_retry(id, "status", json!({"response_mode":"full"}))?;
-            anyhow::ensure!(
-                reply.get("error").is_none() && reply["result"]["isError"] != true,
-                "{reply}"
-            );
-            let observed: Value = serde_json::from_str(
-                reply["result"]["content"][0]["text"]
-                    .as_str()
-                    .ok_or_else(|| anyhow::anyhow!("missing status: {reply}"))?,
-            )?;
-            if observed["freshness"]["state"] == state {
-                return Ok(());
-            }
-            anyhow::ensure!(
-                std::time::Instant::now() < deadline,
-                "fixture source work did not settle: {observed}"
-            );
-            std::thread::sleep(Duration::from_millis(25));
-        }
-    }
-}
-impl Drop for Session {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+    fn wait_source_state(&self, state: &str) -> anyhow::Result<()> {
+        source_runtime::wait(&self._service, state)
     }
 }
 
@@ -236,7 +254,7 @@ fn saved_source_verification_preserves_complete_results_through_cli_and_public_m
     let state = tempfile::tempdir()?;
     let source = "# Saved evidence\nQueue records preserve exact source identity.\n";
     fs::write(root.path().join("policy.md"), source)?;
-    let service = common::Service::start(root.path(), state.path(), "project-a");
+    let service = common::Service::reviewed(root.path(), state.path(), "project-a");
     assert!(matches!(
         common::rpc(
             &service.control,
@@ -247,12 +265,12 @@ fn saved_source_verification_preserves_complete_results_through_cli_and_public_m
         ),
         airk_core::service::ControlResponse::Watch { .. }
     ));
-    common::call(root.path(), state.path(), "project-a", &["index"])?;
+    cli_call(root.path(), state.path(), "project-a", &["index"])?;
     let mut session = Session::start(root.path(), state.path())?;
     session.send(json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"verification-parity-fixture","version":"1"}}}))?;
     assert!(session.receive(1)?.get("error").is_none());
     session.send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
-    session.wait_source_idle(2)?;
+    source_runtime::pause_and_wait(&service)?;
     let args = json!({"path":"policy.md","verification":"report","verification_max_sources":25,"verification_max_bytes":16777216,"verification_deadline_ms":2000,"response_mode":"full"});
     let mcp = session.read_retry(3, "file_info", args.clone())?;
     assert_ne!(mcp["result"]["isError"], true, "{mcp}");
@@ -262,7 +280,7 @@ fn saved_source_verification_preserves_complete_results_through_cli_and_public_m
         native["source_verification"]["counts"]["bytes_read"],
         source.len()
     );
-    let alias = common::call(
+    let alias = common::scoped_call(
         root.path(),
         state.path(),
         "project-a",
@@ -279,7 +297,7 @@ fn saved_source_verification_preserves_complete_results_through_cli_and_public_m
             "2000",
         ],
     )?;
-    let tools = common::call(
+    let tools = cli_call(
         root.path(),
         state.path(),
         "project-a",
@@ -291,9 +309,45 @@ fn saved_source_verification_preserves_complete_results_through_cli_and_public_m
             &serde_json::to_string(&args)?,
         ],
     )?;
+    // Compare the entire native envelopes as well as their complete bodies.
+    // JSON text is normalized with the same dated-field policy as structured
+    // content. Unknown envelope/content fields remain in the equality check.
+    fn normalize_envelope(envelope: &mut Value) -> anyhow::Result<()> {
+        if let Some(discriminator) = envelope
+            .as_object_mut()
+            .and_then(|fields| fields.remove("resultType"))
+        {
+            anyhow::ensure!(
+                discriminator == "complete",
+                "unexpected native result discriminator"
+            );
+        }
+        if let Some(content) = envelope.get_mut("content").and_then(Value::as_array_mut) {
+            for row in content {
+                if row["type"] == "text"
+                    && let Some(text) = row["text"].as_str()
+                    && let Ok(mut body) = serde_json::from_str::<Value>(text)
+                {
+                    stable(&mut body);
+                    row["text"] = serde_json::to_string(&body)?.into();
+                }
+            }
+        }
+        stable(envelope);
+        Ok(())
+    }
+    let mut expected_envelope = mcp["result"].clone();
+    normalize_envelope(&mut expected_envelope)?;
+    for mut actual in [alias.clone(), tools.clone()] {
+        normalize_envelope(&mut actual)?;
+        assert_eq!(
+            actual, expected_envelope,
+            "convenience/tools/HTTP must retain the complete envelope"
+        );
+    }
     let mut expected = native.clone();
     stable(&mut expected);
-    for mut actual in [alias, payload(&tools)?] {
+    for mut actual in [native_payload(&alias)?, payload(&tools)?] {
         stable(&mut actual);
         assert_eq!(actual, expected);
     }
@@ -306,7 +360,7 @@ fn saved_source_verification_preserves_complete_results_through_cli_and_public_m
         8
     );
     stable(&mut default_expected);
-    let mut default_cli = common::call(
+    let mut default_cli = cli_call(
         root.path(),
         state.path(),
         "project-a",
@@ -348,7 +402,7 @@ fn saved_source_verification_preserves_complete_results_through_cli_and_public_m
     );
     stable(&mut expected_plan);
     let output = common::read_retry::output(
-        common::command(root.path(), state.path(), "project-a").args([
+        common::scoped_command(root.path(), state.path(), "project-a").args([
             "tools",
             "call",
             "airk_parse",
@@ -381,7 +435,7 @@ fn saved_source_verification_preserves_complete_results_through_cli_and_public_m
             *invocation.last_mut().unwrap() = serde_json::to_string(&require)?;
         }
         let output = common::read_retry::output(
-            common::command(root.path(), state.path(), "project-a").args(&invocation),
+            common::scoped_command(root.path(), state.path(), "project-a").args(&invocation),
         )?;
         assert_eq!(
             output.status.code(),
@@ -397,7 +451,7 @@ fn saved_source_verification_preserves_complete_results_through_cli_and_public_m
         stable(&mut expected);
         assert_eq!(actual, expected);
     }
-    let mut shell = common::command(root.path(), state.path(), "project-a")
+    let mut shell = common::scoped_command(root.path(), state.path(), "project-a")
         .args(["tools", "shell"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -416,7 +470,7 @@ fn saved_source_verification_preserves_complete_results_through_cli_and_public_m
             && shell_text.contains("source_verification")
             && shell_text.contains("mismatch")
     );
-    let off = common::call(
+    let off = cli_call(
         root.path(),
         state.path(),
         "project-a",
@@ -432,7 +486,7 @@ fn saved_source_verification_preserves_complete_results_through_cli_and_public_m
         let wire = session.read_retry(9000 + ordinal as u64, "capabilities", args.clone())?;
         anyhow::ensure!(wire["result"]["isError"] != true, "capabilities: {wire}");
         let mut native = payload(&wire["result"])?;
-        let tools = common::call(
+        let tools = cli_call(
             root.path(),
             state.path(),
             "project-a",
@@ -506,13 +560,13 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
     }
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
-    let service = common::Service::start(root.path(), state.path(), "project-a");
+    let service = common::Service::reviewed(root.path(), state.path(), "project-a");
     let source = "pub struct QueueClient;\n";
     fs::write(root.path().join("client.rs"), source)?;
     let passage = format!("{} ScopeMarker\n", "background ".repeat(700));
     fs::write(root.path().join("passage.txt"), &passage)?;
-    common::call(root.path(), state.path(), "project-a", &["index"])?;
-    let prepared = common::call(
+    cli_call(root.path(), state.path(), "project-a", &["index"])?;
+    let prepared = cli_call(
         root.path(),
         state.path(),
         "project-a",
@@ -538,7 +592,7 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
     // correctly produces a partial result rather than authorizing whole-plan replay.
     // Freeze this parity fixture's completed source work through the public control
     // contract; source/update and publication-busy behavior have separate fixtures.
-    session.wait_source_idle(19)?;
+    session.wait_source_idle()?;
     assert!(matches!(
         service.request(airk_core::service::ControlMethod::Pause {
             project: service.project.binding,
@@ -546,7 +600,7 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
         }),
         airk_core::service::ControlResponse::Registered { project } if project.paused
     ));
-    session.wait_source_state(19, "paused")?;
+    session.wait_source_state("paused")?;
     let request = json!({"schema":"airk.parse.request/1","plan":prepared["plan"]});
     let mcp_prepared = decode(session.read_retry(2, "parse", request.clone())?)?;
     assert_eq!(mcp_prepared["plan"], prepared["plan"]);
@@ -558,18 +612,11 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
     assert_eq!(mcp["executed"], true);
     let file = state.path().join("workbench-request.json");
     fs::write(&file, serde_json::to_vec(&request)?)?;
-    let cli = common::call(
+    let cli = cli_call(
         root.path(),
         state.path(),
         "project-a",
-        &[
-            "parse",
-            "--request",
-            file.to_str().unwrap(),
-            "--execute",
-            "--project",
-            &service.project.binding.to_string(),
-        ],
+        &["parse", "--request", file.to_str().unwrap(), "--execute"],
     )?;
     assert_eq!(cli["plan"], mcp["plan"]);
     assert_eq!(cli["evidence"], mcp["evidence"]);
@@ -637,19 +684,13 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
             );
         }
         fs::write(&file, serde_json::to_vec(&request)?)?;
-        let cli = common::call(
+        let cli = cli_call(
             root.path(),
             state.path(),
             "project-a",
-            &[
-                "parse",
-                "--request",
-                file.to_str().unwrap(),
-                "--project",
-                &service.project.binding.to_string(),
-            ],
+            &["parse", "--request", file.to_str().unwrap()],
         )?;
-        let tool_reply = common::call(
+        let tool_reply = cli_call(
             root.path(),
             state.path(),
             "project-a",
@@ -700,7 +741,7 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
             }
         }
         if let Some(detail) = detail {
-            let alias = common::call(
+            let alias = cli_call(
                 root.path(),
                 state.path(),
                 "project-a",
@@ -733,7 +774,7 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
                     .any(|v| v["reason"] == "truncated")
             );
         }
-        let tool = common::call(
+        let tool = cli_call(
             root.path(),
             state.path(),
             "project-a",
@@ -748,7 +789,7 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
         let tool: Value = serde_json::from_str(tool["content"][0]["text"].as_str().unwrap())?;
         compare_native(mcp.clone(), tool)?;
         if !full {
-            let alias = common::call(
+            let alias = cli_call(
                 root.path(),
                 state.path(),
                 "project-a",
@@ -791,7 +832,7 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
                 .iter()
                 .any(|v| v["reason"] == reason)
         );
-        let cli = common::call(
+        let cli = cli_call(
             root.path(),
             state.path(),
             "project-a",
@@ -826,7 +867,7 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
     assert_eq!(nested["query_concurrency"], 16);
     assert_eq!(nested["publication"], direct["publication"]);
     assert_eq!(nested["files"], direct["files"]);
-    let cli_status = common::call(root.path(), state.path(), "project-a", &["status"])?;
+    let cli_status = cli_call(root.path(), state.path(), "project-a", &["status"])?;
     assert_eq!(cli_status["query_concurrency"], 16);
     fs::write(
         &file,
@@ -836,7 +877,7 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
     )?;
     // native read: the same single-status request; additional/completed steps cannot repeat.
     let cli_plan = status_plan_with_retry(|| {
-        common::call(
+        cli_call(
             root.path(),
             state.path(),
             "project-a",
@@ -940,31 +981,49 @@ fn workbench_prepared_plans_retry_only_single_explicit_status_refusals() -> anyh
 }
 
 #[test]
-fn default_terse_stdio_supports_full_and_requested_status_without_changing_revision()
+fn default_terse_https_supports_full_and_requested_status_without_changing_revision()
 -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
-    let _service = common::Service::start(root.path(), state.path(), "project-a");
+    let _service = common::Service::reviewed(root.path(), state.path(), "project-a");
     fs::write(
         root.path().join("one.rs"),
         "fn response_fixture() -> bool { true }\n",
     )?;
-    common::call(root.path(), state.path(), "project-a", &["index"])?;
+    cli_call(root.path(), state.path(), "project-a", &["index"])?;
     let mut session = Session::with_mode(root.path(), state.path(), None)?;
     session.send(json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"response-mode-fixture","version":"1"}}}))?;
     let initialized = session.receive(1)?;
     let instructions = initialized["result"]["instructions"].as_str().unwrap();
     assert!(instructions.len() <= 512 && instructions.contains("response_mode=full"));
     session.send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
-    // Exercise unified stdio help without sending Explorer-only detail into the
+    // Exercise unified HTTPS help without sending Explorer-only detail into the
     // native selector; the canonical CLI helper retains the identical refusal.
     let invalid_help = json!({"topic":"workbench","detail":"full"});
     let refused = session.call(200, "help", invalid_help.clone())?;
-    let canonical = airk_mcp::help::call(invalid_help.clone());
+    let mut command = common::scoped_command(root.path(), state.path(), "project-a");
+    command.args(["tools", "call", "help", "--args", &invalid_help.to_string()]);
+    let output = common::read_retry::once_until(
+        &command,
+        std::time::Instant::now() + Duration::from_secs(60),
+    )?;
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let canonical: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(canonical["isError"], true);
+    let text: Value = serde_json::from_str(canonical["content"][0]["text"].as_str().unwrap())?;
+    assert_eq!(
+        canonical["structuredContent"], text,
+        "actual CLI retains complete structured failure"
+    );
     // The pinned SDK omits this complete-result discriminator for the
     // explicitly negotiated 2025 protocol. Assert its exact value before
     // projecting that one documented transport field; keep every native field.
-    let mut legacy = serde_json::to_value(&canonical)?;
+    let mut legacy = canonical.clone();
     assert_eq!(
         legacy.as_object_mut().unwrap().remove("resultType"),
         Some(json!("complete"))
@@ -983,14 +1042,17 @@ fn default_terse_stdio_supports_full_and_requested_status_without_changing_revis
     let fallback_refused = fallback.call(2, "help", invalid_help)?;
     assert_eq!(fallback_refused["result"], legacy);
     assert!(fallback_refused["result"].get("resultType").is_none());
-    assert_eq!(serde_json::to_value(canonical)?["resultType"], "complete");
+    assert_eq!(canonical["resultType"], "complete");
     drop(fallback);
     let valid_help = session.call(
         201,
         "help",
         json!({"topic":"workbench","response_mode":"full"}),
     )?;
-    assert_ne!(valid_help["result"]["isError"], true);
+    assert_ne!(
+        valid_help["result"]["isError"], true,
+        "valid native help refused: {valid_help}"
+    );
     let mut values: Vec<Value> = Vec::new();
     for (id, args) in [
         (2, json!({"query":"response_fixture","mode":"lexical"})),
@@ -1066,7 +1128,7 @@ fn default_search_uses_vectors_and_live_mcp_connections_observe_panel_opt_out() 
 {
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir_in(std::env::temp_dir().canonicalize()?)?;
-    let service = common::Service::with_helper(root.path(), state.path(), "project-a");
+    let service = common::Service::reviewed(root.path(), state.path(), "project-a");
     fs::write(root.path().join("auth.txt"), "authenticate")?;
     let model = state.path().join("models/local");
     fs::create_dir_all(&model)?;
@@ -1082,8 +1144,15 @@ fn default_search_uses_vectors_and_live_mcp_connections_observe_panel_opt_out() 
         }))?,
     )?;
     let cli = |args: &[&str]| -> anyhow::Result<Value> {
-        common::call(root.path(), state.path(), "project-a", args)
+        cli_call(root.path(), state.path(), "project-a", args)
     };
+    // Initial native setup may still update the model policy. Complete that
+    // accepted work before capturing this fixture's first configuration CAS.
+    service.settle_reviewed_index(
+        root.path(),
+        state.path(),
+        std::time::Instant::now() + Duration::from_secs(90),
+    )?;
     service.configure(airk_cli::service_configuration::Draft::InstallModel { directory: model });
     cli(&["index"])?;
     service.wait_semantic(1)?;
@@ -1140,7 +1209,7 @@ fn default_search_uses_vectors_and_live_mcp_connections_observe_panel_opt_out() 
 fn durable_key_reads_match_cli_and_mcp_and_reject_filter_combinations() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
-    let service = common::Service::start(root.path(), state.path(), "project-a");
+    let service = common::Service::reviewed(root.path(), state.path(), "project-a");
     fs::write(
         root.path().join("original.rs"),
         "pub fn original_evidence() -> u32 { 7 }\n",
@@ -1150,11 +1219,18 @@ fn durable_key_reads_match_cli_and_mcp_and_reject_filter_combinations() -> anyho
         "# Original evidence\n\nThe original client must retain its local evidence.\n",
     )?;
     let run = |args: &[&str]| {
-        common::command(root.path(), state.path(), "project-a")
+        common::scoped_command(root.path(), state.path(), "project-a")
             .args(args)
             .output()
     };
-    let cli = |args: &[&str]| common::call(root.path(), state.path(), "project-a", args);
+    let cli = |args: &[&str]| cli_call(root.path(), state.path(), "project-a", args);
+    // Initial native setup may still update the model policy. Complete that
+    // accepted work before capturing this fixture's first configuration CAS.
+    service.settle_reviewed_index(
+        root.path(),
+        state.path(),
+        std::time::Instant::now() + Duration::from_secs(90),
+    )?;
     service.configure(airk_cli::service_configuration::Draft::Detail {
         level: airk_core::extraction::IndexDetail::Detailed,
     });
@@ -1182,7 +1258,7 @@ fn durable_key_reads_match_cli_and_mcp_and_reject_filter_combinations() -> anyho
     let tools = catalog["result"]["tools"].as_array().unwrap();
     assert_eq!(tools.len(), 29);
     assert_query_scope_metadata_tool(tools, "query_scope", true);
-    session.wait_source_idle(30)?;
+    session.wait_source_idle()?;
     for (id, command, option, tool, field, key) in [
         (
             3,
@@ -1231,13 +1307,13 @@ fn durable_key_reads_match_cli_and_mcp_and_reject_filter_combinations() -> anyho
 fn changes_cli_and_mcp_share_results_and_conditional_validators() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
-    let _service = common::Service::start(root.path(), state.path(), "project-a");
+    let _service = common::Service::reviewed(root.path(), state.path(), "project-a");
     fs::write(
         root.path().join("aurora.py"),
         "def northern_observation():\n    return 71\n",
     )?;
     let cli = |args: &[&str]| -> anyhow::Result<Value> {
-        common::call(root.path(), state.path(), "project-a", args)
+        cli_call(root.path(), state.path(), "project-a", args)
     };
     cli(&["index"])?;
     let mut session = Session::start(root.path(), state.path())?;
@@ -1262,7 +1338,7 @@ fn changes_cli_and_mcp_share_results_and_conditional_validators() -> anyhow::Res
                 .expect("tool JSON"),
         )?)
     };
-    session.wait_source_idle(30)?;
+    session.wait_source_idle()?;
     let mut expected = cli(&["changes", "--path", "aurora.py"])?;
     let mut actual = payload(session.read_retry(
         2,
@@ -1317,16 +1393,28 @@ fn changes_cli_and_mcp_share_results_and_conditional_validators() -> anyhow::Res
 fn concurrent_mcp_agents_share_one_index_and_refresh_after_publication() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
-    let _service = common::Service::start(root.path(), state.path(), "project-a");
+    let _service = common::Service::reviewed(root.path(), state.path(), "project-a");
     let old_text = "def authenticate():\n    return 'revisionone'\n";
     let new_text = "def authenticate():\n    return 'revisiontwo'\n";
     fs::write(root.path().join("auth.py"), old_text)?;
     let index = || -> anyhow::Result<Value> {
         // Index admission retains one exact request key across bounded metadata replies.
         _service.job(airk_core::service::JobKind::Index);
+        _service.settle_reviewed_index(
+            root.path(),
+            state.path(),
+            std::time::Instant::now() + Duration::from_secs(90),
+        )?;
         common::published_status(root.path(), state.path(), "project-a")
     };
-    let old_generation = index()?["generation"].as_u64().expect("generation");
+    index()?;
+    source_runtime::pause_and_wait(&_service)?;
+    let baseline = common::published_status(root.path(), state.path(), "project-a")?;
+    let old_generation = baseline["generation"].as_u64().expect("generation");
+    let old_publication = baseline["publication"].clone();
+    assert!(old_publication["token"].is_string());
+    let expected_scope = baseline["scope_observation"].clone();
+    assert!(expected_scope.is_object());
     let mut agents = [
         Session::start(root.path(), state.path())?,
         Session::start(root.path(), state.path())?,
@@ -1359,11 +1447,12 @@ fn concurrent_mcp_agents_share_one_index_and_refresh_after_publication() -> anyh
             json!({"query":"authenticate", "mode":"lexical"}),
         )?)?;
         assert_eq!(ready["hits"][0]["text"], old_text);
+        assert_eq!(ready["publication"], old_publication);
     }
     let collection = airk_store::service::collection::Collection::existing(
-        state.path(),
+        std::path::Path::new(&_service.project.data_root),
         &_service.project.root,
-        "project-a",
+        &_service.project.collection,
     )?;
     let store = collection.selected_store()?;
     // Read readiness does not promise that native maintenance has released its
@@ -1397,6 +1486,7 @@ fn concurrent_mcp_agents_share_one_index_and_refresh_after_publication() -> anyh
                         json!({"query":"authenticate", "mode":"lexical"}),
                     )?)?;
                     assert_eq!(payload["generation"], old_generation);
+                    assert_eq!(payload["publication"], old_publication);
                     assert_eq!(payload["collection"], "project-a");
                     assert_eq!(payload["hits"][0]["text"], old_text);
                     Ok(())
@@ -1411,6 +1501,10 @@ fn concurrent_mcp_agents_share_one_index_and_refresh_after_publication() -> anyh
     drop(writer_lock);
 
     fs::write(root.path().join("auth.py"), new_text)?;
+    assert!(
+        matches!(_service.request(airk_core::service::ControlMethod::Pause{project:_service.project.binding,paused:false}),airk_core::service::ControlResponse::Registered{project} if !project.paused)
+    );
+    let observations = Mutex::new(Vec::<Value>::new());
     let barrier = std::sync::Barrier::new(3);
     let published = std::thread::scope(|scope| -> anyhow::Result<Value> {
         let readers: Vec<_> = agents
@@ -1418,6 +1512,7 @@ fn concurrent_mcp_agents_share_one_index_and_refresh_after_publication() -> anyh
             .map(|agent| {
                 scope.spawn(|| -> anyhow::Result<()> {
                     barrier.wait();
+                    let mut last_generation = old_generation;
                     for id in 10..42 {
                         let result = agent.call(
                             id,
@@ -1433,7 +1528,18 @@ fn concurrent_mcp_agents_share_one_index_and_refresh_after_publication() -> anyh
                         }
                         let payload = evidence(result)?;
                         let generation = payload["generation"].as_u64().expect("generation");
-                        assert!(generation == old_generation || generation == old_generation + 1);
+                        assert!(
+                            generation >= last_generation,
+                            "one reader regressed publication"
+                        );
+                        last_generation = generation;
+                        assert_eq!(payload["scope_observation"], expected_scope);
+                        assert_eq!(payload["publication"]["generation"], generation);
+                        assert_eq!(
+                            payload["publication"]["incarnation"],
+                            old_publication["incarnation"]
+                        );
+                        assert!(payload["publication"]["token"].is_string());
                         assert_eq!(payload["collection"], "project-a");
                         assert_eq!(payload["hits"][0]["citation"]["path"], "auth.py");
                         assert_eq!(
@@ -1444,29 +1550,47 @@ fn concurrent_mcp_agents_share_one_index_and_refresh_after_publication() -> anyh
                                 new_text
                             }
                         );
+                        observations.lock().unwrap().push(payload);
                     }
                     Ok(())
                 })
             })
             .collect();
         barrier.wait();
-        let started = std::time::Instant::now();
-        let published = loop {
-            match index() {
-                Ok(result) => break result,
-                Err(error) => {
-                    assert!(format!("{error:#}").contains("active readers"), "{error:#}");
-                    assert!(started.elapsed().as_secs() < 30);
-                    std::thread::sleep(Duration::from_millis(5));
-                }
-            }
-        };
+        // Submit the update once; later observation failure cannot authorize
+        // replaying an already accepted native mutation.
+        let published = index()?;
         for reader in readers {
             reader.join().expect("reader panicked")?;
         }
         Ok(published)
     })?;
-    assert_eq!(published["generation"], old_generation + 1);
+    // One accepted Index may publish lexical evidence and then semantic
+    // enrichment. Validate every exact revision, not an obsolete one-job/one-
+    // generation assumption. No model or background work is disabled.
+    let final_generation = published["generation"].as_u64().expect("final generation");
+    assert!(final_generation > old_generation);
+    let mut revisions = std::collections::BTreeMap::new();
+    revisions.insert(old_generation, old_publication);
+    revisions.insert(final_generation, published["publication"].clone());
+    let observations = observations.into_inner().unwrap();
+    assert!(
+        !observations.is_empty(),
+        "fanout returned no completed reads"
+    );
+    for observed in observations {
+        let generation = observed["generation"].as_u64().unwrap();
+        assert!(
+            generation <= final_generation,
+            "read exceeded settled final publication"
+        );
+        if let Some(previous) = revisions.insert(generation, observed["publication"].clone()) {
+            assert_eq!(
+                previous, observed["publication"],
+                "one generation changed exact publication identity"
+            );
+        }
+    }
     let mut shared_hash = None;
     for agent in &mut agents {
         let payload = evidence(agent.read_retry(
@@ -1487,31 +1611,70 @@ fn concurrent_mcp_agents_share_one_index_and_refresh_after_publication() -> anyh
 }
 
 #[test]
-fn client_setup_formats_preserve_collection_scope_and_command_arguments() -> anyhow::Result<()> {
+fn client_setup_formats_preserve_reviewed_https_authority_and_secret_references()
+-> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
-    let _service = common::Service::start(root.path(), state.path(), "project-a");
+    let service = common::Service::reviewed(root.path(), state.path(), "project-a");
     fs::write(root.path().join("a.txt"), "fixture")?;
-    for client in [
-        "claude",
-        "codex",
-        "vscode",
-        "cursor",
-        "opencode",
-        "opencode-v2",
-        "copilot-cli",
-        "kilo",
-    ] {
-        let output = common::command(root.path(), state.path(), "project-a")
+    for client in ["claude", "codex", "vscode"] {
+        let value = common::scoped_call(
+            root.path(),
+            state.path(),
+            "project-a",
+            &["setup", "--client", client],
+        )?;
+        let connection: airk_core::service_http::HttpConnectionInfo =
+            serde_json::from_value(value["connection"].clone())?;
+        connection.validate()?;
+        assert_eq!(
+            connection.selection.namespace(),
+            service.http_selection().namespace()
+        );
+        assert_eq!(
+            value["environment"]["token_source_file"],
+            connection.credential_file
+        );
+        assert_eq!(
+            value["environment"]["additional_ca_file"],
+            connection.ca_certificate_file
+        );
+        assert_eq!(value["environment"]["preserve_existing_trust"], true);
+        let configuration = value["configuration"].as_str().unwrap();
+        assert!(configuration.contains(&connection.endpoint.url.to_string()));
+        assert!(
+            !configuration.contains("airk1."),
+            "configuration must contain references only"
+        );
+        assert!(!configuration.contains("airk-launcher"));
+        if client == "vscode" {
+            let configured: Value = serde_json::from_str(configuration)?;
+            assert_eq!(configured["servers"]["airk"]["type"], "http");
+            assert_eq!(configured["inputs"][0]["command"], "airk.httpCredential");
+            assert_eq!(
+                configured["inputs"][0]["args"]["connection_id"],
+                serde_json::to_value(connection.connection_id)?
+            );
+        }
+        let unreviewed = common::command(root.path(), state.path(), "project-a")
             .args(["setup", "--client", client])
             .output()?;
         assert!(
-            !output.status.success(),
-            "raw service invented an installed launcher for {client}"
+            !unreviewed.status.success(),
+            "setup inferred authority without a reviewed selector"
         );
-        assert!(String::from_utf8_lossy(&output.stderr).contains("installed stable launcher"));
+        assert!(String::from_utf8_lossy(&unreviewed.stderr).contains("review_required"));
     }
-
+    for client in ["cursor", "opencode", "opencode-v2", "copilot-cli", "kilo"] {
+        let output = common::scoped_command(root.path(), state.path(), "project-a")
+            .args(["setup", "--client", client])
+            .output()?;
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr)
+                .contains("http_client_compatibility_unverified")
+        );
+    }
     Ok(())
 }
 
@@ -1538,7 +1701,7 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
     }
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
-    let service = common::Service::start(root.path(), state.path(), "project-a");
+    let service = common::Service::reviewed(root.path(), state.path(), "project-a");
     fs::write(
         root.path().join("auth.py"),
         "import os\ndef authenticate():\n    return True\n",
@@ -1556,10 +1719,17 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
         "# Architecture\n\n## Requirements\n\nREQ-1: The interface must be accessible in at most 200 ms by 13 October 2026.\n",
     )?;
     // This fixture exercises broad document facts retained by Rich Structure.
+    // Initial native setup may still update the model policy. Complete that
+    // accepted work before capturing this fixture's first configuration CAS.
+    service.settle_reviewed_index(
+        root.path(),
+        state.path(),
+        std::time::Instant::now() + Duration::from_secs(90),
+    )?;
     service.configure(airk_cli::service_configuration::Draft::Detail {
         level: airk_core::extraction::IndexDetail::Balanced,
     });
-    common::call(root.path(), state.path(), "project-a", &["index"])?;
+    cli_call(root.path(), state.path(), "project-a", &["index"])?;
     let mut session = Session::start(root.path(), state.path())?;
     session.send(json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"airk-test","version":"1"}}}))?;
     assert_eq!(session.receive(1)?["result"]["serverInfo"]["name"], "airk");
@@ -1573,19 +1743,14 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
     assert!(catalog.status.success());
     let catalog: Value = serde_json::from_slice(&catalog.stdout)?;
     assert_eq!(
-        catalog["tools"].as_array().unwrap().len(),
-        19,
-        "terminal evidence adapter retains compatibility aliases"
+        catalog["tools"],
+        serde_json::to_value(airk_mcp::unified::tools())?
     );
     assert_eq!(
-        catalog["tools"],
-        serde_json::to_value(airk_mcp::local::tools())?
+        catalog["tools"], listed["result"]["tools"],
+        "CLI and actual MCP must retain complete public tool definitions"
     );
-    assert_query_scope_metadata_tool(
-        catalog["tools"].as_array().unwrap(),
-        "airk_query_scope",
-        false,
-    );
+    assert_query_scope_metadata_tool(catalog["tools"].as_array().unwrap(), "query_scope", true);
     assert_eq!(tools.len(), 29);
     let names: std::collections::BTreeSet<_> = tools
         .iter()
@@ -1594,11 +1759,7 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
     assert_eq!(names.len(), 29);
     assert_query_scope_metadata_tool(tools, "query_scope", true);
     for tool in catalog["tools"].as_array().unwrap() {
-        let name = tool["name"]
-            .as_str()
-            .unwrap()
-            .strip_prefix("airk_")
-            .unwrap();
+        let name = tool["name"].as_str().unwrap();
         assert!(names.contains(name), "missing public evidence tool {name}");
     }
     let drafts = [
@@ -1613,7 +1774,7 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
             json!(!drafts.contains(&tool["name"].as_str().unwrap()))
         );
     }
-    session.wait_source_idle(30)?;
+    source_runtime::pause_and_wait(&session._service)?;
     for (i, name, args) in [
         (
             3,
@@ -1679,7 +1840,7 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
         let mut direct: Value = if name == "airk_status" {
             common::published_status(root.path(), state.path(), "project-a")?
         } else {
-            let envelope = common::call(
+            let envelope = cli_call(
                 root.path(),
                 state.path(),
                 "project-a",
@@ -1770,198 +1931,9 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
 #[path = "support/current_recovery.rs"]
 mod current_recovery;
 
-/// Pipe framing tests use metadata-only MCP startup against an owned temporary service.
-/// No user runtime installation, index, or read replay is involved.
-fn frame_pipe(bytes: Vec<u8>, chunk: usize) -> anyhow::Result<std::process::Output> {
-    use std::io::Read;
-    let root = tempfile::tempdir()?;
-    let state = tempfile::tempdir()?;
-    let source = root.path().join("original.txt");
-    fs::write(&source, b"Original framing source\n")?;
-    let service = common::Service::start(root.path(), state.path(), "frame-bound");
-    let mut child = common::command(root.path(), state.path(), "frame-bound")
-        .arg("mcp")
-        .env_remove("AIRK_PROCESS_DIAGNOSTICS")
-        .env_remove("AIRK_ERROR_FORMAT")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-    let stdout = child.stdout.take().unwrap();
-    let stderr = child.stderr.take().unwrap();
-    // Keep independent drains so neither output pipe can block the process.
-    let drain = |reader: Box<dyn Read + Send>| {
-        std::thread::spawn(move || {
-            let mut bytes = Vec::new();
-            reader
-                .take(1024 * 1024)
-                .read_to_end(&mut bytes)
-                .map(|_| bytes)
-        })
-    };
-    let out = drain(Box::new(stdout));
-    let err = drain(Box::new(stderr));
-    let mut input = child.stdin.take().unwrap();
-    let writer = std::thread::spawn(move || -> std::io::Result<()> {
-        for part in bytes.chunks(chunk) {
-            if let Err(error) = input.write_all(part) {
-                if error.kind() == std::io::ErrorKind::BrokenPipe {
-                    return Ok(());
-                }
-                return Err(error);
-            }
-            input.flush()?;
-        }
-        Ok(()) // drop stdin: real EOF
-    });
-    let deadline = std::time::Instant::now() + Duration::from_secs(15);
-    let status = loop {
-        if let Some(status) = child.try_wait()? {
-            break status;
-        }
-        if std::time::Instant::now() >= deadline {
-            child.kill()?;
-            child.wait()?;
-            anyhow::bail!("bounded MCP process did not exit before deadline");
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    };
-    writer.join().expect("pipe writer")?;
-    let stdout = out.join().expect("stdout drain")?;
-    let stderr = err.join().expect("stderr drain")?;
-    // The fixture's existing managed shutdown reaps its service before cleanup.
-    drop(service);
-    anyhow::ensure!(fs::read(&source)? == b"Original framing source\n");
-    anyhow::ensure!(fs::read_dir(root.path())?.count() == 1);
-    anyhow::ensure!(
-        stdout.len() < 1024 * 1024 && stderr.len() < 1024 * 1024,
-        "MCP fixture output exceeded its bound"
-    );
-    for line in stdout
-        .split(|&byte| byte == b'\n')
-        .filter(|line| !line.is_empty())
-    {
-        let value: Value = serde_json::from_slice(line)?;
-        anyhow::ensure!(
-            value["jsonrpc"] == "2.0",
-            "stdout must contain protocol frames only"
-        );
-    }
-    Ok(std::process::Output {
-        status,
-        stdout,
-        stderr,
-    })
-}
-
-fn frame_initialize() -> Vec<u8> {
-    format!("{}\n", json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-        "protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"frame-fixture","version":"1"}
-    }})).into_bytes()
-}
-
-#[test]
-fn mcp_pipe_frame_bound_counts_newline_and_resets_per_frame() -> anyhow::Result<()> {
-    const LIMIT: usize = airk_core::service::MAX_FRAME_BYTES;
-    // JSON trailing whitespace is valid, and counts toward the physical line cap.
-    for chunk in [1, 8192, LIMIT + 1] {
-        let mut bytes = frame_initialize();
-        bytes.pop();
-        bytes.resize(LIMIT - 1, b' ');
-        bytes.push(b'\n');
-        bytes.extend_from_slice(b"{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\"}\n");
-        let output = frame_pipe(bytes, chunk)?;
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        assert!(output.stderr.is_empty());
-        let replies: Vec<Value> = String::from_utf8(output.stdout)?
-            .lines()
-            .map(serde_json::from_str)
-            .collect::<Result<_, _>>()?;
-        assert!(replies.iter().any(|reply| reply["id"] == 1));
-        assert!(replies.iter().any(|reply| reply["id"] == 2));
-    }
-    Ok(())
-}
-
-#[test]
-fn mcp_pipe_overflow_is_nonzero_bounded_and_content_free() -> anyhow::Result<()> {
-    const LIMIT: usize = airk_core::service::MAX_FRAME_BYTES;
-    for (newline, chunk) in [(true, 1), (true, 8192), (false, LIMIT + 1)] {
-        let mut bytes = frame_initialize();
-        bytes.pop();
-        bytes.resize(LIMIT, b' ');
-        if newline {
-            bytes.push(b'\n');
-        } else {
-            bytes.push(b'x');
-        }
-        bytes.extend_from_slice(b"PRIVATE_REJECTED_PAYLOAD\n");
-        let output = frame_pipe(bytes, chunk)?;
-        assert!(!output.status.success());
-        assert_eq!(
-            String::from_utf8(output.stderr)?,
-            "Error: MCP request exceeds frame bound\n"
-        );
-        assert!(!String::from_utf8(output.stdout)?.contains("PRIVATE_REJECTED_PAYLOAD"));
-    }
-    Ok(())
-}
-
-#[test]
-fn mcp_pipe_clean_eof_without_newline_and_malformed_input_keep_sdk_semantics() -> anyhow::Result<()>
-{
-    let mut bytes = frame_initialize();
-    bytes.pop();
-    let output = frame_pipe(bytes, 17)?;
-    assert!(output.status.success());
-    assert!(output.stderr.is_empty());
-    let replies: Vec<Value> = String::from_utf8(output.stdout)?
-        .lines()
-        .map(serde_json::from_str)
-        .collect::<Result<_, _>>()?;
-    assert!(replies.iter().any(|reply| reply["id"] == 1));
-
-    let mut bytes = frame_initialize();
-    bytes.pop();
-    bytes.resize(airk_core::service::MAX_FRAME_BYTES, b' ');
-    let output = frame_pipe(bytes, 8192)?;
-    assert!(
-        output.status.success(),
-        "exact-limit unterminated JSON line is allowed"
-    );
-    assert!(output.stderr.is_empty());
-    let replies: Vec<Value> = String::from_utf8(output.stdout)?
-        .lines()
-        .map(serde_json::from_str)
-        .collect::<Result<_, _>>()?;
-    assert!(replies.iter().any(|reply| reply["id"] == 1));
-
-    // Preserve the SDK's existing behavior: ignore unparsable JSON, then
-    // handle the next complete line. Add no custom parser/resynchronization
-    // and never reflect rejected bytes into stderr/stdout.
-    let output = frame_pipe(
-        b"PRIVATE_MALFORMED\n{\"jsonrpc\":\"2.0\",\"id\":99,\"method\":\"ping\"}\n".to_vec(),
-        8192,
-    )?;
-    assert!(output.status.success());
-    assert!(output.stderr.is_empty());
-    let replies: Vec<Value> = String::from_utf8(output.stdout)?
-        .lines()
-        .map(serde_json::from_str)
-        .collect::<Result<_, _>>()?;
-    assert_eq!(replies.len(), 1);
-    assert_eq!(replies[0]["id"], 99);
-    assert!(replies[0]["result"].is_object());
-    Ok(())
-}
-
 #[test]
 fn held_quota_ledger_preserves_same_read_hint_through_native_cli_and_mcp() -> anyhow::Result<()> {
-    fn hint(reply: &Value) -> anyhow::Result<Value> {
+    fn hint(reply: &Value, expected_scope: &Value) -> anyhow::Result<Value> {
         anyhow::ensure!(reply.is_object() && reply["isError"] == true, "{reply}");
         let blocks = reply["content"]
             .as_array()
@@ -1975,7 +1947,7 @@ fn held_quota_ledger_preserves_same_read_hint_through_native_cli_and_mcp() -> an
         anyhow::ensure!(
             value
                 == json!({"status":"retry","retryable":true,"code":"selection_busy",
-            "retry_after_ms":25,"action":"repeat_same_request"}),
+            "retry_after_ms":25,"action":"repeat_same_request", "scope_observation":expected_scope}),
             "{reply}"
         );
         Ok(value)
@@ -1984,7 +1956,14 @@ fn held_quota_ledger_preserves_same_read_hint_through_native_cli_and_mcp() -> an
     let data = tempfile::tempdir()?;
     let original = "QuotaLedgerSentinel original retained source.\n";
     fs::write(root.path().join("one.txt"), original)?;
-    let service = common::Service::start(root.path(), data.path(), "project-a");
+    let service = common::Service::reviewed(root.path(), data.path(), "project-a");
+    // Initial native setup may still update the model policy. Complete that
+    // accepted work before capturing this fixture's first configuration CAS.
+    service.settle_reviewed_index(
+        root.path(),
+        data.path(),
+        std::time::Instant::now() + Duration::from_secs(90),
+    )?;
     service.configure(airk_cli::service_configuration::Draft::Vectors { enabled: false });
     service.job(airk_core::service::JobKind::Index);
     assert!(
@@ -1995,15 +1974,26 @@ fn held_quota_ledger_preserves_same_read_hint_through_native_cli_and_mcp() -> an
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    let mut direct = runtime.block_on(airk_cli::project_client::Connection::connect(
-        &service.control,
+    let airk_core::service_http::HttpSelection::Scoped { selection } =
+        common::http_selection(root.path(), data.path(), "project-a")?
+    else {
+        anyhow::bail!("expected exact reviewed scope")
+    };
+    let direct = airk_cli::project_client::scoped_tools(
+        service.control.clone(),
         service.project.binding,
-    ))?;
+        selection,
+    )?;
     let args = json!({"response_mode":"full"});
-    let baseline = runtime
-        .block_on(direct.call("airk_diagnostics".into(), args.as_object().unwrap().clone()))?;
+    let baseline = runtime.block_on(airk_mcp::remote::call_observed(
+        direct.as_ref(),
+        "airk_diagnostics".into(),
+        args.as_object().unwrap().clone(),
+    ))?;
     anyhow::ensure!(baseline["isError"] != true, "{baseline}");
     let baseline: Value = serde_json::from_str(baseline["content"][0]["text"].as_str().unwrap())?;
+    let expected_scope = baseline["scope_observation"].clone();
+    anyhow::ensure!(expected_scope.is_object(), "{baseline}");
     let publication = baseline["publication"]["token"].clone();
     anyhow::ensure!(publication.is_string(), "{baseline}");
     let mut session = Session::start(root.path(), data.path())?;
@@ -2019,7 +2009,7 @@ fn held_quota_ledger_preserves_same_read_hint_through_native_cli_and_mcp() -> an
     let ledger = fs::OpenOptions::new()
         .read(true)
         .write(true)
-        .open(data.path().join(".quota-1.4/ledger.lock"))?;
+        .open(std::path::Path::new(&service.project.data_root).join(".quota-1.4/ledger.lock"))?;
     let until = std::time::Instant::now() + Duration::from_secs(5);
     loop {
         match ledger.try_lock() {
@@ -2034,11 +2024,14 @@ fn held_quota_ledger_preserves_same_read_hint_through_native_cli_and_mcp() -> an
         let args = json!({"response_mode":mode});
         // native read: exactly once while holding the real ledger, so a typed
         // complete rejection is observed rather than hidden by fixture retries.
-        let native = runtime
-            .block_on(direct.call("airk_diagnostics".into(), args.as_object().unwrap().clone()))?;
-        hint(&native)?;
+        let native = runtime.block_on(airk_mcp::remote::call_observed(
+            direct.as_ref(),
+            "airk_diagnostics".into(),
+            args.as_object().unwrap().clone(),
+        ))?;
+        hint(&native, &expected_scope)?;
         let encoded = args.to_string();
-        let mut command = common::command(root.path(), data.path(), "project-a");
+        let mut command = common::scoped_command(root.path(), data.path(), "project-a");
         command.args(["tools", "call", "airk_diagnostics", "--args", &encoded]);
         // native read: single complete refusal, never auto-repeat under held lock.
         let output = common::read_retry::once_until(
@@ -2052,22 +2045,32 @@ fn held_quota_ledger_preserves_same_read_hint_through_native_cli_and_mcp() -> an
             String::from_utf8_lossy(&output.stderr)
         );
         let cli: Value = serde_json::from_slice(&output.stdout)?;
-        hint(&cli)?;
+        hint(&cli, &expected_scope)?;
         // native read: single MCP response has the same complete error contract.
         let wire = session.call(id, "airk_diagnostics", args)?;
         anyhow::ensure!(wire.get("error").is_none(), "{wire}");
-        hint(&wire["result"])?;
+        hint(&wire["result"], &expected_scope)?;
         assert_eq!(native, cli, "complete native/CLI refusal differs");
+        let mut legacy_wire = native.clone();
+        if let Some(kind) = legacy_wire.as_object_mut().unwrap().remove("resultType") {
+            assert_eq!(
+                kind, "complete",
+                "only the SDK complete-result discriminator may vary"
+            );
+        }
         assert_eq!(
-            native, wire["result"],
+            legacy_wire, wire["result"],
             "complete native/MCP refusal differs"
         );
     }
     ledger.unlock()?;
     drop(ledger);
     let args = json!({"response_mode":"full"});
-    let recovered = runtime
-        .block_on(direct.call("airk_diagnostics".into(), args.as_object().unwrap().clone()))?;
+    let recovered = runtime.block_on(airk_mcp::remote::call_observed(
+        direct.as_ref(),
+        "airk_diagnostics".into(),
+        args.as_object().unwrap().clone(),
+    ))?;
     anyhow::ensure!(recovered["isError"] != true, "{recovered}");
     let recovered: Value = serde_json::from_str(recovered["content"][0]["text"].as_str().unwrap())?;
     assert_eq!(recovered["publication"]["token"], publication);

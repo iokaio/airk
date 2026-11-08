@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { request } from './api';
+import { Notice, noticeKey } from './notices';
 
 /** Only the host's escaped usage renderer supplies this markup; no scripts or source HTML. */
 export function UsageReport(props: { available: boolean }) {
@@ -25,8 +26,8 @@ export function UsageReport(props: { available: boolean }) {
         <h2>Usage &amp; Savings</h2>
         <p class="muted">AIRK measures its own activity. Token and cost estimates are comparisons, not a record of your agent’s bill.</p>
         {busy && <p role="status">Loading usage report…</p>}
-        {error && <div class="callout" role="alert"><p>{error}</p>{html && <p>The previous report remains below. Refresh to update it.</p>}
-            <button disabled={busy} onClick={() => void load('refresh')}>Retry report</button></div>}
+        {error && <Notice noticeKey={noticeKey('usage-error', error)} role="alert"><p>{error}</p>{html && <p>The previous report remains below. Refresh to update it.</p>}
+            <button disabled={busy} onClick={() => void load('refresh')}>Retry report</button></Notice>}
         <fieldset disabled={busy}>
             {html && <button class="ghost" onClick={() => void load('json')}>Open as JSON</button>}
             <div ref={report} onClick={event => {

@@ -15,6 +15,10 @@ use tokio::{
     sync::{Notify, Semaphore},
     task::JoinSet,
 };
+#[path = "service_runtime_checkpoint.rs"]
+pub(crate) mod checkpoint;
+#[path = "service_runtime_http.rs"]
+mod http;
 
 fn connection_failure_code<'a>(error: &anyhow::Error, fallback: &'a str) -> &'a str {
     if error
@@ -74,6 +78,8 @@ pub async fn administrative_read(
 }
 
 struct State {
+    http: std::sync::OnceLock<Arc<http::Owner>>,
+    checkpoint: Arc<checkpoint::Coordinator>,
     control_root: std::path::PathBuf,
     instance: airk_core::identity::Incarnation,
     policy: Arc<Mutex<Broker>>,
@@ -150,6 +156,38 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
     let shutdown = request.protocol == PROTOCOL_VERSION
         && instance_matches
         && matches!(request.method, ControlMethod::Shutdown);
+    let _checkpoint_admission = if request.protocol == PROTOCOL_VERSION
+        && instance_matches
+        && !matches!(
+            request.method,
+            ControlMethod::Health
+                | ControlMethod::HttpEndpoint
+                | ControlMethod::Shutdown
+                | ControlMethod::PrepareUpgradeCheckpoint { .. }
+                | ControlMethod::ObserveUpgradeCheckpoint { .. }
+                | ControlMethod::UpgradeRecoveryProbe { .. }
+                | ControlMethod::ReleaseUpgradeAdmission { .. }
+        )
+        && !(matches!(request.method, ControlMethod::RequestEpoch)
+            && state.checkpoint.recovery_probe(state.instance)?)
+    {
+        match state.checkpoint.admit() {
+            Ok(guard) => Some(guard),
+            Err(_) => {
+                local_ipc::write_message(
+                    &mut stream,
+                    &ControlResponse::Failure {
+                        code: "runtime_upgrade_in_progress".into(),
+                    },
+                    Duration::from_secs(5),
+                )
+                .await?;
+                return Ok(());
+            }
+        }
+    } else {
+        None
+    };
     let response = if request.protocol != PROTOCOL_VERSION {
         ControlResponse::Incompatible {
             protocol: PROTOCOL_VERSION,
@@ -160,6 +198,81 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
         }
     } else {
         match request.method {
+            ControlMethod::HttpEndpoint => ControlResponse::HttpEndpoint {
+                endpoint: state
+                    .http
+                    .get()
+                    .map(|owner| owner.descriptor().map(Box::new))
+                    .transpose()?,
+            },
+            ControlMethod::HttpEnroll {
+                connection_id,
+                selection,
+                client,
+                explorer_descriptor,
+            } => match state.http.get() {
+                Some(owner) => match owner
+                    .enroll(
+                        &state.control_root,
+                        connection_id,
+                        *selection,
+                        explorer_descriptor.map(std::path::PathBuf::from),
+                        client,
+                    )
+                    .await
+                {
+                    Ok(connection) => ControlResponse::HttpConnection {
+                        connection: Box::new(connection),
+                    },
+                    Err(_) => ControlResponse::Failure {
+                        code: "http_enrollment_refused".into(),
+                    },
+                },
+                None => ControlResponse::Failure {
+                    code: "http_catalog_not_ready".into(),
+                },
+            },
+            ControlMethod::HttpRevoke { connection_id } => match state.http.get() {
+                Some(owner) => match owner.revoke(connection_id).await {
+                    Ok(()) => ControlResponse::HttpRevoked { connection_id },
+                    Err(_) => ControlResponse::Failure {
+                        code: "http_revocation_refused".into(),
+                    },
+                },
+                None => ControlResponse::Failure {
+                    code: "http_catalog_not_ready".into(),
+                },
+            },
+            ControlMethod::UpgradeRecoveryProbe { operation_id } => {
+                state.checkpoint.validate_recovery(&state, operation_id)?
+            }
+            ControlMethod::ReleaseUpgradeAdmission { operation_id } => {
+                state
+                    .checkpoint
+                    .release(state.clone(), operation_id)
+                    .await?;
+                ControlResponse::UpgradeAdmissionReleased { operation_id }
+            }
+            ControlMethod::PrepareUpgradeCheckpoint {
+                operation_id,
+                candidate_execution_sha256,
+            } => {
+                state
+                    .checkpoint
+                    .prepare(state.clone(), operation_id, candidate_execution_sha256)
+                    .await?;
+                if let Some(owner) = state.http.get() {
+                    owner.update_state()?;
+                }
+                ControlResponse::UpgradeCheckpoint {
+                    observation: Box::new(state.checkpoint.prepared(&state, operation_id)?),
+                }
+            }
+            ControlMethod::ObserveUpgradeCheckpoint { operation_id } => {
+                ControlResponse::UpgradeCheckpoint {
+                    observation: Box::new(state.checkpoint.observe(&state, operation_id).await?),
+                }
+            }
             ControlMethod::ValidateCombinedDelivery {
                 selection,
                 query_selection,
@@ -372,6 +485,7 @@ pub async fn serve_with_idle(root: &Path, idle_grace: Option<Duration>) -> Resul
     crate::runtime_install::validate_control_root(root)?;
     local_ipc::prepare_root(root)?;
     let _ownership = Arc::new(airk_store::service::ServiceLease::acquire(root)?);
+    crate::http_endpoint::rotation::require_start_allowed(root)?;
     crate::runtime_install::record_control_root(&_ownership)?;
     if root.join("service-1.4.sqlite3").try_exists()? {
         match airk_store::service::registry::ServiceRegistry::open(root, new_instance_id()?) {
@@ -484,6 +598,8 @@ pub async fn serve_with_idle(root: &Path, idle_grace: Option<Duration>) -> Resul
     let address = local_ipc::endpoint(root, "control")?;
     let mut listener = Listener::bind(&address)?;
     let state = Arc::new(State {
+        http: std::sync::OnceLock::new(),
+        checkpoint: Arc::new(checkpoint::Coordinator::new(root)?),
         control_root: root.canonicalize()?,
         instance,
         policy: policy.clone(),
@@ -502,6 +618,18 @@ pub async fn serve_with_idle(root: &Path, idle_grace: Option<Duration>) -> Resul
         native_administrative: Default::default(),
         native_caller: local_ipc::caller_identity()?,
     });
+    let mut http_task = if let Some((owner, task)) = http::Owner::start(&state, _ownership.clone())?
+    {
+        state
+            .http
+            .set(owner)
+            .map_err(|_| anyhow::anyhow!("HTTP owner already initialized"))?;
+        Some(task)
+    } else {
+        None
+    };
+    let mut http_maintenance = tokio::time::interval(Duration::from_secs(60));
+    http_maintenance.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     // Initialization hashes the executable and opens native adapters. None of
     // that time is idle service time: begin the grace only when control can run.
     *state
@@ -514,6 +642,16 @@ pub async fn serve_with_idle(root: &Path, idle_grace: Option<Duration>) -> Resul
     idle_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         tokio::select! {
+            _ = http_maintenance.tick(), if http_task.is_some() => {
+                if let Some(owner) = state.http.get() {
+                    let owner = owner.clone();
+                    tokio::task::spawn_blocking(move || owner.refresh()).await??;
+                }
+            },
+            outcome = async { http_task.as_mut().expect("guarded HTTP task").await }, if http_task.is_some() => {
+                outcome??;
+                anyhow::bail!("HTTP owner exited before service shutdown");
+            },
             stream = listener.accept() => {
                 let stream = match stream {
                     Ok(stream) => stream,
@@ -534,7 +672,7 @@ pub async fn serve_with_idle(root: &Path, idle_grace: Option<Duration>) -> Resul
             },
             _ = state.shutdown.notified() => {log.record(airk_core::service_logs::LogKind::ShutdownRequested,None,None);break},
             _ = idle_tick.tick(), if idle_grace.is_some() => {
-                if !state.management.can_idle_exit() || !state.supervisor.can_idle_exit() || !state.sources.can_idle_exit() {
+                if state.checkpoint.has_active_requests() || !state.management.can_idle_exit() || !state.supervisor.can_idle_exit() || !state.sources.can_idle_exit() {
                     if let Ok(mut activity)=state.last_client_activity.lock() { *activity=Instant::now(); }
                     continue;
                 }
@@ -547,6 +685,12 @@ pub async fn serve_with_idle(root: &Path, idle_grace: Option<Duration>) -> Resul
             signal = tokio::signal::ctrl_c() => { signal?; log.record(airk_core::service_logs::LogKind::SignalExit,None,None);break; },
             _ = connections.join_next(), if !connections.is_empty() => {},
         }
+    }
+    if let Some(owner) = state.http.get() {
+        owner.stop()?;
+    }
+    if let Some(task) = http_task {
+        task.await??;
     }
     // All handlers have finite read/write deadlines and hold no project publication state.
     let _ = tokio::time::timeout(Duration::from_secs(10), async {
@@ -592,7 +736,11 @@ async fn request_scoped(
     version: &str,
     expected_instance: Option<airk_core::identity::Incarnation>,
 ) -> Result<ControlResponse> {
-    let response_deadline = if matches!(method, ControlMethod::Connect { .. }) {
+    let response_deadline = if matches!(method, ControlMethod::ObserveUpgradeCheckpoint { .. }) {
+        Duration::from_secs(30)
+    } else if matches!(method, ControlMethod::UpgradeRecoveryProbe { .. }) {
+        Duration::from_secs(10)
+    } else if matches!(method, ControlMethod::Connect { .. }) {
         Duration::from_secs(20)
     } else {
         Duration::from_secs(5)

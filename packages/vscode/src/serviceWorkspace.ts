@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Reviewed workspace bindings survive extension replacement; indexes belong to the service.
 import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { LaunchSpec } from './model';
@@ -13,24 +14,23 @@ import { validateCatalogSession, validateCombinedCatalogSession } from './catalo
 /** Pure adapter from reviewed native metadata. It does not resolve folders,
  * register an Index, connect, activate preferences or manufacture authority. */
 export function nativeScopeLaunchSpec(binding:RuntimeBinding,selection:ReviewedWindowScopeSelection):LaunchSpec {
-    if(!binding.launcher||binding.payloadVerified===false)throw new ServiceError('stable_launcher_unavailable');
+    if(!binding.executable||binding.payloadVerified===false)throw new ServiceError('native_executable_unavailable');
     if('indexes' in selection){
         const session=validateCombinedCatalogSession(selection.session),index=selection.indexes[0];
         if(!index||selection.indexes.length>32)throw new ServiceError('combined_scope_indexes_unavailable');
         identifier(index.backing.binding,32);
         // The first native member supplies display/storage origins only. Launch
         // arguments carry the complete frozen selector and no legacy root flag.
-        return {command:binding.universalLauncher??binding.launcher,root:absolute(index.backing.root),dataDir:absolute(index.backing.data_root),
+        return {command:binding.executable,root:absolute(index.backing.root),dataDir:absolute(index.backing.data_root),
             collection:index.backing.collection,name:selection.label,combinedSession:session,
-            service:{installDir:binding.installDir,project:index.backing.binding,...(binding.universalLauncher?{universal:true}:{})}};
+            service:{installDir:binding.installDir,project:index.backing.binding,direct:true}};
     }
     const session=validateCatalogSession(selection.session),index=selection.index;
     if(index.id!==session.index_id)throw new ServiceError('crossed_scope_launch_index');
     identifier(index.backing.binding,32);
-    return {command:binding.universalLauncher??binding.launcher,root:absolute(index.backing.root),
+    return {command:binding.executable,root:absolute(index.backing.root),
         dataDir:absolute(index.backing.data_root),collection:index.backing.collection,name:selection.label,
-        catalogSession:session,service:{installDir:binding.installDir,project:index.backing.binding,
-            ...(binding.universalLauncher?{universal:true}:{})}};
+        catalogSession:session,service:{installDir:binding.installDir,project:index.backing.binding,direct:true}};
 }
 
 const PREFIX='airk.service.workspace.1.';
@@ -84,14 +84,44 @@ export async function readWorkspaceRegistrations(binding:RuntimeBinding,
 }
 /** Workspace state remembers reviewed/native bindings; sources remain read-only. */
 export class ServiceWorkspace {
+    private readonly providerPreimages=new Map<string,string>();
     constructor(private readonly storage:IntentStorage,private readonly runtime:Pick<RuntimeHost,'reviewProject'|'registerProject'>,
-        private readonly authorized:()=>boolean){}
+        private readonly authorized:()=>boolean){
+        // Capture only entries which predate this activation. Startup adoption is
+        // allowed to save preferences, but cannot invent predecessor lineage.
+        const keys=storage.keys().filter(key=>key.startsWith(PREFIX)).sort();
+        if(keys.length>1024)throw new ServiceError('workspace_registration_capacity');
+        for(const key of keys){const bytes=JSON.stringify(storage.get(key));if(bytes!==undefined&&Buffer.byteLength(bytes)<=16384)this.providerPreimages.set(key,bytes);}
+    }
+    providerConfigurationReceipt(binding:RuntimeBinding,spec:LaunchSpec):string|undefined{
+        this.active();this.saved();
+        for(const [key,bytes] of this.providerPreimages){
+            const value=record(JSON.parse(bytes)),registration=record(value.registration);
+            const stored=this.storage.get(key);if(stored===undefined)continue;
+            const live=record(structuredClone(stored)),current=record(live.registration);
+            // Approved payload refresh and physical path aliases do not change
+            // the original provider authority. Retain its actual prior bytes.
+            if(typeof current.runtimeSha256!=='string'||!/^[a-f0-9]{64}$/.test(current.runtimeSha256))continue;
+            current.runtimeSha256=registration.runtimeSha256;
+            for(const field of ['installDir','controlDir','root','data_root'])if(typeof current[field]==='string'&&typeof registration[field]==='string'&&same(String(current[field]),String(registration[field])))current[field]=registration[field];
+            if(typeof live.opened==='string'&&typeof value.opened==='string'&&same(live.opened,value.opened))live.opened=value.opened;
+            if(!isDeepStrictEqual(live,value))continue;
+            if(value.schema!==1||!same(String(registration.installDir),binding.installDir)||!same(String(registration.controlDir),binding.controlDir)
+                ||registration.binding!==spec.service?.project||!same(String(registration.root),spec.root)||!same(String(registration.data_root),spec.dataDir)||registration.collection!==spec.collection)continue;
+            return createHash('sha256').update(bytes).digest('hex');
+        }
+        return undefined;
+    }
     private active():void {if(!this.authorized())throw new ServiceError('runtime_client_no_longer_authorized');}
     private selection(install:string,opened:string):string{return ACTIVE+createHash('sha256').update(JSON.stringify([install,opened])).digest('hex');}
     hasRegistration(binding:RuntimeBinding,opened:string):boolean{
         this.active();
         return this.saved().some(value=>same(value.opened,opened)&&same(value.registration.installDir,binding.installDir)
             &&same(value.registration.controlDir,binding.controlDir));
+    }
+    /** Known configuration roots remain migration targets when their windows close. */
+    rememberedRoots(binding:RuntimeBinding):string[]{
+        this.active();return [...new Set(this.saved().filter(value=>same(value.registration.installDir,binding.installDir)&&same(value.registration.controlDir,binding.controlDir)).map(value=>value.opened))];
     }
     /** Early UI evidence only. Saved choices select among current native rows;
      * they never turn absence, removal or ambiguity into a registration. */
@@ -109,10 +139,10 @@ export class ServiceWorkspace {
         if(!exactScopeMatches(observed,binding,root,collection))throw new ServiceError('workspace_observation_not_authoritative');
         if(observed.outcome!=='registered')return {kind:observed.outcome,revision:observed.revision,namespace:observed.namespace,root:observed.root,collection};
         const project=observed.registration!;
-        if(!binding.launcher)throw new ServiceError('stable_launcher_unavailable');
+        if(!binding.executable)throw new ServiceError('native_executable_unavailable');
         return {kind:'registered',revision:observed.revision!,namespace:observed.namespace!,fencing_generation:observed.fencing_generation!,root:observed.root,collection,
-            spec:{command:binding.universalLauncher??binding.launcher,root:project.root,dataDir:project.data_root,collection:project.collection,name:path.basename(opened),
-            service:{installDir:binding.installDir,project:project.binding,...(binding.universalLauncher?{universal:true}:{})}}};
+            spec:{command:binding.executable,root:project.root,dataDir:project.data_root,collection:project.collection,name:path.basename(opened),
+            service:{installDir:binding.installDir,project:project.binding,direct:true}}};
     }
     /** Adopt only existing native bindings into editor preferences. Missing
      * registrations require explicit setup; native removal remains authoritative. */
@@ -191,7 +221,7 @@ export class ServiceWorkspace {
         return review;
     }
     async definitions(binding:RuntimeBinding,openedRoots:readonly string[]):Promise<LaunchSpec[]>{
-        this.active();if(!binding.launcher)throw new ServiceError('stable_launcher_unavailable');
+        this.active();if(!binding.executable)throw new ServiceError('native_executable_unavailable');
         const saved=this.saved(),specs:LaunchSpec[]=[],seen=new Set<string>();
         for(const opened of openedRoots){
             absolute(opened);
@@ -209,9 +239,9 @@ export class ServiceWorkspace {
                     // Missing sources retain their saved binding for read-only evidence.
                 }
                 this.active();if(seen.has(project.binding))continue;seen.add(project.binding);
-                // Agents get the version-free universal launcher when it forwards to this installation.
-                specs.push({command:binding.universalLauncher??binding.launcher,root:project.root,dataDir:project.data_root,collection:project.collection,
-                    name:path.basename(opened),service:{installDir:binding.installDir,project:project.binding,...(binding.universalLauncher?{universal:true}:{})}});
+                // Current direct CLI commands execute the sealed main; MCP uses enrolled HTTPS.
+                specs.push({command:binding.executable,root:project.root,dataDir:project.data_root,collection:project.collection,
+                    name:path.basename(opened),service:{installDir:binding.installDir,project:project.binding,direct:true}});
             }
         }
         return specs;
@@ -261,7 +291,7 @@ export class ServiceWorkspace {
             }
         }
         return {...spec,root:project.root,dataDir:project.data_root,collection:project.collection,
-            command:binding.universalLauncher??binding.launcher??spec.command,
-            service:{installDir:binding.installDir,project:project.binding,...(binding.universalLauncher?{universal:true}:{})}};
+            command:binding.executable,
+            service:{installDir:binding.installDir,project:project.binding,direct:true}};
     }
 }

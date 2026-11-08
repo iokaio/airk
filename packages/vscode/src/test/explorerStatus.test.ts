@@ -14,7 +14,7 @@ test('airk_status maps to separate readiness, freshness and semantic observation
         runtime: { versions_match: null }, work: { project_paused: false, progress: { phase: 'extract' } },
     }, 5);
     assert.deepEqual(summary, { indexState: 'available', semantic: 'partial', freshness: 'idle', observedAt: 5, publication: 'airk-r1:tok',
-        files: 12, chunks: 40, semanticCompleted: 4, semanticSelected: 12, liveSourceVerified: false, vectorsEnabled: true,
+        files: 12, chunks: 40, semanticReadiness: { state: 'partial', completed_artifacts: 4, selected_artifacts: 12 }, semanticCompleted: 4, semanticSelected: 12, liveSourceVerified: false, vectorsEnabled: true,
         localModelReady: true, versionsMatch: null, workPhase: 'extract', workPaused: false });
     const unavailable = statusSummary({ index_state: 'unavailable', index_error: { code: 'index_unavailable', message: 'private detail' }, files: null, publication: null }, 1);
     assert.deepEqual(unavailable, { indexState: 'unavailable', semantic: 'unknown', freshness: 'unknown', observedAt: 1, indexError: 'index_unavailable' });
@@ -143,4 +143,17 @@ test('scalar observations retain scoped details with independent ages without in
     assert.equal(unavailable.observedAt,300);assert.equal(unavailable.detailsObservedAt,100);
     assert.equal(scalarWithRetainedDetails(scalar),scalar);
     assert.equal(details.files,99);assert.equal(details.observedAt,100);
+});
+
+
+test('unavailable saved semantic pipelines retain native metadata without becoming an opt-out or ready',()=>{
+    const semantic={state:'unavailable',failure:'legacy_saved_semantic_conversion_unavailable',future:{reason:'preserved'}},adoption={compatibility:{semantic:'unavailable'},future:['original']};
+    const summary=statusSummary({index_state:'available',vectors_enabled:false,semantic_readiness:semantic,legacy_adoption:adoption});
+    assert.equal(summary.semantic,'unavailable');assert.deepEqual(summary.semanticReadiness,semantic);assert.deepEqual(summary.legacyAdoption,adoption);
+    assert.deepEqual(headline('ready',summary,1),{word:'semantic unavailable',severity:'warn'});
+    assert.match(semanticExplanation(summary).title,/unavailable/);assert.match(semanticExplanation(summary).detail,/not a saved vector opt-out/);
+    assert.notEqual(summary.semanticReadiness,semantic);
+    const member=(state:string)=>({outcome:'complete',index_id:'idx_'+(state==='ready'?'b':'a').repeat(32),result:{index_state:'available',semantic_readiness:{state}}});
+    assert.equal(statusSummary({schema:'airk.combined-read/1',members:[member('unavailable')]}).semantic,'unavailable');
+    assert.equal(statusSummary({schema:'airk.combined-read/1',members:[member('unavailable'),member('ready')]}).semantic,'partial');
 });

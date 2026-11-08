@@ -8,7 +8,9 @@ use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeSet, fmt, str::FromStr};
 
-pub const REGISTRY_SCHEMA: u32 = 12;
+/// Latest runtime contract. Schema 13 retains schema-12 physical catalog DDL
+/// and requires the in-process provider / embedded default source semantics.
+pub const REGISTRY_SCHEMA: u32 = 13;
 pub const MAX_DEFINITIONS: usize = 1024;
 pub const MAX_SELECTION: usize = 32;
 pub const MAX_ATOMS: usize = 128;

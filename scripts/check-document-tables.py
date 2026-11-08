@@ -6,7 +6,6 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
-import tempfile
 import zipfile
 
 
@@ -26,7 +25,7 @@ def main():
     parser.add_argument("--binary", type=Path, required=True)
     args = parser.parse_args()
     binary = args.binary.resolve(strict=True)
-    with tempfile.TemporaryDirectory(prefix="airk-table-smoke-") as temporary, contextlib.ExitStack() as resources:
+    with clients.owned_client_fixture() as temporary, contextlib.ExitStack() as resources:
         base = Path(temporary).resolve(strict=True)
         root = base / "sources"
         root.mkdir()
@@ -41,7 +40,7 @@ def main():
             "word/document.xml": '<w:document xmlns:w="w"><w:body><w:tbl><w:tr><w:trPr><w:tblHeader/></w:trPr><w:tc><w:p><w:r><w:t>ID</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Requirement</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>REQ-8</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>The cache must hold at least 8 MiB.</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>Ordinary background information.</w:t></w:r></w:p></w:body></w:document>',
         })
         originals = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in [xlsx, docx]}
-        state = base / "state"
+        state = base / "index-data"
         state.mkdir()
         fixture = clients.Fixture(binary.parent, base)
         assert fixture.binary == binary
@@ -59,7 +58,7 @@ def main():
                 fixture.job("tables", "index")
                 return fixture.published_status("tables")
             if command == ("usage", "report"):
-                return json.loads(fixture.run(*fixture.arguments("tables"), "usage", "report").stdout)
+                return json.loads(fixture.run(*fixture.management_arguments("tables"), "usage", "report").stdout)
             if command[0] == "facts":
                 arguments = {"path_prefix": command[1], "compact": False, "response_mode": "full"}
                 for option, value in zip(command[2::2], command[3::2]):

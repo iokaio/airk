@@ -3,13 +3,6 @@
 use super::*;
 use std::collections::BTreeMap;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ProviderDrainState {
-    Pending,
-    Drained,
-    Unknown,
-}
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Exchange {
     Observe,

@@ -1,9 +1,12 @@
 # Offline INT8 transformer embeddings
 
-AIRK 1.6.0 runs two pinned MiniLM INT8 exports through ONNX Runtime 1.22.1 CPU
-inside `airk-embed`. Service, project workers and MCP frontends exclude inference
-weights and engine dependencies. Compatible projects share the helper's model
-session. No Python, network service or post-install download is needed.
+AIRK 1.8.14 embeds both pinned MiniLM INT8 exports and statically links ONNX
+Runtime 1.22.1 CPU into the main executable. Inference runs inside the native
+service under its actual service lease; compatible projects share its model
+session. There is no separate semantic inference process or runtime-library DLL
+payload. Project index/source workers retain their process isolation and request
+inference through the service-owned provider. No Python, network service or
+post-install model download is needed.
 
 The optimization reduces embedding memory and CPU cost and bundled weight size.
 [Measurements and limitations](semantic-index-optimization.md) explain the choice.
@@ -28,29 +31,68 @@ without opening an index. Both profiles ship in every platform installer.
 
 ## Offline build inputs
 
-```console
-python scripts/provision-local-model.py --destination target/local-vector-model --download
-python scripts/provision-onnx-runtime.py --download
-python scripts/build-service-runtime.py --destination artifacts/runtime/int8-local --profile release
+The Windows entrypoint provisions and verifies these inputs explicitly:
+
+```powershell
+# Existing verified model/static ORT cache; no model/ORT downloads.
+pwsh -NoProfile -File scripts/build-windows.ps1
+# Initial pinned source/tools/model provisioning and static native build.
+pwsh -NoProfile -File scripts/build-windows.ps1 -DownloadInputs
 ```
 
-These are explicit build-time downloads. Without `--download`, provisioning only
-verifies existing inputs. Offline builders can transfer both profile directories
-under `target/local-vector-model` and `target/local-onnx-runtime/<os>-<arch>`.
-`AIRK_BUNDLED_MODEL_DIR` may select another model parent directory. Each profile
-has `model.json`, `model.onnx`, `tokenizer.json` and `LICENSE`. Cargo never downloads
-model assets or runtime libraries.
+See [Windows local builds](windows-local-build.md) for custom caches, the exact
+five-variable static environment, link-supplement receipts and package commands.
+The canonical cross-platform producer is `scripts/provision-static-onnx-runtime.py`:
+`--verify` checks an existing build, while explicit `--download --download-tools
+--build --parallel 2` prepares pinned inputs and builds the complete `all re2`
+archive closure. Its default cache is `target/static-onnx-runtime/<Rust-target>`.
+Use `--environment-file <report>` and pass subsequent Cargo/runtime build commands
+through `scripts/static-runtime-environment.py --environment-file <report> --
+<command> <arguments>`. The helper re-verifies the saved report against actual
+inputs and supplies only the approved static variables to the child process.
+Cargo/npm dependency restoration remains separate from model/ORT provisioning.
+
+Model provisioning uses `scripts/provision-local-model.py --destination
+target/local-vector-model`; add `--download` only to permit fetching missing
+inputs. `AIRK_BUNDLED_MODEL_DIR` selects another verified model parent. Each
+profile contains `model.json`, `model.onnx`, `tokenizer.json` and `LICENSE`.
+Cargo never downloads model assets or ORT libraries. Offline caches must preserve
+exact native archives, source/tool/build receipts and notices, not just copy a
+platform DLL from an older installation.
 
 Rust build checks exact manifests, sizes and hashes before embedding both models.
-Runtime staging and packaging execute `airk-embed --verify-bundled-models` against
-the actual helper, rejecting missing, substituted, extra or FP32 profiles. CPU
-libraries and their notices ship beside the helper under the complete installer
-inventory. Copying only `airk.exe` is insufficient; use the complete runtime/VSIX.
+The current runtime builder executes the actual main image with
+`--verify-bundled-models` and `--verify-model-smoke`, and checks its native imports
+for an external ORT dependency. The model smoke runs fixed text twice with an
+isolated actual service lease and requires 384 finite, repeat-identical values.
+Schema-2 packages contain the main executable plus required metadata and notices;
+use the complete verified runtime/VSIX for installation and upgrades.
 
-Asset identity and provenance are recorded in the
-[model catalog](../crates/airk-retrieval/src/model_catalog.json) and
-[runtime catalog](../crates/airk-retrieval/src/ort_runtime_catalog.json).
+`scripts/check-transformer-model.py` additionally exercises the installed service's
+default, vector and hybrid retrieval, verifies its embedded pipeline identity and
+in-process provider, and checks that default setup creates no extracted model
+sets. Its custom-input rejection checks copy verified offline build inputs into
+the test's own directory; they do not extract or alter the running default model.
+The shared owned-fixture wrapper preserves state if native shutdown is uncertain.
+These are gate requirements; actual candidate results belong in the release record.
+
+Model identity and provenance remain in the
+[model catalog](../crates/airk-retrieval/src/model_catalog.json). Static ORT source,
+archive and dependency inputs are pinned in the
+[static runtime lock](../scripts/static-onnx-runtime-lock.json); retained build
+receipts bind the verified library/link closure to the packaged main image.
 Installed AIRK never contacts those source URLs.
+
+### Historical separate-helper builds
+
+AIRK 1.6.0 through the predecessor architecture executed MiniLM in `airk-embed`,
+with dynamically distributed ORT libraries beside it. Its
+[runtime catalog](../crates/airk-retrieval/src/ort_runtime_catalog.json),
+`provision-onnx-runtime.py`, `AIRK_BUNDLED_RUNTIME_DIR` and helper verification
+commands describe that historical payload. They remain relevant to exact legacy
+verification and migration, but cannot provision or qualify a 1.8.14 static
+main-only package. Earlier measurement records retain their original architecture
+and do not establish current memory or performance results.
 
 ## Inference and identity
 
@@ -65,6 +107,26 @@ separate from the shipped transformer; they are not a precision fallback.
 
 Pipeline identity covers exact weights/tokenizer, runtime, platform, preprocessing
 and pooling. Query and index vectors must use the same identity.
+Moving weights into the main image does not itself justify changing the model or
+vector pipeline identity, discarding valid vectors, or relabeling accepted work.
+The approved executable digest and service/provider generation are separate
+execution identities and do change across replacement.
+
+The service reports provider kind `in_process` and no separate inference
+`process_id`; model pages are included in service RSS. Diagnostics retain provider
+identity, admission state, queued/running work, callbacks, delivery and model
+references. Zero counters alone do not prove safe retirement: native completion
+barriers and retained completion evidence govern drain. Query and indexing work
+share bounded admission; canceled callers do not make unfinished native work
+cease to exist.
+
+The persistent runtime contract advances to registry schema 13 for in-process
+provider semantics. An incompatible predecessor must reject this state with
+`runtime_state_contract_unsupported`; rollback requires a compatible runtime or
+explicit validated snapshot restoration. Existing accepted requests retain their
+original execution identity and require reconciliation, rather than being
+silently approved under the replacement image.
+
 
 ## Bounds and supported profile
 
@@ -80,9 +142,12 @@ estimate, not a measured resident-memory ceiling or a whole-service memory limit
 
 ## Semantic upgrade
 
-The service queues setup for registered projects once during registry upgrade,
-including closed workspaces. Setup replaces old semantic graphs and embedding
-caches from retained extraction evidence, then queues durable semantic rebuilding.
+When a semantic pipeline upgrade requires replacement, the service queues setup
+for affected registered projects, including closed workspaces. Setup replaces
+incompatible semantic graphs and embedding caches from retained extraction
+evidence, then queues durable semantic rebuilding. The schema-13 execution
+contract and move to in-process inference are not by themselves reasons to
+rebuild vectors whose pipeline identity remains valid.
 Text/fact evidence and sources are preserved. Paused projects wait for resume;
 semantic opt-outs remain off. Old ONNX publications cannot supply new-pipeline
 vectors. Text search remains available while semantic replacement is pending.
@@ -91,20 +156,18 @@ model setup completion does not mean every vector is ready.
 
 ## Native validation
 
-After provisioning:
+Run the main-image bundled-model and model-smoke checks through the runtime
+builder, then the native service and packaging checks from
+[CONTRIBUTING](../CONTRIBUTING.md) against that exact sealed runtime. For a scoped
+retrieval test, wrap Cargo with the verified static environment described above:
 
 ```console
-cargo test -p airk-retrieval --all-features bundled_int8_is_normalized_bounded_and_batch_independent -- --ignored
+python scripts/static-runtime-environment.py --environment-file <verified-report> -- cargo test -p airk-retrieval --all-features bundled_int8_is_normalized_bounded_and_batch_independent -- --ignored
 ```
 
 For ignored cache/order tests, set `AIRK_TEST_MODEL_DIR` to the absolute path of
-one profile directory, not its parent. Run native service and packaging checks
-from [CONTRIBUTING](../CONTRIBUTING.md) against the exact runtime being packaged.
-Windows validation does not qualify Mac/Linux, VNNI performance or ARM performance.
-
-Prepared runtime inputs can live outside Cargo's target cache using
-`AIRK_BUNDLED_RUNTIME_DIR`; its children are platform directories such as
-`windows-x86_64`. The container uses this to preserve verified libraries when
-BuildKit mounts its compiler cache. macOS packages require 13.3 or later, matching
-the pinned inference library's declared minimum; oldest-OS qualification remains
-separate from compilation on current runners.
+one profile directory, not its parent. Static archive verification, import checks,
+model smoke, service/provider lifetime tests and installed upgrade acceptance are
+distinct evidence; none alone qualifies the full deployment. Windows results do
+not qualify macOS/Linux, VNNI performance or ARM performance. macOS packages target
+13.3 or later; compilation on a current runner does not prove oldest-OS support.

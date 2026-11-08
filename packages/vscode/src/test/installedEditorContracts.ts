@@ -4,6 +4,8 @@ import {strict as assert} from 'node:assert';
 import {validateCombinedCatalogSession} from '../catalogSession';
 import {materializeNativeMetadata} from '../nativeMetadata';
 import {readResultBody} from '../sourceVerification';
+import {sameHttpAuthority, validateHttpConnection} from '../serviceHttp';
+import {installedHttpIdentity,InstalledHttpFailure} from './installedEditorHttp';
 import {combinedRows} from '../explorerSearch';
 export class InstalledNativeReplyError extends Error {
     readonly code?:string;
@@ -24,15 +26,14 @@ export async function installedLegacyLifecycle(start:()=>Promise<unknown>,read:(
     }
 }
 export function installedSelector(definition:any,result:any,selection:any):any{
-    assert.ok(Array.isArray(definition.args));
-    assert.equal(definition.args.filter((arg:string)=>arg==='--combined-session').length,1,'Actual combined native selector');
-    for(const arg of ['--catalog-session','--root','--data-dir','--collection','--service-project'])assert.ok(!definition.args.includes(arg),'No reconstructed legacy selector');
-    const at=definition.args.indexOf('--combined-session');assert.ok(at>=0&&typeof definition.args[at+1]==='string');
-    const selector=validateCombinedCatalogSession(JSON.parse(definition.args[at+1]));
+    const identity=installedHttpIdentity(definition),connection=validateHttpConnection(definition.nativeConnection);
+    assert.equal(identity.credentialId,connection.connection_id);assert.equal(identity.url,connection.endpoint.url);
+    assert.equal(connection.selection.kind,'combined');
+    const selector=validateCombinedCatalogSession(connection.selection.selection);
     assert.equal(result.outcome.status,'search_scope_selected');
     assert.deepEqual(result.outcome.selected,{index_ids:[],project_ids:[selection.project]},'Exact visible checkbox selection');
     assert.equal(result.outcome.activation.selected_subset,true);
-    assert.deepEqual(selector,result.outcome.activation.selection.session,'Complete native reviewed selection');
+    assert.ok(sameHttpAuthority({kind:'combined',selection:selector},{kind:'combined',selection:result.outcome.activation.selection.session}),'Complete native reviewed selection; only catalog clock may advance');
     assert.deepEqual(selector.index_ids,[selection.index]);assert.deepEqual(selector.project_ids,[selection.project]);assert.equal(selector.grant_id,selection.grant);
     return selector;
 }
@@ -107,4 +108,23 @@ export async function finishInstalledClient(client:{observations:unknown[];close
         console.error('Private native evidence retention failed:',String(error));
     }
     if(cleanup&&!evidence.failure)throw cleanup; // Preserve a primary failure and disclose failed cleanup separately.
+}
+
+/** A transport reset proves fencing only with the exact completed native deletion. */
+export function installedDeliveryFence(failure:unknown,review:any,applied:any,selector:any):void{
+    assert.equal(review.request.operation.operation,'delete_project');assert.deepEqual(selector.project_ids,[review.request.operation.id]);
+    const receipt=applied.verifiedReceipt;
+    assert.equal(receipt.authority_fence_required,true);assert.ok(applied.verifiedFencedReceipt?.proof);
+    assert.equal(receipt.caller,review.request.caller);assert.deepEqual(receipt.key,review.request.key);
+    assert.equal(receipt.request_digest,review.requestDigest);assert.ok(receipt.catalog_revision>review.request.expected_catalog_revision);
+    assert.ok(failure instanceof InstalledHttpFailure);
+    if(failure.kind==='network'){
+        assert.ok(['ECONNRESET','EPIPE','ERR_STREAM_PREMATURE_CLOSE'].includes(failure.detail.code??''));
+        assert.equal(failure.detail.response_bytes,0,'No partial evidence delivered after revocation');
+    }else{
+        assert.equal(failure.kind,'http');assert.ok([403,503].includes(failure.detail.status??0));
+        const body=failure.detail.body as any;assert.equal(body?.schema,'airk.local-api-error/1');
+        assert.equal(body.error?.code,failure.detail.status===403?'native_grant_refused':'native_delivery_fenced');
+        for(const field of ['items','hits','evidence','result','members'])assert.equal(body[field],undefined);
+    }
 }

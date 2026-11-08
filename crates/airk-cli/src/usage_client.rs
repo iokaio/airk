@@ -256,6 +256,10 @@ async fn collect_selected(
     let mut bytes = 0usize;
     let mut scope_headers = None;
     for _ in 0..256 {
+        let context = airk_mcp::read_attempt::ReadAttemptContext::new(
+            std::time::Instant::now() + std::time::Duration::from_secs(125),
+            Default::default(),
+        );
         let value = if let Some(selection) = selection {
             if connection
                 .as_ref()
@@ -274,7 +278,7 @@ async fn collect_selected(
             connection
                 .as_mut()
                 .context("selected native connection missing")?
-                .read_native(request(cursor))
+                .read_native_with_context(request(cursor), context)
                 .await?
         } else {
             crate::service_runtime::administrative_read(

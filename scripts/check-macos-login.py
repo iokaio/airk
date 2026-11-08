@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Explicit native Mac login acceptance in a retained, uniquely owned fixture.
+"""Historical schema-1 AIRK 1.4 Mac login acceptance in an owned fixture.
 
 Never modifies an existing registration. Keep the fixture on any failure so its
 app/receipt cannot disappear while Service Management ownership is uncertain.
@@ -16,6 +16,17 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def require_historical_runtime(payload):
+    metadata = payload / "airk-runtime.json"
+    info = metadata.lstat()
+    if not metadata.is_file() or metadata.is_symlink() or info.st_nlink != 1 or info.st_size > 4096:
+        raise ValueError("historical_fixture_only: invalid schema-1 AIRK 1.4 runtime metadata")
+    value = json.loads(metadata.read_bytes())
+    import re
+    if type(value.get("schema")) is not int or value["schema"] != 1 or not isinstance(value.get("version"), str) or not re.fullmatch(r"1\.4\.(0|[1-9][0-9]*)", value["version"]):
+        raise ValueError("historical_fixture_only: check-macos-login.py requires schema-1 AIRK 1.4. Use check-macos-direct-runtime.py for current single-image SMAppService/HTTPS acceptance; see docs/macos-build.md.")
+
+
 def digest(path):
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
@@ -30,6 +41,7 @@ def main():
     if platform.system() != "Darwin":
         parser.error("Native Mac SDK/login acceptance requires a Mac GUI execution host")
     payload = args.runtime.resolve(strict=True)
+    require_historical_runtime(payload)
     if digest(payload / "airk-install.json") != args.approved_sha256:
         parser.error("Runtime differs from the explicitly supplied approval")
     binary = payload / "AIRK.app/Contents/MacOS/airk"

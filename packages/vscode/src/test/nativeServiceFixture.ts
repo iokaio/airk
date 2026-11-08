@@ -7,7 +7,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import {LaunchSpec,launchArgs} from '../model';
 import {runText,NativeProcessError} from '../native';
-import {McpStdioSession} from '../mcpStdioSession';
+import {validateHttpConnection,publishNativeInput,removeNativeInput,type HttpConnectionInfo} from '../serviceHttp';
+import {NativeHttpSession} from './nativeHttpSession';
 import {boundedReply,readNative} from './nativeReadRetry';
 import {NativeControlTransport,RecordValue,ServiceClient,record,JobKind,ServiceError} from '../serviceClient';
 
@@ -76,7 +77,7 @@ export function nativeFailureDetail(error:unknown):RecordValue {
 
 export class NativeServiceFixture {
     client?:ServiceClient;
-    control='';launcher='';
+    control='';launcher:string|null=null;
     private retained=false;
     private lastPhase:RecordValue={phase:'fixture_setup'};
     private constructor(readonly binary:string,readonly owner:string,readonly install:string){}
@@ -101,7 +102,7 @@ export class NativeServiceFixture {
             const prepared=await fixture.run(['runtime','prepare-client','--install-dir',fixture.install],180000);
             const inspected=await fixture.run(['runtime','inspect','--install-dir',fixture.install]);
             assert.equal(inspected.launcher,prepared.launcher);if(mode==='managed')assert.equal(record(inspected.managed_policy).lifecycle,'user_on_demand');else assert.equal(inspected.managed_policy,null);
-            fixture.control=String(inspected.control_dir);fixture.launcher=String(prepared.launcher);
+            fixture.control=String(inspected.control_dir);assert.equal(inspected.launcher,null,'Modern native runtime has no stdio launcher');fixture.launcher=null;
             fixture.client=new ServiceClient(new NativeControlTransport(fixture.binary,['service','console','--runtime-dir',fixture.control],60000));
             return fixture;
         }catch(error){
@@ -150,9 +151,42 @@ export class NativeServiceFixture {
         descriptor=record((await client.catalogHostContext(contextKey)).descriptor);
         const grant=await client.catalogGrantDraft(contextKey,{key:await client.key(),expected_catalog_revision:revision,project_ids:[projectId],index_ids:[index]});
         const granted=await client.submitCatalog({catalog_apply:{request:grant.request,preview_digest:grant.previewDigest},request_digest:grant.requestDigest});revision=Number(record(granted.receipt).catalog_revision);
-        return {command:this.launcher,root:String(registration.root),dataDir:String(registration.data_root),collection:name,name,
+        const spec:LaunchSpec={command:this.binary,root:String(registration.root),dataDir:String(registration.data_root),collection:name,name,
             catalogSession:{schema:1,context_key:contextKey,namespace:String(descriptor.namespace),expected_catalog_revision:revision,grant_id:String(record(grant.request.operation.grant).id),expected_grant_revision:1,index_id:index,project_ids:[projectId]},
-            service:{installDir:this.install,project:String(registration.binding)}};
+            service:{installDir:this.install,project:String(registration.binding),direct:true}};
+        spec.http=await this.enroll(spec);return spec;
+    }
+    /** Native enrolls the exact reviewed grant; root paths never confer read permission. */
+    async enroll(spec:LaunchSpec,explorerDescriptor?:string):Promise<HttpConnectionInfo>{
+        assert.ok(spec.catalogSession);const id=randomBytes(16).toString('hex');
+        const selection={kind:'scoped' as const,selection:spec.catalogSession};
+        const file=await this.privateInput(selection);
+        try{
+            const info=await this.run(['runtime','http-connection','--install-dir',this.install,'--selection-file',file,'--connection-id',id,'--client','native-test',...(explorerDescriptor?['--explorer-descriptor',explorerDescriptor]:[])]);
+            return validateHttpConnection(info,selection,path.join(this.control,'http-1'));
+        }finally{await removeNativeInput(file);}
+    }
+    /** Native created this exact owner-only directory. Do not apply the separate
+     * Assistance ACL policy (which also admits SYSTEM/Administrators on Windows).
+     * Exclusive files inherit the native ACL; native readers verify it again. */
+    private async privateInput(value:unknown):Promise<string>{
+        const bytes=Buffer.from(JSON.stringify(value));assert.ok(bytes.length<=49152);
+        return publishNativeInput(this.control,bytes.toString());
+    }
+    async openHttp(spec:LaunchSpec,clientName:string,explorerDescriptor?:string):Promise<NativeHttpSession>{return NativeHttpSession.open(await this.enroll(spec,explorerDescriptor),clientName);}
+    /** An ordinary newly reviewed registration is not sealed legacy authority. */
+    async refuseUnimportedLegacy(spec:LaunchSpec):Promise<void>{
+        const registration={binding:spec.service!.project,root:spec.root,data_root:spec.dataDir,collection:spec.collection},file=await this.privateInput(registration);
+        // A real retained source declaration is merely configuration, never a
+        // sealed imported grant. Bind the probe to these exact original bytes.
+        const configuration=JSON.stringify({servers:{airk:{command:spec.command,args:['--root',spec.root,'--data-dir',spec.dataDir,'--collection',spec.collection,'--service-project',spec.service!.project,'mcp']}}});
+        const configurationReceipt=createHash('sha256').update(configuration).digest('hex');
+        let response:RecordValue;
+        try{response=await this.run(['runtime','http-legacy-connection','--install-dir',this.install,'--registration-file',file,'--configuration-receipt',configurationReceipt,'--connection-id',randomBytes(16).toString('hex'),'--client','native-test']);}
+        finally{await removeNativeInput(file);}
+        assert.equal(response.status,'review_required',JSON.stringify(response));
+        assert.equal(response.schema,1);assert.equal(response.connection_id,undefined);assert.equal(response.credential_file,undefined);
+        assert.equal(response.code,'legacy_selection_review_required');assert.deepEqual(response.registration,registration);assert.equal(response.configuration_receipt,configurationReceipt);
     }
     async tool(spec:LaunchSpec,name:string,args:RecordValue={},deadline?:number):Promise<RecordValue>{
         this.lastPhase={phase:'tool',tool:name};
@@ -220,7 +254,7 @@ export class NativeServiceFixture {
         const deadline=performance.now()+180000;
         while(performance.now()<deadline){
             const status=await this.publishedStatus(spec,deadline),readiness=record(status.semantic_readiness);
-            assert.ok(['disabled','pending','partial','ready','failed'].includes(String(readiness.state)),'Invalid semantic state');
+            assert.ok(['disabled','pending','partial','ready','failed','unavailable'].includes(String(readiness.state)),'Invalid semantic state');
             assert.notEqual(readiness.state,'failed','Semantic work explicitly failed');
             if(readiness.state==='ready'&&readiness.completed_artifacts===files)return status;
             await new Promise(resolve=>setTimeout(resolve,50));
@@ -243,7 +277,7 @@ export class NativeServiceFixture {
         await this.client!.rpc({plan_execute:{id,preview:reviewed.preview_digest,allow_fallback:false}},'plan');
         const completed=await wait('finished');assert.equal(completed.outcome,'succeeded',JSON.stringify(completed));return completed;
     }
-    async retainFailure(error:unknown,sessions:readonly McpStdioSession[]=[],context?:RecordValue):Promise<void>{
+    async retainFailure(error:unknown,sessions:readonly {diagnosticSnapshot():unknown}[]=[],context?:RecordValue):Promise<void>{
         this.retained=true;
         const parent=process.env.AIRK_NATIVE_DIAGNOSTIC_DIR??path.join(this.owner,'test-failure-diagnostics');
         try{
@@ -265,7 +299,7 @@ export class NativeServiceFixture {
             process.stderr.write(`[native fixture] failure report unavailable: ${String(diagnostic).slice(0,1024)}\n`);
         }
     }
-    async dispose(failure?:NativeTestFailure,sessions:readonly McpStdioSession[]=[]):Promise<void>{
+    async dispose(failure?:NativeTestFailure,sessions:readonly {diagnosticSnapshot():unknown}[]=[]):Promise<void>{
         const errors:unknown[]=failure?[failure.error]:[];
         let stopped=false;
         try{

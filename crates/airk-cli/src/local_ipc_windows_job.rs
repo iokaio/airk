@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Current-user security for native named jobs. Validation never repairs an ACL
 //! or establishes process/session absence; callers retain their native handle.
-use super::{Allocation, current_user, descriptor, sid_string};
+#[cfg(any(not(feature = "local-inference"), test))]
+use super::descriptor;
+use super::{Allocation, current_user, sid_string};
 use anyhow::{Result, ensure};
 use std::{
     io, mem,
@@ -12,13 +14,17 @@ use windows_sys::Win32::{
         ACCESS_ALLOWED_ACE, ACE_HEADER,
         Authorization::{GetSecurityInfo, SE_KERNEL_OBJECT},
         DACL_SECURITY_INFORMATION, GetAce, GetSecurityDescriptorControl,
-        OWNER_SECURITY_INFORMATION, SE_DACL_PRESENT, SE_DACL_PROTECTED, SECURITY_ATTRIBUTES,
+        OWNER_SECURITY_INFORMATION, SE_DACL_PRESENT, SE_DACL_PROTECTED,
     },
     System::SystemServices::ACCESS_ALLOWED_ACE_TYPE,
 };
 
+#[cfg(any(not(feature = "local-inference"), test))]
+use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
+
 /// Keep the existing native descriptor allocation alive during object creation.
 /// The SID is derived from this process's native token, never a frontend claim.
+#[cfg(any(not(feature = "local-inference"), test))]
 pub(crate) fn with_current_user_job_security<T>(
     action: impl FnOnce(&SECURITY_ATTRIBUTES, &str) -> Result<T>,
 ) -> Result<T> {

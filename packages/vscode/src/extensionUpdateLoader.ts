@@ -17,7 +17,7 @@ export interface UpdatePayload {
     manifest: Record<string, unknown>; files: ReadonlyMap<string, Buffer>;
 }
 interface ManagedApi {
-    getServerDefinitions(): Promise<vscode.McpStdioServerDefinition[]>;
+    getServerDefinitions(): Promise<vscode.McpServerDefinition[]>;
     whenReady(): Promise<void>;
     explorerHandoff?(): { open: boolean; route?: string };
     prepareForUpdate?(): Promise<void>;

@@ -15,7 +15,7 @@ import { runStrategy } from '../explorerStrategyRunner';
 import { NativeServiceFixture } from './nativeServiceFixture';
 import { checkCitations } from '../explorerInspect';
 
-test('the Explorer evidence session reads one pinned publication through the verified launcher', { skip: !process.env.AIRK_TEST_BINARY, timeout: 300000 }, async () => {
+test('the Explorer evidence session reads one pinned publication through reviewed native HTTPS', { skip: !process.env.AIRK_TEST_BINARY, timeout: 300000 }, async () => {
     const fixture = await NativeServiceFixture.create(process.env.AIRK_TEST_BINARY!);
     let client: EvidenceClient | undefined;
     try {

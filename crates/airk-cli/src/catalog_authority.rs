@@ -71,7 +71,7 @@ pub(crate) fn build_legacy_catalog_read_authority(
         registry.legacy_compatibility_snapshot(legacy_binding, host, expected_catalog_revision)?;
     persisted.validate()?;
     ensure!(
-        persisted.provenance.kind() == GrantProvenanceKind::ImportedLegacySnapshot
+        persisted.provenance.imported_binding() == Some(legacy_binding)
             && persisted.grant.memberships.len() == 1,
         ScopeReadRefused
     );
@@ -86,11 +86,7 @@ pub(crate) fn build_legacy_catalog_read_authority(
         project_ids: vec![member.project_id],
         backing: legacy_binding,
     };
-    build_catalog_read_authority_kind(
-        registry,
-        &selection,
-        GrantProvenanceKind::ImportedLegacySnapshot,
-    )
+    build_catalog_read_authority_kind(registry, &selection, persisted.provenance.kind())
 }
 
 fn build_catalog_read_authority_kind(

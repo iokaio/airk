@@ -284,6 +284,20 @@ fn item(db: &Connection, kind: CatalogKind, id: &str) -> Result<CatalogItem> {
                         );
                         provenance
                     }
+                    (kind, None, None, None, None) if kind == "imported_standalone_adoption" => {
+                        let provenance = super::adopted_authority::read_provenance(db, value.id)?;
+                        let namespace: String = db.query_row(
+                            "SELECT incarnation FROM service_meta WHERE id=1",
+                            [],
+                            |r| r.get(0),
+                        )?;
+                        ensure!(
+                            native_imported_grant_id(namespace.parse()?, value.host, &provenance)?
+                                == value.id,
+                            "standalone grant identity does not match sealed lineage"
+                        );
+                        provenance
+                    }
                     _ => anyhow::bail!("invalid persisted grant provenance"),
                 }
             };

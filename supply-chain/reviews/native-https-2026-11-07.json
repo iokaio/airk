@@ -1,0 +1,2015 @@
+{
+  "schema": "airk.dependency-source-review-proposal/1",
+  "status": "REVIEWED_LIMITED_EXACT_VERSION_EXCEPTIONS",
+  "date": "2026-11-07",
+  "lock_sha256": "390e7352fc2235caafbd3046dc3f2c8ef7202f469fb1792c4fde9ff5d3ac38f2",
+  "source_policy_before_sha256": "3b758ac590ac90981665e67fe638ecbf61c63660de67cb81a764089fb5c33364",
+  "scope": "Exact registry archive identity, extracted-cache equality, declared licenses/build behavior and targeted source inspection. Not full safe-to-deploy audit, upstream publisher authentication, advisory clearance, platform execution or legal approval.",
+  "packages": [
+    {
+      "identity": {
+        "name": "asn1-rs",
+        "version": "0.7.2",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "b7f43a50ac4fdca5df8e885c21b835997f0a1cdee65494a6847694a98652d9d8"
+      },
+      "archive_bytes": 93179,
+      "packaged_files": 93,
+      "packaged_tree_sha256": "314234244102f4f324bc361683d06ec68195bc91d0bde44e0c6c27b4581aaf9e",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "668c9760ab09b6c019c101ebcc1d5b1197c29864eecd9486a22630f8dbac86e6",
+      "original_manifest_sha256": "8c242e9824b32d5fbeebb42c875266f764aad22f416c1d6c2ae5a6b1be425d6c",
+      "declared_license": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10847,
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1060,
+          "sha256": "a5c61b93b6ee1d104af9920cf020ff3c7efe818e31fe562c72261847a728f513"
+        }
+      ],
+      "declared_repository": "https://github.com/rusticata/asn1-rs.git",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "84c7ac4cc40616497d922c7e5730fb75cff59256"
+        },
+        "path_in_vcs": ""
+      },
+      "effective_build_script": false,
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "Owned certificate ASN.1 parsing; src/lib.rs forbids unsafe; BER parser default recursion 50. Parser correctness and arbitrary malformed input are not fully audited."
+    },
+    {
+      "identity": {
+        "name": "asn1-rs-derive",
+        "version": "0.6.0",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "3109e49b1e4909e9db6515a30c633684d68cdeaa252f215214cb4fa1a5bfee2c"
+      },
+      "archive_bytes": 11337,
+      "packaged_files": 12,
+      "packaged_tree_sha256": "e19e0eba34b0fe1a4120b1452578cce98388e437a50c6419ed96dacfa9d7a61d",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "8fd0e2bea8ed9b98d689c764aab519f7c411078f571e0cf113054f6ddae695f5",
+      "original_manifest_sha256": "c87f9704a05e8cc11baa6ce853a2f3df7850baaef8f7ffd4744f0b21ac758d8b",
+      "declared_license": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10847,
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1060,
+          "sha256": "a5c61b93b6ee1d104af9920cf020ff3c7efe818e31fe562c72261847a728f513"
+        }
+      ],
+      "declared_repository": "https://github.com/rusticata/asn1-rs.git",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "f0bf28d2ce0697604110db64d89ca78bbf53ef58"
+        },
+        "path_in_vcs": "derive"
+      },
+      "effective_build_script": false,
+      "procedural_macro": true,
+      "exception_rationale_and_limits": "Compiler procedural macro for ASN.1 derives; inspected token parsing/emission has no external I/O or process execution. Generated semantics are not formally proved."
+    },
+    {
+      "identity": {
+        "name": "asn1-rs-impl",
+        "version": "0.2.0",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "7b18050c2cd6fe86c3a76584ef5e0baf286d038cda203eb6223df2cc413565f7"
+      },
+      "archive_bytes": 2261,
+      "packaged_files": 5,
+      "packaged_tree_sha256": "6e79eed667c8a45f8cfb4afed404f822126c6818b2d401f8899c302b1486e402",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "a631619d2ce5c7060ce03cbbfc08a45430350e55b700b8bb905ff4ecb2819a8e",
+      "original_manifest_sha256": "f4d839a0543fac286eb3be3b6c56cb75bb5910f3cb8a98f44a448ff36a8e50ec",
+      "declared_license": "MIT/Apache-2.0",
+      "license_files": [],
+      "declared_repository": "https://github.com/rusticata/asn1-rs.git",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "a20e5f7319c896737ad0f2557037817b91ad854f"
+        },
+        "path_in_vcs": "impl"
+      },
+      "effective_build_script": null,
+      "procedural_macro": true,
+      "exception_rationale_and_limits": "Compiler procedural macro encodes fixed OID/integer token literals; no external I/O/process found. Compile-time input handling is not a complete macro audit. Declares MIT OR Apache-2.0 but packages no standalone license text; retain this provenance qualification."
+    },
+    {
+      "identity": {
+        "name": "async-trait",
+        "version": "0.1.92",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "82f6aeea286b8eb4dd3431a1be1b59d290ace00f5bfd8e2a159bc2a05e2c1667"
+      },
+      "archive_bytes": 32039,
+      "packaged_files": 53,
+      "packaged_tree_sha256": "3f0b509a94ae317cf2c2397bf05615d1a5b1b1a1de52132aa89482e1c35fa365",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "8a32a3c4df044e9371308c8040d6db97279683fb86284ff01b909ea1985bccfb",
+      "original_manifest_sha256": "22484eb58c672e86df75863b17279bf01eed57c9d0919952f033dc973996ec86",
+      "declared_license": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 9723,
+          "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1023,
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+        }
+      ],
+      "declared_repository": "https://github.com/dtolnay/async-trait",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "82e7e9edd60f622294373a23c0ce9c0077ad0263"
+        },
+        "path_in_vcs": ""
+      },
+      "effective_build_script": false,
+      "procedural_macro": true,
+      "exception_rationale_and_limits": "RMCP async interface procedural macro; token AST to boxed future expansion, no external I/O/process found; generated lifetime/Send behavior not fully audited."
+    },
+    {
+      "identity": {
+        "name": "atomic-waker",
+        "version": "1.1.2",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
+      },
+      "archive_bytes": 12422,
+      "packaged_files": 11,
+      "packaged_tree_sha256": "be1f046c728199e6bdcd419ee90119b7ce5049d0fb7e46c13c7fa590d86879d2",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "0bcc14ea808935bf632dfaa6746dce30e4fdfc0902e1320df8ab36763dc76250",
+      "original_manifest_sha256": "b7942dd5e1c083b2cc1a66a09b7301edb45f96c51c89a91792e807b224109852",
+      "declared_license": "Apache-2.0 OR MIT",
+      "license_files": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10847,
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1023,
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+        },
+        {
+          "path": "LICENSE-THIRD-PARTY",
+          "bytes": 1849,
+          "sha256": "6226d0632e2e1a80c23597e964da9812ae193c535fe058154afb034e94167aa5"
+        }
+      ],
+      "declared_repository": "https://github.com/smol-rs/atomic-waker",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "9969a29ccd1fe298e2df7346849c0095ba303a64"
+        },
+        "path_in_vcs": ""
+      },
+      "effective_build_script": null,
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "Hyper wake coordination; atomic state guards unsafe interior-cell access and Send/Sync; callback panic/concurrency behavior not formally proved. Retain LICENSE-THIRD-PARTY."
+    },
+    {
+      "identity": {
+        "name": "base64",
+        "version": "0.23.1",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
+      },
+      "archive_bytes": 93605,
+      "packaged_files": 39,
+      "packaged_tree_sha256": "d469b1d723476cfe04bb4d519e1afe283b6b658c4b8332f1a9d0541db4cef714",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "3951a99756ac9b339501a149c547ce0e24248287a10830298ea319c006090790",
+      "original_manifest_sha256": "cf1d96ff463ee2680db8948e5bd5fcf2b7241381b4c530008d5e6d292bf9f186",
+      "declared_license": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10847,
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1093,
+          "sha256": "ab499c75a0f0da8e0fe83bf9ba3a27e5c39705310f07107c6c66b69958d2401c"
+        }
+      ],
+      "declared_repository": "https://github.com/marshallpierce/rust-base64",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "069bf7067b949f5c0a92b6ceb82492920502f2c2"
+        },
+        "path_in_vcs": ""
+      },
+      "effective_build_script": false,
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "PEM/HTTP encoding; default features include simd-unsafe. Inspected AVX2/NEON dispatch and unchecked encoding operations; no autonomous I/O/process. No all-architecture SIMD soundness claim."
+    },
+    {
+      "identity": {
+        "name": "bit-vec",
+        "version": "0.9.1",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "b71798fca2c1fe1086445a7258a4bc81e6e49dcd24c8d0dd9a1e57395b603f51"
+      },
+      "archive_bytes": 29177,
+      "packaged_files": 14,
+      "packaged_tree_sha256": "7c03d8c1013ae86462c54194ea4d8586a745b5a6d7127e87f957a48ff0268e3d",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "487c8f9e14edef0b4638fa049ffc196fd54554ddd55bd97021cde370ea74019c",
+      "original_manifest_sha256": "729b4a799ea52de0d40a894ac6e1814648163c422ea89b1b35a15e654cb12505",
+      "declared_license": "Apache-2.0 OR MIT",
+      "license_files": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10850,
+          "sha256": "8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1071,
+          "sha256": "f51ac2c59a222f7476ce507ca879960e2b64ea64bb2786eefdbeb7b0b538d1b7"
+        }
+      ],
+      "declared_repository": "https://github.com/contain-rs/bit-vec",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "2fb0305422ff7fd915a107b91209abbff9fce50f"
+        },
+        "path_in_vcs": ""
+      },
+      "effective_build_script": false,
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "ASN.1 bit strings; bitmap indexing/allocation source inspected; no autonomous I/O/process found. Resource limits remain caller responsibility."
+    },
+    {
+      "identity": {
+        "name": "data-encoding",
+        "version": "2.11.1",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "4583a4551df46e2792f82ceeac45e850d2e2d5debba0b91f102385cda5b11f06"
+      },
+      "archive_bytes": 22651,
+      "packaged_files": 7,
+      "packaged_tree_sha256": "30d699d3cb940345d09f3e7a35a743fdbb58cd80b9464e4b40d91c1c3f0b59fe",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "d024c81d5919502c1c69e48a6325da1091521c95622057bea10d8963b7be5344",
+      "original_manifest_sha256": "0b1e7e2298a345bd38c7b75f73793ce70b1458979e6e436582ac3defbc0c6401",
+      "declared_license": "MIT",
+      "license_files": [
+        {
+          "path": "LICENSE",
+          "bytes": 1121,
+          "sha256": "b68ad1a3367b825447089e1f8d6829b97f47a89eb78d2f4ebaef4672f5606186"
+        }
+      ],
+      "declared_repository": "https://github.com/ia0/data-encoding",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "834737d9c3dc957ce1b653959e3f35061dd77ade"
+        },
+        "path_in_vcs": "lib"
+      },
+      "effective_build_script": false,
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "Certificate data encoding; unsafe slice chunking/UTF8 views rely on checked bounds/alphabet contracts. No autonomous I/O/process found; no complete soundness proof."
+    },
+    {
+      "identity": {
+        "name": "der-parser",
+        "version": "10.0.0",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "07da5016415d5a3c4dd39b11ed26f915f52fc4e0dc197d87908bc916e51bc1a6"
+      },
+      "archive_bytes": 66186,
+      "packaged_files": 40,
+      "packaged_tree_sha256": "857f784eeda7bdb9b4300daacd4e6e8a253dca6a78b6c637bce2d82fd079ac9b",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "3b9b8368da0aaeb55edf28982baa2d924e57bac7661c5292ea081e689d62c631",
+      "original_manifest_sha256": "4c68a13c2f092995be49719d4665750e9b6a1cb4ac36804ee8dfdcefdfd62e38",
+      "declared_license": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10847,
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1060,
+          "sha256": "a5c61b93b6ee1d104af9920cf020ff3c7efe818e31fe562c72261847a728f513"
+        }
+      ],
+      "declared_repository": "https://github.com/rusticata/der-parser.git",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "79ec2d0cfe1e3ba2deb49ee1f68f984f4ef3a971"
+        },
+        "path_in_vcs": ""
+      },
+      "effective_build_script": false,
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "Certificate DER/BER parser; forbids unsafe and default recursion 50. ber/tagged.rs explicitly resets a depth counter and ignores trailing bytes in one generic combinator; not a universal recursion/completeness guarantee. Native owned certificate files are separately bounded."
+    },
+    {
+      "identity": {
+        "name": "deranged",
+        "version": "0.5.9",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "9e9de72ce2ad1f90dc62fa25f0f430ef85eb4b0d8fa0be4f30373bc40a21d28e"
+      },
+      "archive_bytes": 27842,
+      "packaged_files": 10,
+      "packaged_tree_sha256": "02d6eaaff8b17e20f80cb4feebd9237159f2a7da2e2bef573c17ae0f54398b62",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "8604c48d0f13a96386d4ef94448d295c64a1639a9a6352b3a060bc00da5bc011",
+      "original_manifest_sha256": "8d82d967d014ff3bde0b905004fc94155c55ef76047caf68a7773758d14c1cf1",
+      "declared_license": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "path": "LICENSE-Apache",
+          "bytes": 11349,
+          "sha256": "edd65bdd88957a205c47d53fa499eed8865a70320f0f03f6391668cb304ea376"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1062,
+          "sha256": "231c837c45eb53f108fb48929e488965bc4fcc14e9ea21d35f50e6b99d98685b"
+        }
+      ],
+      "declared_repository": "https://github.com/jhpratt/deranged",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "aeb03a4be17fe287d5fdd509e9ae134d4b9999fc"
+        },
+        "path_in_vcs": "deranged"
+      },
+      "effective_build_script": false,
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "Certificate time bounded integer helpers; unsafe unchecked constructors/range assumptions inspected; no autonomous I/O/process found. Range-contract correctness not fully proved."
+    },
+    {
+      "identity": {
+        "name": "getrandom",
+        "version": "0.2.17",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "ff2abc00be7fca6ebc474524697ae276ad847ad0a6b3faa4bcb027e9a4614ad0"
+      },
+      "archive_bytes": 40780,
+      "packaged_files": 38,
+      "packaged_tree_sha256": "e475a702fb6ee5df129af06d8a3d6394468030b61d1142ed738041b829b80dc0",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "032d84ffe843860402ec2339ae4179be20fd6f432109e595a3fa83be54893ec7",
+      "original_manifest_sha256": "850cb9e629142ded23e40a80943fc19b559b09931bb71df35cef2ae7f6152c14",
+      "declared_license": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10849,
+          "sha256": "aaff376532ea30a0cd5330b9502ad4a4c8bf769c539c87ffe78819d188a18ebf"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1130,
+          "sha256": "42fa16951ce7f24b5a467a40e5b449a1d41e662f97ca779864f053f39e097737"
+        }
+      ],
+      "declared_repository": "https://github.com/rust-random/getrandom",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "b625985d852600a3eeb68556811e59e7c9a6a098"
+        },
+        "path_in_vcs": ""
+      },
+      "effective_build_script": false,
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "Ring OS entropy; unsafe OS FFI, Linux /dev/urandom fallback; no downloader/subprocess found. Other target/custom/JS/RDRAND paths are not platform-qualified."
+    },
+    {
+      "identity": {
+        "name": "http",
+        "version": "1.5.0",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "918d3568bebf352712bc2ef3d46a8bcf1a75b373be6539de198e9105cbbf9ce0"
+      },
+      "archive_bytes": 111161,
+      "packaged_files": 35,
+      "packaged_tree_sha256": "86ead549635c8e8e41d6eb4d459bfa0cca0bd4a08889f7d42ad2591ec3cfede5",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "a949b1afc8b7fe334e9f6038b88d987e6a83b41b10cc852ad11dad1ead3c296d",
+      "original_manifest_sha256": "d746fe0ed51dfd2a4e92c9a8c2348278adea73671187bbb711f231cd3c19669b",
+      "declared_license": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10835,
+          "sha256": "8bb1b50b0e5c9399ae33bd35fab2769010fa6c14e8860c729a52295d84896b7a"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1059,
+          "sha256": "dc91f8200e4b2a1f9261035d4c18c33c246911a6c0f7b543d75347e61b249cff"
+        }
+      ],
+      "declared_repository": "https://github.com/hyperium/http",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "e559023f67e3fad6ecc3ee91307be178e0f13626",
+          "dirty": true
+        },
+        "path_in_vcs": ""
+      },
+      "effective_build_script": false,
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "Canonical HTTP types; unsafe header-map/byte representations. HeaderValue sensitivity is opt-in, not default credential redaction. Packaged VCS dirty flag retained."
+    },
+    {
+      "identity": {
+        "name": "http-body",
+        "version": "1.1.0",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "ca2a8f2913ee65f60facd6a5905613afaa448497a0230cc41ce022d93290bc2c"
+      },
+      "archive_bytes": 7887,
+      "packaged_files": 11,
+      "packaged_tree_sha256": "9e7323a8809ce3e2abd3c3f4e19049aeb0a799d08cb187537501af124fe364ab",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "87911167224d2c0bd1d92650330e39ff1bada6ebd0ab7add8a4e10309eb8d0f1",
+      "original_manifest_sha256": "6526c42603e11a2f07f30487a682fc0b33a1186fe8e6499fba7af3895d90919d",
+      "declared_license": "MIT",
+      "license_files": [
+        {
+          "path": "LICENSE",
+          "bytes": 1083,
+          "sha256": "248378d0a3383c173fb925f17141b88e71580b3ba17ddc6ac3d2a344683232ab"
+        }
+      ],
+      "declared_repository": "https://github.com/hyperium/http-body",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "2fb78de9c875c364b7eb1a1a117acc3b83ffb13a",
+          "dirty": true
+        },
+        "path_in_vcs": "http-body"
+      },
+      "effective_build_script": false,
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "HTTP streaming trait; unsafe pin projections; size hints are not enforced budgets. Packaged VCS dirty flag retained."
+    },
+    {
+      "identity": {
+        "name": "http-body-util",
+        "version": "0.1.5",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "23169fe34a5fbcdd3f3862e78fb9b6fccd5f02a6dc6f732547005d45631ce71c"
+      },
+      "archive_bytes": 18574,
+      "packaged_files": 26,
+      "packaged_tree_sha256": "556e3262393bb9a51eb9b429ffeb6209a9fe540f33a239ea9c813d75d23ed83d",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "9802a7455d684d313cca788e7fc76d71978f29f50587f4487b8b1c0a04e2ca84",
+      "original_manifest_sha256": "7dff628f89dcb647065c4fe7ecc3b2e099f0e79a27c99f78d8eca0573586164e",
+      "declared_license": "MIT",
+      "license_files": [
+        {
+          "path": "LICENSE",
+          "bytes": 1083,
+          "sha256": "248378d0a3383c173fb925f17141b88e71580b3ba17ddc6ac3d2a344683232ab"
+        }
+      ],
+      "declared_repository": "https://github.com/hyperium/http-body",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "07838bd97b714b95bd783cd695ebf211b67545c4"
+        },
+        "path_in_vcs": "http-body-util"
+      },
+      "effective_build_script": false,
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "Bounded HTTP body adapters; Limited checks frame bytes, plain collect accumulates without its own cap. Unsafe pin projection inspected; callers must retain explicit limits."
+    },
+    {
+      "identity": {
+        "name": "httparse",
+        "version": "1.10.1",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
+      },
+      "archive_bytes": 45190,
+      "packaged_files": 25,
+      "packaged_tree_sha256": "60bccea6f48ddc11ce19cf58bf54ecc30180e1269af821967b04475f2f7dd4d2",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "067da5f6334526ce5f080909e5c271dd0968ab4198a65eea51d93b242febb48a",
+      "original_manifest_sha256": "3a0da8a3d1c3ab896e16182c9a876b4ad4c265faa3042cde693621ea95c94060",
+      "declared_license": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10847,
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1063,
+          "sha256": "391a5396cec6230bfabd4ef4eb2350eb895bc5efce377a2218f5702ed020d3e3"
+        }
+      ],
+      "declared_repository": "https://github.com/seanmonstar/httparse",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "9f29e79f9832dbd0ae5220acb17c1866745bdecd"
+        },
+        "path_in_vcs": ""
+      },
+      "effective_build_script": "build.rs",
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "HTTP/1 parser with unsafe cursors/SIMD; build script runs configured RUSTC --version and emits cfgs, no download. No complete parser/request-smuggling/all-target soundness audit."
+    },
+    {
+      "identity": {
+        "name": "httpdate",
+        "version": "1.0.3",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
+      },
+      "archive_bytes": 10639,
+      "packaged_files": 11,
+      "packaged_tree_sha256": "3ad96578ab1acf2824fc62d5b3ca2f23de4574c8fa71e192fddd6c61651f5152",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "d1adbc974f706b302bc844ce7b6d6323d30a1689b9e3bf53ab78ba0bb09a9ed9",
+      "original_manifest_sha256": "935ef51333a927e121be199efebd6aa6df22e14682770d1cfd9d32fd2bc931eb",
+      "declared_license": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10255,
+          "sha256": "4d10fe5f3aa176b05b229a248866bad70b834c173f1252a814ff4748d8a13837"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1051,
+          "sha256": "934887691e05d69d7c86ad3f2c360980fa30c15b035e351f3c9865e99da4debc"
+        }
+      ],
+      "declared_repository": "https://github.com/pyfisch/httpdate",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "638da761065df8b67282b0a1d139c0a7e4a02429"
+        },
+        "path_in_vcs": ""
+      },
+      "effective_build_script": null,
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "Hyper date formatting/parsing; forbids unsafe, no autonomous I/O/process found. Not a general calendar validation audit."
+    },
+    {
+      "identity": {
+        "name": "hyper",
+        "version": "1.12.0",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "2c3e324da4c95177d6291d4c8730197c0d1822f8a9766814a4a44fa5ab797c9c"
+      },
+      "archive_bytes": 172269,
+      "packaged_files": 70,
+      "packaged_tree_sha256": "c457df6d36f3fb026348d4ac5c83b6e49e4067081167c38b37ec8d58b09fa8a2",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "dda7caddb7df155f479d2bd4764f201c57311f04969a0e7c893362765857161a",
+      "original_manifest_sha256": "226a36792ab1b4cfbb7082ca10d477858a8bd0ab7b6171071f4376b02f83a85f",
+      "declared_license": "MIT",
+      "license_files": [
+        {
+          "path": "LICENSE",
+          "bytes": 1062,
+          "sha256": "2d01890414494742ba4a509fcec8efa40f6d8be22cbd72be7cff08d6fda4ec89"
+        }
+      ],
+      "declared_repository": "https://github.com/hyperium/hyper",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "7f67699ce32d717081deb7018b4da7d679277ac0"
+        },
+        "path_in_vcs": ""
+      },
+      "effective_build_script": false,
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "Native HTTP/1 transport; caller-provided I/O/executor. Unsafe read buffers/upgrades/wakers; caller TLS/auth/budgets/deadlines retained. Optional HTTP2/C FFI not qualified."
+    },
+    {
+      "identity": {
+        "name": "hyper-util",
+        "version": "0.1.21",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "ddc03d96684f9226b8a787cdb71488417b53ab5ea8fdb1dac946cb9431cc8bff"
+      },
+      "archive_bytes": 126820,
+      "packaged_files": 62,
+      "packaged_tree_sha256": "b7208aa0116e4987e38d2bdf081bac6e1d08c7c44b49667c5443fb731b74b174",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "be68258b960525839b23a699362c550c7c5e73934cabd9dfe1b2a3fdebb37a2e",
+      "original_manifest_sha256": "ecdace19ddd41ff8f9d3c2b87d4cdc3daa1c5820d64a268817f6431ab1ba856c",
+      "declared_license": "MIT",
+      "license_files": [
+        {
+          "path": "LICENSE",
+          "bytes": 1062,
+          "sha256": "9e0a97848ea543aef745c98e84fde696a9a3e0735538f6daefdd3cb1942effc1"
+        }
+      ],
+      "declared_repository": "https://github.com/hyperium/hyper-util",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "23a868965964c1d6bb1b94f30ba4c420a4bebe7c"
+        },
+        "path_in_vcs": ""
+      },
+      "effective_build_script": false,
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "Tokio I/O adapter with unsafe ReadBuf projection. Optional legacy DNS/socket/proxy-environment paths exist; direct declaration selects tokio. Unified feature graph not executed."
+    },
+    {
+      "identity": {
+        "name": "lazy_static",
+        "version": "1.5.1",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "20870f649af7073d53e38067b2a84312175d56ea15217e1b15bc83506ec50afb"
+      },
+      "archive_bytes": 13937,
+      "packaged_files": 21,
+      "packaged_tree_sha256": "981e1c92d25c3c999a2f5889a86cd89cce1636ab3106f46f3445d0de777b350d",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "032c43c141ba8df09f2bf4910e0a660a790394458cc319ad45e444e08458a742",
+      "original_manifest_sha256": "2b8098d84f9d7906658ed7271b6292560e966a23efd5627652528206a8675b51",
+      "declared_license": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10847,
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1023,
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+        }
+      ],
+      "declared_repository": "https://github.com/rust-lang-nursery/lazy-static.rs",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "4c1b9a170c157d679592e2682b13cc780c1db814"
+        },
+        "path_in_vcs": ""
+      },
+      "effective_build_script": false,
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "Parser shared initialization; Once/MaybeUninit unsafe publication inspected, no autonomous I/O/process found. User initializer behavior is outside this crate's guarantee."
+    },
+    {
+      "identity": {
+        "name": "num-bigint",
+        "version": "0.4.8",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "c89e69e7e0f03bea5ef08013795c25018e101932225a656383bd384495ecc367"
+      },
+      "archive_bytes": 109961,
+      "packaged_files": 53,
+      "packaged_tree_sha256": "ea497f318ef1e89ba87a294731f77112a03a1c9f80df70bdfb4b4841933f9e41",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "fcb19e142df64dc58a459ba33e1e22c1551497962f8037ed98df124d749f28f1",
+      "original_manifest_sha256": "62010089fd0c2ef0106c006dfe18bc07d01152a0d761b026de2a3b409308c831",
+      "declared_license": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10847,
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1071,
+          "sha256": "6485b8ed310d3f0340bf1ad1f47645069ce4069dcc6bb46c7d5c6faf41de1fdb"
+        }
+      ],
+      "declared_repository": "https://github.com/rust-num/num-bigint",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "65330056d6c00def4c6cda78c87453f4c2a76913"
+        },
+        "path_in_vcs": ""
+      },
+      "effective_build_script": false,
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "ASN.1 arbitrary precision integers; unsafe ASCII/UTF8 conversion and CPU arithmetic intrinsics inspected. Not constant-time crypto assurance; caller allocation limits remain required."
+    },
+    {
+      "identity": {
+        "name": "num-conv",
+        "version": "0.2.2",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "521739c6d2bac4aa25192232afe6841231376b2b26d4d9fae5ecf8ca5772e441"
+      },
+      "archive_bytes": 7441,
+      "packaged_files": 8,
+      "packaged_tree_sha256": "787520d51153dc57ced953cb3e2c7371fee64f848c15320f89a8ac6423fa519e",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "ecd9eaa1fb85eb5c739bce95bf50387e018e3b3f0d109e97416111acbb190028",
+      "original_manifest_sha256": "59aa824bbf80cc75cd8c3056f67c1ca43b9452130831d53d907c967790128531",
+      "declared_license": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "path": "LICENSE-Apache",
+          "bytes": 10174,
+          "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1050,
+          "sha256": "e2e245f2b566d0bfafb0f6a04c16b82d710c4e6e7d799e39bb4ef6e541b85b98"
+        }
+      ],
+      "declared_repository": "https://github.com/jhpratt/num-conv",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "b022fe87ac3ad5b0d7606ea7465549eaa92efe97"
+        },
+        "path_in_vcs": ""
+      },
+      "effective_build_script": false,
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "Time integer conversions; pure arithmetic/traits, no external I/O/process or unsafe found in inspected source. No exhaustive arithmetic proof."
+    },
+    {
+      "identity": {
+        "name": "oid-registry",
+        "version": "0.8.1",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "12f40cff3dde1b6087cc5d5f5d4d65712f34016a03ed60e9c08dcc392736b5b7"
+      },
+      "archive_bytes": 16668,
+      "packaged_files": 13,
+      "packaged_tree_sha256": "1b205b5fd3a113e8ac2b7e2ccd3afe5d74788581315b1fcd25f48c8c2008faa0",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "b6d5c66c99ff1f09e6c960141f52af112289600d09dde5691f13b3c0541d0f33",
+      "original_manifest_sha256": "a55c6da99f55d0d80def3266720fd24c6b2f6406c136806707b549b6ae333ff7",
+      "declared_license": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10847,
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1060,
+          "sha256": "a5c61b93b6ee1d104af9920cf020ff3c7efe818e31fe562c72261847a728f513"
+        }
+      ],
+      "declared_repository": "https://github.com/rusticata/oid-registry.git",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "33b20513b73ce04e1de48232beba3fa89df33b1d"
+        },
+        "path_in_vcs": ""
+      },
+      "effective_build_script": "build.rs",
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "Certificate OID names; build script reads packaged assets/oid_db.txt and writes OUT_DIR/oid_db.rs. No subprocess/download; fixed verified archive DB is a compiler input. Runtime forbids unsafe."
+    },
+    {
+      "identity": {
+        "name": "pem",
+        "version": "4.0.0",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "d354a98a3d1251555de99e8fdd8afda05573c31b82f59063a7b0a29b5527f120"
+      },
+      "archive_bytes": 18770,
+      "packaged_files": 13,
+      "packaged_tree_sha256": "60d84ebc0bb0f887e5bac5f083b11aa98cefb5c1b084edc2c68dbc764f8b59d5",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "5352d4883418c4e8c319bb5ee9721592f0cb6f29b23cbf7be17cf9b417ef02eb",
+      "original_manifest_sha256": "1d487e7b437eeca519268ec44163efc0044058f89427dffaee55fca542beb4b1",
+      "declared_license": "MIT",
+      "license_files": [
+        {
+          "path": "LICENSE.md",
+          "bytes": 1085,
+          "sha256": "b7c76ff4466a3aeb6a7d903e81b651335e97d64ecb857e2ee9812a36c6fd1acf"
+        }
+      ],
+      "declared_repository": "https://github.com/jcreekmore/pem-rs.git",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "99c15c08f1389153ed037c33750f8605bbf8bd55"
+        },
+        "path_in_vcs": ""
+      },
+      "effective_build_script": false,
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "Owned CA PEM armor; pure parse/encode, no unsafe/external I/O/process found in inspected source. Decoding is not certificate trust validation."
+    },
+    {
+      "identity": {
+        "name": "powerfmt",
+        "version": "0.2.1",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "4a6394b9e965e73d0a289ee54f589087e2c676aedf60885baf52c76b771e4958"
+      },
+      "archive_bytes": 16184,
+      "packaged_files": 12,
+      "packaged_tree_sha256": "18d81bf20694ea47788b5762b0b458e1d4780fc122a045401e81b36b2bf06ff8",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "623e62724836792656467cabde148f04a3e4fefb5b86ae5e43195cb79a3fcdfb",
+      "original_manifest_sha256": "4d84c86c2baebe52da4530906cd90718a9de954564e1ec93a7e8bcc1d2220322",
+      "declared_license": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "path": "LICENSE-Apache",
+          "bytes": 11349,
+          "sha256": "155420c6403d4e0fca34105e3c03fdd6939b64c393c7ec6f95f5b72c5474eab0"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1062,
+          "sha256": "070dbc7dda03a29296f2d58bdb9b7331af90f2abc9f31df22875d1eabaf29852"
+        }
+      ],
+      "declared_repository": "https://github.com/jhpratt/powerfmt",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "3dd45162a7e64d6b354675e4282d0550dce8bfc8"
+        },
+        "path_in_vcs": "powerfmt"
+      },
+      "effective_build_script": false,
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "Time formatting; unsafe MaybeUninit buffers rely on initialized width/precision contracts. No autonomous I/O/process found; full soundness not proved."
+    },
+    {
+      "identity": {
+        "name": "rcgen",
+        "version": "0.14.10",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "8774e05a7d0de114588e6a28fe7e71694b82614ed569d86d8b389dfbc98b8ad8"
+      },
+      "archive_bytes": 65329,
+      "packaged_files": 22,
+      "packaged_tree_sha256": "208bcd2b0d20cded21391d78802ce7923412e072a812198e0d089e0767c91ae4",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "e6ce71bc561976d61894777346d043ec44c3847838b557046a261e29613a1ef4",
+      "original_manifest_sha256": "a3fea5b4d7e3a33603ad0a80e7290ee69cf9b02b3023919d26e6ea04debfad3e",
+      "declared_license": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "path": "LICENSE",
+          "bytes": 11670,
+          "sha256": "debe6fed7ac143217c7f533759c54b14f18cd01d5fe195c51d83c2ae2d136cb4"
+        }
+      ],
+      "declared_repository": "https://github.com/rustls/rcgen",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "f4a3b165c467c070d5c74b86acc2c3f0a0be10ab"
+        },
+        "path_in_vcs": "rcgen"
+      },
+      "effective_build_script": false,
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "Owner-private CA/leaf issuance using ring SystemRandom; forbids unsafe, no build script. Issuer CA parser assumes rather than validates CA. Private key DER clones are not automatically zeroized; optional zeroize omitted by AIRK."
+    },
+    {
+      "identity": {
+        "name": "ring",
+        "version": "0.17.14",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "a4689e6c2294d81e88dc6261c768b63bc4fcdb852be6d1352498b114f61383b7"
+      },
+      "archive_bytes": 1502610,
+      "packaged_files": 391,
+      "packaged_tree_sha256": "af7da630b228bd4660cc53908a077a262392c7613c13f24f26510c953e6675c6",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "b81a19b27cc744410b056eb1d1195ecd41e25a163acadfca3c6457e96b797d3f",
+      "original_manifest_sha256": "4c58550e0f323c33bff699c2c00ee7320f2e078b68e9eafc9b269f65784873de",
+      "declared_license": "Apache-2.0 AND ISC",
+      "license_files": [
+        {
+          "path": "LICENSE",
+          "bytes": 499,
+          "sha256": "b3d734001a94efff3579978d953391aa7115f877657d25eb54037a43875d078a"
+        },
+        {
+          "path": "LICENSE-BoringSSL",
+          "bytes": 14870,
+          "sha256": "005fc765ddc5115da796cca915baa9557abae13ff35e0a47c47affc56f6c414d"
+        },
+        {
+          "path": "LICENSE-other-bits",
+          "bytes": 731,
+          "sha256": "f025ccfb7dfb6bdfedc75ca0f67acc69e6fb4998143d834f7c2f38a29989680f"
+        },
+        {
+          "path": "src/polyfill/once_cell/LICENSE-APACHE",
+          "bytes": 10847,
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+        },
+        {
+          "path": "src/polyfill/once_cell/LICENSE-MIT",
+          "bytes": 1022,
+          "sha256": "6ee2ed6c77710de911761acd5fc1ad1da00f476beb1a7ef27e78c2d1858deafc"
+        },
+        {
+          "path": "third_party/fiat/LICENSE",
+          "bytes": 638,
+          "sha256": "9eacbcb81be660840c714a560a9d65ba07913db98dd4baf969f78dd499fdd60f"
+        }
+      ],
+      "declared_repository": "https://github.com/briansmith/ring",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "2723abbca9e83347d82b056d5b239c6604f786df",
+          "dirty": true
+        },
+        "path_in_vcs": ""
+      },
+      "effective_build_script": "build.rs",
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "TLS cryptography and OS entropy via Rust/C/ASM FFI and CPU dispatch. Build script executes compiler/assembler, can consume shipped pregenerated objects, optional regeneration Perl/NASM; no download found. Packaged dirty VCS metadata and nested Apache/ISC notices retained; no crypto/prebuilt reproducibility audit."
+    },
+    {
+      "identity": {
+        "name": "rusticata-macros",
+        "version": "4.1.0",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "faf0c4a6ece9950b9abdb62b1cfcf2a68b3b67a10ba445b3bb85be2a293d0632"
+      },
+      "archive_bytes": 11746,
+      "packaged_files": 17,
+      "packaged_tree_sha256": "69e5aa282df660a12282e660249a3f6cabf509f6dc7aa5d59f6c9f5b074b30c0",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "bd460c97047304654d8c5327664e504af3b0a26f2b20ff3ef9c18a6a4368ff51",
+      "original_manifest_sha256": "7b83708715907cf46c15e1e9aae58ca556b135ee8955ceb06968b0220dc4a032",
+      "declared_license": "MIT/Apache-2.0",
+      "license_files": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10847,
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1060,
+          "sha256": "a5c61b93b6ee1d104af9920cf020ff3c7efe818e31fe562c72261847a728f513"
+        }
+      ],
+      "declared_repository": "https://github.com/rusticata/rusticata-macros.git",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "d6b00e821e9148bada1aa4eccc29a5948dc4ab23"
+        },
+        "path_in_vcs": ""
+      },
+      "effective_build_script": null,
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "ASN.1 parser combinator macros; inspected source has no unsafe/autonomous I/O/process. Composed parser completeness/resource bounds remain caller responsibilities."
+    },
+    {
+      "identity": {
+        "name": "rustls",
+        "version": "0.23.45",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
+      },
+      "archive_bytes": 378933,
+      "packaged_files": 119,
+      "packaged_tree_sha256": "1cc42e6aa67f63f59e643d438f3a03ba154b93ce30c8fec1f2b4b50e34a8f1a6",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "9f101ca003e89fff8231fe6da21e67a866b5c1139c8af2a5bc6015b72f4fe383",
+      "original_manifest_sha256": "738a530135cacb25934c9f38798aac39aa76494a0b3e8c765e1b985e5128b6e7",
+      "declared_license": "Apache-2.0 OR ISC OR MIT",
+      "license_files": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10847,
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+        },
+        {
+          "path": "LICENSE-ISC",
+          "bytes": 775,
+          "sha256": "7cfafc877eccc46c0e346ccbaa5c51bb6b894d2b818e617d970211e232785ad4"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1082,
+          "sha256": "709e3175b4212f7b13aa93971c9f62ff8c69ec45ad8c6532a7e0c41d7a7d6f8c"
+        }
+      ],
+      "declared_repository": "https://github.com/rustls/rustls",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "2976d90fd1c2db6b518700dd101b714069cfcb17"
+        },
+        "path_in_vcs": "rustls"
+      },
+      "effective_build_script": "build.rs",
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "TLS engine, forbids unsafe, ring/WebPKI delegation; build script probes optional nightly cfg. Explicit KeyLogFile can read SSLKEYLOGFILE/write secrets; AIRK must not install logger. No protocol/crypto correctness certification."
+    },
+    {
+      "identity": {
+        "name": "rustls-pki-types",
+        "version": "1.15.1",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "2f4925028c7eb5d1fcdaf196971378ed9d2c1c4efc7dc5d011256f76c99c0a96"
+      },
+      "archive_bytes": 39322,
+      "packaged_files": 32,
+      "packaged_tree_sha256": "9d17da0108ef6d79e5a124876640b7fdda8325d1a6fd310aa03cc46305e03c0f",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "f47414e4c62453298a6f39b38d612289b035e2ad8300125c998bfeb4eaa69c8a",
+      "original_manifest_sha256": "4813261876b3d05e62fe5e23880cc97c1daa985888fb8ed4679434930f2de073",
+      "declared_license": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10835,
+          "sha256": "45fd05c4865e7c350b98ad7ac50e1b15462d49af4a91e9b0c9dd933dc9a69742"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1080,
+          "sha256": "9117d922e667125508dde62b02c1f57ed22f5ad21eb536aa2e2d99e1c796e639"
+        }
+      ],
+      "declared_repository": "https://github.com/rustls/pki-types",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "e29ad15465126acc089b39611bcec85e27ce0817"
+        },
+        "path_in_vcs": ""
+      },
+      "effective_build_script": false,
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "TLS key/certificate/name containers; explicit caller PEM file APIs and fixed-layout unsafe IPv6 conversion. Zeroization is API-specific, not all copies. No independent trust validation in types."
+    },
+    {
+      "identity": {
+        "name": "rustls-webpki",
+        "version": "0.103.16",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "4443b1b6d39d7c663139942cc4558262562d2c84123bb6282ef177009ca8b281"
+      },
+      "archive_bytes": 89984,
+      "packaged_files": 36,
+      "packaged_tree_sha256": "a5b3968d3eadd5a84a2a9ed28ec39c0c76abc8e17d94b1eaafde7f16249f79dc",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "5b759da0e12ee54e9b3ee5e0d3fac82e0ecee11317d464f9dfbb53e9d73d0948",
+      "original_manifest_sha256": "d2264fd4cf50e851dfd8a5d1a9f24cc4518f8205520c92707d2a8613ef4cdd88",
+      "declared_license": "ISC",
+      "license_files": [
+        {
+          "path": "LICENSE",
+          "bytes": 916,
+          "sha256": "5b698ca13897be3afdb7174256fa1574f8c6892b8bea1a66dd6469d3fe27885a"
+        }
+      ],
+      "declared_repository": "https://github.com/rustls/webpki",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "8ecdcc76f56b68fda67a6adf7976f5eed5006a4c"
+        },
+        "path_in_vcs": ""
+      },
+      "effective_build_script": false,
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "TLS chain and identity validation with explicit work budgets; no unsafe/autonomous I/O/process found in inspected source. Chain and name validation are separate caller obligations; no complete cryptographic/parser audit."
+    },
+    {
+      "identity": {
+        "name": "sse-stream",
+        "version": "0.2.6",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "c25ac7aff0abd1dbc474536e40416e1102c7dd9bfba0b9861c6d357f835dcfb4"
+      },
+      "archive_bytes": 26576,
+      "packaged_files": 22,
+      "packaged_tree_sha256": "73c6a454359dfa75841ec6091901b77f99a0c99c2c7971f24150b8dd2f0492f8",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "3e96f43e636bb50360c3eae296ffdd18a123689f5945626f2d69f39f5fc8a9a9",
+      "original_manifest_sha256": "d122c6f7db9221f5a37430aed354521c640cd414ae955611d9c88caaf764561c",
+      "declared_license": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 11358,
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1062,
+          "sha256": "049d23c7810a0723f186a193f841378dbc307f62be89bdba21c73126b0df2c52"
+        }
+      ],
+      "declared_repository": "https://github.com/4t145/sse-stream/",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "3108d1ec2b5b34b6bd35e5b50bd0eb2c8fa6e04f"
+        },
+        "path_in_vcs": ""
+      },
+      "effective_build_script": false,
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "RMCP SSE parser; unfinished lines/event data grow without intrinsic byte bound; optional tracing logs invalid content. Exception conditional on caller byte/event/deadline limits and logging policy."
+    },
+    {
+      "identity": {
+        "name": "subtle",
+        "version": "2.6.1",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
+      },
+      "archive_bytes": 14562,
+      "packaged_files": 10,
+      "packaged_tree_sha256": "8e8f8a04909f3feaedc18a64731c329457acbb29371bc4ec598d3cf16c9d0578",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "a3b9aefa358b0cd742de62e880ea080414ead838847a95892acaa58575dfc4cf",
+      "original_manifest_sha256": "96e660a887170f9c01deb01a166b5e0c881a3e8fb7d5fe78658c7ce5eef3440d",
+      "declared_license": "BSD-3-Clause",
+      "license_files": [
+        {
+          "path": "LICENSE",
+          "bytes": 1582,
+          "sha256": "d1fc1bc0d155df60b2e7705b6b2ae02a05c96f948e1cec6e2fb86360b09f346b"
+        }
+      ],
+      "declared_repository": "https://github.com/dalek-cryptography/subtle",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "5457b5448b021d1da101ababbb854e6657233943"
+        },
+        "path_in_vcs": ""
+      },
+      "effective_build_script": false,
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "Constant-time selection helpers use unsafe volatile optimization barrier; no external I/O/process. Best-effort compiler barrier, not universal constant-time proof."
+    },
+    {
+      "identity": {
+        "name": "synstructure",
+        "version": "0.13.2",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "728a70f3dbaf5bab7f0c4b1ac8d7ae5ea60a4b5549c8a5914361c99147a709d2"
+      },
+      "archive_bytes": 18950,
+      "packaged_files": 8,
+      "packaged_tree_sha256": "fc9b2675a03fa618e0505fb273e371080df5121eea20fd3b0161faced913db9e",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "a1cc9f5d8a95afc23a3e514e52bc5e2d3f59e30f28c0803eb084e3f2f16dfd3c",
+      "original_manifest_sha256": "a3b7bfea0e3ea18ed568829a3fd68e5a77dbf7d4d59e229efce497b0afa15c76",
+      "declared_license": "MIT",
+      "license_files": [
+        {
+          "path": "LICENSE",
+          "bytes": 1052,
+          "sha256": "219920e865eee70b7dcfc948a86b099e7f4fe2de01bcca2ca9a20c0a033f2b59"
+        }
+      ],
+      "declared_repository": "https://github.com/mystor/synstructure",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "91ead072fa43c55f35880bd7f75a2b0eab72a04e"
+        },
+        "path_in_vcs": ""
+      },
+      "effective_build_script": false,
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "ASN.1 derive token AST helper; no external I/O/process or unsafe found in inspected source. Generated-code behavior not fully audited."
+    },
+    {
+      "identity": {
+        "name": "time",
+        "version": "0.3.55",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "cdb87b95ec50ddfa440816d227a17b2ccbdda963a316a727fda0fc4334f7d134"
+      },
+      "archive_bytes": 279955,
+      "packaged_files": 178,
+      "packaged_tree_sha256": "f43e8eaf10a0086f87d40a7ce58652a4acce8c4306a9df4165220b5d3cc430b1",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "cc10e8f4bdbda88efd94e5df3636c909a12df9780d198e41b75acab3ba25045a",
+      "original_manifest_sha256": "68f252666cc75beb9f5df0da8c6045909d59f4d69c0da11d1108fd2552fa550e",
+      "declared_license": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "path": "LICENSE-Apache",
+          "bytes": 10174,
+          "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1057,
+          "sha256": "2537228d9a1b44a5dc595241349cae7090b326c8de165aaf89bfddef4a00d0fc"
+        }
+      ],
+      "declared_repository": "https://github.com/time-rs/time",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "857d9c404c5b6f6cb64d1bfa604c695be3369e12"
+        },
+        "path_in_vcs": "time"
+      },
+      "effective_build_script": false,
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "CA certificate validity intervals; private unsafe validated date/range operations. Optional local-offset has OS FFI; declared default std/macros are not full resolved feature proof. No autonomous process/download found."
+    },
+    {
+      "identity": {
+        "name": "time-core",
+        "version": "0.1.9",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "9e1c906769ad99c88eaa54e728060edef082f8e358ff32030cb7c7d315e81109"
+      },
+      "archive_bytes": 10320,
+      "packaged_files": 10,
+      "packaged_tree_sha256": "8db7924a3ca1f2ca7bce9ada1dd08d337bb80b42c7d2ac4cea6cd0aa509ab6c9",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "e4fcb8945ac8299fa6ece980320f557d1f1b32f9281e4dc9d047c87bc81fb41e",
+      "original_manifest_sha256": "3189bca58e349f0368a4de337d76dd6129c6f2ccdd45453912d6783e7128ed2f",
+      "declared_license": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "path": "LICENSE-Apache",
+          "bytes": 10174,
+          "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1057,
+          "sha256": "2537228d9a1b44a5dc595241349cae7090b326c8de165aaf89bfddef4a00d0fc"
+        }
+      ],
+      "declared_repository": "https://github.com/time-rs/time",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "5d8737c39b9170c36c99cfc1f9f49cf0c059c63a"
+        },
+        "path_in_vcs": "time-core"
+      },
+      "effective_build_script": false,
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "Shared time/calendar constants and arithmetic; no unsafe/external I/O/process found in inspected source. No exhaustive calendar arithmetic proof."
+    },
+    {
+      "identity": {
+        "name": "time-macros",
+        "version": "0.2.32",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "7e689342a48d2ea927c87ea50cabf8594854bf940e9310208848d680d668ed85"
+      },
+      "archive_bytes": 33664,
+      "packaged_files": 27,
+      "packaged_tree_sha256": "9614c71b446f63a1fb422e32fe4a86c0f20cd38dec00176a9c0cba6a111a3685",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "26d08e95ebfc19a4f74668251de04bac0856597126a2db21d153f5962459e856",
+      "original_manifest_sha256": "f3612e7e92125c1781619f6b7da59d73a8ec10c768299b153df24fe326a8affd",
+      "declared_license": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "path": "LICENSE-Apache",
+          "bytes": 10174,
+          "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1057,
+          "sha256": "2537228d9a1b44a5dc595241349cae7090b326c8de165aaf89bfddef4a00d0fc"
+        }
+      ],
+      "declared_repository": "https://github.com/time-rs/time",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "d1c55a454051c83e8fd2ad8431cf37b90dd6ea31"
+        },
+        "path_in_vcs": "time-macros"
+      },
+      "effective_build_script": false,
+      "procedural_macro": true,
+      "exception_rationale_and_limits": "Compiler-executed date/time literal macros; unsafe UTF8/slice and emitted unchecked validated constructors. No external I/O/process found; no full generated-code soundness proof."
+    },
+    {
+      "identity": {
+        "name": "tokio-rustls",
+        "version": "0.26.6",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "c9cc2678c2cdd569ef8215e2afd7954ada2ae20b4fdd2c5fe6139a3b02d105db"
+      },
+      "archive_bytes": 29259,
+      "packaged_files": 16,
+      "packaged_tree_sha256": "3423732bac0035ec1f426c8dc4ae80937cc20145028be1001dd2f2ef5f8d176a",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "ad124b109caa4315c0a45dabb5211f272bf913462914ddeedb4c9aa9f6e19e41",
+      "original_manifest_sha256": "48fe38d0ae71835f9ebc3630a6b89c7085e6a67534a2bcf54e0d998d83be289f",
+      "declared_license": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10832,
+          "sha256": "cc117d90b498b32b11a886f279b359da16a73c3b01efbb2f5cc004b20262334e"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1056,
+          "sha256": "e20fa2b8e0a2565f24a792b94b4bf4b6c2b9d36f781d8a9516e218a036e6677a"
+        }
+      ],
+      "declared_repository": "https://github.com/rustls/tokio-rustls",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "8aebb7c9556ea8024c1b974b84a4a6f2e306889a"
+        },
+        "path_in_vcs": ""
+      },
+      "effective_build_script": false,
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "Async TLS over caller-provided I/O, no autonomous dial/resolve; no unsafe/build script found. Caller owns deadlines, authorization, CA validation and cancellation."
+    },
+    {
+      "identity": {
+        "name": "tower-service",
+        "version": "0.3.3",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
+      },
+      "archive_bytes": 6950,
+      "packaged_files": 7,
+      "packaged_tree_sha256": "a47266243118d4c5f1e5077db3820f901ccfdf0bf2e825c050bb80d42143b389",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "98a29ed09a717054bacd7ae7515e59000303932d04c5da5d5af0f4828f40453d",
+      "original_manifest_sha256": "3848c8400633ab3a141d64c45ca70b42dce03794a2f63184558ddbe37d074db8",
+      "declared_license": "MIT",
+      "license_files": [
+        {
+          "path": "LICENSE",
+          "bytes": 1062,
+          "sha256": "4249c8e6c5ebb85f97c77e6457c6fafc1066406eb8f1ef61e796fbdc5ff18482"
+        }
+      ],
+      "declared_repository": "https://github.com/tower-rs/tower",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "646804d77eebf072dac180cb5e1256b9ee7e0229"
+        },
+        "path_in_vcs": "tower-service"
+      },
+      "effective_build_script": false,
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "Readiness/call trait, forbids unsafe; implementers must release admission reservations on cancellation. No independent scheduler/admission guarantee."
+    },
+    {
+      "identity": {
+        "name": "try-lock",
+        "version": "0.2.5",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
+      },
+      "archive_bytes": 4314,
+      "packaged_files": 8,
+      "packaged_tree_sha256": "78e1428a7b002d599a374dc8d4f78e92b1e0d7afe3c5efba794180fac85ae4d7",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "b929e378a4dd54a76870264bb0b25d059c8a12ec1dda78a8017d7dbba96260fc",
+      "original_manifest_sha256": "8a54a701aa2af45dbc6621b9e4881638b6f4f7e3a88885fd870a19818a7aacba",
+      "declared_license": "MIT",
+      "license_files": [
+        {
+          "path": "LICENSE",
+          "bytes": 1096,
+          "sha256": "c816a0749cdc6bf062a5111c159723de51b2bfac66a1dac2655abd9e6b1583eb"
+        }
+      ],
+      "declared_repository": "https://github.com/seanmonstar/try-lock",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "fd160ecd9105e8afcc43dbea450a0ef6e5128cce"
+        },
+        "path_in_vcs": ""
+      },
+      "effective_build_script": null,
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "CONDITIONAL: deprecated safe try_lock_order is documented unsound for weak ordering. Inspected want callers use checked try_lock_explicit SeqCst only; no deprecated callers found in AIRK/Hyper/want. Do not certify crate-wide soundness; reject future unchecked/weak-order usage."
+    },
+    {
+      "identity": {
+        "name": "untrusted",
+        "version": "0.9.0",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
+      },
+      "archive_bytes": 14447,
+      "packaged_files": 19,
+      "packaged_tree_sha256": "73b81f00e229f0142a9bfbf5ee4a7d19277c3c8f0a7d352fa349b4cc29228476",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "25efda62e6e0a7e3cf463ff88bd9d9321befb22de7660cd63b2a0a195d70aed6",
+      "original_manifest_sha256": "6c0de4b4eb8c2aa14aa20cf57a72e518bf1a7e937f1954a78ec345936439344a",
+      "declared_license": "ISC",
+      "license_files": [
+        {
+          "path": "LICENSE.txt",
+          "bytes": 769,
+          "sha256": "7abd9b6960dcf7d4d0a48606a5b71bfe37d472db68d70637f3a58a56785f1621"
+        }
+      ],
+      "declared_repository": "https://github.com/briansmith/untrusted",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "89c8b8415f692d3803d183fc5fbf9ec08a6adcf4"
+        }
+      },
+      "effective_build_script": null,
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "Checked bounded input reader/read_all rejects trailing input; no unsafe/build script/autonomous I/O/process found. Does not validate higher-level certificate semantics."
+    },
+    {
+      "identity": {
+        "name": "want",
+        "version": "0.3.2",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "ec4cdd0dd910afe868b7ef477227d8d538b46b3075031afee8a9f2acb0a2ed0b"
+      },
+      "archive_bytes": 7311,
+      "packaged_files": 9,
+      "packaged_tree_sha256": "e9a7c04115bf1fb1d58a174a30bff76cb2a777cdaaca905ab89755fe0c740549",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "0c927cd8eafad73bbcbedd78694f629ee836e04fbd090b94af0366125b0188ed",
+      "original_manifest_sha256": "ea938e8ff2e84f430cd7f6a593e9b5da8b4a0c64f13a7e61590d2249dbd18638",
+      "declared_license": "MIT",
+      "license_files": [
+        {
+          "path": "LICENSE",
+          "bytes": 1063,
+          "sha256": "a65f5d0a945d267751344c95665945b90c030ea107faf5c85d518929886187da"
+        }
+      ],
+      "declared_repository": "https://github.com/seanmonstar/want",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "322291ce5a87c72ecfd83d383d0d7f5245cf72c6"
+        },
+        "path_in_vcs": ""
+      },
+      "effective_build_script": false,
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "Hyper readiness uses checked try_lock_explicit SeqCst at both inspected calls, atomic state and caller wakers; no unsafe/external I/O found. Conditional on try-lock checked usage; no concurrency proof."
+    },
+    {
+      "identity": {
+        "name": "windows-sys",
+        "version": "0.52.0",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "282be5f36a8ce781fad8c8ae18fa3f9beff57ec1b52cb3de0789201425d9a33d"
+      },
+      "archive_bytes": 2576877,
+      "packaged_files": 241,
+      "packaged_tree_sha256": "13d7956c56317c199fc686e4bbd3ad88dc26fd0f321332e4ed91df8d074765e0",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "ff53899cc9a441f18f66fd21c4784716a0aab5020a21cba5764ac8ee1e1f34cd",
+      "original_manifest_sha256": "e3966aa39979c7b7b7e65bc771fd1f562d59605c33faeda8c13f441694f26aa6",
+      "declared_license": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "path": "license-apache-2.0",
+          "bytes": 11351,
+          "sha256": "c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b"
+        },
+        {
+          "path": "license-mit",
+          "bytes": 1141,
+          "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+        }
+      ],
+      "declared_repository": "https://github.com/microsoft/windows-rs",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "3a605cba064b26f2a198ac58085f8c8836f47c38"
+        },
+        "path_in_vcs": "crates/libs/sys"
+      },
+      "effective_build_script": null,
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "Getrandom Windows OS bindings: generated unsafe extern declarations/macros; platform ABI/handle lifetime is caller responsibility. No build script. No cross-target execution qualification."
+    },
+    {
+      "identity": {
+        "name": "windows-targets",
+        "version": "0.52.6",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "9b724f72796e036ab90c1021d4780d4d3d648aca59e491e6b98e725b84e99973"
+      },
+      "archive_bytes": 6403,
+      "packaged_files": 7,
+      "packaged_tree_sha256": "a446a3dbe433724a67b7907254225250777a390c5be839f669291b1f1888e275",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "315c2609b517bc97f1ddb62ecdadfc66f44f03f6bceb74adcdc3cec26f2126b6",
+      "original_manifest_sha256": "124a89a5b658b7bbe23cada5f0e32ca41f0c2678e5746be3dedd6976685fa5c0",
+      "declared_license": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "path": "license-apache-2.0",
+          "bytes": 11351,
+          "sha256": "c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b"
+        },
+        {
+          "path": "license-mit",
+          "bytes": 1141,
+          "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+        }
+      ],
+      "declared_repository": "https://github.com/microsoft/windows-rs",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "db06b51c2ebb743efb544d40e3064efa49f28d38"
+        },
+        "path_in_vcs": "crates/libs/targets"
+      },
+      "effective_build_script": false,
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "Architecture-specific Windows linking macros select OS import libraries/raw-dylib. No downloader/process/build script. Imported ABI correctness and other targets not runtime-qualified."
+    },
+    {
+      "identity": {
+        "name": "windows_aarch64_gnullvm",
+        "version": "0.52.6",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "32a4622180e7a0ec044bb555404c800bc9fd9ec262ec147edd5989ccd0c02cd3"
+      },
+      "archive_bytes": 435718,
+      "packaged_files": 8,
+      "packaged_tree_sha256": "99df61eab7c5308d7eb72aabec015381687583e19a8b259ad26c93afd45eba73",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "7535a631f6950dae31847b64f09469b499bc00fc492374fbb37589cfb9f2d02e",
+      "original_manifest_sha256": "6775ecceb39640c62b0e1f1cc3d4b0ac4acafbeec6d24ce9fd8b3b1cf7c4a68a",
+      "declared_license": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "path": "license-apache-2.0",
+          "bytes": 11351,
+          "sha256": "c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b"
+        },
+        {
+          "path": "license-mit",
+          "bytes": 1141,
+          "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+        }
+      ],
+      "declared_repository": "https://github.com/microsoft/windows-rs",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "db06b51c2ebb743efb544d40e3064efa49f28d38"
+        },
+        "path_in_vcs": "crates/targets/aarch64_gnullvm"
+      },
+      "effective_build_script": "build.rs",
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "Windows architecture import-library package; build.rs only emits CARGO_MANIFEST_DIR/lib link search. Published binary import libraries are exact registry-checksummed bytes, not independently regenerated or qualified on this architecture. No network/subprocess found."
+    },
+    {
+      "identity": {
+        "name": "windows_aarch64_msvc",
+        "version": "0.52.6",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "09ec2a7bb152e2252b53fa7803150007879548bc709c039df7627cabbd05d469"
+      },
+      "archive_bytes": 832615,
+      "packaged_files": 8,
+      "packaged_tree_sha256": "96c8370d0ee865df563ebac92ad523595e9f8afdef2333768000f866b24bd7b7",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "36a94f20ae8c86cfc38b0489dc9c4a9d0607d5f8e1e3216c866eae9e5bd2d5a5",
+      "original_manifest_sha256": "924ffb9dba95a55052dc3d58d091fa970580e647fc7b804783cd6c90c0356618",
+      "declared_license": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "path": "license-apache-2.0",
+          "bytes": 11351,
+          "sha256": "c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b"
+        },
+        {
+          "path": "license-mit",
+          "bytes": 1141,
+          "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+        }
+      ],
+      "declared_repository": "https://github.com/microsoft/windows-rs",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "db06b51c2ebb743efb544d40e3064efa49f28d38"
+        },
+        "path_in_vcs": "crates/targets/aarch64_msvc"
+      },
+      "effective_build_script": "build.rs",
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "Windows architecture import-library package; build.rs only emits CARGO_MANIFEST_DIR/lib link search. Published binary import libraries are exact registry-checksummed bytes, not independently regenerated or qualified on this architecture. No network/subprocess found."
+    },
+    {
+      "identity": {
+        "name": "windows_i686_gnu",
+        "version": "0.52.6",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "8e9b5ad5ab802e97eb8e295ac6720e509ee4c243f69d781394014ebfe8bbfa0b"
+      },
+      "archive_bytes": 880402,
+      "packaged_files": 8,
+      "packaged_tree_sha256": "7abc246364f9a1338dc8ed0206689915dca3514ac4aeadb6fa237f30b1925deb",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "bd9f2440820141c9a41c21b48a9d98c4c14f41936afe10e911ba963aa2c35809",
+      "original_manifest_sha256": "0082103cef0e9a7ac13250eb51050ccf0b0506610bef59a8558345b6792c97e1",
+      "declared_license": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "path": "license-apache-2.0",
+          "bytes": 11351,
+          "sha256": "c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b"
+        },
+        {
+          "path": "license-mit",
+          "bytes": 1141,
+          "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+        }
+      ],
+      "declared_repository": "https://github.com/microsoft/windows-rs",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "db06b51c2ebb743efb544d40e3064efa49f28d38"
+        },
+        "path_in_vcs": "crates/targets/i686_gnu"
+      },
+      "effective_build_script": "build.rs",
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "Windows architecture import-library package; build.rs only emits CARGO_MANIFEST_DIR/lib link search. Published binary import libraries are exact registry-checksummed bytes, not independently regenerated or qualified on this architecture. No network/subprocess found."
+    },
+    {
+      "identity": {
+        "name": "windows_i686_gnullvm",
+        "version": "0.52.6",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "0eee52d38c090b3caa76c563b86c3a4bd71ef1a819287c19d586d7334ae8ed66"
+      },
+      "archive_bytes": 475940,
+      "packaged_files": 8,
+      "packaged_tree_sha256": "8a6790b33408c6adf2e2303736d645de2652c18b6aff8e78cba5b2fb06c9ac3e",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "ab3340805fce89252fa7d9c7e38fcdc2d8f5aa114dfdaa4d7926c7265ea54f38",
+      "original_manifest_sha256": "7bd223c65c05f15a19e3426d9165e655aaf111b88c2001c51910946c8ad2f92c",
+      "declared_license": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "path": "license-apache-2.0",
+          "bytes": 11351,
+          "sha256": "c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b"
+        },
+        {
+          "path": "license-mit",
+          "bytes": 1141,
+          "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+        }
+      ],
+      "declared_repository": "https://github.com/microsoft/windows-rs",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "db06b51c2ebb743efb544d40e3064efa49f28d38"
+        },
+        "path_in_vcs": "crates/targets/i686_gnullvm"
+      },
+      "effective_build_script": "build.rs",
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "Windows architecture import-library package; build.rs only emits CARGO_MANIFEST_DIR/lib link search. Published binary import libraries are exact registry-checksummed bytes, not independently regenerated or qualified on this architecture. No network/subprocess found."
+    },
+    {
+      "identity": {
+        "name": "windows_i686_msvc",
+        "version": "0.52.6",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "240948bc05c5e7c6dabba28bf89d89ffce3e303022809e73deaefe4f6ec56c66"
+      },
+      "archive_bytes": 901163,
+      "packaged_files": 8,
+      "packaged_tree_sha256": "3997958de50aeb44bd4921c21ff0477c15f71250f5c6d14e1424433b2bc3392d",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "30419314e9cb467e2ddfe347f1626a9b59f030041bcdc9cb563cbc5a39fc4a5f",
+      "original_manifest_sha256": "934cc2fefa7b48ea34307ce5cb0691aed87e11abc8d58125ebbaeaa971c56b92",
+      "declared_license": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "path": "license-apache-2.0",
+          "bytes": 11351,
+          "sha256": "c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b"
+        },
+        {
+          "path": "license-mit",
+          "bytes": 1141,
+          "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+        }
+      ],
+      "declared_repository": "https://github.com/microsoft/windows-rs",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "db06b51c2ebb743efb544d40e3064efa49f28d38"
+        },
+        "path_in_vcs": "crates/targets/i686_msvc"
+      },
+      "effective_build_script": "build.rs",
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "Windows architecture import-library package; build.rs only emits CARGO_MANIFEST_DIR/lib link search. Published binary import libraries are exact registry-checksummed bytes, not independently regenerated or qualified on this architecture. No network/subprocess found."
+    },
+    {
+      "identity": {
+        "name": "windows_x86_64_gnu",
+        "version": "0.52.6",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "147a5c80aabfbf0c7d901cb5895d1de30ef2907eb21fbbab29ca94c5b08b1a78"
+      },
+      "archive_bytes": 836363,
+      "packaged_files": 8,
+      "packaged_tree_sha256": "a233b961d021d460080777a41da7e519256e1c2244319da66988bdfe472e84d1",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "7bd069878ae02213cb113a56b15a1eac497a697de64ec0006bb0930c49b65386",
+      "original_manifest_sha256": "aeedc3b03332c1c651e81fd32863e7bf8ba3e09a1f22310772c4545888cf7a7d",
+      "declared_license": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "path": "license-apache-2.0",
+          "bytes": 11351,
+          "sha256": "c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b"
+        },
+        {
+          "path": "license-mit",
+          "bytes": 1141,
+          "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+        }
+      ],
+      "declared_repository": "https://github.com/microsoft/windows-rs",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "db06b51c2ebb743efb544d40e3064efa49f28d38"
+        },
+        "path_in_vcs": "crates/targets/x86_64_gnu"
+      },
+      "effective_build_script": "build.rs",
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "Windows architecture import-library package; build.rs only emits CARGO_MANIFEST_DIR/lib link search. Published binary import libraries are exact registry-checksummed bytes, not independently regenerated or qualified on this architecture. No network/subprocess found."
+    },
+    {
+      "identity": {
+        "name": "windows_x86_64_gnullvm",
+        "version": "0.52.6",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "24d5b23dc417412679681396f2b49f3de8c1473deb516bd34410872eff51ed0d"
+      },
+      "archive_bytes": 435707,
+      "packaged_files": 8,
+      "packaged_tree_sha256": "6ad7792677ad72e9229f1bdd87408dbd7211c2d3092152eb74f73183cc05d6d4",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "b4e30fa8303981a233886a54ab98a180041adf2815f4a0d45e34484e5fb20585",
+      "original_manifest_sha256": "39cf3aa438b36b3157081d1d6dced5c81a76895790dd8f100523f4b0d83818d1",
+      "declared_license": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "path": "license-apache-2.0",
+          "bytes": 11351,
+          "sha256": "c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b"
+        },
+        {
+          "path": "license-mit",
+          "bytes": 1141,
+          "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+        }
+      ],
+      "declared_repository": "https://github.com/microsoft/windows-rs",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "db06b51c2ebb743efb544d40e3064efa49f28d38"
+        },
+        "path_in_vcs": "crates/targets/x86_64_gnullvm"
+      },
+      "effective_build_script": "build.rs",
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "Windows architecture import-library package; build.rs only emits CARGO_MANIFEST_DIR/lib link search. Published binary import libraries are exact registry-checksummed bytes, not independently regenerated or qualified on this architecture. No network/subprocess found."
+    },
+    {
+      "identity": {
+        "name": "windows_x86_64_msvc",
+        "version": "0.52.6",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
+      },
+      "archive_bytes": 832564,
+      "packaged_files": 8,
+      "packaged_tree_sha256": "7279a2db3f500434be992fc58e65259cbdba5b9dbd58a78064b10ea3a531bdda",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "cebfc4eefe4d2c0da8ab97e31e3f5a518fc9db453a131d31d84dcdb5c16acb26",
+      "original_manifest_sha256": "2194fbcaa11f15f18ced165d5b421c760d6d39029c99bfcb2d70b20d54bd25a4",
+      "declared_license": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "path": "license-apache-2.0",
+          "bytes": 11351,
+          "sha256": "c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b"
+        },
+        {
+          "path": "license-mit",
+          "bytes": 1141,
+          "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+        }
+      ],
+      "declared_repository": "https://github.com/microsoft/windows-rs",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "db06b51c2ebb743efb544d40e3064efa49f28d38"
+        },
+        "path_in_vcs": "crates/targets/x86_64_msvc"
+      },
+      "effective_build_script": "build.rs",
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "Windows architecture import-library package; build.rs only emits CARGO_MANIFEST_DIR/lib link search. Published binary import libraries are exact registry-checksummed bytes, not independently regenerated or qualified on this architecture. No network/subprocess found."
+    },
+    {
+      "identity": {
+        "name": "x509-parser",
+        "version": "0.18.1",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "d43b0f71ce057da06bc0851b23ee24f3f86190b07203dd8f567d0b706a185202"
+      },
+      "archive_bytes": 102625,
+      "packaged_files": 74,
+      "packaged_tree_sha256": "fec3f821eee3bedac44c4b8d27fc9356449ec8deef312d442d129099c75cb0af",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "59b5f4f148244b4a7ad53750338abbc2c065ebfc4410b6931e62ced3eac57823",
+      "original_manifest_sha256": "76af3c16840fbbef9b1b8eb09d734a550c2304b27f8605efa35daeb7b8c47f82",
+      "declared_license": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10847,
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1060,
+          "sha256": "a5c61b93b6ee1d104af9920cf020ff3c7efe818e31fe562c72261847a728f513"
+        }
+      ],
+      "declared_repository": "https://github.com/rusticata/x509-parser.git",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "33b15d2db5a19b15c17bb15fa57b08691316ee95"
+        },
+        "path_in_vcs": ""
+      },
+      "effective_build_script": false,
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "Owned CA metadata parsing; forbids unsafe, explicit Read/PEM APIs; parsing is not trust/chain validation. Rustls WebPKI validates peer certificates separately. No complete parser audit."
+    },
+    {
+      "identity": {
+        "name": "yasna",
+        "version": "0.6.0",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "b5f6765e852b9b4dc8e2a76843e4d64d1cea8e79bcde0b6901aea8e7c7f08282"
+      },
+      "archive_bytes": 40598,
+      "packaged_files": 20,
+      "packaged_tree_sha256": "83d093d37c6b95ab5862f292a9951858449530310e369d75b22fe15c4d4932d6",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "95d1cf9bfdefd6f2f096d49bd0e5f99c2ba36f996bfc36b71b81385a559b84b2",
+      "original_manifest_sha256": "819d32940649065cc1a169915a599ac6eb1a818f8d71917d51c6a445bc4242e8",
+      "declared_license": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10847,
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1055,
+          "sha256": "2a7df90e60fd5512b8bca35d3ce90e068f21c52d962855053fd1d9e2e7ca0f16"
+        }
+      ],
+      "declared_repository": "https://github.com/qnighy/yasna.rs",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "3c7f2ba61cfb59c478137051a7e79ad8af0e2247"
+        },
+        "path_in_vcs": ""
+      },
+      "effective_build_script": false,
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "RCGen ASN.1 DER writer/reader; forbids unsafe, no autonomous I/O/process/build script found. Encoding correctness not exhaustively proved."
+    },
+    {
+      "identity": {
+        "name": "zeroize",
+        "version": "1.9.1",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "e13084392c5e4bc371903e2935a5eaeed24905a7511356b883835e18a78f6879"
+      },
+      "archive_bytes": 25043,
+      "packaged_files": 16,
+      "packaged_tree_sha256": "a2f2f63eee9a37bd5c6286e27c3e77aa0aed205a434e39aa9ba32cae2238449d",
+      "cache_matches_all_packaged_files": true,
+      "archive_links": 0,
+      "manifest_sha256": "71dd9b47dcf1ea92e55517d3543d1524448c76582a0a49d1d4c16c24a09f7cb0",
+      "original_manifest_sha256": "5a02315966d889fc90c682768796c8d8c92bb41b7a3568876ba9808d3976350b",
+      "declared_license": "Apache-2.0 OR MIT",
+      "license_files": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 11358,
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1082,
+          "sha256": "8c7516d4b27b1e495be5e38b612298b63de48d05f49cdac94f70f3cd70f8864b"
+        }
+      ],
+      "declared_repository": "https://github.com/RustCrypto/utils",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "34a6ebcb9b920ec7ae5809e470fce94fe7c0cb55"
+        },
+        "path_in_vcs": "zeroize"
+      },
+      "effective_build_script": false,
+      "procedural_macro": false,
+      "exception_rationale_and_limits": "Volatile writes/compiler barriers and Drop wrapper; unsafe slice operations inspected. Copies/reallocation/explicit unwrapped buffers remain outside blanket erasure guarantee."
+    }
+  ],
+  "proposal_evidence_sha256": "33741ae4555118efe8202c1a90af108f617fd0c33c424a9c6b6b785a2cd654e6",
+  "decision_scope": "Primary independently reviewed and accepted exact-version exceptions with documented limitations; not a full safe-to-deploy audit, human signature, advisory clearance or publisher trust."
+}

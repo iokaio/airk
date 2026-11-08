@@ -260,7 +260,10 @@ export async function publishLauncherCommand(launcher:string,storage:string,plat
 
 async function installPath(directory:string,context:Pick<ExtensionContext,'environmentVariableCollection'>,scope:ShellIntegration='all',touched:ShellTouch[]=[]):Promise<string[]>{
     const variables = context.environmentVariableCollection;
-    variables.persistent = true;
+    // A shared collection can also carry native MCP bearer values for future
+    // terminals. Never re-enable Code's on-disk environment cache for those.
+    variables.persistent = typeof variables[Symbol.iterator]==='function'
+        && ![...variables].some(([name])=>name.startsWith('AIRK_MCP_TOKEN_'));
     variables.description = 'Makes the installed AIRK CLI available in new terminals.';
     variables.prepend('PATH', directory + path.delimiter);
     // VS Code terminals always find the command; external shells follow the chosen scope.

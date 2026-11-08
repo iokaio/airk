@@ -581,6 +581,24 @@ pub(super) fn catalog_control(
     validate_catalog_control(&control, namespace)?;
     Ok(control)
 }
+/// Read-only routing for installer transaction exclusion, including incomplete
+/// initial staging. A known issuer journal never falls back to another control.
+pub(super) fn issuer_rotation_control(root: &Path) -> Result<Option<PathBuf>> {
+    let Some(layout) = Layout::read(root)? else {
+        return Ok(None);
+    };
+    let control = layout.state.join("control");
+    if !exists(&control.join("http-1/issuer-rotation.json"))? {
+        return Ok(None);
+    }
+    ensure!(
+        layout.ready && layout.claimed()?,
+        "issuer journal exists in an unclaimed runtime layout"
+    );
+    require_control(&control)?;
+    Ok(Some(control))
+}
+
 /// Log lookup may use verified layout ownership even when registry authority is unavailable.
 pub(super) fn saved_control(root: &Path) -> Result<PathBuf> {
     let layout = Layout::read(root)?.context("runtime state layout missing")?;
@@ -605,6 +623,20 @@ pub(super) fn retained_parameters(root: &Path) -> Result<(PathBuf, RuntimeChanne
         "runtime state layout is not claimed"
     );
     Ok((layout.state, layout.channel))
+}
+/// Actual receipt-bound paths which may never contain registered index data.
+pub(super) fn retained_private_paths(root: &Path) -> Result<Vec<PathBuf>> {
+    let layout = Layout::read(root)?.context("runtime state layout missing")?;
+    ensure!(
+        layout.ready && layout.claimed()?,
+        "runtime state layout is not claimed"
+    );
+    let mut paths = vec![layout.install, layout.state];
+    paths.extend(layout.logs);
+    if let Some(origin) = layout.managed_catalog_origin {
+        paths.push(origin.source);
+    }
+    Ok(paths)
 }
 /// Record initialization before any registry creation, under singleton ownership.
 pub(super) fn record_control(lease: &airk_store::service::ServiceLease) -> Result<()> {

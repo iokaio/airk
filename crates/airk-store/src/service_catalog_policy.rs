@@ -21,7 +21,7 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 pub(in crate::service::registry) fn job_eligibility(db: &Connection) -> Result<&'static str> {
     let version: u32 = db.pragma_query_value(None, "user_version", |row| row.get(0))?;
     ensure!(
-        matches!(version, 11 | 12),
+        matches!(version, 11..=13),
         "unsupported source policy scheduler format"
     );
     if version == 11 || super::state(db)?.policy_contract == 0 {

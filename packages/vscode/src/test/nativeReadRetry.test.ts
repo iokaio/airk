@@ -279,6 +279,12 @@ test('combined retry preserves complete qualified framing and rejects unknown ev
             memberships:[{project_id:original.selection.project_ids[0],membership_revision:1}],source_root_ids:['src_'+'07'.repeat(16)],source_revision:1,policy_epoch:0,policy_digest:null}]};
     const hint={...original.members[0].result.structuredContent,scope_observation:scope,request_id:'bounded-request'};
     assert.equal(readRetryDelay(combinedEnvelope(singleCombinedRetry(hint))),25);
+    for(const provenance of ['imported_legacy_snapshot','imported_standalone_adoption']){
+        const adopted={...hint,scope_observation:{...scope,provenance}};
+        assert.equal(readRetryDelay(combinedEnvelope(singleCombinedRetry(adopted))),25,'Native imported lineage retains the same exact safe-admission retry');
+        assert.equal(readRetryDelay(combinedEnvelope(singleCombinedRetry({...adopted,scope_observation:{...adopted.scope_observation,grant:{...scope.grant,revision:2}}}))),undefined,'New provenance never waives revision binding');
+    }
+    assert.equal(readRetryDelay(combinedEnvelope(singleCombinedRetry({...hint,scope_observation:{...scope,provenance:'future_unrecognized'}}))),undefined);
     for(const key of ['unknown_future','index_state','chunks','symbols','metadata','hits']){
         assert.equal(readRetryDelay(combinedEnvelope(singleCombinedRetry({...hint,[key]:[]}))),undefined,key);
         const error={code:'direct_query_admission',reason:'busy',query_submitted:false,retryable:true,fresh_brokerage_required:false,retry_after_ms:25,[key]:[]};

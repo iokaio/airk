@@ -63,7 +63,7 @@ function RuntimeVersions(props: { state: ScreenProps['state']; view: ManagementV
             ['VS Code extension', props.state.extensionVersion], ...props.view.runtimeVersions,
             ...(props.state.status?.runtimeVersions ?? [['MCP frontend (airk)', 'not observed'], ['Index worker (airk)', 'not observed']] as FactRow[]),
         ]} hideUnobserved />
-        <p class="muted">CLI and helper versions describe the selected installation. Process observations describe the service and the selected project’s MCP connection and worker; they may differ during an upgrade. {(props.state.status?.runtimeVersions || props.state.status?.versionsMatch !== undefined) ? `Project runtime details observed ${ago(props.state.status.detailsObservedAt ?? props.state.status.observedAt)}.` : 'Connect to the selected project to observe its processes.'} {!props.view.connected && 'Disconnected: observations may be stale.'}</p>
+        <p class="muted">CLI and historical helper versions describe the selected installation. Process observations describe the service and the selected project’s MCP connection and worker; they may differ during an upgrade. {(props.state.status?.runtimeVersions || props.state.status?.versionsMatch !== undefined) ? `Project runtime details observed ${ago(props.state.status.detailsObservedAt ?? props.state.status.observedAt)}.` : 'Connect to the selected project to observe its processes.'} {!props.view.connected && 'Disconnected: observations may be stale.'}</p>
         {props.state.status?.versionsMatch === false && <Notice noticeKey={noticeKey("runtime-versions", props.state.extensionVersion)} role="alert"><p>The observed runtime versions do not match. Review Service before relying on the new version’s behavior.</p></Notice>}
     </section>;
 }
@@ -132,7 +132,7 @@ export function IndexContents(props:{project:ProjectSummary;status?:StatusSummar
         <div class="semantic-coverage">
             <p><strong>Semantic coverage</strong> · {saved.semanticCompleted===undefined&&saved.semanticSelected===undefined?'Not reported yet':`${observed(saved.semanticCompleted)} of ${saved.semanticSelected===undefined?'an unknown number of':observed(saved.semanticSelected)} selected files`}</p>
             {coverageKnown&&<progress value={saved.semanticCompleted} max={saved.semanticSelected} aria-label="Selected files with published semantic data"/>}
-            <p class="muted">{saved.semantic==='ready'?'Semantic coverage is ready.':saved.semantic==='partial'?'Some selected files have published semantic data. Current work and waits are shown below.':saved.semantic==='disabled'?'This publication has no semantic coverage. Saved setup and current work are separate.':saved.semantic==='failed'?'Semantic indexing reported a failure; review Activity for its outcome.':`Semantic readiness: ${saved.semantic}.`} {saved.discoveryState==='ready'?'Source discovery completed for this snapshot.':saved.discoveryState==='partial'?'Source discovery is still partial.':''}</p>
+            <p class="muted">{saved.semantic==='ready'?'Semantic coverage is ready.':saved.semantic==='partial'?'Some selected files have published semantic data. Current work and waits are shown below.':saved.semantic==='unavailable'?'The semantic pipeline for this saved evidence is unavailable. This does not establish a vector opt-out or current semantic readiness.':saved.semantic==='disabled'?'This publication has no semantic coverage. Saved setup and current work are separate.':saved.semantic==='failed'?'Semantic indexing reported a failure; review Activity for its outcome.':`Semantic readiness: ${saved.semantic}.`} {saved.discoveryState==='ready'?'Source discovery completed for this snapshot.':saved.discoveryState==='partial'?'Source discovery is still partial.':''}</p>
         </div>
         <p>{sourceWorkExplanation(saved.freshness)}</p>
         <CompleteNativeResponse value={props.status?.nativeFailure ?? props.status?.combined?.nativeResult} />
@@ -479,7 +479,7 @@ export function AgentsScreen(props: ScreenProps) {
                             <button class="ghost" onClick={async()=>{try{await request('clipboard.write',{text:`AIRK ${props.state.extensionVersion} — MCP connection check\n${JSON.stringify(check,null,2)}`});setCopied('Details copied.');}catch(error){setCopied(String(error));}}}>Copy connection details</button>
                             {copied&&<p>{copied}</p>}
                         </Notice>}
-                        <p class="muted">This checks the installed launcher, MCP handshake, tool list and index status. It does not establish that Claude Code, Codex or Copilot loaded their configuration. If AIRK passes but an agent has no tools, inspect that agent’s MCP connection error.</p></article>
+                        <p class="muted">This checks the selected HTTPS connection, MCP handshake, tool list and index status. It does not establish that Claude Code, Codex or Copilot loaded their configuration. If AIRK passes but an agent has no tools, inspect that agent’s MCP connection error.</p></article>
                     <article class="card"><h2>Responses and terminal</h2>
                         <p>MCP response mode: <strong>{view.responseMode}</strong>.</p>
                         <p><strong>Terse (default)</strong> suits routine code searches and navigation. It keeps focused evidence and citations while reducing repeated metadata, leaving more of the agent’s context budget for the task.</p>
@@ -489,6 +489,8 @@ export function AgentsScreen(props: ScreenProps) {
                             <Act actions={actions} action="responseMode" enabled={view.enabled.responseMode} ghost>Choose terse / full responses</Act>
                             <button type="button" class="ghost" onClick={() => { void actions.command('airk.installCli'); }}>Install or repair CLI</button>
                             <button type="button" class="ghost" onClick={() => { void actions.command('airk.openTools'); }}>Open AIRK Tools terminal</button>
+                            <button type="button" class="ghost" onClick={() => { void actions.command('airk.httpIssuerRotationStatus'); }}>Open HTTPS issuer rotation receipt</button>
+                            <button type="button" class="ghost" onClick={() => { void actions.command('airk.rotateHttpIssuer'); }}>Review HTTPS issuer rotation…</button>
                         </div></article>
                 </div>
                 <AgentInstructions key={props.state.selectedProject} {...props}/>

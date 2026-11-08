@@ -7,10 +7,10 @@ import {NativeServiceFixture} from './nativeServiceFixture';
 import {LaunchSpec,UNIFIED_TOOLS} from '../model';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import {McpStdioSession} from '../mcpStdioSession';
+import {NativeHttpSession} from './nativeHttpSession';
 import {assertQuickStatusTimeout,observeQuickStatus,requestWithReadRetry,readRetryReceipt,ReadRetryReceipt,QuickStatusObservation,QuickStatusObserver} from './nativeReadRetry';
 
-async function quickStatus(session:McpStdioSession,observer?:QuickStatusObserver,expectedScope?:LaunchSpec['catalogSession']):Promise<any>{
+async function quickStatus(session:NativeHttpSession,observer?:QuickStatusObserver,expectedScope?:LaunchSpec['catalogSession']):Promise<any>{
     return observeQuickStatus(async deadline=>{
         // native read: observeQuickStatus applies the typed retry contract to this reply.
         const result=await session.request('tools/call',{name:'status',arguments:{}},Math.max(1,deadline-performance.now()));
@@ -35,31 +35,25 @@ function assertEmptySetupStatus(status:any):void{
     else{assert.equal(status.files,null);assert.equal(status.publication,null);}
 }
 
-test('one root-scoped MCP session survives late registration and rejects ambiguous indexes',{skip:!process.env.AIRK_TEST_BINARY,timeout:240000},async()=>{
-    const fixture=await NativeServiceFixture.create(process.env.AIRK_TEST_BINARY!);let session:McpStdioSession|undefined;
+test('one reviewed HTTPS MCP selection excludes indexes registered later',{skip:!process.env.AIRK_TEST_BINARY,timeout:240000},async()=>{
+    const fixture=await NativeServiceFixture.create(process.env.AIRK_TEST_BINARY!);let session:NativeHttpSession|undefined;
     try{
         const root=path.join(fixture.owner,'late-source');await fs.mkdir(root);
-        session=(await McpStdioSession.open({command:fixture.launcher,args:['runtime','launch','--install-dir',fixture.install,'--','--root',root,'mcp'],cwd:fixture.owner,clientName:'root-recovery-test',clientVersion:'1.6.1'},60000)).session;
-        assert.equal((await session.request('tools/list',{},10000)).tools.length,UNIFIED_TOOLS.length);
-        const body=(result:any)=>JSON.parse(result.content[0].text);
-        // Repeated quick reads must complete cold verification without a diagnostics warm-up.
-        let status=await quickStatus(session);
-        assert.equal(status.registration_state,'missing');
-        // native read: projects is answered by the frontend scope table without a native query.
-        const scopes=body(await session.request('tools/call',{name:'projects',arguments:{}},10000));
         const spec=await fixture.register('new-index',root);
-        status=await quickStatus(session);
-        assert.equal(status.project,scopes.default_project);assert.equal(status.registration_state,undefined);
-        assert.equal(status.index_state,'unavailable','registration alone does not imply a publication');
-        await fixture.register('another-index',root);
-        status=await quickStatus(session);
-        assert.equal(status.registration_state,'ambiguous');
-        // native read: a deliberate negative test must receive exactly PROJECT_AMBIGUOUS once.
-        const search=await session.request('tools/call',{name:'search',arguments:{query:'fixture'}},10000);
-        assert.equal(search.isError,true);assert.equal(body(search).error.code,'PROJECT_AMBIGUOUS');
-        assert.equal((await fixture.embedding()).loads,0,'metadata and rejected reads do not start inference');
-        assert.ok(spec.service!.project);
-    }catch(error){await fixture.retainFailure(error,session?[session]:[]);throw error;}finally{session?.close();await fixture.dispose();}
+        session=await fixture.openHttp(spec,'scope-no-widening-test');
+        assert.equal((await session.request('tools/list',{},10000)).tools.length,UNIFIED_TOOLS.length);
+        assertSelectedScope(await quickStatus(session,undefined,spec.catalogSession),spec);
+        // A second reviewed index on the same root is not part of this grant.
+        const another=await fixture.register('another-index',root);
+        assert.notEqual(another.catalogSession!.index_id,spec.catalogSession!.index_id);
+        // Reconnect using the SAME immutable selector after the native catalog
+        // clock changed. Never invent a source-selected compatibility grant.
+        await session.close();session=await fixture.openHttp(spec,'scope-no-widening-after-registration');
+        const status=await quickStatus(session,undefined,spec.catalogSession);assertSelectedScope(status,spec);
+        assert.equal(status.scope_observation.members.length,1);
+        await fixture.refuseUnimportedLegacy(spec);
+        assert.equal((await fixture.embedding()).loads,0,'metadata/refused enrollment do not start inference');
+    }catch(error){await fixture.retainFailure(error,session?[session]:[]);throw error;}finally{try{await session?.close();}finally{await fixture.dispose();}}
 });
 
 test('reviewed native setup verifies without starting inference', {skip:!process.env.AIRK_TEST_BINARY,timeout:240000}, async()=>{
@@ -77,8 +71,8 @@ test('reviewed native setup verifies without starting inference', {skip:!process
     }catch(error){await fixture.retainFailure(error);throw error;}finally{await fixture.dispose();}
 });
 
-test('pinned MCP quick status completes cold verification without diagnostics or inference',{skip:!process.env.AIRK_TEST_BINARY,timeout:240000},async t=>{
-    const fixture=await NativeServiceFixture.create(process.env.AIRK_TEST_BINARY!);let session:McpStdioSession|undefined;
+test('reviewed HTTPS MCP quick status completes cold verification without diagnostics or inference',{skip:!process.env.AIRK_TEST_BINARY,timeout:240000},async t=>{
+    const fixture=await NativeServiceFixture.create(process.env.AIRK_TEST_BINARY!);let session:NativeHttpSession|undefined;
     const attempts:QuickStatusObservation[]=[];let confirmed:QuickStatusObservation|undefined;let dropped=0;
     const observe:QuickStatusObserver=value=>{
         if(value.kind==='confirmed')confirmed=value;
@@ -86,24 +80,23 @@ test('pinned MCP quick status completes cold verification without diagnostics or
         else dropped++;
     };
     try{
-        const spec=await fixture.register('pinned-status');const {launchArgs}=await import('../model');
-        session=(await McpStdioSession.open({command:spec.command,args:launchArgs(spec,'mcp',true),cwd:fixture.owner,clientName:'pinned-status-test',clientVersion:'1.6.4'},60000)).session;
+        const spec=await fixture.register('pinned-status');
+        session=await fixture.openHttp(spec,'pinned-status-test');
         const status=await quickStatus(session,observe,spec.catalogSession);assertSelectedScope(status,spec);
         assertEmptySetupStatus(status);
         const embedding=await fixture.embedding();assert.equal(embedding.loads,0);assert.equal(embedding.sessions,0);
     }catch(error){await fixture.retainFailure(error,session?[session]:[]);throw error;}finally{
         t.diagnostic(JSON.stringify({quickStatus:{attempts,confirmed:confirmed??null,dropped,nativeStageCounts:'unmeasured',hashCounts:'unmeasured'}}));
-        session?.close();await fixture.dispose();
+        try{await session?.close();}finally{await fixture.dispose();}
     }
 });
 
 test('scoped status revalidates authority and keeps complete provenance across aliases and detail modes',{skip:!process.env.AIRK_TEST_BINARY,timeout:240000},async()=>{
-    const fixture=await NativeServiceFixture.create(process.env.AIRK_TEST_BINARY!);let session:McpStdioSession|undefined;
+    const fixture=await NativeServiceFixture.create(process.env.AIRK_TEST_BINARY!);let session:NativeHttpSession|undefined;
     try{
         const spec=await fixture.register('cached-status');await fs.writeFile(path.join(spec.root,'memo.txt'),'Original status cache fixture.');
         await fixture.configure(spec,{operation:'vectors',enabled:false});await fixture.job(spec);
-        const {launchArgs}=await import('../model');
-        session=(await McpStdioSession.open({command:spec.command,args:launchArgs(spec),cwd:fixture.owner,clientName:'status-cache-test',clientVersion:'1.6.1'},60000)).session;
+        session=await fixture.openHttp(spec,'status-cache-test');
         const read=async(name:string,args:Record<string,unknown>={})=>{
             const result=await requestWithReadRetry(session!,name,args,name.endsWith('diagnostics')?60000:15000,undefined,spec.catalogSession);
             const value=JSON.parse(result.content[0].text);assert.deepEqual(result.structuredContent,value,JSON.stringify(result));return value;
@@ -128,65 +121,43 @@ test('scoped status revalidates authority and keeps complete provenance across a
         for(const value of [first,primedTerse,full,cached,legacy,terse,included,includedHit,beforeDetail]){assert.equal(value.query_concurrency,16,JSON.stringify(value));assert.equal(value.runtime,undefined);assert.equal(value.work,undefined);assert.equal(value.explorer,undefined);assertSelectedScope(value,spec);const {scope_observation,...scalar}=value;assert.ok(Buffer.byteLength(JSON.stringify(scalar))<1024,'scalar status retains its original byte bound; complete scope is additional');}
         for(const name of ['diagnostics','airk_diagnostics']){const detail=await read(name);assert.equal(detail.query_concurrency,16,JSON.stringify(detail));assert.ok(detail.runtime);assert.ok(detail.work);}
         const after=await read('status',{response_mode:'terse'});assert.equal(after.cached,false);assert.ok(after.observed_unix_ms>=first.observed_unix_ms);
-    }catch(error){await fixture.retainFailure(error,session?[session]:[]);throw error;}finally{session?.close();await fixture.dispose();}
+    }catch(error){await fixture.retainFailure(error,session?[session]:[]);throw error;}finally{try{await session?.close();}finally{await fixture.dispose();}}
 });
 
-for(const binding of ['pinned','source'] as const){
-    test(`four cold ${binding} clients observe first status without diagnostic warmup`,{skip:!process.env.AIRK_TEST_BINARY,timeout:240000},async()=>{
-        const fixture=await NativeServiceFixture.create(process.env.AIRK_TEST_BINARY!);
-        const sessions:McpStdioSession[]=[];
+for(const admission of ['sequential','concurrent'] as const){
+    test(`four cold HTTPS ${admission} clients observe first status without diagnostic warmup`,{skip:!process.env.AIRK_TEST_BINARY,timeout:240000},async()=>{
+        const fixture=await NativeServiceFixture.create(process.env.AIRK_TEST_BINARY!);const sessions:NativeHttpSession[]=[];
         try{
-            const spec=await fixture.register(`four-${binding}-status`);
-            const {launchArgs}=await import('../model');
-            const args=binding==='pinned'?launchArgs(spec,'mcp',true):
-                ['runtime','launch','--install-dir',fixture.install,'--','--root',spec.root,'mcp'];
-            const opened=await Promise.allSettled(Array.from({length:4},async(_,client)=>{
-                const opened=await McpStdioSession.open({command:fixture.launcher,args,cwd:fixture.owner,
-                    clientName:`cold-${binding}-${client}`,clientVersion:'1.8.0'},60000);
-                sessions.push(opened.session);
-            }));
-            for(const result of opened)if(result.status==='rejected')throw result.reason;
-            const expected=await Promise.all(sessions.map(async session=>{
-                // native read: one static configured-scope declaration before this session's first native status.
-                const result=await session.request('tools/call',{name:'projects',arguments:{}},10000);
-                return JSON.parse(result.content[0].text).default_project;
-            }));
-            const observations=await Promise.all(sessions.map(session=>quickStatus(session,undefined,binding==='pinned'?spec.catalogSession:undefined)));
-            for(const [index,observation] of observations.entries()){
-                if(binding==='pinned'){assertSelectedScope(observation,spec);assertEmptySetupStatus(observation);}
-                else{assert.equal(observation.project,expected[index]);assert.equal(observation.index_state,'unavailable');assert.equal(observation.files,null);assert.equal(observation.publication,null);}
-            }
+            const spec=await fixture.register(`four-${admission}-status`);
+            const open=async(client:number)=>{const session=await fixture.openHttp(spec,`cold-${admission}-${client}`);sessions.push(session);};
+            if(admission==='concurrent'){
+                const opened=await Promise.allSettled(Array.from({length:4},(_,client)=>open(client)));
+                for(const value of opened)if(value.status==='rejected')throw value.reason;
+            }else for(let client=0;client<4;client++)await open(client);
+            const observations=await Promise.all(sessions.map(session=>quickStatus(session,undefined,spec.catalogSession)));
+            for(const observation of observations){assertSelectedScope(observation,spec);assertEmptySetupStatus(observation);}
             assert.equal((await fixture.embedding()).loads,0,'first status does not start inference');
-        }catch(error){await fixture.retainFailure(error,sessions);throw error;}finally{for(const session of sessions)session.close();await fixture.dispose();}
+        }catch(error){await fixture.retainFailure(error,sessions);throw error;}finally{const closed=await Promise.allSettled(sessions.map(session=>session.close()));try{for(const result of closed)if(result.status==='rejected')throw result.reason;}finally{await fixture.dispose();}}
     });
 }
 
 test('mixed four-call batches honor status snapshots and typed read admission',{skip:!process.env.AIRK_TEST_BINARY,timeout:240000},async()=>{
     const fixture=await NativeServiceFixture.create(process.env.AIRK_TEST_BINARY!);
-    const sessions:McpStdioSession[]=[];
+    const sessions:NativeHttpSession[]=[];
     const refusals:Array<{binding:string;round:number;tool:string}&ReadRetryReceipt>=[];
     try{
         const spec=await fixture.register('mixed-status');
         await fs.writeFile(path.join(spec.root,'session.rs'),'pub struct Session;\nimpl Session { pub fn new() -> Self { Session } }\nfn connect() -> Session { Session::new() }\n');
         await fs.writeFile(path.join(spec.root,'session.md'),'# Session\nSession is a fictional local handle.\n');
         await fixture.configure(spec,{operation:'vectors',enabled:false});await fixture.job(spec);
-        const {launchArgs}=await import('../model');
         const expectedVersion=JSON.parse(await fs.readFile(path.resolve(__dirname,'../../package.json'),'utf8')).version;
-        for(const binding of ['pinned','source'] as const){
-            const args=binding==='pinned'?launchArgs(spec,'mcp',true):
-                ['runtime','launch','--install-dir',fixture.install,'--','--root',spec.root,'mcp'];
-            const session=(await McpStdioSession.open({command:fixture.launcher,args,cwd:fixture.owner,
-                clientName:`mixed-${binding}-status`,clientVersion:expectedVersion},60000)).session;
-            sessions.push(session);
+        // Ordinary source registrations have no imported compatibility authority.
+        // Native enrollment refuses them without issuing a bearer or running a read.
+        await fixture.refuseUnimportedLegacy(spec);
+        const binding='reviewed_https';
+        {
+            const session=await fixture.openHttp(spec,'mixed-reviewed-https-status');sessions.push(session);
             const first=await quickStatus(session,undefined,spec.catalogSession);assert.equal(first.version,expectedVersion);
-            if(binding==='source'){
-                assert.equal(first.index_state,'unavailable');assert.equal(first.publication,null);
-                // native read: observe absent imported compatibility authority exactly once; no retry.
-                const refused=await session.request('tools/call',{name:'read_file',arguments:{path:'session.rs',start_line:1,end_line:3}},30000);
-                assert.equal(refused.isError,true,JSON.stringify(refused));const detail=JSON.parse(refused.content[0].text);
-                assert.equal(detail.error.code,'scoped_read_unavailable',JSON.stringify(refused));assert.equal(detail.error.retryable,false,JSON.stringify(refused));
-                continue;
-            }
             assert.equal(first.index_state,'available');assertSelectedScope(first,spec);
             // Establish an evidence channel. Source-selector observations can
             // still be superseded before submission, even on a warm channel.
@@ -227,6 +198,6 @@ test('mixed four-call batches honor status snapshots and typed read admission',{
                 }
             }
         }
-        process.stderr.write(`[native fixture] mixed batches: ${JSON.stringify({scoped_batches:6,scoped_logical_reads:24,unselected_source_refusals:1,unsubmitted_refusals:refusals})}\n`);
-    }catch(error){await fixture.retainFailure(error,sessions);throw error;}finally{for(const session of sessions)session.close();await fixture.dispose();}
+        process.stderr.write(`[native fixture] mixed batches: ${JSON.stringify({scoped_batches:6,scoped_logical_reads:24,unimported_legacy_enrollment_refusals:1,unsubmitted_refusals:refusals})}\n`);
+    }catch(error){await fixture.retainFailure(error,sessions);throw error;}finally{const closed=await Promise.allSettled(sessions.map(session=>session.close()));try{for(const result of closed)if(result.status==='rejected')throw result.reason;}finally{await fixture.dispose();}}
 });

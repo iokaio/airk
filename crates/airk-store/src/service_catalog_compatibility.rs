@@ -599,15 +599,24 @@ impl super::super::ServiceRegistry {
                 && state.revision == expected_catalog_revision,
             ScopeReadRefused
         );
-        let id: String = tx.query_row("SELECT id FROM index_access_grants WHERE provenance_kind='imported_legacy' AND import_legacy_binding=?1 AND host=?2",
-            params![binding.to_string(),host.to_string()], |r|r.get(0)).optional()?
-            .ok_or(ScopeReadRefused)?;
+        let legacy: Option<String> = tx.query_row("SELECT id FROM index_access_grants WHERE provenance_kind='imported_legacy' AND import_legacy_binding=?1 AND host=?2",
+            params![binding.to_string(),host.to_string()], |r|r.get(0)).optional()?;
+        let adopted = super::super::adopted_authority::grant_for_binding(&tx, binding, host)?;
+        ensure!(!(legacy.is_some() && adopted.is_some()), ScopeReadRefused);
+        let id = legacy.or(adopted).ok_or(ScopeReadRefused)?;
         let snapshot = super::super::operations::read_persisted_grant(&tx, id.parse()?)?;
         snapshot.validate()?;
         ensure!(
             !snapshot.grant.revoked && snapshot.grant.host == host,
             ScopeReadRefused
         );
+        if matches!(
+            snapshot.provenance,
+            GrantProvenance::ImportedStandaloneAdoption { .. }
+        ) {
+            super::super::adopted_authority::validate_snapshot(&tx, &snapshot, binding, host)?;
+            return Ok(snapshot);
+        }
         let GrantProvenance::ImportedLegacySnapshot {
             upgrade_id,
             legacy_binding,

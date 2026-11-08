@@ -21,6 +21,7 @@ use std::{
 
 #[path = "service_catalog_split_final.rs"]
 mod finalization;
+pub(crate) use finalization::CheckpointReceiptClassifier;
 const RESERVED_COMPLETION_BYTES: usize = 3 * 1024 * 1024;
 const MAX_ACTIVE: i64 = 8;
 /// Conservative native format capacity, independent of selected document size.
@@ -76,7 +77,7 @@ pub fn native_metadata_capacity(
 fn available(db: &Connection) -> Result<bool> {
     let version: u32 = db.pragma_query_value(None, "user_version", |row| row.get(0))?;
     ensure!(
-        matches!(version, 11 | 12),
+        matches!(version, 11..=13),
         "unsupported native split scheduler format"
     );
     if version == 11 {

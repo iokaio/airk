@@ -18,6 +18,8 @@ use std::{
 mod status_observation;
 pub(crate) use status_observation::StatusOwner;
 use status_observation::{RequestTicket, RetiredRequest};
+#[path = "project_read_lifetime.rs"]
+mod read_lifetime;
 #[derive(Debug)]
 struct RetrySetup(&'static str);
 impl std::fmt::Display for RetrySetup {
@@ -120,12 +122,14 @@ fn setup_rejection(error: &anyhow::Error) -> Option<serde_json::Value> {
 }
 
 pub struct Connection {
-    stream: Stream,
+    stream: Option<Stream>,
     identity: airk_core::service::WorkerIdentity,
     authorized_until: Instant,
     last_finished: Instant,
     healthy: bool,
     scoped: bool,
+    read_scope: Option<airk_core::service::ScopedReadRef>,
+    read_attempt_supported: bool,
     status_receipt: airk_mcp::response::StatusReceipt,
 }
 impl Connection {
@@ -374,12 +378,14 @@ impl Connection {
             "direct worker identity mismatch"
         );
         Ok(Self {
-            stream,
+            stream: Some(stream),
             identity: grant.identity,
             authorized_until: setup_started + Duration::from_secs(55),
             last_finished: Instant::now(),
             healthy: true,
             scoped: grant.scope.is_some(),
+            read_scope: grant.scope,
+            read_attempt_supported: crate::read_attempt::supported(&observation.version),
             status_receipt: Default::default(),
         })
     }
@@ -387,6 +393,19 @@ impl Connection {
         self.healthy
             && now < self.authorized_until
             && now.saturating_duration_since(self.last_finished) < Duration::from_secs(25)
+    }
+    pub(crate) fn require_scope_fingerprint(
+        &self,
+        expected: airk_core::identity::Sha256Digest,
+    ) -> Result<()> {
+        if self
+            .read_scope
+            .is_some_and(|scope| scope.fingerprint == expected)
+        {
+            Ok(())
+        } else {
+            Err(airk_core::scoped_reads::ScopeReadRefused.into())
+        }
     }
 
     fn reusable_for_source(&self, fence: SourceFence, now: Instant) -> bool {
@@ -400,51 +419,133 @@ impl Connection {
         tool: String,
         arguments: serde_json::Map<String, serde_json::Value>,
     ) -> Result<serde_json::Value> {
-        self.exchange(Query {
-            frontend: if tool == "airk_diagnostics" && !self.scoped {
-                Some(crate::runtime_metadata::observe_process())
-            } else {
-                None
-            },
+        self.call_with_read_context(
             tool,
             arguments,
-            native: None,
-            status_receipt: self.status_receipt,
-        })
+            airk_mcp::read_attempt::ReadAttemptContext::new(
+                Instant::now() + Duration::from_secs(125),
+                Default::default(),
+            ),
+        )
+        .await
+    }
+    pub async fn call_with_read_context(
+        &mut self,
+        tool: String,
+        arguments: serde_json::Map<String, serde_json::Value>,
+        context: airk_mcp::read_attempt::ReadAttemptContext,
+    ) -> Result<serde_json::Value> {
+        self.exchange(
+            Query {
+                frontend: if tool == "airk_diagnostics" && !self.scoped {
+                    Some(crate::runtime_metadata::observe_process())
+                } else {
+                    None
+                },
+                tool,
+                arguments,
+                native: None,
+                status_receipt: self.status_receipt,
+                read_attempt: None,
+            },
+            context,
+        )
         .await
     }
     pub async fn read_native(
         &mut self,
         request: airk_mcp::local::NativeRead,
     ) -> Result<serde_json::Value> {
-        self.exchange(Query {
-            frontend: None,
-            tool: String::new(),
-            arguments: Default::default(),
-            native: Some(request),
-            status_receipt: self.status_receipt,
-        })
+        self.read_native_with_context(
+            request,
+            airk_mcp::read_attempt::ReadAttemptContext::new(
+                Instant::now() + Duration::from_secs(125),
+                Default::default(),
+            ),
+        )
         .await
     }
-    async fn exchange(&mut self, query: Query) -> Result<serde_json::Value> {
+    pub async fn read_native_with_context(
+        &mut self,
+        request: airk_mcp::local::NativeRead,
+        context: airk_mcp::read_attempt::ReadAttemptContext,
+    ) -> Result<serde_json::Value> {
+        let context = if matches!(
+            &request,
+            airk_mcp::local::NativeRead::SourceProjection { .. }
+                | airk_mcp::local::NativeRead::VerifyProjection { .. }
+        ) {
+            context
+        } else {
+            context.with_native_retry_deadline(Instant::now() + Duration::from_secs(5))
+        };
+        self.exchange(
+            Query {
+                frontend: None,
+                tool: String::new(),
+                arguments: Default::default(),
+                native: Some(request),
+                status_receipt: self.status_receipt,
+                read_attempt: None,
+            },
+            context,
+        )
+        .await
+    }
+    async fn exchange(
+        &mut self,
+        mut query: Query,
+        context: airk_mcp::read_attempt::ReadAttemptContext,
+    ) -> Result<serde_json::Value> {
         ensure!(
             self.reusable(Instant::now()),
             "direct connection expired before query submission; obtain fresh brokerage"
         );
-        // A dropped async caller may leave an unread result on this stream. Mark
-        // it unusable before the first write; restore only after a complete reply.
-        self.healthy = false;
-        local_ipc::write_message(&mut self.stream, &query, Duration::from_secs(5)).await?;
-        let result: protocol::QueryResult =
-            local_ipc::read_message(&mut self.stream, Duration::from_secs(120))
-                .await?
-                .ok_or_else(|| {
-                    anyhow::anyhow!("project query disconnected; retry through fresh brokerage")
-                })?;
-        self.last_finished = Instant::now();
-        self.healthy = !result.rebind;
-        self.status_receipt = result.status_receipt;
-        Ok(result.result)
+        let context = context.narrowed(self.authorized_until);
+        if self.read_attempt_supported {
+            query.read_attempt = Some(crate::read_attempt::encode(
+                &context,
+                airk_kernel::service_broker::new_instance_id()?,
+            )?);
+        }
+        loop {
+            ensure!(
+                !context.cancellation().is_cancelled() && Instant::now() < context.deadline(),
+                "native read deadline or cancellation before submission"
+            );
+            // A dropped async caller may leave an unread result on this stream. Mark
+            // it unusable before the first write; restore only after a complete reply.
+            self.healthy = false;
+            let stream = self
+                .stream
+                .take()
+                .context("native query stream unavailable")?;
+            // Detaching a canceled outer future must not drop the native stream
+            // or accepted capacity while the worker still owns this operation.
+            let exchange = tokio::spawn(read_lifetime::submit(
+                stream,
+                query.clone(),
+                self.identity,
+                self.read_scope,
+                context.clone(),
+            ));
+            let (result, stream) = exchange.await.context("native read owner failed")?;
+            self.stream = stream;
+            let result = result?;
+            ensure!(
+                !context.cancellation().is_cancelled() && Instant::now() < context.deadline(),
+                "native read completed after caller cancellation or deadline; delivery suppressed"
+            );
+            self.last_finished = Instant::now();
+            self.healthy = !result.rebind;
+            self.status_receipt = result.status_receipt;
+            if result.read_admission.is_some() && context.wait_for_selection_admission().await {
+                // Only this exact proven pre-handler refusal can repeat. Keep
+                // the original serialized deadline, request ID, scope and args.
+                continue;
+            }
+            return Ok(result.result);
+        }
     }
 
     pub fn status_receipt(&self) -> airk_mcp::response::StatusReceipt {
@@ -454,6 +555,10 @@ impl Connection {
         self.status_receipt = receipt;
     }
 }
+
+#[cfg(test)]
+#[path = "project_client_read_attempt_tests.rs"]
+mod read_attempt_tests;
 
 #[derive(Default)]
 struct ClientState {
@@ -698,7 +803,16 @@ impl airk_mcp::remote::RemoteTools for Backend {
         tool: String,
         arguments: serde_json::Map<String, serde_json::Value>,
     ) -> airk_mcp::remote::RemoteFuture<'_> {
-        self.call_bound(tool, arguments, None, None, None)
+        self.call_bound(tool, arguments, None, None, None, None)
+    }
+    fn call_with_read_context(
+        &self,
+        tool: String,
+        arguments: serde_json::Map<String, serde_json::Value>,
+        _limit: usize,
+        context: airk_mcp::read_attempt::ReadAttemptContext,
+    ) -> airk_mcp::remote::RemoteFuture<'_> {
+        self.call_bound(tool, arguments, None, None, None, Some(context))
     }
 }
 
@@ -741,8 +855,9 @@ impl Backend {
         arguments: serde_json::Map<String, serde_json::Value>,
         fence: SourceFence,
     ) -> airk_mcp::remote::RemoteFuture<'_> {
-        self.call_bound(tool, arguments, Some(fence), None, None)
+        self.call_bound(tool, arguments, Some(fence), None, None, None)
     }
+    #[cfg(test)]
     pub(crate) fn call_observed_until(
         &self,
         tool: String,
@@ -750,15 +865,40 @@ impl Backend {
         fence: SourceFence,
         expires: Instant,
     ) -> airk_mcp::remote::RemoteFuture<'_> {
-        self.call_bound(tool, arguments, Some(fence), Some(expires), None)
+        self.call_bound(tool, arguments, Some(fence), Some(expires), None, None)
     }
-    /// Typed native reads use the same bounded pool and admission/delivery
-    /// tickets; no internal native operation becomes a callable MCP tool name.
-    pub(crate) fn call_native(
+    pub(crate) fn call_observed_with_context(
+        &self,
+        tool: String,
+        arguments: serde_json::Map<String, serde_json::Value>,
+        fence: SourceFence,
+        expires: Instant,
+        context: airk_mcp::read_attempt::ReadAttemptContext,
+    ) -> airk_mcp::remote::RemoteFuture<'_> {
+        self.call_bound(
+            tool,
+            arguments,
+            Some(fence),
+            Some(expires),
+            None,
+            Some(context),
+        )
+    }
+    /// Typed native reads retain the caller's pool, budget and delivery tickets;
+    /// no internal native operation becomes a callable MCP tool name.
+    pub(crate) fn call_native_with_context(
         &self,
         request: airk_core::native_reads::NativeRead,
+        context: airk_mcp::read_attempt::ReadAttemptContext,
     ) -> airk_mcp::remote::RemoteFuture<'_> {
-        self.call_bound(String::new(), Default::default(), None, None, Some(request))
+        self.call_bound(
+            String::new(),
+            Default::default(),
+            None,
+            None,
+            Some(request),
+            Some(context),
+        )
     }
     fn call_bound(
         &self,
@@ -767,7 +907,16 @@ impl Backend {
         observed: Option<SourceFence>,
         source_expires: Option<Instant>,
         native: Option<airk_core::native_reads::NativeRead>,
+        context: Option<airk_mcp::read_attempt::ReadAttemptContext>,
     ) -> airk_mcp::remote::RemoteFuture<'_> {
+        let context = context.unwrap_or_else(|| {
+            airk_mcp::read_attempt::ReadAttemptContext::new(
+                Instant::now() + Duration::from_secs(125),
+                Default::default(),
+            )
+        });
+        let context =
+            source_expires.map_or_else(|| context.clone(), |expires| context.narrowed(expires));
         Box::pin(async move {
             if tool == "airk_help" && self.catalog_session.is_none() {
                 return Ok(serde_json::to_value(airk_mcp::help::call(
@@ -801,14 +950,15 @@ impl Backend {
                     .unwrap_or(airk_core::usage::ClientFamily::Unknown);
                 return self
                     .status
-                    .status(
-                        self.root.clone(),
-                        self.project,
-                        arguments,
-                        observed,
-                        source_expires,
+                    .status_with_read_context(status_observation::StatusRequest {
+                        root: self.root.clone(),
+                        project: self.project,
+                        args: arguments,
+                        source: observed,
+                        expires: source_expires,
                         client,
-                    )
+                        context,
+                    })
                     .await;
             }
             if tool == "airk_diagnostics" {
@@ -985,8 +1135,12 @@ impl Backend {
                 Err(_) => return Ok(source_scope_superseded()),
             };
             let result = match native {
-                Some(request) => connection.read_native(request).await,
-                None => connection.call(tool, arguments).await,
+                Some(request) => connection.read_native_with_context(request, context).await,
+                None => {
+                    connection
+                        .call_with_read_context(tool, arguments, context)
+                        .await
+                }
             };
             if result.is_ok() {
                 let receipt = connection.status_receipt();
@@ -1328,7 +1482,7 @@ mod tests {
         let stream = local_ipc::connect(&endpoint).await?;
         let now = Instant::now();
         let mut connection = Connection {
-            stream,
+            stream: Some(stream),
             identity: airk_core::service::WorkerIdentity {
                 service: airk_core::identity::Incarnation::from_bytes([1; 16]),
                 worker: airk_core::identity::Incarnation::from_bytes([2; 16]),
@@ -1339,6 +1493,8 @@ mod tests {
             last_finished: now,
             healthy: true,
             scoped: false,
+            read_scope: None,
+            read_attempt_supported: false,
             status_receipt: Default::default(),
         };
         assert!(connection.reusable(now + Duration::from_secs(24)));
@@ -1756,6 +1912,7 @@ mod source_brokerage_ipc_tests {
                 local_ipc::write_message(
                     &mut stream,
                     &protocol::QueryResult {
+                        read_admission: None,
                         result: airk_mcp::unified::success(rendered),
                         status_receipt: receipt,
                         rebind: false,

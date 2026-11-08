@@ -1,9 +1,22 @@
 {
   "servers": {
     "airk": {
-      "type": "stdio",
-      "command": "airk",
-      "args": ["--root", "${workspaceFolder}", "--data-dir", "${workspaceFolder}/.airk", "--collection", "project-a", "mcp"]
+      "type": "http",
+      "url": "REPLACE_WITH_NATIVE_CONNECTION_ENDPOINT_URL",
+      "headers": {
+        "Authorization": "Bearer ${input:airkToken_REPLACE_WITH_NATIVE_CONNECTION_ID}",
+        "X-AIRK-Response-Mode": "terse"
+      }
     }
-  }
+  },
+  "inputs": [
+    {
+      "id": "airkToken_REPLACE_WITH_NATIVE_CONNECTION_ID",
+      "type": "command",
+      "command": "airk.httpCredential",
+      "args": {
+        "connection_id": "REPLACE_WITH_NATIVE_CONNECTION_ID"
+      }
+    }
+  ]
 }

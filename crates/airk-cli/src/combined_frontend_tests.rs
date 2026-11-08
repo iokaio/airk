@@ -333,7 +333,15 @@ async fn exhausted_final_verification_records_all_32_members_without_native_subm
         let (backend, selected, before, projection) = expired_projection_fixture()?;
         let args=json!({"projection":projection,"remaining_deadline_ms":0,"receipt_bytes_budget":32768,"verification":mode,"project_ids":selected.project_ids}).as_object().unwrap().clone();
         let result = backend
-            .verify_final_callback(args, selected, before)
+            .verify_final_callback(
+                args,
+                selected,
+                before,
+                airk_mcp::read_attempt::ReadAttemptContext::new(
+                    std::time::Instant::now() + std::time::Duration::from_secs(30),
+                    tokio_util::sync::CancellationToken::new(),
+                ),
+            )
             .await?;
         assert_eq!(result["partial"], true);
         assert_eq!(result["members"].as_array().unwrap().len(), 32);

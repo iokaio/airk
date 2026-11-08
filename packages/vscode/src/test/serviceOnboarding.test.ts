@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
+import {createHash} from 'node:crypto';
+import * as globalInventory from '../globalAgentInventory';
+const realGlobalInventory=globalInventory.inventoryGlobalAgentConfigs;
+import * as fs from 'node:fs/promises';
 import { serviceTestHost } from './serviceTestHost';
 import { renderServiceDashboard } from '../serviceDashboard';
 import { RuntimeHost } from '../serviceBootstrap';
@@ -48,20 +52,20 @@ test('failed setup stays visible through missing-runtime refresh until successfu
     }finally{await f.close();}
 });
 
-test('healthy automatic reconnect clears resolved preparation failure while failed retry remains visible',async context=>{
+test('upgrade stays incomplete until metadata, migration and launcher removal can finish',async context=>{
     let release!:()=>void;const discoveryGate=new Promise<void>(resolve=>{release=resolve;});
     const f=await serviceTestHost(context,{automatic:true,deferStartup:true,discoveryGate,registered:false});
     const preparation=context.mock.method(ServiceWorkspace.prototype,'reconcileStartup',async()=>{throw new ServiceError('project_metadata_unavailable');});
     try{
         release();await f.api.whenReady();assert.equal((await startupState(f,'preparation-failed'))?.failed,true);
-        assert.ok(f.calls.some(value=>value.includes('installation is complete. Project preparation needs attention')));
+        assert.ok(f.calls.some(value=>value.includes('upgrade completion blocked')));
         await f.commands.get('airk.setUp')!();
         assert.equal((await startupState(f,'retry-still-failed'))?.failed,true,'runtime health cannot erase unresolved preparation failure');
         preparation.mock.restore();const ensures=f.state.ensured,progress=f.progressRuns.length;
         await f.refreshFolders();
-        assert.ok(f.calls.some(value=>value.includes('Connected to AIRK.')));
+        assert.ok(f.calls.includes('legacy-launchers-retired'));
         assert.equal(await startupState(f,'healthy-reconnect'),undefined);
-        assert.equal(f.state.ensured,ensures);assert.equal(f.progressRuns.length,progress,'healthy reconnect does not rerun installation');
+        assert.ok(f.state.ensured>ensures);assert.ok(f.progressRuns.length>progress,'an incomplete upgrade reruns its completion gates');
         assert.equal(f.registrations.size,0);assert.equal(f.writes.filter(value=>value.reserve_project||value.enqueue).length,0);
     }finally{release();await f.close();}
 });
@@ -114,7 +118,7 @@ test('runtime installation never calls legacy project preparation for missing in
         let reviewed=0;context.mock.method(RuntimeHost.prototype,'reviewProject',async()=>{reviewed++;throw new ServiceError('source_unavailable');});
         f.settings.set('cli.autoInstall',true);
         await f.refreshFolders();
-        assert.ok([...f.values.keys()].some(key=>key.startsWith('airk.installComplete.1.')));
+        assert.ok([...f.values.keys()].some(key=>key.startsWith('airk.installComplete.2.')));
         assert.equal(reviewed,0);assert.equal(f.registrations.size,0);assert.equal(f.warnings.length,0);
         assert.equal(f.calls.some(message=>message.startsWith('Automatic installation failed:')),false);
         assert.equal(f.calls.some(message=>message.startsWith('Installation did not complete.')),false);
@@ -209,7 +213,7 @@ test('1.4 patch upgrade retains existing storage bindings and does not reset wat
         assert.ok(f.calls.includes('previous-runtime-retired'));
         assert.equal(f.registrations.size,1);assert.equal(f.writes.length,0);
         const definitions=await f.api.getServerDefinitions();assert.equal(definitions.length,1);
-        assert.ok(definitions[0].args.includes([...f.registrations.values()][0].root));
+        assert.equal(definitions[0].uri.toString(),f.httpUrl);const enrolled=f.state.httpConnections.at(-1)!.selection;assert.equal(enrolled.kind,'imported_legacy');if(enrolled.kind==='imported_legacy')assert.equal(enrolled.selection.registration.root,[...f.registrations.values()][0].root);
         const saved=[...f.values.entries()].filter(([key])=>key.startsWith('airk.service.workspace.1.'));
         await f.refreshFolders();assert.deepEqual([...f.values.entries()].filter(([key])=>key.startsWith('airk.service.workspace.1.')),saved);
         assert.equal(f.writes.length,0);
@@ -247,8 +251,7 @@ test('startup adopts an existing manually restored index for the same root witho
         const previous=[...f.registrations.values()][0],restored={...previous,binding:'cd'.repeat(32),collection:'manually-restored',data_root:path.join(f.root,'restored-index')};
         f.registrations.clear();f.registrations.set(restored.binding,restored);const writes=f.writes.length;
         await f.refreshFolders();assert.equal(f.registrations.size,1);assert.equal(f.writes.length,writes);
-        const definition=(await f.api.getServerDefinitions())[0];
-        assert.ok(definition.args.includes(restored.root));assert.ok(!definition.args.includes('--collection'));assert.ok(!definition.args.includes('--data-dir'));
+        await assert.rejects(f.api.getServerDefinitions(),/legacy_selection_review_required/,'a newly adopted different Index cannot inherit old provider authority');
         const again=f.writes.length;await f.refreshFolders();assert.equal(f.writes.length,again);
     }finally{await f.close();}
 });
@@ -270,7 +273,7 @@ for(const from of ['1.4.4','1.5.12','1.6.0','1.8.7','1.8.8']){
             assert.ok(f.calls.indexOf('upgrade-applied')<f.calls.indexOf('Checking selected runtime…'));
             assert.equal(f.calls.some(value=>value.includes('explicit_runtime_upgrade_or_matching_extension_required')),false);
             assert.equal(f.calls.some(value=>value.startsWith('Automatic installation failed:')),false);
-            assert.equal(f.values.get(`airk.installComplete.1.${f.binding.installDir}`),`${to}:${f.binding.runtimeSha256}`);
+            assert.equal(f.values.get(`airk.installComplete.2.${f.binding.installDir}`),`${to}:${f.binding.runtimeSha256}`);
             assert.equal(f.registrations.size,1);assert.equal(f.writes.length,0);
             assert.match(f.progressRuns[0].title,/Updating AIRK/);
             const registrations=structuredClone([...f.registrations]),ensures=f.state.ensured;
@@ -309,7 +312,7 @@ for(const command of ['airk.installCli','airk.retryUpdate']){
     test(`${command} upgrades a completed older installation to the shipped version`,async context=>{
         const f=await serviceTestHost(context,{runtimeVersion:'1.5.12',bundledVersion:releaseVersion});
         try{
-            const key=`airk.installComplete.1.${f.binding.installDir}`;
+            const key=`airk.installComplete.2.${f.binding.installDir}`;
             f.values.set(key,`1.5.12:${f.binding.runtimeSha256}`);
             const start=f.calls.length,registrations=structuredClone([...f.registrations]);
             await f.commands.get(command)!();
@@ -392,7 +395,7 @@ test('first installation waits for review: dismiss and defer change nothing pers
         const reviews=()=>f.notices.filter(notice=>notice.message==='Set up AIRK on this computer?').length;
         assert.equal(reviews(),1);
         assert.equal(f.state.ensured,0);assert.equal(f.registrations.size,0);
-        assert.equal([...f.values.keys()].some(key=>key.startsWith('airk.installComplete.1.')),false);
+        assert.equal([...f.values.keys()].some(key=>key.startsWith('airk.installComplete.2.')),false);
         f.state.noticeAction='Not now';await f.refreshFolders();
         assert.equal(reviews(),2);assert.equal(f.state.ensured,0);
         await f.refreshFolders();
@@ -583,3 +586,290 @@ for(const [kind,roots,workspaceFile] of [['folder',1,false],['single-root worksp
         }finally{await f.close();}
     });
 }
+
+/** Model the editor's real guarded file/save boundary; disk verification remains production. */
+function migrationEditor(f:Awaited<ReturnType<typeof serviceTestHost>>,save=false){
+    const documents=new Map<string,any>();
+    f.stub.WorkspaceEdit=class{edits:any[]=[];replace(uri:any,_range:any,text:string){this.edits.push({uri,text});}};
+    f.stub.Range=class{constructor(..._args:any[]){}};
+    f.stub.workspace.openTextDocument=async(uri:any)=>{
+        if(typeof uri.content==='string')return uri;
+        const filename=uri.fsPath;let document=documents.get(filename);
+        if(!document){let text=await fs.readFile(filename,'utf8');document={uri,version:1,eol:1,isDirty:false,getText:()=>text,positionAt:(offset:number)=>offset,
+            replace:(next:string)=>{text=next;document.version++;document.isDirty=true;},
+            save:async()=>{if(save)return false;await fs.writeFile(filename,text);document.isDirty=false;return true;}};
+            documents.set(filename,document);f.stub.workspace.textDocuments.push(document);
+        }return document;
+    };
+    f.stub.workspace.applyEdit=async(edit:any)=>{for(const row of edit.edits){const doc=await f.stub.workspace.openTextDocument(row.uri);doc.replace(row.text);}return true;};
+    return documents;
+}
+function legacyConfiguration(f:Awaited<ReturnType<typeof serviceTestHost>>){
+    const registration=[...f.registrations.values()][0],command=path.join(f.binding.installDir,process.platform==='win32'?'airk-launcher.exe':'airk-launcher');
+    return {registration,command,configuration:{keep:'unrelated user setting',mcpServers:{['airk-'+registration.collection]:{command,args:['runtime','launch','--install-dir',f.binding.installDir,'--','--root',registration.root,'--data-dir',registration.data_root,'--collection',registration.collection,'--service-project',registration.binding,'mcp'],disabled:true},other:{command:'other-tool',args:['unchanged']}}}};
+}
+test('upgrade migrates exact owned configuration before retiring launchers and publishes completion only after verification',async context=>{
+    const f=await serviceTestHost(context,{automatic:false});
+    try{
+        const {registration,command,configuration}=legacyConfiguration(f),filename=path.join(registration.root,'.mcp.json'),before=JSON.stringify(configuration);
+        await fs.writeFile(filename,before);migrationEditor(f);
+        context.mock.method(RuntimeHost.prototype,'inspectLegacyLaunchers',async()=>({schema:1,active:f.binding.runtimeSha256,launcher:{path:command,sha256:'ab'.repeat(32)},universal_launcher:null}));
+        let removed=0;context.mock.method(RuntimeHost.prototype,'retireLegacyLaunchers',async()=>{
+            removed++;const current=JSON.parse(await fs.readFile(filename,'utf8'));
+            assert.equal(current.mcpServers.airk.url,f.httpUrl);assert.equal(current.mcpServers.airk.command,undefined);assert.equal(current.mcpServers.airk.disabled,true);
+            assert.deepEqual(current.mcpServers.other,configuration.mcpServers.other);assert.equal(current.keep,configuration.keep);
+            assert.equal([...f.values.keys()].some(key=>key.startsWith('airk.installComplete.2.')),false,'No premature successful-upgrade marker');
+            return {schema:1,active:f.binding.runtimeSha256,legacy_launchers_retired:true,launcher:null,universal_launcher:null,processes:{scope:'verified_launcher_images',remaining:0,observations:[{fixture:'held native image audit'}]}};
+        });
+        await f.commands.get('airk.installCli')!();assert.equal(removed,1);
+        assert.ok([...f.values.keys()].some(key=>key.startsWith('airk.installComplete.2.')));
+        const imported=f.state.httpConnections.find((value:any)=>value.client==='claude');assert.ok(imported);assert.equal(imported.selection.kind,'imported_legacy');
+        assert.equal(imported.selection.selection.configuration_receipt,createHash('sha256').update(before).digest('hex'));
+        assert.deepEqual(imported.selection.selection.registration,{binding:registration.binding,root:registration.root,data_root:registration.data_root,collection:registration.collection});
+        assert.equal(f.calls.some(value=>value.includes('upgrade completion blocked')),false);
+    }finally{await f.close();}
+});
+for(const appearedDuringCleanup of [false,true])test(`one install adopts a standalone sibling and migrates managed stdio without collapsing scope (${appearedDuringCleanup?'fresh original declaration appears during cache retirement':'same original file'})`,async context=>{
+    const f=await serviceTestHost(context,{automatic:false});
+    try{
+        const {registration,configuration}=legacyConfiguration(f),destination=path.join(registration.root,'.mcp.json'),alias='old_standalone',digest='ba'.repeat(32),origin='10'.repeat(32),cached=path.join(f.root,'private-editor','User','globalStorage','iokaio.airk','helpers','1.3.1-windows-x64-'+digest.slice(0,16),'airk.exe');
+        const fields={command:cached,args:['--root',registration.root,'--data-dir',path.join(f.root,'old-standalone-data'),'--collection','old-saved','mcp'],disabled:true,alwaysAllow:['airk_search']};
+        const initial={...configuration,mcpServers:{...configuration.mcpServers,[alias]:fields}},before=JSON.stringify(initial),sha=createHash('sha256').update(before).digest('hex');if(!appearedDuringCleanup)await fs.writeFile(destination,before);migrationEditor(f);
+        const original={binding:'f0'.repeat(32),root:registration.root,data_root:path.join(f.root,'old-standalone-data'),collection:'old-saved'},adopted={...original,binding:'f1'.repeat(32),data_root:path.join(f.root,'converted-saved-data')},namespace='34'.repeat(16);
+        const claim={schema:1,origin_sha256:origin,config_sha256:sha,executable_sha256:digest,selected_entry_sha256:digest,container_path:['mcpServers'],original_server:alias,no_default_project:false};
+        const setup={caller:'11'.repeat(16),key:{namespace,epoch:1,nonce:'22'.repeat(16)},expected_catalog_revision:1,name:'Original saved index',registration:adopted,sources:[{canonical_path:registration.root,aliases:[],owner:true}],setup_watch:false};
+        const plan={schema:1,setup,original_registration:original,origin_sha256:origin,config_sha256:sha,executable_sha256:digest,quiescence_sha256:digest,archive_inventory_sha256:digest,original_publication_sha256:digest,source_inventory_sha256:digest};
+        const adoption={schema:1,operation_id:'33'.repeat(16),plan,publication:{schema:1,plan_digest:digest,archive_inventory_sha256:digest,original_publication_sha256:digest,current:`airk-r1:${namespace}:2:${digest}`,resource_sha256:digest,compatibility_sha256:digest},original_server:alias,no_default_project:false,configuration_claims:[claim]};
+        const grant={grant:{id:'grt_'+'92'.repeat(16),host:digest,revision:1,revoked:false,memberships:[{membership:{project_id:'prj_'+'44'.repeat(16),index_id:'idx_'+'55'.repeat(16),revision:1,scope:[{source_root_id:'src_'+'66'.repeat(16),kind:'subtree',path:''}]},source_revision:1,policy_epoch:0,policy_digest:null}]},provenance:{kind:'imported_standalone_adoption',adoption}};
+        let accepted:any,adoptions=0,replans=0,retirements=0,originalPlan:any;
+        const oldLocator={path:path.join(registration.root,'previous-original.json'),format:'mcp_servers_json',server:'previous_original',container_path:['mcpServers']},oldProof={config_path:oldLocator.path,server:oldLocator.server,container_path:['mcpServers'],config_sha256:'81'.repeat(32),executable:path.join(f.root,'previous-cache','airk.exe'),executable_sha256:'82'.repeat(32),selected_entry_sha256:'83'.repeat(32),declaration:{argv:['mcp']}};
+        const newPlan=(selected:typeof f.binding,storage:string,locators:any[])=>({schema:1,active:selected.runtimeSha256,scope:'context-only',context_global_storage:storage,global_storage_roots:[storage],caches:[{executable:cached}],inspection_sha256:'ad'.repeat(32),origin_locators:locators,adoption_locators:locators,managed_locators:[],origin_classifications:[{locator:locators[0],origin_sha256:origin,kind:'standalone',authority:'not_observed'}],origin_proofs:[{config_path:destination,server:alias,container_path:['mcpServers'],config_sha256:sha,executable:cached,executable_sha256:digest,selected_entry_sha256:digest,declaration:{argv:fields.args}}]});
+        context.mock.method(RuntimeHost.prototype,'prepareLegacyCaches',async(selected:typeof f.binding,storage:string,input?:string)=>{
+            const locators=input?JSON.parse(await fs.readFile(input,'utf8')):[];
+            if(accepted)return accepted;
+            if(appearedDuringCleanup){assert.deepEqual(locators,[]);accepted={schema:1,active:selected.runtimeSha256,scope:'context-only',context_global_storage:storage,global_storage_roots:[storage],caches:[{executable:oldProof.executable}],inspection_sha256:'ac'.repeat(32),origin_locators:[oldLocator],adoption_locators:[],managed_locators:[oldLocator],origin_classifications:[{locator:oldLocator,origin_sha256:'84'.repeat(32),kind:'managed',authority:'not_observed'}],origin_proofs:[oldProof]};originalPlan=structuredClone(accepted);return accepted;}
+            assert.equal(locators.length,1);assert.equal(await fs.readFile(destination,'utf8'),before);accepted=newPlan(selected,storage,locators);return accepted;
+        });
+        if(appearedDuringCleanup){
+            context.mock.method(RuntimeHost.prototype,'retireLegacyCaches',async(_selected:typeof f.binding,prepared:any)=>{assert.equal(prepared,accepted);if(++retirements===1){await fs.writeFile(destination,before);throw new ServiceError('legacy_cache_retirement_unconfirmed',true,{code:'new_native_cache_observed'});}assert.equal(adoptions,1);assert.equal(prepared.origin_proofs[0],oldProof);return {scope:'context-only',caches_retired:true,remaining:0};});
+            context.mock.method(RuntimeHost.prototype,'reprepareLegacyCaches',async(selected:typeof f.binding,previous:any,input?:string)=>{replans++;assert.deepEqual(previous,originalPlan);assert.ok(input,'A fresh protected native locator input must accompany explicit reprepare');const locators=JSON.parse(await fs.readFile(input,'utf8'));assert.deepEqual(locators,[{path:destination,format:'mcp_servers_json',server:alias,container_path:['mcpServers']}]);assert.equal(await fs.readFile(destination,'utf8'),before);const fresh=newPlan(selected,String(previous.context_global_storage),locators);accepted={...fresh,caches:[...previous.caches,...fresh.caches],origin_locators:[...previous.origin_locators,...fresh.origin_locators],managed_locators:previous.managed_locators,origin_classifications:[...previous.origin_classifications,...fresh.origin_classifications],origin_proofs:[...previous.origin_proofs,...fresh.origin_proofs]};return accepted;});
+        }
+        context.mock.method(RuntimeHost.prototype,'adoptLegacyIndexes',async(_selected:typeof f.binding,prepared:any,_operation:string,input:string)=>{adoptions++;assert.equal(prepared,accepted);assert.equal(await fs.readFile(destination,'utf8'),before);assert.deepEqual(JSON.parse(await fs.readFile(input,'utf8')),accepted.adoption_locators);return {schema:1,status:'ready',claims:[{locator:accepted.adoption_locators[0],origin_sha256:origin,config_sha256:sha,group_operation_id:setup.key.nonce,original_registration:original,registration:adopted,claim}],groups:[{grant}],future_native_metadata:{retained:true}};});
+        const fixtureLegacy=RuntimeHost.prototype.httpLegacyConnection,fixtureHttp=RuntimeHost.prototype.httpConnection;
+        context.mock.method(RuntimeHost.prototype,'httpLegacyConnection',async function(this:RuntimeHost,selected:typeof f.binding,saved:any,file:string,receipt:string,id:string,client:string,descriptor?:string,originSha?:string){
+            if(saved.binding!==original.binding)return fixtureLegacy.call(this,selected,saved,file,receipt,id,client,descriptor,originSha);
+            assert.equal(originSha,origin);assert.equal(receipt,sha);assert.deepEqual(saved,original);
+            return fixtureHttp.call(this,selected,{kind:'imported_legacy',selection:{namespace,expected_catalog_revision:2,registration:adopted,configuration_receipt:sha,grant}},file,id,client,descriptor);
+        });
+        await f.commands.get('airk.installCli')!();
+        const after=JSON.parse(await fs.readFile(destination,'utf8')),managedKey='airk-'+registration.collection;
+        assert.equal(adoptions,1);assert.equal(after.mcpServers[alias].url,f.httpUrl);assert.equal(after.mcpServers[managedKey].url,f.httpUrl);assert.equal(after.mcpServers[alias].disabled,true);assert.deepEqual(after.mcpServers[alias].alwaysAllow,['search']);
+        assert.deepEqual(after.mcpServers.other,initial.mcpServers.other);assert.equal(after.mcpServers[alias].command,undefined);assert.equal(after.mcpServers[managedKey].command,undefined);
+        const clients=f.state.httpConnections.filter(value=>value.client==='claude');assert.equal(clients.length,2);assert.notEqual(clients[0].id,clients[1].id);assert.equal(clients[0].selection.kind,'imported_legacy');assert.equal(clients[1].selection.kind,'imported_legacy');
+        for(const client of clients)assert.equal((client.selection.selection as any).configuration_receipt,sha,'Both original claims retain the original complete file SHA before either CAS');
+        assert.ok([...f.values.keys()].some(key=>key.startsWith('airk.installComplete.2.')));assert.equal(f.calls.some(value=>value.includes('upgrade completion blocked')),false,'A managed sibling does not prematurely terminate standalone snapshot tracking');
+        assert.equal(replans,appearedDuringCleanup?1:0);if(appearedDuringCleanup){assert.equal(retirements,2);assert.deepEqual(accepted.origin_proofs[0],originalPlan.origin_proofs[0]);assert.deepEqual(accepted.origin_locators[0],originalPlan.origin_locators[0]);}
+    }finally{await f.close();}
+});
+
+test('two clients sharing one adopted index resume a partial file migration with the frozen original batch and per-file SHA',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,registered:false});
+    try{
+        const root=f.folders[0].uri.fsPath,files=[path.join(root,'.codex','config.toml'),path.join(root,'.mcp.json')],keys=['old_codex','old_claude'],digest='bc'.repeat(32),cached=path.join(f.root,'User','globalStorage','iokaio.airk','helpers','1.3.1-windows-x64-'+digest.slice(0,16),'airk.exe'),args=['--root',root,'--data-dir',path.join(f.root,'original-data'),'--collection','saved','mcp'];
+        const sources=[`# Original Codex policy\n[mcp_servers.old_codex]\ncommand = ${JSON.stringify(cached)}\nargs = ${JSON.stringify(args)}\nenabled = false\n`,JSON.stringify({keep:'untouched',mcpServers:{old_claude:{command:cached,args,disabled:true}}})];
+        for(const [index,file]of files.entries()){await fs.mkdir(path.dirname(file),{recursive:true});await fs.writeFile(file,sources[index]);}migrationEditor(f);
+        const locators=files.map((file,index)=>({path:file,format:index?'mcp_servers_json':'codex_toml',server:keys[index],container_path:[index?'mcpServers':'mcp_servers']})),shas=sources.map(source=>createHash('sha256').update(source).digest('hex')),origins=['10'.repeat(32),'20'.repeat(32)],namespace='34'.repeat(16),original={binding:'f2'.repeat(32),root,data_root:path.join(f.root,'original-data'),collection:'saved'},adopted={...original,binding:'f3'.repeat(32),data_root:path.join(f.root,'converted-data')};
+        const claims=locators.map((locator,index)=>({schema:1,origin_sha256:origins[index],config_sha256:shas[index],executable_sha256:digest,selected_entry_sha256:digest,container_path:locator.container_path,original_server:locator.server,no_default_project:false}));
+        const setup={caller:'11'.repeat(16),key:{namespace,epoch:1,nonce:'22'.repeat(16)},expected_catalog_revision:1,name:'Shared saved index',registration:adopted,sources:[{canonical_path:root,aliases:[],owner:true}],setup_watch:false},plan={schema:1,setup,original_registration:original,origin_sha256:origins[0],config_sha256:shas[0],executable_sha256:digest,quiescence_sha256:digest,archive_inventory_sha256:digest,original_publication_sha256:digest,source_inventory_sha256:digest};
+        const adoption={schema:1,operation_id:'33'.repeat(16),plan,publication:{schema:1,plan_digest:digest,archive_inventory_sha256:digest,original_publication_sha256:digest,current:`airk-r1:${namespace}:2:${digest}`,resource_sha256:digest,compatibility_sha256:digest},original_server:keys[0],no_default_project:false,configuration_claims:claims},grant={grant:{id:'grt_'+'93'.repeat(16),host:digest,revision:1,revoked:false,memberships:[{membership:{project_id:'prj_'+'44'.repeat(16),index_id:'idx_'+'55'.repeat(16),revision:1,scope:[{source_root_id:'src_'+'66'.repeat(16),kind:'subtree',path:''}]},source_revision:1,policy_epoch:0,policy_digest:null}]},provenance:{kind:'imported_standalone_adoption',adoption}};
+        const prepared:any={schema:1,active:f.binding.runtimeSha256,scope:'context-only',context_global_storage:f.root,global_storage_roots:[f.root],caches:[{executable:cached}],inspection_sha256:'ae'.repeat(32),origin_locators:locators,adoption_locators:locators,managed_locators:[],origin_classifications:locators.map((locator,index)=>({locator,origin_sha256:origins[index],kind:'standalone',authority:'not_observed'})),origin_proofs:locators.map((locator,index)=>({config_path:locator.path,server:locator.server,container_path:locator.container_path,config_sha256:shas[index],executable:cached,executable_sha256:digest,selected_entry_sha256:digest,declaration:{argv:args}}))};
+        const owner=f.context.subscriptions.find((value:any)=>typeof value.adoptStandaloneConfigurations==='function');assert.ok(owner);
+        const seed=async()=>{owner.legacyCachePreparation=prepared;owner.legacyMigrationFiles=new Map(await Promise.all(files.map(async(file,index)=>{const source=await fs.readFile(file,'utf8'),agent=index?'claude':'codex';return [file,{agent,file:{agent,destination:file,source,sha256:createHash('sha256').update(source).digest('hex'),declarations:globalInventory.globalConfigDeclarations(agent,source)}}] as const;})));};await seed();
+        const requests:{operation:string;bytes:string}[]=[];let conversions=0;
+        context.mock.method(RuntimeHost.prototype,'adoptLegacyIndexes',async(_binding:typeof f.binding,accepted:any,operation:string,input:string)=>{assert.equal(accepted,prepared);requests.push({operation,bytes:await fs.readFile(input,'utf8')});if(requests.length===1)conversions++;return {retained_completed_operation:requests.length>1,groups:[{grant}],claims:locators.map((locator,index)=>({locator,origin_sha256:origins[index],config_sha256:shas[index],group_operation_id:setup.key.nonce,original_registration:original,registration:adopted,claim:claims[index]}))};});
+        const fixtureHttp=RuntimeHost.prototype.httpConnection;
+        context.mock.method(RuntimeHost.prototype,'httpLegacyConnection',async function(this:RuntimeHost,binding:typeof f.binding,saved:any,file:string,receipt:string,id:string,client:string,descriptor?:string,origin?:string){const index=origins.indexOf(origin!);assert.ok(index>=0);assert.equal(receipt,shas[index]);assert.deepEqual(saved,original);return fixtureHttp.call(this,binding,{kind:'imported_legacy',selection:{namespace,expected_catalog_revision:2,registration:adopted,configuration_receipt:receipt,grant}},file,id,client,descriptor);});
+        const open=f.stub.workspace.openTextDocument;let fail=true;
+        f.stub.workspace.openTextDocument=async(uri:any)=>{if(uri.fsPath===files[1]&&fail){fail=false;throw Error('fixture editor stopped before second file CAS');}return open(uri);};
+        await assert.rejects(owner.adoptStandaloneConfigurations(f.binding,()=>{},()=>{}),/editor stopped/);
+        assert.ok((await fs.readFile(files[0],'utf8')).includes(f.httpUrl));assert.equal(await fs.readFile(files[1],'utf8'),sources[1]);const issued=f.state.httpConnections.length;
+        await seed();await owner.adoptStandaloneConfigurations(f.binding,()=>{},()=>{});
+        assert.equal(conversions,1,'Native completed publication is retained, not copied once per client or retry');assert.equal(requests.length,2);assert.deepEqual(requests[1],requests[0],'Original complete batch request survives a prior file already becoming HTTPS');
+        assert.equal(f.state.httpConnections.length,issued,'Resume resolves existing live native credentials without minting replacements');
+        const after=JSON.parse(await fs.readFile(files[1],'utf8'));assert.equal(after.keep,'untouched');assert.equal(after.mcpServers.old_claude.disabled,true);assert.equal(after.mcpServers.old_claude.url,f.httpUrl);
+        const selected=f.state.httpConnections.map(value=>value.selection as any);assert.deepEqual(selected.map(value=>value.selection.registration),[adopted,adopted]);assert.deepEqual(selected.map(value=>value.selection.configuration_receipt),shas);assert.deepEqual(selected.map(value=>value.selection.grant),[grant,grant]);
+    }finally{await f.close();}
+});
+
+test('cache native preimages precede original config edits and cache uncertainty prevents launcher/runtime completion',async context=>{
+    const f=await serviceTestHost(context,{automatic:false});
+    try{
+        const {registration,configuration}=legacyConfiguration(f),destination=path.join(registration.root,'.mcp.json'),before=JSON.stringify(configuration);await fs.writeFile(destination,before);migrationEditor(f);
+        let accepted:any,attempts=0;
+        context.mock.method(RuntimeHost.prototype,'prepareLegacyCaches',async(selected:typeof f.binding,storage:string)=>{
+            assert.equal(selected.runtimeSha256,f.binding.runtimeSha256);
+            if(!accepted){assert.equal(await fs.readFile(destination,'utf8'),before,'Original complete bytes exist when native accepts its cleanup plan');accepted={schema:1,active:selected.runtimeSha256,scope:'context-only',context_global_storage:storage,global_storage_roots:[storage],caches:[],origin_proofs:[],origin_locators:[],adoption_locators:[],managed_locators:[],origin_classifications:[],inspection_sha256:'ab'.repeat(32)};}
+            return accepted;
+        });
+        context.mock.method(RuntimeHost.prototype,'retireLegacyCaches',async(selected:typeof f.binding,prepared:Record<string,unknown>)=>{
+            assert.equal(prepared,accepted);assert.equal(selected.runtimeSha256,prepared.active);
+            const current=JSON.parse(await fs.readFile(destination,'utf8'));assert.equal(current.mcpServers.airk.url,f.httpUrl,'Migration is saved before native can retire old executable images');
+            if(++attempts===1)throw new ServiceError('legacy_cache_process_identity_unknown',true,{scope:'context-only',processes:{remaining:null,observations:[{unobservable:true}]}});
+            return {scope:'context-only',global_storage_roots:prepared.global_storage_roots,caches_retired:true,remaining:0};
+        });
+        await f.commands.get('airk.installCli')!();
+        assert.equal(f.calls.includes('legacy-launchers-retired'),false);assert.equal(f.calls.includes('previous-runtime-retired'),false);assert.equal([...f.values.keys()].some(key=>key.startsWith('airk.installComplete.2.')),false);
+        const migrated=f.state.httpConnections.filter(value=>value.client==='claude');assert.equal(migrated.length,1);await f.commands.get('airk.installCli')!();
+        assert.equal(attempts,2);assert.deepEqual(f.state.httpConnections.filter(value=>value.client==='claude'),migrated,'Resumption verifies already migrated HTTP authority instead of enrolling it again');
+        assert.ok(f.calls.includes('legacy-launchers-retired'));assert.ok(f.calls.includes('previous-runtime-retired'));assert.ok([...f.values.keys()].some(key=>key.startsWith('airk.installComplete.2.')));
+    }finally{await f.close();}
+});
+
+for(const obstruction of ['dirty','save_failed','unsupported_client','native_unknown'] as const){
+    test(`upgrade stays incomplete and never retires launchers before ${obstruction} is resolved`,async context=>{
+        const f=await serviceTestHost(context,{automatic:false});
+        try{
+            const {registration,configuration}=legacyConfiguration(f);
+            const filename=obstruction==='unsupported_client'?path.join(registration.root,'.gemini','settings.json'):path.join(registration.root,'.mcp.json');
+            await fs.mkdir(path.dirname(filename),{recursive:true});const before=JSON.stringify(configuration);await fs.writeFile(filename,before);
+            migrationEditor(f,obstruction==='save_failed');
+            if(obstruction==='dirty'){const document=await f.stub.workspace.openTextDocument(f.stub.Uri.file(filename));document.isDirty=true;}
+            let removed=0;context.mock.method(RuntimeHost.prototype,'retireLegacyLaunchers',async()=>{removed++;throw new ServiceError('legacy_launcher_process_identity_unknown',true,{observations:[{unknown:true}]});});
+            await f.commands.get('airk.installCli')!();
+            assert.equal(removed,obstruction==='native_unknown'?1:0);
+            assert.equal([...f.values.keys()].some(key=>key.startsWith('airk.installComplete.2.')),false);
+            assert.ok(f.calls.some(value=>value.includes('upgrade completion blocked')));
+            if(obstruction!=='native_unknown')assert.equal(await fs.readFile(filename,'utf8'),before,'Unconfirmed source file preserved');
+        }finally{await f.close();}
+    });
+}
+
+for(const flag of ['--data-dir','--service-project'] as const)test(`generated legacy migration refuses a crossed original ${flag} instead of selecting by source root`,async context=>{
+    const f=await serviceTestHost(context,{automatic:false});
+    try{
+        const {registration,configuration}=legacyConfiguration(f),destination=path.join(registration.root,'.mcp.json'),entry=configuration.mcpServers['airk-'+registration.collection],index=entry.args.indexOf(flag);entry.args[index+1]=flag==='--data-dir'?path.join(f.root,'different-index-data'):'fe'.repeat(32);
+        const before=JSON.stringify(configuration);await fs.writeFile(destination,before);migrationEditor(f);await f.commands.get('airk.installCli')!();
+        assert.equal(await fs.readFile(destination,'utf8'),before);assert.equal(f.state.httpConnections.filter(value=>value.client==='claude').length,0);assert.equal(f.calls.includes('legacy-launchers-retired'),false);assert.equal([...f.values.keys()].some(key=>key.startsWith('airk.installComplete.2.')),false);
+    }finally{await f.close();}
+});
+for(const secondFailure of [false,true])test(`cache inventory recovery performs one native reprepare and complete migration review (${secondFailure?'second refusal remains incomplete':'new inventory completes'})`,async context=>{
+    const f=await serviceTestHost(context,{automatic:false,registered:false});
+    try{
+        let current:any,retirements=0,replans=0,preparations=0;
+        context.mock.method(RuntimeHost.prototype,'prepareLegacyCaches',async(selected:typeof f.binding,storage:string)=>{preparations++;current??={schema:1,active:selected.runtimeSha256,scope:'context-only',context_global_storage:storage,global_storage_roots:[storage],caches:[],origin_proofs:[],origin_locators:[],adoption_locators:[],managed_locators:[],origin_classifications:[],inspection_sha256:'a1'.repeat(32)};return current;});
+        context.mock.method(RuntimeHost.prototype,'retireLegacyCaches',async(_binding:typeof f.binding,prepared:Record<string,unknown>)=>{retirements++;assert.equal(prepared,current);if(retirements===1||secondFailure)throw new ServiceError('legacy_cache_retirement_unconfirmed',true,{original_native_failure:{remaining:null}});return {scope:'context-only',caches_retired:true,remaining:0};});
+        context.mock.method(RuntimeHost.prototype,'reprepareLegacyCaches',async(_binding:typeof f.binding,previous:Record<string,unknown>)=>{replans++;assert.equal(previous,current);current={...current,inspection_sha256:'a2'.repeat(32)};return current;});
+        await f.commands.get('airk.installCli')!();assert.equal(replans,1);assert.equal(retirements,2);assert.equal(preparations,2,'Replacement inventory triggers the full guarded migration phase');assert.equal(f.state.httpConnections.length,0);
+        assert.equal([...f.values.keys()].some(key=>key.startsWith('airk.installComplete.2.')),!secondFailure);assert.equal(f.calls.includes('legacy-launchers-retired'),!secondFailure);
+    }finally{await f.close();}
+});
+
+test('inactive native roots with unrelated agent settings neither enroll nor block launcher retirement',async context=>{
+    const f=await serviceTestHost(context,{automatic:false});
+    try{
+        const registration=[...f.registrations.values()][0],filename=path.join(registration.root,'.mcp.json'),bytes='{"account":"keep","mcpServers":{"unrelated":{"command":"other"}}}';
+        await fs.writeFile(filename,bytes);f.registrations.delete(registration.binding);f.inactiveRegistrations.set(registration.binding,registration);
+        await f.commands.get('airk.installCli')!();
+        assert.equal(await fs.readFile(filename,'utf8'),bytes);assert.equal(f.state.httpConnections.length,0);
+        assert.ok(f.calls.includes('legacy-launchers-retired'));assert.ok([...f.values.keys()].some(key=>key.startsWith('airk.installComplete.2.')));
+    }finally{await f.close();}
+});
+for(const shape of ['nested_owned','owned_custom_alias','owned_unknown_scope','foreign'] as const){
+    test(`global ${shape} declaration is migrated or blocks cleanup using original native authority`,async context=>{
+        const realInventory=realGlobalInventory,f=await serviceTestHost(context,{automatic:false});
+        try{
+            const {registration,configuration}=legacyConfiguration(f),home=path.join(f.root,'isolated-global-home');await fs.mkdir(home);
+            const entry=configuration.mcpServers['airk-'+registration.collection];
+            if(shape==='owned_unknown_scope')entry.args=entry.args.map(arg=>arg===registration.root?path.join(f.root,'unregistered-source'):arg);
+            if(shape==='foreign'){entry.command=path.join(f.root,'foreign-install','airk-launcher');entry.args=entry.args.map(arg=>arg===f.binding.installDir?path.dirname(entry.command):arg);}
+            const key=shape==='owned_custom_alias'?'custom_named_airk':'airk-'+registration.collection;
+            const value={account:'preserve',projects:{'this key is never source authority':{mcpServers:{[key]:entry,unrelated:{command:'other'}}},foreign:{mcpServers:{other:{command:'foreign'}}}}};
+            const filename=path.join(home,'.claude.json'),before=JSON.stringify(value);await fs.writeFile(filename,before);migrationEditor(f);
+            context.mock.method(globalInventory,'inventoryGlobalAgentConfigs',async(options:globalInventory.GlobalInventoryOptions)=>realInventory({...options,home,env:{},globalStoragePath:undefined,vscodeUserDirectories:[]}));
+            let cleanup=0;context.mock.method(RuntimeHost.prototype,'retireLegacyLaunchers',async()=>{cleanup++;return {schema:1,active:f.binding.runtimeSha256,legacy_launchers_retired:true,launcher:null,universal_launcher:null,processes:{scope:'verified_launcher_images',remaining:0,observations:[]}};});
+            await f.commands.get('airk.installCli')!();
+            if(shape==='nested_owned'){
+                assert.equal(cleanup,1);const after=JSON.parse(await fs.readFile(filename,'utf8'));
+                const servers=after.projects['this key is never source authority'].mcpServers;assert.equal(servers.airk.url,f.httpUrl);assert.equal(servers.airk.disabled,true);assert.deepEqual(servers.unrelated,value.projects['this key is never source authority'].mcpServers.unrelated);
+                assert.deepEqual(after.projects.foreign,value.projects.foreign);assert.equal(after.account,value.account);
+                assert.equal((f.state.httpConnections[0].selection.selection as any).configuration_receipt,createHash('sha256').update(before).digest('hex'),'Actual complete original global bytes bind enrollment');
+            }else{
+                assert.equal(await fs.readFile(filename,'utf8'),before);assert.equal(cleanup,shape==='foreign'?1:0);assert.equal(f.state.httpConnections.filter((row:any)=>row.client==='claude').length,0);
+            }
+        }finally{await f.close();}
+    });
+}
+test('interrupted native cleanup resumes without stale completion and repeated runtime replacement reruns finalization',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,registered:false});
+    try{
+        let attempts=0;context.mock.method(RuntimeHost.prototype,'retireLegacyLaunchers',async()=>{attempts++;if(attempts===1)throw new ServiceError('legacy_launcher_identity_unknown',true,{phase:'removing'});return {schema:1,active:f.binding.runtimeSha256,legacy_launchers_retired:true,launcher:null,universal_launcher:null,processes:{scope:'verified_launcher_images',remaining:0,observations:[]}};});
+        await f.commands.get('airk.installCli')!();assert.equal(attempts,1);assert.equal([...f.values.keys()].some(key=>key.startsWith('airk.installComplete.2.')),false);
+        await f.commands.get('airk.installCli')!();assert.equal(attempts,2);const key='airk.installComplete.2.'+f.binding.installDir,first=f.values.get(key);assert.ok(first);
+        f.binding.runtimeSha256='ef'.repeat(32);await f.commands.get('airk.installCli')!();assert.equal(attempts,3);assert.notEqual(f.values.get(key),first);assert.equal(f.values.get(key),f.binding.version+':'+f.binding.runtimeSha256);
+        assert.ok(f.calls.filter(value=>value==='previous-runtime-retired').length>=2,'Each completed distinct runtime retires previous payloads after the gate');
+    }finally{await f.close();}
+});
+
+test('future modern upgrade completes an older fully occupied cleanup before admitting another payload',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,registered:false,bundledVersion:'1.8.15',runtimeVersion:'1.8.14',installedVersion:'1.8.15'});
+    try{
+        f.binding.launcher=null;const order:string[]=[];
+        context.mock.method(RuntimeHost.prototype,'retireLegacyLaunchers',async(selected:typeof f.binding)=>{order.push('launchers-'+selected.version);return {schema:1,active:selected.runtimeSha256,legacy_launchers_retired:true,launcher:null,universal_launcher:null,processes:{scope:'verified_launcher_images',remaining:0,observations:[]}};});
+        context.mock.method(RuntimeHost.prototype,'retirePrevious',async(selected:typeof f.binding)=>{order.push('runtimes-'+selected.version);return {active:selected.runtimeSha256,retired_previous:null,retired_runtimes:[],complete:true,selected_service_restarted:false,processes:{scope:'verified_superseded_runtime_images',remaining:0,observations:[]}};});
+        const transition=RuntimeHost.prototype.transition;
+        context.mock.method(RuntimeHost.prototype,'transition',async function(this:RuntimeHost,...args:Parameters<RuntimeHost['transition']>){order.push('activate-next');return transition.apply(this,args);});
+        await f.commands.get('airk.installCli')!();
+        assert.deepEqual(order,['launchers-1.8.14','runtimes-1.8.14','activate-next','launchers-1.8.15','runtimes-1.8.15']);
+        assert.ok(f.calls.includes('selected-modern-metadata-verified'),'Older selected binding uses its narrowly verified metadata adapter');
+        assert.equal(f.values.get('airk.installComplete.2.'+f.binding.installDir),'1.8.15:'+f.binding.runtimeSha256);
+        assert.equal(f.registrations.size,0);assert.equal(f.writes.filter(value=>value.reserve_project||value.enqueue).length,0);
+    }finally{await f.close();}
+});
+
+for(const [transientFailures,directoryHint] of [[0,false],[2,false],[0,true]] as const)test(`live native owner replacement refreshes owned HTTP port after ${transientFailures} transient failures (${directoryHint?'closed UI directory watcher':'console observation'}) without installing or enrolling again`,async context=>{
+    const f=await serviceTestHost(context,{automatic:false});
+    try{
+        const definitions=await f.api.getServerDefinitions();assert.equal(definitions.length,1);
+        const id=String(definitions[0].headers.Authorization).split('.')[1],info=await RuntimeHost.prototype.httpConnectionInfo.call({} as RuntimeHost,f.binding,id),selection=structuredClone(info.selection);
+        const row=[...f.registrations.values()][0],destination=path.join(row.root,'.vscode','mcp.json');await fs.mkdir(path.dirname(destination));
+        await fs.writeFile(destination,JSON.stringify({servers:{airk:{type:'http',url:info.endpoint.url,headers:{Authorization:'Bearer ${input:airkToken_'+id+'}','X-AIRK-Response-Mode':'full'},disabled:true},other:{command:'keep'}}}));migrationEditor(f);
+        const control=(f.views.get('airk.workbench') as any).host.control;
+        if(directoryHint){
+            assert.equal((control as any).consumers,0,'No Workbench or Explorer consumer polls the service');
+            const owner=f.context.subscriptions.find((entry:any)=>typeof entry.syncHttpEndpointWatcher==='function');assert.ok(owner);
+            await fs.writeFile(path.join(f.binding.controlDir,'http-1','endpoint.json'),'old notification hint');owner.syncHttpEndpointWatcher();
+            const limit=Date.now()+3000;while(owner.observedHttpInstance!=='12'.repeat(16)&&Date.now()<limit)await new Promise(resolve=>setTimeout(resolve,10));
+            assert.equal(owner.observedHttpInstance,'12'.repeat(16),'Initial authenticated discovery closes the missed-event gap');
+        }
+        const next={...info,endpoint:{...info.endpoint,url:'https://127.0.0.1:57423/mcp',service_instance:'98'.repeat(16),generation:info.endpoint.generation+1}};
+        let lookups=0;context.mock.method(RuntimeHost.prototype,'lookupHttpConnection',async(binding:typeof f.binding,id:string)=>{lookups++;if(lookups<=transientFailures)throw new ServiceError('native_management_busy',false,{safe_read:true});assert.equal(binding.runtimeSha256,f.binding.runtimeSha256);assert.equal(id,info.connection_id);return {schema:1,active:binding.runtimeSha256,connection_id:id,status:'owned',connection:next};});
+        context.mock.method(RuntimeHost.prototype,'httpConnectionInfo',async()=>next);
+        let changes=0;f.providers[0].onDidChangeMcpServerDefinitions(()=>changes++);
+        const before=f.state.httpConnections.length,retirements=f.calls.filter(value=>value==='legacy-launchers-retired').length;
+        if(!directoryHint)control.controller.state.health={state:'live',checkedAt:Date.now(),value:{status:'health',observation:{version:f.binding.version,runtime_sha256:f.binding.runtimeSha256,instance:next.endpoint.service_instance}}};
+        const realNow=Date.now.bind(Date);let offset=0;
+        if(transientFailures)context.mock.method(Date,'now',()=>realNow()+offset);
+        const emit=()=>{(control as any).stateChanged.fire(control.controller.state);};
+        const waitFor=async(predicate:()=>boolean)=>{const limit=realNow()+3000;while(!predicate()&&realNow()<limit)await new Promise(resolve=>setTimeout(resolve,10));assert.ok(predicate());};
+        const noisyReads=f.nativeMethods.filter(method=>['resources','workers','events','embedding_status','source_status'].includes(method)).length;
+        if(directoryHint){
+            f.state.nativeInstance=next.endpoint.service_instance;f.state.nativeHealthFailures=1;
+            const temporary=path.join(f.binding.controlDir,'http-1','endpoint.next');await fs.writeFile(temporary,'invalid descriptor bytes are only a notification hint');
+            await fs.rename(temporary,path.join(f.binding.controlDir,'http-1','endpoint.json'));
+        }else emit();
+        for(let failure=1;failure<=transientFailures;failure++){
+            await waitFor(()=>f.calls.filter(value=>value.includes('saved HTTPS connection refresh deferred')).length===failure);
+            assert.equal(JSON.parse(await fs.readFile(destination,'utf8')).servers.airk.url,info.endpoint.url);
+            emit();await new Promise(resolve=>setTimeout(resolve,15));assert.equal(lookups,failure,'Backoff prevents repeated state events from replaying even the safe read');
+            // The next attempt must read the present file and preserve new edits.
+            const current=JSON.parse(await fs.readFile(destination,'utf8'));current.recentEdit=failure;await fs.writeFile(destination,JSON.stringify(current));
+            offset+=30000;emit();
+        }
+        const deadline=Date.now()+3000;let actual:any;
+        do{actual=JSON.parse(await fs.readFile(destination,'utf8'));if(actual.servers.airk.url===next.endpoint.url&&changes>0)break;await new Promise(resolve=>setTimeout(resolve,10));}while(Date.now()<deadline);
+        assert.equal(actual.servers.airk.url,next.endpoint.url);assert.equal(actual.servers.airk.disabled,true);assert.deepEqual(actual.servers.other,{command:'keep'});
+        assert.ok(changes>0);assert.equal(lookups,1+transientFailures);if(transientFailures){assert.equal(actual.recentEdit,transientFailures);assert.equal(f.warnings.filter(value=>value.includes('Some saved HTTPS connections still need refreshing')).length,1);}assert.equal(f.state.httpConnections.length,before,'Port discovery never reenrolls a credential or changes its grant');
+        assert.equal(f.calls.filter(value=>value==='legacy-launchers-retired').length,retirements,'Port refresh performs no installer retirement');assert.deepEqual(next.selection,selection);
+        if(directoryHint){assert.equal(f.state.nativeHealthFailures,0,'A transient management failure after publication is retried without a second file event');assert.equal((control as any).consumers,0);assert.equal(f.nativeMethods.filter(method=>['resources','workers','events','embedding_status','source_status'].includes(method)).length,noisyReads,'Endpoint observation does not start general console polling');}
+    }finally{await f.close();}
+});

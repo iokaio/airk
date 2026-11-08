@@ -223,7 +223,8 @@ pub fn installed_body(
         }
     }
     let reason = match observation.provenance {
-        crate::grant_provenance::GrantProvenanceKind::ImportedLegacySnapshot => {
+        crate::grant_provenance::GrantProvenanceKind::ImportedLegacySnapshot
+        | crate::grant_provenance::GrantProvenanceKind::ImportedStandaloneAdoption => {
             "This imported legacy grant authorizes only the frozen selection shown here. Current catalog discovery and widening require an explicitly reviewed Project/index session."
         }
         crate::grant_provenance::GrantProvenanceKind::UserReviewedProjectGrant => {

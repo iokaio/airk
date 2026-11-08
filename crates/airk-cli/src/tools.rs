@@ -124,6 +124,41 @@ mod parity_tests {
     }
 
     #[tokio::test]
+    async fn cli_public_facade_uses_http_catalog_aliases_and_help_validation() -> Result<()> {
+        let backend = Arc::new(Backend {
+            limit: AtomicUsize::new(16),
+        });
+        let public = public_project_backend(backend, "a".repeat(64), "fixture")?;
+        assert_eq!(
+            serde_json::to_value(public.catalog())?,
+            serde_json::to_value(airk_mcp::unified::tools())?
+        );
+        let session = RemoteSession(public);
+        let invalid = json!({"topic":"workbench","detail":"full"});
+        let response = session
+            .call("help".into(), invalid.as_object().unwrap().clone())
+            .await?;
+        let mut expected = serde_json::to_value(airk_mcp::help::call(invalid))?;
+        expected["structuredContent"] =
+            serde_json::from_str(expected["content"][0]["text"].as_str().unwrap())?;
+        assert_eq!(response, expected);
+        assert_eq!(
+            response["structuredContent"]["error"]["code"],
+            "invalid_help_arguments"
+        );
+        let args = json!({"query":"needle", "response_mode":"full"});
+        let short = session
+            .call("search".into(), args.as_object().unwrap().clone())
+            .await?;
+        let native = session
+            .call("airk_search".into(), args.as_object().unwrap().clone())
+            .await?;
+        assert_eq!(short, native);
+        assert_eq!(short["structuredContent"]["native_field"]["complete"], true);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn cli_discovery_honors_the_same_response_options_as_the_mcp_bridge() -> Result<()> {
         let backend = Arc::new(Backend {
             limit: AtomicUsize::new(16),
@@ -148,7 +183,7 @@ mod parity_tests {
 #[derive(Subcommand)]
 #[command(disable_help_subcommand = true)]
 pub enum ToolsCommand {
-    /// List the connection's native prefixed tools; --json includes schemas. Unified MCP also supplies scope discovery and Explorer Assistance.
+    /// List the connection's unified tools; --json includes complete schemas and annotations.
     List {
         #[arg(long)]
         json: bool,
@@ -172,7 +207,7 @@ pub enum ToolsCommand {
         #[arg(long)]
         args_file: Option<PathBuf>,
     },
-    /// Open a collection-bound interactive console with help and examples.
+    /// Open a connection-bound interactive console with help and examples.
     Shell,
 }
 
@@ -183,7 +218,7 @@ fn print_json(value: &impl serde::Serialize) -> Result<()> {
 
 /// Metadata inspection works even before a workspace has been indexed.
 pub fn inspect(action: &ToolsCommand) -> Result<bool> {
-    inspect_catalog(action, tools())
+    inspect_catalog(action, airk_mcp::unified::tools())
 }
 
 fn inspect_catalog(action: &ToolsCommand, catalog: Vec<airk_mcp::remote::Tool>) -> Result<bool> {
@@ -192,28 +227,13 @@ fn inspect_catalog(action: &ToolsCommand, catalog: Vec<airk_mcp::remote::Tool>) 
             tool,
             args,
             args_file,
-        } if tool == "airk_help" => {
+        } if matches!(tool.as_str(), "airk_help" | "help") => {
             let result = serde_json::to_value(airk_mcp::help::call(Value::Object(arguments(
                 args.as_deref(),
                 args_file.as_deref(),
             )?)))?;
             print_json(&result)?;
             ensure!(result["isError"] != true, "AIRK help request failed");
-        }
-        ToolsCommand::Call {
-            tool,
-            args,
-            args_file,
-        } if tool == "airk_query_scope" => {
-            let result = airk_mcp::combined::legacy_discovery(Value::Object(arguments(
-                args.as_deref(),
-                args_file.as_deref(),
-            )?));
-            print_json(&result)?;
-            ensure!(
-                result["isError"] != true,
-                "AIRK scope discovery request failed"
-            );
         }
         ToolsCommand::List { json: true } => print_json(&json!({"tools": catalog}))?,
         ToolsCommand::List { json: false } => {
@@ -232,7 +252,9 @@ fn inspect_catalog(action: &ToolsCommand, catalog: Vec<airk_mcp::remote::Tool>) 
         } => {
             let tool = catalog
                 .into_iter()
-                .find(|tool| tool.name == *name)
+                .find(|tool| {
+                    tool.name == *name || name.strip_prefix("airk_") == Some(tool.name.as_ref())
+                })
                 .with_context(|| format!("Unknown MCP tool '{name}'. Use 'airk tools list'."))?;
             if *raw {
                 print_json(&tool)?;
@@ -270,7 +292,7 @@ fn inspect_catalog(action: &ToolsCommand, catalog: Vec<airk_mcp::remote::Tool>) 
                     "\nSave arguments as query.json, then run with your collection options:\n  airk tools call {name} --args-file query.json\nInside the tools console:\n  call {name} --args-file query.json\n  call {name} {}",
                     Value::Object(template)
                 );
-                if name == "airk_search" {
+                if matches!(name.as_str(), "airk_search" | "search") {
                     println!(
                         "\nExplicit vector search (requires a published model/index and discloses partial coverage):\n  call airk_search {{\"query\":\"how is a forgotten password recovered\",\"mode\":\"vector\",\"limit\":5}}\nOmit mode for the saved collection search policy."
                     );
@@ -371,10 +393,15 @@ pub async fn run_remote_selected(
     if inspect_selected(&action, selection.is_some())? {
         return Ok(());
     }
-    let session = RemoteSession(match selection {
+    let backend = match selection {
         Some(selection) => airk_cli::project_client::scoped_tools(control, project, selection)?,
         None => airk_cli::project_client::tools(control, project),
-    });
+    };
+    let session = RemoteSession(public_project_backend(
+        backend,
+        project.to_string(),
+        collection,
+    )?);
     match action {
         ToolsCommand::Call {
             tool,
@@ -394,6 +421,25 @@ pub async fn run_remote_selected(
     }
 }
 
+/// Reuse HTTP's public routing and argument validation without attaching an
+/// ambient Explorer window or changing the native selection authority.
+fn public_project_backend(
+    backend: std::sync::Arc<dyn airk_mcp::remote::RemoteTools>,
+    binding: String,
+    collection: &str,
+) -> Result<std::sync::Arc<dyn airk_mcp::remote::RemoteTools>> {
+    Ok(std::sync::Arc::new(airk_mcp::unified::Unified::new(
+        vec![airk_mcp::unified::Project {
+            binding: binding.clone(),
+            name: collection.into(),
+            collection: collection.into(),
+            backend,
+        }],
+        Some(binding),
+        None,
+    )?))
+}
+
 /// Combined sessions use the backend's canonical catalog for calls, shell help
 /// and argument templates. The same backend is also served over MCP.
 pub async fn run_backend(
@@ -401,6 +447,8 @@ pub async fn run_backend(
     backend: std::sync::Arc<dyn airk_mcp::remote::RemoteTools>,
     defaults: Map<String, Value>,
 ) -> Result<()> {
+    let backend: std::sync::Arc<dyn airk_mcp::remote::RemoteTools> =
+        std::sync::Arc::new(airk_mcp::unified::Unified::combined(backend, None)?);
     struct SelectedSession {
         remote: RemoteSession,
         defaults: Map<String, Value>,

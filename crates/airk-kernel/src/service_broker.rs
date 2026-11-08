@@ -99,6 +99,7 @@ pub struct Broker {
     service: Incarnation,
     limits: BrokerLimits,
     alive: bool,
+    evidence_paused: bool,
     workers: BTreeMap<ProjectBinding, Worker>,
     pending: BTreeMap<Sha256Digest, Pending>,
 }
@@ -118,7 +119,7 @@ impl Broker {
     pub fn status(&self, now: Instant) -> BrokerStatus {
         let mut status = BrokerStatus {
             service: self.service,
-            accepting: self.alive,
+            accepting: self.alive && !self.evidence_paused,
             projects: self.workers.len(),
             draining_projects: 0,
             pending_connections: self.pending.values().filter(|p| now < p.expires).count(),
@@ -161,6 +162,7 @@ impl Broker {
             service,
             limits,
             alive: true,
+            evidence_paused: false,
             workers: BTreeMap::new(),
             pending: BTreeMap::new(),
         })
@@ -319,6 +321,9 @@ impl Broker {
         now: Instant,
         ttl: Duration,
     ) -> Result<ConnectionGrant> {
+        if self.evidence_paused {
+            return Err(Error::Busy);
+        }
         self.worker(identity, now)?;
         if ttl.is_zero() || ttl > Duration::from_millis(MAX_GRANT_TTL_MS) || ttl.as_millis() == 0 {
             return Err(Error::InvalidRequest);
@@ -487,6 +492,9 @@ impl Broker {
         now: Instant,
         control: bool,
     ) -> Result<Incarnation> {
+        if self.evidence_paused {
+            return Err(Error::Busy);
+        }
         let worker = self.worker(identity, now)?;
         let connection = worker
             .connections
@@ -620,6 +628,13 @@ impl Broker {
             response_bytes: 0,
         };
         Ok(())
+    }
+
+    /// Quiesce evidence without revoking accepted indexing/model continuations
+    /// or worker renewal. This flag is intentionally irreversible for an owner.
+    pub fn pause_evidence(&mut self) {
+        self.evidence_paused = true;
+        self.pending.clear();
     }
 
     pub fn ownership_lost(&mut self) {

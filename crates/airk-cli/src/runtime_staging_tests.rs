@@ -1,6 +1,124 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
 
+fn approved_slot(root: &Path, label: &str) -> Result<String> {
+    let source = root.join(format!("slot-fixture-{label}"));
+    local_ipc::prepare_root(&source)?;
+    super::super::tests::fixture(&source)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(source.join("notices"), fs::Permissions::from_mode(0o700))?;
+    }
+    fs::write(source.join("LICENSE"), label.as_bytes())?;
+    let mut inventory: InstallManifest =
+        serde_json::from_slice(&fs::read(source.join("airk-install.json"))?)?;
+    inventory.files.insert(
+        "LICENSE".into(),
+        runtime_pair::digest_file(&source.join("LICENSE"))?,
+    );
+    let raw = serde_json::to_vec(&inventory)?;
+    let identity = format!("{:x}", Sha256::digest(&raw));
+    fs::write(source.join("airk-install.json"), raw)?;
+    replace_json(
+        &source,
+        "approval.json",
+        &Approval {
+            schema: 1,
+            manifest_sha256: identity.clone(),
+            version: inventory.version,
+            verification_basis: VerificationBasis::OrganizationDigest,
+        },
+    )?;
+    fs::rename(source, root.join("runtimes").join(&identity))?;
+    Ok(identity)
+}
+
+#[test]
+fn fifth_modern_escrow_preserves_four_approved_predecessors_and_resumes_only_same_candidate()
+-> Result<()> {
+    let (_owner, root, active) = super::super::tests::unselected_fixture()?;
+    for label in ["second", "third", "fourth"] {
+        approved_slot(&root, label)?;
+    }
+    replace_json(
+        &root,
+        "selected.json",
+        &Selection {
+            schema: 1,
+            active: active.clone(),
+            previous: None,
+        },
+    )?;
+    let incoming = "f".repeat(64);
+    assert_eq!(occupied_slots(&root)?, 4);
+    assert_eq!(slot_limit(&root, &incoming, true, false)?, 5);
+    assert_eq!(slot_limit(&root, &incoming, false, false)?, 4);
+    let source = root.join("incoming-source");
+    local_ipc::prepare_root(&source)?;
+    super::super::tests::fixture(&source)?;
+    fs::write(
+        source.join("LICENSE"),
+        b"distinct incoming modern candidate",
+    )?;
+    let mut inventory: InstallManifest =
+        serde_json::from_slice(&fs::read(source.join("airk-install.json"))?)?;
+    inventory.files.insert(
+        "LICENSE".into(),
+        runtime_pair::digest_file(&source.join("LICENSE"))?,
+    );
+    let raw = serde_json::to_vec(&inventory)?;
+    let identity = format!("{:x}", Sha256::digest(&raw));
+    let intent = StageIntent {
+        schema: 1,
+        root: root.to_str().unwrap().into(),
+        leaf: format!("stage-{}", "9".repeat(32)),
+        approval: Approval {
+            schema: 1,
+            manifest_sha256: identity.clone(),
+            version: inventory.version,
+            verification_basis: VerificationBasis::OrganizationDigest,
+        },
+        manifest_json: String::from_utf8(raw)?,
+        lengths: inventory
+            .files
+            .keys()
+            .map(|name| Ok((name.clone(), fs::metadata(source.join(name))?.len())))
+            .collect::<Result<_>>()?,
+    };
+    replace_json(
+        &root,
+        StageIntent::path(&root, &identity)
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        &intent,
+    )?;
+    assert_eq!(occupied_slots(&root)?, 5);
+    assert_eq!(slot_limit(&root, &identity, true, true)?, 5);
+    assert_eq!(slot_limit(&root, &incoming, true, false)?, 4);
+    local_ipc::prepare_root(&intent.directory(&root))?;
+    assert_eq!(slot_limit(&root, &identity, true, true)?, 5);
+    assert_eq!(fs::read_dir(root.join("runtimes"))?.count(), 5);
+    let unknown = root
+        .join("runtimes")
+        .join(&active)
+        .join("unknown-user-file");
+    fs::write(&unknown, b"preserve")?;
+    assert!(slot_limit(&root, &identity, true, true).is_err());
+    assert_eq!(fs::read(unknown)?, b"preserve");
+    fs::remove_file(
+        root.join("runtimes")
+            .join(&active)
+            .join("unknown-user-file"),
+    )?;
+    approved_slot(&root, "unexpected-sixth-payload")?;
+    assert!(occupied_slots(&root).is_err());
+    assert!(slot_limit(&root, &identity, true, true).is_err());
+    Ok(())
+}
+
 #[test]
 fn private_stage_directory_creation_is_exclusive_and_owner_verified() -> Result<()> {
     let owner = tempfile::tempdir()?;

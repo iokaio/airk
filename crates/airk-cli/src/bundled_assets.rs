@@ -1,5 +1,48 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Explicit offline extraction of verified embedded model assets.
+/// Exercise the embedded graph inside an exact private native service fixture.
+/// This does not register projects, publish an index, or touch the user's runtime.
+#[cfg(all(feature = "bundled-model", feature = "local-inference"))]
+pub fn verify_model_smoke() -> Result<serde_json::Value> {
+    use anyhow::Context;
+    let mut fixture_builder = tempfile::Builder::new();
+    fixture_builder.prefix("airk-model-smoke-");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fixture_builder.permissions(std::fs::Permissions::from_mode(0o700));
+    }
+    let fixture = fixture_builder.tempdir()?;
+    let runtime = fixture.path().join("runtime");
+    crate::local_ipc::prepare_root(&runtime)?;
+    let ownership = std::sync::Arc::new(airk_store::service::ServiceLease::acquire(&runtime)?);
+    let report = airk_kernel::inference_owner::run_service_inference(
+        ownership,
+        || -> Result<serde_json::Value> {
+            let plan = EmbeddedAssets::plan()?;
+            let model =
+                airk_retrieval::model::EmbeddingModel::open_native_assets(&EmbeddedAssets, &plan)?;
+            let first = model
+                .embed_text("cobalt harbor")?
+                .context("embedded model produced no vector")?;
+            let second = model
+                .embed_text("cobalt harbor")?
+                .context("embedded model produced no repeat vector")?;
+            ensure!(
+                first.len() == 384
+                    && first.len() == model.dimensions()
+                    && first.iter().all(|value| value.is_finite())
+                    && first == second,
+                "embedded model smoke output differs from approved contract"
+            );
+            Ok(
+                serde_json::json!({"schema":1,"source":"embedded","engine":"onnxruntime-cpu/1.22.1","profile":airk_retrieval::model_catalog::selected_profile()?.id,"legacy_identity":plan.legacy_identity,"pipeline_digest":plan.pipeline_digest,"dimensions":first.len(),"repeat_equal":true}),
+            )
+        },
+    )??;
+    fixture.close()?;
+    Ok(report)
+}
 use anyhow::Result;
 #[cfg(feature = "bundled-model")]
 use anyhow::ensure;
@@ -28,6 +71,26 @@ fn manifest_bytes() -> Result<&'static [u8]> {
 }
 pub fn manifest() -> Result<serde_json::Value> {
     Ok(serde_json::from_slice(manifest_bytes()?)?)
+}
+
+/// Bind only authenticated model metadata to a worker/observer. Native model
+/// initialization remains owned by the service's inference capability.
+pub fn bind_service_models(
+    kernel: airk_kernel::Kernel,
+    runtime: &std::path::Path,
+) -> Result<airk_kernel::Kernel> {
+    #[cfg(feature = "bundled-model")]
+    {
+        kernel.with_embedded_service_models(
+            runtime,
+            default_plan()?,
+            std::sync::Arc::new(EmbeddedAssets),
+        )
+    }
+    #[cfg(not(feature = "bundled-model"))]
+    {
+        kernel.with_service_models(runtime, default_plan()?)
+    }
 }
 #[cfg(feature = "bundled-model")]
 fn assets() -> Result<&'static [(&'static str, &'static [u8])]> {
@@ -106,6 +169,18 @@ impl EmbeddedAssets {
 }
 #[cfg(feature = "bundled-model")]
 impl airk_core::model_objects::ModelAssetSource for EmbeddedAssets {
+    fn borrowed_asset(
+        &self,
+        name: airk_core::model_objects::ModelAssetName,
+        maximum: u64,
+    ) -> Result<Option<&[u8]>> {
+        let bytes = Self::bytes(name)?;
+        ensure!(
+            bytes.len() as u64 <= maximum.min(name.maximum_bytes()),
+            "embedded model asset exceeds budget"
+        );
+        Ok(Some(bytes))
+    }
     fn read_asset(
         &self,
         name: airk_core::model_objects::ModelAssetName,

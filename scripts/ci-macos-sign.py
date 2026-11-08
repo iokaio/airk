@@ -8,6 +8,7 @@ Neither secret values nor captured credential-tool diagnostics are logged.
 import argparse
 import base64
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -138,6 +139,87 @@ def verify_signed_output(output, paired, sha1):
     return audit
 
 
+def probe_diagnostics(stderr):
+    """Bounded traceback coordinates/codes, without arbitrary child text."""
+    frames = re.findall(r'File "[^"\r\n]*[/\\]([A-Za-z0-9_.-]+\.py)", line ([0-9]{1,7}), in ([A-Za-z_][A-Za-z0-9_]*)', stderr)
+    kinds = re.findall(r'^([A-Za-z_][A-Za-z0-9_]*(?:Error|Exception))(?::|$)', stderr, re.MULTILINE)
+    codes = re.findall(r'\b([a-z][a-z0-9_]{1,100}_(?:failed|changed|unavailable|pending|refused|unsupported|invalid))\b', stderr)
+    return {"exception_types": sorted(set(kinds))[:16], "native_error_codes": sorted(set(codes))[:16],
+            "frames": [{"file": file, "line": int(line), "function": function} for file, line, function in frames[-16:]]}
+
+
+def qualify_signed_runtime(output, paired, target):
+    """Probe the actual signed schema-2 bundle after credential cleanup.
+
+    Historical standalone/pair formats retain their existing signing checks.
+    No executable is extracted from its app, re-signed, or written in place.
+    """
+    if not paired:
+        return None
+    if any(name in os.environ for name in SECRET_NAMES):
+        raise ValueError("Post-sign execution requires signing secrets to be removed first")
+    spec = importlib.util.spec_from_file_location("post_sign_native_package", ROOT / "scripts/package-native.py")
+    package = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(package)
+    runtime = output / "runtime"
+    descriptor = package.bounded_json(runtime / "airk-runtime.json", 4096)
+    builder = package.runtime_builder()
+    version = descriptor.get("version")
+    if not isinstance(version, str):
+        raise ValueError("Signed runtime probe version is missing")
+    modern = builder.single_image_version(version)
+    if descriptor.get("schema") == 1 and not modern:
+        return None
+    if descriptor.get("schema") != 2:
+        raise ValueError("Unsupported signed runtime schema for installation probes")
+    if not modern or "apple" not in target:
+        raise ValueError("Signed single-image probes require a modern Mac runtime")
+    files, _ = package.validate_runtime(runtime, version, target, builder.source_identity())
+    report = {"schema": "airk-macos-post-sign-validation/1", "target": target, "version": version,
+              "install_manifest_sha256": package.sha256(runtime / "airk-install.json"),
+              "executable_sha256": files["AIRK.app/Contents/MacOS/airk"],
+              "scope": "signed embedded-model and owned private installation; GUI approval and agent trust are separate",
+              "stages": []}
+    receipt = output / "post-sign-validation.json"
+    def save():
+        receipt.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    save()
+    stage = "signed_embedded_model"
+    try:
+        # Uses the same numerical/profile contract as the original build probe,
+        # now executing the signed CFBundleExecutable in its sealed app.
+        report["model_smoke"] = builder.verify_model_smoke(runtime, "macos", version)
+        report["stages"].append("signed_embedded_model_passed")
+        save()
+        stage = "signed_private_installation"
+        environment = {key: value for key, value in os.environ.items() if key not in SECRET_NAMES}
+        result = subprocess.run([sys.executable, str(ROOT / "scripts/check-service-install.py"),
+                                 "--runtime", str(runtime)], cwd=ROOT, env=environment,
+                                capture_output=True, text=True, encoding="utf-8", errors="replace")
+        report["service_install"] = {"exit_code": result.returncode,
+            "stdout_sha256": hashlib.sha256(result.stdout.encode()).hexdigest(),
+            "stderr_sha256": hashlib.sha256(result.stderr.encode()).hexdigest(),
+            "diagnostics": probe_diagnostics(result.stderr)}
+        if result.returncode:
+            raise RuntimeError("Signed Mac private service-install probe failed; owned fixture is retained by the probe")
+        report["stages"].append("signed_private_installation_passed")
+        stage = "signed_payload_inventory"
+        if package.inventory(runtime) != files:
+            raise RuntimeError("Signed payload changed during post-sign probes")
+        report["status"] = "passed"
+    except Exception as error:
+        # Do not copy arbitrary child output or secrets into a signing receipt.
+        report["status"] = "failed"
+        report["failure_stage"] = stage
+        report["failure_type"] = type(error).__name__
+        save()
+        print("Signed Mac runtime execution failed: " + json.dumps(report, sort_keys=True))
+        raise
+    save()
+    print("Verified signed Mac runtime execution: " + json.dumps(report, sort_keys=True))
+    return report
+
+
 def sign(target, paired=False):
     directory = runner_directory()
     values = {name: os.environ.pop(name, "") for name in SECRET_NAMES}
@@ -180,6 +262,9 @@ def sign(target, paired=False):
             security("list-keychains", "-d", "user", "-s", *original_keychains)
         finally:
             cleanup(directory)
+    # Both hosted signing callers share this gate. In particular, no model or
+    # installation subprocess runs while the imported signing keychain exists.
+    qualify_signed_runtime(ROOT / "artifacts/signed" / target, paired, target)
 
 
 def main():

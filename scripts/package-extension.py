@@ -20,9 +20,9 @@ TARGETS = {"x86_64-pc-windows-msvc": "win32-x64", "x86_64-unknown-linux-gnu": "l
            "aarch64-apple-darwin": "darwin-arm64", "x86_64-apple-darwin": "darwin-x64"}
 MODULES = ("extension.js", "extensionUpdateLoader.js", "extensionUninstall.js", "uninstallHook.js", "diagnosticLogs.js", "diagnosticCaptures.js", "serviceExtension.js", "serviceDashboard.js", "serviceWorkspace.js", "model.js", "native.js", "nativeGate.js", "cliInstall.js", "cliRemove.js", "privateDirectory.js",
            "usagePanel.js", "usageReport.js", "report.js", "readRetry.js",
-           "agentConnections.js", "agentConfig.js", "agentMigration.js", "unifiedAgentConfig.js", "agentSetup.js", "serviceBootstrap.js", "runtimeLegacyRetirement.js", "serviceClient.js",
+           "agentConnections.js", "agentConfig.js", "agentMigration.js", "globalAgentInventory.js", "agentToml.js", "unifiedAgentConfig.js", "agentSetup.js", "serviceBootstrap.js", "runtimeLegacyRetirement.js", "serviceClient.js",
            "serviceConsole.js", "serviceConsoleController.js", "serviceConsoleView.js", "serviceIntents.js",
-           "mcpStdioSession.js", "explorerSidebar.js", "explorerStatus.js", "explorerController.js", "explorerControl.js",
+           "mcpStdioSession.js", "mcpHttpSession.js", "serviceHttp.js", "httpIssuerRotation.js", "explorerSidebar.js", "explorerStatus.js", "explorerController.js", "explorerControl.js",
            "explorerContracts.js", "explorerErrors.js", "explorerEvidence.js", "explorerFeatures.js", "explorerPanel.js",
            "explorerRoutes.js", "explorerSearch.js", "explorerSource.js", "explorerWorkspaceIO.js",
            "explorerFacts.js", "explorerInspect.js", "explorerManagement.js", "indexingCatalog.js", "indexingSplit.js", "referenceRefresh.js", "indexingCatalogController.js", "catalogSession.js", "scopeSelection.js", "localSearchScope.js",
@@ -353,9 +353,10 @@ def main():
     builder = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(builder)
     operating_system = "windows" if "windows" in args.target else "macos" if "apple" in args.target else "linux"
-    executable, helper = builder.runtime_names(operating_system)
+    executables = builder.runtime_executables(operating_system, manifest["version"])
+    executable = executables[0]
     launcher = builder.launcher_name(operating_system, manifest["version"])
-    inference_assets = builder.inference_assets(operating_system, "aarch64" if args.target.startswith("aarch64-") else "x86_64")
+    inference_assets = builder.inference_assets(operating_system, "aarch64" if args.target.startswith("aarch64-") else "x86_64", manifest["version"])
     builder.load_script("int8-policy").verify_embedded(manifest.get("embedded_models", {}))
     mac_resources = set(builder.macos_bundle_files(manifest["version"])) | {"AIRK.app/Contents/_CodeSignature/CodeResources", "AIRK.app/Contents/CodeResources"} if operating_system == "macos" else set()
     with zipfile.ZipFile(archive) as zipped:
@@ -363,7 +364,7 @@ def main():
             raise SystemExit("Native archive inventory differs")
         for name, expected in manifest["payload"].items():
             safe_name(name)
-            if name not in (executable, helper, launcher, "airk-build.json", "airk-runtime.json", "airk-install.json", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md") and name not in mac_resources and name not in inference_assets and not name.startswith("notices/"):
+            if name not in (*executables, launcher, "airk-build.json", "airk-runtime.json", "airk-install.json", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md") and name not in mac_resources and name not in inference_assets and not name.startswith("notices/"):
                 raise SystemExit("Unexpected native payload path: " + name)
             data = zipped.read(name)
             if digest(data) != expected:
@@ -386,13 +387,13 @@ def main():
     inventory = {name: value for name, value in manifest["payload"].items() if name != "airk-install.json"}
     if install.get("files") != inventory or install_digest != manifest.get("install_manifest_sha256"):
         raise SystemExit("Native pair installer inventory differs")
-    for name in dict.fromkeys((executable, helper, launcher)):
+    for name in dict.fromkeys((*executables, launcher)):
         if name not in inventory:
             raise SystemExit("Native pair executable missing: " + name)
         (runtime / name).chmod(0o755)
     wrapper = {"schema": 2, "version": manifest["version"], "vsix_target": manifest["vsix_target"],
                "runtime_dir": "runtime", "install_manifest_sha256": install_digest,
-               "payload": {name: inventory[name] for name in (executable, helper)}}
+               "payload": {name: inventory[name] for name in executables}}
     (stage / "native" / "manifest.json").write_text(json.dumps(wrapper, indent=2) + "\n", encoding="utf-8")
     shutil.copyfile(native / "manifest.json", stage / "native" / "candidate.json")
     stage_runtime_modules(EXTENSION / "out", stage / "out")

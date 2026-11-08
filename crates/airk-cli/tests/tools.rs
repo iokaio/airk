@@ -9,7 +9,7 @@ use std::{
 };
 
 fn command(root: &Path, state: &Path) -> Command {
-    common::command(root, state, "tools-test")
+    common::evidence_command(root, state, "tools-test")
 }
 
 fn success(output: Output) -> Value {
@@ -39,29 +39,29 @@ fn tools_help_works_without_a_workspace_and_exposes_live_schemas() {
             .unwrap(),
     );
     let tools = list["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 19);
+    assert_eq!(tools.len(), airk_mcp::unified::tools().len());
     assert_eq!(
         list["tools"],
-        serde_json::to_value(airk_mcp::local::tools()).unwrap()
+        serde_json::to_value(airk_mcp::unified::tools()).unwrap()
     );
-    assert!(tools.iter().any(|tool| tool["name"] == "airk_help"));
+    assert!(tools.iter().any(|tool| tool["name"] == "help"));
     let query_scope = tools
         .iter()
-        .find(|tool| tool["name"] == "airk_query_scope")
+        .find(|tool| tool["name"] == "query_scope")
         .expect("query scope metadata tool");
     assert_eq!(query_scope["annotations"]["readOnlyHint"], true);
+    let mut discovery_properties =
+        airk_core::combined_reads::query_scope::schema()["properties"].clone();
+    // Public routing permits only the already configured project binding;
+    // it is consumed by Unified before native grant-bound discovery.
+    discovery_properties["project"] = query_scope["inputSchema"]["properties"]["project"].clone();
+    assert_eq!(discovery_properties["project"]["pattern"], "^[0-9a-f]{64}$");
     assert_eq!(
         query_scope["inputSchema"]["properties"],
-        airk_core::combined_reads::query_scope::schema()["properties"]
+        discovery_properties
     );
     assert_eq!(query_scope["inputSchema"]["additionalProperties"], false);
-    for field in [
-        "project",
-        "project_ids",
-        "index_ids",
-        "verification",
-        "response_mode",
-    ] {
+    for field in ["project_ids", "index_ids", "verification", "response_mode"] {
         assert!(
             query_scope["inputSchema"]["properties"]
                 .get(field)
@@ -69,30 +69,24 @@ fn tools_help_works_without_a_workspace_and_exposes_live_schemas() {
             "discovery must not advertise {field}"
         );
     }
-    let discovery = evidence(
-        command(&root, &state)
-            .args([
-                "tools",
-                "call",
-                "airk_query_scope",
-                "--args",
-                r#"{"view":"projects"}"#,
-            ])
+    for alias in ["query_scope", "airk_query_scope"] {
+        let discovery = command(&root, &state)
+            .args(["tools", "call", alias, "--args", r#"{"view":"projects"}"#])
             .output()
-            .unwrap(),
-    );
-    assert_eq!(discovery["schema"], "airk.query-scope/1");
-    assert_eq!(discovery["mode"], "legacy");
-    assert_eq!(discovery["status"], "configuration_required");
-    for field in ["projects", "indexes", "sources"] {
-        assert_eq!(discovery[field], json!([]));
+            .unwrap();
+        assert_eq!(discovery.status.code(), Some(1));
+        assert!(
+            discovery.stdout.is_empty(),
+            "missing authority must not produce successful discovery"
+        );
+        assert!(
+            String::from_utf8_lossy(&discovery.stderr).contains("runtime installation is missing")
+        );
+        assert!(
+            !root.exists() && !state.exists(),
+            "scope discovery created source/private state"
+        );
     }
-    assert_eq!(discovery["grant"], Value::Null);
-    assert!(discovery.get("publication").is_none());
-    assert!(
-        !root.exists() && !state.exists(),
-        "legacy discovery created source/private state"
-    );
     let help = evidence(
         command(&root, &state)
             .args(["tools", "call", "airk_help"])
@@ -119,15 +113,12 @@ fn tools_help_works_without_a_workspace_and_exposes_live_schemas() {
             .contains("--expected-active")
     );
     assert!(!root.exists() && !state.exists());
-    let status = tools
-        .iter()
-        .find(|tool| tool["name"] == "airk_status")
-        .unwrap();
+    let status = tools.iter().find(|tool| tool["name"] == "status").unwrap();
     assert!(
         status["description"]
             .as_str()
             .unwrap()
-            .contains("Quick AIRK version, basic health and project-index check")
+            .contains("Quick version, health and project-index check")
     );
     for tool in tools {
         let help = success(
@@ -138,7 +129,7 @@ fn tools_help_works_without_a_workspace_and_exposes_live_schemas() {
         );
         assert_eq!(&help, tool);
     }
-    let search = tools.iter().find(|t| t["name"] == "airk_search").unwrap();
+    let search = tools.iter().find(|t| t["name"] == "search").unwrap();
     assert_eq!(search["inputSchema"]["properties"]["limit"]["default"], 10);
     let output = command(&root, &state)
         .args(["tools", "help", "airk_search"])
@@ -166,10 +157,10 @@ fn tool_calls_preserve_evidence_scope_errors_and_argument_budgets() {
         "# Fixture\nAuthenticate the local account.\n",
     )
     .unwrap();
-    let service = common::Service::start(root.path(), state.path(), "tools-test");
+    let service = common::Service::reviewed(root.path(), state.path(), "tools-test");
     service.configure(airk_cli::service_configuration::Draft::Vectors { enabled: false });
     let accepted = success(
-        command(root.path(), state.path())
+        common::command(root.path(), state.path(), "tools-test")
             .arg("index")
             .output()
             .unwrap(),
@@ -177,59 +168,131 @@ fn tool_calls_preserve_evidence_scope_errors_and_argument_budgets() {
     service.wait(serde_json::from_value(accepted["job"]["id"].clone()).unwrap());
     let query = state.path().join("query with spaces.json");
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-    let status = loop {
-        let status = evidence(
-            common::read_retry::output_until(
-                command(root.path(), state.path()).args(["tools", "call", "airk_diagnostics"]),
-                deadline,
-            )
-            .unwrap(),
-        );
-        common::read_retry::publication_pending(
-            &status,
-            "tools-test",
-            &service.project.binding.to_string(),
-        )
+    // An accepted Index job can finish before its setup/source continuations.
+    // Settle the owned native work before asserting running-worker diagnostics.
+    service
+        .settle_reviewed_index(root.path(), state.path(), deadline)
         .unwrap();
-        assert!(
-            std::time::Instant::now() < deadline,
-            "runtime observation deadline exhausted"
-        );
-        if !status["runtime"]["index_worker"]["process"]["executable_sha256"].is_null() {
-            break status;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(100));
+    let status = evidence(
+        common::read_retry::output_until(
+            command(root.path(), state.path()).args(["tools", "call", "airk_diagnostics"]),
+            deadline,
+        )
+        .unwrap(),
+    );
+    common::read_retry::publication_pending(
+        &status,
+        "tools-test",
+        &service.project.binding.to_string(),
+    )
+    .unwrap();
+    // A reviewed index grant intentionally cannot disclose project-wide jobs,
+    // process inventory, or watcher state. Observe those using the fixture's
+    // native administrative authority, never widen its evidence grant.
+    assert_eq!(
+        status["runtime"],
+        json!({"schema":1,"error":"native_runtime_context_unavailable"})
+    );
+    assert_eq!(
+        status["work"],
+        json!({"error":"native_work_context_unavailable"})
+    );
+    assert!(status["scope_observation"]["fingerprint"].is_string());
+    use airk_core::service::{ControlMethod, ControlResponse};
+    let health = match service
+        .request_until(ControlMethod::Health, deadline)
+        .unwrap()
+    {
+        ControlResponse::Health { observation } => observation,
+        _ => panic!("native health unavailable"),
     };
-    let runtime = &status["runtime"];
-    assert_eq!(runtime["schema"], 1);
-    assert_eq!(runtime["versions_match"], true);
-    assert_eq!(
-        runtime["mcp_frontend"]["process"]["version"],
-        env!("CARGO_PKG_VERSION")
+    let worker = match service
+        .request_until(
+            ControlMethod::Worker {
+                project: service.project.binding,
+            },
+            deadline,
+        )
+        .unwrap()
+    {
+        ControlResponse::Worker {
+            project,
+            identity: Some(identity),
+            ..
+        } => {
+            assert_eq!(project, service.project.binding);
+            identity
+        }
+        _ => panic!("native worker identity unavailable"),
+    };
+    assert_eq!(worker.project, service.project.binding);
+    assert_eq!(worker.service, health.instance);
+    assert_eq!(health.version, env!("CARGO_PKG_VERSION"));
+    // The current single executable is the actual service image. Do not invent
+    // a scoped worker/front-end process report that the native API withholds.
+    use sha2::{Digest, Sha256};
+    let expected_image = format!(
+        "{:x}",
+        Sha256::digest(fs::read(env!("CARGO_BIN_EXE_airk")).unwrap())
     );
     assert_eq!(
-        runtime["index_worker"]["process"]["version"],
-        env!("CARGO_PKG_VERSION")
+        serde_json::to_value(&health).unwrap()["executable_sha256"],
+        expected_image
     );
-    assert_eq!(runtime["service"]["version"], env!("CARGO_PKG_VERSION"));
-    assert_eq!(
-        status["work"]["serving_worker"]["project"],
-        serde_json::to_value(service.project.binding).unwrap()
-    );
+    let version =
+        common::read_retry::once_until(common::native_command().arg("--version"), deadline)
+            .unwrap();
+    assert!(version.status.success());
     assert!(
-        status["work"]["pending_job"].is_null()
-            || status["work"]["pending_job"]["project"]
-                == status["work"]["serving_worker"]["project"]
+        String::from_utf8(version.stdout)
+            .unwrap()
+            .contains(env!("CARGO_PKG_VERSION"))
     );
-    assert!(status["work"]["watch"]["enabled"].is_boolean());
-    assert_eq!(
-        runtime["index_worker"]["identity"]["service"],
-        runtime["service"]["instance"]
-    );
-    assert_eq!(
-        runtime["index_worker"]["process"]["executable_sha256"],
-        runtime["service"]["executable_sha256"]
-    );
+    match service
+        .request_until(
+            ControlMethod::Progress {
+                project: worker.project,
+            },
+            deadline,
+        )
+        .unwrap()
+    {
+        ControlResponse::Progress {
+            project,
+            pending_job,
+            queued_jobs,
+            observation,
+            ..
+        } => {
+            assert_eq!(project, worker.project);
+            assert!(pending_job.is_none_or(|job| job.project == worker.project));
+            assert!(queued_jobs.iter().all(|job| job.project == worker.project));
+            assert!(
+                observation.is_none_or(|sample| sample.worker.project == worker.project
+                    && sample.job.project == worker.project)
+            );
+        }
+        _ => panic!("native work observation unavailable"),
+    }
+    match service
+        .request_until(
+            ControlMethod::Watch {
+                project: worker.project,
+            },
+            deadline,
+        )
+        .unwrap()
+    {
+        ControlResponse::Watch {
+            project,
+            observation,
+        } => {
+            assert_eq!(project, worker.project);
+            observation.validate().unwrap();
+            assert!(serde_json::to_value(observation).unwrap()["enabled"].is_boolean());
+        }
+        _ => panic!("native watch observation unavailable"),
+    }
     fs::write(
         &query,
         br#"{"query":"Authenticate","mode":"lexical","limit":1}"#,
@@ -316,7 +379,7 @@ fn tool_calls_preserve_evidence_scope_errors_and_argument_budgets() {
 fn interactive_tools_show_help_and_recover_from_invalid_requests() {
     let root = tempfile::tempdir().unwrap();
     let state = tempfile::tempdir().unwrap();
-    let _service = common::Service::start(root.path(), state.path(), "tools-test");
+    let _service = common::Service::reviewed(root.path(), state.path(), "tools-test");
     let query = root.path().join("arguments with spaces.json");
     fs::write(&query, r#"{"reply_detail":"rich","adapter":"text"}"#).unwrap();
     let mut child = command(root.path(), state.path())

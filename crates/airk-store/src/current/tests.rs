@@ -21,6 +21,8 @@ use std::{
 
 #[path = "grants_tests.rs"]
 mod grants_tests;
+#[path = "legacy_adoption_archive_tests.rs"]
+mod legacy_adoption_archive_tests;
 #[path = "postings_tests.rs"]
 mod postings_tests;
 #[path = "recent_tests.rs"]

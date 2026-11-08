@@ -36,14 +36,23 @@ async fn handle(
     runtime: Option<&str>,
 ) -> ControlResponse {
     // The console never receives an evidence bearer credential. Evidence
-    // brokerage remains the dedicated direct-project client/stdio MCP path.
+    // brokerage remains on the dedicated scoped read transports.
     match &method {
         ControlMethod::Connect { .. } | ControlMethod::ConnectScoped { .. } => {
             return failure("console_brokerage_forbidden");
         }
+        ControlMethod::PrepareUpgradeCheckpoint { .. }
+        | ControlMethod::ObserveUpgradeCheckpoint { .. }
+        | ControlMethod::UpgradeRecoveryProbe { .. }
+        | ControlMethod::ReleaseUpgradeAdmission { .. }
+        | ControlMethod::HttpEnroll { .. }
+        | ControlMethod::HttpRevoke { .. } => {
+            return failure("console_private_setup_forbidden");
+        }
         // Exhaustive review: a new service method must be considered here before
         // a trusted console can expose it. No default credential-bearing path.
-        ControlMethod::ValidateCombinedDelivery { .. }
+        ControlMethod::HttpEndpoint
+        | ControlMethod::ValidateCombinedDelivery { .. }
         | ControlMethod::NativeRead { .. }
         | ControlMethod::CatalogPage { .. }
         | ControlMethod::CatalogDetail { .. }

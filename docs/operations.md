@@ -1,5 +1,36 @@
 # Operations
 
+## Current 1.8.14 connection setup
+
+Use [reviewed index setup](service-project-setup.md) and an actual native grant,
+then [Connect Coding Agent](agent-integration.md). The supported working adapters
+are Codex, Claude Code and VS Code/Copilot Chat. They connect directly to the
+authenticated HTTPS service; no launcher or stdio command belongs in a new
+agent declaration. Native `airk ... setup --client codex` requires an exact
+reviewed catalog/combined session and prints configuration and protected-file
+references; it does not infer authority from `--root` or save client files.
+
+An owned predecessor migration preserves its complete original scope and client
+policies. The VSIX installer must finish known configuration migration and
+verified native launcher retirement, then retirement of all approved superseded
+runtime executables before reporting clean success. This also applies to later
+modern-to-modern upgrades, preserving the selected runtime, sources, indexes and
+settings. Unknown or
+unsupported declarations and blocked cleanup remain explicitly incomplete.
+Use the actual saved endpoint and provision trust/credentials in the client
+process; writing a URL does not reconnect an existing client.
+
+The Docker stdio example below is historical. A host client cannot reuse a
+container's private loopback URL, and a current externally reachable container
+endpoint needs its own qualified transport/trust/scope contract. See the
+[current template boundaries](../examples/mcp/README.md).
+
+## Historical 1.2 operations
+
+The remaining commands and deployment examples on this page describe the
+pre-service 1.2 implementation. They are retained historical instructions, not
+new-install or update guidance for 1.8.14.
+
 ## Upgrading to 1.2
 
 AIRK 1.2 starts fresh collection/configuration ownership in `collections-1.2/`; it does not import the old `collections/` indexes or per-collection settings. Old state remains untouched and still consumes disk space. Review roots, extraction detail, vector selection, ingestion limits and quotas for the new collection, then index saved sources. Shared model assets require digest verification. See the [current-index contract](current-index-runtime.md).

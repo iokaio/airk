@@ -72,7 +72,7 @@ export function waitLabel(reason:unknown):string {
         resident_capacity:'Waiting for a resident worker slot',memory_budget:'Waiting for the memory budget',
         memory_pressure:'Waiting for observed memory pressure to ease',extraction_capacity:'Waiting for extraction capacity',
         scheduler:'Waiting for the scheduler turn',resource_policy:'Waiting for valid resource policy',
-        provider_drain:'Waiting for previous provider processes to drain',embedding_recovery:'Waiting for the embedding helper',
+        provider_drain:'Waiting for previous model work to finish',embedding_recovery:'Waiting for the embedding engine',
         index_capacity:'Waiting for indexing capacity',reader_lease:'Waiting for active readers',publication:'Waiting for publication',
         collection_selection:'Waiting for collection selection',native_lock:'Waiting for a native ownership lock'};
     return typeof reason==='string'&&Object.hasOwn(labels,reason)?labels[reason]:'Unrecognized native wait observation';
@@ -96,7 +96,7 @@ export function diagnosticPreview(state:ServiceConsoleState,includePaths:boolean
         lifecycle:fields(obj(state.bootstrap.value?.lifecycle),['explicitly_stopped','recorded_instance']),
         resources:fields(resources,['resident_workers','resident_limit','running_jobs','waiting_projects','logical_cpus','extraction_threads_limit','extraction_threads_reserved','inference_threads_limit','memory_limit_bytes','memory_reserved_bytes','query_headroom_bytes','background_io_limit_bytes_per_second','background_io_reserved_bytes_per_second','observed_rss_bytes','available_memory_bytes','telemetry_complete','pressure','pending_provider_drains','provider_drain_error']),
         resourceConfiguration:fields(obj(resources.configuration),['preset','query_concurrency','extraction_threads','inference_threads','memory_bytes','background_io_bytes_per_second']),
-        inference:fields(model,['available','worker','loads','reuses','sessions','observation_age_ms']),
+        inference:{...fields(model,['available','worker','process_id','loads','reuses','sessions','observation_age_ms']),...(model.provider?{provider:{...fields(obj(model.provider),['schema','kind','admission_open','admitted_high_water','queued_outstanding','running_outstanding','callback_outstanding','delivery_outstanding','model_references_outstanding','failure']),provider:fields(obj(obj(model.provider).provider),['schema','service_instance','approved_execution_sha256','provider_generation'])}}:{})},
         projects:(state.page?.projects??[]).map(row=>{const project=obj(row.project),registration=obj(project.registration),inspection=obj(row.inspection),snapshot=obj(inspection.snapshot),progress=obj(row.progress),work=obj(progress.progress),job=obj(progress.job);return {
             project:registration.binding,collection:includePaths?registration.collection:'[redacted]',root:includePaths?registration.root:'[redacted]',dataRoot:includePaths?registration.data_root:'[redacted]',
             fencingGeneration:project.fencing_generation,paused:project.paused,inspectionObservedAt:inspection.observed_unix_ms,

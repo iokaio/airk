@@ -16,6 +16,36 @@ import { FactHandles } from '../explorerFacts';
 const project = 'ab'.repeat(32);
 const sha = (text: string) => createHash('sha256').update(Buffer.from(text)).digest('hex');
 
+test('Inspector preserves complete predecessor provenance for details and copies without inventing current readiness', async () => {
+    const legacy = {origin:{schema:1,archive_inventory_sha256:sha('original inventory'),original_root_sha256:sha('original root'),
+        original_path:'saved/file.ts',source_available:true,profile_available:false,future_provenance:{retained:['all','fields']}},
+        vector_selection_available:false,profile_families_available:false,future_compatibility:{reason:'unavailable'}};
+    const payload = {content_hash:sha('saved bytes'),indexed_lines:4,legacy_saved_evidence:legacy,future_file_info:{retained:true}};
+    const view = await inspect({call:async()=>({publication:'original-imported-publication',payload})} as any,
+        new RefRegistry(),project,undefined,()=>false,'saved/file.ts');
+    assert.equal(view.live,'unchecked');
+    assert.equal(view.sourceVerification,undefined);
+    assert.deepEqual(view.legacySavedEvidence,legacy);
+    assert.deepEqual(view.nativeResult,payload);
+    assert.match(view.legacyAvailabilityMessage!,/Original saved source bytes: available/);
+    assert.match(view.legacyAvailabilityMessage!,/Original saved profile bytes: unavailable/);
+    assert.match(view.legacyAvailabilityMessage!,/Vector selection: unavailable/);
+    assert.match(view.legacyAvailabilityMessage!,/Current profile-family reads: unavailable/);
+    assert.match(view.legacyAvailabilityMessage!,/does not establish current profile or vector readiness/);
+    const copied = JSON.stringify(view.nativeResult,null,2);
+    assert.deepEqual(JSON.parse(copied).legacy_saved_evidence,legacy);
+    const raw = {content:[{type:'text',text:JSON.stringify(payload)}],structuredContent:payload,future_envelope:{retained:true}};
+    const enveloped = await inspect({call:async()=>({publication:'original-imported-publication',payload,rawPayload:raw})} as any,
+        new RefRegistry(),project,undefined,()=>false,'saved/file.ts');
+    assert.deepEqual(enveloped.nativeResult,raw);
+    legacy.origin.future_provenance.retained.push('later mutation');
+    assert.deepEqual((view.legacySavedEvidence!.origin as any).future_provenance.retained,['all','fields']);
+    const unknown = await inspect({call:async()=>({publication:'p',payload:{content_hash:sha('saved bytes'),legacy_saved_evidence:{origin:{future:true}}}})} as any,
+        new RefRegistry(),project,undefined,()=>false,'saved/file.ts');
+    assert.match(unknown.legacyAvailabilityMessage!,/source bytes: not reported/);
+    assert.match(unknown.legacyAvailabilityMessage!,/Vector selection: not reported/);
+});
+
 test('selected-file inspection creates a project-bound reference from one indexed record', async () => {
     const refs = new RefRegistry();
     const session = { call: async (tool: string, args: unknown) => {

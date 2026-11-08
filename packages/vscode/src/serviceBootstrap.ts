@@ -1,23 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import * as fs from 'node:fs/promises';
+import { HttpConnectionInfo, HttpSelection, validateHttpConnection, validateEndpoint, matchesImportedHttpOrigin } from './serviceHttp';
 import * as path from 'node:path';
 import { runText } from './native';
 import { NativeControlTransport, ServiceClient, ServiceError, record, RecordValue, identifier, count, ProjectConfigurationRequest, validateConfigurationRequest } from './serviceClient';
 import type { LifecycleIntent } from './serviceIntents';
 import { validateRetirementReply } from './runtimeLegacyRetirement';
+import {validateNativeLegacyBinding} from './indexingCatalog';
+import {IssuerRotationAction,IssuerRotationStatus,validateIssuerRotation} from './httpIssuerRotation';
 
-/**
- * Whether activation may upgrade the installed runtime to the bundled one without asking:
- * Forward upgrades within the explicitly supported 1.4–1.9 service-compatible
- * lines. Downgrades and unknown lines need an explicit, reviewed transition.
- * The onboarding tests target the package version so each release checks this policy.
- */
+/** Version direction only, never a protocol/storage compatibility claim.
+ * Native authenticated formats and migration capabilities decide whether a
+ * selected older payload can actually be replaced. Skipped releases are allowed. */
 export function automaticUpgrade(installed: string, bundled: string): boolean {
     if(!/^\d+\.\d+\.\d+$/.test(installed)||!/^\d+\.\d+\.\d+$/.test(bundled))return false;
     const from = installed.split('.').map(Number), to = bundled.split('.').map(Number);
-    if (from.length !== 3 || to.length !== 3 || [...from, ...to].some(part => !Number.isSafeInteger(part) || part < 0) || from[0] !== 1 || to[0] !== 1) { return false; }
-    return from[1]>=4&&to[1]<=9&&(from[1]<to[1]||from[1]===to[1]&&from[2]<=to[2]);
+    if (from.length !== 3 || to.length !== 3 || [...from, ...to].some(part => !Number.isSafeInteger(part) || part < 0)) { return false; }
+    return from[0]<to[0]||from[0]===to[0]&&(from[1]<to[1]||from[1]===to[1]&&from[2]<=to[2]);
 }
 export type RuntimeChannel = 'stable' | 'preview';
 export interface RuntimeOptions {
@@ -27,10 +28,11 @@ export interface RuntimeOptions {
 export type NativeRunner = (command: string, args: string[], timeout?: number,input?:string) => Promise<RecordValue>;
 export const nativeRunner: NativeRunner = async (command,args,timeout=60000,input) => {
     const text=await runText(command,args,path.dirname(command),timeout,undefined,undefined,input);
-    if(Buffer.byteLength(text)>2*1024*1024){throw new ServiceError('bootstrap_response_oversize');}
+    const adoption=args[0]==='runtime'&&args[1]==='adopt-legacy-indexes',maximum=adoption?16*1024*1024:2*1024*1024;
+    if(Buffer.byteLength(text)>maximum){throw new ServiceError('bootstrap_response_oversize',adoption);}
     return record(JSON.parse(text));
 };
-export interface VerifiedBundle { main: string; helper: string; source: string; digest: string; version: string; platform: string }
+export interface VerifiedBundle { main: string; helper?: string; source: string; digest: string; version: string; platform: string }
 export interface RuntimeBinding {
     installDir: string; controlDir: string; executable: string; launcher: string | null;
     /** Version-free launcher that currently forwards to this installation, when published. */
@@ -38,6 +40,59 @@ export interface RuntimeBinding {
     runtimeSha256: string; version: string; lifecycle: 'on-demand' | 'external' | 'user-on-demand';
     verificationBasis: string;
     payloadVerified?:boolean;
+}
+export interface LegacyOriginLocator {path:string;format:'codex_toml'|'mcp_servers_json'|'vscode_servers_json'|'open_code_json';server:string;container_path?:string[]}
+export function legacyOriginLocatorIdentity(locator:LegacyOriginLocator):string{
+    // Literal locator identity stays separate from native effective-origin
+    // identity; omitted and explicit default containers may share one proof.
+    return JSON.stringify([locator.path,locator.format,locator.server,locator.container_path??null]);
+}
+function validateLegacyOriginLocator(input:unknown):LegacyOriginLocator{
+    const value=record(input);safePath(value.path);
+    if(!['codex_toml','mcp_servers_json','vscode_servers_json','open_code_json'].includes(String(value.format))||typeof value.server!=='string'||!value.server||Buffer.byteLength(value.server)>256||/[\x00-\x1f\x7f-\x9f]/.test(value.server)||value.container_path!==undefined&&(!Array.isArray(value.container_path)||value.container_path.length>16||value.container_path.some(part=>typeof part!=='string'||!part||Buffer.byteLength(part)>4096||/[\x00-\x1f\x7f-\x9f]/.test(part))))throw Error('invalid_native_original_locator');
+    return input as LegacyOriginLocator;
+}
+/** Complete native inventory. Scope is derived by native OS installation
+ * identity; caller-provided editor paths are candidates, never ownership proof. */
+function validateLegacyCachePreparation(input:unknown,binding:RuntimeBinding,context?:string):RecordValue{
+    const value=record(input);
+    if(value.schema!==1||value.active!==binding.runtimeSha256||!['native-defaults','context-only'].includes(String(value.scope)))throw new ServiceError('legacy_cache_inspection_unconfirmed',false,value);
+    identifier(value.inspection_sha256,32);safePath(value.context_global_storage);
+    if(context&&!sameNativeLocation(String(value.context_global_storage),context))throw new ServiceError('legacy_cache_inspection_unconfirmed',false,value);
+    const roots=value.global_storage_roots;
+    if(!Array.isArray(roots)||!roots.length||roots.length>128||!roots.every(root=>typeof root==='string')||new Set(roots).size!==roots.length)throw new ServiceError('legacy_cache_inspection_unconfirmed',false,value);
+    roots.forEach(root=>safePath(root));
+    if(!roots.some(root=>sameNativeLocation(root,String(value.context_global_storage)) )||!Array.isArray(value.caches)||value.caches.length>128)throw new ServiceError('legacy_cache_inspection_unconfirmed',false,value);
+    if(!Array.isArray(value.origin_locators)||value.origin_locators.length>128||!Array.isArray(value.origin_proofs)||value.origin_proofs.length>128)throw new ServiceError('legacy_cache_inspection_unconfirmed',false,value);
+    const locators=value.origin_locators.map(validateLegacyOriginLocator),keys=locators.map(legacyOriginLocatorIdentity);
+    const effective=(locator:LegacyOriginLocator)=>locator.container_path??[locator.format==='codex_toml'?'mcp_servers':locator.format==='vscode_servers_json'?'servers':locator.format==='open_code_json'?'mcp':'mcpServers'];
+    const matches=(input:unknown,locator:LegacyOriginLocator)=>{const proof=record(input);return proof.config_path===locator.path&&proof.server===locator.server&&isDeepStrictEqual(proof.container_path,effective(locator));};
+    if(locators.some(locator=>(value.origin_proofs as unknown[]).filter(proof=>matches(proof,locator)).length!==1)||(value.origin_proofs as unknown[]).some(proof=>!locators.some(locator=>matches(proof,locator))))throw new ServiceError('legacy_cache_inspection_unconfirmed',false,value);
+    if(locators.length){
+        if(!Array.isArray(value.origin_classifications)||value.origin_classifications.length!==locators.length||!Array.isArray(value.adoption_locators)||!Array.isArray(value.managed_locators))throw new ServiceError('legacy_origin_classification_unconfirmed',false,value);
+        const classified=new Map<string,{kind:string;origin:string;count:number}>(),origins=new Map<string,string>(),originProofs=new Map<string,unknown>();
+        for(const input of value.origin_classifications){
+            const item=record(input),locator=validateLegacyOriginLocator(item.locator),key=legacyOriginLocatorIdentity(locator);identifier(item.origin_sha256,32);const proof=(value.origin_proofs as unknown[]).find(value=>matches(value,locator));
+            const previous=classified.get(key),origin=String(item.origin_sha256),kind=String(item.kind);
+            if(!keys.includes(key)||!['standalone','managed','unsupported'].includes(kind)||item.authority!=='not_observed'||previous&&(previous.origin!==origin||previous.kind!==kind)||origins.has(origin)&&(origins.get(origin)!==kind||!isDeepStrictEqual(originProofs.get(origin),proof)))throw new ServiceError('legacy_origin_classification_unconfirmed',false,value);
+            classified.set(key,{kind,origin,count:(previous?.count??0)+1});origins.set(origin,kind);originProofs.set(origin,proof);
+        }
+        for(const key of new Set(keys))if(classified.get(key)?.count!==keys.filter(value=>value===key).length)throw new ServiceError('legacy_origin_classification_unconfirmed',false,value);
+        for(const [field,kind]of [['adoption_locators','standalone'],['managed_locators','managed']]){
+            const selected=(value[field] as unknown[]).map(validateLegacyOriginLocator).map(legacyOriginLocatorIdentity),seen=new Set<string>(),expected=[...origins].filter(([,entry])=>entry===kind).map(([origin])=>origin);
+            for(const key of selected){const item=classified.get(key);if(!item||item.kind!==kind||seen.has(item.origin))throw new ServiceError('legacy_origin_classification_unconfirmed',false,value);seen.add(item.origin);}
+            if(seen.size!==expected.length||expected.some(origin=>!seen.has(origin)))throw new ServiceError('legacy_origin_classification_unconfirmed',false,value);
+        }
+    }
+    const images=new Set<string>();
+    for(const entry of value.caches){
+        const cache=record(entry);safePath(cache.global_storage);safePath(cache.cache_directory);safePath(cache.executable);identifier(cache.executable_sha256,32);
+        if(cache.schema!==1||cache.provenance!=='owned_legacy_helper_cache'||typeof cache.user!=='string'||!cache.user||typeof cache.artifact_approved!=='boolean'||!roots.some(root=>sameNativeLocation(root,String(cache.global_storage)))||typeof cache.digest_prefix!=='string'||!/^[a-f0-9]{16}$/.test(cache.digest_prefix)||!String(cache.executable_sha256).startsWith(cache.digest_prefix)||images.has(String(cache.executable)))throw new ServiceError('legacy_cache_inspection_unconfirmed',false,value);
+        for(const field of ['global_storage_identity','helpers_identity','cache_directory_identity','executable_identity','cache_version','platform'])if(typeof cache[field]!=='string'||!cache[field]||Buffer.byteLength(String(cache[field]))>4096||/[\x00-\x1f\x7f]/.test(String(cache[field])))throw new ServiceError('legacy_cache_inspection_unconfirmed',false,value);
+        if(!sameNativeLocation(path.dirname(String(cache.cache_directory)),path.join(String(cache.global_storage),'iokaio.airk','helpers'))||!sameNativeLocation(path.dirname(String(cache.executable)),String(cache.cache_directory))||!['airk','airk.exe'].includes(path.basename(String(cache.executable)).toLowerCase()))throw new ServiceError('legacy_cache_inspection_unconfirmed',false,value);
+        images.add(String(cache.executable));
+    }
+    return value;
 }
 export interface BootstrapObservation {
     bundle: VerifiedBundle; installDir: string; location: RecordValue;
@@ -176,6 +231,13 @@ export async function verifyBundledRuntime(extensionPath:string,version:string,
     const prefix=host.platform==='darwin'?'AIRK.app/Contents/MacOS/':'';
     const main=prefix+(host.platform==='win32'?'airk.exe':'airk'),helper=prefix+(host.platform==='win32'?'airk-embed.exe':'airk-embed');
     const payload=record(wrapper.payload);
+    const [major,minor,patch]=version.split(/[.-]/).slice(0,3).map(Number),singleImage=major>1||major===1&&(minor>8||minor===8&&patch>=14);
+    if(singleImage){
+        if(Object.keys(payload).length!==1||payload[main]!==files[main]||!files[main]||names.some(name=>/(?:^|\/)(?:airk-embed|airk-launcher)(?:\.exe)?$/.test(name)))throw new ServiceError('single_image_runtime_required');
+        const metadata=(await boundedJson(path.join(source,'airk-runtime.json'),16384)).value;
+        if(Object.keys(metadata).sort().join(',')!=='airk_sha256,arch,os,schema,version'||metadata.schema!==2||metadata.version!==version||metadata.os!==os||metadata.arch!==arch||metadata.airk_sha256!==files[main])throw new ServiceError('single_image_runtime_metadata_mismatch');
+        return {main:path.join(source,main),source,digest,version,platform};
+    }
     if(payload[main]!==files[main]||payload[helper]!==files[helper]||!files[main]||!files[helper]){throw new ServiceError('runtime_pair_missing');}
     return {main:path.join(source,main),helper:path.join(source,helper),source,digest,version,platform};
 }
@@ -373,13 +435,107 @@ export class RuntimeHost {
             verificationBasis:typeof approval.verification_basis==='string'?approval.verification_basis:'unknown',
             payloadVerified:inspection.payload_verified!==false&&inspection.metadata_only!==true};
     }
-    async retirePrevious(binding:RuntimeBinding):Promise<void>{
+    async retirePrevious(binding:RuntimeBinding):Promise<RecordValue|undefined>{
         this.active();
         if(this.options.managed)return;
         const bundle=await this.verified();
         const result=await this.invoke(bundle.main,['runtime','retire-previous','--install-dir',binding.installDir,
             '--expected-active',binding.runtimeSha256],180000);
-        if(result.active!==binding.runtimeSha256)throw new ServiceError('crossed_runtime_retirement_receipt',true);
+        if(result.active!==binding.runtimeSha256)throw new ServiceError('crossed_runtime_retirement_receipt',true,result);
+        if(bundle.helper===undefined){
+            const processes=result.processes&&typeof result.processes==='object'&&!Array.isArray(result.processes)?result.processes as RecordValue:{},runtimes=result.retired_runtimes;
+            if(result.complete!==true||result.selected_service_restarted!==false||!Array.isArray(runtimes)||runtimes.length>4||runtimes.some(value=>typeof value!=='string'||!/^[a-f0-9]{64}$/.test(value)||value===binding.runtimeSha256)||processes.scope!=='verified_superseded_runtime_images'||processes.remaining!==0||!Array.isArray(processes.observations)||processes.observations.length>20)throw new ServiceError('previous_runtime_cleanup_unconfirmed',true,result);
+        }
+        return result;
+    }
+    /** Read-only native proof of this installation's exact legacy command lineage. */
+    async inspectLegacyLaunchers(binding:RuntimeBinding):Promise<RecordValue>{
+        this.active();if(binding.payloadVerified===false)throw new ServiceError('selected_runtime_payload_unverified');
+        const bundle=await this.verified(),result=await this.invoke(bundle.main,['runtime','inspect-legacy-launchers','--install-dir',binding.installDir,'--expected-active',binding.runtimeSha256],60000);
+        if(result.schema!==1||result.active!==binding.runtimeSha256)throw new ServiceError('legacy_launcher_inspection_unconfirmed',false,result);
+        for(const field of ['launcher','universal_launcher']){const item=result[field];if(item===null)continue;const value=record(item);safePath(value.path);identifier(value.sha256,32);}
+        if(result.legacy_runtime_images!==undefined){if(!Array.isArray(result.legacy_runtime_images)||result.legacy_runtime_images.length>20)throw new ServiceError('legacy_launcher_inspection_unconfirmed',false,result);for(const item of result.legacy_runtime_images){const value=record(item);safePath(value.path);identifier(value.sha256,32);identifier(value.runtime_sha256,32);if(value.runtime_sha256===binding.runtimeSha256||path.relative(process.platform==='win32'?path.toNamespacedPath(String(value.path)).toLowerCase():String(value.path),process.platform==='win32'?path.toNamespacedPath(binding.executable).toLowerCase():binding.executable)==='')throw new ServiceError('legacy_launcher_inspection_unconfirmed',false,result);}}
+        return result;
+    }
+    /** Final upgrade gate: native ownership/identity checks stop only verified old
+     * launcher images and prove exact launcher absence. Keep the full audit. */
+    async retireLegacyLaunchers(binding:RuntimeBinding):Promise<RecordValue>{
+        this.active();if(binding.payloadVerified===false)throw new ServiceError('selected_runtime_payload_unverified');
+        const bundle=await this.verified(),result=await this.invoke(bundle.main,['runtime','retire-legacy-launchers','--install-dir',binding.installDir,'--expected-active',binding.runtimeSha256],180000);
+        const processes=result.processes&&typeof result.processes==='object'&&!Array.isArray(result.processes)?result.processes as RecordValue:{};
+        if(result.schema!==1||result.active!==binding.runtimeSha256||result.legacy_launchers_retired!==true||result.launcher!==null||result.universal_launcher!==null||processes.scope!=='verified_launcher_images'||processes.remaining!==0||!Array.isArray(processes.observations))throw new ServiceError('legacy_launcher_cleanup_unconfirmed',true,result);
+        return result;
+    }
+    async inspectLegacyCaches(binding:RuntimeBinding,contextGlobalStorage:string,originLocatorsFile?:string):Promise<RecordValue>{
+        this.active();safePath(contextGlobalStorage);if(originLocatorsFile)safePath(originLocatorsFile);
+        const bundle=await this.verified(),result=await this.invoke(bundle.main,['runtime','inspect-legacy-caches','--install-dir',binding.installDir,'--expected-active',binding.runtimeSha256,'--global-storage',contextGlobalStorage,...(originLocatorsFile?['--origin-locators-file',originLocatorsFile]:[])],180000);
+        try{return validateLegacyCachePreparation(result,binding,contextGlobalStorage);}catch{throw new ServiceError('legacy_cache_inspection_unconfirmed',false,result);}
+    }
+    /** Captures a native-owned immutable inventory before any original config
+     * changes. Resumption returns its accepted preimage, never transformed bytes. */
+    async prepareLegacyCaches(binding:RuntimeBinding,contextGlobalStorage:string,originLocatorsFile?:string):Promise<RecordValue>{
+        this.active();if(binding.payloadVerified===false)throw new ServiceError('selected_runtime_payload_unverified');
+        safePath(contextGlobalStorage);if(originLocatorsFile)safePath(originLocatorsFile);
+        const bundle=await this.verified(),result=await this.invoke(bundle.main,['runtime','prepare-legacy-caches','--install-dir',binding.installDir,'--expected-active',binding.runtimeSha256,'--global-storage',contextGlobalStorage,...(originLocatorsFile?['--origin-locators-file',originLocatorsFile]:[])],180000);
+        try{return validateLegacyCachePreparation(result,binding,contextGlobalStorage);}catch{throw new ServiceError('legacy_cache_inspection_unconfirmed',true,result);}
+    }
+    async reprepareLegacyCaches(binding:RuntimeBinding,previous:RecordValue,originLocatorsFile?:string):Promise<RecordValue>{
+        this.active();const prepared=validateLegacyCachePreparation(previous,binding);if(originLocatorsFile)safePath(originLocatorsFile);
+        const bundle=await this.verified(),result=await this.invoke(bundle.main,['runtime','reprepare-legacy-caches','--install-dir',binding.installDir,'--expected-active',binding.runtimeSha256,'--global-storage',String(prepared.context_global_storage),'--expected-inspection-sha256',String(prepared.inspection_sha256),...(originLocatorsFile?['--origin-locators-file',originLocatorsFile]:[])],180000);
+        try{
+            const next=validateLegacyCachePreparation(result,binding,String(prepared.context_global_storage));
+            if(next.scope!==prepared.scope||(prepared.global_storage_roots as string[]).some(root=>!(next.global_storage_roots as string[]).includes(root))||(prepared.caches as unknown[]).some(cache=>!(next.caches as unknown[]).some(value=>isDeepStrictEqual(value,cache)))||(prepared.origin_proofs as unknown[]).some(proof=>!(next.origin_proofs as unknown[]).some(value=>isDeepStrictEqual(value,proof)))||(prepared.origin_locators as unknown[]).some(locator=>!(next.origin_locators as unknown[]).some(value=>isDeepStrictEqual(value,locator))))throw Error('changed_accepted_cache_preimage');
+            return next;
+        }catch{throw new ServiceError('legacy_cache_reprepare_unconfirmed',true,result);}
+    }
+    /** One native batch owns grouping, archive publication and original claims.
+     * Frontend paths never decide whether two declarations share an index. */
+    async adoptLegacyIndexes(binding:RuntimeBinding,preparation:RecordValue,batchOperation:string,locatorsFile:string,acceptedLocators?:readonly LegacyOriginLocator[]):Promise<RecordValue>{
+        this.active();const prepared=validateLegacyCachePreparation(preparation,binding);identifier(batchOperation,16);safePath(locatorsFile);
+        const available=(prepared.adoption_locators as unknown[]).map(validateLegacyOriginLocator),locators=acceptedLocators?[...acceptedLocators].map(validateLegacyOriginLocator):available;
+        if(locators.some(locator=>!available.some(value=>legacyOriginLocatorIdentity(value)===legacyOriginLocatorIdentity(locator)))||new Set(locators.map(legacyOriginLocatorIdentity)).size!==locators.length)throw new ServiceError('legacy_batch_input_unconfirmed');
+        if(!locators.length||locators.length>32)throw new ServiceError('legacy_adoption_claim_budget_exceeded');
+        const bundle=await this.verified(),result=await this.invoke(bundle.main,['runtime','adopt-legacy-indexes','--install-dir',binding.installDir,'--expected-active',binding.runtimeSha256,'--operation-id',batchOperation,'--locators-file',locatorsFile,'--expected-cache-inspection-sha256',String(prepared.inspection_sha256)],1850000);
+        try{
+            if(result.schema!==1||result.active!==binding.runtimeSha256||result.status!=='ready'||result.operation_id!==batchOperation||result.batch_operation_id!==batchOperation||result.cache_inspection_sha256!==prepared.inspection_sha256||typeof result.retained_completed_operation!=='boolean'||!Array.isArray(result.groups)||!result.groups.length||result.groups.length>32||!Array.isArray(result.claims)||result.claims.length!==locators.length)throw Error('invalid_adoption_batch');
+            const groups=new Map<string,RecordValue>();
+            for(const input of result.groups){
+                const group=record(input);identifier(group.operation_id,16);
+                if(groups.has(String(group.operation_id))||group.schema!==1||group.active!==binding.runtimeSha256||group.status!=='ready'||group.batch_operation_id!==batchOperation||group.source_availability!=='not_observed_saved_only')throw Error('invalid_adoption_group');
+                const original=record(group.original_registration),registration=record(group.registration),grant=record(group.grant),provenance=record(grant.provenance),adoption=record(provenance.adoption),plan=record(adoption.plan),setup=record(plan.setup),key=record(setup.key),publication=record(adoption.publication),receipt=record(group.adoption_receipt),completed=record(receipt.setup);
+                if(provenance.kind!=='imported_standalone_adoption'||!isDeepStrictEqual(plan.original_registration,original)||!isDeepStrictEqual(setup.registration,registration)||plan.config_sha256!==group.original_config_sha256||key.nonce!==group.operation_id||receipt.schema!==1||receipt.plan_digest!==publication.plan_digest||completed.schema!==1||completed.stage!=='ready'||!isDeepStrictEqual(completed.request,setup)||completed.operation_id!==adoption.operation_id||completed.legacy_adoption!==receipt.plan_digest||record(completed.preparation).legacy_adoption!==receipt.plan_digest||!isDeepStrictEqual(record(completed.completion).legacy_adoption,publication))throw Error('crossed_adoption_publication');
+                validateNativeLegacyBinding({status:'catalog_legacy_binding',observation:{schema:1,namespace:key.namespace,catalog_revision:completed.catalog_revision,project:registration.binding,eligibility:{kind:'imported_snapshot',registration,grant}}},String(registration.binding),Number(completed.catalog_revision));
+                const members=record(grant.grant).memberships;
+                if(!Array.isArray(members)||members.length!==1||record(record(members[0]).membership).index_id!==completed.index_id||record(members[0]).source_revision!==completed.source_revision)throw Error('crossed_adoption_membership');
+                record(group.conversion);groups.set(String(group.operation_id),group);
+            }
+            const expected=new Set(locators.map(legacyOriginLocatorIdentity)),seen=new Set<string>(),groupClaims=new Map<string,Set<string>>();
+            for(const input of result.claims){
+                const mapped=record(input),locator=validateLegacyOriginLocator(mapped.locator),key=legacyOriginLocatorIdentity(locator),group=groups.get(String(mapped.group_operation_id)),claim=record(mapped.claim);identifier(mapped.origin_sha256,32);identifier(mapped.config_sha256,32);
+                if(!expected.has(key)||seen.has(key)||!group)throw Error('crossed_adoption_claim_locator');seen.add(key);
+                const adoption=record(record(record(group.grant).provenance).adoption),claims=adoption.configuration_claims as RecordValue[];
+                if(mapped.origin_sha256!==claim.origin_sha256||mapped.config_sha256!==claim.config_sha256||claim.original_server!==locator.server||!isDeepStrictEqual(mapped.original_registration,group.original_registration)||!isDeepStrictEqual(mapped.registration,group.registration)||!claims.some(candidate=>isDeepStrictEqual(candidate,claim)))throw Error('crossed_adoption_claim');
+                const container=locator.container_path??[locator.format==='codex_toml'?'mcp_servers':locator.format==='vscode_servers_json'?'servers':locator.format==='open_code_json'?'mcp':'mcpServers'];
+                if(!isDeepStrictEqual(claim.container_path,container)||!(prepared.origin_proofs as unknown[]).some(value=>{const origin=record(value);return sameNativeLocation(String(origin.config_path),locator.path)&&origin.server===locator.server&&origin.config_sha256===claim.config_sha256&&origin.executable_sha256===claim.executable_sha256&&origin.selected_entry_sha256===claim.selected_entry_sha256&&isDeepStrictEqual(origin.container_path,container);}))throw Error('crossed_adoption_origin');
+                const origins=groupClaims.get(String(group.operation_id))??new Set<string>();if(origins.has(String(claim.origin_sha256)))throw Error('duplicate_adoption_claim');origins.add(String(claim.origin_sha256));groupClaims.set(String(group.operation_id),origins);
+            }
+            for(const [id,group]of groups){const claims=record(record(record(group.grant).provenance).adoption).configuration_claims as RecordValue[],origins=groupClaims.get(id);if(!origins||origins.size!==claims.length||claims.some(claim=>!origins.has(String(claim.origin_sha256))))throw Error('incomplete_adoption_group_claims');}
+            const maintenance=record(result.maintenance);identifier(maintenance.execution_sha256,32);count(maintenance.observed_unix_ms);
+            if(maintenance.operation!==batchOperation||typeof maintenance.originally_running!=='boolean'||typeof maintenance.originally_explicitly_stopped!=='boolean'||maintenance.restarted!==(maintenance.originally_running&&!maintenance.originally_explicitly_stopped))throw Error('unconfirmed_adoption_restoration');
+            if(maintenance.restarted)identifier(maintenance.service_instance,16);else if(maintenance.service_instance!==null)throw Error('unconfirmed_adoption_restoration');
+            const withdrawal=record(result.withdrawal),held=record(withdrawal.held),restored=record(withdrawal.restored);
+            if(held.schema!==1||held.operation_id!==batchOperation||held.inspection_sha256!==prepared.inspection_sha256||held.scope!=='verified_legacy_cache_images'||held.remaining!==0||!Array.isArray(held.image_roster)||!Array.isArray(held.image_exclusions)||!Array.isArray(held.observations)||restored.schema!==1||restored.operation_id!==batchOperation||restored.inspection_sha256!==prepared.inspection_sha256||restored.original_image_paths_restored!==true||restored.retirement_pending!==true)throw Error('unconfirmed_adoption_cache_restore');
+            return result;
+        }catch{throw new ServiceError('legacy_index_adoption_unconfirmed',true,result);}
+    }
+    /** Final absence proof consumes exactly the native accepted inventory. It
+     * cannot discover additional roots after original declarations were saved. */
+    async retireLegacyCaches(binding:RuntimeBinding,preparation:RecordValue):Promise<RecordValue>{
+        this.active();const prepared=validateLegacyCachePreparation(preparation,binding),bundle=await this.verified();
+        const result=await this.invoke(bundle.main,['runtime','retire-legacy-caches','--install-dir',binding.installDir,'--expected-active',binding.runtimeSha256,'--expected-inspection-sha256',String(prepared.inspection_sha256)],180000);
+        const processes=result.processes&&typeof result.processes==='object'&&!Array.isArray(result.processes)?result.processes as RecordValue:{};
+        if(result.schema!==1||result.active!==binding.runtimeSha256||result.inspection_sha256!==prepared.inspection_sha256||result.scope!==prepared.scope||!isDeepStrictEqual(result.global_storage_roots,prepared.global_storage_roots)||result.caches_retired!==true||result.remaining!==0||processes.scope!=='verified_legacy_cache_images'||processes.remaining!==0||!Array.isArray(processes.observations)||!Array.isArray(processes.image_roster)||!Array.isArray(processes.image_exclusions)||!Array.isArray(result.retired_caches)||!isDeepStrictEqual(result.retired_caches,prepared.caches))throw new ServiceError('legacy_cache_cleanup_unconfirmed',true,result);
+        return result;
     }
     /** Native saved-scope observation only; not permission to start or broker evidence. */
     async sourceScope(binding:RuntimeBinding,root:string,collection:string|null):Promise<NativeSourceScope> {
@@ -409,12 +565,46 @@ export class RuntimeHost {
         const value:NativeSourceScope=Object.freeze({root:canonical,collection,namespace,revision,observed_unix_ms:observed,outcome:raw.outcome as NativeSourceScope['outcome'],registration,fencing_generation:generation});
         exactScopeOwners.set(value,{binding:identity,root,collection});return value;
     }
-    client(binding:RuntimeBinding):ServiceClient {
+    /** Metadata-only predecessor cleanup adapter. General UI/evidence clients
+     * keep their strict running-version gate. No job/grant mutation is exposed. */
+    async migrationClient(binding:RuntimeBinding):Promise<Pick<ServiceClient,'projects'|'dispose'>>{
+        this.active();
+        if(binding.payloadVerified===false||!automaticUpgrade(binding.version,this.version))throw new ServiceError('legacy_cleanup_protocol_unverified');
+        const bundle=await this.verified(),inspection=await this.invoke(bundle.main,['runtime','inspect','--install-dir',binding.installDir],60000);
+        const selected=this.binding(inspection,binding.installDir);
+        if(inspection.payload_verified!==true||inspection.metadata_only===true||inspection.launcher!==null||selected.runtimeSha256!==binding.runtimeSha256||selected.version!==binding.version||selected.executable!==binding.executable||selected.controlDir!==binding.controlDir)throw new ServiceError('legacy_cleanup_selection_changed',false,inspection);
+        const directory=path.dirname(binding.executable),contents=path.dirname(directory),app=path.dirname(contents),runtimeRoot=path.basename(directory)==='MacOS'&&path.basename(contents)==='Contents'&&path.basename(app)==='AIRK.app'?path.dirname(app):directory;
+        const pair=(await boundedJson(path.join(runtimeRoot,'airk-runtime.json'),65536)).value;
+        if(pair.schema!==2||pair.version!==binding.version)throw new ServiceError('legacy_cleanup_protocol_unverified');identifier(pair.airk_sha256,32);
+        const capabilities=await this.invoke(binding.executable,['runtime','self-test'],60000);
+        if(capabilities.version!==binding.version||capabilities.protocol!==1||capabilities.metadata_console!==1||capabilities.self_test!=='passed')throw new ServiceError('legacy_cleanup_protocol_unverified',false,capabilities);
+        // Metadata calls bind the caller's compiled version/image to the owner.
+        // Use the verified predecessor for its protocol; the new installer
+        // above still verifies the selected payload before any old code runs.
+        const raw=await this.invoke(binding.executable,['service','rpc','--runtime-dir',binding.controlDir,'--stdin'],60000,JSON.stringify('health'));
+        const health=record(raw.observation),clock=record(health.catalog_clock);
+        if(raw.status!=='health'||health.version!==binding.version||health.protocol!==1||health.runtime_sha256!==binding.runtimeSha256||health.executable_sha256!==pair.airk_sha256||record(health.policy).accepting!==true)throw new ServiceError('legacy_cleanup_health_unconfirmed',false,raw);
+        identifier(health.instance,16);identifier(clock.namespace,16);
+        const endpoint=validateEndpoint(await this.invoke(binding.executable,['runtime','http-endpoint','--install-dir',binding.installDir],60000));
+        if(endpoint.service_instance!==health.instance||endpoint.namespace!==clock.namespace||endpoint.executable_sha256!==pair.airk_sha256||endpoint.state!=='ready')throw new ServiceError('legacy_cleanup_endpoint_unconfirmed',false,record(endpoint));
+        this.active();let disposed=false;
+        const client=new ServiceClient({dispose:()=>{disposed=true;},request:async method=>{
+            this.active();if(disposed)throw new ServiceError('legacy_cleanup_reader_disposed');
+            const observed=await this.invoke(binding.executable,['service','rpc','--runtime-dir',binding.controlDir,'--stdin'],60000,JSON.stringify('health'));
+            const live=record(observed.observation);
+            if(observed.status!=='health'||live.instance!==health.instance||live.version!==binding.version||live.protocol!==1||live.runtime_sha256!==binding.runtimeSha256||live.executable_sha256!==pair.airk_sha256)throw new ServiceError('legacy_cleanup_health_unconfirmed',false,observed);
+            // The facade exposes Console metadata pages only. Existing canonical
+            // ServiceClient parsing retains their complete native response.
+            return this.invoke(binding.executable,['service','rpc','--runtime-dir',binding.controlDir,'--stdin'],60000,JSON.stringify(method));
+        }});
+        return {projects:(after,revision,limit,inactive)=>client.projects(after,revision,limit,inactive),dispose:()=>client.dispose()};
+    }
+    client(binding:RuntimeBinding,timeout=20000):ServiceClient {
         this.active();
         if(binding.version!==this.version)throw new ServiceError('service_runtime_version_mismatch');
         if(binding.payloadVerified===false)throw new ServiceError('selected_runtime_payload_unverified');
         return new ServiceClient(new NativeControlTransport(binding.executable,['service','console','--runtime-dir',binding.controlDir,
-            '--runtime-sha256',binding.runtimeSha256]));
+            '--runtime-sha256',binding.runtimeSha256],timeout));
     }
     async snapshot(binding:RuntimeBinding,after:string|null=null,revision:number|null=null):Promise<RecordValue>{
         this.active();const bundle=await this.verified();
@@ -498,6 +688,74 @@ export class RuntimeHost {
         if(Buffer.byteLength(input)>16384)throw new ServiceError('configuration_draft_exceeds_budget');
         const bundle=await this.verified();
         return validateConfigurationRequest(await this.invoke(bundle.main,['service','prepare-configuration','--runtime-dir',binding.controlDir,'--project',project],60000,input));
+    }
+    /** Setup/enrollment only. Evidence requests subsequently use the shared HTTPS
+     * listener and never execute this native command. Native validates the input
+     * file's owner-private ACL and the live selected grant before returning refs. */
+    async httpConnection(binding:RuntimeBinding,selection:HttpSelection,selectionFile:string,connectionId:string,client:string,explorerDescriptor?:string):Promise<HttpConnectionInfo>{
+        this.active();if(!/^[a-f0-9]{32}$/.test(connectionId)||!/^[A-Za-z0-9._-]{1,64}$/.test(client))throw new ServiceError('invalid_http_enrollment_identity');
+        safePath(selectionFile);const bundle=await this.verified();
+        const response=await this.invoke(bundle.main,['runtime','http-connection','--install-dir',binding.installDir,'--selection-file',selectionFile,'--connection-id',connectionId,'--client',client,...(explorerDescriptor?['--explorer-descriptor',safePath(explorerDescriptor)]:[])],60000);
+        this.active();const info=validateHttpConnection(response,selection,path.join(binding.controlDir,'http-1'));if(info.connection_id!==connectionId)throw new ServiceError('crossed_http_connection_identity');return info;
+    }
+    async httpLegacyConnection(binding:RuntimeBinding,registration:{binding:string;root:string;data_root:string;collection:string},registrationFile:string,receipt:string,connectionId:string,client:string,explorerDescriptor?:string,originSha256?:string):Promise<HttpConnectionInfo>{
+        this.active();if(originSha256)identifier(originSha256,32);if(!/^[a-f0-9]{32}$/.test(connectionId)||!/^[a-f0-9]{64}$/.test(receipt)||!/^[A-Za-z0-9._-]{1,64}$/.test(client))throw new ServiceError('invalid_http_enrollment_identity');
+        safePath(registrationFile);const bundle=await this.verified();
+        const response=await this.invoke(bundle.main,['runtime','http-legacy-connection','--install-dir',binding.installDir,'--registration-file',registrationFile,'--configuration-receipt',receipt,...(originSha256?['--origin-sha256',originSha256]:[]),'--connection-id',connectionId,'--client',client,...(explorerDescriptor?['--explorer-descriptor',safePath(explorerDescriptor)]:[])],60000);this.active();
+        if(response.status==='review_required')throw new ServiceError('legacy_selection_review_required',false,response);
+        let info:HttpConnectionInfo;try{info=validateHttpConnection(response,undefined,path.join(binding.controlDir,'http-1'));}catch{throw new ServiceError('http_legacy_connection_unconfirmed',true,response);}
+        if(info.connection_id!==connectionId||info.selection.kind!=='imported_legacy'||!matchesImportedHttpOrigin(info.selection.selection,registration,receipt))throw new ServiceError('crossed_http_legacy_connection',true,response);
+        if(originSha256){const provenance=record(info.selection.selection.grant.provenance),adoption=record(provenance.adoption);if(provenance.kind!=='imported_standalone_adoption'||!Array.isArray(adoption.configuration_claims)||!adoption.configuration_claims.some(value=>{const claim=record(value);return claim.origin_sha256===originSha256&&claim.config_sha256===receipt;}))throw new ServiceError('crossed_http_legacy_origin',true,response);}
+        return info;
+    }
+    async httpLegacyUnionConnection(binding:RuntimeBinding,registrations:{registration:{binding:string;root:string;data_root:string;collection:string};configuration_receipt:string}[],file:string,connectionId:string,client:string,explorerDescriptor?:string):Promise<HttpConnectionInfo>{
+        this.active();if(registrations.length<2||registrations.length>32||!/^[a-f0-9]{32}$/.test(connectionId)||!/^[A-Za-z0-9._-]{1,64}$/.test(client))throw new ServiceError('invalid_http_enrollment_identity');
+        safePath(file);const bundle=await this.verified();
+        const response=await this.invoke(bundle.main,['runtime','http-legacy-union-connection','--install-dir',binding.installDir,'--registrations-file',file,'--connection-id',connectionId,'--client',client,...(explorerDescriptor?['--explorer-descriptor',safePath(explorerDescriptor)]:[])],60000);this.active();
+        if(response.status==='review_required')throw new ServiceError('legacy_selection_review_required',false,response);
+        let info:HttpConnectionInfo;try{info=validateHttpConnection(response,undefined,path.join(binding.controlDir,'http-1'));}catch{throw new ServiceError('http_legacy_connection_unconfirmed',true,response);}
+        if(info.connection_id!==connectionId||info.selection.kind!=='imported_legacy_union'||info.selection.selection.selections.length!==registrations.length||info.selection.selection.selections.some((member,index)=>!matchesImportedHttpOrigin(member,registrations[index].registration,registrations[index].configuration_receipt)))throw new ServiceError('crossed_http_legacy_union',true,response);return info;
+    }
+    /** Typed ownership lookup never issues/renews credentials. Absence is valid
+     * only when the native private ledger proves this installation never owned it. */
+    async lookupHttpConnection(binding:RuntimeBinding,connectionId:string):Promise<RecordValue>{
+        this.active();identifier(connectionId,16);const bundle=await this.verified();
+        const result=await this.invoke(bundle.main,['runtime','lookup-http-connection','--install-dir',binding.installDir,'--expected-active',binding.runtimeSha256,'--connection-id',connectionId],60000);
+        if(result.schema!==1||result.active!==binding.runtimeSha256||result.connection_id!==connectionId)throw new ServiceError('http_connection_lookup_unconfirmed',false,result);
+        if(result.status==='not_owned'){if(result.connection!==undefined)throw new ServiceError('http_connection_lookup_unconfirmed',false,result);return result;}
+        if(result.status==='unavailable'){if(typeof result.code!=='string'||!/^owned_connection_(?:revoked|expired|unavailable)$/.test(result.code))throw new ServiceError('http_connection_lookup_unconfirmed',false,result);throw new ServiceError(result.code,false,result);}
+        if(result.status!=='owned')throw new ServiceError('http_connection_lookup_unconfirmed',false,result);
+        const connection=validateHttpConnection(result.connection,undefined,path.join(binding.controlDir,'http-1'));
+        if(connection.connection_id!==connectionId)throw new ServiceError('http_connection_lookup_unconfirmed',false,result);
+        return {...result,connection};
+    }
+    async httpConnectionInfo(binding:RuntimeBinding,connectionId:string):Promise<HttpConnectionInfo>{
+        this.active();if(!/^[a-f0-9]{32}$/.test(connectionId))throw new ServiceError('invalid_http_connection_identity');
+        const bundle=await this.verified(),response=await this.invoke(bundle.main,['runtime','http-connection-info','--install-dir',binding.installDir,'--connection-id',connectionId],60000);this.active();
+        const info=validateHttpConnection(response,undefined,path.join(binding.controlDir,'http-1'));if(info.connection_id!==connectionId)throw new ServiceError('crossed_http_connection_identity');return info;
+    }
+    async httpTrust(binding:RuntimeBinding,action:'inspect'|'install'|'remove',expectedCa?:string):Promise<RecordValue>{
+        this.active();if(action!=='inspect'&&!expectedCa||expectedCa!==undefined&&!/^[a-f0-9]{64}$/.test(expectedCa))throw new ServiceError('http_trust_review_required');
+        const bundle=await this.verified(),response=await this.invoke(bundle.main,['runtime','http-trust','--install-dir',binding.installDir,'--action',action,...(expectedCa?['--expected-ca-sha256',expectedCa]:[])],60000);this.active();
+        if(Buffer.byteLength(JSON.stringify(response))>16384||response.schema!==1||typeof response.ca_sha256!=='string'||!/^[a-f0-9]{64}$/.test(response.ca_sha256)||expectedCa!==undefined&&response.ca_sha256!==expectedCa||typeof response.present!=='boolean'||typeof response.trusted!=='boolean'||typeof response.owned!=='boolean'||typeof response.outcome!=='string'||typeof response.guidance!=='string')throw new ServiceError('invalid_native_http_trust_receipt');
+        return response;
+    }
+    async httpIssuerRotation(binding:RuntimeBinding,action:IssuerRotationAction,expected?:IssuerRotationStatus,operationId?:string):Promise<IssuerRotationStatus>{
+        this.active();if(!['status','prepare','trust-new','commit','finalize','abort'].includes(action))throw new ServiceError('invalid_http_rotation_action');
+        const args=['runtime','http-issuer-rotation','--install-dir',binding.installDir,'--action',action];
+        if(action==='prepare'){
+            if(!expected?.current_endpoint||!expected.current_descriptor_sha256||!operationId||!/^[a-f0-9]{32}$/.test(operationId))throw new ServiceError('http_rotation_review_required');
+            args.push('--operation-id',operationId,'--expected-ca-sha256',expected.current_endpoint.ca_sha256,'--expected-descriptor-sha256',expected.current_descriptor_sha256);
+        }else if(action!=='status'){
+            if(!expected?.rotation||!expected.receipt_sha256)throw new ServiceError('http_rotation_review_required');
+            args.push('--operation-id',expected.rotation.operation_id,'--expected-receipt-sha256',expected.receipt_sha256);
+        }
+        const bundle=await this.verified(),raw=await this.invoke(bundle.main,args,180000);this.active();
+        let result:IssuerRotationStatus;
+        try{result=validateIssuerRotation(raw,binding.controlDir,action==='prepare'?undefined:expected);}
+        catch(error){throw new ServiceError(error instanceof Error?error.message:'invalid_native_http_rotation_receipt',action!=='status',raw);}
+        if(action==='prepare'&&(!result.rotation||result.rotation.operation_id!==operationId||result.rotation.old_ca_sha256!==expected!.current_endpoint!.ca_sha256))throw new ServiceError('crossed_http_rotation_transaction',true,result);
+        return result;
     }
     private legacyReview(binding:RuntimeBinding,value:RecordValue,phase?:string):LegacyStartupReview {
         if(Buffer.byteLength(JSON.stringify(value))>16384)throw new ServiceError('legacy_review_exceeds_budget');

@@ -2,6 +2,10 @@
 use super::*;
 
 fn fixture() -> Result<(tempfile::TempDir, PathBuf, Intent)> {
+    fixture_for(false)
+}
+
+fn fixture_for(historical: bool) -> Result<(tempfile::TempDir, PathBuf, Intent)> {
     let owner = tempfile::tempdir()?;
     let root = owner.path().canonicalize()?.join("install");
     local_ipc::prepare_root(&root)?;
@@ -11,7 +15,11 @@ fn fixture() -> Result<(tempfile::TempDir, PathBuf, Intent)> {
     for number in 0..2 {
         let stage = root.join(format!("fixture-{number}"));
         local_ipc::prepare_root(&stage)?;
-        super::super::tests::fixture(&stage)?;
+        if historical {
+            super::super::tests::historical_pair_fixture(&stage)?;
+        } else {
+            super::super::tests::fixture(&stage)?;
+        }
         fs::write(
             stage.join("LICENSE"),
             format!("Fictional approved inventory {number}."),
@@ -36,7 +44,7 @@ fn fixture() -> Result<(tempfile::TempDir, PathBuf, Intent)> {
             &Approval {
                 schema: 1,
                 manifest_sha256: identity.clone(),
-                version: env!("CARGO_PKG_VERSION").into(),
+                version: inventory.version.clone(),
                 verification_basis: VerificationBasis::OrganizationDigest,
             },
         )?;
@@ -57,12 +65,65 @@ fn fixture() -> Result<(tempfile::TempDir, PathBuf, Intent)> {
         prior: Some(prior),
         manager: false,
         phase: Phase::Drain,
+        checkpoint: None,
     };
     Ok((owner, root, intent))
 }
 
+#[tokio::test]
+async fn canonical_launcher_phase_preserves_modern_predecessor_bytes_and_repairs_only_historical_payloads()
+-> Result<()> {
+    for historical in [false, true] {
+        for retained in [false, true] {
+            let (_owner, root, mut intent) = fixture_for(historical)?;
+            // Enter the real durable handoff phase without executing a fixture
+            // predecessor. The inert candidate must fail later qualification.
+            fs::remove_file(root.join("selected.json"))?;
+            intent.prior = None;
+            intent.phase(&root, Phase::Launcher)?;
+            let launcher = launcher_path(&root);
+            let original = b"Genuine retained predecessor launcher bytes";
+            let receipt = root.join("launcher.json");
+            if retained {
+                fs::write(&launcher, original)?;
+                replace_json(
+                    &root,
+                    "launcher.json",
+                    &LauncherReceipt {
+                        schema: 1,
+                        sha256: format!("{:x}", Sha256::digest(original)),
+                    },
+                )?;
+            }
+            let original_receipt = retained.then(|| fs::read(&receipt)).transpose()?;
+            let (main, _, inventory) = verify_runtime_inventory(&root, &intent.candidate)?;
+            let main_before = fs::read(&main)?;
+            assert!(resume(&root).await.is_err());
+            let saved = pending(&root)?.context("inert candidate lost recoverable activation")?;
+            assert!(
+                saved.phase == Phase::Probe,
+                "launcher handoff did not complete"
+            );
+            assert!(selection(&root)?.is_none());
+            assert_eq!(fs::read(&main)?, main_before);
+            if historical {
+                let expected = launcher_image(runtime_pair::payload_root(&main)?, &inventory)?;
+                assert_eq!(fs::read(&launcher)?, fs::read(expected)?);
+                verified_launcher(&root)?;
+            } else if retained {
+                assert_eq!(fs::read(&launcher)?, original);
+                assert_eq!(fs::read(&receipt)?, original_receipt.unwrap());
+            } else {
+                assert!(!launcher.try_exists()? && !receipt.try_exists()?);
+            }
+            assert!(!root.join("launcher-repair.json").try_exists()?);
+        }
+    }
+    Ok(())
+}
+
 #[test]
-fn installed_role_aliases_preserve_inventory_and_retire_with_the_owned_payload() -> Result<()> {
+fn single_main_role_dispatch_preserves_inventory_and_refuses_unowned_aliases() -> Result<()> {
     let (_owner, root, intent) = fixture()?;
     let (main, _) = verify_runtime(&root, &intent.candidate)?;
     let directory = runtime_pair::payload_root(&main)?;
@@ -71,13 +132,9 @@ fn installed_role_aliases_preserve_inventory_and_retire_with_the_owned_payload()
     assert_eq!(fs::read(directory.join("airk-install.json"))?, original);
     verify_runtime(&root, &intent.candidate)?;
     let selected = crate::process_roles::executable(&main, crate::process_roles::Role::Service)?;
-    let alias = if cfg!(target_os = "macos") {
-        assert_eq!(selected, main);
-        directory.join(crate::process_roles::Role::Service.name())
-    } else {
-        fs::remove_file(&selected)?;
-        selected
-    };
+    assert_eq!(selected, main);
+    let alias = directory.join(crate::process_roles::Role::Service.name());
+    assert!(!alias.exists());
     fs::write(&alias, b"modified alias must be preserved")?;
     assert!(verify_runtime(&root, &intent.candidate).is_err());
     assert!(retirement::remove(&root, &intent.candidate).is_err());

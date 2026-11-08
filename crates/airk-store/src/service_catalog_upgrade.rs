@@ -538,10 +538,10 @@ fn registry_read(root: &Path) -> Result<Connection> {
         connection.pragma_query_value(None, "application_id", |row| row.get(0))?;
     let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
     ensure!(
-        application == super::super::APPLICATION && matches!(version, 11 | 12),
+        application == super::super::APPLICATION && matches!(version, 11..=13),
         "unsupported catalog upgrade source format"
     );
-    if version == 12 {
+    if matches!(version, 12 | 13) {
         super::validate_catalog_layout(&connection)?;
     } else {
         validate_shape(&connection, 11)?;
@@ -634,7 +634,7 @@ pub(super) fn recover_owned_registry(
     ensure!(
         &header[..16] == b"SQLite format 3\0"
             && u32::from_be_bytes(header[68..72].try_into()?) == super::super::APPLICATION as u32
-            && matches!(u32::from_be_bytes(header[60..64].try_into()?), 11 | 12),
+            && matches!(u32::from_be_bytes(header[60..64].try_into()?), 11..=13),
         "migration recovery registry header is foreign or damaged"
     );
     let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
@@ -644,7 +644,7 @@ pub(super) fn recover_owned_registry(
     )?;
     let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
     ensure!(
-        matches!(version, 11 | 12),
+        matches!(version, 11..=13),
         "migration recovery returned an unsupported registry"
     );
     validate_shape(&connection, version)?;
@@ -946,7 +946,7 @@ impl CatalogUpgrade {
             .context("catalog backup digest missing")?;
         let read = registry_read(&self.root)?;
         let version: u32 = read.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version == 12 {
+        if matches!(version, 12 | 13) {
             self.migration_state(&read, &receipt)?;
             if receipt.stage == UpgradeStage::Migration {
                 receipt.stage = UpgradeStage::Imports;

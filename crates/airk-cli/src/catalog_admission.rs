@@ -52,10 +52,30 @@ pub(crate) fn native_provider_obligation(
     worker: WorkerIdentity,
     helpers: Vec<Incarnation>,
 ) -> WorkerProviderObligation {
+    native_provider_obligation_kind(worker, helpers, false)
+}
+pub(crate) fn native_provider_obligation_kind(
+    worker: WorkerIdentity,
+    helpers: Vec<Incarnation>,
+    in_process: bool,
+) -> WorkerProviderObligation {
+    native_provider_obligation_completed(worker, helpers, in_process, None)
+}
+pub(crate) fn native_provider_obligation_completed(
+    worker: WorkerIdentity,
+    helpers: Vec<Incarnation>,
+    in_process: bool,
+    completed_authorizations: Option<airk_core::inference_provider::CompletionLedgerObservation>,
+) -> WorkerProviderObligation {
     WorkerProviderObligation {
         worker,
-        history: if helpers.is_empty() {
+        history: if helpers.is_empty() && completed_authorizations.is_none() {
             WorkerProviderHistory::NativeNeverAuthorized
+        } else if in_process || completed_authorizations.is_some() {
+            WorkerProviderHistory::InProcess {
+                generations: helpers,
+                completed_authorizations,
+            }
         } else {
             WorkerProviderHistory::Helpers {
                 generations: helpers,
@@ -252,8 +272,19 @@ struct State {
     workers: BTreeMap<Incarnation, WorkerIdentity>,
     retired_workers: BTreeMap<Incarnation, WorkerIdentity>,
     provider_history: BTreeMap<Incarnation, Vec<Incarnation>>,
+    provider_in_process: BTreeMap<Incarnation, bool>,
+    provider_completed_authorizations:
+        BTreeMap<Incarnation, airk_core::inference_provider::CompletionLedgerObservation>,
+    #[cfg(feature = "local-inference")]
+    provider_ledgers:
+        BTreeMap<Sha256Digest, crate::inference_completion_ledger::NativeLedgerWitness>,
     provider_reaps:
         BTreeMap<(Incarnation, Incarnation), crate::embedding_pool_process::ProviderReapWitness>,
+    provider_exclusions:
+        BTreeMap<(Incarnation, Incarnation), crate::service_inference::PredecessorExclusionWitness>,
+    #[cfg(feature = "local-inference")]
+    provider_completions:
+        BTreeMap<(Incarnation, Incarnation), crate::inference_engine::NativeCompletionWitness>,
     installed: BTreeMap<(Incarnation, GrantId, IndexId, Sha256Digest), Installed>,
     highwater: BTreeMap<(Incarnation, GrantId, IndexId), CatalogRevision>,
     lease_highwater: BTreeMap<Incarnation, u64>,
@@ -375,7 +406,14 @@ impl NativeCatalogAdmission {
             workers: BTreeMap::new(),
             retired_workers: BTreeMap::new(),
             provider_history: BTreeMap::new(),
+            provider_completed_authorizations: BTreeMap::new(),
+            #[cfg(feature = "local-inference")]
+            provider_ledgers: BTreeMap::new(),
+            provider_in_process: BTreeMap::new(),
             provider_reaps: BTreeMap::new(),
+            provider_exclusions: BTreeMap::new(),
+            #[cfg(feature = "local-inference")]
+            provider_completions: BTreeMap::new(),
             installed: BTreeMap::new(),
             highwater: BTreeMap::new(),
             lease_highwater: BTreeMap::new(),
@@ -417,6 +455,24 @@ impl NativeCatalogAdmission {
         state.workers.insert(identity.worker, identity);
         Ok(())
     }
+    /// Capture the current native clock while retaining a saved selection's
+    /// namespace and minimum revision. Exact authority is validated separately
+    /// and the returned ticket must be rechecked after that validation.
+    pub(crate) fn capture_current_issue(
+        &self,
+        namespace: Incarnation,
+        minimum_revision: CatalogRevision,
+    ) -> Result<IssueTicket> {
+        let state = self.0.lock().map_err(|_| ScopeReadRefused)?;
+        ensure!(
+            state.namespace == namespace && state.revision >= minimum_revision,
+            ScopeReadRefused
+        );
+        let ticket = state.ticket();
+        state.check_issue(ticket)?;
+        Ok(ticket)
+    }
+
     pub fn begin_issue(
         &self,
         namespace: Incarnation,
@@ -1063,7 +1119,18 @@ impl NativeCatalogAdmission {
                         .provider_history
                         .get(&worker.worker)
                         .ok_or(ScopeReadRefused)?;
-                    providers.push(native_provider_obligation(*worker, helpers.clone()));
+                    providers.push(native_provider_obligation_completed(
+                        *worker,
+                        helpers.clone(),
+                        *state
+                            .provider_in_process
+                            .get(&worker.worker)
+                            .ok_or(ScopeReadRefused)?,
+                        state
+                            .provider_completed_authorizations
+                            .get(&worker.worker)
+                            .cloned(),
+                    ));
                 }
             }
             let obligation = WorkerDrainObligation {
@@ -1178,6 +1245,10 @@ impl NativeCatalogAdmission {
         // owner. No live authority/high-water entry is evicted here.
         state.retired_workers.remove(&worker.worker);
         state.provider_history.remove(&worker.worker);
+        state
+            .provider_completed_authorizations
+            .remove(&worker.worker);
+        state.provider_in_process.remove(&worker.worker);
         Ok(Some(result))
     }
     /// Only an actual provider completion barrier / native provider reap may
@@ -1218,16 +1289,54 @@ impl NativeCatalogAdmission {
         worker: WorkerIdentity,
         helpers: Vec<Incarnation>,
     ) -> Result<()> {
+        self.observe_worker_provider_history_kind(worker, helpers, false)
+    }
+    pub fn observe_worker_provider_history_kind(
+        &self,
+        worker: WorkerIdentity,
+        helpers: Vec<Incarnation>,
+        in_process: bool,
+    ) -> Result<()> {
+        self.observe_worker_provider_history_completed(worker, helpers, in_process, None)
+    }
+    pub fn observe_worker_provider_history_completed(
+        &self,
+        worker: WorkerIdentity,
+        helpers: Vec<Incarnation>,
+        in_process: bool,
+        completed: Option<airk_core::inference_provider::CompletionLedgerObservation>,
+    ) -> Result<()> {
         let mut state = self.0.lock().map_err(|_| ScopeReadRefused)?;
+        if let Some(anchor) = &completed {
+            anchor.validate()?;
+            ensure!(
+                in_process
+                    && anchor.service_instance == worker.service
+                    && anchor.namespace == state.namespace,
+                ScopeReadRefused
+            );
+        }
         ensure!(
             state.retired_workers.get(&worker.worker) == Some(&worker) && helpers.len() <= 32,
             ScopeReadRefused
         );
         if let Some(previous) = state.provider_history.get(&worker.worker) {
-            ensure!(*previous == helpers, ScopeReadRefused);
+            ensure!(
+                *previous == helpers
+                    && state.provider_in_process.get(&worker.worker) == Some(&in_process)
+                    && state.provider_completed_authorizations.get(&worker.worker)
+                        == completed.as_ref(),
+                ScopeReadRefused
+            );
             return Ok(());
         }
         state.provider_history.insert(worker.worker, helpers);
+        state.provider_in_process.insert(worker.worker, in_process);
+        if let Some(completed) = completed {
+            state
+                .provider_completed_authorizations
+                .insert(worker.worker, completed);
+        }
         Ok(())
     }
     pub fn worker_provider_history(
@@ -1240,6 +1349,32 @@ impl NativeCatalogAdmission {
             ScopeReadRefused
         );
         Ok(state.provider_history.get(&worker.worker).cloned())
+    }
+    pub fn worker_provider_in_process(&self, worker: WorkerIdentity) -> Result<bool> {
+        let state = self.0.lock().map_err(|_| ScopeReadRefused)?;
+        ensure!(
+            state.retired_workers.get(&worker.worker) == Some(&worker),
+            ScopeReadRefused
+        );
+        state
+            .provider_in_process
+            .get(&worker.worker)
+            .copied()
+            .ok_or(ScopeReadRefused.into())
+    }
+    pub fn worker_completed_authorizations(
+        &self,
+        worker: WorkerIdentity,
+    ) -> Result<Option<airk_core::inference_provider::CompletionLedgerObservation>> {
+        let state = self.0.lock().map_err(|_| ScopeReadRefused)?;
+        ensure!(
+            state.retired_workers.get(&worker.worker) == Some(&worker),
+            ScopeReadRefused
+        );
+        Ok(state
+            .provider_completed_authorizations
+            .get(&worker.worker)
+            .cloned())
     }
     pub fn observe_provider_reaped(
         &self,
@@ -1261,9 +1396,148 @@ impl NativeCatalogAdmission {
             .get(&(service, helper))
             .is_some_and(|proof| proof.matches(service, helper)))
     }
-    pub fn prune_provider_reaps(&self, live_helpers: &[Incarnation]) -> Result<()> {
+    #[cfg(feature = "local-inference")]
+    pub fn observe_provider_completed(
+        &self,
+        witness: crate::inference_engine::NativeCompletionWitness,
+        ledger: crate::inference_completion_ledger::NativeLedgerWitness,
+    ) -> Result<()> {
         let mut state = self.0.lock().map_err(|_| ScopeReadRefused)?;
-        let pending_helpers: Vec<_> = state
+        let observation = witness.observation();
+        observation.validate()?;
+        ledger.observation().validate()?;
+        ensure!(
+            ledger.matches(state.namespace, state.service)
+                && ledger.observation().service_instance == observation.provider.service_instance
+                && ledger.observation().approved_execution_sha256
+                    == observation.provider.approved_execution_sha256,
+            ScopeReadRefused
+        );
+        let key = (
+            observation.provider.service_instance,
+            observation.provider.provider_generation,
+        );
+        ensure!(
+            witness.matches(key.0, key.1)
+                && witness.namespace() == state.namespace
+                && (state.provider_completions.contains_key(&key)
+                    || state.provider_completions.len() < 128),
+            ScopeReadRefused
+        );
+        let head = ledger.observation().head_sha256;
+        ensure!(
+            state.provider_ledgers.contains_key(&head) || state.provider_ledgers.len() < 256,
+            ScopeReadRefused
+        );
+        state.provider_completions.insert(key, witness);
+        state.provider_ledgers.insert(head, ledger);
+        Ok(())
+    }
+    pub fn ledger_was_completed(
+        &self,
+        anchor: &airk_core::inference_provider::CompletionLedgerObservation,
+    ) -> Result<bool> {
+        anchor.validate()?;
+        let state = self.0.lock().map_err(|_| ScopeReadRefused)?;
+        ensure!(anchor.namespace == state.namespace, ScopeReadRefused);
+        if anchor.service_instance != state.service {
+            return Ok(state
+                .provider_exclusions
+                .get(&(anchor.service_instance, anchor.factory_generation))
+                .is_some_and(|proof| {
+                    proof.matches(
+                        state.service,
+                        state.namespace,
+                        anchor.service_instance,
+                        anchor.factory_generation,
+                    )
+                }));
+        }
+        #[cfg(feature = "local-inference")]
+        return Ok(state
+            .provider_ledgers
+            .get(&anchor.head_sha256)
+            .is_some_and(|proof| {
+                proof.matches(state.namespace, state.service) && proof.observation() == anchor
+            }));
+        #[cfg(not(feature = "local-inference"))]
+        Ok(false)
+    }
+    #[cfg(feature = "local-inference")]
+    pub fn observe_ledger_completed(
+        &self,
+        ledger: crate::inference_completion_ledger::NativeLedgerWitness,
+    ) -> Result<()> {
+        let mut state = self.0.lock().map_err(|_| ScopeReadRefused)?;
+        ledger.observation().validate()?;
+        ensure!(
+            ledger.matches(state.namespace, state.service),
+            ScopeReadRefused
+        );
+        let head = ledger.observation().head_sha256;
+        ensure!(
+            state.provider_ledgers.contains_key(&head) || state.provider_ledgers.len() < 256,
+            ScopeReadRefused
+        );
+        state.provider_ledgers.insert(head, ledger);
+        Ok(())
+    }
+    pub fn provider_was_completed(
+        &self,
+        service: Incarnation,
+        generation: Incarnation,
+        in_process: bool,
+    ) -> Result<bool> {
+        if !in_process {
+            return self.provider_was_reaped(service, generation);
+        }
+        {
+            let state = self.0.lock().map_err(|_| ScopeReadRefused)?;
+            if state
+                .provider_exclusions
+                .get(&(service, generation))
+                .is_some_and(|proof| {
+                    proof.matches(state.service, state.namespace, service, generation)
+                })
+            {
+                return Ok(true);
+            }
+        }
+        #[cfg(feature = "local-inference")]
+        {
+            let state = self.0.lock().map_err(|_| ScopeReadRefused)?;
+            Ok(state
+                .provider_completions
+                .get(&(service, generation))
+                .is_some_and(|proof| proof.matches(service, generation)))
+        }
+        #[cfg(not(feature = "local-inference"))]
+        Ok(false)
+    }
+    pub fn observe_provider_excluded(
+        &self,
+        witness: crate::service_inference::PredecessorExclusionWitness,
+    ) -> Result<()> {
+        let mut state = self.0.lock().map_err(|_| ScopeReadRefused)?;
+        let (prior, generation) = witness.key();
+        ensure!(
+            witness.matches(state.service, state.namespace, prior, generation)
+                && (state.provider_exclusions.contains_key(&(prior, generation))
+                    || state.provider_exclusions.len() < 128),
+            ScopeReadRefused
+        );
+        state
+            .provider_exclusions
+            .insert((prior, generation), witness);
+        Ok(())
+    }
+    pub fn prune_provider_reaps(
+        &self,
+        live_helpers: &[Incarnation],
+        live_ledgers: &[Sha256Digest],
+    ) -> Result<()> {
+        let mut state = self.0.lock().map_err(|_| ScopeReadRefused)?;
+        let mut pending_helpers: Vec<_> = state
             .pending
             .as_ref()
             .map(|pending| {
@@ -1277,9 +1551,69 @@ impl NativeCatalogAdmission {
                     .collect()
             })
             .unwrap_or_default();
+        if let Some(obligation) = state
+            .pending
+            .as_ref()
+            .and_then(|pending| pending.durable.worker_obligation.as_ref())
+        {
+            for provider in &obligation.providers {
+                match &provider.history {
+                    WorkerProviderHistory::NativeNeverAuthorized => {}
+                    WorkerProviderHistory::Helpers { generations } => {
+                        pending_helpers.extend(generations)
+                    }
+                    WorkerProviderHistory::InProcess {
+                        generations,
+                        completed_authorizations,
+                    } => {
+                        pending_helpers.extend(generations);
+                        pending_helpers.extend(
+                            completed_authorizations
+                                .iter()
+                                .map(|anchor| anchor.factory_generation),
+                        );
+                    }
+                }
+            }
+        }
         state.provider_reaps.retain(|(_, helper), _| {
             live_helpers.contains(helper) || pending_helpers.contains(helper)
         });
+        state.provider_exclusions.retain(|(_, generation), _| {
+            live_helpers.contains(generation) || pending_helpers.contains(generation)
+        });
+        #[cfg(feature = "local-inference")]
+        state.provider_completions.retain(|(_, generation), _| {
+            live_helpers.contains(generation) || pending_helpers.contains(generation)
+        });
+        #[cfg(feature = "local-inference")]
+        {
+            let mut retained: Vec<_> = state
+                .provider_completed_authorizations
+                .values()
+                .map(|anchor| anchor.head_sha256)
+                .collect();
+            if let Some(obligation) = state
+                .pending
+                .as_ref()
+                .and_then(|pending| pending.durable.worker_obligation.as_ref())
+            {
+                retained.extend(obligation.providers.iter().filter_map(|provider| {
+                    match &provider.history {
+                        WorkerProviderHistory::InProcess {
+                            completed_authorizations: Some(anchor),
+                            ..
+                        } => Some(anchor.head_sha256),
+                        _ => None,
+                    }
+                }));
+            }
+            state
+                .provider_ledgers
+                .retain(|head, _| live_ledgers.contains(head) || retained.contains(head));
+        }
+        #[cfg(not(feature = "local-inference"))]
+        let _ = live_ledgers;
         Ok(())
     }
     pub fn worker_confirmations(
@@ -1551,13 +1885,29 @@ impl NativeCatalogAdmission {
         let mut highwater = BTreeMap::new();
         let mut lease_highwater = BTreeMap::new();
         let mut provider_history = BTreeMap::new();
+        let mut provider_in_process = BTreeMap::new();
+        let mut provider_completed_authorizations = BTreeMap::new();
         if let Some(obligation) = &intent.plan.worker_obligation {
             for provider in &obligation.providers {
                 let helpers = match &provider.history {
                     WorkerProviderHistory::NativeNeverAuthorized => Vec::new(),
-                    WorkerProviderHistory::Helpers { generations } => generations.clone(),
+                    WorkerProviderHistory::Helpers { generations }
+                    | WorkerProviderHistory::InProcess { generations, .. } => generations.clone(),
                 };
+                if let WorkerProviderHistory::InProcess {
+                    completed_authorizations: Some(anchor),
+                    ..
+                } = &provider.history
+                {
+                    ensure!(anchor.namespace == state.namespace, ScopeReadRefused);
+                    provider_completed_authorizations
+                        .insert(provider.worker.worker, anchor.clone());
+                }
                 provider_history.insert(provider.worker.worker, helpers);
+                provider_in_process.insert(
+                    provider.worker.worker,
+                    matches!(&provider.history, WorkerProviderHistory::InProcess { .. }),
+                );
             }
             for worker in &obligation.workers {
                 if let Some(previous) = workers.insert(worker.worker, *worker) {
@@ -1634,6 +1984,8 @@ impl NativeCatalogAdmission {
         ensure!(workers.len() <= MAX_WORKERS, ScopeReadRefused);
         state.workers = workers;
         state.provider_history = provider_history;
+        state.provider_completed_authorizations = provider_completed_authorizations;
+        state.provider_in_process = provider_in_process;
         state.installed = installed;
         state.highwater = highwater;
         state.lease_highwater = lease_highwater;

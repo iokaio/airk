@@ -53,7 +53,7 @@ export type ConnectionState = 'connecting' | 'ready' | 'degraded' | 'disconnecte
 export type IndexState = 'not_registered' | 'not_indexed' | 'indexing' | 'available' | 'unavailable' | 'unknown';
 /** Native scheduler freshness (airk_status.freshness.state); never proof that live source bytes match. */
 export type FreshnessState = 'unregistered' | 'unavailable' | 'idle' | 'pending' | 'running' | 'paused' | 'blocked' | 'failed' | 'unknown';
-export type SemanticState = 'pending' | 'partial' | 'ready' | 'failed' | 'disabled' | 'unknown';
+export type SemanticState = 'pending' | 'partial' | 'ready' | 'failed' | 'disabled' | 'unavailable' | 'unknown';
 /** E1 indexed text, E2 syntax fact, E3 rule observation, E4 provider-asserted (design §9.1). */
 export type EvidenceClass = 'E1' | 'E2' | 'E3' | 'E4';
 export type SearchMode = 'policy' | 'lexical' | 'vector' | 'hybrid';
@@ -74,6 +74,8 @@ export interface ProjectSummary {
     readonly semanticSelected?: number;
     readonly discoveryState?: string;
     readonly semantic?: SemanticState;
+    readonly semanticReadiness?: Record<string, unknown>;
+    readonly legacyAdoption?: Record<string, unknown>;
     readonly indexState?: string;
     readonly jobState?: string;
     readonly jobKind?: string;
@@ -100,6 +102,8 @@ export interface StatusSummary {
     readonly vectors?: number;
     readonly discoveryState?: string;
     readonly semantic: SemanticState;
+    readonly semanticReadiness?: Record<string, unknown>;
+    readonly legacyAdoption?: Record<string, unknown>;
     readonly semanticCompleted?: number;
     readonly semanticSelected?: number;
     readonly freshness: FreshnessState;
@@ -300,6 +304,8 @@ export interface InspectView {
     readonly facts?: number;
     readonly sourceRoot?: string;
     readonly sourceVerification?: Record<string, unknown>;
+    readonly legacySavedEvidence?: Record<string, unknown>;
+    readonly legacyAvailabilityMessage?: string;
 }
 
 export type CitationStatus = 'valid' | 'changed_since_index' | 'not_saved' | 'missing' | 'not_found' | 'line_out_of_range' | 'outside_collection' | 'unchecked';
@@ -468,7 +474,7 @@ export const MANAGE_ACTIONS = [
 ] as const;
 /** Existing AIRK commands that Management may open; each keeps its own dialogs and confirmations. */
 export const MANAGE_COMMANDS = ['airk.setupAgent', 'airk.verifyMcp', 'airk.manageVscodeMcp', 'airk.installCli', 'airk.openTools', 'airk.chooseStorage',
-    'airk.indexMode', 'airk.usage', 'airk.logs', 'airk.showExtensionOutput'] as const;
+    'airk.indexMode', 'airk.usage', 'airk.logs', 'airk.showExtensionOutput', 'airk.httpIssuerRotationStatus', 'airk.rotateHttpIssuer'] as const;
 
 /** One Explorer help topic, compiled from src/explorerHelp at build time and versioned with the VSIX. */
 export interface HelpTopic {

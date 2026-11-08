@@ -59,6 +59,37 @@ function text(node: any): string {
 }
 function dismiss(tree: any) { return nodes(tree).find(node => node.type === 'button' && node.props['aria-label'] === 'Dismiss notice'); }
 
+test('usage read errors use the persistent project notice while retaining explicit report retry', async () => {
+    const usageFile = path.resolve(__dirname, '../../src/explorerWebview/usage.tsx'), nativeRequire = createRequire(usageFile);
+    const built = buildSync({ entryPoints: [usageFile], bundle: true, write: false, platform: 'node', format: 'cjs',
+        jsx: 'automatic', jsxImportSource: 'preact', external: ['preact', 'preact/hooks', 'preact/jsx-runtime'] }).outputFiles[0].text;
+    const sent: any[] = [], timers = new Map<number, unknown>(), slots: any[] = ['<p>Retained report</p>', false, 'Native usage read failed.'];
+    let cursor = 0;
+    const module = { exports: {} as any };
+    vm.runInNewContext(built, { module, exports: module.exports,
+        require: (id: string) => id === 'preact/hooks' ? {
+            useEffect() {}, useRef: (current: unknown) => ({ current }),
+            useState: () => { const index = cursor++; return [slots[index], (value: unknown) => { slots[index] = value; }]; },
+        } : nativeRequire(id),
+        acquireVsCodeApi: () => ({ getState() {}, setState() {}, postMessage: (message: unknown) => sent.push(message) }),
+        window: { addEventListener() {} }, setTimeout: () => { timers.set(1, true); return 1; }, clearTimeout: () => timers.clear(),
+    });
+    const tree = module.exports.UsageReport({ available: true }), notice = nodes(tree).find(node => node.type?.name === 'Notice');
+    assert.ok(notice, 'the actual usage failure must pass through shared persistent dismissal');
+    assert.equal(notice.props.noticeKey, JSON.stringify(['usage-error', 'Native usage read failed.']));
+    assert.equal(notice.props.global, undefined, 'usage failures retain project scope');
+    assert.match(text(notice), /previous report remains below/);
+    const host = noticeHost([], 'project-a');
+    dismiss(host.render(notice.props.noticeKey)).props.onClick(); await host.reply(true);
+    assert.equal(host.render(notice.props.noticeKey), null);
+    const reopened = noticeHost([host.sent[0].key], 'project-a');
+    assert.equal(reopened.render(notice.props.noticeKey), null, 'the same error stays dismissed after reopening');
+    assert.ok(noticeHost([host.sent[0].key], 'project-b').render(notice.props.noticeKey), 'another project retains its own failure');
+    nodes(notice).find(node => node.type === 'button' && text(node) === 'Retry report').props.onClick();
+    assert.equal(sent.length, 1); assert.equal(sent[0].type, 'usage.action'); assert.equal(sent[0].action, 'refresh');
+    assert.equal(slots[2], undefined, 'explicit retry clears the old error while a new result is pending');
+});
+
 test('notice dismissal waits for persistence and survives panel recreation with host preferences', async () => {
     const f = noticeHost([], 'project-a'), key = f.key('runtime', '1.8.11', '1.8.12', 'ready');
     const tree = f.render(key, true), close = dismiss(tree);

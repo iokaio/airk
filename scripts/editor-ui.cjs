@@ -6,6 +6,12 @@ function privateEditorEnvironment(parent=process.env){
     for(const key of Object.keys(value)){const name=key.toUpperCase();if(name.startsWith('VSCODE_')||name==='ELECTRON_RUN_AS_NODE'||name==='NODE_COMPILE_CACHE')delete value[key];}
     return value;
 }
+/** Child-only client/config homes. Existing OS UID and parent environment stay
+ * unchanged; actual acceptance must not migrate an ambient user's MCP files. */
+function privateClientEnvironment(parent,clientHome){
+    const path=require('node:path');if(typeof clientHome!=='string'||!path.isAbsolute(clientHome))throw Error('Private client home must be absolute');
+    return {...parent,HOME:clientHome,USERPROFILE:clientHome,CODEX_HOME:path.join(clientHome,'.codex'),CLAUDE_CONFIG_DIR:path.join(clientHome,'.claude'),XDG_CONFIG_HOME:path.join(clientHome,'.config'),APPDATA:path.join(clientHome,'AppData','Roaming'),LOCALAPPDATA:path.join(clientHome,'AppData','Local')};
+}
 function formFillExpressions(button,values){
     if(typeof button!=='string'||!button.length||button.length>256||!values||typeof values!=='object'||Array.isArray(values))throw new Error('Invalid exact private form inputs');
     const entries=Object.entries(values);
@@ -28,6 +34,44 @@ function appliedReviewMatches(value,review){
     if(receipt.schema!==1||receipt.caller!==request.caller||!same(receipt.key,request.key)||receipt.request_digest!==review.requestDigest||receipt.catalog_revision!==request.expected_catalog_revision+1)return false;
     if(receipt.authority_fence_required===true){const full=value.outcome.fenced_receipt;if(!full?.proof||!same(full.request,request)||full.preview_digest!==review.previewDigest)return false;}
     return true;
+}
+function catalogApplyValidator(){
+    const {ServiceClient}=require('../packages/vscode/out/serviceClient.js');
+    return new ServiceClient({request:async()=>{throw Error('Receipt validation must never dispatch native work');}});
+}
+async function observeReviewedApply(review,actions,{deadline,maxReceipts=64,now=Date.now,pause=ms=>new Promise(resolve=>setTimeout(resolve,ms)),validator=catalogApplyValidator()}={}){
+    const same=require('node:util').isDeepStrictEqual,request=review?.request;
+    if(!request||!Number.isSafeInteger(deadline)||now()>=deadline||!Number.isSafeInteger(maxReceipts)||maxReceipts<1||maxReceipts>64)throw Error('Exact Apply review/deadline unavailable');
+    const observations=[];let bytes=0;
+    const bounded=()=>{if(now()>=deadline)throw Error('Accepted Apply receipt observation deadline exhausted');};
+    const copyBounded=response=>{bytes+=Buffer.byteLength(JSON.stringify(response));if(bytes>524288)throw Error('Accepted Apply receipt evidence byte budget exhausted');return structuredClone(response);};
+    const retain=response=>{const copy=copyBounded(response);observations.push(copy);actions.record?.(copy);};
+    await actions.apply(); // Exactly one mutation dispatch, including unknown transport failures.
+    let initial;
+    for(let count=0;count<128;count++){
+        bounded();const view=await actions.read();bounded();
+        if(view.busy){await pause(Math.min(250,deadline-now()));continue;}
+        if(appliedReviewMatches(view,review)){if(view.namespace!==request.key.namespace)throw Error('Crossed Apply namespace');validator.validateCatalogReceipt(view.outcome,request,review.requestDigest,review.previewDigest);return view;}
+        if(!view.error){await pause(Math.min(250,deadline-now()));continue;}
+        const raw=view.outcome;
+        if(!/^(?:AIRK service: )?catalog_apply_outcome_unknown$/.test(view.error)||raw?.status!=='catalog_outcome_unknown'||raw.code!=='catalog_apply_outcome_unknown'||raw.caller!==request.caller||!same(raw.key,request.key)||raw.request_digest!==review.requestDigest||!same(view.submittedReview,review)||view.namespace!==request.key.namespace||raw.observation?.kind!=='authority_fence'||raw.observation.fence?.state!=='pending')throw Error('Unqualified or crossed Apply outcome: '+view.error);
+        const pending={status:'catalog_receipt',receipt:null,fence:raw.observation.fence};
+        if(validator.validateCatalogObservation(pending,request,review.requestDigest,review.previewDigest))throw Error('Unknown Apply unexpectedly described terminal work');
+        initial=copyBounded(view);copyBounded(review);actions.record?.({initial});retain(raw);break;
+    }
+    if(!initial)throw Error('Apply did not produce a bounded exact outcome');
+    let previous=initial.outcome;
+    for(let count=0;count<maxReceipts;count++){
+        bounded();const view=await actions.check();bounded();
+        if(view.error||view.busy||view.namespace!==request.key.namespace||!Array.isArray(view.outcome?.receipts)||view.outcome.receipts.length!==1)throw Error('Exact accepted Apply receipt observation unavailable');
+        const response=view.outcome.receipts[0];retain(response);
+        if(response.status!=='catalog_receipt'||response.receipt==null&&response.fence?.state!=='pending')throw Error('Missing or expired accepted Apply receipt');
+        const complete=validator.validateCatalogObservation(response,request,review.requestDigest,review.previewDigest);
+        validator.validateCatalogFenceContinuity(previous,response);previous=response;
+        if(complete)return {...view,applyObservation:{review:structuredClone(review),initial,observations,terminal:response,mutation_dispatches:1,receipt_reads:count+1}};
+        await pause(Math.min(500,deadline-now()));
+    }
+    throw Error('Accepted Apply receipt observation request budget exhausted');
 }
 async function openUsageAdministration(request,actions){
     // The native combined selection opens a picker even for one selected Index.
@@ -275,7 +319,10 @@ async function editorUi(port,deadline=Date.now()+600000){
             case 'renameDraft':await click('Index settings');await openDetails('Rename index');await fill('Preview rename',{'New name':request.name});return afterClick('Preview rename',v=>!!v.review);
             case 'apply':{
                 const before=await catalog();if(!before.review)throw new Error('No exact current review before Apply');
-                return afterClick('Apply reviewed changes',value=>appliedReviewMatches(value,before.review));
+                return observeReviewedApply(before.review,{apply:()=>click('Apply reviewed changes'),read:catalog,record:value=>{(activeReadDiagnostic.acceptedApplyObservations??=[]).push(value);},check:async()=>{
+                    const previous=await catalog();await click('Check native receipts');
+                    return settled(v=>v.generation>previous.generation&&Array.isArray(v.outcome?.receipts),previous);
+                }},{deadline:actionDeadline});
             }
             case 'read':return catalog();
             case 'reconcile':{const previous=await catalog();await click('Check native receipts');return settled(v=>v.generation>previous.generation&&Array.isArray(v.outcome?.receipts),previous);}
@@ -307,4 +354,4 @@ async function editorUi(port,deadline=Date.now()+600000){
     }
     return {dispatch,dispatchReceipts:()=>structuredClone(dispatchLog),diagnostics:()=>({picker:structuredClone(pickerDiagnostics),mutations:structuredClone(mutationDiagnostics),read_observations:structuredClone(readDiagnostics),reads,dispatches}),document,workbench,service,quickPick,confirm,indexing,catalog,click,approveRepair,responseMode,until,close(){for(const client of clients.values())client.close();}};
 }
-module.exports={editorUi,until,formFillExpressions,checkboxFillExpressions,appliedReviewMatches,privateEditorEnvironment,openUsageAdministration,retainUiDiagnostic,beginUiDiagnostic,editorActionDeadline,editorRemainingBudget};
+module.exports={editorUi,until,formFillExpressions,checkboxFillExpressions,appliedReviewMatches,observeReviewedApply,privateEditorEnvironment,privateClientEnvironment,openUsageAdministration,retainUiDiagnostic,beginUiDiagnostic,editorActionDeadline,editorRemainingBudget};

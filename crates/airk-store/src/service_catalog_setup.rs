@@ -21,8 +21,19 @@ use std::path::Path;
 
 const KIND: &str = "catalog_index_setup";
 
+#[path = "service_catalog_setup_checkpoint.rs"]
+mod checkpoint;
+#[path = "service_catalog_legacy_adoption.rs"]
+mod legacy_adoption;
 #[path = "service_catalog_setup_metadata.rs"]
 mod metadata;
+pub use checkpoint::legacy_adoption_checkpoint_history;
+pub(crate) use checkpoint::uninitialized_legacy_adoption;
+pub use legacy_adoption::{NativeLegacyAdoptionCompletion, SavedAdoptionSources};
+#[cfg(test)]
+pub(in crate::service::registry::catalog) use legacy_adoption::{
+    complete_metadata_authority_fixture, completed_authority_fixture,
+};
 
 /// Read-only native encoding preflight. Its digest binds actual defaults and
 /// individual native format budgets; syntax alone is not filesystem authority.
@@ -31,6 +42,12 @@ pub fn validate_setup_metadata_plan(
     request: &IndexSetupRequest,
 ) -> Result<Sha256Digest> {
     metadata::Metadata::from_request(control, request)?.digest(request)
+}
+pub fn validate_saved_adoption_metadata_plan(
+    control: &Path,
+    saved: &SavedAdoptionSources,
+) -> Result<Sha256Digest> {
+    metadata::Metadata::saved_plan(control, saved.plan())?.digest(&saved.plan().setup)
 }
 
 pub(crate) fn native_setup_scratch_name(name: &str, bytes: &[u8]) -> String {
@@ -52,6 +69,7 @@ pub struct NativeIndexPreparation {
     storage_identity: Sha256Digest,
     source_configuration_digest: Sha256Digest,
     review: SetupPreparationReview,
+    legacy_adoption: Option<Sha256Digest>,
 }
 impl NativeIndexPreparation {
     pub fn from_validated_native_review(
@@ -70,6 +88,7 @@ impl NativeIndexPreparation {
             storage_identity,
             source_configuration_digest,
             review,
+            legacy_adoption: None,
         })
     }
     fn evidence(&self, request: &IndexSetupRequest) -> Result<PreparationEvidence> {
@@ -90,11 +109,19 @@ impl NativeIndexPreparation {
                 &self.review,
             ))?],
         );
+        let digest = match self.legacy_adoption {
+            None => digest,
+            Some(plan) => framed_digest(
+                b"airk/catalog-legacy-adoption-prepared/1",
+                &[digest.as_bytes(), plan.as_bytes()],
+            ),
+        };
         Ok(PreparationEvidence {
             digest,
             storage_identity: self.storage_identity,
             source_configuration_digest: self.source_configuration_digest,
             review: self.review.clone(),
+            legacy_adoption: self.legacy_adoption,
         })
     }
 }
@@ -304,6 +331,13 @@ impl ServiceRegistry {
         &mut self,
         request: &IndexSetupRequest,
     ) -> Result<IndexSetupReceipt> {
+        self.reserve_setup_inner(request, None)
+    }
+    fn reserve_setup_inner(
+        &mut self,
+        request: &IndexSetupRequest,
+        legacy_adoption: Option<Sha256Digest>,
+    ) -> Result<IndexSetupReceipt> {
         request.validate()?;
         let tx = self
             .connection
@@ -315,7 +349,8 @@ impl ServiceRegistry {
         );
         if let Some(previous) = saved(&tx, request.caller, &request.key)? {
             ensure!(
-                previous.request_digest == request.identity()?,
+                previous.request_digest == request.identity()?
+                    && previous.legacy_adoption == legacy_adoption,
                 "index setup request key conflict"
             );
             return Ok(previous);
@@ -370,6 +405,7 @@ impl ServiceRegistry {
             source_revision: CatalogRevision::INITIAL,
             preparation: None,
             completion: None,
+            legacy_adoption,
         };
         // Reserve enough encoded space for the largest terminal receipt before
         // accepting this metadata intent or authorizing any filesystem effects.
@@ -382,11 +418,27 @@ impl ServiceRegistry {
                 expected_catalog_revision: u64::try_from(i64::MAX - 1)?.try_into()?,
                 expected_source_revision: CatalogRevision::INITIAL,
             },
+            legacy_adoption,
         });
         largest.completion = Some(SetupCompletion {
             prepared_digest: Sha256Digest::from_bytes([255; 32]),
             expected_catalog_revision: u64::try_from(i64::MAX - 1)?.try_into()?,
             expected_source_revision: CatalogRevision::INITIAL,
+            legacy_adoption: legacy_adoption.map(|plan| {
+                airk_core::catalog_legacy_adoption::LegacyAdoptionPublication {
+                    schema: 1,
+                    plan_digest: plan,
+                    archive_inventory_sha256: Sha256Digest::from_bytes([255; 32]),
+                    original_publication_sha256: Sha256Digest::from_bytes([255; 32]),
+                    current: airk_core::identity::RevisionToken {
+                        incarnation: Incarnation::from_bytes([255; 16]),
+                        generation: u64::MAX,
+                        revision: Sha256Digest::from_bytes([255; 32]),
+                    },
+                    resource_sha256: Sha256Digest::from_bytes([255; 32]),
+                    compatibility_sha256: Sha256Digest::from_bytes([255; 32]),
+                }
+            }),
         });
         largest.stage = SetupStage::Ready;
         largest.catalog_revision = largest
@@ -397,7 +449,20 @@ impl ServiceRegistry {
             .next()?;
         largest.source_revision = CatalogRevision::INITIAL.next()?;
         largest.validate()?;
+        if let Some(plan_digest) = legacy_adoption {
+            airk_core::catalog_legacy_adoption::LegacyAdoptionReceipt {
+                schema: 1,
+                plan_digest,
+                setup: largest.clone(),
+            }
+            .validate()?;
+        }
         receipt.validate()?;
+        if legacy_adoption.is_some() {
+            // New durable receipt semantics fence older managed readers before
+            // any destination metadata or Current evidence can be written.
+            super::super::runtime_contract::arm_in_transaction(&tx)?;
+        }
         tx.execute(
             "INSERT INTO index_operation_receipts VALUES(?1,?2,'reserved',?3,?4)",
             params![
@@ -467,6 +532,10 @@ impl ServiceRegistry {
             "index setup request digest changed"
         );
         let evidence = native.evidence(&before.request)?;
+        ensure!(
+            evidence.legacy_adoption == before.legacy_adoption,
+            "native preparation changed reserved adoption intent"
+        );
         if let Some(previous) = &before.preparation {
             ensure!(
                 previous == &evidence,
@@ -504,6 +573,21 @@ impl ServiceRegistry {
         request_digest: Sha256Digest,
         completion: &SetupCompletion,
     ) -> Result<IndexSetupReceipt> {
+        ensure!(
+            completion.legacy_adoption.is_none(),
+            "ordinary setup cannot supply a legacy adoption publication"
+        );
+        self.complete_setup_inner(caller, key, request_digest, completion, None)
+    }
+
+    fn complete_setup_inner(
+        &mut self,
+        caller: Incarnation,
+        key: &RequestKey,
+        request_digest: Sha256Digest,
+        completion: &SetupCompletion,
+        adoption: Option<&NativeLegacyAdoptionCompletion>,
+    ) -> Result<IndexSetupReceipt> {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -517,6 +601,16 @@ impl ServiceRegistry {
             before.request_digest == request_digest,
             "index setup request digest changed"
         );
+        match adoption {
+            None => ensure!(
+                before
+                    .preparation
+                    .as_ref()
+                    .is_none_or(|p| p.legacy_adoption.is_none()),
+                "legacy adoption requires its native publication completion"
+            ),
+            Some(native) => native.check(&before, completion)?,
+        }
         if let Some(previous) = &before.completion {
             ensure!(
                 previous == completion,
@@ -556,11 +650,13 @@ impl ServiceRegistry {
             "UPDATE index_sources SET enabled=1 WHERE index_id=?1",
             [after.index_id.to_string()],
         )?;
-        super::super::schedule_project_setup(
-            &tx,
-            before.request.registration.binding,
-            before.request.setup_watch,
-        )?;
+        if adoption.is_none() {
+            super::super::schedule_project_setup(
+                &tx,
+                before.request.registration.binding,
+                before.request.setup_watch,
+            )?;
+        }
         replace(&tx, &before, &after)?;
         ensure!(
             tx.execute(

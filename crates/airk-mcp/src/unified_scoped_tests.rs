@@ -17,8 +17,19 @@ struct Native {
     mode: AtomicU8,
     calls: AtomicUsize,
     retained: std::sync::Mutex<Option<Value>>,
+    contexts: std::sync::Mutex<Vec<crate::read_attempt::ReadAttemptContext>>,
 }
 impl RemoteTools for Native {
+    fn call_with_read_context(
+        &self,
+        tool: String,
+        args: Map<String, Value>,
+        _: usize,
+        context: crate::read_attempt::ReadAttemptContext,
+    ) -> RemoteFuture<'_> {
+        self.contexts.lock().unwrap().push(context);
+        self.call(tool, args)
+    }
     fn scoped_selection(&self) -> Option<&ScopedConnectRequest> {
         Some(&self.selection)
     }
@@ -147,6 +158,7 @@ fn fixture() -> Result<(tempfile::TempDir, Unified, Arc<Native>, Arc<Ui>)> {
         mode: AtomicU8::new(0),
         calls: AtomicUsize::new(0),
         retained: std::sync::Mutex::new(None),
+        contexts: std::sync::Mutex::new(Vec::new()),
     });
     let ui = Arc::new(Ui::default());
     let unified = Unified::new(
@@ -395,5 +407,181 @@ async fn installed_scope_requires_unambiguous_transport_project_and_strips_it_be
     .await?;
     assert_eq!(invalid["isError"], true);
     assert_eq!(native.calls.load(Ordering::SeqCst), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn selected_public_routes_preserve_original_attempt_and_lifetime() -> Result<()> {
+    use crate::read_attempt::ReadAttemptContext;
+    use std::time::{Duration, Instant};
+    let (_dir, unified, native, ui) = fixture()?;
+    for (name, args) in [
+        ("help", json!({"tool":"search"})),
+        ("airk_help", json!({"tool":"search"})),
+        ("status", json!({})),
+        ("airk_status", json!({})),
+        ("diagnostics", json!({})),
+        ("airk_diagnostics", json!({})),
+        ("search", json!({"query":"Fixture","mode":"lexical"})),
+        ("airk_search", json!({"query":"Fixture","mode":"lexical"})),
+        ("query_scope", json!({"view":"projects"})),
+        ("airk_query_scope", json!({"view":"projects"})),
+    ] {
+        let cancellation = tokio_util::sync::CancellationToken::new();
+        let context = ReadAttemptContext::new(
+            Instant::now() + Duration::from_secs(5),
+            cancellation.clone(),
+        )
+        .with_native_retry_deadline(Instant::now() + Duration::from_secs(1))
+        .with_lifetime_guard(Arc::new(17_u32));
+        let guard = context.lifetime_guard().unwrap();
+        let before = native.contexts.lock().unwrap().len();
+        unified
+            .call_with_read_context(
+                name.into(),
+                args.as_object().unwrap().clone(),
+                8,
+                context.clone(),
+            )
+            .await?;
+        let contexts = native.contexts.lock().unwrap();
+        assert_eq!(contexts.len(), before + 1, "{name}");
+        let observed = contexts.last().unwrap();
+        assert_eq!(observed.deadline(), context.deadline(), "{name}");
+        assert_eq!(
+            observed.native_retry_deadline(),
+            context.native_retry_deadline(),
+            "{name}"
+        );
+        assert!(
+            Arc::ptr_eq(&guard, &observed.lifetime_guard().unwrap()),
+            "{name}"
+        );
+        observed.mark_selection_refused();
+        assert!(
+            context.selection_admission_refused(),
+            "attempt identity lost for {name}"
+        );
+        cancellation.cancel();
+        assert!(observed.cancellation().is_cancelled());
+    }
+    assert_eq!(ui.0.load(Ordering::SeqCst), 0);
+    let before = native.calls.load(Ordering::SeqCst);
+    for name in ["search", "help", "get_template", "query_scope"] {
+        let expired = ReadAttemptContext::new(
+            Instant::now() - Duration::from_millis(1),
+            Default::default(),
+        );
+        assert!(
+            unified
+                .call_with_read_context(name.into(), Map::new(), 8, expired)
+                .await
+                .is_err()
+        );
+    }
+    assert_eq!(native.calls.load(Ordering::SeqCst), before);
+    assert_eq!(ui.0.load(Ordering::SeqCst), 0);
+    Ok(())
+}
+#[tokio::test]
+async fn combined_public_routes_keep_exact_selector_capacity_and_attempt() -> Result<()> {
+    struct Combined {
+        selection: airk_core::service::CombinedConnectRequest,
+        observed: std::sync::Mutex<Option<(usize, crate::read_attempt::ReadAttemptContext)>>,
+    }
+    impl RemoteTools for Combined {
+        fn combined_selection(&self) -> Option<&airk_core::service::CombinedConnectRequest> {
+            Some(&self.selection)
+        }
+        fn call(&self, _: String, _: Map<String, Value>) -> RemoteFuture<'_> {
+            panic!("context discarded")
+        }
+        fn call_with_read_context(
+            &self,
+            _: String,
+            _: Map<String, Value>,
+            limit: usize,
+            context: crate::read_attempt::ReadAttemptContext,
+        ) -> RemoteFuture<'_> {
+            *self.observed.lock().unwrap() = Some((limit, context));
+            Box::pin(async { Ok(success(json!({"complete":true}))) })
+        }
+    }
+    let (_dir, _, native, _) = fixture()?;
+    let s = &native.selection;
+    let selection = airk_core::service::CombinedConnectRequest {
+        schema: s.schema,
+        context_key: s.context_key,
+        namespace: s.namespace,
+        expected_catalog_revision: s.expected_catalog_revision,
+        grant_id: s.grant_id,
+        expected_grant_revision: s.expected_grant_revision,
+        project_ids: s.project_ids.clone(),
+        index_ids: Some(vec![s.index_id]),
+    };
+    let backend = Arc::new(Combined {
+        selection: selection.clone(),
+        observed: Default::default(),
+    });
+    let unified = Unified::combined(backend.clone(), None)?;
+    assert_eq!(unified.combined_selection(), Some(&selection));
+    for name in ["search", "airk_search", "help", "airk_help", "query_scope"] {
+        let context = crate::read_attempt::ReadAttemptContext::new(
+            std::time::Instant::now() + std::time::Duration::from_secs(1),
+            Default::default(),
+        )
+        .with_lifetime_guard(Arc::new(19_u32));
+        unified
+            .call_with_read_context(name.into(), Map::new(), 32, context.clone())
+            .await?;
+        let observed = backend.observed.lock().unwrap();
+        let (limit, seen) = observed.as_ref().unwrap();
+        assert_eq!(*limit, 32);
+        assert_eq!(seen.deadline(), context.deadline());
+        assert!(Arc::ptr_eq(
+            &seen.lifetime_guard().unwrap(),
+            &context.lifetime_guard().unwrap()
+        ));
+        seen.mark_selection_refused();
+        assert!(context.selection_admission_refused());
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn explorer_routing_obeys_original_deadline_and_cancellation() -> Result<()> {
+    struct PendingUi;
+    impl ExplorerTools for PendingUi {
+        fn call(
+            &self,
+            _: Option<String>,
+            _: String,
+            _: Map<String, Value>,
+            _: airk_core::usage::ClientFamily,
+        ) -> RemoteFuture<'_> {
+            Box::pin(std::future::pending())
+        }
+    }
+    let (_dir, mut unified, _, _) = fixture()?;
+    unified.explorer = Some(Arc::new(PendingUi));
+    for cancel in [false, true] {
+        let token = tokio_util::sync::CancellationToken::new();
+        let context = crate::read_attempt::ReadAttemptContext::new(
+            std::time::Instant::now() + std::time::Duration::from_millis(40),
+            token.clone(),
+        );
+        let read = unified.call_with_read_context("list_templates".into(), Map::new(), 8, context);
+        let canceler = async {
+            if cancel {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                token.cancel();
+            }
+        };
+        let (reply, ()) = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            tokio::join!(read, canceler)
+        })
+        .await?;
+        assert_eq!(body(&reply?).unwrap()["error"]["code"], "UI_UNAVAILABLE");
+    }
     Ok(())
 }

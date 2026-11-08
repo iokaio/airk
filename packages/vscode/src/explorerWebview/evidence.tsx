@@ -59,6 +59,10 @@ export function InspectorScreen(props: ScreenProps) {
                     <p>{view.value.liveMessage}</p>
                     {view.value.nativeFailure && <p class="callout" role="alert">The native read failed its requested verification requirements. The complete attempted result is retained below.</p>}
                     {view.value.sourceVerification && <details><summary>Dated native source check</summary><pre>{JSON.stringify(view.value.sourceVerification, null, 2)}</pre></details>}
+                    {view.value.legacySavedEvidence && <>
+                        <p class="callout">{view.value.legacyAvailabilityMessage}</p>
+                        <details><summary>Saved predecessor evidence</summary><pre>{JSON.stringify(view.value.legacySavedEvidence, null, 2)}</pre></details>
+                    </>}
                     <CompleteNativeResponse value={view.value.nativeResult} />
                     <Facts rows={[
                         ['Publication', <span title={view.value.publication}>{shortToken(view.value.publication)}</span>],

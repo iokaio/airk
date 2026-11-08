@@ -132,8 +132,8 @@ impl ServiceRegistry {
         let tx = self.connection.unchecked_transaction()?;
         let version: u32 = tx.pragma_query_value(None, "user_version", |row| row.get(0))?;
         ensure!(
-            matches!(version, 11 | 12),
-            "source observations require registry schema 11 or 12; use the native installer to upgrade"
+            matches!(version, 11..=13),
+            "source observations require registry schema 11, 12 or 13; use the native installer to upgrade"
         );
         let namespace: String = tx.query_row(
             "SELECT incarnation FROM service_meta WHERE id=1",
@@ -166,7 +166,7 @@ impl ServiceRegistry {
                         .as_millis(),
                 )?,
                 root: request.root.clone(),
-                basis: if version == 12 {
+                basis: if matches!(version, 12 | 13) {
                     RootObservationBasis::CatalogSources
                 } else {
                     RootObservationBasis::LegacyOwnerAndWatchCache
@@ -191,7 +191,7 @@ impl ServiceRegistry {
         // final cursor and bounded counter widths. A fixed path-size reserve
         // would undercount legal POSIX names containing JSON escapes.
         observation.reply_reserve = encoded_size(&observation.page, MAX_RELATIONSHIP_BYTES)? + 512;
-        let selection_column = if version == 12 {
+        let selection_column = if matches!(version, 12 | 13) {
             "i.legacy_binding"
         } else {
             "p.binding"
@@ -210,7 +210,7 @@ impl ServiceRegistry {
             .map(|bindings| bindings.iter().map(ToString::to_string).collect::<Vec<_>>())
             .unwrap_or_default();
         let mut seen = BTreeSet::new();
-        if version == 12 {
+        if matches!(version, 12 | 13) {
             let selected_predicate = selected
                 .as_ref()
                 .map(|bindings| {

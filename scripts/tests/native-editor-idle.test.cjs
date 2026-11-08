@@ -1,6 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 const {test}=require('node:test'),assert=require('node:assert/strict');
-const {progressIdle,waitForIndexIdle}=require('../native-editor-idle.cjs');
+const {verifyHealth,progressIdle,waitForIndexIdle}=require('../native-editor-idle.cjs');
+// Shape retained from native-ui-same1-complete/native-ui-failure-settlement.json
+// health-exact-owned-control; identities and build text redacted, no synthetic grant_policy.
+function actualHealth(){return {status:'health',observation:{catalog_clock:{namespace:'a'.repeat(32),revision:4},storage_formats:{index:1,service_state:1,logs:1,query_projection_records:4},build:{source_sha256:'b'.repeat(64),source_files:978,profile:'release',rustc:'redacted'},build_error:null,logs:{available:true,dropped_records:0,write_failures:0},version:'1.8.12',protocol:1,instance:'c'.repeat(32),process_id:24909,executable_sha256:'d'.repeat(64),runtime_sha256:'e'.repeat(64),user:'redacted',uptime_ms:200487,policy:{service:'c'.repeat(32),accepting:true,projects:1,draining_projects:1,pending_connections:0,allocated:{concurrent_queries:0,response_bytes:0},active_queries:0,reserved_response_bytes:0}}};}
+test('real public Health DTO qualifies identity without inventing mutation admission',()=>{
+    const value=actualHealth(),expected={version:'1.8.12',namespace:'a'.repeat(32),executableSha256:'d'.repeat(64),runtimeSha256:'e'.repeat(64)};
+    assert.equal(Object.hasOwn(value.observation,'grant_policy'),false);
+    assert.equal(verifyHealth(value,expected),value.observation);
+    value.observation.policy.accepting=false;
+    assert.throws(()=>verifyHealth(value,expected));
+    for(const change of [v=>{v.status='failure';},v=>{v.observation.version='1.8.7';},v=>{v.observation.protocol=2;},v=>{v.observation.runtime_sha256='f'.repeat(64);},v=>{v.observation.executable_sha256='f'.repeat(64);},v=>{v.observation.catalog_clock.namespace='f'.repeat(32);},v=>{delete v.observation.catalog_clock;},v=>{v.observation.catalog_clock.revision=-1;},v=>{v.observation.instance='bad';}]){const crossed=actualHealth();change(crossed);assert.throws(()=>verifyHealth(crossed,expected));}
+});
 const expected={project:'a'.repeat(64),service:'b'.repeat(32)};
 function idle(){const id='c'.repeat(64);return {status:'progress',project:expected.project,queued_jobs:[],queue_truncated:false,observed_unix_ms:10,project_paused:false,pending_paused:null,pending_job:null,observation:{worker:{service:expected.service,worker:'d'.repeat(32),project:expected.project,fencing_generation:2},current_fencing_generation:2,progress:{job:id},job:{id,project:expected.project,kind:'index',state:'succeeded',fencing_generation:2}}};}
 test('idle requires explicit complete queue and a succeeded current native work observation',()=>{

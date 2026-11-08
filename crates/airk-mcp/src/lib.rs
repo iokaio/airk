@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 
 mod execution;
 mod lifecycle;
+pub mod read_attempt;
 pub mod response;
 mod workbench;
 use response::ResponseArgs;
@@ -637,6 +638,7 @@ pub struct AirkServer {
     response_mode: response::ResponseMode,
     // Inner plan reads share the outer admitted lifetime and usage observation.
     plan_read: bool,
+    read_attempt: Option<read_attempt::ReadAttemptContext>,
 }
 
 #[tool_router]
@@ -663,6 +665,7 @@ impl AirkServer {
             responses,
             response_mode: response::ResponseMode::from_environment(),
             plan_read: false,
+            read_attempt: None,
         }
     }
 
@@ -1412,6 +1415,7 @@ fn render<T: Serialize>(
         response::ResponseMode,
         Option<airk_core::reply::ReplyDetail>,
         Option<airk_core::verification::VerificationBudget>,
+        Option<std::time::Instant>,
     ),
     include_status: bool,
     operation: UsageOperation,
@@ -1420,7 +1424,7 @@ fn render<T: Serialize>(
     if let Err(error) = kernel.scoped_read_fingerprint() {
         return response::scoped_error_result(kernel, &error);
     }
-    let (mode, reply_detail, verification) = projection;
+    let (mode, reply_detail, verification, read_deadline) = projection;
     let mut logical = result
         .as_ref()
         .ok()
@@ -1484,7 +1488,7 @@ fn render<T: Serialize>(
         response::fact_items(display, operation);
         airk_core::guidance::annotate(display);
         if let Some(budget) = verification {
-            match kernel.verify_returned_sources(display, budget) {
+            match kernel.verify_returned_sources_with_deadline(display, budget, read_deadline) {
                 Ok(receipt) => match airk_core::verification::attach_response(display, receipt) {
                     Ok(failed) => verification_failed = failed,
                     Err(error) => verification_error = Some(error),

@@ -1,0 +1,139 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Pinned build-tool policy tests; fixtures never compile Ninja or ORT."""
+import copy
+import hashlib
+import importlib.util
+import io
+import json
+import os
+import sys
+from pathlib import Path
+import tarfile
+import tempfile
+from types import SimpleNamespace
+import unittest
+from unittest.mock import patch
+
+SPEC = importlib.util.spec_from_file_location("airk_static_tools", Path(__file__).parents[1] / "provision-static-onnx-tools.py")
+MODULE = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(MODULE)
+CORE = MODULE.core_module()
+
+
+class StaticToolTests(unittest.TestCase):
+    def archive(self, root, link=None):
+        path = root / "tool.tar.gz"
+        with tarfile.open(path, "w:gz") as output:
+            member = tarfile.TarInfo("tool/bin/program")
+            content = b"original pinned executable fixture"
+            member.size, member.mode = len(content), 0o755
+            output.addfile(member, io.BytesIO(content))
+            if link:
+                member = tarfile.TarInfo("tool/bin/alias")
+                member.type, member.linkname = tarfile.SYMTYPE, link
+                output.addfile(member)
+        return path, {"archive_root": "tool", "bytes": path.stat().st_size, "sha256": CORE.digest(path)}
+
+    def test_exact_official_cmake_and_ninja_source_pins(self):
+        MODULE.validate_lock(CORE)
+        self.assertEqual(MODULE.LOCK["cmake"]["Darwin"]["sha256"], "330b9514f5112e5ed4fb08b8b05803b776fd9b539a6ae12927d14dcc0ee2ba8d")
+        self.assertEqual(MODULE.LOCK["ninja"]["sha256"], "373bb33a8db2769b825a771e5d25b11d79ef5e41a934b870487257c27b187180")
+        for change in (lambda lock: lock.update(cmake_version="4.0.0"), lambda lock: lock["cmake"]["Linux"].update(url="https://example.invalid/tool")):
+            lock = copy.deepcopy(MODULE.LOCK)
+            change(lock)
+            with patch.object(MODULE, "LOCK", lock), self.assertRaises(ValueError):
+                MODULE.validate_lock(CORE)
+
+    def test_archive_internal_links_are_omitted_and_outside_links_are_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            archive, row = self.archive(root, link="program")
+            entries = MODULE.extract(archive, root / "extracted", row, CORE)
+            self.assertTrue(any(entry["kind"] == "omitted_link" for entry in entries))
+            self.assertFalse((root / "extracted/bin/alias").exists())
+            self.assertEqual((root / "extracted/bin/program").read_bytes(), b"original pinned executable fixture")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            archive, row = self.archive(root, link="../../outside")
+            with self.assertRaises(ValueError):
+                MODULE.extract(archive, root / "extracted", row, CORE)
+            self.assertFalse((root / "extracted").exists())
+
+    def test_existing_tree_requires_exact_sealed_bytes_and_roster(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            archive, row = self.archive(root)
+            target = root / "extracted"
+            MODULE.extract(archive, target, row, CORE)
+            MODULE.extract(archive, target, row, CORE)
+            extra = target / "extra.cmake"
+            extra.write_text("unknown injected module")
+            with self.assertRaises(ValueError):
+                MODULE.extract(archive, target, row, CORE)
+            self.assertEqual(extra.read_text(), "unknown injected module")
+
+    def test_read_only_tools_verification_never_creates_owner_or_tree(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve() / "owned"
+            CORE.owned_destination(root, "x86_64-pc-windows-msvc", create=True)
+            with self.assertRaises(ValueError):
+                MODULE.verify_tools(root, "x86_64-pc-windows-msvc", CORE)
+            self.assertFalse((root / "tools").exists())
+
+    def test_foreign_tools_directory_is_preserved(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve() / "owned"
+            CORE.owned_destination(root, "x86_64-pc-windows-msvc", create=True)
+            tools = root / "tools"
+            tools.mkdir()
+            (tools / "keep").write_text("user file")
+            with self.assertRaises(ValueError):
+                MODULE.setup_owner(root, "x86_64-pc-windows-msvc", CORE, create=True)
+            self.assertEqual((tools / "keep").read_text(), "user file")
+
+    def test_receipt_cannot_redirect_to_an_external_same_hash_binary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            cmake = root / "cmake/bin/cmake.exe"
+            ninja = root / "ninja-build/ninja.exe"
+            for path in (cmake, ninja):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"identical harmless executable fixture")
+            receipt = {"cmake": CORE.tool_record(cmake), "ninja": CORE.tool_record(ninja)}
+            MODULE.bound_tool_paths(root, "x86_64-pc-windows-msvc", receipt, CORE)
+            outside = root / "outside.exe"
+            outside.write_bytes(cmake.read_bytes())
+            receipt["cmake"] = CORE.tool_record(outside)
+            self.assertEqual(receipt["cmake"]["sha256"], CORE.digest(cmake))
+            with self.assertRaisesRegex(ValueError, "redirected"):
+                MODULE.bound_tool_paths(root, "x86_64-pc-windows-msvc", receipt, CORE)
+
+    def test_ninja_policy_disables_tests_and_ambient_re2c_and_retains_native_mac_minimum(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            options = SimpleNamespace(cxx=Path(sys.executable), vs_root=None, msvc_toolset="14.44.35207", windows_sdk="10.0.26100.0")
+            with patch.object(CORE, "program_path", side_effect=lambda value, name: Path(value) if value else root / name):
+                configure, build, _ = MODULE.ninja_commands(root, "aarch64-apple-darwin", root / "cmake", options, CORE)
+            receipt = {"configure_argv": configure, "build_argv": build, "cmake": {"path": str(root / "cmake")}, "python": {"path": str(Path(sys.executable).resolve())}}
+            MODULE.verify_ninja_policy(root, "aarch64-apple-darwin", receipt, CORE)
+            self.assertIn("-DBUILD_TESTING=OFF", configure)
+            self.assertIn("-DRE2C=OFF", configure)
+            self.assertIn("-DCMAKE_OSX_ARCHITECTURES=arm64", configure)
+            for change in (lambda r: r["configure_argv"].append("-DCMAKE_TOOLCHAIN_FILE=/unknown"),
+                           lambda r: r["configure_argv"].append("-DRE2C=/ambient/re2c"),
+                           lambda r: r["build_argv"].append("--clean-first")):
+                crossed = copy.deepcopy(receipt)
+                change(crossed)
+                with self.assertRaises(ValueError):
+                    MODULE.verify_ninja_policy(root, "aarch64-apple-darwin", crossed, CORE)
+
+    def test_base_cli_exposes_explicit_download_tools_without_implicit_cargo(self):
+        with patch.object(CORE, "prepare") as prepare, patch.object(CORE, "build") as build, patch("sys.stderr", new_callable=io.StringIO):
+            with self.assertRaises(SystemExit):
+                CORE.main(["--verify", "--download-tools", "--target", "x86_64-pc-windows-msvc"])
+            prepare.assert_not_called()
+            build.assert_not_called()
+
+
+if __name__ == "__main__":
+    unittest.main()

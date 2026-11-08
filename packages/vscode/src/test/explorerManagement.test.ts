@@ -2,7 +2,7 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { managementView, panelDetails } from '../explorerManagement';
-import { ServiceConsoleState } from '../serviceConsoleView';
+import { ServiceConsoleState, diagnosticPreview } from '../serviceConsoleView';
 import { statusSummary } from '../explorerStatus';
 
 const project = '12'.repeat(32), job = '34'.repeat(32), pending = '56'.repeat(32), plan = '78'.repeat(32), intent = '9a'.repeat(16);
@@ -302,4 +302,25 @@ test('idle semantic mode without published coverage offers complete setup and un
     let entry=managementView(value).projects[0];assert.equal(entry.health.action,'enableSemantic');
     (row.inspection as any).snapshot.source_state='unavailable';
     entry=managementView(value).projects[0];assert.equal(entry.health.title,'Source folder unavailable');assert.equal(entry.health.action,'inspect');
+});
+
+test('in-service inference keeps identity, complete counters and failures without a process PID',()=>{
+    const provider={schema:1,kind:'in_process',provider:{schema:1,service_instance:'12'.repeat(16),approved_execution_sha256:'34'.repeat(32),provider_generation:'56'.repeat(16)},admission_open:false,admitted_high_water:17,queued_outstanding:2,running_outstanding:3,callback_outstanding:4,delivery_outstanding:5,model_references_outstanding:6,failure:'owner_failed',future_native_field:{retained:true}};
+    const value=state();value.model.value={status:'embedding_status',available:true,worker:'56'.repeat(16),process_id:null,loads:7,reuses:8,sessions:9,provider};value.bootstrap.value={payloadVerified:true,selectedVersion:'1.8.14'};
+    const view=managementView(value);assert.equal(view.enabled.stopEmbedding,true);assert.equal(view.enabled.forceEmbedding,true);
+    assert.ok(view.inference.some(([label,value])=>label==='In-service inference available'&&value==='Yes'));assert.ok(!view.runtimeVersions.some(([label])=>label.includes('helper')));
+    const complete=view.inference.find(([label])=>label==='Complete native provider status');assert.ok(complete);assert.deepEqual(JSON.parse(complete[1]),provider);
+    const report=panelDetails(view,'service','1.8.14');for(const key of ['queued_outstanding','running_outstanding','callback_outstanding','delivery_outstanding','model_references_outstanding','owner_failed','future_native_field'])assert.ok(report.includes(key),key);
+    const diagnostic=JSON.parse(diagnosticPreview(value,false));for(const key of ['admission_open','admitted_high_water','queued_outstanding','running_outstanding','callback_outstanding','delivery_outstanding','model_references_outstanding','failure'])assert.deepEqual(diagnostic.inference.provider[key],(provider as any)[key]);assert.deepEqual(diagnostic.inference.provider.provider,provider.provider);assert.equal(diagnostic.inference.process_id,null);
+    const legacy=state();legacy.bootstrap.value={payloadVerified:true,selectedVersion:'1.8.13'};assert.ok(managementView(legacy).runtimeVersions.some(([label])=>label==='Inference helper (airk-embed)'));
+});
+
+
+test('unavailable historical semantics are disclosed in health and complete copied details',()=>{
+    const current=state(),semantic={state:'unavailable',failure:'legacy_saved_semantic_conversion_unavailable',future:{preserved:true}};
+    const row=current.page!.projects[0] as any;row.inspection.snapshot.semantic=semantic;row.pending_job=null;row.progress=undefined;
+    const view=managementView(current),entry=view.projects[0];
+    assert.equal(entry.health.title,'Semantic pipeline unavailable');assert.equal(entry.health.severity,'warn');assert.equal(entry.health.action,undefined);
+    const report=panelDetails(view,'semantic','1.8.14',project,statusSummary({semantic_readiness:semantic,legacy_adoption:{future:'native-provenance'}}));
+    assert.match(report,/legacy_saved_semantic_conversion_unavailable/);assert.match(report,/native-provenance/);assert.match(report,/preserved/);
 });

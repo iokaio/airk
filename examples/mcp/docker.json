@@ -1,8 +1,21 @@
 {
-  "mcpServers": {
+  "_airk_example_status": "Historical predecessor stdio example; not a supported 1.8.14 shared HTTPS connection. See README.md.",
+  "historical_mcpServers": {
     "airk": {
       "command": "docker",
-      "args": ["exec", "-i", "airk", "airk", "--root", "/workspaces/project-a", "--data-dir", "/data", "--collection", "project-a", "mcp"]
+      "args": [
+        "exec",
+        "-i",
+        "airk",
+        "airk",
+        "--root",
+        "/workspaces/project-a",
+        "--data-dir",
+        "/data",
+        "--collection",
+        "project-a",
+        "mcp"
+      ]
     }
   }
 }

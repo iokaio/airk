@@ -885,7 +885,6 @@ fn unavailable_source_ancestor_keeps_retained_evidence_and_cancelable_typed_reco
 fn service_watcher_owns_nested_changes_pause_and_restart_without_editor_events() -> Result<()> {
     use airk_core::service::{ControlMethod as Method, ControlResponse as Response};
     let owner = tempfile::tempdir()?;
-    let root = owner.path().join("runtime");
     let source = owner.path().join("source");
     let data = owner.path().join("state");
     fs::create_dir_all(source.join("nested"))?;
@@ -893,7 +892,10 @@ fn service_watcher_owns_nested_changes_pause_and_restart_without_editor_events()
     let file = source.join("nested/original.txt");
     fs::write(&file, b"Initial native watcher fixture.\n")?;
     let project = airk_kernel::service_projects::registration(&source, &data, "watch-fixture")?;
-    let mut children = Children(vec![start(&root)?]);
+    let service = qualified_process_fixture(&source, &data, "watch-fixture")?;
+    let selection = selected_scope(service.http_selection())?;
+    let root = service.control.clone();
+    let mut children = Children(vec![start_qualified(&service)?]);
     wait_ready(&root)?;
     tokio::runtime::Runtime::new()?.block_on(async {
         let request = |method| airk_cli::service_runtime::request(&root, method);
@@ -1006,8 +1008,7 @@ fn service_watcher_owns_nested_changes_pause_and_restart_without_editor_events()
             );
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        let mut connection =
-            airk_cli::project_client::Connection::connect(&root, project.binding).await?;
+        let mut connection = connect_qualified(&root, project.binding, &selection).await?;
         let evidence = connection
             .read_retry(
                 "airk_search".into(),
@@ -1035,12 +1036,12 @@ fn service_watcher_owns_nested_changes_pause_and_restart_without_editor_events()
     drop(airk_store::service::SourceWatchLease::acquire(&root)?);
     let offline = b"Saved while the service was stopped: lavender signal.\n";
     fs::write(&file, offline)?;
-    children.0.push(start(&root)?);
+    children.0.push(start_qualified(&service)?);
     wait_ready(&root)?;
     tokio::runtime::Runtime::new()?.block_on(async {
         let until = tokio::time::Instant::now() + Duration::from_secs(60);
         loop {
-            let mut connection = airk_cli::project_client::Connection::connect(&root, project.binding).await?;
+            let mut connection = connect_qualified(&root, project.binding,&selection).await?;
             let evidence = connection.read_retry("airk_search".into(), serde_json::json!({"query":"lavender signal","mode":"lexical","max_bytes":4096}).as_object().unwrap().clone()).await?;
             if evidence.to_string().contains("original.txt") { break; }
             ensure!(tokio::time::Instant::now() < until, "restart did not reconcile changes saved without an editor");
@@ -1054,13 +1055,13 @@ fn service_watcher_owns_nested_changes_pause_and_restart_without_editor_events()
         "restarted watcher did not drain"
     );
     ensure!(fs::read(file)? == offline, "restart changed source bytes");
+    finish_qualified_process_fixture(&service)?;
     Ok(())
 }
 #[test]
 fn over_budget_document_stays_bounded_across_service_restart() -> Result<()> {
     use airk_core::service::{ControlMethod as Method, ControlResponse as Response};
     let owner = tempfile::tempdir()?;
-    let root = owner.path().join("runtime");
     let source = owner.path().join("source");
     let data = owner.path().join("state");
     fs::create_dir_all(&source)?;
@@ -1075,11 +1076,15 @@ fn over_budget_document_stays_bounded_across_service_restart() -> Result<()> {
     let notes = source.join("notes.md");
     fs::write(&notes, "# Zircon harbor\nZircon harbor notes.\n")?;
     let project = airk_kernel::service_projects::registration(&source, &data, "budget-fixture")?;
+    let service = qualified_process_fixture(&source, &data, "budget-fixture")?;
+    let selection = selected_scope(service.http_selection())?;
+    let root = service.control.clone();
     // Settled automatic work must find `term` while the unchanged over-budget file
     // remains, and no job may stall or rely on the watchdog.
     async fn settle(
         root: &Path,
         project: &airk_core::service::ProjectRegistration,
+        selection: &airk_core::service::ScopedConnectRequest,
         term: &str,
     ) -> Result<()> {
         let until = tokio::time::Instant::now() + Duration::from_secs(90);
@@ -1095,8 +1100,7 @@ fn over_budget_document_stays_bounded_across_service_restart() -> Result<()> {
                 if observation.completed_revision > 0
                     && observation.completed_revision == observation.requested_revision);
             if settled {
-                let mut connection =
-                    airk_cli::project_client::Connection::connect(root, project.binding).await?;
+                let mut connection = connect_qualified(root, project.binding, selection).await?;
                 let evidence = connection
                     .read_retry(
                         "airk_search".into(),
@@ -1131,7 +1135,7 @@ fn over_budget_document_stays_bounded_across_service_restart() -> Result<()> {
         );
         Ok(())
     }
-    let mut children = Children(vec![start(&root)?]);
+    let mut children = Children(vec![start_qualified(&service)?]);
     wait_ready(&root)?;
     tokio::runtime::Runtime::new()?.block_on(async {
         let request = |method| airk_cli::service_runtime::request(&root, method);
@@ -1156,17 +1160,17 @@ fn over_budget_document_stays_bounded_across_service_restart() -> Result<()> {
             ),
             "budget fixture watch configuration failed"
         );
-        settle(&root, &project, "zircon harbor").await?;
+        settle(&root, &project, &selection, "zircon harbor").await?;
         request(Method::Shutdown).await?;
         Ok::<_, anyhow::Error>(())
     })?;
     ensure!(wait_exit(&mut children.0[0])?, "service did not drain");
     drop(airk_store::service::SourceWatchLease::acquire(&root)?);
     fs::write(&notes, "# Zircon harbor\nRestarted garnet beacon.\n")?;
-    children.0.push(start(&root)?);
+    children.0.push(start_qualified(&service)?);
     wait_ready(&root)?;
     tokio::runtime::Runtime::new()?.block_on(async {
-        settle(&root, &project, "garnet beacon").await?;
+        settle(&root, &project, &selection, "garnet beacon").await?;
         airk_cli::service_runtime::request(&root, Method::Shutdown).await?;
         Ok::<_, anyhow::Error>(())
     })?;
@@ -1174,6 +1178,7 @@ fn over_budget_document_stays_bounded_across_service_restart() -> Result<()> {
         wait_exit(children.0.last_mut().unwrap())?,
         "restarted service did not drain"
     );
+    finish_qualified_process_fixture(&service)?;
     Ok(())
 }
 
@@ -1219,6 +1224,304 @@ fn start(root: &Path) -> Result<Child> {
         .stdout(Stdio::null())
         .stderr(log)
         .spawn()?)
+}
+
+// Process-lifecycle campaigns still own real child handles, while fresh model
+// publication uses the same approved catalog/storage setup as installed users.
+fn qualified_process_fixture(
+    source: &Path,
+    data: &Path,
+    label: &str,
+) -> Result<std::sync::Arc<common::Service>> {
+    let service = common::Service::reviewed(source, data, label);
+    service.settle_reviewed_index(source, data, Instant::now() + Duration::from_secs(90))?;
+    stop_qualified_bootstrap(&service)?;
+    Ok(service)
+}
+
+fn selected_scope(
+    selection: airk_core::service_http::HttpSelection,
+) -> Result<airk_core::service::ScopedConnectRequest> {
+    let airk_core::service_http::HttpSelection::Scoped { selection } = selection else {
+        anyhow::bail!("process fixture requires its exact reviewed grant");
+    };
+    Ok(selection)
+}
+
+async fn refreshed_scope(
+    root: &Path,
+    project: airk_core::service::ProjectBinding,
+    selection: &airk_core::service::ScopedConnectRequest,
+) -> Result<airk_core::service::ScopedConnectRequest> {
+    let refreshed = airk_cli::service_frontend::resolve_scoped(None, Some(root), selection).await?;
+    ensure!(
+        refreshed.project.registration.binding == project,
+        "process fixture scoped backing changed"
+    );
+    Ok(refreshed.selection)
+}
+
+async fn connect_qualified(
+    root: &Path,
+    project: airk_core::service::ProjectBinding,
+    selection: &airk_core::service::ScopedConnectRequest,
+) -> Result<airk_cli::project_client::Connection> {
+    airk_cli::project_client::Connection::connect_scoped(
+        root,
+        project,
+        &refreshed_scope(root, project, selection).await?,
+        airk_core::usage::ClientFamily::Unknown,
+    )
+    .await
+}
+
+fn stop_qualified_bootstrap(service: &common::Service) -> Result<()> {
+    let response = service.request_until(
+        airk_core::service::ControlMethod::Shutdown,
+        Instant::now() + Duration::from_secs(5),
+    )?;
+    ensure!(
+        matches!(response, airk_core::service::ControlResponse::Stopping),
+        "qualified bootstrap did not acknowledge shutdown"
+    );
+    let until = Instant::now() + Duration::from_secs(30);
+    loop {
+        if let Ok(lease) = airk_store::service::ServiceLease::acquire(&service.control) {
+            drop(lease);
+            break;
+        }
+        ensure!(
+            Instant::now() < until,
+            "qualified bootstrap retained native ownership"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    Ok(())
+}
+
+fn storage_fingerprints(
+    root: &Path,
+) -> Result<std::collections::BTreeMap<std::path::PathBuf, String>> {
+    fn advisory(path: &Path) -> bool {
+        let parts = path.iter().map(|value| value.to_str()).collect::<Vec<_>>();
+        matches!(
+            parts.as_slice(),
+            [Some("service-data-1.4.lock" | ".lifecycle-1.4.lock")]
+                | [Some(".quota-1.4"), Some("ledger.lock")]
+                | [
+                    Some("collections-1.4"),
+                    Some(_),
+                    Some("manifest.lock" | "replacement.lock")
+                ]
+        ) || matches!(
+            parts.as_slice(),
+            [
+                Some("collections-1.4"),
+                Some(".writer-locks" | ".reader-locks" | ".current-gates"),
+                ..
+            ]
+        )
+    }
+    fn collect(
+        root: &Path,
+        path: &Path,
+        out: &mut std::collections::BTreeMap<std::path::PathBuf, String>,
+    ) -> Result<()> {
+        for entry in fs::read_dir(path)? {
+            let entry = entry?;
+            let kind = entry.file_type()?;
+            let relative = entry.path().strip_prefix(root)?.to_owned();
+            if kind.is_dir() {
+                out.insert(relative, "directory".into());
+                collect(root, &entry.path(), out)?;
+            } else {
+                ensure!(
+                    kind.is_file(),
+                    "qualified storage contains redirected entry"
+                );
+                // Native advisory bytes are OS-locked on Windows. Compare their
+                // exact inventory/type/length; hash all durable index/owner bytes.
+                let fingerprint = if advisory(&relative) {
+                    format!("native-advisory:{}", entry.metadata()?.len())
+                } else {
+                    airk_cli::runtime_pair::digest_file(&entry.path()).with_context(|| {
+                        format!(
+                            "fingerprint durable qualified storage {}",
+                            relative.display()
+                        )
+                    })?
+                };
+                out.insert(relative, fingerprint);
+            }
+        }
+        Ok(())
+    }
+    let mut out = std::collections::BTreeMap::new();
+    collect(root, root, &mut out)?;
+    Ok(out)
+}
+
+fn cold_project_idle(
+    service: &common::Service,
+    project: airk_core::service::ProjectBinding,
+    paused: bool,
+    until: Instant,
+) -> Result<bool> {
+    use airk_core::service::{ControlMethod as Method, ControlResponse as Response, JobState};
+    let progress = service.request_until(Method::Progress { project }, until)?;
+    let Response::Progress {
+        project: seen,
+        pending_job,
+        queued_jobs,
+        queue_truncated,
+        project_paused,
+        observation,
+        ..
+    } = &progress
+    else {
+        anyhow::bail!(
+            "cold project progress unavailable: {}",
+            serde_json::to_string(&progress)?
+        );
+    };
+    ensure!(*seen==project && pending_job.as_ref().is_none_or(|job|job.project==project)
+        && queued_jobs.iter().all(|job|job.project==project)
+        && observation.as_ref().is_none_or(|value|value.worker.project==project && value.job.project==project),"cold project progress crossed identity");
+    let watch = service.request_until(Method::Watch { project }, until)?;
+    let Response::Watch {
+        project: seen,
+        observation: watch,
+    } = watch
+    else {
+        anyhow::bail!(
+            "cold project watch unavailable: {}",
+            serde_json::to_string(&watch)?
+        );
+    };
+    ensure!(seen == project, "cold project watch crossed identity");
+    watch.validate()?;
+    ensure!(
+        watch.failure.is_none() && !watch.automatic_retries_exhausted,
+        "cold project watch failed: {watch:?}"
+    );
+    Ok(pending_job.is_none()
+        && queued_jobs.is_empty()
+        && *queue_truncated == Some(false)
+        && *project_paused == Some(paused)
+        && watch.completed_revision == watch.requested_revision
+        && observation
+            .as_ref()
+            .is_none_or(|value| !matches!(value.job.state, JobState::Pending | JobState::Running)))
+}
+
+fn pause_cold_projects(
+    service: &common::Service,
+    projects: &[airk_core::service::ProjectRegistration],
+    until: Instant,
+) -> Result<()> {
+    use airk_core::service::{ControlMethod as Method, ControlResponse as Response};
+    loop {
+        let mut idle = true;
+        for project in projects {
+            idle &= cold_project_idle(service, project.binding, false, until)?;
+        }
+        if idle {
+            for project in projects {
+                let response = service.request_until(
+                    Method::Pause {
+                        project: project.binding,
+                        paused: true,
+                    },
+                    until,
+                )?;
+                ensure!(
+                    matches!(response,Response::Registered { project:saved } if saved.registration==*project && saved.paused),
+                    "cold project pause refused/crossed identity"
+                );
+            }
+            let mut pinned = true;
+            for project in projects {
+                pinned &= cold_project_idle(service, project.binding, true, until)?;
+            }
+            if pinned {
+                return Ok(());
+            }
+            // Work accepted between idle and Pause still owns its original job.
+            // Resume only these fixture projects so that work can actually drain.
+            for project in projects {
+                let response = service.request_until(
+                    Method::Pause {
+                        project: project.binding,
+                        paused: false,
+                    },
+                    until,
+                )?;
+                ensure!(
+                    matches!(response,Response::Registered { project:saved } if saved.registration==*project && !saved.paused),
+                    "cold project resume refused/crossed identity"
+                );
+            }
+        }
+        ensure!(
+            Instant::now() + Duration::from_millis(25) < until,
+            "initial native project jobs did not drain before cold metadata test"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+fn start_qualified(service: &common::Service) -> Result<Child> {
+    let template = service.installed_command(
+        Path::new(&service.project.root),
+        Path::new(&service.project.data_root),
+        &service.project.collection,
+    );
+    let mut command = Command::new(template.get_program());
+    for (key, value) in template.get_envs() {
+        if let Some(value) = value {
+            command.env(key, value);
+        } else {
+            command.env_remove(key);
+        }
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+    let log = tempfile::NamedTempFile::new_in(
+        service
+            .control
+            .parent()
+            .context("qualified control parent missing")?,
+    )?;
+    let (_, path) = log.keep()?;
+    Ok(command
+        .args(["serve", "--runtime-dir"])
+        .arg(&service.control)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(fs::OpenOptions::new().append(true).open(path)?)
+        .spawn()?)
+}
+
+// These tests deliberately end with native Shutdown or owner loss. Re-establish
+// only this exact owned image to obtain the canonical installation Stop receipt
+// required before deleting the private managed fixture.
+fn finish_qualified_process_fixture(service: &common::Service) -> Result<()> {
+    let mut child = start_qualified(service)?;
+    wait_ready(&service.control)?;
+    let stopped = service.shutdown_reviewed();
+    if stopped.is_err() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    stopped?;
+    ensure!(
+        wait_exit(&mut child)?,
+        "qualified cleanup child did not drain"
+    );
+    Ok(())
 }
 
 fn control(root: &Path, action: &str) -> Result<Value> {
@@ -1506,173 +1809,283 @@ fn enabled_background_watch_retains_idle_service_until_explicitly_disabled() -> 
     Ok(())
 }
 
-fn probe_stdio_bridge(
+fn probe_https_mcp(service: &common::Service) -> Result<()> {
+    let mut session =
+        common::http::HttpMcpSession::start(&service.control, service.http_selection())?;
+    let initialized = session.request(1,"initialize", serde_json::json!({"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"airk-original-test","version":"1"}}))?;
+    ensure!(
+        initialized["result"]["serverInfo"]["name"] == "airk",
+        "HTTPS initialization failed"
+    );
+    session.send(serde_json::json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
+    let listed = session.request(2, "tools/list", serde_json::json!({}))?;
+    let tools = listed["result"]["tools"]
+        .as_array()
+        .context("HTTPS tool list missing")?;
+    ensure!(
+        tools.len() == 29
+            && tools
+                .iter()
+                .all(|tool| !tool["name"].as_str().unwrap_or("").starts_with("airk_")),
+        "public MCP catalog is not unified"
+    );
+    let canonical = serde_json::to_value(airk_mcp::unified::tools())?;
+    ensure!(
+        listed["result"]["tools"] == canonical,
+        "HTTPS public catalog lost canonical schemas or annotations"
+    );
+    let scope = tools
+        .iter()
+        .find(|tool| tool["name"] == "query_scope")
+        .context("query scope missing")?;
+    let mut expected_schema = airk_core::combined_reads::query_scope::schema();
+    expected_schema["$schema"] = serde_json::json!("https://json-schema.org/draft/2020-12/schema");
+    let project = &scope["inputSchema"]["properties"]["project"];
+    ensure!(
+        project["type"] == "string"
+            && project["pattern"] == "^[0-9a-f]{64}$"
+            && !scope["inputSchema"]["required"]
+                .as_array()
+                .is_some_and(|fields| fields.iter().any(|field| field == "project")),
+        "query scope optional binding changed"
+    );
+    expected_schema["properties"]["project"] = project.clone();
+    ensure!(
+        scope["annotations"]["readOnlyHint"] == true && scope["inputSchema"] == expected_schema,
+        "query scope metadata diverged"
+    );
+    for field in ["project_ids", "index_ids", "verification", "response_mode"] {
+        ensure!(
+            scope["inputSchema"]["properties"].get(field).is_none(),
+            "query scope advertised unsupported {field}"
+        );
+    }
+    // The native 19-tool catalog remains complete, independent of its retired
+    // public stdin role. Exercise metadata directly rather than relaunching it.
+    let native = airk_mcp::local::tools();
+    ensure!(
+        native.len() == 19
+            && native.iter().all(|tool| serde_json::to_value(tool)
+                .is_ok_and(|tool| tool["annotations"]["readOnlyHint"] == true)),
+        "native catalog exposed management"
+    );
+    let query = serde_json::json!({"query":"cobalt harbor","mode":"lexical","max_bytes":4096});
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let evidence = loop {
+        ensure!(
+            Instant::now() < deadline,
+            "HTTPS read retry deadline exhausted"
+        );
+        let reply = session.request(
+            3,
+            "tools/call",
+            serde_json::json!({"name":"search","arguments":query}),
+        )?;
+        let Some(retry) = read_retry::within(&reply["result"], deadline) else {
+            break reply;
+        };
+        std::thread::sleep(retry.delay);
+    };
+    ensure!(
+        evidence["id"] == 3
+            && evidence.to_string().contains("original.txt")
+            && evidence.to_string().contains("cobalt harbor"),
+        "HTTPS lost original evidence"
+    );
+    session.close()?;
+    Ok(())
+}
+
+#[test]
+fn reviewed_https_discovery_and_evidence_preserve_native_contracts() -> Result<()> {
+    let source = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    fs::write(
+        source.path().join("original.txt"),
+        "cobalt harbor original evidence\n",
+    )?;
+    let service = common::Service::reviewed(source.path(), data.path(), "fixture");
+    service.configure(airk_cli::service_configuration::Draft::Vectors { enabled: false });
+    service.job(airk_core::service::JobKind::Index);
+    probe_https_mcp(&service)
+}
+
+#[test]
+fn actual_https_protocol_negotiation_preserves_legacy_fallback_and_metadata() -> Result<()> {
+    let source = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    fs::write(
+        source.path().join("original.txt"),
+        "Protocol negotiation source\n",
+    )?;
+    let service = common::Service::reviewed(source.path(), data.path(), "http-negotiation");
+    for (requested, negotiated) in [
+        ("2024-11-05", "2024-11-05"),
+        ("2025-11-25", "2025-11-25"),
+        ("2026-07-28", "2025-11-25"),
+    ] {
+        let mut session =
+            common::http::HttpMcpSession::start(&service.control, service.http_selection())?;
+        let initialized = session.request(1, "initialize", serde_json::json!({"protocolVersion":requested,"capabilities":{},"clientInfo":{"name":"http-negotiation","version":"1"}}))?;
+        ensure!(
+            initialized["result"]["protocolVersion"] == negotiated,
+            "requested {requested} negotiation changed: {initialized}"
+        );
+        session.send(serde_json::json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
+        ensure!(
+            session
+                .request(2, "ping", serde_json::json!({}))?
+                .get("result")
+                .is_some()
+        );
+        ensure!(
+            session.request(3, "tools/list", serde_json::json!({}))?["result"]["tools"].is_array()
+        );
+        // Raw probes deliberately keep the negotiated header instead of fixing
+        // the body: mismatched per-request metadata must still be rejected.
+        let other = if negotiated == "2024-11-05" {
+            "2025-11-25"
+        } else {
+            "2024-11-05"
+        };
+        let error = session.probe(serde_json::to_vec(&serde_json::json!({"jsonrpc":"2.0","id":4,"method":"ping","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":other}}}))?).expect_err("mismatched HTTP metadata accepted");
+        ensure!(
+            error
+                .downcast_ref::<common::http::HttpRefused>()
+                .context("expected HTTP metadata refusal")?
+                .status
+                == 400
+        );
+        session.close()?;
+    }
+    let mut mismatch =
+        common::http::HttpMcpSession::start(&service.control, service.http_selection())?;
+    let error = mismatch.probe(serde_json::to_vec(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"deliberate-header-mismatch","version":"1"}}}))?).expect_err("mismatched initial header accepted");
+    ensure!(
+        error
+            .downcast_ref::<common::http::HttpRefused>()
+            .context("expected initial HTTP refusal")?
+            .status
+            == 400
+    );
+    mismatch.close()?;
+    let mut inline =
+        common::http::HttpMcpSession::start(&service.control, service.http_selection())?;
+    let meta = serde_json::json!({"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{},"io.modelcontextprotocol/clientInfo":{"name":"http-inline-negotiation","version":"1"}});
+    let discovered = inline.request(1, "server/discover", serde_json::json!({"_meta":meta}))?;
+    ensure!(
+        discovered["result"]["supportedVersions"]
+            .as_array()
+            .is_some_and(|versions| versions.iter().any(|version| version == "2026-07-28"))
+    );
+    ensure!(
+        inline.request(2, "tools/list", serde_json::json!({"_meta":meta}))?["result"]["tools"]
+            .is_array()
+    );
+    inline.close()?;
+    Ok(())
+}
+
+#[test]
+fn actual_https_body_bound_and_malformed_requests_are_content_free() -> Result<()> {
+    let source = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    let original = b"Original immutable HTTPS framing source\n";
+    fs::write(source.path().join("original.txt"), original)?;
+    let service = common::Service::reviewed(source.path(), data.path(), "frame-bound");
+    for kind in ["exact", "overflow", "malformed"] {
+        let mut session =
+            common::http::HttpMcpSession::start(&service.control, service.http_selection())?;
+        let initialized = session.request(1,"initialize",serde_json::json!({"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"https-bound-fixture","version":"1"}}))?;
+        ensure!(initialized["result"]["serverInfo"]["name"] == "airk");
+        session.send(serde_json::json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
+        let mut bytes =
+            serde_json::to_vec(&serde_json::json!({"jsonrpc":"2.0","id":2,"method":"ping"}))?;
+        match kind {
+            "exact" => bytes.resize(airk_core::service::MAX_FRAME_BYTES, b' '),
+            "overflow" => bytes.resize(airk_core::service::MAX_FRAME_BYTES + 1, b' '),
+            _ => bytes = b"PRIVATE_MALFORMED_BODY".to_vec(),
+        }
+        if kind == "exact" {
+            let reply = session
+                .probe(bytes)?
+                .context("exact-bound HTTPS reply missing")?;
+            ensure!(
+                reply["id"] == 2 && reply.get("result").is_some(),
+                "exact-bound HTTPS request refused: {reply}"
+            );
+            let next = session.request(3, "ping", serde_json::json!({}))?;
+            ensure!(
+                next["id"] == 3 && next.get("result").is_some(),
+                "body counter did not reset"
+            );
+        } else {
+            let failure = session
+                .probe(bytes)
+                .expect_err("invalid HTTPS body accepted");
+            let refusal = failure
+                .downcast_ref::<common::http::HttpRefused>()
+                .context("expected real HTTP refusal")?;
+            ensure!(
+                refusal.status == if kind == "overflow" { 413 } else { 415 },
+                "unexpected HTTP body refusal: {failure}"
+            );
+            ensure!(
+                !refusal.body.to_string().contains("PRIVATE_MALFORMED_BODY"),
+                "HTTP parser reflected rejected bytes"
+            );
+            ensure!(
+                serde_json::to_vec(&refusal.body)?.len() <= 256,
+                "HTTP rejection lost its bounded diagnostic"
+            );
+            if kind == "malformed" {
+                // rmcp expect_json returns 415 for malformed JSON, with only
+                // the parser category/location, not the rejected input.
+                ensure!(
+                    refusal.body
+                        == serde_json::json!(
+                            "fail to deserialize request body expected value at line 1 column 1"
+                        )
+                );
+            }
+        }
+        session.close()?;
+    }
+    ensure!(fs::read(source.path().join("original.txt"))? == original);
+    ensure!(fs::read_dir(source.path())?.count() == 1);
+    Ok(())
+}
+
+fn assert_retired_stdio_roles(
     root: &Path,
     project: airk_core::service::ProjectBinding,
-    unified: bool,
 ) -> Result<()> {
-    use std::io::{BufRead, Read, Write};
-    let mut launch = command();
-    if unified {
-        launch
-            .arg("--service-runtime-dir")
-            .arg(root)
-            .arg("--service-project")
-            .arg(project.to_string())
-            .arg("mcp");
-    } else {
-        launch
-            .arg("bridge")
-            .arg("--runtime-dir")
-            .arg(root)
-            .arg("--project")
-            .arg(project.to_string());
+    for role in ["mcp", "bridge"] {
+        let mut invocation = command();
+        invocation.arg(role);
+        if role == "bridge" {
+            invocation
+                .arg("--runtime-dir")
+                .arg(root)
+                .arg("--project")
+                .arg(project.to_string());
+        }
+        let output = invocation.stdin(Stdio::null()).output()?;
+        ensure!(
+            !output.status.success(),
+            "retired {role} accepted modern stdin"
+        );
+        ensure!(
+            output.stdout.is_empty(),
+            "retired {role} emitted protocol data"
+        );
+        let error = std::str::from_utf8(&output.stderr)?;
+        ensure!(
+            error.len() <= 4096 && error.contains("stdio_mcp_retired"),
+            "retired role did not give bounded reconnect guidance: {error}"
+        );
     }
-    let mut child = launch
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()?;
-    let mut input = child.stdin.take().context("bridge input missing")?;
-    let output = child.stdout.take().context("bridge output missing")?;
-    let mut children = Children(vec![child]);
-    let (sender, receiver) = std::sync::mpsc::sync_channel(4);
-    let reader = std::thread::spawn(move || {
-        let mut output = std::io::BufReader::new(output);
-        loop {
-            let mut line = Vec::new();
-            let result = (&mut output)
-                .take(128 * 1024 + 1)
-                .read_until(b'\n', &mut line);
-            if !matches!(result,Ok(count) if count>0&&count<=128*1024) {
-                break;
-            }
-            if let Ok(value) = serde_json::from_slice::<Value>(&line)
-                && sender.try_send(value).is_err()
-            {
-                break;
-            }
-        }
-    });
-    let result = (|| -> Result<()> {
-        let mut send = |value: &Value| -> Result<()> {
-            serde_json::to_writer(&mut input, value)?;
-            input.write_all(b"\n")?;
-            input.flush()?;
-            Ok(())
-        };
-        send(
-            &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"airk-original-test","version":"1"}}}),
-        )?;
-        let initialized = receiver.recv_timeout(Duration::from_secs(10))?;
-        ensure!(
-            initialized["id"] == 1 && initialized["result"]["serverInfo"]["name"] == "airk",
-            "bridge initialization failed"
-        );
-        send(&serde_json::json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
-        send(&serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}))?;
-        let listed = receiver.recv_timeout(Duration::from_secs(10))?;
-        let tools = listed["result"]["tools"]
-            .as_array()
-            .context("bridge tool list missing")?;
-        if unified {
-            ensure!(
-                tools.len() == 29
-                    && tools
-                        .iter()
-                        .all(|tool| !tool["name"].as_str().unwrap_or("").starts_with("airk_")),
-                "public MCP catalog is not unified"
-            );
-        } else {
-            ensure!(
-                tools.len() == 19
-                    && tools
-                        .iter()
-                        .all(|tool| tool["annotations"]["readOnlyHint"] == true),
-                "bridge exposed a management tool"
-            );
-        }
-        let scope_name = if unified {
-            "query_scope"
-        } else {
-            "airk_query_scope"
-        };
-        let scope = tools
-            .iter()
-            .find(|tool| tool["name"] == scope_name)
-            .context("query scope metadata tool missing")?;
-        let canonical_catalog = if unified {
-            airk_mcp::unified::tools()
-        } else {
-            airk_mcp::local::tools()
-        };
-        let canonical = canonical_catalog
-            .iter()
-            .find(|tool| tool.name == scope_name)
-            .context("canonical query scope metadata tool missing")?;
-        let canonical = serde_json::to_value(canonical)?;
-        ensure!(
-            scope["annotations"]["readOnlyHint"] == true
-                && scope["inputSchema"]["additionalProperties"] == false
-                && scope["inputSchema"] == canonical["inputSchema"],
-            "bridge query scope discovery diverged from its closed read-only metadata contract"
-        );
-        let mut expected_schema = airk_core::combined_reads::query_scope::schema();
-        expected_schema["$schema"] =
-            serde_json::json!("https://json-schema.org/draft/2020-12/schema");
-        if unified {
-            let project = &scope["inputSchema"]["properties"]["project"];
-            ensure!(
-                project["type"] == "string"
-                    && project["pattern"] == "^[0-9a-f]{64}$"
-                    && !scope["inputSchema"]["required"]
-                        .as_array()
-                        .is_some_and(|fields| fields.iter().any(|field| field == "project")),
-                "public query scope must expose only an optional configured transport binding"
-            );
-            expected_schema["properties"]["project"] = project.clone();
-        }
-        ensure!(
-            scope["inputSchema"] == expected_schema,
-            "query scope must preserve the complete native schema plus only its public transport binding"
-        );
-        for field in ["project_ids", "index_ids", "verification", "response_mode"] {
-            ensure!(
-                scope["inputSchema"]["properties"].get(field).is_none(),
-                "query scope must not advertise {field}"
-            );
-        }
-        if !unified {
-            ensure!(
-                listed["result"]["tools"] == serde_json::to_value(airk_mcp::local::tools())?,
-                "native bridge catalog diverged from the canonical read-only catalog"
-            );
-        }
-        let name = if unified { "search" } else { "airk_search" };
-        let query = serde_json::json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":name,"arguments":{"query":"cobalt harbor","mode":"lexical","max_bytes":4096}}});
-        let deadline = Instant::now() + Duration::from_secs(10);
-        let evidence = loop {
-            send(&query)?;
-            let reply =
-                receiver.recv_timeout(deadline.saturating_duration_since(Instant::now()))?;
-            let Some(retry) = read_retry::within(&reply["result"], deadline) else {
-                break reply;
-            };
-            std::thread::sleep(retry.delay);
-        };
-        ensure!(
-            evidence["id"] == 3 && evidence.to_string().contains("original.txt"),
-            "stdio bridge did not preserve evidence"
-        );
-        Ok(())
-    })();
-    drop(input);
-    children.0[0].kill()?;
-    children.0[0].wait()?;
-    reader
-        .join()
-        .map_err(|_| anyhow::anyhow!("bridge reader panicked"))?;
-    result
+    Ok(())
 }
 
 fn exercise_disappearing_stalled_and_malformed_clients(root: &Path) -> Result<()> {
@@ -1878,23 +2291,30 @@ fn racing_launchers_elect_one_service_and_restart_changes_instance_without_proje
 
 #[test]
 fn supervised_jobs_and_direct_queries_preserve_grants_and_stop_on_service_loss() -> Result<()> {
-    use airk_cli::{local_ipc, project_client::Connection, project_protocol};
+    use airk_cli::{local_ipc, project_protocol};
     use airk_core::service::{
         ControlMethod as Method, ControlResponse as Response, JobKind, JobState, RequestKey,
     };
     let owner = tempfile::tempdir()?;
-    let root = owner.path().join("runtime");
     let source = owner.path().join("source");
     let data = owner.path().join("state");
     fs::create_dir(&source)?;
     fs::create_dir(&data)?;
     let text = b"Native supervised project retrieval fixture: cobalt harbor.";
-    fs::write(source.join("original.txt"), text)?;
-    airk_kernel::Kernel::open_collection(&source, Some(data.clone()), "fixture")?
-        .configure_vectors(false)?;
+    fs::write(
+        source.join("original.txt"),
+        b"Qualified canonical setup seed.\n",
+    )?;
+    let service = qualified_process_fixture(&source, &data, "fixture")?;
+    let selection = selected_scope(service.http_selection())?;
+    let root = service.control.clone();
     let project = airk_kernel::service_projects::registration(&source, &data, "fixture")?;
-    let mut children = Children(vec![start(&root)?]);
+    let mut children = Children(vec![start_qualified(&service)?]);
     wait_ready(&root)?;
+    // Preserve this protocol fixture's original explicit lexical policy through
+    // native configuration, after canonical model/storage ownership is sealed.
+    service.configure(airk_cli::service_configuration::Draft::Vectors { enabled: false });
+    fs::write(source.join("original.txt"), text)?;
     tokio::runtime::Runtime::new()?.block_on(async {
         let request = |method| airk_cli::service_runtime::request(&root, method);
         ensure!(
@@ -1981,8 +2401,8 @@ fn supervised_jobs_and_direct_queries_preserve_grants_and_stop_on_service_loss()
             );
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
-        let Response::Connection { role, grant } = request(Method::Connect {
-            project: project.binding,
+        let Response::Connection { role, grant } = request(Method::ConnectScoped {
+            request: refreshed_scope(&root, project.binding, &selection).await?,
         })
         .await?
         else {
@@ -2016,7 +2436,7 @@ fn supervised_jobs_and_direct_queries_preserve_grants_and_stop_on_service_loss()
             airk_store::service::ProjectLease::acquire(&root, project.binding).is_err(),
             "worker lost its ownership lock"
         );
-        let mut connection = Connection::connect(&root, project.binding).await?;
+        let mut connection = connect_qualified(&root, project.binding, &selection).await?;
         let arguments =
             serde_json::json!({"query":"cobalt harbor","mode":"lexical","max_bytes":4096})
                 .as_object()
@@ -2034,12 +2454,14 @@ fn supervised_jobs_and_direct_queries_preserve_grants_and_stop_on_service_loss()
                 && result.to_string().contains("cobalt harbor"),
             "direct response lost original citation"
         );
-        probe_stdio_bridge(&root, project.binding, false)?;
-        probe_stdio_bridge(&root, project.binding, true)?;
-        let pinned = airk_kernel::Kernel::open_service_collection_for_diagnostics(
-            Path::new(&project.root),
-            Some(data.clone()),
-            "fixture",
+        assert_retired_stdio_roles(&root, project.binding)?;
+        let pinned = airk_cli::bundled_assets::bind_service_models(
+            airk_kernel::Kernel::open_service_collection_for_diagnostics(
+                Path::new(&project.root),
+                Some(data.clone()),
+                "fixture",
+            )?,
+            &root,
         )?
         .refresh_service_snapshot()?;
         let pinned_revision = pinned
@@ -2168,6 +2590,7 @@ fn supervised_jobs_and_direct_queries_preserve_grants_and_stop_on_service_loss()
         );
         Ok::<_, anyhow::Error>(())
     })?;
+    finish_qualified_process_fixture(&service)?;
     Ok(())
 }
 
@@ -3097,7 +3520,6 @@ fn identity_bound_project_restart_preserves_other_workers_and_unavailable_source
         ControlMethod as Method, ControlResponse as Response, JobKind, JobState, RequestKey,
     };
     let owner = tempfile::tempdir()?;
-    let runtime = owner.path().join("runtime");
     let mut projects = Vec::new();
     for n in 0..2 {
         let source = owner.path().join(format!("source-{n}"));
@@ -3114,7 +3536,53 @@ fn identity_bound_project_restart_preserves_other_workers_and_unavailable_source
             &format!("restart-{n}"),
         )?);
     }
-    let mut children = Children(vec![start(&runtime)?]);
+    let service = common::Service::reviewed(
+        Path::new(&projects[0].root),
+        Path::new(&projects[0].data_root),
+        &projects[0].collection,
+    );
+    let second = service.additional_project(
+        Path::new(&projects[1].root),
+        Path::new(&projects[1].data_root),
+        &projects[1].collection,
+    )?;
+    ensure!(
+        second == projects[1],
+        "second canonical setup changed project identity"
+    );
+    let selections = [
+        selected_scope(service.http_selection())?,
+        selected_scope(common::reviewed_http_selection(&service.control, &second))?,
+    ];
+    service.settle_reviewed_index(
+        Path::new(&projects[0].root),
+        Path::new(&projects[0].data_root),
+        Instant::now() + Duration::from_secs(90),
+    )?;
+    let until = Instant::now() + Duration::from_secs(90);
+    loop {
+        let response = service.request_until(
+            Method::Inspection {
+                project: second.binding,
+            },
+            until,
+        )?;
+        if matches!(response,Response::Inspection { observation:Some(observation),.. }
+            if observation.snapshot.index_state==airk_core::service_inspection::IndexState::Ready
+                && observation.snapshot.semantic.as_ref().is_none_or(|semantic| matches!(semantic.state,airk_core::readiness::SemanticState::Ready | airk_core::readiness::SemanticState::Disabled)))
+        {
+            break;
+        }
+        ensure!(
+            Instant::now() + Duration::from_millis(25) < until,
+            "second canonical project did not become ready"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    pause_cold_projects(&service, &projects, until)?;
+    stop_qualified_bootstrap(&service)?;
+    let runtime = service.control.clone();
+    let mut children = Children(vec![start_qualified(&service)?]);
     wait_ready(&runtime)?;
     tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(async {
         let request = |method| airk_cli::service_runtime::request(&runtime,method);
@@ -3132,8 +3600,12 @@ fn identity_bound_project_restart_preserves_other_workers_and_unavailable_source
         let Response::RequestEpoch { namespace, epoch } = request(Method::RequestEpoch).await? else { anyhow::bail!("epoch missing") };
         for project in &projects {
             request(Method::Register { project: project.clone() }).await?;
+            let before=storage_fingerprints(Path::new(&project.data_root))?;
             ensure!(matches!(request(Method::Worker { project: project.binding }).await?, Response::Worker { identity: None, restarting: false, .. }), "observation started a closed project");
-            ensure!(fs::read_dir(&project.data_root)?.next().is_none(), "worker observation opened project data");
+            ensure!(storage_fingerprints(Path::new(&project.data_root))?==before, "worker observation changed qualified project data");
+        }
+        for project in &projects {
+            ensure!(matches!(request(Method::Pause { project:project.binding,paused:false }).await?,Response::Registered { project:saved } if saved.registration==*project && !saved.paused),"cold fixture resume refused/crossed project");
             let caller = airk_kernel::service_broker::new_instance_id()?;
             let Response::Job { job } = request(Method::Enqueue { project: project.binding, caller,
                 key: RequestKey { namespace, epoch, nonce: caller }, kind: JobKind::Index }).await? else { anyhow::bail!("index not accepted") };
@@ -3146,12 +3618,12 @@ fn identity_bound_project_restart_preserves_other_workers_and_unavailable_source
             }
         }
         let mut identities = Vec::new();
-        for project in &projects {
-            let response = request(Method::Connect { project: project.binding }).await?;
+        for (project,selection) in projects.iter().zip(&selections) {
+            let response = request(Method::ConnectScoped { request:refreshed_scope(&runtime,project.binding,selection).await? }).await?;
             let Response::Connection { grant, .. } = response else { anyhow::bail!("worker not connected: {}", serde_json::to_string(&response)?) };
             identities.push(grant.identity);
         }
-        let mut unaffected = airk_cli::project_client::Connection::connect(&runtime,projects[1].binding).await?;
+        let mut unaffected = connect_qualified(&runtime,projects[1].binding,&selections[1]).await?;
         let moved = owner.path().join("offline-source");
         fs::rename(&projects[0].root,&moved)?;
         let old = identities[0];
@@ -3174,7 +3646,7 @@ fn identity_bound_project_restart_preserves_other_workers_and_unavailable_source
         ensure!(replacement.service==old.service && replacement.project==old.project && replacement.fencing_generation>old.fencing_generation,"restart lost service/project fencing");
         ensure!(matches!(request(Method::Worker { project: projects[1].binding }).await?, Response::Worker { identity: Some(identity), .. } if identity==identities[1]),"restart changed unrelated worker");
         ensure!(matches!(request(Method::RestartProject { project: old.project, expected: Some(old) }).await?, Response::Failure { code } if code=="project_worker_changed"),"stale restart stopped a replacement");
-        let mut retained = airk_cli::project_client::Connection::connect(&runtime,old.project).await?;
+        let mut retained = connect_qualified(&runtime,old.project,&selections[0]).await?;
         let arguments = serde_json::json!({"query":"copper beacon","mode":"lexical"}).as_object().unwrap().clone();
         for connection in [&mut unaffected,&mut retained] {
             let result = connection.read_retry("airk_search".into(),arguments.clone()).await?;
@@ -3186,6 +3658,7 @@ fn identity_bound_project_restart_preserves_other_workers_and_unavailable_source
         Ok::<_,anyhow::Error>(())
     })?;
     ensure!(wait_exit(&mut children.0[0])?, "service did not drain");
+    finish_qualified_process_fixture(&service)?;
     Ok(())
 }
 

@@ -82,7 +82,8 @@ def record_pair():
     commit = signer.run(["git", "rev-parse", "HEAD"]).strip()
     lock_digest = signer.digest(ROOT / "Cargo.lock")
     components = {}
-    for name in ("airk.exe", "airk-embed.exe"):
+    original = signer.pair_package().bounded_json(source / "airk-install.json")
+    for name in signer.pair_package().runtime_builder().signing_names("windows", original["version"]):
         binary = output / "runtime" / name
         if binary.is_symlink() or (source / name).is_symlink():
             raise ValueError("Linked service component rejected")
@@ -95,9 +96,30 @@ def record_pair():
     signer.finish_pair(source, output, TARGET, components, commit, lock_digest)
 
 
+def signing_files(runtime):
+    """Export only the exact versioned components already staged and verified."""
+    guard()
+    package = signer.pair_package()
+    runtime = runtime.resolve(strict=True)
+    install = package.bounded_json(runtime / "airk-install.json")
+    build = package.bounded_json(runtime / "airk-build.json", 65_536)
+    package.validate_runtime(runtime, install["version"], TARGET, build["source"])
+    files = [str(runtime / name) for name in package.runtime_builder().signing_names("windows", install["version"])]
+    if any("\n" in name or "\r" in name for name in files):
+        raise ValueError("Unsafe signing component output")
+    with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+        output.write("files<<AIRK_SIGNING_COMPONENTS\n" + "\n".join(files) + "\nAIRK_SIGNING_COMPONENTS\n")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("stage", choices=("prepare", "record"))
+    parser.add_argument("stage", choices=("prepare", "record", "list"))
     parser.add_argument("--pair", action="store_true")
+    parser.add_argument("--runtime-dir", type=Path)
     args = parser.parse_args()
-    prepare(args.pair) if args.stage == "prepare" else record(args.pair)
+    if args.stage == "list":
+        if args.runtime_dir is None:
+            parser.error("list requires --runtime-dir")
+        signing_files(args.runtime_dir)
+    else:
+        prepare(args.pair) if args.stage == "prepare" else record(args.pair)

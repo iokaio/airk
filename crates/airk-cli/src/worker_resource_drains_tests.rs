@@ -17,13 +17,13 @@ fn resource_owner_requires_both_child_and_provider_completion() -> Result<()> {
     let mut owners = WorkerResourceDrains::default();
     owners.reserve_history(worker, vec![helper])?;
     assert_eq!(
-        owners.poll(worker, None, |_, _| Ok(false))?,
+        owners.poll(worker, None, |_, _, _| Ok(false))?,
         DrainProgress::ChildPending
     );
     assert!(owners.mark_released(worker).is_err());
     owners.child_reaped(worker)?;
     assert_eq!(
-        owners.poll(worker, None, |_, _| Ok(false))?,
+        owners.poll(worker, None, |_, _, _| Ok(false))?,
         DrainProgress::ProviderPending,
         "missing/replaced helper is not engine completion"
     );
@@ -31,9 +31,10 @@ fn resource_owner_requires_both_child_and_provider_completion() -> Result<()> {
     // Exercise exact native-proof routing; actual engine/native-reap witnesses
     // are qualified separately by the helper process tests.
     assert_eq!(
-        owners.poll(worker, None, |service, generation| Ok(service
+        owners.poll(worker, None, |service, generation, in_process| Ok(service
             == worker.service
-            && generation == helper))?,
+            && generation == helper
+            && !in_process))?,
         DrainProgress::Ready
     );
     owners.mark_released(worker)?;
@@ -52,12 +53,12 @@ fn never_authorized_still_requires_actual_child_reap_and_exact_identity() -> Res
     foreign.fencing_generation += 1;
     assert!(owners.child_reaped(foreign).is_err());
     assert_eq!(
-        owners.poll(worker, None, |_, _| unreachable!())?,
+        owners.poll(worker, None, |_, _, _| unreachable!())?,
         DrainProgress::ChildPending
     );
     owners.child_reaped(worker)?;
     assert_eq!(
-        owners.poll(worker, None, |_, _| unreachable!())?,
+        owners.poll(worker, None, |_, _, _| unreachable!())?,
         DrainProgress::Ready
     );
     assert!(owners.remove_completed(worker).is_err());
@@ -81,5 +82,63 @@ fn bounded_owner_refusal_preserves_existing_obligations() -> Result<()> {
             .is_err()
     );
     assert_eq!(owners.identities().len(), 128);
+    Ok(())
+}
+#[test]
+fn inprocess_history_never_routes_through_legacy_helper_proof() -> Result<()> {
+    let worker = identity(6);
+    let generation = Incarnation::from_bytes([7; 16]);
+    let mut owners = WorkerResourceDrains::default();
+    owners.reserve_history_kind(worker, vec![generation], true)?;
+    assert!(owners.reserve_history(worker, vec![generation]).is_err());
+    owners.child_reaped(worker)?;
+    assert_eq!(
+        owners.poll(worker, None, |_, _, in_process| {
+            assert!(in_process);
+            Ok(false)
+        })?,
+        DrainProgress::ProviderPending
+    );
+    assert_eq!(
+        owners.poll(worker, None, |service, observed, in_process| Ok(in_process
+            && service == worker.service
+            && observed == generation))?,
+        DrainProgress::Ready
+    );
+    Ok(())
+}
+
+#[test]
+fn completed_authorizations_require_native_anchor_even_without_live_generations() -> Result<()> {
+    let worker = identity(8);
+    let anchor = airk_core::inference_provider::CompletionLedgerObservation {
+        schema: 1,
+        namespace: Incarnation::from_bytes([2; 16]),
+        service_instance: worker.service,
+        approved_execution_sha256: "ab".repeat(32).parse()?,
+        factory_generation: Incarnation::from_bytes([3; 16]),
+        completed_owners: 40,
+        admitted_high_water: 80,
+        head_sha256: "cd".repeat(32).parse()?,
+    };
+    let mut owners = WorkerResourceDrains::default();
+    owners.reserve_history_completed(worker, Vec::new(), true, Some(anchor.clone()))?;
+    owners.child_reaped(worker)?;
+    assert_eq!(
+        owners.poll(worker, None, |_, _, _| unreachable!())?,
+        DrainProgress::ProviderPending,
+        "parsed completion metadata is not a native witness"
+    );
+    assert!(owners.mark_released(worker).is_err());
+    assert_eq!(
+        owners.poll_completed(
+            worker,
+            None,
+            |_, _, _| unreachable!(),
+            |expected| Ok(expected == &anchor)
+        )?,
+        DrainProgress::Ready
+    );
+    owners.mark_released(worker)?;
     Ok(())
 }

@@ -33,7 +33,7 @@ def producer():
 
 
 class PromotionContracts(unittest.TestCase):
-    def seal_loader_fixture(self, directory):
+    def seal_loader_fixture(self, directory, version=VERSION):
         """Add the actual loader graph contract to fictional signed-layout bytes."""
         receipt = json.loads((directory / "manifest.json").read_text())
         archive = directory / receipt["archive"]
@@ -43,7 +43,7 @@ class PromotionContracts(unittest.TestCase):
         for name in package.update_inventory_paths():
             key = "extension/" + name
             if name == "package.json":
-                data = json.dumps({"name": "airk", "publisher": "iokaio", "version": VERSION}).encode()
+                data = json.dumps({"name": "airk", "publisher": "iokaio", "version": version}).encode()
             elif key in entries:
                 continue
             else:
@@ -52,7 +52,7 @@ class PromotionContracts(unittest.TestCase):
         files = {name: package.digest(entries["extension/" + name][1]) for name in package.update_inventory_paths()}
         snapshot = entries["extension/package.json"][1].decode()
         key = "extension/airk-update.json"
-        entries[key] = (zipfile.ZipInfo(key), package.encode_update_inventory(files, VERSION, snapshot))
+        entries[key] = (zipfile.ZipInfo(key), package.encode_update_inventory(files, version, snapshot))
         with zipfile.ZipFile(archive, "w") as zipped:
             for info, data in entries.values():
                 zipped.writestr(info, data)
@@ -242,6 +242,26 @@ class PromotionContracts(unittest.TestCase):
                 run.assert_not_called()
             self.assertEqual({p.name: p.read_bytes() for p in (root / "out").iterdir()},
                              {p.name: p.read_bytes() for p in (root / "vsix").iterdir()})
+
+    def test_modern_promotion_preserves_signed_single_image_and_complete_loader_graph(self):
+        version = "1.8.14"
+        for target in release.SIGNED_TARGETS:
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                files, original, executables = fixtures.pair_fixture(root / "original", target, version=version)
+                fixtures.pair_vsix(root / "vsix", root / "original", files, original, executables)
+                self.seal_loader_fixture(root / "vsix", version)
+                _, signed, _ = fixtures.pair_fixture(root / "signed", target, True, version)
+                result = promotion.promote(root / "vsix", root / "original", root / "signed", root / "out", target, COMMIT, version, "stable")
+                with zipfile.ZipFile(root / "vsix" / result["archive"]) as before, zipfile.ZipFile(root / "out" / result["archive"]) as after:
+                    old = release.extension.package.read_update_inventory(before, version, result["platform"])
+                    new = release.extension.package.read_update_inventory(after, version, result["platform"])
+                    self.assertEqual({name for name in old["files"] if old["files"][name] != new["files"][name]}, {"native/manifest.json"})
+                    wrapper = json.loads(after.read("extension/native/manifest.json"))
+                    self.assertEqual(wrapper["payload"], {executables[0]: signed["payload"][executables[0]]})
+                    for name, expected in signed["payload"].items():
+                        self.assertEqual(release.hashlib.sha256(after.read("extension/native/runtime/" + name)).hexdigest(), expected)
+                    self.assertFalse(any("airk-embed" in name or "airk-launcher" in name for name in after.namelist()))
 
     def test_signed_promotion_preserves_every_nonnative_extension_byte(self):
         for target in release.SIGNED_TARGETS:

@@ -147,7 +147,12 @@ pub(crate) fn activated_identity(
     let original = &record.readiness.candidate.catalog;
     ensure!(
         current.activated
-            && current.schema == original.schema
+            && (current.schema == original.schema
+                || (fence_cleared
+                    && current.accepted_new_writes
+                    && original.schema == 12
+                    && current.schema
+                        == crate::service::registry::runtime_contract::IN_PROCESS_SCHEMA))
             && current.namespace == original.namespace
             && current.upgrade_id == original.upgrade_id
             && current.authority_contract == 1
@@ -451,7 +456,7 @@ pub(crate) fn recover_owned_v1(
         &header[..16] == b"SQLite format 3\0"
             && u32::from_be_bytes(header[68..72].try_into()?)
                 == super::super::super::APPLICATION as u32
-            && u32::from_be_bytes(header[60..64].try_into()?) == 12,
+            && matches!(u32::from_be_bytes(header[60..64].try_into()?), 12 | 13),
         "foreign authority-1 recovery registry"
     );
     let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
@@ -465,7 +470,7 @@ pub(crate) fn recover_owned_v1(
     let pages: i64 = connection.pragma_query_value(None, "page_count", |r| r.get(0))?;
     ensure!(
         application == super::super::super::APPLICATION
-            && version == 12
+            && matches!(version, 12 | 13)
             && page_size == 4096
             && pages > 0
             && pages <= i64::try_from(super::super::super::MAX_DATABASE_BYTES / 4096)?,
@@ -991,6 +996,21 @@ mod tests {
         current.accepted_new_writes = true;
         activated_identity(&current, &record, true)?;
         assert!(activated_identity(&current, &record, false).is_err());
+        // Schema 13 is an owned post-settlement write capability, not a new
+        // namespace or a replacement for the original readiness receipt.
+        current.schema = crate::service::registry::runtime_contract::IN_PROCESS_SCHEMA;
+        activated_identity(&current, &record, true)?;
+        assert!(activated_identity(&current, &record, false).is_err());
+        current.accepted_new_writes = false;
+        assert!(activated_identity(&current, &record, true).is_err());
+        current.accepted_new_writes = true;
+        current.schema = 14;
+        assert!(activated_identity(&current, &record, true).is_err());
+        current.schema = 11;
+        assert!(activated_identity(&current, &record, true).is_err());
+        current.schema = 13;
+        current.namespace = Incarnation::from_bytes([99; 16]);
+        assert!(activated_identity(&current, &record, true).is_err());
         Ok(())
     }
 }

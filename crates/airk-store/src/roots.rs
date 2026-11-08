@@ -130,6 +130,24 @@ impl RootConfig {
         );
         Ok(bytes)
     }
+    /// Saved-only adoption preserves authenticated historical path strings.
+    /// This performs syntax/budget checks and never asserts live ownership or
+    /// availability of a source directory. Native archive proof gates callers.
+    pub(crate) fn initial_saved_adoption_bytes(
+        owner: &str,
+        roots: &BTreeMap<String, String>,
+    ) -> Result<Vec<u8>> {
+        airk_core::source_policy::validate_root_path(owner)?;
+        validate_map(roots)?;
+        let mut config = Self::empty(owner);
+        config.roots = roots.clone();
+        let bytes = serde_json::to_vec(&config)?;
+        ensure!(
+            bytes.len() as u64 <= MAX_CONFIG_BYTES,
+            "saved source configuration exceeds 96 KiB"
+        );
+        Ok(bytes)
+    }
 }
 
 pub fn validate_alias(alias: &str) -> Result<()> {

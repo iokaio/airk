@@ -138,7 +138,9 @@ pub(super) fn read(
     let logs = log_control
         .as_ref()
         .and_then(|control| crate::service_logs::recent(control, 32).ok());
-    let launcher = policy.is_none().then(|| launcher_path(root));
+    let launcher = launcher_path(root)
+        .try_exists()?
+        .then(|| launcher_path(root));
     let mut value = serde_json::json!({"schema":1,"metadata_only":true,"payload_verified":false,"observed_unix_ms":unix_ms()?,
         "selection":saved.selection,"executable":saved.executable,"approval":saved.approval,"executable_sha256":saved.executable_sha256,
         "managed_policy":policy,"launcher":launcher,"control_dir":control.ok(),"state_error":state_error,
@@ -286,7 +288,10 @@ mod tests {
             .record_service_instance(&lease, airk_kernel::service_broker::new_instance_id()?)?;
         layout::record_registry(&lease, namespace)?;
         drop(registry);
-        fs::remove_file(slot.join(helper_name()))?;
+        assert!(
+            !slot.join(helper_name()).exists(),
+            "current fixture must not invent a helper"
+        );
         fs::remove_file(slot.join(main_name()))?;
         assert!(selected(&root).is_err());
         let snapshot = read(&root, None, None, 16)?;

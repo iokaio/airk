@@ -14,6 +14,38 @@ h=importlib.util.module_from_spec(spec);spec.loader.exec_module(h)
 
 
 class LegacyRetirementHarnessTests(unittest.TestCase):
+    def test_modern_all_role_proof_requires_native_false_and_preserves_exact_retained_state(self):
+        selected={'active':'a'*64}
+        before={'airk-launcher.exe':{'bytes':23,'sha256':'b'*64,'device':1,'inode':2},'launcher.json':None}
+        proof={'launcher_repaired':False,'runtime':selected['active']}
+        self.assertIs(h.qualify_launcher_repair({'schema':2},proof,selected,before,before),proof)
+        with self.assertRaises(AssertionError):
+            h.qualify_launcher_repair({'schema':2},{**proof,'launcher_repaired':True},selected,before,before)
+        with self.assertRaises(AssertionError):
+            h.qualify_launcher_repair({'schema':2},proof,selected,before,{**before,'launcher.json':{'sha256':'c'*64}})
+        with self.assertRaises(AssertionError):
+            h.qualify_launcher_repair({'schema':2},proof,selected,{'airk-launcher.exe':None},before)
+        with self.assertRaises(AssertionError):
+            h.qualify_launcher_repair({'schema':2},{**proof,'runtime':'c'*64},selected,before,before)
+
+    def test_historical_repair_remains_actual_true_and_unknown_schema_is_refused(self):
+        selected={'active':'a'*64};proof={'launcher_repaired':True,'runtime':selected['active']}
+        h.qualify_launcher_repair({'schema':1},proof,selected,{}, {'changed':'owned historical repair'})
+        for schema in (None,True,0,3):
+            with self.assertRaises(AssertionError):h.qualify_launcher_repair({'schema':schema},proof,selected,{}, {})
+
+    def test_retained_launcher_snapshot_records_absence_and_refuses_aliases(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary).resolve();install=root/'installation';install.mkdir()
+            before=h.retained_launcher_snapshot(root,install)
+            self.assertEqual(before,{'airk-launcher.exe':None,'launcher.json':None})
+            launcher=install/'airk-launcher.exe';launcher.write_bytes(b'inert predecessor bytes')
+            present=h.retained_launcher_snapshot(root,install)
+            self.assertEqual(present['airk-launcher.exe']['sha256'],h.sha(launcher))
+            import os
+            os.link(launcher,install/'unrelated-alias')
+            with self.assertRaises(AssertionError):h.retained_launcher_snapshot(root,install)
+
     def test_old_new_search_arguments_preserve_shared_work_without_unsupported_field(self):
         old,new='1'*64,'2'*64
         before=h.search_arguments(old,old,new);after=h.search_arguments(new,old,new)

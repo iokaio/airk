@@ -101,7 +101,10 @@ impl NativeOwner {
                 .context("native owner lost")?;
             let pool = self.pool.as_mut().context("native helper absent")?;
             // Register can have a wire effect even when its acknowledgement fails.
-            worker.record_provider_delivery(Some(pool.identity()))?;
+            worker.record_provider_delivery(
+                Some(pool.identity()),
+                crate::service_inference::in_process(pool),
+            )?;
             let access = pool.access_worker(identity, registration)?;
             worker.activate(identity, allowance, Some(access), false)?;
             self.gate.register_worker(identity)?;
@@ -298,6 +301,7 @@ async fn search_scope(
     local_ipc::write_message(
         stream,
         &protocol::Query {
+            read_attempt: None,
             frontend: None,
             tool: "airk_search".into(),
             arguments: serde_json::json!({"query":query, "mode":mode, "response_mode":"full"})
@@ -1027,6 +1031,7 @@ async fn require_semantic_ready(stream: &mut local_ipc::Stream) -> Result<()> {
     local_ipc::write_message(
         stream,
         &protocol::Query {
+            read_attempt: None,
             frontend: None,
             tool: "airk_status".into(),
             arguments: serde_json::json!({"response_mode":"full"})

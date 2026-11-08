@@ -2,39 +2,47 @@
 
 Signing is opt-in and operates on a fresh copy under ignored `artifacts/`. It does not import certificates, export keys, change the original build or publish a package. `scripts/sign-native.py` only writes a success receipt after OS signature verification succeeds. The native packager accepts `--signed-dir` and re-verifies the signature, source binary digest, target, commit and dependency lock before including the signed copy.
 
-The runtime builder gives macOS development/CI candidates ad-hoc signatures with runtime flags cleared. Ad-hoc code has no Team ID, so hardened-runtime library validation would reject its bundled ONNX library even after successful signature verification. A small native helper/library load test covers this boundary on Mac hosts. Developer ID release signing applies the requested identity and hardened runtime to both executables and the ONNX library, then verifies the team, timestamp and enclosing app before notarization. See [Apple's library-validation rules](https://developer.apple.com/documentation/BundleResources/Entitlements/com.apple.security.cs.disable-library-validation).
+## Current 1.8.14 signing contract
 
-The 1.8.8 working layout also includes an independently signed copy of the
-compiled main at `AIRK.app/Contents/MacOS/airk-launcher-image`. The app-sealed main
-depends on its resource envelope and cannot be copied out as a valid standalone
-launcher. Sign the separate image before sealing the app; native/VSIX inventories
-bind its exact bytes and executable permission. Installer staging and repair copy
-only this approved image into stable launchers. Mac services and workers execute
-the sealed main in its bundle rather than creating bundle-bound process-role
-copies. RuntimePair and service-health contracts still identify the sealed main
-and helper; the full approved install inventory separately binds the launcher image.
-Historical layouts through 1.8.7 retain their original inventories.
+The unpublished modern runtime has one main executable, with embedded default
+MiniLM/tokenizer assets and statically linked CPU ORT. On Mac it stays inside
+`AIRK.app/Contents/MacOS/airk`. Sign the tested schema-2 runtime through
+`--runtime-dir`; a bare no-feature `cargo build` is not the modern distributable.
+The builder's development ad-hoc signature establishes no Developer ID or Apple
+notarization trust. Release signing verifies the exact main and enclosing app,
+Developer ID/team, hardened runtime and timestamp, then notarizes/staples the app
+and reseals the complete external inventories. There is no modern embedding
+executable, dynamic ORT library or separately copied launcher image to sign.
+Legal notices, static startup resources, tickets and complete native/VSIX
+verification remain required. See [the Mac build guide](macos-build.md).
 
-Signing and re-verification check a byte-identical standalone copy of the image
-with strict Developer ID/team/runtime/timestamp validation and `--version` before
-recording `copied_launcher` evidence. Ad-hoc fixture success is separate from
-Developer ID, notarization and installed-editor qualification. The additional
-image has a packaging/storage cost; it introduces no new model or retrieval work.
-Current results and any remaining signing limits are in the
-[implementation ledger](research/implementation-v190.md).
+Static ORT legal texts use bounded packaged filenames under
+`notices/static-onnx-runtime/<component>/LICENSE-<source-path-sha256>.txt`.
+Their schema-2 inventory preserves every original upstream path, byte count and
+content hash, plus the producer receipt and dependency-lock hashes. Packaging
+and release verification use the same mapping and complete dependency-coverage
+checks. This keeps deep upstream documentation paths within the unchanged
+native install path limit without omitting or modifying any legal text.
 
-Universal launcher publication and retirement share a private directory lock,
-including requests from different installation roots. Busy requests refuse before
-mutation. Uninstall retains its zero-byte lock inode after removing the owned
-launcher/pointer, preventing a second owner from locking a replacement inode.
-Known Mac copies can refresh from the selected approved image; unknown bytes are
-preserved. Interrupted image/pointer updates fail closed and resume only from the
-matching source. Preparing a client copy does not change service lifecycle policy.
+### Historical schema-1 layouts
+
+Versions 1.8.8–1.8.13 carried an independently signed
+`AIRK.app/Contents/MacOS/airk-launcher-image` alongside the main/helper and dynamic
+inference library. Only that inventoried standalone image could be copied out;
+the app-bound main depended on its resource envelope. Their signing and
+verification checked the exact copied bytes, Developer ID/team/runtime/timestamp
+and `--version` before recording `copied_launcher`. Earlier ad-hoc helper/library
+load fixtures cover their own library-validation boundary, not modern static
+inference. Historical universal-launcher publication/retirement uses its private
+lock and exact image/pointer ownership; unknown bytes remain preserved during
+migration. Those records and older inventories stay valid only for their
+original inputs. See the [dated build guide](reviews/macos-build-before-static-main-2026-11-07.md)
+and [implementation ledger](research/implementation-v190.md).
 
 On Windows, provision a trusted code-signing identity in the current user's certificate store, then run:
 
 ```powershell
-python scripts/sign-native.py --target x86_64-pc-windows-msvc --identity CERTIFICATE_THUMBPRINT --timestamp-url https://YOUR_RFC3161_SERVER --output artifacts/signed/windows-candidate
+python scripts/sign-native.py --target x86_64-pc-windows-msvc --runtime-dir artifacts/runtime/x86_64-pc-windows-msvc --identity CERTIFICATE_THUMBPRINT --timestamp-url https://YOUR_RFC3161_SERVER --output artifacts/signed/windows-candidate
 python scripts/package-native.py --target x86_64-pc-windows-msvc --signed-dir artifacts/signed/windows-candidate --output artifacts/native/windows-signed-candidate
 ```
 
@@ -45,8 +53,8 @@ The supplied Apple public certificate identifies `Developer ID Application: Ioka
 After native tests/build on the Mac, choose its architecture and run:
 
 ```sh
-cargo build --release --locked -p airk-cli --target aarch64-apple-darwin
 python3 scripts/sign-native.py --target aarch64-apple-darwin \
+  --runtime-dir artifacts/local/macos-1.8.14/runtime \
   --identity 'Developer ID Application: Ioka LLC (5PX7D99PXA)' \
   --team-id 5PX7D99PXA --notarize --keychain-profile airk-notary \
   --keychain "$HOME/Library/Keychains/airk-signing.keychain-db" \
@@ -56,11 +64,11 @@ python3 scripts/package-native.py --target aarch64-apple-darwin \
   --output artifacts/native/mac-arm64-signed-candidate
 ```
 
-Use `x86_64-apple-darwin` on the Intel native runner. The signer enables hardened runtime and a trusted timestamp, verifies the Developer ID certificate/team, and uploads only when `--notarize` is supplied. It waits for Apple's explicit `Accepted` result and records the submission ID. A standalone CLI does not support stapling; the server-side ticket is not an offline Gatekeeper qualification. See [Apple's notarization workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow).
+Use `x86_64-apple-darwin` on the Intel native runner. The signer enables hardened runtime and a trusted timestamp, verifies the Developer ID certificate/team, and uploads only when `--notarize` is supplied. It waits for Apple's explicit `Accepted` result and records the submission ID. Modern runtime signing staples and validates the app ticket; a historical standalone CLI cannot carry a stapled app ticket. Neither outcome alone establishes offline extracted Gatekeeper acceptance. See [Apple's notarization workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow).
 
 Signing replaces any linker-generated ad-hoc signature on the fresh artifact copy, then verifies the Developer ID signature, team, hardened runtime and timestamp. The tested source executable remains unchanged; the receipt records both source and signed hashes.
 
-Feed the resulting native `publish/` directory to `package-extension.py --native-dir ...`. Candidate payload hashes then cover the signed executable. Continue with [the macOS build guide](macos-build.md) and [release checklist](releases/release-1.1.0.md), retaining actual logs for the final commit. Signing/notarization does not qualify installed services, remote editors or the oldest supported macOS version.
+Feed the resulting native `publish/` directory to `package-extension.py --native-dir ...`. Candidate payload hashes then cover the signed executable. Continue with [the macOS build guide](macos-build.md) and [current release record](releases/release-1.8.14.md), retaining actual logs for the final commit. Signing/notarization does not qualify installed services, remote editors or the oldest supported macOS version.
 
 The local AIRK keychain is `~/Library/Keychains/airk-signing.keychain-db`; its notary profile is `airk-notary`. It reuses the company’s Developer ID Application identity, with a separate keychain and profile from WritingForgePro. Unlock it in Keychain Access before signing. Its generated unlock password is kept in the login keychain as the generic-password item `airk-signing-keychain-password`, never in the repository.
 
@@ -86,6 +94,24 @@ The public `.cer` file cannot replace the PKCS#12 private key. Export the exact 
 The workflow exposes secrets only to [the CI signing helper](../scripts/ci-macos-sign.py), after build/test steps finish. It uses a private directory under `RUNNER_TEMP`, a fresh random keychain password, and explicit `--keychain` selection. It also adds the temporary keychain to the user's search list for certificate-chain resolution, preserving the existing entries and restoring the original list when signing exits. Passwords reach `security` through standard input and `notarytool` through its password prompt. Credential-tool diagnostics are suppressed to prevent accidental disclosure. The helper clears secrets from child-process environments, validates the imported identity and notary credentials, requires notarization `Accepted`, and deletes the temporary keychain on success or failure. An additional always-run cleanup step handles an interrupted signer. No compiler cache or artifact contains the credentials.
 
 ### Verify the exact Mac signing certificate
+
+Both hosted Mac signing callers use the same post-sign execution gate in
+`ci-macos-sign.py`. For a schema-2 runtime, it runs the canonical embedded-model
+smoke against `runtime/AIRK.app/Contents/MacOS/airk`, then the existing private
+`check-service-install.py` lifecycle fixture against that exact signed runtime.
+The temporary keychain is deleted and its original search list restored before
+either probe; remaining signing-secret environment variables cause refusal.
+The probes neither extract the main from its app nor re-sign it. Complete
+runtime inventory equality is checked afterward. Failure prevents the signing
+step from succeeding and therefore blocks subsequent packaging/promotion.
+
+`post-sign-validation.json` stays beside `signing.json`, outside the sealed
+runtime. CI logs include its structured stages, model identity, hashes and
+bounded traceback coordinates/error codes; arbitrary child output and bearer
+bytes are omitted. Installation uses the canonical script's bounded native
+operations and the existing job timeout. This source gate still needs an actual
+authorized hosted run. It does not qualify GUI approval, agent-host trust,
+oldest-supported macOS, reboot, or the complete historical migration matrix.
 
 CI intentionally creates a different temporary keychain file on each runner.
 The reproducible check is the certificate and matching private-key identity,
@@ -119,7 +145,7 @@ and prints the public fingerprints to the job log. A mismatch fails the step,
 restores the original search list and removes the temporary keychain. This check
 exports no private key and changes no signed payload or installer inventory.
 
-These guard changes are local until an authorized source update and CI run.
+The source guard does not prove a current hosted signing run has executed it.
 The next authorized signing run must execute them to prove that its effective
 `macos-signing/MACOS_CERTIFICATE_P12` import uses the pinned certificate and key
 pair. Renewal or rotation requires a separately reviewed public fingerprint

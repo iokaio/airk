@@ -1,0 +1,428 @@
+# Historical vscode extension guidance before the HTTP cutover
+
+Archived 7 November 2026 before the 1.8.14 operational rewrite. The predecessor
+helper/launcher and schema-1 descriptions and dated results below retain their
+original scope; they are not current installation or qualification claims.
+Relative links are adjusted for this archive directory. See [current guidance](../vscode-extension.md).
+
+# Native VS Code extension
+
+The 1.8.12 working build separates choosing what to search from managing stored
+indexes. See the [current working-build record](../releases/release-1.8.12.md) and
+[setup and selection guide](../service-project-setup.md). Opening folders alone
+never creates an index.
+
+**Retained P14 checkpoint (6 November 2026):** prior source `5d8912b1...` passed
+its final Windows and 10 selected broader stages. Its `same`, `different`, `multi`
+and `untrusted` editor scenarios passed on the original package; failed usage Stop
+and initial legacy scenarios remain recorded. Checkpoint source `237f8969...`
+added bounded native lifecycle installation-lock admission; its fresh whole
+usage/legacy and Windows native qualification passed on that source. These
+results retain their historical identity in the [1.8.8 record](../releases/release-1.8.8.md);
+manual acceptance and release promotion remain separate.
+
+**Indexing in 1.8.12:**
+
+- **Search scope:** check local indexes and index sets, then choose **Apply selection**.
+  **Refresh choices** reads current choices. Opening the tab and editing checkboxes
+  do not apply a selection. There are no user-facing grant or saved-association steps.
+- **Index library:** create indexes and manage their sources, watching, settings
+  and splitting. **Delete index** opens **Delete this index?**; **Delete index and
+  stop maintenance** confirms retirement and cleanup of that index's derived data.
+  Source files, shared models and independent indexes remain untouched. Pending
+  cleanup is reported separately from removal from the active library.
+- **Index sets:** name reusable groups with **Create an index set** and **Open index set**.
+  A set organizes existing indexes or their selected source scopes; it does not
+  copy index data or imply the VS Code workspace is a separate AIRK project.
+
+Library and set metadata load automatically on entry. Failed reads retain an
+explicit retry. Recommendations under **Help me choose indexes**, recovery and
+complete catalog copies/exports remain secondary disclosures. Native APIs keep
+`Project` and grant terminology for compatibility; the local-user selection flow
+handles those details internally. MCP evidence tools remain read-only.
+See the [split walkthrough](../index-splitting.md), [deletion details](../service-project-retirement.md)
+and [setup guide](../service-project-setup.md).
+
+**1.8.8 P12 accepted local development:** Workbench can review refresh of eligible
+references from one completed live result step and one index, then check the
+exact native receipt and separately confirm requery. The first wave requires
+full-index metadata authority; partial Project/path grants are unsupported.
+Refresh evidence for this flow stays in memory: after reload, its receipt can
+still be checked but unavailable originals are not reconstructed for requery.
+Stop, trust or selection changes prevent further host submission/requery; they
+do not undo an already accepted durable native job. Reading, verification and
+export remain separate from indexing. See the [controls and limits](../source-verification.md#explicit-reference-refresh).
+Focused Windows native and UI tests, all 12 final release qualification stages
+and 19 scoped Neo tests passed; Neo cleanup completed successfully. Primary
+review accepted the local phase. The build is unpublished and installed-editor
+qualification remains separate.
+
+**1.8.4 development candidate:** Workbench's **+ → Tool forms** exposes indexed language/evidence-type filters, explicit name matching, reference ordering/paging, file summaries and count precision as typed controls. Default/Yes/No preserves optional booleans; blank fields retain the existing native default. Structured results show definition pointers and qualified written method targets with explicit **Inspect** and **Find callers** actions. Continuation preserves original selectors/publication, and both JSON and Markdown exports retain discovery metadata. These are local evidence operations; they do not execute tests, resolve every caller or modify sources. See [Workbench details](../workbench/implementation.md#184-bounded-discovery-controls) and the [1.8.4 qualification record](../releases/release-1.8.7.md#candidate-1-8-4).
+
+**1.8.2 installed responsiveness:** the owner approved quicker loading and responsive requests in the normal editor. Five fresh installed-launcher sessions returned available first statuses without timeouts; median initialization through confirmed status was 2.29 seconds, with a 7.31-second first-session outlier. See the [performance report and causal analysis](../performance-improvements-1.8.2.md) for the unmatched historical comparison, UI transfer reductions, native regressions and qualification limits.
+
+**Workbench improvements:** independent readiness/history loading, selected-connection reuse across New/Clear, no duplicate Save scan, scalar status/save updates, query-first reveal, retained reading position and linked Select all/Copy selected controls. See the [Workbench performance and usability evidence](../performance-improvements-1.8.2.md#workbench-responsiveness-and-everyday-use).
+
+**1.8.2 features:** [Conversational evidence retrieval](../releases/release-1.8.7.md#candidate-1-8-2) supports developer, writer, architect and QA/tester requests for code/document evidence, including “I want to know about struct Owner.” Unsupported requests still require clarification; general symbol requests may return multiple cited candidates, while definition-path selection requires an explicit choice. Workbench anchors each new pending, completed or failed reply at its query bubble, keeping the question visible above timestamp, details and results; manual and nested reading positions remain retained across tab/status/save updates. Structured results include linked top/bottom **Select all N** controls and **Copy selected** in each row. The earlier [1.8.1 scrolling record](../releases/release-1.8.7.md#candidate-1-8-1) describes the initial first-result reveal and retained sidebar view; 1.8.2 moves the reveal anchor to the question. The inherited [candidate preparation](../releases/release-1.8.7.md#candidate-1-8-0) synchronizes package versions and admits supported forward runtime upgrades through the 1.8 line. Explorer publishes verified service health before optional management observations finish; index readiness remains separate. Search sends its full successful result once through the retained session notification, followed by a small completion acknowledgment. The performance report separates installed responsiveness from native throughput.
+
+**1.7.6 stable release (published 2026-10-31):** [first-use review, native execution control, uninstall cleanup and data purge](../releases/release-1.7.6.md). Published 1.7.3: [Marketplace image links and release promotion](../releases/release-1.7.3.md).
+
+The 1.8.0 candidate can expose an eligible saved selected project in Explorer and Workbench while other workspace roots finish preparation. A native metadata observation confirms that selection; saved editor state alone is insufficient. Complete workspace MCP declarations remain atomic, including explicit project selection in multi-root workspaces. Healthy authenticated discovery can finish before optional diagnostics, and Windows Assistance permission checks run asynchronously. Stop, updates, managed ownership, trust and native-execution settings retain their gates. See [F09 validation and limits](../optimizations.md#f09-selected-binding-and-asynchronous-editor-setup); installed-editor latency is not yet measured.
+
+Workbench opens once after successful trusted setup. Its compact header provides history, settings and new-session icons; the composer’s **+** menu holds scope, recipes and tool forms. Explorer’s **Workbench** toolbar button, immediately left of Help, toggles secondary-sidebar visibility and shows a pressed state while visible. The project selector is available inside Overview and Management; its selection remains shared across Explorer screens. VS Code retains control of sidebar tab order. For the initial transition from older AIRK code, use **Restart Extensions** in VS Code’s Extensions pane to activate the new loader.
+
+The [Workbench](../workbench/implementation.md) adds a secondary-sidebar transcript, shared native `parse`, evidence recipes, copy/export and local sessions. Open it with **AIRK: Open Workbench**. Workbench was introduced in published 1.7.2; published 1.7.3 followed. The current manual-test working version is **1.8.12**, with [its record](../releases/release-1.8.12.md) distinguishing implemented behavior from gated work toward 1.9.0.
+
+**Version 1.6.4 — runtime upgrades, project cleanup and responsive diagnostics.** This public release consolidates the unpublished 1.6.1–1.6.3 branch work. Supported runtimes upgrade before connection checks; uninstall removes owned executables and recorded agent entries while preserving index data. Trusted open folders register and index automatically, subject to saved opt-out, pause and manual-update settings. Removing a project drains its workers and deletes its AIRK index and saved settings while preserving source files.
+
+The Workbench development catalog exposes 29 tools, including read-only `parse` plan preparation/execution and grant-bound `query_scope` discovery; published 1.6.4 has 27 tools. `status` is a lightweight readiness check; `diagnostics` provides detailed runtime, job and watcher observations. Agent connections follow their configured source folders across index replacement. Explorer bounds status polling, keeps local log actions responsive and reconciles uncertain requests internally without replaying them. Installation migrates registered historical default index roots to `index-v1`, preserving publications and settings; custom roots stay in place. See the [1.6.4 release notes](../releases/release-1.6.4.md).
+
+## Workbench result selection
+
+In **structured** results, **Select all N** appears above and below the evidence cards. It selects every matching result already available in that response, including records behind **Show 20 more retained records**. It does not fetch another page. Filtering changes the matching set; selecting or clearing it preserves selections hidden by the filter. A mixed checkbox means some matching records are selected.
+
+Both the top and bottom rows provide **Copy selected (N)** beside Select all. Copy selected copies the selected records, including selections hidden by the current filter. **Save export…** remains available; the structured evidence list has no redundant full-response copy button. Raw JSON/Markdown and status/no-evidence output can retain full-output copying. Use **Tab** to focus a checkbox and **Space** to toggle it. Select all is disabled for zero matches, and Copy selected is disabled with no selection. If a selection exceeds the supported copy limit, the message asks you to select fewer records or use Save export; it does not silently discard selected records.
+
+<a id="airk-explorer-150"></a>
+
+## Installation and evidence privacy
+
+In a trusted workspace, automatic setup:
+
+- installs the bundled runtime and CLI;
+- updates the user PATH or adds marked shell-profile blocks;
+- registers folders for background indexing.
+
+Before the first installation, 1.7.6 shows a [first-use review](#first-use-review-176) of these effects and lets you defer or decline them. The service can keep indexing after the editor closes; login startup is a separate opt-in. Use an isolated OS environment when evaluating untrusted binaries.
+
+### Native execution control
+
+`airk.runtime.nativeExecution: false` (User settings only) stops the extension from starting any AIRK process. That covers discovery and self-tests, the service, MCP sessions, tools, usage reports and MCP server definitions. Views report that native execution is off rather than guessing native status. Run **AIRK: Enable Native Execution** to resume the normal verified-runtime path. `airk.cli.autoInstall: false` is narrower: it skips installation and registration, but discovery still runs the bundled executable. Neither setting is a sandbox or isolates the operating-system account. The Explorer Assistance endpoint runs inside the editor and follows `airk.explorer.assistance.enabled`.
+
+### Sensitive files and saved evidence
+
+Hidden files can be indexed unless ignore rules exclude them. AIRK is not a secret scanner: credentials in ordinary source, JSON or configuration files can end up in retained index objects and retrieved excerpts.
+
+- **Hard exclusions.** `.git`, `.ssh`, `.aws`, `.env` and `.env.*`, `*.pem`, `*.key`, `node_modules`, `target`, `.venv` and `__pycache__` are always skipped.
+- **Credential defaults (1.7.6).** These are skipped unless an ignore-file negation such as `!.npmrc` re-includes them: `.npmrc`, `.netrc`/`_netrc`, `.pypirc`, `.git-credentials`, the private keys `id_rsa`, `id_dsa`, `id_ecdsa` and `id_ed25519` (public `.pub` keys are indexed), `*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `kubeconfig`, `.kube/config`, `*.tfstate` and `*.tfstate.backup`, and `.docker/config.json`.
+
+Review source selection and `.airkignore` before indexing.
+
+Workbench sessions can keep result excerpts. Turning off `airk.workbench.persistResults` strips saved excerpts in every project, and turning off `airk.workbench.persistSessions` deletes saved sessions in every project. Evidence returned to a connected agent is subject to that agent provider's policies.
+
+### Retiring sensitive data that was already indexed
+
+1. Add an ignore rule (for example `secrets.json` in `.airkignore`), then update the index. Changes to ignore files trigger a full rescan, which removes the file from the current publication.
+2. For a complete purge of a project's index, unregister it in Management or through **AIRK: Review and Remove AIRK Data**. This deletes its index and saved settings and leaves source files untouched.
+3. Clear Workbench sessions with **AIRK: Clear Workbench Sessions**, or turn persistence off.
+
+Deletion is logical. It does not erase filesystem backups, relocated or copied roots, exports, or evidence already sent to an agent provider.
+
+### Storage privacy
+
+Indexes hold source-derived text. On Unix, AIRK creates new storage directories with mode 0700 and never changes the permissions of a directory it did not create. If an existing storage root, and every ancestor of it, could let other accounts read it, `airk runtime inventory` reports a `storage_not_private` warning for that project, and **AIRK: Review and Remove AIRK Data** lists it. Storage is never refused for this reason. Use a private directory, or restrict it yourself (for example with `chmod 700`). POSIX ACLs are not evaluated. Windows storage relies on the inherited profile ACL and is not checked.
+
+### Data inventory and purge
+
+**AIRK: Review and Remove AIRK Data**, or `airk runtime inventory --install-dir <dir>`, lists AIRK-owned locations (logs, cache, data, state, install, launcher, configuration) with bounded sizes, every recorded project index root, and what the inventory cannot see. The command never deletes anything by itself.
+
+- **Logs and caches** can be purged after reviewing an exact plan: run `airk runtime purge --select stable:logs`, then repeat it with `--confirm <plan_digest>`. The AIRK service must be stopped first. Links are never followed, and the location roots remain.
+- **Project indexes** are removed only through the project removal contract (Management's unregister).
+- **Runtime payloads** are removed by `airk runtime uninstall`.
+
+Uninstall preserves index data; see [removing the terminal command and uninstalling](#removing-the-terminal-command-and-uninstalling).
+
+## AIRK Explorer (1.5.9 development)
+
+The bundled runtime corrects discovery followed by legacy MCP initialization. Separate assistants can connect to the same project with independent handshake styles. See [1.5.9](../releases/release-1.5.9.md) for the reproduced failure, validation and limits.
+
+The 1.8.12 loader watches installed extension changes and replaces AIRK's own running extension automatically after detecting a new payload. If Explorer was open, AIRK disposes its old singleton panel and reopens one panel with the updated host and UI. This does not reload the whole VS Code window. Native runtime activation and accepted indexing work remain under the native owners. Local installation scripts verify shipped JavaScript/CSS against the VSIX. The first transition from an older running extension still needs VS Code to activate this loader; use **Restart Extensions** in VS Code’s Extensions pane for that one-time transition. Current validation and installed-editor limits are in the [1.8.12 record](../releases/release-1.8.12.md).
+
+Explorer update/connection banners and action-result notices have an accessible **Dismiss notice** (**×**) control. Dismissing removes the notice from the layout on every screen where that notice appears. The extension saves the exact dismissal in workspace storage before hiding it, so it survives route changes, closing/reopening Explorer and window reload. The same notice stays hidden; a different update, outcome or failure can appear separately. Dismissal does not approve work, clear a native failure or change trust, execution or upgrade restrictions. Logs and service details remain available. A failed preference write keeps the notice visible with an error. Up to 512 distinct dismissals are retained without evicting older choices; reaching that limit reports a storage-limit error instead of falsely claiming dismissal. Required input validation, empty states, evidence qualifications and confirmation dialogs retain their own behavior.
+
+Historical introduction: updates in 1.5.8 show a single **Reload to finish update** action when VS Code exposes an installed extension version different from the loaded version. Explorer and the status bar retain that action after the toast is dismissed. Installing/updating the native runtime is labeled separately; success needs no completion-popup decision. See [1.5.8](../releases/release-1.5.8.md) for detection limits and validation.
+
+Management now uses horizontal tabs and distinguishes queued work from a completed progress sample. Logs offers Generate/Open/Copy/Save report and a separate Save retained service logs export. Verified completed runtime installations reopen without repeating setup notifications, terminal installation or runtime cleanup; new folders still register. The native repeated-recovery and source-retry corrections, validation and remaining remote diagnostic uncertainty are recorded in [1.5.7](../releases/release-1.5.7.md).
+
+Management shows native automatic-recovery reasons, bounded attempts and prerequisite waits. Search mode and Evidence detail are durable before native inspection; closed editors cannot lose that accepted intent. Unknown job/configuration acknowledgements are reconciled by read-only receipt lookup. See [automatic indexing recovery](../index-self-healing.md).
+
+Search retains query/options, the latest results and page when switching tabs or reopening the panel in the same selected project and extension-host session. Project/binding changes or extension-host restart clear that session. Results are not written to workspace storage. Search displays twenty of the retrieved hits per page; the request limit remains up to 100, subject to its byte budget. Paging does not rerun a search; a newer observed publication is labeled so users can explicitly search again.
+
+Review Changes displays fifty-file pages with totals and Previous/Next controls, without a fifty-file total cutoff. A changed Git list or publication requires refreshing instead of mixing pages. Impact/Tests inventory calls respect the native hundred-file page bound. Reports restart once on a changed, present publication identity within a shared 90-second budget; missing identity, integrity and other tool failures are not replayed. Tests distinguishes changed test files from indexed textual references, explains why each candidate appears, and shows changed test files even when indexed analysis fails. Refresh repeats analysis of the current inputs; it never executes tests or measures coverage. See the bundled [Search](../../packages/vscode/src/explorerHelp/search.md), [Changes](../../packages/vscode/src/explorerHelp/review-changes.md) and [Tests](../../packages/vscode/src/explorerHelp/review-tests.md) guidance.
+
+Overview’s **Source work** reports saved-source reconciliation/freshness separately from published-index availability and semantic coverage. Native watcher directory planning uses indexing’s ignore rules; ignored output directories do not require listing access, while failures in included source directories remain visible. A ready semantic index does not verify that saved files still match its snapshot.
+
+Management › Advanced diagnostics and recovery shows **Unreadable directories** with bounded paths, error categories and observation time. The list can be incomplete because each root walk stops at its first failure. A later complete root traversal clears its failures automatically. Native logs record only project unavailable/recovered transitions; repeated retries do not add duplicate failure records.
+
+Search offers **Semantic (by meaning)**, **Lexical (all words)**, **Hybrid (lexical + semantic)** and **Collection policy**. Semantic queries describe a concept or behavior and use native vector retrieval; exact words need not appear. The form explains building, partial and failed coverage, and results show observed semantic readiness. Choose Text + semantic in Management › Search mode to use semantic and hybrid modes. Saved recipes retain the native `vector` mode value.
+
+### Help, About and local files
+
+**Help** searches one offline catalog of Explorer topics and native engine guidance. Role guides cover Developer, Tester, Architect and Writer, with separate guidance for indexing purpose, source/document formats, models, OCR and recovery. The upper-right **Help** button opens a native VS Code quick pick for the current screen or general help; Overview and Indexing offer direct purpose/format links. Live reference can read an exact native tool schema, CLI command path or topic with bounded pagination; it never executes that operation. The bundled guidance remains available when the service is disconnected or the workspace is untrusted.
+
+**About** opens Help → About AIRK with the installed extension version, Ioka LLC credit, Munarium/VCP inspiration and independent implementation history. User-clicked links open the repository, [AIRK website](https://ioka.io/airk), [Ioka Discord community](https://discord.gg/sJase5FbE), [GitHub Issues](https://github.com/iokaio/airk/issues), contribution guide and license notices. Public sites can describe an earlier release; runtime observations identify the actual installed processes separately.
+
+Planner **Load plan…** starts in `.airk/plans` (or the configured directory), accepts validated plan JSON or AIRK-generated Markdown and confirms replacement of an existing draft. JSON preserves complete states/evidence; Markdown's abbreviated evidence summaries reopen as draft tasks without verified evidence metadata. **Export plan JSON…** provides an exact round trip. Studio imports start in `.airk/strategies`; importing cannot replace work changed during the file picker or confirmation. Loading never executes instructions or edits the selected source file. Search recipes retain their editor workspace state and can now be imported/exported as validated `airk.explorer.search-recipe/1` JSON in `.airk/recipes`. Import previews the query and confirms adding or replacing the named recipe; a changed saved recipe is refused. Loading never searches.
+
+Studio **Save** writes the complete draft inputs to `.airk/strategies/<name>.studio.airk.json` in the selected local project without a folder picker. It preserves the objective, parameters, path scope, steps, prompt profile and edited prompt under a `user/<name>` definition. Save again to update it, or change the name for a copy; outside edits are guarded. Browse saved strategies restores these inputs, with evidence recollected after loading. Accepting a suggestion does not save automatically. **Export…** continues to save only a strategy definition.
+
+Management separates current work from published evidence. Captured files, newly extracted payloads, publications, phase time and last advancement remain distinct; unknown totals stay unknown. Indexing, Activity, Storage, Recovery, Service, Agents, Usage and Logs use the standard horizontal tab bar. Only the selected section mounts; the Management project choice persists across tabs. Existing Management URLs open the corresponding tab. In 1.6.4, removal preserves source files and automatically deletes AIRK index data and saved project settings after owned workers drain. Only opaque identifiers and a removal timestamp remain in native history; incomplete cleanup resumes automatically. See [index management](../index-management.md) for action semantics and recovery.
+
+### Unified agent connection
+
+1.5.7 offers one AIRK server with 26 unprefixed tools for evidence, help and reviewed Explorer drafts. `search` retrieves indexed evidence; `draft_search` proposes a form. `status` reports native health and editor attachment separately. Template discovery, non-admitting validation, proposal status and explicitly shared snapshots retain their prior safeguards. See [the catalog and startup migration](../unified-mcp.md).
+
+Trusted startup and Install or Repair CLI consolidate recognized old Retrieval and Explorer entries in supported project files. Conflicts, unsupported syntax, unsafe files and unsaved edits remain for review. Client disabled state is preserved. The VS Code provider advertises one workspace endpoint; a recognized manual definition owns its policies and suppresses the duplicate provider connection. Each external agent must restart and approve renamed tools through its own controls.
+
+Studio and saved Planner tasks retain **Share snapshot with agent**. Confirmation produces an opaque ten-minute token for a complete UTF-8 snapshot up to 24 KiB, with bounded count/total storage. Draft, binding, trust and observed-publication changes revoke access. Agents cannot enumerate snapshots or read arbitrary drafts.
+
+Webview requests have bounded admission and waiting periods. Read timeouts release waiting controls; uncertain action acknowledgments instruct the user to inspect Activity, saved files or proposal status before retrying. No mutation is automatically replayed. Recovery Help remains available offline.
+
+**AIRK: Open Explorer** opens the AIRK Explorer in an editor tab. Clicking the monochrome A› activity-bar icon opens or reveals Explorer and closes its entry sidebar. If the Explorer assets or host cannot load, the old setup/status/search panel and Workspace Projects tree remain available with a retry button. Service downtime, missing registrations and workspace trust do not disable the Explorer shell. The status bar also opens Explorer.
+
+The Explorer reads evidence through its own stdio MCP session over the same verified launcher agents use, identified as the `airk-explorer` client so usage reports keep it separate from coding agents. Management actions run through the existing Service Console controller, so journaled requests, confirmations and paging are unchanged. Screens that are designed but not yet built are labeled and show no sample data. See the [Explorer design](../explorer/AIRK_Explorer_Final_Design.md).
+
+In the 1.8.0 candidate, automatic Explorer observations use lightweight status. **Refresh** also obtains detailed runtime and work observations. Published status retains its native observation time; retained details show their own age and are kept only for the matching project and connection. Policy/work details additionally require the same publication. If either observation has a settings identity, both identities must match; when neither has one, retained details keep their original age. Explorer keeps tracking source files without triggering a full service refresh when the source editor changes. Visible views keep their normal polling and explicit management controls.
+
+**Management** replaces the Service Console with a tabbed workspace. Commands that used to open the console (for example **AIRK: Show Extraction Policy**, **Review Native Storage Quotas…**, **Connect / Reconnect Service**, **Preview Service Diagnostics**) now open the matching Management tab, running the same console action first where there is one. Clicking a project in the Workspace Projects tree opens the Management project page. The separate Service Console view was removed in 1.5.0.
+
+**Search › Saved Searches** keeps up to 50 named sets of Search arguments in VS Code workspace state; **Save** beside Search name on Search › Query stores the current form and **Run** fills the form and runs it. Recipes never change the index.
+
+**Review** joins the editor's Git changes with indexed facts. **Changes** lists the selected project's staged, unstaged, untracked and merge changes from the built-in Git extension (`vscode.git`) and shows, for each file, whether AIRK indexed it and whether the saved bytes still match the index; AIRK keeps no history. **Impact** is a checklist, not a verdict: for declarations AIRK indexed in the changed files it counts exact-case textual references and references in test paths. **Tests** lists test-path lines that mention those declarations as declared candidates, never executed and not coverage; `airk.explorer.review.testPathPattern` sets which paths count as tests.
+
+**Strategies** turns evidence gathering into a reviewable recipe. **Library** lists the 25 core-pack templates (`airk.core/NAME@1.0.0`); Investigate & fix a bug, Change an API contract and Explain a component are Runnable, and every other template is labeled Preview with its reason. **Studio** edits one strategy from a closed operator catalog (AIRK retrieval tools, a saved-file hash check and evidence transforms; no shell, write or network steps, and search is always lexical), runs it against one pinned publication and compiles an editable prompt with Objective, Evidence, Task instructions, Deliverables and Completion gates. A run that sees the index republished stops instead of mixing publications. It is a verified snapshot only when every cited file's saved bytes match the index; otherwise it is partial and lists why. Strategies can be exported to and imported from `.strategy.airk.json` files through the save and open dialogs. The Explorer never runs an agent.
+
+**Planner** combines Studio snapshots and manual tasks into one Markdown plan (YAML front matter `airk.explorer.plan/1`). Blocked is derived from incomplete predecessors and Stale from evidence on an older publication; Completed asks for confirmation. **Save in workspace…** opens the save dialog in `airk.explorer.planner.directory` (workspace setting, default `.airk/plans`, which native indexing excludes); the file must stay inside the chosen workspace folder, an unsaved editor copy is never overwritten, replacing an existing file asks first, and the written bytes are read back and compared before the editor opens. Only then is a one-task handoff prompt offered ("Read `<path>`… Do T1 only…"); copying it marks the task Exported, never Completed. **Completion check** runs an agent's report through the Evidence Checker before the task moves to Review, Needs work or Completed. Exporting a plan as an agent skill file is not implemented.
+
+**Suggestions** is the Inbox for agent drafts. The header **Suggestions** button, the AIRK sidebar count and **AIRK: Show Agent Suggestions** open it. Each card shows the agent's self-reported name (never treated as authenticated), when it arrived, its destination, status and warnings such as evidence on an older publication; cards with the same destination and title collapse with a count and at most 20 are shown. **Review** shows the draft as text; **Apply to draft** fills the Search form without running it, or loads Studio or Planner. When Studio has work, the Planner already has a plan or the target changed since the draft was written, the Inbox shows the differing fields and offers replace, merge (keep your objective and values) or append (renumbered tasks). **Defer**, **Reject** and **Discard all** are always available; clicking a card never applies it.
+
+The extension-owned Explorer adapter is bundled as `out/explorerAssistance.js`. The native unified endpoint invokes its verified offline help/template or private-window IPC handlers only when needed, using the editor's runtime; no system Node is required. Drafts are inert, validated at both adapter and window, bounded to 16 KiB and admitted only to the matching selected project. Unknown fields, unsafe paths and execution/save requests are refused. Idempotency conflicts and stale bindings remain explicit. The Inbox is memory-only, bounded to 50 open drafts/256 KiB and 30 admissions per minute, with configured expiry. `airk.explorer.assistance.enabled` controls this adapter/window attachment; native evidence remains available when it is off. The legacy provider withdraws its definitions.
+
+
+Each trusted window publishes a private attachment endpoint (a named pipe on Windows, a socket in a `0700` temporary directory elsewhere) and a user-only descriptor under the extension's global storage (`explorer-assistance/windows/`) holding its canonical folder paths and a credential that rotates every 10 minutes and expires after 30. `status.explorer` reads those descriptors at call time and attaches only when the agent's working directory is inside exactly one window's folders; otherwise it reports `UI_NOT_ATTACHED`, `AMBIGUOUS_TARGET` or `HOST_UNAVAILABLE`. It returns an opaque binding fingerprint, never paths or the credential. Node cannot set a named pipe's ACL, so on Windows the credential in the user-only descriptor is what authenticates a caller; a wrong credential gets no reply. Untrusted windows publish no attachment and offer no provider. Closing or reloading a window withdraws its descriptor; descriptors left by a crashed window are swept once they expire. Activation also rewrites `explorer-assistance/launch-1.json`, the launch descriptor external agents use through the native forwarder.
+
+**Open AIRK Tools** on each dashboard collection, or **AIRK: Open AIRK Tools** in the Command Palette, opens an interactive console in the Terminal panel. It launches the verified bundled helper directly with that collection's root and storage. Enter `list`, `help airk_search`, `call airk_status`, or `exit`. [Direct MCP tool access](../mcp.md#call-tools-without-a-coding-agent) documents JSON/file arguments and standalone equivalents. Trust is required; the console does not trigger indexing. Existing consoles close when their collection bindings change or the extension shuts down.
+
+An independent thin native-helper extension is implemented under [packages/vscode](../../packages/vscode). It wraps the Rust kernel and bundles the native helper in platform-specific VSIX packages. The checked-in manual-test working version is 1.8.12, unpublished; earlier 1.2/1.3 candidate records below retain their original scope. New collections default to Agent Lean; existing saved or published detail remains in effect. See [1.3.0 candidate changes](../releases/release-1.3.0.md), [1.2.4 diagnosis and recovery](../releases/release-1.2.4.md) and [1.2.3 defaults](../releases/release-1.2.3.md). Local and ordinary CI candidates contain unsigned helpers; the separate GitHub release workflow signs Windows/macOS downloads. [Windows local build/review instructions](../windows-local-build.md) provide the single PowerShell command and an isolated editor test.
+
+[Deployment and packaging](../extension-deployment.md) adapts VCP's delivery practices; [CI](../ci-and-builds.md) builds matching native and extension candidates on all three operating systems. Actual observed checks remain in [validation](../validation.md).
+
+## CLI installation and PATH
+
+New vector-model setup asks the native helper for its CPU capabilities and pinned model catalog before installing its embedded assets offline. Version 1.6 selects unsigned INT8 on x64 without VNNI and signed INT8 on VNNI x64 and ARM64; prior semantic state is rebuilt. `airk model-catalog` inspects the choice offline without opening collection/model state. [CPU selection and offline provisioning](../onnx-models.md) describe the implemented optimization.
+
+### Current first-use review (1.8.12 working build)
+
+Before the first runtime installation on a machine, a trusted window asks **Set up AIRK on this computer?** and shows what setup will change:
+
+- the saved storage preference and separate per-index source/storage review;
+- that opening folders does not register or index them during runtime installation;
+- that existing accepted indexing or saved watching can continue after windows close, and login startup is a separate opt-in;
+- the shell or PATH change;
+- possible updates to existing AIRK agent entries;
+- that hidden files can be indexed (see `.airkignore`).
+
+The choices are:
+
+- **Set up** installs as described.
+- **Customize…** controls the external terminal command and its shell/PATH integration.
+- **Not now** defers runtime/terminal setup; existing accepted native work is independent. Run **AIRK: Set Up** or **AIRK: Install or Repair CLI** when ready.
+- **Don't set up automatically** sets `airk.cli.autoInstall` to `false`.
+
+Existing or managed runtimes are reconciled through their authenticated native binding. All new indexes, including broad source locations, require **Indexing > Index library** review; opening or reordering folders does not register them. In **Search scope**, check the indexes or index sets you want to search, then choose **Apply selection**. Customize does not select or deselect workspace folders. See [reviewed setup](../service-project-setup.md).
+
+### Terminal command
+
+Setup publishes a small wrapper, `service-cli/bin/airk` on macOS/Linux or `service-cli/bin/airk.cmd` on Windows, under the extension's per-user global storage. The wrapper forwards every argument to the native installation's version-free launcher. It is not a copy of the engine. Updates rewrite it atomically, and the directory does not contain an extension version. No Cargo, Rust, administrator permission or system-wide installation is needed. Releases before 1.6 copied an executable to `cli/bin`. That layout is retired: setup removes an old copy, and uninstall also removes old profile blocks and PATH entries for it.
+
+The dashboard's **Use AIRK in your terminal** note starts with `airk --help`, reports setup status, and offers **Install or repair CLI**. The Command Palette also exposes **AIRK: Install or Repair CLI**. A CLI setup failure is logged and shown separately; it does not stop indexing or the collection-scoped tools console.
+
+- **VS Code terminals:** the extension adds the wrapper directory through VS Code's terminal environment collection. Open a new terminal after activation.
+- **Windows external terminals:** setup **prepends** the wrapper directory to the current user's registry PATH (`HKCU\Environment\Path`). It preserves existing entries, unexpanded variables and the registry value type, then broadcasts the environment change. Restart Windows Terminal or PowerShell, or sign out and back in, if a new tab still inherits the old environment.
+- **macOS/Linux external terminals:** `airk.cli.shellIntegration` controls which startup files are edited.
+  - `auto` (the default) appends a marked `# AIRK CLI PATH` block to `.profile`, to the startup files of your current `$SHELL`, and to any Bash, Zsh or fish startup files that already exist. It honors an absolute `ZDOTDIR` and `XDG_CONFIG_HOME`, and never creates profiles for shells you do not use.
+  - `all` keeps the 1.7.3 behavior and also edits `.bashrc`, `.zprofile`, `.zshrc` and fish's `conf.d/airk-path.fish`.
+  - `off` changes no startup file or user PATH. In that case the command works only in VS Code terminals.
+
+  Existing commands are preserved, and repeated setup does not append duplicate blocks. Open a new shell after setup.
+- **Remote workspaces:** installation and PATH changes happen on the extension host (an SSH host, WSL distribution or container), not on the local desktop.
+
+Set `airk.cli.autoInstall` to `false` in **User** settings before activation to skip automatic setup; workspace values cannot override that choice. Disabling it stops future automatic installation, but trusted windows still run the bundled executable for `runtime self-test` and `runtime location`. To start no AIRK process at all, see [native execution control](#native-execution-control). An explicit **Install or Repair CLI** still works. Source collection settings are never baked into the command: ordinary CLI commands keep their native workspace and storage defaults. Use **Open AIRK Tools** to target an extension-managed collection with its existing root, storage and collection arguments.
+
+If Windows locks a running CLI during an update, the previous executable remains intact and setup reports a failure. Close that process and run **Install or Repair CLI**. Redirected or non-file shell startup files are reported for manual configuration rather than overwritten. An alias, or another `airk` earlier on PATH, can still select an older executable. Inspect `Get-Command airk -All` in PowerShell or `command -v airk` in a POSIX shell, and remove the stale alias or entry.
+
+### Removing the terminal command and uninstalling
+
+**AIRK: Remove Terminal Command** removes AIRK-owned PATH integration from external shells now: the exact `# AIRK CLI PATH` blocks it wrote, or the matching user PATH entries on Windows. It also sets `airk.cli.shellIntegration` to `off` so later setup does not add them again. The wrapper stays so that VS Code terminals keep working. A block you edited, or a redirected or hard-linked profile, is preserved and reported.
+
+VS Code controls when it finalizes extension removal and runs the `vscode:uninstall` hook during a later start. If no new cleanup directory or result appears after a restart, confirm that VS Code has finished removing the extension; a pending removal may require another restart. A missing receipt does not establish cleanup success. The hook copies the verified engine to a private temporary `airk-uninstall-*` directory and starts a detached cleanup worker. It prints that directory, which holds `cleanup.log`, `result.json` and `README.txt`. The worker:
+
+- first records `state: started`;
+- removes recorded AIRK agent entries in project files;
+- runs `airk runtime uninstall`, which stops the service and removes the runtime payloads and the launcher;
+- removes the AIRK-owned PATH entries, profile blocks and wrapper, deletes a startup file AIRK created only when removing its owned blocks leaves it empty apart from whitespace, and removes the Workbench sessions;
+- writes `complete` or `needs_attention`.
+
+The result is also mirrored to `extension-uninstall/last-result.json` in the native state directory, which survives uninstall. A `started` result with no running worker means the cleanup was interrupted; it is never reported as success. Reinstall AIRK and run **AIRK: Show Last Uninstall Result**, or read the files above. A later activation warns once when the last cleanup needs attention.
+
+Uninstall deliberately preserves:
+
+- project index data and service metadata;
+- user-wide agent configurations you added manually;
+- the temporary diagnostics directory;
+- exports, backups and evidence already sent to agent providers.
+
+To remove index data first, use **AIRK: Review and Remove AIRK Data** or unregister projects in Management (see [installation and evidence privacy](#installation-and-evidence-privacy)). To remove only the command manually, delete the marked blocks or PATH entry and the extension storage's `service-cli` (or legacy `cli`) directory. Do not delete the sibling index directories just to remove the command.
+
+Windows tests exercise executable discovery and registry-value handling through an isolated registry double. POSIX profile-generation fixtures run on Windows; execution fixtures run on POSIX hosts. These checks do not establish clean-machine macOS/Linux, remote-host or installed-editor qualification.
+
+## Runtime and distribution
+
+A Node extension host can launch the native AIRK process. Workspace extensions run alongside workspace files; remote windows need the helper on that remote host, not a local path pretending to read remote source. A pure browser extension cannot directly host the current native stack. This follows the documented [extension host model](https://code.visualstudio.com/api/advanced-topics/extension-host).
+
+Package platform-specific helpers for Windows, macOS and Linux. VS Code supports target-specific VSIX packages, including Windows/Linux x64 and ARM64 plus macOS x64 and ARM64. Bundle the right executable and dependency notices so users do not install Docker, Rust, C/C++ tools or Python. Extension updates must preserve a stable helper launch path for separately configured agents. Platform and macOS signing/notarization requirements still need packaging qualification. [Platform packaging documentation](https://code.visualstudio.com/api/working-with-extensions/publishing-extension) supports this delivery approach; the ease-of-use assessment is our inference.
+
+## Vector search
+
+From 1.2.2, the extension continues pending semantic batches after **Index now** and on trusted workspace reopen, even with the dashboard hidden. A background service is not required. The collection and status bar show **Building semantic index** or **Semantic indexing pending**, with refreshed completed/selected counts after each batch. Manual mode still completes already requested semantic work. Pause prevents new batches; a running batch finishes first. Failures stop retries until Resume or a new index request. Closing a folder or changing storage prevents another batch against the old binding.
+
+From 1.2.4, a structured native gate-contention outcome yields and retries through the scheduler instead of permanently blocking semantic work. Repeated contention backs off through 1, 2, 4, 8, 16 and 30 seconds; progress, manual retry and resume reset it. Classification does not depend on stderr wording or Rust backtraces. Other failures remain explicit. Batch durations vary with the amount of evidence; unchanged counts during an active batch do not alone establish a stopped process.
+
+Each collection defaults to local vector indexing and hybrid retrieval. The **Vector search** panel switch saves a native collection policy and requests indexing. Turning it off changes default queries to lexical immediately; the next successful index omits vectors. Turning it on prepares the pinned MiniLM assets (about 91 MB) if absent, then indexes. Scheduled indexing publishes lexical/fact evidence first, then the native scheduler commits bounded vector batches. The panel shows pending, partial, ready or failed semantic coverage with completed and selected file counts. A paused collection keeps its pending work; Resume permits it to continue. Existing custom assets are preserved, bundled assets are size/digest checked and installed atomically without network access, and inference stays local. See [model setup and opt-out behavior](../local-models.md) and [semantic readiness](../current-index-runtime.md#semantic-readiness-and-deferred-work).
+
+## Storage and collection UI
+
+Use machine-scoped settings for user-selected storage. A folder picker should allow another local drive; defaults can use the extension's per-user global storage. Keep the chosen absolute path out of shared repository configuration. Show its free space, total AIRK usage and each collection's current/reclaimable bytes, last index, queued work, root binding and extraction status.
+
+Each registered workspace folder gets a stable collection ID. The current VS Code provider publishes one MCP definition for the window, with additional configured roots and no implicit default in multi-root mode; callers choose a configured project. A collection spanning multiple roots uses explicit aliases described in [collections](../collections.md). Choosing a common data directory never authorizes cross-collection retrieval.
+
+Current limitations: saving a folder as a workspace preserves its native index binding but workspace-keyed saved searches may not follow; closing/removing a folder leaves native watching active until explicitly changed. Window-scoped settings in folder settings do not apply in multi-root windows, and a recognized manual AIRK entry in one folder can suppress the provider for the window. The [dated scenario analysis](../research/vs-code-folders-workspaces.md) and [proposed 1.9.0 plan](../research/plan-v190.md) distinguish these current behaviors from planned fixes. Editor `files.exclude`/`search.exclude` do not replace AIRK's native ignore policy.
+
+Implemented settings and commands:
+
+| Control | Proposed default / behavior |
+|---|---|
+| airk.storage.path | Machine-scoped user-selected absolute folder; defaults to extension user storage |
+| airk.index.mode | debounced; choices manual, onSave, debounced, idle |
+| airk.index.quietMs | 2000 ms after the latest eligible change |
+| airk.index.maxDelayMs | 30000 ms before offering/beginning a queued bounded batch |
+| airk.index.minIntervalMs | 1000 ms minimum gap between automatic jobs; the quiet period still applies |
+| airk.index.idleMs | 10000 ms without editor activity in idle mode |
+| airk.storage.maxBytes | User-selected soft total budget; never silently deletes active evidence |
+| Index Now / Reindex Collection | Immediate queued incremental update, automatically promoted to a full rebuild for a recognized older index format / deliberate full rebuild |
+| Diagnose & Repair | Inspect the selected helper, collection readiness, queue and recent failures; verify retained data, retry, resume window indexing or confirm a rebuild |
+| Pause Auto-index / Resume | Persist native pause state and retain pending revisions; explicit indexing remains available |
+| Manage Collections / Trim | Preview usage and reclaim plan; remove selected derived state |
+| Choose Index Storage Folder | Select a new location; reindex there and retain prior collections without moving/deleting them |
+| Show Extraction Policy / Configure Extraction Policy | Inspect configured versus published selection; validate a bounded JSON policy and confirm saving it for the next successful index |
+
+The indexing-mode Quick Pick offers Manual, After edits settle, On save and When idle. Advanced timings remain separate settings. The footer shows active-folder coverage or scanning/indexing/failure/storage-budget state; the tooltip explains queued work and automatic pause. **AIRK: Usage & Savings** opens collection-scoped aggregate reports with explicit counterfactual-estimate labels.
+
+The 1.3.0 candidate accumulates changed paths and submits them to the native scoped-update path after the editor quiet period. It marks prior coverage out of date without launching a coverage inventory for each event or completed index. Explicit and five-minute inventories remain; a complete accepted observation of stale/missing/removed sources queues a full pass, respecting mode and pause. A scoped pass does not prove complete live coverage. Returned readiness updates the vector display, and stage timings remain in AIRK output. Bounded semantic drains reuse a model for up to eight batches and a 60 s soft budget; pause or new source work is checked between commits. An edit during a drain sends one durable queue notification so source work can take the next turn.
+
+Coverage and usage commands open themed report panels with selected metrics as cards and tables. **Open as JSON** preserves the full native diagnostic output. Panels load no workspace resources. Coverage accepts only the fixed JSON-open message. Usage & Savings additionally accepts validated fixed actions for refresh, 7/30-day selection, exports, recording, clearing, feedback, explicit imports and cost scenarios. Mutations recheck trust and captured collection/storage identity; clearing requires confirmation.
+
+The AIRK Activity Bar opens a **Dashboard** with a card for every active workspace collection. Each card shows indexing state, measured coverage, current/eligible/stale/missing counts, extraction failures and direct **Index now**, **Reindex** and **Details** buttons. Expand **Storage and last index** for disk usage and paths. A mode selector and pause/resume button control automatic indexing; storage selection, agent setup, reports, cleanup and extraction controls remain available in the sidebar. Coverage is a measured inventory result, not a percentage of indexing progress; pending scans retain labeled previous counts without claiming fresh coverage.
+
+**Diagnose & Repair** keeps current observations separate from previous failures and can copy a bounded report without requesting source contents. **Verify retained data** checks source and extraction inputs at one exact publication, with cancellation and a two-minute time budget; incomplete checks and oversized inputs remain explicit. Retry and rebuild actions recheck trust and the collection/storage binding. Recent helper and failure events persist locally across reloads. From 1.3.0, a scheduler join timeout continues waiting for the same queued revision. A later confirmed native completion supersedes that specific editor wait failure in the assessment, without hiding partial retained-input verification or unrelated failures. See [diagnosis and recovery](../operations.md#recovery) for the controls and remaining repair limits.
+
+Verification is disabled while this editor indexes or enriches the selected collection and stops if work starts before a page/result is accepted. Diagnostics also flag saved entries in known project agent configurations and the Codex user configuration that use a different helper or storage binding. Unsupported or bounded configuration checks remain partial. Review changes through **Connect Coding Agent**; a saved matching configuration does not verify a live connection, and diagnostics do not rewrite settings.
+
+The managed `cli/bin` copy is recognized by a matching SHA-256 digest against the verified extension helper, after a successful helper probe. Only these managed paths are compared; unavailable comparisons remain unresolved. Structured native errors display their message while retaining bounded raw stderr for diagnosis, including errors whose escaped paths exceed the display limit.
+
+Each collection’s **AIRK helper check** section shows Not checked, Checking MCP, Verified with a tool count, or Verification failed with an error. **Check AIRK helper** checks the native handshake and tool inventory without waiting for indexing. If no index has been published, the check reports indexing pending; it does not claim search evidence is ready. The result and last-check time stay in the panel for this editor session; **View details** opens the cached diagnostic result. This verifies the helper, not an agent’s live connection.
+
+The collection card shows elapsed initial indexing time and native progress observations: processed files, committed files, and whether a committed publication is available to MCP. A long quiet interval is shown as a warning, not a definitive stuck diagnosis. The editor stops an index process after ten minutes with no progress event, while the one-hour total process cap still applies. Scheduled semantic batches have a twenty-minute cap. Earlier committed evidence remains available; inspect **Diagnose & Repair**, then retry or Resume after correcting a failure. MCP definition resolution no longer waits for indexing to complete. Search cannot return indexed evidence before the first publication, and incomplete discovery remains explicit in its results.
+
+While semantic indexing runs, the Vector search section shows a determinate bar and completed/remaining selected-file counts from the last committed batch. A continuously animated working indicator and updating elapsed time show that the current batch is active; native batch-stage observations distinguish preparation from vector computation and publication. The completed count advances only after a durable commit, so the bar does not invent per-file publication. The twenty-minute batch limit is surfaced there only after a batch has run for three minutes. Reduced-motion settings stop the animation without hiding the working label.
+
+Under **Agent connections**, the **VS Code registration** switch controls automatic AIRK server definitions on this extension host (`airk.mcp.registrationEnabled`, a machine-scoped user setting). Turning it off prevents new provider resolutions; it does not pause indexing, remove manual server entries or disable external agents. **Connect coding agent…** and **Manage Agent Connections** open the agent picker and setup guide. The separate **VS Code / Copilot MCP controls** button only manages VS Code connections; other agents use their own configuration.
+
+The collapsed **Collections** view also lists inactive stored collections and retains its existing confirmed removal action. Both views read cached observations and bounded native collection metadata; they do not traverse sources on repaint. Dashboard collection actions bind both the collection ID and storage path, so selecting a card never indexes a different active editor's root. Stale storage bindings are rejected.
+
+The **Get Started with AIRK** walkthrough in VS Code's Getting Started page links four steps: trust and index the workspace (with optional storage selection), choose an indexing mode, set up a coding agent, and verify the native MCP connection. Its steps complete when the linked commands run; opening setup does not establish a connection; follow the guide to create or merge configuration, reload the client and verify its tools. The walkthrough uses packaged local illustrations and does not load workspace content.
+
+The [extraction-policy controls](../extraction-policy.md) show the configured digest, published applied digest and pending-index state. Configuration captures a private copy of the selected JSON file, validates and previews it, then saves those same bytes only after confirmation. It offers an explicit **Index now** action afterward. Reading policy does not index; saving does not reinterpret existing evidence. The selected file and workspace/client settings are unchanged, and temporary input is removed on cancellation or failure. Existing native adapter capabilities remain the limit of each override.
+
+[Workspace coverage](../index-coverage.md) implements the current/eligible file percentage with a native, bounded inventory. Clicking the status item opens grouped AIRK controls, including **Index Now** for the active editor's folder; multi-root workspaces without an active match prompt for a folder. The tooltip shows stale/missing/extraction-failed/capacity counts and unsaved editor documents. New disk events show **Coverage pending rescan** until the next five-minute inventory or explicit refresh. Incomplete or failed inventories remain unknown; zero eligibility never becomes 100%. **AIRK: Open Controls** is also a palette command. Its entries use the same names as the palette titles, with a one-line description of each command.
+
+During a source scan, semantic readiness is labeled as the last observed publication. The setup label says source files are being indexed before vector indexing. Elapsed time, committed/processed counts, capacity or collection waits, and quiet-scan warnings appear beside the indexing buttons with an animated working indicator during active scans. These observations do not prove that a native scan is advancing between events.
+
+The [1.3.2 empty-index fix](../releases/release-1.3.2.md) enables progressive publications for initialized empty indexes and empty full rebuilds, including first-use configuration changes. Previously those paths could prepare all source evidence before the first committed-file update. Populated full/configuration rebuilds retain their atomic publication boundary; this change does not add a time bound to recovery of a previously interrupted publication. On 2026-10-22, the reporter confirmed that the 1.3.2 Windows x64 VSIX resolved the issue in the reported two-project VS Code setup; see the release notes for the scope of that manual acceptance.
+
+## Scheduler and space behavior
+
+During active indexing, the Collections row and status bar show committed source-file counts or published semantic-file percentage. Their coverage tooltip retains the separate measured saved-file inventory. A completed source pass invalidates the previous coverage percentage until the next scheduled or explicit inventory.
+
+The editor scheduler checks pending work and deadlines again when a timer fires. An early callback schedules another wake-up instead of starting unrequested semantic work. Source requests and semantic retry intervals remain independent; pause, storage-selection holds and genuine failure blocking still apply.
+
+**Reclaim Unreferenced Index Objects** runs bounded native current-object maintenance. The current head owns its source, extraction, metadata, model and cache objects; cleanup removes only verified unreferenced objects under the exclusive collection gate. A busy reader/writer or invalid ownership state is reported explicitly. History, checkpoint and generation-retention controls have been removed in 1.2. See [current cleanup](../retention.md).
+
+Filesystem events, including ignore-rule changes, queue incremental work. Bursts coalesce by collection; rapid agent edits reset the quiet timer and a maximum batch delay bounds debounced/on-save waiting, subject to job completion/minimum intervals. Idle mode also waits for editor activity to settle and deliberately does not use the maximum batch delay to override idleness. On-save mode queues saved documents; external edits wait for Index Now unless an independently started native watch worker is running. Native ingestion remains authoritative for ignores. Editor jobs submit to the [durable native queue](../native-scheduler.md), whose operating-system worker locks serialize each collection independently while different projects can run concurrently within storage-root execution budgets. An explicit `schedule run --watch` process drains requests and periodically reconciles registered roots without an editor; no system service is automatically installed.
+
+Edits arriving during a build queue a subsequent pass. Repeated explicit clicks share the pass already handling that revision. Pause prevents automatic jobs and retains queued revisions; an in-progress writer finishes. Explicit indexing and first server startup for a missing collection can run while paused or in manual mode; reconnecting an indexed server reads the committed current head while edits settle. Closing a folder drops its editor queue while allowing submitted native work to finish. Failed jobs preserve native pending state without retry loops. Before Applying, failed preparation preserves the committed head. Interrupted Applying requires captured replay before reads resume. Submitted/completed revision watermarks persist across helper exits; event notifications still in the editor's debounce buffer are reconciled by a fresh inventory after reopening.
+
+Coverage refreshes are separate background jobs: one scan at a time at startup, every five minutes and on explicit refresh. Edits invalidate observations without an extra inventory; index completion does not launch another scan. Reconciliation is attempted once per published generation and exact binding until coverage is healthy, so persistent failures do not retry on every inventory. Storage/folder changes invalidate old bindings. Coverage refresh does not restart MCP clients or walk sources during status-bar repaint. Native scan limits and cache identity rules are documented in [workspace coverage](../index-coverage.md).
+
+**Choose Index Storage Folder** opens even while indexing is active. It holds new editor indexing jobs while the picker is open and, after selection, visibly waits for the active pass to settle before updating storage. Cancelling or rejecting an invalid destination releases the hold without changing storage or the user's pause state. Repeated clicks share one picker. Existing indexes remain in the old location; the new destination gets independent indexes and connected agents must restart. Automatic indexing starts with the default per-user storage, so the walkthrough does not require storage selection to beat the startup timer.
+
+The soft byte budget measures collection-state bytes, not source workspace size or helper-cache bytes. At the limit, automatic indexing blocks until resumed; manual indexing may exceed it. A successful batch can cross the soft limit. Removal uses native validated collection maintenance, protects collections open in this window and refuses active native requests. Idle MCP processes hold no revision lease. There is no automatic collection deletion. Choosing another storage folder creates independent state there; the native relocation command instead verifies and transfers the selected current collection.
+
+## Agent setup and trust
+
+The extension registers a trusted collection-scoped VS Code MCP definition provider. Other agents require separate APIs/configuration. [The agent matrix](../agent-integration.md) records the verified routes. Do not assume registering a server in VS Code also configures Claude Code, Codex or another installed agent.
+
+Workspace trust gates native process execution/indexing and MCP definitions. Untrusted windows expose no servers and refuse indexing/setup/maintenance commands. [Workspace trust documentation](https://code.visualstudio.com/api/extension-guides/workspace-trust) provides the integration contract. This is product design, not a request to alter trust or approval settings in the user's current editor.
+
+Helper bytes/version/platform are checked before use. A version/digest-specific per-user cache keeps generated agent launch paths valid after extension-directory replacement. Refresh generated configuration after helper upgrades. The connection guide can create a missing Codex project configuration after its explicit create action. Existing TOML settings are preserved for manual merging. Claude Code, Gemini CLI and Antigravity offer project JSON installation that preserves other settings. Copilot has an explicit registration-enable action. No agent is silently enabled. VS Code provider registration does not configure another agent. No extension runtime network service or telemetry is added. The pinned MIT-licensed Microsoft `jsonc-parser` dependency supports targeted JSON edits and is packaged with its original license.
+
+## Remaining acceptance
+
+Test clean installation and helper startup on Windows/macOS/Linux; storage selection and relocation; multi-window collection isolation; 100 rapid edits producing bounded work; changes during indexing; pause/resume; disk-full recovery; collection removal preserving source; and actual MCP links for the target clients. Measure cold-start, CPU/RSS, disk growth, indexing delay and DiskANN recall. Keep runtime behavior in the Rust kernel so the extension remains replaceable.
+
+### Storage budgets and current cleanup
+
+The sidebar's **Storage limits…** control edits the selected collection quota (default **256 GiB**) and shared storage quota (default **500 GiB**). These are ceilings, not disk reservations. The 1.2 rebuild boundary starts fresh collection settings. Temporary preparation and recovery work must be admitted before publication. A failed capacity admission reports the limit and leaves the committed head intact unless Applying already requires recovery.
+
+**Reclaim Unreferenced Index Objects** performs bounded cleanup. Post-commit cleanup failures are reported separately from a successful index commit. Review limits or reclaim eligible objects, then Resume or Index now; new file events do not restart a capacity-blocked job. There is no retained-generation policy or background retention timer.
+
+### Shared workspaces and agents
+
+Two VS Code windows using the same canonical workspace and storage folder share a collection. The native queue coalesces pending work for the same collection and gives each collection an independent worker. Different projects sharing the storage root can index concurrently within the four execution slots and CPU/memory budgets. Different workspace roots have independent collection bindings and evidence. Each MCP request holds one current read gate through response materialization; writers report busy while conflicting requests run. Idle processes hold no gate. Saved collection settings and native automatic-index pause state are shared; panel refresh and local scheduler state are per window. Separate storage roots or remote extension hosts have independent indexes and can duplicate storage/work.
+
+### Agent connection guide
+
+**Connect Coding Agent** and **Manage Agent Connections** both open an agent picker. The persistent guide keeps the workspace/root, collection, storage, configuration and reload instructions together. **VS Code / Copilot MCP Controls** is a separate command and sidebar button. It never configures Codex or another agent.
+
+For local Codex projects, the guide can create a missing `.codex/config.toml` with an exclusive create operation. It refuses existing files, unsaved editor contents and redirected `.codex` directories. Existing project settings can be opened beside the guide for manual merging. Remote extension hosts retain manual setup with explicit host guidance. Client-managed global settings and trust/tool policies remain unchanged.
+
+Opening setup does not force indexing. **Check AIRK helper** indexes and probes the selected collection; the guide separately supplies a prompt for checking the actual agent tools. Configuration creation and helper health are never reported as an agent connection. Stale workspace/storage guides refuse actions. The original design and qualification are recorded in the [1.1.2 release notes](../releases/release-1.1.2.md).
+
+Claude Code (`.mcp.json`), Gemini CLI (`.gemini/settings.json`) and Google Antigravity (`.agents/mcp_config.json`) offer **Install for…**. The installer adds only a missing collection-specific entry, preserves comments and policies, and leaves an identical entry unchanged. Conflicting entries, malformed/duplicate JSON keys, unsaved edits, redirected files/directories, hardlinks and files over 1 MiB require manual review. Existing files are edited and saved through VS Code; save failures remain visible. **Enable AIRK for Copilot** enables the machine-scoped registration setting and opens VS Code’s MCP controls. The stable API does not expose a start-server operation, so the user completes start/trust prompts there.
+
+The **Usage & Savings** button on each collection opens that collection directly. Plain-language estimates lead the report; developer counters are expandable. Daily activity, comparison coverage, longer-term native totals, session/task evidence and cost assumptions remain distinct. See [measuring AIRK's value](../usage-evaluation.md).
+
+From 1.2.3, the bundled helper protects active scan captures from cleanup between progressive batches, fixing the `retained object missing` failure on fresh or incremental scans. Retry **Index now** after updating; no wipe is needed for this failure. The dashboard qualifies semantic readiness as applying to committed files while discovery remains incomplete.
+
+## Independent project workers (1.3.1)
+
+Different project collections in the same storage root can index concurrently within the four native execution slots and their CPU/memory budgets. Windows opening the same collection share its worker. Source joins advance only the selected collection; foreign source work does not interrupt semantic drains. The dashboard distinguishes a busy project from exhausted indexing capacity. Active older global workers require restarting older AIRK editor/watch workers before retrying. See [native scheduling](../native-scheduler.md) and [1.3.1 release notes](../releases/release-1.3.1.md).
+
+Bundled-model helpers can exceed 256 MiB. Managed CLI identity comparison retains streaming SHA-256, regular-file and identity checks, cancellation and its five-second deadline, with a 512 MiB executable ceiling. An exhausted comparison remains unverified.
+
+### Presentation, file libraries and source context (1.5.1)
+
+The upper-right **Themed** toggle defaults to the AIRK palette. Turn it off to inherit VS Code colors while keeping the same improved panels, spacing, controls and responsive layout. The choice persists per workspace; high-contrast themes retain editor colors. Management sits directly after Strategies. Only the content pane scrolls; the header and navigation stay available. Project summaries expose primary cached observations in cards, with publication identity and inspection details in a disclosure.
+
+Planner lists the configured plan folder (default `.airk/plans`), Studio lists `.airk/strategies`, and Saved Searches lists `.airk/recipes`. Choose a workspace root, navigate subfolders with breadcrumbs or Up, then choose **Load** or double-click a file. Folder pages are bounded to 100 examined entries and 24 KiB of entry metadata, with explicit continuation; paging stops at 10,000 entries and recommends smaller folders. Browsing creates no directories. Linked/redirected local paths, traversal, foreign roots, invalid formats and oversized imports are refused. Remote enumeration belongs to the filesystem provider; displayed pages and loaded bytes remain bounded, with provider-reported link/type checks. Remote behavior is not qualified by local Windows results.
+
+The source-file strip remembers the last source file per project, even when Explorer takes editor focus. **Choose file…** offers open editor files and another-file browsing. Files in another open AIRK project name the project switch explicitly; files outside registered open projects cannot be examined as that project's evidence. Open a file in the editor and return to Explorer to use its file-based tools. Outline and Evidence › Inspector use the selected file's published indexed evidence, not unsaved text. Inspector loads it automatically when no citation is selected; **Inspect selected file** refreshes it or switches back from a specific citation opened with **Inspect** on a search result, fact or checked citation. A file absent from the published index reports an error. Source links, saved plans and untitled plan drafts open beside Explorer rather than replacing it. Workbench, which lives in the secondary sidebar, opens cited sources in the active editor group instead of splitting the editor (1.7.6). General project search retains its own scope.
+
+
+Review follow-up: changed source paths are prioritized ahead of documentation, declaration samples are spread across files, and test directories are searched before applying reference-hit limits. Changed test files appear even without indexed declarations and are labeled as Git observations. Native reference replies retain their nested publication identity; mismatched publications still fail closed. Reports disclose inspected-path/declaration limits, incomplete inventory and Git availability. Review considers uncommitted changes and textual candidates, not resolved callers or executed test coverage.
+
+Source result text uses normal weight and a thin outline across the shared fact, excerpt and Review views. Metadata stays separate from quoted source text.
+
+## Concurrent evidence requests (1.8.5)
+
+Management → Service → Concurrent requests… sets the service-host policy: default 16, choices 4, 8, 16, 32 and 64. MCP admission, independent native channel pools and project-worker processing use the same allowance, with one extra status/control slot. Native owners acknowledge live changes before the policy is saved; subsequent frontend requests observe it. Reductions drain accepted work, and finite queues and typed unsubmitted retry receipts remain authoritative. See [service resources](../service-resources.md#concurrent-evidence-requests-in-185) and [candidate validation](../releases/release-1.8.7.md#candidate-1-8-5).

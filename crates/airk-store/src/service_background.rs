@@ -105,6 +105,13 @@ pub(super) fn debit(
 }
 
 impl ServiceRegistry {
+    /// Exact retained phase intent, including paused or presently ineligible
+    /// work. A scheduler's empty due page is not evidence of quiescence.
+    pub fn project_background_pending(&self, project: ProjectBinding) -> Result<bool> {
+        self.get(project)?;
+        Ok(self.connection.query_row("SELECT EXISTS(SELECT 1 FROM service_background WHERE project=?1 AND (source_pending=1 OR semantic_pending=1)) OR EXISTS(SELECT 1 FROM service_setup_pending WHERE project=?1)",[project.to_string()],|row|row.get(0))?)
+    }
+
     /// Only reviewed native setup may create reserved storage during worker startup.
     pub fn project_setup_pending(&self, project: ProjectBinding) -> Result<bool> {
         Ok(self.connection.query_row("SELECT EXISTS(SELECT 1 FROM service_setup_pending WHERE project=?1) OR EXISTS(SELECT 1 FROM service_jobs WHERE project=?1 AND kind='model_setup' AND state IN('pending','running'))",[project.to_string()],|row|row.get(0))?)
@@ -179,7 +186,7 @@ mod tests {
     use super::*;
     use airk_core::{
         identity::{Incarnation, Sha256Digest},
-        service::{JobOutcome, JobState, ProjectRegistration},
+        service::{JobOutcome, JobState, ProjectRegistration, RequestKey},
     };
     fn nonce(value: u16) -> Incarnation {
         let mut bytes = [0u8; 16];
@@ -198,6 +205,58 @@ mod tests {
         let mut lease = ProjectLease::acquire(root.path(), project.binding)?;
         registry.admit_worker(&mut lease)?;
         Ok((root, registry, lease))
+    }
+    #[test]
+    fn exact_project_intent_observation_keeps_paused_and_delayed_phases_visible() -> Result<()> {
+        let (root, mut registry, lease) = fixture()?;
+        let project = lease.identity().0;
+        let other = ProjectRegistration::new(
+            "/other-source".into(),
+            "/other-state".into(),
+            "other".into(),
+        )?;
+        registry.register(&other)?;
+        assert!(!registry.project_background_pending(project)?);
+        for kind in [JobKind::ModelSetup, JobKind::Index, JobKind::Vectors] {
+            registry.set_background_pending(&lease, kind, true)?;
+            registry.pause(project, true)?;
+            assert!(registry.due_background_jobs(None, 0, 32)?.is_empty());
+            assert!(registry.project_background_pending(project)?);
+            assert!(!registry.project_background_pending(other.binding)?);
+            let reader = ServiceRegistry::open_saved(root.path())?;
+            assert!(reader.project_background_pending(project)?);
+            assert!(!reader.project_background_pending(other.binding)?);
+            drop(reader);
+            registry.set_background_pending(&lease, kind, false)?;
+            assert!(!registry.project_background_pending(project)?);
+            registry.pause(project, false)?;
+        }
+        let (namespace, epoch) = registry.request_epoch()?;
+        let caller = nonce(9);
+        let held = registry.enqueue(
+            project,
+            caller,
+            &RequestKey {
+                namespace,
+                epoch,
+                nonce: caller,
+            },
+            JobKind::Inspect,
+        )?;
+        registry.set_background_pending(&lease, JobKind::Vectors, true)?;
+        assert!(
+            registry.due_background_jobs(None, 0, 32)?.is_empty(),
+            "accepted inspection delays background admission"
+        );
+        assert!(registry.project_background_pending(project)?);
+        assert_eq!(
+            registry.job(held.id)?.state,
+            airk_core::service::JobState::Pending
+        );
+        registry.set_background_pending(&lease, JobKind::Vectors, false)?;
+        assert!(!registry.project_background_pending(project)?);
+        assert!(!registry.project_background_pending(other.binding)?);
+        Ok(())
     }
     #[test]
     fn reviewed_registration_persists_setup_and_source_fallback_without_duplicate_work()

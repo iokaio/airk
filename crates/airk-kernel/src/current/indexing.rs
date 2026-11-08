@@ -423,6 +423,30 @@ impl Kernel {
         self.status()
     }
 
+    /// Initialize an explicitly staged legacy destination without scanning its
+    /// source roots or opening a newly selected embedding model.
+    pub(crate) fn bootstrap_legacy_adoption(
+        &self,
+        writer: &WriterLock,
+        quota: &Quota,
+        configuration: &CollectionConfiguration,
+        reservation: &airk_store::quota::Reservation,
+    ) -> Result<CurrentScope> {
+        ensure!(
+            self.service_collection.is_some(),
+            "legacy adoption requires service storage"
+        );
+        ensure!(
+            configuration.model.is_none(),
+            "legacy adoption cannot select a new model"
+        );
+        ensure!(
+            self.current_scope()?.is_none(),
+            "legacy adoption requires a fresh destination"
+        );
+        self.bootstrap_current(writer, quota, configuration, 1, reservation)
+    }
+
     fn bootstrap_current(
         &self,
         writer: &WriterLock,

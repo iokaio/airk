@@ -12,6 +12,19 @@ spec.loader.exec_module(plan)
 
 
 class PlanTests(unittest.TestCase):
+    def test_current_native_selection_uses_shipping_features_and_separate_component_compile(self):
+        workflow = (Path(__file__).parents[2] / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        regression = next(line for line in workflow.splitlines() if "--name platform-regressions --" in line)
+        self.assertIn("-p airk-cli --no-default-features --features local-inference --lib",regression)
+        self.assertIn("--profile ci --test-threads 2",regression)
+        self.assertIn("cargo check -p airk-cli --no-default-features --all-targets --locked --target ${{ matrix.target }}",workflow)
+        extended = (Path(__file__).parents[2] / ".github/workflows/qualification.yml").read_text(encoding="utf-8")
+        self.assertNotIn("provision-onnx-runtime.py",extended)
+        self.assertIn("target: x86_64-unknown-linux-gnu",extended)
+        self.assertIn("target: x86_64-pc-windows-msvc",extended)
+        self.assertIn("--target ${{ matrix.target }} --download --download-tools --build --parallel 2 --github-env",extended)
+        self.assertIn("--destination artifacts/qualification/runtime --profile release",extended)
+
     def test_only_verified_pinned_repair_can_skip_rebuilding_on_main(self):
         with patch.object(plan, "repair_scope", return_value={}) as verified:
             for event in ("pull_request", "push"):
@@ -143,6 +156,8 @@ class PlanTests(unittest.TestCase):
                       ["crates/airk-core/src/lib.rs", "Cargo.lock"]):
             with self.subTest(paths=paths):
                 self.assertTrue(plan.requires_full_main(paths))
+        for filename in ("provision-static-onnx-runtime.py", "static-onnx-runtime-lock.json", "provision-static-onnx-tools.py", "static-onnx-tools-lock.json", "static-onnx-link-closure.py"):
+            self.assertTrue(plan.requires_full_main(["scripts/" + filename]))
         for paths in (["crates/airk-core/src/lib.rs"], ["docs/a.md"], ["packages/vscode/src/native.ts", "scripts/ci-plan.py"]):
             with self.subTest(paths=paths):
                 self.assertFalse(plan.requires_full_main(paths))

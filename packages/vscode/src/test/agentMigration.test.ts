@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
+import {createHash} from 'node:crypto';
+import {globalConfigDeclarations} from '../globalAgentInventory';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { parse } from 'jsonc-parser';
-import { LaunchSpec, unifiedEntry, assistanceEntry, serializeServers } from '../model';
+import { LaunchSpec, unifiedEntry, assistanceEntry, serializeServers, RETRIEVAL_TOOLS } from '../model';
 import { launchDescriptorPath } from '../explorerAssistanceLaunch';
-import { LocalAgent, hasUnifiedVscodeConfig, migrateAgentConfig, migrateLocalAgents } from '../agentMigration';
+import { LocalAgent, migrateStandaloneHttpEntry, httpConfigurationConnectionId, refreshHttpAgentConfig, hasUnifiedVscodeConfig, migrateAgentConfig, migrateLocalAgents } from '../agentMigration';
 
 const storage=path.resolve('fixture-storage');
 const spec:LaunchSpec={root:path.resolve('fixture-source'),dataDir:path.resolve('fresh-data'),collection:'project-fixture',name:'fixture',
@@ -125,6 +127,9 @@ test('workspace migration skips missing files, refuses linked directories and re
     await fs.writeFile(path.join(root,'.mcp.json'),json('claude',old));
     const failures=await migrateLocalAgents(local,storage,()=>{},async()=>{throw new Error('unsaved edits');});
     assert.ok(failures.some(message=>message.includes('unsaved edits')));
+    const unconfirmed=await migrateLocalAgents(local,storage,()=>{},async()=>{});
+    assert.ok(unconfirmed.some(message=>message.includes('save is unconfirmed')),'A fulfilled editor save callback is not disk persistence proof');
+    assert.equal(await fs.readFile(path.join(root,'.mcp.json'),'utf8'),json('claude',old));
     await assert.rejects(migrateLocalAgents(local,storage,()=>{throw new Error('lost trust');},async()=>{}),/lost trust/);
     await fs.unlink(path.join(root,'.mcp.json'));
     await fs.rename(path.join(root,'.codex'),path.join(root,'redirected'));
@@ -169,4 +174,53 @@ test('startup migrates recognized source scopes even when every prior local rece
             assert.throws(()=>migrateAgentConfig(agent,current,storage,source,true,undefined,true),/Unrecognized/);
         }
     }
+});
+
+test('modern native HTTP refresh preserves complete scoped authority and policies without a synthetic source spec',()=>{
+    const id='a'.repeat(32),directory=path.resolve('fictional-native-private'),url='https://127.0.0.1:57421/mcp';
+    const info:any={schema:1,connection_id:id,endpoint:{schema:1,installation:'b'.repeat(64),user:'fixture',namespace:'c'.repeat(32),generation:3,service_instance:'d'.repeat(32),executable_sha256:'e'.repeat(64),url,ca_sha256:'f'.repeat(64),certificate_sha256:'1'.repeat(64),state:'ready',predecessor_digest:null},selection:{kind:'combined',selection:{schema:1,context_key:'2'.repeat(64),namespace:'c'.repeat(32),expected_catalog_revision:7,grant_id:'grt_'+'3'.repeat(32),expected_grant_revision:2,project_ids:['prj_'+'4'.repeat(32)],index_ids:['idx_'+'5'.repeat(32)]}},ca_certificate_file:path.join(directory,'ca.pem'),credential_file:path.join(directory,'credential-'+id+'.token')};
+    const oldUrl='https://127.0.0.1:57422/mcp',variable='AIRK_MCP_TOKEN_'+id.toUpperCase();
+    for(const agent of ['codex','claude','copilot'] as const){
+        const source=agent==='codex'?`model = "keep-model"\n[mcp_servers.airk]\nurl = "${oldUrl}"\nbearer_token_env_var = "${variable}"\nenabled = false\n`:JSON.stringify({keep:'user', [agent==='copilot'?'servers':'mcpServers']:{airk:{type:'http',url:oldUrl,headers:{Authorization:agent==='copilot'?'Bearer ${input:airkToken_'+id+'}':'Bearer ${'+variable+'}','X-AIRK-Response-Mode':'full'},disabled:true},foreign:{command:'other'}}});
+        const before=structuredClone(info),after=refreshHttpAgentConfig(agent,source,info,oldUrl);assert.ok(after.includes(url));assert.ok(!after.includes(oldUrl));assert.deepEqual(info,before);
+        if(agent==='codex'){assert.ok(after.includes('keep-model'));assert.ok(after.includes('enabled = false'));assert.equal(httpConfigurationConnectionId(agent,{url:oldUrl,bearer_token_env_var:variable}),id);}
+        else{const value=parse(after),entry=value[agent==='copilot'?'servers':'mcpServers'].airk;assert.equal(entry.disabled,true);assert.equal(value.keep,'user');assert.deepEqual(value[agent==='copilot'?'servers':'mcpServers'].foreign,{command:'other'});assert.equal(httpConfigurationConnectionId(agent,entry),id);}
+        assert.throws(()=>refreshHttpAgentConfig(agent,source,{...info,connection_id:'0'.repeat(32),credential_file:path.join(directory,'credential-'+'0'.repeat(32)+'.token')},oldUrl));
+    }
+    assert.equal(httpConfigurationConnectionId('claude',{url:'https://example.invalid/mcp',headers:{Authorization:'Bearer ${'+variable+'}'}}),undefined);
+});
+
+function adoptedAliasInfo(serverKey:string,id:string,configurationReceipt:string,container=['mcpServers']):any{
+    const directory=path.resolve('fictional-native-private'),namespace='c'.repeat(32),root=path.resolve('saved-original-'+id[0]),original={binding:'1'.repeat(64),root,data_root:path.resolve('original-data-'+id[0]),collection:'original-'+id[0]},registration={...original,binding:'2'.repeat(64),data_root:path.resolve('adopted-data-'+id[0])};
+    const setup={caller:'d'.repeat(32),key:{namespace,epoch:1,nonce:'e'.repeat(32)},expected_catalog_revision:1,name:'Saved original',registration,sources:[{canonical_path:root,owner:true,aliases:[]}],setup_watch:false};
+    const digest='f'.repeat(64),plan={schema:1,setup,original_registration:original,origin_sha256:digest,config_sha256:configurationReceipt,executable_sha256:digest,quiescence_sha256:digest,archive_inventory_sha256:digest,original_publication_sha256:digest,source_inventory_sha256:digest};
+    const adoption={schema:1,operation_id:'d'.repeat(32),plan,publication:{schema:1,plan_digest:digest,archive_inventory_sha256:digest,original_publication_sha256:digest,current:`airk-r1:${namespace}:2:${digest}`,resource_sha256:digest,compatibility_sha256:digest},original_server:serverKey,no_default_project:true,configuration_claims:[{schema:1,origin_sha256:plan.origin_sha256,config_sha256:configurationReceipt,executable_sha256:plan.executable_sha256,selected_entry_sha256:digest,container_path:container,original_server:serverKey,no_default_project:true}]};
+    return {schema:1,connection_id:id,endpoint:{schema:1,installation:digest,user:'fixture',namespace,generation:1,service_instance:'d'.repeat(32),executable_sha256:digest,url:'https://127.0.0.1:57421/mcp',ca_sha256:digest,certificate_sha256:digest,state:'ready',predecessor_digest:null},selection:{kind:'imported_legacy',selection:{namespace,expected_catalog_revision:2,registration,configuration_receipt:configurationReceipt,grant:{grant:{id:'grt_'+'91'.repeat(16),host:digest,revision:1,revoked:false,memberships:[]},provenance:{kind:'imported_standalone_adoption',adoption}}}},ca_certificate_file:path.join(directory,'ca.pem'),credential_file:path.join(directory,'credential-'+id+'.token')};
+}
+for(const agent of ['codex','claude','copilot'] as const)test(`native standalone ${agent} aliases retain disjoint scopes, original names, comments and policies`,()=>{
+    const keys=['old.first','second_old'],fields=keys.map((key,index)=>({command:path.resolve('original-helper-'+index),args:['--root',path.resolve('source-'+index),'--collection','saved-'+index,'mcp'],env:{AIRK_CLIENT:agent,AIRK_MCP_RESPONSE_MODE:index?'terse':'full'},disabled:true,enabled_tools:['airk_search'],custom_setting:'keep-'+key}));
+    const prefix=agent==='codex'?'instructions = """unrelated instructions\n[mcp_servers.fake]\nstay unchanged"""\n':'// Original comment remains\n';
+    const before=agent==='codex'?prefix+fields.map((entry,index)=>`[mcp_servers.${JSON.stringify(keys[index])}]\ncommand = ${JSON.stringify(entry.command)}\nargs = ${JSON.stringify(entry.args)}\ndisabled = true\nenabled_tools = ["airk_search"]\ncustom_setting = ${JSON.stringify(entry.custom_setting)}\n[mcp_servers.${JSON.stringify(keys[index])}.env]\nAIRK_CLIENT = ${JSON.stringify(agent)}\nAIRK_MCP_RESPONSE_MODE = ${JSON.stringify(entry.env.AIRK_MCP_RESPONSE_MODE)}\n`).join('')+'[mcp_servers.airk]\ncommand = "foreign"\n':prefix+JSON.stringify({keep:'unchanged',[agent==='copilot'?'servers':'mcpServers']:{[keys[0]]:fields[0],[keys[1]]:fields[1],airk:{command:'foreign'}}});
+    const digest=createHash('sha256').update(before).digest('hex'),originalRows=globalConfigDeclarations(agent,before),connections=keys.map((key,index)=>adoptedAliasInfo(key,(index?'b':'a').repeat(32),digest,[agent==='codex'?'mcp_servers':agent==='copilot'?'servers':'mcpServers']));
+    let after=before;
+    for(const [index,key]of keys.entries())after=migrateStandaloneHttpEntry(agent,after,key,originalRows.find(row=>row.serverKey===key)!.fields,connections[index],digest);
+    assert.ok(after.startsWith(prefix));const rows=globalConfigDeclarations(agent,after);
+    assert.deepEqual(rows.find(row=>row.serverKey==='airk')?.fields,originalRows.find(row=>row.serverKey==='airk')?.fields);
+    for(const [index,key]of keys.entries()){
+        const row=rows.find(row=>row.serverKey===key)!;assert.ok(row);assert.equal(row.fields.command,undefined);assert.equal(row.fields.url,connections[index].endpoint.url);assert.equal(row.fields.disabled,true);assert.deepEqual(row.fields.enabled_tools,['search']);assert.equal(row.fields.custom_setting,fields[index].custom_setting);
+        const headers=row.fields[agent==='codex'?'http_headers':'headers'] as Record<string,string>;assert.equal(headers['X-AIRK-Response-Mode'],index?'terse':'full');assert.equal(httpConfigurationConnectionId(agent,row.fields),connections[index].connection_id);
+    }
+    const next={...connections[0],endpoint:{...connections[0].endpoint,url:'https://127.0.0.1:57422/mcp'}};
+    const refreshed=refreshHttpAgentConfig(agent,after,next,connections[0].endpoint.url,keys[0]),nextRows=globalConfigDeclarations(agent,refreshed);
+    assert.equal(nextRows.find(row=>row.serverKey===keys[0])!.fields.url,next.endpoint.url);assert.deepEqual(nextRows.find(row=>row.serverKey===keys[1])!.fields,rows.find(row=>row.serverKey===keys[1])!.fields);
+    assert.throws(()=>refreshHttpAgentConfig(agent,after,connections[1],connections[0].endpoint.url,keys[0]),/alias_unconfirmed/);
+    assert.throws(()=>migrateStandaloneHttpEntry(agent,before,keys[0],{...fields[0],command:'crossed'},connections[0],digest),/Unrecognized/);
+    assert.throws(()=>migrateStandaloneHttpEntry(agent,before,keys[0],fields[0],connections[1],digest),/origin_unconfirmed/);
+    assert.throws(()=>migrateStandaloneHttpEntry(agent,before,keys[0],fields[0],connections[0],'0'.repeat(64)),/origin_unconfirmed/);
+});
+
+test('a pre-service native alias literally named airk translates wildcard approval only from the old retrieval catalog',()=>{
+    const original={command:path.resolve('old-helper'),args:['mcp'],alwaysAllow:['*']},source=JSON.stringify({mcpServers:{airk:original}}),digest=createHash('sha256').update(source).digest('hex'),info=adoptedAliasInfo('airk','a'.repeat(32),digest);
+    const after=migrateStandaloneHttpEntry('claude',source,'airk',original,info,digest),value=parse(after);
+    assert.deepEqual(value.mcpServers.airk.alwaysAllow,[...RETRIEVAL_TOOLS]);assert.ok(!value.mcpServers.airk.alwaysAllow.includes('draft_plan'));
 });

@@ -15,6 +15,9 @@ const MAX_ARTIFACT_BYTES: u64 = airk_core::extraction::MAX_PAYLOAD_BYTES as u64;
 type SourceObserver<'a> = &'a mut dyn FnMut(&[u8]) -> Result<()>;
 pub const MAX_CATALOG_BYTES: u64 = airk_core::publication::MAX_INVENTORY_BYTES as u64;
 
+#[path = "legacy_saved.rs"]
+mod legacy_saved;
+
 /// A missing derived source/extraction object. This typed context is attached
 /// only to NotFound reads, never to corrupt, inaccessible or missing model state.
 #[derive(Debug)]
@@ -935,6 +938,7 @@ impl FileStore {
         put(self.directory(), "artifacts", &bytes, &object, reservation)?;
         let mut compact = artifact.clone();
         compact.retained = Some(ArtifactRef {
+            legacy_origin: None,
             source_encoding: None,
             payload_encoding: None,
             profile: None,
@@ -1029,6 +1033,7 @@ impl FileStore {
         )?;
         let mut compact = artifact.clone();
         compact.retained = Some(ArtifactRef {
+            legacy_origin: None,
             source_encoding,
             payload_encoding,
             object,
@@ -1177,6 +1182,12 @@ impl FileStore {
             .retained
             .as_ref()
             .context("retained reference missing")?;
+        if reference.legacy_origin.is_some() {
+            return Ok((
+                self.load_legacy_saved_artifact_bounded(entry, maximum)?,
+                None,
+            ));
+        }
         let bytes = read_object(
             self.directory(),
             "artifacts",

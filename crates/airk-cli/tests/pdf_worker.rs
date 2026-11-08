@@ -37,7 +37,7 @@ fn distributed_cli_indexes_pdf_in_its_worker_and_preserves_source_locations() ->
     let state = tempfile::tempdir()?;
     let original = pdf();
     fs::write(source.path().join("original.pdf"), &original)?;
-    let service = common::Service::start(source.path(), state.path(), "isolated-pdf");
+    let service = common::Service::reviewed(source.path(), state.path(), "isolated-pdf");
     service.configure(airk_cli::service_configuration::Draft::Vectors { enabled: false });
     let command = |args: &[&str]| -> anyhow::Result<Value> {
         common::call(source.path(), state.path(), "isolated-pdf", args)

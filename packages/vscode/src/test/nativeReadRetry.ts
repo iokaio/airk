@@ -31,7 +31,7 @@ export function readRetryReceipt(reply:any,expectedScope?:unknown):ReadRetryRece
 }
 
 /** Repeat one MCP read only after an explicit typed rejection, within its original budget. */
-export async function requestWithReadRetry(session:McpStdioSession,name:string,args:Record<string,unknown>={},timeout=120000,onReply?:(reply:any)=>void,expectedScope?:unknown):Promise<any>{
+export async function requestWithReadRetry(session:Pick<McpStdioSession,'request'>,name:string,args:Record<string,unknown>={},timeout=120000,onReply?:(reply:any)=>void,expectedScope?:unknown):Promise<any>{
     const deadline=performance.now()+timeout;
     while(true){
         const result=await session.request('tools/call',{name,arguments:args},Math.max(1,deadline-performance.now()));

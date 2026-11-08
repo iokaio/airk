@@ -4,7 +4,9 @@
 param(
     [switch]$SkipChecks,
     [switch]$OpenReview,
-    [switch]$RunEditorTests
+    [switch]$RunEditorTests,
+    [switch]$DownloadInputs,
+    [string]$StaticOrtDirectory
 )
 $ErrorActionPreference = 'Stop'
 if (-not $IsWindows -or [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne 'X64') { throw 'This script builds Windows x64. Use hosted CI for the other native platforms.' }
@@ -15,36 +17,40 @@ $airkOutput = Join-Path $airkRoot "artifacts/local/$airkRun"
 New-Item -ItemType Directory -Path $airkOutput | Out-Null
 function Invoke-AirkTool {
     param([string]$Tool, [string[]]$Arguments)
-    & $Tool @Arguments
+    if ($airkStaticEnvironment -and ($Tool -eq 'cargo' -or ($Arguments.Count -gt 0 -and $Arguments[0] -eq 'scripts/build-service-runtime.py'))) {
+        $airkWrappedArgs = @('scripts/static-runtime-environment.py', '--environment-file', $airkStaticEnvironment, '--', $Tool) + $Arguments
+        & $airkPython @airkWrappedArgs
+    } else {
+        & $Tool @Arguments
+    }
     if ($LASTEXITCODE -ne 0) { throw "$Tool failed with exit code $LASTEXITCODE" }
 }
 $airkPython = if (Get-Command py -ErrorAction SilentlyContinue) { 'py' } else { 'python' }
 foreach ($airkTool in @('git', 'cargo', 'rustup', 'node', 'npm.cmd', $airkPython)) { Get-Command $airkTool -ErrorAction Stop | Out-Null }
 Push-Location $airkRoot
 $airkPreviousBinary = $env:AIRK_TEST_BINARY
+$airkStaticEnvironment = $null
 try {
     Start-Transcript -LiteralPath (Join-Path $airkOutput 'build.log') | Out-Null
     Invoke-AirkTool rustup @('show')
     Invoke-AirkTool node @('--version')
     Invoke-AirkTool npm.cmd @('ci', '--ignore-scripts', '--no-audit', '--no-fund', '--prefix', 'packages/vscode')
-    if ($env:AIRK_BUNDLED_MODEL_DIR) {
-        Invoke-AirkTool $airkPython @('scripts/provision-local-model.py', '--destination', $env:AIRK_BUNDLED_MODEL_DIR)
-    } else {
-        Invoke-AirkTool $airkPython @('scripts/provision-local-model.py', '--destination', (Join-Path $airkRoot 'target/local-vector-model'), '--download')
-    }
-    if ($env:AIRK_BUNDLED_RUNTIME_DIR) {
-        Invoke-AirkTool $airkPython @('scripts/provision-onnx-runtime.py')
-    } else {
-        Invoke-AirkTool $airkPython @('scripts/provision-onnx-runtime.py', '--download')
-    }
+    $airkModelDirectory = if ($env:AIRK_BUNDLED_MODEL_DIR) { $env:AIRK_BUNDLED_MODEL_DIR } else { Join-Path $airkRoot 'target/local-vector-model' }
+    $airkModelArgs = @('scripts/provision-local-model.py', '--destination', $airkModelDirectory)
+    if ($DownloadInputs) { $airkModelArgs += '--download' }
+    Invoke-AirkTool $airkPython $airkModelArgs
+    $airkStaticRoot = if ($StaticOrtDirectory) { [IO.Path]::GetFullPath($StaticOrtDirectory, $airkRoot) } else { Join-Path $airkRoot "target/static-onnx-runtime/$airkTarget" }
+    $airkStaticReport = Join-Path $airkOutput 'static-onnx-environment.json'
+    $airkStaticArgs = @('scripts/provision-static-onnx-runtime.py', '--target', $airkTarget, '--destination', $airkStaticRoot, '--environment-file', $airkStaticReport)
+    if ($DownloadInputs) { $airkStaticArgs += @('--download', '--download-tools', '--build', '--parallel', '2') }
+    else { $airkStaticArgs += '--verify' }
+    Invoke-AirkTool $airkPython $airkStaticArgs
+    $airkStaticEnvironment = $airkStaticReport
     if (-not $SkipChecks) {
         Invoke-AirkTool cargo @('fmt', '--all', '--check')
-        Invoke-AirkTool cargo @('clippy', '--workspace', '--all-targets', '--all-features', '--locked', '--target', $airkTarget, '--', '-D', 'warnings')
-        Invoke-AirkTool cargo @('test', '--workspace', '--all-features', '--locked', '--target', $airkTarget)
-        Invoke-AirkTool cargo @('test', '--doc', '--workspace', '--locked', '--target', $airkTarget)
-        Invoke-AirkTool $airkPython @('-m', 'unittest', 'discover', '-s', 'scripts/tests', '-v')
-        & (Join-Path $PSScriptRoot 'check-repo.ps1')
-        Invoke-AirkTool git @('diff', '--check')
+        Invoke-AirkTool cargo @('clippy', '--timings', '--workspace', '--all-targets', '--all-features', '--locked', '--target', $airkTarget, '--', '-D', 'warnings')
+        Invoke-AirkTool cargo @('test', '--timings', '--workspace', '--all-features', '--locked', '--target', $airkTarget)
+        Invoke-AirkTool cargo @('test', '--timings', '--doc', '--workspace', '--locked', '--target', $airkTarget)
     }
     $airkRuntime = Join-Path $airkOutput 'runtime'
     Invoke-AirkTool $airkPython @('scripts/build-service-runtime.py', '--profile', 'release', '--destination', $airkRuntime)
@@ -60,6 +66,13 @@ try {
     }
     if ($SkipChecks) { Invoke-AirkTool npm.cmd @('run', 'compile', '--prefix', 'packages/vscode') }
     else { Invoke-AirkTool npm.cmd @('test', '--prefix', 'packages/vscode') }
+    if (-not $SkipChecks) {
+        # Packaging contracts inspect out/. Build the current closure through
+        # npm test first; an old extension.js must not hide missing new modules.
+        Invoke-AirkTool $airkPython @('-m', 'unittest', 'discover', '-s', 'scripts/tests', '-v')
+        & (Join-Path $PSScriptRoot 'check-repo.ps1')
+        Invoke-AirkTool git @('diff', '--check')
+    }
     Invoke-AirkTool $airkPython @('scripts/package-native.py', '--target', $airkTarget, '--runtime-dir', $airkRuntime, '--output', (Join-Path $airkOutput 'native'))
     Invoke-AirkTool $airkPython @('scripts/package-extension.py', '--target', $airkTarget, '--native-dir', (Join-Path $airkOutput 'native/publish'), '--output', (Join-Path $airkOutput 'vscode'))
     $airkReceipt = Get-Content (Join-Path $airkOutput 'vscode/publish/manifest.json') -Raw | ConvertFrom-Json

@@ -6,7 +6,7 @@ export interface VectorStatus {
     enabled: boolean; published: boolean; indexed_vectors: number; pending_reindex: boolean;
     default_search_mode: 'hybrid' | 'lexical' | 'requires_complete';
     semantic_readiness?: {
-        state: 'disabled' | 'pending' | 'partial' | 'ready' | 'failed';
+        state: 'disabled' | 'pending' | 'partial' | 'ready' | 'failed' | 'unavailable';
         selected_artifacts: number; completed_artifacts: number;
         selected_units: number | null; completed_units: number;
         failure: string | null;

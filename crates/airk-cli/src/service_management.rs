@@ -350,6 +350,8 @@ impl CatalogRuntime {
     }
 }
 pub struct Management {
+    checkpoint_pause: Arc<AtomicBool>,
+    checkpoint_observed: Arc<AtomicBool>,
     sender: Option<Arc<SyncSender<Envelope>>>,
     thread: Option<std::thread::JoinHandle<()>>,
     pending: Arc<AtomicUsize>,
@@ -1044,6 +1046,13 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         ControlMethod::Logs { .. }
         | ControlMethod::Health
         | ControlMethod::Shutdown
+        | ControlMethod::PrepareUpgradeCheckpoint { .. }
+        | ControlMethod::ObserveUpgradeCheckpoint { .. }
+        | ControlMethod::UpgradeRecoveryProbe { .. }
+        | ControlMethod::ReleaseUpgradeAdmission { .. }
+        | ControlMethod::HttpEndpoint
+        | ControlMethod::HttpEnroll { .. }
+        | ControlMethod::HttpRevoke { .. }
         | ControlMethod::Connect { .. }
         | ControlMethod::ConnectScoped { .. }
         | ControlMethod::NativeRead { .. }
@@ -1260,6 +1269,11 @@ impl Management {
         let active = pending.clone();
         let plans = Arc::new(AtomicBool::new(true));
         let runnable_plans = plans.clone();
+        let checkpoint_pause = Arc::new(AtomicBool::new(false));
+        let checkpoint_observed = Arc::new(AtomicBool::new(false));
+        let checkpoint_freeze = checkpoint_pause.clone();
+        let checkpoint_ack = checkpoint_observed.clone();
+        let recovery_fenced = crate::service_runtime::checkpoint::admission_closed(&root)?;
         let (ready, initialized) = sync_channel::<std::result::Result<(), String>>(1);
         let thread = std::thread::Builder::new()
             .name("airk-registry".into())
@@ -1293,6 +1307,30 @@ impl Management {
                 let split_engine = crate::runtime_pair::engine_identity();
                 let mut split_cursor = None;
                 loop {
+                    if recovery_fenced && crate::service_runtime::checkpoint::admission_closed(&root).unwrap_or(true)
+                        || checkpoint_freeze.load(Ordering::Acquire)
+                        && active.load(Ordering::Acquire) == 0
+                        && !runnable_plans.load(Ordering::Acquire)
+                        && missing_work.is_empty()
+                    {
+                        checkpoint_ack.store(true, Ordering::Release);
+                        // All accepted operations have settled. Keep ownership
+                        // alive, without advancing/pruning metadata after capture.
+                        match receiver.recv_timeout(Duration::from_millis(250)) {
+                            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                            Ok(envelope) => {
+                                checkpoint_ack.store(false, Ordering::Release);
+                                match envelope {
+                                    Envelope::Request(_, reply) => { active.fetch_sub(1,Ordering::AcqRel); let _=reply.send(ControlResponse::Failure {code:"runtime_upgrade_in_progress".into()}); },
+                                    Envelope::AdministrativeRead(_, reply) => { active.fetch_sub(1,Ordering::AcqRel); let _=reply.send(Err(anyhow::anyhow!("runtime_upgrade_in_progress"))); },
+                                    Envelope::Missing(_) => { active.fetch_sub(1,Ordering::AcqRel); accepted_missing.fetch_sub(1,Ordering::AcqRel); },
+                                }
+                                continue;
+                            }
+                        }
+                    }
+                    checkpoint_ack.store(false, Ordering::Release);
                     if std::time::Instant::now() >= next_tick {
                         let running = registry.as_mut().ok().and_then(|registry| {
                             let now = std::time::SystemTime::now()
@@ -1508,6 +1546,8 @@ impl Management {
                 }
             })?;
         let management = Self {
+            checkpoint_pause,
+            checkpoint_observed,
             sender: Some(Arc::new(sender)),
             thread: Some(thread),
             pending,
@@ -1609,6 +1649,12 @@ impl Management {
             .map_err(|_| anyhow::anyhow!("catalog_connection_outcome_unknown"))?
             .map_err(|_| anyhow::anyhow!("catalog_connection_owner_closed"))?
     }
+    pub(crate) fn begin_checkpoint_freeze(&self) {
+        self.checkpoint_pause.store(true, Ordering::Release);
+    }
+    pub(crate) fn checkpoint_observed(&self) -> bool {
+        self.checkpoint_observed.load(Ordering::Acquire)
+    }
     pub fn can_idle_exit(&self) -> bool {
         self.pending.load(Ordering::Acquire) == 0 && !self.plans.load(Ordering::Acquire)
     }
@@ -1636,6 +1682,8 @@ mod tests {
     {
         let (sender, receiver) = sync_channel(0);
         let owner = Management {
+            checkpoint_pause: Arc::new(AtomicBool::new(false)),
+            checkpoint_observed: Arc::new(AtomicBool::new(false)),
             sender: Some(Arc::new(sender)),
             thread: None,
             pending: Arc::new(AtomicUsize::new(0)),
@@ -1838,6 +1886,8 @@ mod tests {
                 }
             });
             let management = Management {
+                checkpoint_pause: Arc::new(AtomicBool::new(false)),
+                checkpoint_observed: Arc::new(AtomicBool::new(false)),
                 sender: Some(Arc::new(sender)),
                 thread: Some(thread),
                 pending,

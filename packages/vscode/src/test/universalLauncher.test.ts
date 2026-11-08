@@ -1,8 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 import { strict as assert } from 'node:assert';
-import { createHash } from 'node:crypto';
-import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
 import { test } from 'node:test';
 import { parse } from 'jsonc-parser';
@@ -47,32 +44,18 @@ test('migration moves this installation\'s per-install launcher entries to the u
     assert.throws(() => migrateAgentConfig('claude', universalSpec, storage, otherInstall), /Unrecognized/, 'another installation\'s launcher is never adopted');
 });
 
-test('a real universal launcher reads its pointer on every launch and forwards to the installation\'s launcher', { skip: !process.env.AIRK_TEST_BINARY, timeout: 300000 }, async () => {
-    const fixture = await NativeServiceFixture.create(process.env.AIRK_TEST_BINARY!);
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'airk-universal-'));
-    try {
-        const spec = await fixture.register('universal');
-        const launcherDir = path.join(directory, 'launcher');
-        fs.mkdirSync(launcherDir, { mode: 0o700 });
-        const executable = path.join(launcherDir, path.basename(spec.command));
-        fs.copyFileSync(spec.command, executable);
-        const sha = createHash('sha256').update(fs.readFileSync(executable)).digest('hex');
-        const pointer = (install: string) => fs.writeFileSync(path.join(launcherDir, 'airk-launcher.json'), JSON.stringify({ schema: 1, install, launcher_sha256: sha }), { mode: 0o600 });
-        pointer(spec.service!.installDir);
-        const universalCall: LaunchSpec = { ...spec, command: executable, service: { ...spec.service!, universal: true } };
-        assert.equal((await probeMcp(universalCall)).tools.length, UNIFIED_TOOLS.length, 'the universal launcher reaches the installed service');
-        pointer(path.join(directory, 'missing-install'));
-        await assert.rejects(probeMcp(universalCall), 'a pointer to a missing installation fails instead of guessing');
-        pointer(spec.service!.installDir);
-        assert.equal((await probeMcp(universalCall)).tools.length, UNIFIED_TOOLS.length, 'the next launch follows the rewritten pointer');
-    } catch(error) {await fixture.retainFailure(error);throw error;} finally {
-        // Closing a probe signals its child asynchronously. Windows may still
-        // hold the copied executable briefly; always drain the owned fixture,
-        // even when removing that executable fails.
-        try {
-            await fs.promises.rm(directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
-        } finally {
-            await fixture.dispose();
-        }
-    }
+test('modern native installation retires stdio launchers and keeps HTTPS authority explicit', {skip:!process.env.AIRK_TEST_BINARY,timeout:300000},async()=>{
+    const fixture=await NativeServiceFixture.create(process.env.AIRK_TEST_BINARY!);
+    try{
+        const spec=await fixture.register('modern-endpoint'),inspected=await fixture.run(['runtime','inspect','--install-dir',fixture.install]);
+        assert.equal(inspected.launcher,null);assert.equal(fixture.launcher,null);assert.ok(spec.http);
+        assert.equal((await probeMcp(spec)).tools.length,UNIFIED_TOOLS.length,'Actual reviewed native HTTPS endpoint');
+        const {runText}=await import('../native');
+        await assert.rejects(runText(fixture.binary,['runtime','launch','--install-dir',fixture.install,'--','mcp'],fixture.owner,15000),/stdio_mcp_retired/);
+        const connection=await fixture.run(['runtime','http-connection-info','--install-dir',fixture.install,'--connection-id',spec.http!.connection_id]);
+        const {validateHttpConnection}=await import('../serviceHttp'),observed=validateHttpConnection(connection,spec.http!.selection);
+        assert.deepEqual(observed.endpoint,spec.http!.endpoint);assert.equal(observed.connection_id,spec.http!.connection_id);
+        assert.equal(observed.credential_file,spec.http!.credential_file);assert.equal(observed.ca_certificate_file,spec.http!.ca_certificate_file);
+        assert.equal((await probeMcp(spec)).tools.length,UNIFIED_TOOLS.length,'Read remains attached to exact native endpoint');
+    }catch(error){await fixture.retainFailure(error);throw error;}finally{await fixture.dispose();}
 });

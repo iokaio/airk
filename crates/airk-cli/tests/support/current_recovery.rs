@@ -24,6 +24,29 @@ fn crash_child() -> Result<()> {
         "project-a",
     )?;
     let store = collection.selected_store()?;
+    // Legacy retained snapshots have no executable-owned model provider. The
+    // installed HTTPS fixture does: preserve its real model references while
+    // constructing the deliberately interrupted Current transaction.
+    let runtime = std::env::var_os("AIRK_RUNTIME_CRASH_RUNTIME");
+    let store = if let Some(runtime) = runtime.as_ref() {
+        #[cfg(feature = "bundled-model")]
+        {
+            store.with_embedded_service_models(
+                std::path::Path::new(runtime),
+                airk_cli::bundled_assets::default_plan()?,
+                Arc::new(airk_cli::bundled_assets::EmbeddedAssets),
+            )?
+        }
+        #[cfg(not(feature = "bundled-model"))]
+        {
+            store.with_service_models(
+                std::path::Path::new(runtime),
+                airk_cli::bundled_assets::default_plan()?,
+            )?
+        }
+    } else {
+        store
+    };
     let owner: Value =
         serde_json::from_slice(&fs::read(store.directory().join("current-owner.json"))?)?;
     let scope: CurrentScope = serde_json::from_value(owner["scope"].clone())?;
@@ -31,7 +54,11 @@ fn crash_child() -> Result<()> {
     let configuration = read.collection_state()?.unwrap().configuration;
     let artifact = read.artifact("captured.txt")?.unwrap();
     drop(read);
-    let quota = Quota::open_service(data)?;
+    let quota = if runtime.is_some() {
+        Quota::for_store(&store)?
+    } else {
+        Quota::open_service(data)?
+    };
     let reservation = quota.reserve("project-a", 512 << 20)?;
     let writer = store.lock()?;
     if boundary.starts_with("cold-") {
@@ -88,34 +115,94 @@ fn cli_and_mcp_recover_captured_updates_after_process_exit_and_expire_old_tokens
                 root.path().join("captured.txt"),
                 "captured original source\n",
             )?;
-            let owner = tempfile::tempdir()?;
-            common::bind_data(&owner.path().join("control"), data.path())?;
-            let kernel = Kernel::open_service_collection(
-                root.path(),
-                Some(data.path().into()),
-                "project-a",
-            )?;
-            kernel.configure_vectors(false)?;
-            kernel.index()?;
-            let old = kernel.status()?.publication.unwrap().token;
-            drop(kernel);
-            let output = Command::new(std::env::current_exe()?)
-                .args(["--exact", "current_recovery::crash_child", "--nocapture"])
-                .env(
-                    "AIRK_RUNTIME_CRASH_CASE",
-                    serde_json::to_string(&(data.path(), root.path().canonicalize()?, boundary))?,
+            let mut legacy_owner = None;
+            let (old, modern): (airk_core::identity::RevisionToken, _) = if mcp {
+                let service = common::Service::reviewed(root.path(), data.path(), "project-a");
+                service.settle_reviewed_index(
+                    root.path(),
+                    data.path(),
+                    std::time::Instant::now() + Duration::from_secs(90),
+                )?;
+                service
+                    .configure(airk_cli::service_configuration::Draft::Vectors { enabled: false });
+                service.job(airk_core::service::JobKind::Index);
+                service.settle_reviewed_index(
+                    root.path(),
+                    data.path(),
+                    std::time::Instant::now() + Duration::from_secs(90),
+                )?;
+                super::source_runtime::pause_and_wait(&service)?;
+                let status = common::published_status(root.path(), data.path(), "project-a")?;
+                let old = status["publication"]["token"]
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("missing recovery baseline: {status}"))?
+                    .parse()?;
+                (old, Some(service))
+            } else {
+                // Keep genuine prepopulated retained-state CLI coverage. A
+                // fresh catalog bootstrap would erase that migration boundary.
+                let owner = tempfile::tempdir()?;
+                common::bind_data(&owner.path().join("control"), data.path())?;
+                let kernel = Kernel::open_service_collection(
+                    root.path(),
+                    Some(data.path().into()),
+                    "project-a",
+                )?;
+                kernel.configure_vectors(false)?;
+                kernel.index()?;
+                let old = kernel.status()?.publication.unwrap().token;
+                drop(kernel);
+                legacy_owner = Some(owner);
+                (old, None)
+            };
+            let crash = |runtime: Option<&std::path::Path>| -> Result<()> {
+                let mut child = Command::new(std::env::current_exe()?);
+                child
+                    .args(["--exact", "current_recovery::crash_child", "--nocapture"])
+                    .env(
+                        "AIRK_RUNTIME_CRASH_CASE",
+                        serde_json::to_string(&(
+                            data.path(),
+                            root.path().canonicalize()?,
+                            boundary,
+                        ))?,
+                    );
+                if let Some(runtime) = runtime {
+                    child.env("AIRK_RUNTIME_CRASH_RUNTIME", runtime);
+                } else {
+                    child.env_remove("AIRK_RUNTIME_CRASH_RUNTIME");
+                }
+                let output = child.output()?;
+                ensure!(
+                    output.status.code() == Some(73),
+                    "crash child: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                // The interrupted transaction captures the original bytes;
+                // change live source only after that exact process has exited.
+                fs::write(
+                    root.path().join("captured.txt"),
+                    "LIVE_UNINDEXED_SENTINEL\n",
+                )?;
+                Ok(())
+            };
+            let _service = if let Some(service) = modern {
+                // The lifecycle helper verifies worker/owner exclusion and
+                // restarts this same approved installation and catalog scope.
+                service.with_stopped_owner(|project| {
+                    ensure!(project == &service.project, "recovery project changed");
+                    crash(Some(&service.control))
+                })?;
+                service
+            } else {
+                crash(None)?;
+                common::Service::in_owner(
+                    root.path(),
+                    data.path(),
+                    "project-a",
+                    legacy_owner.take().unwrap(),
                 )
-                .output()?;
-            ensure!(
-                output.status.code() == Some(73),
-                "crash child: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-            fs::write(
-                root.path().join("captured.txt"),
-                "LIVE_UNINDEXED_SENTINEL\n",
-            )?;
-            let _service = common::Service::in_owner(root.path(), data.path(), "project-a", owner);
+            };
             // Worker startup queues recovery as durable service work. Hold its
             // admission while checking what an ordinary read may observe.
             ensure!(

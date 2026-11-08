@@ -33,10 +33,14 @@ import subprocess
 import tempfile
 import threading
 import time
+import uuid
 
 evidence_spec = importlib.util.spec_from_file_location("combined_evidence", Path(__file__).with_name("combined_evidence.py"))
 combined_evidence = importlib.util.module_from_spec(evidence_spec)
 evidence_spec.loader.exec_module(combined_evidence)
+http_spec = importlib.util.spec_from_file_location("benchmark_https_fixture", Path(__file__).with_name("http_fixture.py"))
+http_fixture = importlib.util.module_from_spec(http_spec)
+http_spec.loader.exec_module(http_fixture)
 
 SCHEMA = "airk.mcp-investigation/1"
 MAX_LINE = 2 * 1024 * 1024
@@ -269,6 +273,92 @@ def observation(envelope):
             "source_verification": verification}
 
 
+def modern_configuration(config, *, combined):
+    allowed = {"schema", "transport", "command", "args", "launcher_sha256", "route", "expected_version", "control", "selection", "connections_file", "cwd", "source_root", "verification_override"}
+    if (set(config) - allowed or type(config.get("schema")) is not int or config["schema"] != 2
+            or config.get("transport") != "https" or config.get("args") != []
+            or config.get("route") != "isolated-approved-runtime"):
+        raise ValueError("explicit_https_configuration_required")
+    control = Path(config["control"])
+    if not control.is_absolute() or control.is_symlink() or not control.is_dir():
+        raise ValueError("explicit_owned_control_required")
+    selected = config.get("selection", {})
+    if (set(selected) != {"kind", "selection"} or selected["kind"] != ("combined" if combined else "scoped")
+            or not isinstance(selected["selection"], dict) or len(canonical(selected)) > 8192):
+        raise ValueError("explicit_https_selection_required")
+    if not isinstance(config.get("connections_file"), str):
+        raise ValueError("native_pre_enrollment_required")
+    # The native fixture owner enrolls each exact selector before measurement.
+    # JSON selectors never manufacture authority or cause console enrollment.
+    return config
+
+
+def selection_identity(value):
+    if isinstance(value, list):
+        return [selection_identity(item) for item in value]
+    if isinstance(value, dict):
+        return {key:selection_identity(item) for key,item in value.items() if key != "expected_catalog_revision"}
+    return value
+
+
+def enroll_https(configuration, timeout):
+    deadline = time.monotonic() + timeout
+    def rpc(method):
+        result = subprocess.run([configuration["command"], "service", "rpc", "--runtime-dir", configuration["control"], "--stdin"],
+            input=canonical(method), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            cwd=configuration.get("cwd"), timeout=max(.001, deadline-time.monotonic()),
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+        if result.returncode or len(result.stdout) > 65536:
+            raise RuntimeError("native_https_metadata_refused")
+        return json.loads(result.stdout)
+    health = rpc("health")
+    if health.get("status") != "health":
+        raise RuntimeError("native_https_health_unavailable")
+    roster = json.loads(http_fixture.private_bytes(configuration["connections_file"], configuration["control"], 262144))
+    if (not isinstance(roster, dict) or set(roster) != {"schema", "client", "connections"}
+            or roster["schema"] != 1 or roster["client"] != "unknown"
+            or not isinstance(roster["connections"], list) or not 1 <= len(roster["connections"]) <= 32):
+        raise ValueError("native_pre_enrollment_roster_invalid")
+    matches = [connection for connection in roster["connections"]
+               if selection_identity(connection.get("selection")) == selection_identity(configuration["selection"])]
+    if len(matches) != 1:
+        raise ValueError("native_pre_enrollment_exact_selection_required")
+    connection = matches[0]
+    http_fixture.validate_enrollment(connection, configuration["control"], configuration["selection"], connection["connection_id"])
+    http_fixture.validate_native_identity(connection, health["observation"])
+    if time.monotonic() >= deadline:
+        raise TimeoutError("native HTTPS metadata deadline exhausted")
+    return connection
+
+
+def configuration_for_case(configuration, case):
+    if configuration.get("transport") != "https":
+        return configuration
+    # Every narrowed selector must match one prior native enrollment exactly.
+    # Query arguments never reuse a broader credential.
+    selected = json.loads(json.dumps(configuration["selection"]))
+    frozen = selected["selection"]
+    if (not case["project_ids"] or not case["index_ids"]
+            or not set(case["project_ids"]).issubset(frozen["project_ids"])
+            or frozen.get("index_ids") is not None and not set(case["index_ids"]).issubset(frozen["index_ids"])):
+        raise ValueError("case_widens_frozen_connection_selection")
+    frozen["project_ids"] = list(case["project_ids"])
+    frozen["index_ids"] = list(case["index_ids"])
+    return {**configuration, "selection":selected}
+
+
+def require_historical_stdio(config):
+    version = re.fullmatch(r"([0-9]+)\.([0-9]+)\.([0-9]+)", config.get("expected_version", ""))
+    if version and tuple(map(int, version.groups())) >= (1,8,14):
+        raise ValueError("modern_stdio_configuration_retired")
+
+
+def cleanup_ok(cleanup):
+    if cleanup.get("frontend_process_created") is False:
+        return cleanup.get("http_session_delete") is True
+    return cleanup.get("graceful_eof") is True
+
+
 class Session:
     def __init__(self, configuration, timeout, *, prime_status=True):
         self.configuration, self.timeout = configuration, timeout
@@ -277,12 +367,20 @@ class Session:
         self.pending, self.lock, self.write_lock = {}, threading.Lock(), threading.Lock()
         self.next_id, self.tx_bytes, self.rx_bytes = 0, 0, 0
         self.child = None
+        self.https = configuration.get("transport") == "https"
+        self.networks, self.local = [], threading.local()
 
     def __enter__(self):
         started = time.perf_counter()
         self.started = started
         configuration = self.configuration
-        self.child = subprocess.Popen([configuration["command"], *configuration["args"]],
+        if self.https:
+            self.connection = enroll_https(configuration, self.timeout)
+            self.network = http_fixture.McpClient(self.connection, configuration["control"], self.timeout)
+            self.networks.append(self.network)
+            self.local.network = self.network
+        else:
+            self.child = subprocess.Popen([configuration["command"], *configuration["args"]],
             cwd=configuration.get("cwd"), env={**os.environ, **configuration.get("env", {})},
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
@@ -304,8 +402,9 @@ class Session:
                 with self.lock:
                     for target in self.pending.values():
                         target.put(None)
-        self.reader = threading.Thread(target=pump, daemon=True)
-        self.reader.start()
+        if not self.https:
+            self.reader = threading.Thread(target=pump, daemon=True)
+            self.reader.start()
         try:
             initialized, _ = self.request("initialize", {"protocolVersion": "2025-11-25", "capabilities": {},
                 "clientInfo": {"name": "airk-mcp-investigation", "version": "1"}})
@@ -329,6 +428,12 @@ class Session:
             raise
 
     def send(self, message):
+        if self.https:
+            self.network.send(message)
+            size = len(canonical(message))
+            with self.lock:
+                self.tx_bytes += size
+            return size
         data = canonical(message) + b"\n"
         with self.write_lock:
             self.child.stdin.write(data)
@@ -337,6 +442,8 @@ class Session:
         return len(data)
 
     def request(self, method, params, deadline=None):
+        if self.https:
+            return self.https_request(method, params, deadline)
         started = time.perf_counter()
         deadline = min(deadline or math.inf, time.monotonic() + self.timeout)
         with self.lock:
@@ -365,6 +472,54 @@ class Session:
             with self.lock:
                 self.pending.pop(identifier, None)
 
+    def https_request(self, method, params, deadline=None):
+        started = time.perf_counter()
+        deadline = min(deadline or math.inf, time.monotonic() + self.timeout)
+        if deadline <= time.monotonic():
+            raise TimeoutError("request_not_submitted")
+        with self.lock:
+            self.next_id += 1
+            identifier = self.next_id
+        network = getattr(self.local, "network", None)
+        if network is None:
+            # Each measuring thread owns one TLS connection, while all of them
+            # use the exact same initialized MCP session and frozen authority.
+            network = http_fixture.McpClient(self.connection, self.configuration["control"], max(.001, deadline-time.monotonic()))
+            network.session, network.protocol = self.network.session, self.network.protocol
+            self.local.network = network
+            with self.lock:
+                self.networks.append(network)
+        network.connection.timeout = max(.001, deadline-time.monotonic())
+        if network.connection.sock is not None:
+            network.connection.sock.settimeout(network.connection.timeout)
+        message = {"jsonrpc":"2.0","id":identifier,"method":method,"params":params}
+        sent = len(canonical(message))
+        with self.lock:
+            self.tx_bytes += sent
+        try:
+            reply = network._request("POST", message)
+        except http_fixture.HttpRefused as refused:
+            with self.lock:
+                self.rx_bytes += len(canonical(refused.body))
+            error = RuntimeError("http_refused")
+            # Actual transport evidence, never a fabricated JSON-RPC envelope.
+            error.raw_response = {"http_status":refused.status,"body":refused.body}
+            raise error from refused
+        received = time.perf_counter()
+        size = len(canonical(reply))
+        with self.lock:
+            self.rx_bytes += size
+        if not isinstance(reply, dict) or reply.get("id") != identifier or "error" in reply or not isinstance(reply.get("result"), dict):
+            error = RuntimeError("protocol_error")
+            error.raw_response = reply
+            raise error
+        if method == "initialize":
+            protocol = reply["result"].get("protocolVersion")
+            if not isinstance(protocol, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", protocol):
+                raise ValueError("invalid_negotiated_protocol")
+            network.protocol = protocol
+        return reply["result"], {"request_bytes":sent,"response_bytes":size,"elapsed_ms":(received-started)*1000,"completed_at":received}
+
     def tool(self, task):
         name, arguments = task
         if name not in ALLOWED:
@@ -387,6 +542,24 @@ class Session:
             "elapsed_ms": (time.perf_counter()-started)*1000, "completed_at": time.perf_counter()}
 
     def __exit__(self, *_):
+        if self.https:
+            failures = []
+            for network in self.networks[1:]:
+                try:
+                    network.close(delete=False)
+                except Exception:
+                    failures.append("owned_tls_connection_close_failed")
+            try:
+                if self.networks:
+                    self.networks[0].close()
+            except Exception:
+                failures.append("owned_http_session_delete_failed")
+                raise
+            finally:
+                self.cleanup = {"http_session_delete":not failures,"owned_tls_connections":len(self.networks),"frontend_process_created":False}
+            if failures:
+                raise RuntimeError(failures[0])
+            return
         if self.child is None:
             return
         self.cleanup = {"graceful_eof": False, "forced_owned_frontend_reap": False, "exit_code": None}
@@ -622,6 +795,13 @@ def load_combined_configuration(path):
         raise ValueError("absolute_regular_launcher_required")
     if digest_bytes(command.read_bytes()) != config.get("launcher_sha256"):
         raise ValueError("launcher_identity_mismatch")
+    if config.get("transport") == "https":
+        modern_configuration(config, combined=True)
+        selected = config["selection"]["selection"]
+        if not selected.get("project_ids") or len(canonical(selected)) > 4096:
+            raise ValueError("invalid_combined_session")
+        return config, digest_bytes(raw)
+    require_historical_stdio(config)
     args = config.get("args", [])
     if (config.get("route") not in ("installed-launcher", "isolated-approved-runtime")
             or not isinstance(args, list) or not args or args[-1] != "mcp"
@@ -647,6 +827,8 @@ def owned_legacy_configuration(configuration, case, source_root, timeout):
     """
     if os.environ.get(LEGACY_COMPARE_ENV) != "1":
         raise LegacyComparisonError("legacy_comparison_not_authorized")
+    if configuration.get("transport") == "https":
+        raise LegacyComparisonError("genuine_predecessor_configuration_required")
     args = configuration.get("args", [])
     if (configuration.get("route") != "isolated-approved-runtime"
             or args.count("--service-runtime-dir") != 1
@@ -852,6 +1034,7 @@ def combined(args):
             raise ValueError("output_source_overlap")
     output.mkdir(parents=True, exist_ok=False)
     report = {"schema": COMBINED_SCHEMA, "scenario_sha256": digest_bytes(raw),
+              "wire_basis": "canonical_json_body_bytes_excluding_http_headers_tls" if configuration.get("transport") == "https" else "newline_delimited_json_bytes",
               "configuration_sha256": config_digest, "launcher_sha256": configuration["launcher_sha256"],
               "route": configuration["route"], "expected_version": configuration["expected_version"],
               "samples_per_case": args.samples, "cases": [], "passed": False,
@@ -898,7 +1081,7 @@ def combined(args):
             group = {"selected_indexes": len(case["index_ids"]), "selection_sha256": digest_bytes(canonical(case)), "trials": []}
             report["cases"].append(group)
             matched_case = compare_legacy and case is cases[0]
-            group_session = (RetainedSession if matched_case or retain_raw else Session)(configuration, args.timeout, prime_status=False)
+            group_session = (RetainedSession if matched_case or retain_raw else Session)(configuration_for_case(configuration, case), args.timeout, prime_status=False)
             comparison_session = RetainedSession(legacy_configuration, args.timeout, prime_status=False) if matched_case else None
             with group_session as session, (comparison_session if matched_case else nullcontext()) as legacy, \
                     ((output / "legacy-one-index/raw.jsonl").open("x", encoding="utf-8") if matched_case else nullcontext()) as retained:
@@ -955,10 +1138,10 @@ def combined(args):
                 comparison["errors"] = sum(attempt.get("is_error") is True for row in comparison["trials"] for attempt in row.get("attempts", []))
                 comparison["retries"] = sum(row.get("retries", 0) for row in comparison["trials"])
                 comparison["passed"] = (len(comparison["trials"]) == args.samples and all(row["validated"] for row in comparison["trials"])
-                                        and comparison["frontend_cleanup"]["graceful_eof"])
+                                        and cleanup_ok(comparison["frontend_cleanup"]))
         if not report["cases"]:
             raise ValueError("combined_fanout_cases_missing")
-        report["passed"] = all(group["frontend_cleanup"]["graceful_eof"] for group in report["cases"])
+        report["passed"] = all(cleanup_ok(group["frontend_cleanup"]) for group in report["cases"])
         if compare_legacy:
             report["passed"] = report["passed"] and report["legacy_one_index"]["passed"]
     except (OSError, ValueError, RuntimeError, TimeoutError) as error:
@@ -1085,13 +1268,26 @@ def phase_gates(args):
 
 
 def load_configuration(path, source):
-    raw = Path(path).read_bytes()
+    with Path(path).open("rb") as stream:
+        raw = stream.read(65537)
+    if len(raw) > 65536:
+        raise ValueError("configuration_byte_limit")
     config = json.loads(raw)
     command = Path(config["command"])
     if not command.is_absolute() or not command.is_file() or command.is_symlink():
         raise ValueError("absolute_regular_launcher_required")
     if digest_bytes(command.read_bytes()) != config.get("launcher_sha256"):
         raise ValueError("launcher_identity_mismatch")
+    if config.get("transport") == "https":
+        modern_configuration(config, combined=False)
+        try:
+            same_source = Path(config["source_root"]).is_absolute() and Path(config["source_root"]).resolve(strict=True).samefile(source)
+        except (KeyError, OSError, ValueError):
+            same_source = False
+        if not same_source:
+            raise ValueError("configuration_fixture_scope_mismatch")
+        return config, digest_bytes(raw)
+    require_historical_stdio(config)
     if config.get("route") not in ("installed-launcher", "isolated-approved-runtime"):
         raise ValueError("explicit_route_required")
     args = config.get("args", [])
@@ -1122,6 +1318,7 @@ def run(args):
         raise ValueError("output_source_overlap")
     output.mkdir(parents=True, exist_ok=False)
     report = {"schema": SCHEMA, "label": args.label, "route": configuration["route"],
+        "wire_basis": "canonical_json_body_bytes_excluding_http_headers_tls" if configuration.get("transport") == "https" else "newline_delimited_json_bytes",
         "configuration_sha256": config_digest, "launcher_sha256": configuration["launcher_sha256"],
         "expected_version": configuration["expected_version"], "fixture_sha256": manifest["fixture_sha256"],
         "effective_argument_overrides": {} if override is None else {"evidence_tools": {"verification": override}},
@@ -1179,7 +1376,7 @@ def run(args):
                     first_status_observation_unit="Separate initial status per primed connection only; unprimed status is measured inside the fixed task batch.",
                     coverage_complete=all(trial["coverage"]["complete"] and trial["publication_consistent"] for trial in trials)
                         and (warmup is None or (warmup["coverage"]["complete"] and warmup["publication_consistent"])),
-                    cleanup_clean=all(trial.get("frontend_cleanup", group.get("frontend_cleanup", {})).get("graceful_eof", False) for trial in trials))
+                    cleanup_clean=all(cleanup_ok(trial.get("frontend_cleanup", group.get("frontend_cleanup", {}))) for trial in trials))
         report["status"] = "complete"
     except (OSError, ValueError, RuntimeError, TimeoutError) as error:
         # Class name only: arbitrary exception messages can contain local paths.
@@ -1188,6 +1385,29 @@ def run(args):
         report["source_unchanged"] = source_inventory(source) == manifest["inventory"]
         (output / "report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     return report["status"] == "complete" and report["source_unchanged"] and all(c.get("coverage_complete", False) and c.get("cleanup_clean", False) for c in report["cohorts"])
+
+
+def owned_configuration(service, name, runtime):
+    """One actual owned producer; modern clients receive inert reviewed selectors."""
+    config = {"command": str(service.binary),
+              "launcher_sha256": digest_bytes(service.binary.read_bytes()),
+              "expected_version": json.loads((runtime / "airk-runtime.json").read_text())["version"],
+              "route": "isolated-approved-runtime", "cwd": str(runtime)}
+    if service.single_image:
+        selection = {"kind": "scoped", "selection": json.loads(json.dumps(service.scopes[name]))}
+        connection = service.enroll_http(selection, uuid.uuid4().hex, "unknown")
+        roster_path = service.control / "http-1" / ("benchmark-connections-" + uuid.uuid4().hex + ".json")
+        descriptor = os.open(roster_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(canonical({"schema": 1, "client": "unknown", "connections": [connection]}))
+        config.update({"schema": 2, "transport": "https", "args": [],
+                       "control": str(service.control), "source_root": service.projects[name]["root"],
+                       "selection": selection, "connections_file": str(roster_path)})
+        modern_configuration(config, combined=False)
+    else:
+        config["args"] = [*service.arguments(name), "mcp"]
+        require_historical_stdio(config)
+    return config
 
 
 def owned(args):
@@ -1199,12 +1419,12 @@ def owned(args):
     output = Path(args.output).resolve()
     output.mkdir(parents=True, exist_ok=False)
     result = False
-    with tempfile.TemporaryDirectory(prefix="airk-mcp-owned-", dir=os.environ.get("AIRK_PRIVATE_CENSUS_BASE")) as temporary:
+    with clients.owned_client_fixture() as temporary:
         owner = Path(temporary).resolve()
         fixture = owner / "fixture"
         create_fixture(fixture)
         root, _ = load_fixture(fixture)
-        state = owner / "state"
+        state = owner / "index-data"
         state.mkdir()
         with clients.Fixture(runtime, owner) as service:
             service.register("investigation", root, state)
@@ -1213,10 +1433,7 @@ def owned(args):
             service.configure("investigation", {"operation": "usage", "mode": "disabled"})
             service.job("investigation", "index")
             service.published_status("investigation", time.monotonic() + 90)
-            config = {"command": str(service.binary), "args": [*service.arguments("investigation"), "mcp"],
-                      "launcher_sha256": digest_bytes(service.binary.read_bytes()),
-                      "expected_version": json.loads((runtime / "airk-runtime.json").read_text())["version"],
-                      "route": "isolated-approved-runtime", "cwd": str(runtime)}
+            config = owned_configuration(service, "investigation", runtime)
             configuration = output / "configuration.json"
             configuration.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
             replay_args = argparse.Namespace(**vars(args))

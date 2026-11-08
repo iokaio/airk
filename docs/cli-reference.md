@@ -47,12 +47,24 @@ Every public command and subcommand, exactly as `airk <command> --help` prints i
 - [`airk runtime abort-layout`](#airk-runtime-abort-layout)
 - [`airk runtime abort-stage`](#airk-runtime-abort-stage)
 - [`airk runtime activate`](#airk-runtime-activate)
+- [`airk runtime adopt-legacy-index`](#airk-runtime-adopt-legacy-index)
+- [`airk runtime adopt-legacy-indexes`](#airk-runtime-adopt-legacy-indexes)
 - [`airk runtime container-host`](#airk-runtime-container-host)
 - [`airk runtime diagnose`](#airk-runtime-diagnose)
 - [`airk runtime ensure`](#airk-runtime-ensure)
 - [`airk runtime foreground`](#airk-runtime-foreground)
+- [`airk runtime http-connection`](#airk-runtime-http-connection)
+- [`airk runtime http-connection-info`](#airk-runtime-http-connection-info)
+- [`airk runtime http-endpoint`](#airk-runtime-http-endpoint)
+- [`airk runtime http-issuer-rotation`](#airk-runtime-http-issuer-rotation)
+- [`airk runtime http-legacy-connection`](#airk-runtime-http-legacy-connection)
+- [`airk runtime http-legacy-union-connection`](#airk-runtime-http-legacy-union-connection)
+- [`airk runtime http-revoke`](#airk-runtime-http-revoke)
+- [`airk runtime http-trust`](#airk-runtime-http-trust)
 - [`airk runtime inspect`](#airk-runtime-inspect)
 - [`airk runtime inspect-candidate`](#airk-runtime-inspect-candidate)
+- [`airk runtime inspect-legacy-caches`](#airk-runtime-inspect-legacy-caches)
+- [`airk runtime inspect-legacy-launchers`](#airk-runtime-inspect-legacy-launchers)
 - [`airk runtime inventory`](#airk-runtime-inventory)
 - [`airk runtime launch`](#airk-runtime-launch)
 - [`airk runtime legacy-retirement-authorize`](#airk-runtime-legacy-retirement-authorize)
@@ -69,13 +81,18 @@ Every public command and subcommand, exactly as `airk <command> --help` prints i
 - [`airk runtime login status`](#airk-runtime-login-status)
 - [`airk runtime login stop`](#airk-runtime-login-stop)
 - [`airk runtime login uninstall`](#airk-runtime-login-uninstall)
+- [`airk runtime lookup-http-connection`](#airk-runtime-lookup-http-connection)
 - [`airk runtime managed`](#airk-runtime-managed)
 - [`airk runtime prepare-client`](#airk-runtime-prepare-client)
+- [`airk runtime prepare-legacy-caches`](#airk-runtime-prepare-legacy-caches)
 - [`airk runtime purge`](#airk-runtime-purge)
 - [`airk runtime remove`](#airk-runtime-remove)
 - [`airk runtime repair-launcher`](#airk-runtime-repair-launcher)
 - [`airk runtime repair-payload`](#airk-runtime-repair-payload)
+- [`airk runtime reprepare-legacy-caches`](#airk-runtime-reprepare-legacy-caches)
 - [`airk runtime reset-startup`](#airk-runtime-reset-startup)
+- [`airk runtime retire-legacy-caches`](#airk-runtime-retire-legacy-caches)
+- [`airk runtime retire-legacy-launchers`](#airk-runtime-retire-legacy-launchers)
 - [`airk runtime retire-previous`](#airk-runtime-retire-previous)
 - [`airk runtime rollback`](#airk-runtime-rollback)
 - [`airk runtime self-test`](#airk-runtime-self-test)
@@ -148,17 +165,17 @@ Commands:
   bridge         Internal read-only adapter used by trusted launchers
   serve          Run the AIRK service in the foreground for a private control directory (created if missing)
   model-catalog  Print the offline model catalog and the CPU-based model choice for this machine; opens no project state
-  tools          List, describe or call the read-only MCP tools from the terminal
+  tools          List, describe or call unified evidence and Explorer proposal tools
   changes        Report indexed changes since a revision token: added, modified and removed files, symbols and documents
   code-facts     Inspect code facts and signatures with exact default name matching and bounded continuation
   relationships  Follow indexed relationships of a symbol in --direction, optionally of one --kind, up to --hops levels
-  setup          Print the MCP client configuration (command and arguments) for an already registered project
-  init           Register --root as a project of the installed runtime and prepare its index storage
+  setup          Enroll an explicit existing catalog selection for HTTPS and print configuration references
+  init           Acknowledge an existing reviewed index mapping and prepare its reserved storage
   status         Print the project's publication, freshness, coverage and job status
   search         Search indexed evidence; results carry file, line and revision citations
   files          List indexed files under an optional path prefix, with continuation cursors
   read           Read an indexed file's lines (--start-line/--end-line) from the published revision, with a citation
-  mcp            Serve the read-only MCP protocol on stdin/stdout for one agent connection (this is what agents launch)
+  mcp            Historical stdio MCP entry; modern installations require localhost HTTPS setup
   info           Show what the index knows about one file: language, size, extraction method and parse status
   outline        Read one indexed file's structure in file order; this returns evidence, not an Explorer page proposal
   symbol         Find definitions by exact name by default; use --name-match for suffix/contains variants
@@ -1610,9 +1627,9 @@ Options:
 ## airk init
 
 ```text
-Register --root as a project of the installed runtime and prepare its index storage.
+Acknowledge an existing reviewed index mapping and prepare its reserved storage.
 
-For a service you started with `airk serve`, use `airk service register --runtime-dir <control>` instead.
+In an authority-1 catalog, --root/--data-dir/--collection must exactly match an existing ready index. New indexes require the reviewed catalog IndexSetup draft/apply/receipt flow through `airk service rpc`; init creates no index or grant. Authority-zero services retain their legacy registration behavior. For a service started with `airk serve`, use `airk service register --runtime-dir <control>` instead.
 
 Usage: airk init [OPTIONS]
 
@@ -1700,7 +1717,7 @@ Options:
 ## airk mcp
 
 ```text
-Serve the read-only MCP protocol on stdin/stdout for one agent connection (this is what agents launch)
+Historical stdio MCP entry; modern installations require localhost HTTPS setup
 
 Usage: airk mcp [OPTIONS]
 
@@ -2401,6 +2418,15 @@ The VS Code extension uses these; headless experiments can instead run `airk ser
 Usage: airk runtime [OPTIONS] <COMMAND>
 
 Commands:
+  http-issuer-rotation          Explicitly stage, commit or finalize an authenticated local issuer rotation
+  http-endpoint                 Read the owner-authenticated local HTTPS endpoint without enrolling a client
+  http-connection-info          Read an existing connection's verified references without issuing credentials
+  lookup-http-connection        Read-only typed connection ownership lookup; revoked or unavailable IDs never become foreign
+  http-trust                    Inspect or explicitly manage this native issuer in the current user's trust store
+  http-connection               Enroll a saved native selection and return protected credential references
+  http-revoke                   Revoke one local HTTPS connection while preserving its original receipt
+  http-legacy-connection        Migrate exact owned predecessor configuration using existing imported authority
+  http-legacy-union-connection  Migrate an original no-default multi-project declaration without widening authority
   source-scope                  Read one exact saved source scope, without electing a service or opening an index
   container-host                Run one externally supervised Linux container service from an approved read-only image pair
   location                      Resolve the native user's stable-channel install location; no workspace settings or writes
@@ -2423,7 +2449,15 @@ Commands:
   snapshot                      Read saved bootstrap/project metadata without executing or trusting selected payload files
   repair-payload                Preview or explicitly repair the selected payload, preserving the complete damaged slot
   remove                        Remove one unused owned runtime; preserve active/rollback selections and unknown files
-  retire-previous               Retire the previous rollback payload after a successful replacement; preserve the active runtime and project data
+  retire-previous               After configuration migration, remove all approved superseded payloads for HTTPS runtimes; legacy runtimes retire only the previous rollback payload. Preserve active runtime, User Stop and project data
+  retire-legacy-launchers       After HTTPS configuration migration, stop and remove only owned legacy launcher images and receipts
+  inspect-legacy-launchers      Read-only verification of retained legacy launcher configuration lineage
+  inspect-legacy-caches         Read-only ownership inventory of obsolete extension helper caches
+  prepare-legacy-caches         Freeze the exact owned helper-cache inventory before changing MCP configurations
+  reprepare-legacy-caches       Explicitly re-review a pending cache inventory after newly appeared owned caches; preserve original proofs and require configuration migration against the new inspection
+  retire-legacy-caches          After HTTPS migration, stop and remove only caches in the accepted native ownership inventory
+  adopt-legacy-index            Adopt an original pre-managed saved index under native exclusion; preserve original sources and index bytes without reindexing or creating a reviewed grant
+  adopt-legacy-indexes          Adopt original saved indexes once per verified physical backing, retaining every original client configuration claim
   abort-stage                   Abort an ownership-proven interrupted copy; preserve promoted runtimes and unknown files
   repair-launcher               Repair an absent or known older launcher from the selected approved payload; requires stopped owners
   abort-launcher-repair         Abort an owned unfinished launcher copy; an already replaced image must be finalized
@@ -2777,6 +2811,124 @@ Options:
           Print help
 ```
 
+## airk runtime adopt-legacy-index
+
+```text
+Adopt an original pre-managed saved index under native exclusion; preserve original sources and index bytes without reindexing or creating a reviewed grant
+
+Usage: airk runtime adopt-legacy-index [OPTIONS] --install-dir <INSTALL_DIR> --expected-active <EXPECTED_ACTIVE> --operation-id <OPERATION_ID> --locator-file <LOCATOR_FILE> --expected-cache-inspection-sha256 <EXPECTED_CACHE_INSPECTION_SHA256>
+
+Options:
+      --install-dir <INSTALL_DIR>
+
+
+      --root <ROOT>
+          [default: .]
+
+      --data-dir <DATA_DIR>
+
+
+      --expected-active <EXPECTED_ACTIVE>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --operation-id <OPERATION_ID>
+
+
+      --locator-file <LOCATOR_FILE>
+
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --expected-cache-inspection-sha256 <EXPECTED_CACHE_INSPECTION_SHA256>
+
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --service-project <SERVICE_PROJECT>
+
+
+  -h, --help
+          Print help
+```
+
+## airk runtime adopt-legacy-indexes
+
+```text
+Adopt original saved indexes once per verified physical backing, retaining every original client configuration claim
+
+Usage: airk runtime adopt-legacy-indexes [OPTIONS] --install-dir <INSTALL_DIR> --expected-active <EXPECTED_ACTIVE> --operation-id <OPERATION_ID> --locators-file <LOCATORS_FILE> --expected-cache-inspection-sha256 <EXPECTED_CACHE_INSPECTION_SHA256>
+
+Options:
+      --install-dir <INSTALL_DIR>
+
+
+      --root <ROOT>
+          [default: .]
+
+      --data-dir <DATA_DIR>
+
+
+      --expected-active <EXPECTED_ACTIVE>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --operation-id <OPERATION_ID>
+
+
+      --locators-file <LOCATORS_FILE>
+
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --expected-cache-inspection-sha256 <EXPECTED_CACHE_INSPECTION_SHA256>
+
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --service-project <SERVICE_PROJECT>
+
+
+  -h, --help
+          Print help
+```
+
 ## airk runtime container-host
 
 ```text
@@ -2972,6 +3124,454 @@ Options:
           Print help
 ```
 
+## airk runtime http-connection
+
+```text
+Enroll a saved native selection and return protected credential references
+
+Usage: airk runtime http-connection [OPTIONS] --install-dir <INSTALL_DIR> --selection-file <SELECTION_FILE> --connection-id <CONNECTION_ID> --client <CLIENT>
+
+Options:
+      --install-dir <INSTALL_DIR>
+
+
+      --root <ROOT>
+          [default: .]
+
+      --data-dir <DATA_DIR>
+
+
+      --selection-file <SELECTION_FILE>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --connection-id <CONNECTION_ID>
+
+
+      --client <CLIENT>
+
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --explorer-descriptor <EXPLORER_DESCRIPTOR>
+
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --service-project <SERVICE_PROJECT>
+
+
+  -h, --help
+          Print help
+```
+
+## airk runtime http-connection-info
+
+```text
+Read an existing connection's verified references without issuing credentials
+
+Usage: airk runtime http-connection-info [OPTIONS] --install-dir <INSTALL_DIR> --connection-id <CONNECTION_ID>
+
+Options:
+      --install-dir <INSTALL_DIR>
+
+
+      --root <ROOT>
+          [default: .]
+
+      --connection-id <CONNECTION_ID>
+
+
+      --data-dir <DATA_DIR>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --service-project <SERVICE_PROJECT>
+
+
+  -h, --help
+          Print help
+```
+
+## airk runtime http-endpoint
+
+```text
+Read the owner-authenticated local HTTPS endpoint without enrolling a client
+
+Usage: airk runtime http-endpoint [OPTIONS] --install-dir <INSTALL_DIR>
+
+Options:
+      --install-dir <INSTALL_DIR>
+
+
+      --root <ROOT>
+          [default: .]
+
+      --data-dir <DATA_DIR>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --service-project <SERVICE_PROJECT>
+
+
+  -h, --help
+          Print help
+```
+
+## airk runtime http-issuer-rotation
+
+```text
+Explicitly stage, commit or finalize an authenticated local issuer rotation
+
+Usage: airk runtime http-issuer-rotation [OPTIONS] --install-dir <INSTALL_DIR> --action <ACTION>
+
+Options:
+      --install-dir <INSTALL_DIR>
+
+
+      --root <ROOT>
+          [default: .]
+
+      --action <ACTION>
+          [possible values: status, prepare, trust-new, commit, finalize, abort]
+
+      --data-dir <DATA_DIR>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --operation-id <OPERATION_ID>
+
+
+      --expected-ca-sha256 <EXPECTED_CA_SHA256>
+
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --expected-descriptor-sha256 <EXPECTED_DESCRIPTOR_SHA256>
+
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --expected-receipt-sha256 <EXPECTED_RECEIPT_SHA256>
+
+
+      --overlap-seconds <OVERLAP_SECONDS>
+          [default: 86400]
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --service-project <SERVICE_PROJECT>
+
+
+  -h, --help
+          Print help
+```
+
+## airk runtime http-legacy-connection
+
+```text
+Migrate exact owned predecessor configuration using existing imported authority
+
+Usage: airk runtime http-legacy-connection [OPTIONS] --install-dir <INSTALL_DIR> --registration-file <REGISTRATION_FILE> --configuration-receipt <CONFIGURATION_RECEIPT> --connection-id <CONNECTION_ID> --client <CLIENT>
+
+Options:
+      --install-dir <INSTALL_DIR>
+
+
+      --root <ROOT>
+          [default: .]
+
+      --data-dir <DATA_DIR>
+
+
+      --registration-file <REGISTRATION_FILE>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --configuration-receipt <CONFIGURATION_RECEIPT>
+
+
+      --origin-sha256 <ORIGIN_SHA256>
+          Exact native original declaration identity when several saved indexes share a configuration file and logical registration
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --connection-id <CONNECTION_ID>
+
+
+      --client <CLIENT>
+
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --explorer-descriptor <EXPLORER_DESCRIPTOR>
+
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --service-project <SERVICE_PROJECT>
+
+
+  -h, --help
+          Print help
+```
+
+## airk runtime http-legacy-union-connection
+
+```text
+Migrate an original no-default multi-project declaration without widening authority
+
+Usage: airk runtime http-legacy-union-connection [OPTIONS] --install-dir <INSTALL_DIR> --registrations-file <REGISTRATIONS_FILE> --connection-id <CONNECTION_ID> --client <CLIENT>
+
+Options:
+      --install-dir <INSTALL_DIR>
+
+
+      --root <ROOT>
+          [default: .]
+
+      --data-dir <DATA_DIR>
+
+
+      --registrations-file <REGISTRATIONS_FILE>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --connection-id <CONNECTION_ID>
+
+
+      --client <CLIENT>
+
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --explorer-descriptor <EXPLORER_DESCRIPTOR>
+
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --service-project <SERVICE_PROJECT>
+
+
+  -h, --help
+          Print help
+```
+
+## airk runtime http-revoke
+
+```text
+Revoke one local HTTPS connection while preserving its original receipt
+
+Usage: airk runtime http-revoke [OPTIONS] --install-dir <INSTALL_DIR> --connection-id <CONNECTION_ID>
+
+Options:
+      --install-dir <INSTALL_DIR>
+
+
+      --root <ROOT>
+          [default: .]
+
+      --connection-id <CONNECTION_ID>
+
+
+      --data-dir <DATA_DIR>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --service-project <SERVICE_PROJECT>
+
+
+  -h, --help
+          Print help
+```
+
+## airk runtime http-trust
+
+```text
+Inspect or explicitly manage this native issuer in the current user's trust store
+
+Usage: airk runtime http-trust [OPTIONS] --install-dir <INSTALL_DIR> --action <ACTION>
+
+Options:
+      --install-dir <INSTALL_DIR>
+
+
+      --root <ROOT>
+          [default: .]
+
+      --action <ACTION>
+          [possible values: inspect, install, remove]
+
+      --data-dir <DATA_DIR>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --expected-ca-sha256 <EXPECTED_CA_SHA256>
+
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --service-project <SERVICE_PROJECT>
+
+
+  -h, --help
+          Print help
+```
+
 ## airk runtime inspect
 
 ```text
@@ -3037,6 +3637,112 @@ Options:
 
 
       --runtime-sha256 <RUNTIME_SHA256>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --service-project <SERVICE_PROJECT>
+
+
+  -h, --help
+          Print help
+```
+
+## airk runtime inspect-legacy-caches
+
+```text
+Read-only ownership inventory of obsolete extension helper caches
+
+Usage: airk runtime inspect-legacy-caches [OPTIONS] --install-dir <INSTALL_DIR> --expected-active <EXPECTED_ACTIVE> --global-storage <GLOBAL_STORAGE>
+
+Options:
+      --install-dir <INSTALL_DIR>
+
+
+      --root <ROOT>
+          [default: .]
+
+      --data-dir <DATA_DIR>
+
+
+      --expected-active <EXPECTED_ACTIVE>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --global-storage <GLOBAL_STORAGE>
+
+
+      --origin-locators-file <ORIGIN_LOCATORS_FILE>
+
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --service-project <SERVICE_PROJECT>
+
+
+  -h, --help
+          Print help
+```
+
+## airk runtime inspect-legacy-launchers
+
+```text
+Read-only verification of retained legacy launcher configuration lineage
+
+Usage: airk runtime inspect-legacy-launchers [OPTIONS] --install-dir <INSTALL_DIR> --expected-active <EXPECTED_ACTIVE>
+
+Options:
+      --install-dir <INSTALL_DIR>
+
+
+      --root <ROOT>
+          [default: .]
+
+      --data-dir <DATA_DIR>
+
+
+      --expected-active <EXPECTED_ACTIVE>
 
 
       --collection <COLLECTION>
@@ -3823,6 +4529,59 @@ Options:
           Print help
 ```
 
+## airk runtime lookup-http-connection
+
+```text
+Read-only typed connection ownership lookup; revoked or unavailable IDs never become foreign
+
+Usage: airk runtime lookup-http-connection [OPTIONS] --install-dir <INSTALL_DIR> --expected-active <EXPECTED_ACTIVE> --connection-id <CONNECTION_ID>
+
+Options:
+      --install-dir <INSTALL_DIR>
+
+
+      --root <ROOT>
+          [default: .]
+
+      --data-dir <DATA_DIR>
+
+
+      --expected-active <EXPECTED_ACTIVE>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --connection-id <CONNECTION_ID>
+
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --service-project <SERVICE_PROJECT>
+
+
+  -h, --help
+          Print help
+```
+
 ## airk runtime managed
 
 ```text
@@ -3909,6 +4668,62 @@ Options:
 
       --collection <COLLECTION>
           [default: default]
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --service-project <SERVICE_PROJECT>
+
+
+  -h, --help
+          Print help
+```
+
+## airk runtime prepare-legacy-caches
+
+```text
+Freeze the exact owned helper-cache inventory before changing MCP configurations
+
+Usage: airk runtime prepare-legacy-caches [OPTIONS] --install-dir <INSTALL_DIR> --expected-active <EXPECTED_ACTIVE> --global-storage <GLOBAL_STORAGE>
+
+Options:
+      --install-dir <INSTALL_DIR>
+
+
+      --root <ROOT>
+          [default: .]
+
+      --data-dir <DATA_DIR>
+
+
+      --expected-active <EXPECTED_ACTIVE>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --global-storage <GLOBAL_STORAGE>
+
+
+      --origin-locators-file <ORIGIN_LOCATORS_FILE>
+
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
@@ -4143,6 +4958,65 @@ Options:
           Print help
 ```
 
+## airk runtime reprepare-legacy-caches
+
+```text
+Explicitly re-review a pending cache inventory after newly appeared owned caches; preserve original proofs and require configuration migration against the new inspection
+
+Usage: airk runtime reprepare-legacy-caches [OPTIONS] --install-dir <INSTALL_DIR> --expected-active <EXPECTED_ACTIVE> --global-storage <GLOBAL_STORAGE> --expected-inspection-sha256 <EXPECTED_INSPECTION_SHA256>
+
+Options:
+      --install-dir <INSTALL_DIR>
+
+
+      --root <ROOT>
+          [default: .]
+
+      --data-dir <DATA_DIR>
+
+
+      --expected-active <EXPECTED_ACTIVE>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --global-storage <GLOBAL_STORAGE>
+
+
+      --origin-locators-file <ORIGIN_LOCATORS_FILE>
+
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --expected-inspection-sha256 <EXPECTED_INSPECTION_SHA256>
+
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --service-project <SERVICE_PROJECT>
+
+
+  -h, --help
+          Print help
+```
+
 ## airk runtime reset-startup
 
 ```text
@@ -4190,10 +5064,113 @@ Options:
           Print help
 ```
 
+## airk runtime retire-legacy-caches
+
+```text
+After HTTPS migration, stop and remove only caches in the accepted native ownership inventory
+
+Usage: airk runtime retire-legacy-caches [OPTIONS] --install-dir <INSTALL_DIR> --expected-active <EXPECTED_ACTIVE> --expected-inspection-sha256 <EXPECTED_INSPECTION_SHA256>
+
+Options:
+      --install-dir <INSTALL_DIR>
+
+
+      --root <ROOT>
+          [default: .]
+
+      --data-dir <DATA_DIR>
+
+
+      --expected-active <EXPECTED_ACTIVE>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --expected-inspection-sha256 <EXPECTED_INSPECTION_SHA256>
+
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --service-project <SERVICE_PROJECT>
+
+
+  -h, --help
+          Print help
+```
+
+## airk runtime retire-legacy-launchers
+
+```text
+After HTTPS configuration migration, stop and remove only owned legacy launcher images and receipts
+
+Usage: airk runtime retire-legacy-launchers [OPTIONS] --install-dir <INSTALL_DIR> --expected-active <EXPECTED_ACTIVE>
+
+Options:
+      --install-dir <INSTALL_DIR>
+
+
+      --root <ROOT>
+          [default: .]
+
+      --data-dir <DATA_DIR>
+
+
+      --expected-active <EXPECTED_ACTIVE>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --service-project <SERVICE_PROJECT>
+
+
+  -h, --help
+          Print help
+```
+
 ## airk runtime retire-previous
 
 ```text
-Retire the previous rollback payload after a successful replacement; preserve the active runtime and project data
+After configuration migration, remove all approved superseded payloads for HTTPS runtimes; legacy runtimes retire only the previous rollback payload. Preserve active runtime, User Stop and project data
 
 Usage: airk runtime retire-previous [OPTIONS] --install-dir <INSTALL_DIR> --expected-active <EXPECTED_ACTIVE>
 
@@ -6162,7 +7139,7 @@ Options:
 ## airk setup
 
 ```text
-Print the MCP client configuration (command and arguments) for an already registered project
+Enroll an explicit existing catalog selection for HTTPS and print configuration references
 
 Usage: airk setup [OPTIONS]
 
@@ -6174,11 +7151,20 @@ Options:
       --root <ROOT>
           [default: .]
 
+      --connection-id <CONNECTION_ID>
+          Reuse the exact connection ID when retrying enrollment
+
       --data-dir <DATA_DIR>
 
 
       --collection <COLLECTION>
           [default: default]
+
+      --existing-connection-id <EXISTING_CONNECTION_ID>
+          Render an existing credential without enrollment or changing its authority
+
+      --explorer-descriptor <EXPLORER_DESCRIPTOR>
+          Exact private explorer-assistance/windows/<session>.json attachment
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
@@ -6398,17 +7384,17 @@ Options:
 ## airk tools
 
 ```text
-List, describe or call the read-only MCP tools from the terminal.
+List, describe or call unified evidence and Explorer proposal tools.
 
 `tools list --json`, `tools help <tool>` and `tools call <tool> --args '<json>'`. Start here to learn every query an agent can make.
 
 Usage: airk tools [OPTIONS] <COMMAND>
 
 Commands:
-  list   List the connection's native prefixed tools; --json includes schemas. Unified MCP also supplies scope discovery and Explorer Assistance
+  list   List the connection's unified tools; --json includes complete schemas and annotations
   help   Show a tool's description, input schema, defaults and argument template
   call   Invoke an MCP tool and print its unchanged result envelope as JSON
-  shell  Open a collection-bound interactive console with help and examples
+  shell  Open a connection-bound interactive console with help and examples
 
 Options:
       --root <ROOT>
@@ -6509,7 +7495,7 @@ Use 'airk tools help airk_search' for the JSON format. Tool errors exit nonzero.
 ## airk tools list
 
 ```text
-List the connection's native prefixed tools; --json includes schemas. Unified MCP also supplies scope discovery and Explorer Assistance
+List the connection's unified tools; --json includes complete schemas and annotations
 
 Usage: airk tools list [OPTIONS]
 
@@ -6556,7 +7542,7 @@ Options:
 ## airk tools shell
 
 ```text
-Open a collection-bound interactive console with help and examples
+Open a connection-bound interactive console with help and examples
 
 Usage: airk tools shell [OPTIONS]
 

@@ -232,6 +232,7 @@ async fn submit(
     local_ipc::write_message(
         &mut stream,
         &worker::Query {
+            read_attempt: None,
             frontend: None,
             tool: "airk_search".into(),
             arguments:
@@ -643,6 +644,7 @@ fn real_semantic_wait_keeps_worker_controls_and_other_project_reads_responsive_t
                 runtime: control.clone(),
                 role: pool::role(advertised_id),
                 grant: advertised,
+                in_process: false,
             };
             first.exchange(
                 &worker::Command::ConfigurePool {

@@ -1,8 +1,26 @@
 # AIRK: Local Search for Coding Agents
 
+**1.8.14 implementation and qualification are in progress; unpublished.** The source versions and generated catalog identify the [One AIRK implementation](https://github.com/iokaio/airk/blob/feat/finetuning/docs/one-airk.md). The single-executable HTTPS runtime is implemented; remaining migration corrections and final native and installed-platform acceptance are tracked in the [1.8.14 working record](https://github.com/iokaio/airk/blob/feat/finetuning/docs/releases/release-1.8.14.md). Earlier binaries keep their original versions and hashes.
+
+Modern installation must migrate recognized owned Codex, Claude Code and
+VS Code/Copilot Chat connections to direct native HTTPS, then remove verified
+legacy launcher images, their processes and all superseded runtime executables.
+This applies to legacy-to-modern and later modern-to-modern updates, preserving
+the selected runtime, sources, indexes and settings. Obsolete payloads may remain
+only while migration or cleanup is unfinished; they are not a fallback. Unsupported clients,
+unproven scopes and blocked cleanup leave installation explicitly incomplete.
+Installed-client and platform acceptance remain pending.
+
+HTTPS uses normal certificate validation with an installation-local CA; clients
+do not ignore certificate errors or discard their existing trusted CAs. Native
+discovery reports the actual bound port, including an alternate when the preferred
+port is occupied. Owned connection configuration can be refreshed, while external
+clients may still require reconnection. See the [local HTTPS API](https://github.com/iokaio/airk/blob/feat/finetuning/docs/local-https-api.md)
+for trust, credentials, endpoint discovery and local-tool examples.
+
 **Explorer notices and updates:** dismiss update, connection and action-outcome notices with **×**. Dismissals are saved for the workspace and stay hidden across screens, Explorer reopen and window reload. Once the new loader is running, later detected AIRK extension replacements reload AIRK automatically and reopen its single Explorer panel when it was open. For the first transition from an older loaded extension, use **Restart Extensions** in VS Code’s Extensions pane to activate the new version. Installed-editor acceptance is recorded separately.
 
-**1.8.12 is an unpublished manual-test working build.** Indexing has three tabs: **Search scope** selects local indexes and index sets with checkboxes; **Index library** creates and manages indexes, including **Delete index**; **Index sets** organizes reusable search groups. Choose indexes or sets and apply the selection; access details are handled internally. See the [1.8.12 working-build record](https://github.com/iokaio/airk/blob/feat/finetuning/docs/releases/release-1.8.12.md) for behavior and validation. The earlier 1.8.11, 1.8.10 and 1.8.9 records retain their dated evidence.
+**Inherited 1.8.12 behavior:** Indexing has three tabs: **Search scope** selects local indexes and index sets with checkboxes; **Index library** creates and manages indexes, including **Delete index**; **Index sets** organizes reusable search groups. Choose indexes or sets and apply the selection; access details are handled internally. See the [historical 1.8.12 working-build record](https://github.com/iokaio/airk/blob/feat/finetuning/docs/releases/release-1.8.12.md) for behavior and validation. The earlier 1.8.11, 1.8.10 and 1.8.9 records retain their dated evidence.
 
 **MCP QA follow-up:** the working source preserves structured read failures, discloses unobserved filters and relationship limits, and aligns context inputs across interfaces. Terse capability replies summarize operation schemas; Full retains them. Validation results and remaining limits are recorded in the [QA evaluation](https://github.com/iokaio/airk/blob/main/docs/reviews/mcp-qa-1.8.9.md).
 
@@ -85,13 +103,12 @@ One AIRK MCP endpoint gives independently configured clients access to the same 
 
 | Client | AIRK setup route |
 |---|---|
-| VS Code / GitHub Copilot | Workspace MCP registration and VS Code’s MCP controls. |
-| Claude Code | Project MCP configuration and client approval. |
-| Codex | Scoped TOML configuration and the client’s MCP controls. |
-| Gemini CLI / Antigravity | Project configuration and client-specific enablement. |
-| Cursor, Cline, Roo, Junie and others | Configuration previews or connection guidance for the selected client. |
+| VS Code / Copilot Chat | Implemented native HTTPS provider/project configuration and VS Code’s MCP controls. |
+| Claude Code | Implemented project HTTPS configuration and client approval. |
+| Codex | Implemented scoped HTTPS TOML configuration and the client’s MCP controls. |
+| Other clients, including Gemini, Antigravity, Cursor, Cline, Roo and Junie | Automatic HTTPS configuration and migration are unsupported. Manual compatibility must be verified against that client's TLS, credential and scope requirements. |
 
-These are configuration routes, not a claim that every client/version has passed end-to-end testing. Use the built-in setup guide and [integration documentation](https://github.com/iokaio/airk/blob/main/docs/agent-integration.md). AIRK’s connection check verifies its helper; a successful request in your agent verifies that client’s access.
+These are implemented adapter routes, not completed installed-client/platform qualification. Use the built-in setup guide and [integration documentation](https://github.com/iokaio/airk/blob/feat/finetuning/docs/agent-integration.md). AIRK’s connection check verifies its authenticated scoped HTTPS path; the external client still needs its own trust, credential provisioning, reconnection and successful scoped request. Local tools can use the [documented HTTPS API](https://github.com/iokaio/airk/blob/feat/finetuning/docs/local-https-api.md); that generic API does not establish compatibility with another client's configuration format.
 
 ## Local control and transparent limits
 
@@ -101,7 +118,7 @@ AIRK does not use a remote inference service. If you give retrieved evidence to 
 
 Usage reporting can help inspect retrieval activity and supplied measurement scenarios. Context, token or cost savings depend on the task and agent; AIRK does not promise a universal reduction in tokens, time or bills.
 
-Developer references: [MCP tools](https://github.com/iokaio/airk/blob/main/docs/mcp-developer-guide.md) and [CLI commands](https://github.com/iokaio/airk/blob/main/docs/cli-developer-guide.md) explain purpose, examples, implementation ownership and the 28-tool unified versus 18-tool native catalogs.
+Developer references: [MCP tools](https://github.com/iokaio/airk/blob/feat/finetuning/docs/mcp-developer-guide.md) and [CLI commands](https://github.com/iokaio/airk/blob/feat/finetuning/docs/cli-developer-guide.md) explain purpose, examples and implementation ownership. Current CLI `tools list/help/call/shell` and public HTTPS share the 29-tool unified catalog; its 19 native evidence/help/plan/scope operations remain a backend subset.
 
 ## Version and setup notes
 

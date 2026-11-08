@@ -14,17 +14,19 @@ complete/selected exports retain applicable reasons without additional reads.
 
 
 
-For detailed per-tool developer guidance, see the [MCP developer guide](mcp-developer-guide.md) and its companion [CLI developer guide](cli-developer-guide.md). Native terminal tools cover 18 operations; projects and nine Assistance operations have separate CLI commands and different registry/proposal scope where documented.
+For detailed per-tool developer guidance, see the [MCP developer guide](mcp-developer-guide.md) and its companion [CLI developer guide](cli-developer-guide.md). In the unpublished 1.8.14 implementation, CLI `tools list/help/call/shell` and public HTTPS use the same 29-tool catalog and public routing. The 19 native evidence/help/plan/scope operations are its backend subset; `projects` and nine Assistance tools retain their distinct connection/proposal scope. Direct administrative commands remain separately authorized.
 
 
 
-The AIRK 1.8.8 manual-test working build retains one server named `airk`, with 29 unique, unprefixed tools (the historical 1.6.4 catalog has 27). Evidence tools answer from the configured index. `parse` prepares or executes a bounded read-only evidence plan without an editor. Help explains AIRK. Draft tools prepare suggestions that wait for the user in Explorer.
+The unpublished AIRK 1.8.14 implementation uses one server named `airk`, with 29 unique, unprefixed tools (the historical 1.6.4 catalog has 27). Evidence tools answer from the configured index. `parse` prepares or executes a bounded read-only evidence plan without an editor. Help explains AIRK. Draft tools prepare suggestions that wait for the user in Explorer. Current qualification limits are recorded in the [1.8.14 working record](releases/release-1.8.14.md).
 
-P1 repairs compact discovery bindings inside `parse` and advertises its nested
+**Historical P1 scope:** P1 repaired compact discovery bindings inside `parse` and advertised its nested
 plan/recipe/budget/output inputs as JSON objects. See the [shared binding and
 parity contract](read-interface-parity.md#regression-evidence). Existing direct
-read defaults and compact producer replies are unchanged; source verification
-and Project/index management remain later planned phases.
+read defaults and compact producer replies were unchanged at that checkpoint;
+source verification and Project/index management were later planned phases.
+Their current contracts are documented in [saved-source verification](source-verification.md)
+and [reviewed index setup](service-project-setup.md).
 
 Native read tools accept optional `reply_detail: lean | rich` independently of
 retention and response mode. The public help route validates the input while

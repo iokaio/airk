@@ -86,6 +86,11 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(rows["dependency-policy"][-1], str(Path("/owned space/run/dependency-policy.json")))
         self.assertIn("--offline", rows["npm-inputs"])
         self.assertFalse(any("--download" in command for command in rows.values()))
+        self.assertIn("scripts/provision-static-onnx-runtime.py", rows["runtime-inputs"])
+        self.assertIn("--verify", rows["runtime-inputs"])
+        self.assertIn("--environment-file", rows["runtime-inputs"])
+        self.assertNotIn("--build", rows["runtime-inputs"])
+        self.assertNotIn("--download-tools", rows["runtime-inputs"])
         self.assertEqual(rows["runtime-build"][-3], str(Path("/owned space/run/runtime")))
         args.download = True
         args.no_tests = False
@@ -95,10 +100,71 @@ class BootstrapTests(unittest.TestCase):
         self.assertIn("--require-fresh", rows["dependency-policy"])
         self.assertNotIn("--offline", rows["dependency-policy"])
         self.assertIn("--download", rows["model-inputs"])
+        for flag in ["--download", "--download-tools", "--build"]:
+            self.assertIn(flag, rows["runtime-inputs"])
+        self.assertNotIn("--verify", rows["runtime-inputs"])
+        self.assertEqual(rows["runtime-inputs"][-2:], ["--parallel", "2"])
         self.assertNotIn("--offline", rows["npm-inputs"])
         self.assertNotIn("clippy", rows)
         self.assertIn("--all-features", rows["native-tests"])
         self.assertEqual(rows["native-tests"][-2:], ["--profile", "ci"])
+
+    def test_static_runtime_cache_is_persistent_and_existing_explicit_location_is_retained(self):
+        static = MODULE.static_environment_owner()
+        owner = SimpleNamespace(host_target=lambda: "fixture-native",plain=lambda path:Path(path))
+        with patch.object(MODULE, "static_environment_owner", return_value=SimpleNamespace(provisioner_owner=lambda: owner,destination_from_location=static.destination_from_location)), patch.dict(MODULE.os.environ):
+            MODULE.os.environ.pop("ORT_LIB_LOCATION", None)
+            first = MODULE.static_inputs(Path("/run/first"), False)
+            second = MODULE.static_inputs(Path("/run/second"), False)
+            location = first[first.index("--destination") + 1]
+            self.assertEqual(location, second[second.index("--destination") + 1])
+            self.assertEqual(location, str(MODULE.ROOT / "target/static-onnx-runtime/fixture-native"))
+            with tempfile.TemporaryDirectory() as temporary:
+                for tree in ("b","b2"):
+                    supplied = Path(temporary) / "reviewed original cache" / tree
+                    MODULE.os.environ["ORT_LIB_LOCATION"] = str(supplied)
+                    command = MODULE.static_inputs(Path("/run/third"), False)
+                    self.assertEqual(command[command.index("--destination") + 1], str(supplied.parent))
+            MODULE.os.environ["ORT_LIB_LOCATION"] = "relative/b"
+            with self.assertRaisesRegex(ValueError, "absolute"):
+                MODULE.static_inputs(Path("/run/fourth"), False)
+
+    def test_verified_static_handoff_reaches_build_child_only_and_refusal_stops_build(self):
+        for refused in (False, True):
+            with self.subTest(refused=refused), tempfile.TemporaryDirectory() as temporary, \
+                    patch.object(MODULE, "ROOT", Path(temporary)), \
+                    patch.object(MODULE, "pins", return_value={"rust": "1.98.0"}), \
+                    patch.object(MODULE, "prerequisites", return_value={"rustup": ["rustup"], "git": ["git"]}), \
+                    patch.object(MODULE.subprocess, "check_output", return_value="fixture"), \
+                    patch.object(MODULE.platform, "platform", return_value="fixture platform"), \
+                    patch.object(MODULE, "steps", return_value=[("dependency-policy", ["policy"]), ("runtime-inputs", ["static-owner"]), ("runtime-build", ["builder"])]):
+                verified = {"LIBONNXRUNTIME_NO_PKG_CONFIG": "1", "ORT_SKIP_DOWNLOAD": "1", "ORT_PREFER_DYNAMIC_LINK": "0", "ORT_LIB_LOCATION": str(Path(temporary) / "cache/b"), "ORT_LIB_PROFILE": "Release"}
+                complete = {"environment": verified, "receipt": {"future_owner_field": [1, 2, 3]}}
+                before = dict(MODULE.os.environ)
+                seen = []
+                def execute(name, command, directory, environment):
+                    seen.append(name)
+                    if name == "dependency-policy":
+                        (directory / "dependency-policy.json").write_text(json.dumps({"schema": "airk.dependency-policy-check/1", "all_requested_checks_passed": True}))
+                    if name == "runtime-inputs":
+                        (directory / "static-runtime-environment.json").write_text(json.dumps(complete))
+                    if name == "runtime-build":
+                        self.assertEqual({key: environment[key] for key in verified}, verified)
+                    return {"name": name, "exit_code": 0, "seconds": 0, "counts": None}
+                def load(path):
+                    self.assertEqual(json.loads(path.read_text()), complete)
+                    if refused:
+                        raise ValueError("actual static owner refused")
+                    return verified
+                with patch.object(MODULE, "execute", side_effect=execute), \
+                        patch.object(MODULE, "static_environment_owner", return_value=SimpleNamespace(load_environment_file=load)):
+                    self.assertEqual(MODULE.main(["--no-tests"]), 2 if refused else 0)
+                self.assertEqual(dict(MODULE.os.environ), before)
+                self.assertEqual(seen, ["dependency-policy", "runtime-inputs"] + ([] if refused else ["runtime-build"]))
+                report = json.loads(next(Path(temporary).glob("artifacts/bootstrap/*/report.json")).read_text())
+                self.assertEqual(report["host"]["os"], "fixture platform")
+                self.assertEqual(report["complete"], not refused)
+                self.assertEqual(report["static_runtime"]["status"], "refused" if refused else "verified")
 
     def test_npm_windows_entry_uses_node_without_a_shell(self):
         with tempfile.TemporaryDirectory() as temporary:

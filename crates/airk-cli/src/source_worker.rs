@@ -133,6 +133,39 @@ pub fn run() -> Result<()> {
                 Err(mpsc::TryRecvError::Disconnected) => return Ok(()),
             };
             match command {
+                Command::Checkpoint {
+                    service,
+                    worker,
+                    operation_id,
+                } => {
+                    ensure!(
+                        service == init.service && worker == init.worker && pending.is_none(),
+                        "source checkpoint owner or binding changed"
+                    );
+                    let targets = watcher
+                        .checkpoint_notices()?
+                        .into_iter()
+                        .map(|notice| protocol::CheckpointTarget {
+                            project: notice.project,
+                            configuration_epoch: notice.epoch,
+                            sequence: notice.sequence,
+                        })
+                        .collect::<Vec<_>>();
+                    for target in &targets {
+                        reply(&Reply::Event {
+                            project: target.project,
+                            configuration_epoch: target.configuration_epoch,
+                            sequence: target.sequence,
+                        })?;
+                    }
+                    reply(&Reply::Checkpoint {
+                        service,
+                        worker,
+                        operation_id,
+                        targets,
+                    })?;
+                    return Ok(());
+                }
                 Command::FencePolicy {
                     service,
                     worker,

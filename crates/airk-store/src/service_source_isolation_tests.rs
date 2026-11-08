@@ -43,7 +43,7 @@ fn managed_layout_origin_preserves_strict_receipts_namespace_and_payload_isolati
         source: base.join("payload"),
         runtime_sha256: airk_core::identity::Sha256Digest::from_bytes([2; 32]),
         main_sha256: airk_core::identity::Sha256Digest::from_bytes([3; 32]),
-        helper_sha256: airk_core::identity::Sha256Digest::from_bytes([4; 32]),
+        helper_sha256: Some(airk_core::identity::Sha256Digest::from_bytes([4; 32])),
         installer_identity: airk_core::identity::Sha256Digest::from_bytes([5; 32]),
     };
     let layout = serde_json::json!({"schema":1,"install":origin.install,"state":origin.state,

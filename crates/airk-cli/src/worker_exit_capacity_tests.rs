@@ -37,6 +37,7 @@ fn exit_capacity_refusal_retains_child_and_closes_all_fresh_admission() -> Resul
     };
     let worker = ChildWorker {
         exiting: false,
+        read_settlement: None,
         catalog_gate: None,
         catalog_pending: None,
         catalog_quarantined: false,
@@ -53,6 +54,9 @@ fn exit_capacity_refusal_retains_child_and_closes_all_fresh_admission() -> Resul
         last_renewal: Instant::now(),
         pool_binding: None,
         provider_helpers: Vec::new(),
+        provider_in_process: false,
+        #[cfg(feature = "local-inference")]
+        provider_completed: None,
         pool_pending: false,
         last_status: Instant::now(),
         waiting: None,
@@ -110,13 +114,16 @@ fn exit_capacity_refusal_retains_child_and_closes_all_fresh_admission() -> Resul
             .to_string()
             .contains("draining")
     );
-    assert!(
-        retained
-            .record_provider_delivery(Some(instance))
-            .unwrap_err()
-            .to_string()
-            .contains("draining")
-    );
+    for in_process in [false, true] {
+        assert!(
+            retained
+                .record_provider_delivery(Some(instance), in_process)
+                .unwrap_err()
+                .to_string()
+                .contains("draining")
+        );
+    }
     assert!(retained.provider_helpers.is_empty());
+    assert!(!retained.provider_in_process);
     Ok(())
 }

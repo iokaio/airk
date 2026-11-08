@@ -244,7 +244,7 @@ test('Windows installer exposes a real executable in fresh terminal PATH without
     // A real executable proves command discovery; no Rust build or live registry edit is needed.
     let terminalPath = '';
     const runner = context.mock.method(native, 'runSystemText', async () => '');
-    const variables = { persistent: false, description: '', prepend: (name: string, value: string) => {
+    const variables = { persistent: false, description: '', [Symbol.iterator]:()=>new Map<string,unknown>().entries(), prepend: (name: string, value: string) => {
         assert.equal(name, 'PATH'); terminalPath = value;
     } };
     await installCli(process.execPath, { globalStorageUri: { fsPath: path.join(root, 'Editor Storage') }, environmentVariableCollection: variables } as any);
@@ -268,4 +268,12 @@ test('Windows service command executes the selected launcher with original argum
     const result=require('node:child_process').spawnSync(powershell,['-NoProfile','-NonInteractive','-Command',`airk '${script.replaceAll("'","''")}' 'space argument' 'literal-value'; exit $LASTEXITCODE`],
         {encoding:'utf8',env:{...process.env,PATH:bin+path.delimiter+process.env.PATH}});
     assert.equal(result.status,7);assert.deepEqual(JSON.parse(result.stdout),['space argument','literal-value']);
+});
+
+test('later CLI repair cannot persist a terminal collection containing MCP credentials',async context=>{
+    const root=await fixture(context),mutations=new Map<string,unknown>([['AIRK_MCP_TOKEN_'+ 'A'.repeat(32),{type:1,value:'fictional-test-credential'}]]);
+    const variables={persistent:false,description:'',[Symbol.iterator]:()=>mutations.entries(),prepend:(name:string,value:string)=>{mutations.set(name,{type:2,value});}};
+    const host={globalStorageUri:{fsPath:root},environmentVariableCollection:variables} as any;
+    await installLauncherCli(process.execPath,host,'off');assert.equal(variables.persistent,false,'repair must retain ephemeral credential delivery');assert.ok(mutations.has('PATH'));
+    mutations.delete('AIRK_MCP_TOKEN_'+ 'A'.repeat(32));await installLauncherCli(process.execPath,host,'off');assert.equal(variables.persistent,true,'a PATH-only collection can use its ordinary persistent cache');
 });

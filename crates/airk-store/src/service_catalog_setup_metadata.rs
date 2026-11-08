@@ -25,6 +25,33 @@ impl Metadata {
         Self::from_request(control, &receipt.request)
     }
     pub(crate) fn from_request(control: &Path, request: &IndexSetupRequest) -> Result<Self> {
+        Self::format_request(control, request, false)
+    }
+    pub(crate) fn saved_adoption(
+        control: &Path,
+        receipt: &IndexSetupReceipt,
+        plan: &airk_core::catalog_legacy_adoption::LegacyAdoptionPlan,
+    ) -> Result<Self> {
+        plan.validate()?;
+        receipt.validate()?;
+        anyhow::ensure!(
+            receipt.request == plan.setup && receipt.legacy_adoption == Some(plan.identity()?),
+            "saved adoption metadata differs from exact native reservation"
+        );
+        Self::format_request(control, &receipt.request, true)
+    }
+    pub(crate) fn saved_plan(
+        control: &Path,
+        plan: &airk_core::catalog_legacy_adoption::LegacyAdoptionPlan,
+    ) -> Result<Self> {
+        plan.validate()?;
+        Self::format_request(control, &plan.setup, true)
+    }
+    pub(super) fn format_request(
+        control: &Path,
+        request: &IndexSetupRequest,
+        saved: bool,
+    ) -> Result<Self> {
         request.validate()?;
         let aliases = request
             .sources
@@ -38,7 +65,9 @@ impl Metadata {
             .collect::<BTreeMap<_, _>>();
         let source = Path::new(&request.registration.root);
         let data = Path::new(&request.registration.data_root);
-        crate::roots::validate_planned_sources(source, data, &aliases)?;
+        if !saved {
+            crate::roots::validate_planned_sources(source, data, &aliases)?;
+        }
         let slot: Incarnation = catalog_operation_id(request.caller, &request.key)?;
         let owner =
             crate::service::data_scope::initial_owner_bytes(data, control, request.key.namespace)?;
@@ -48,7 +77,14 @@ impl Metadata {
             &request.registration.collection,
             slot,
         )?;
-        let roots = crate::roots::RootConfig::initial_setup_bytes(source, data, &aliases)?;
+        let roots = if saved {
+            crate::roots::RootConfig::initial_saved_adoption_bytes(
+                &request.registration.root,
+                &aliases,
+            )?
+        } else {
+            crate::roots::RootConfig::initial_setup_bytes(source, data, &aliases)?
+        };
         let configuration = framed_digest(
             b"airk/catalog-source-configuration/1",
             &[

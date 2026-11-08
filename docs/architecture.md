@@ -1,9 +1,45 @@
 # Architecture
 
-The unpublished **1.8.12 working build** retains the existing crate and service
-owners. Current behavior and validation identities are recorded in the
-[working-build record](releases/release-1.8.12.md). Earlier
-[1.8.11 evidence](releases/release-1.8.11.md) remains dated history.
+The unpublished **1.8.14 implementation** retains the existing crate and native
+service owners while replacing per-client launchers with service-owned local
+HTTPS ingress and moving bundled MiniLM inference into that service. The
+[implementation ledger](research/one-airk-implementation.md) and
+[working record](releases/release-1.8.14.md) distinguish implemented source from
+completed qualification. The [1.8.12 record](releases/release-1.8.12.md) and older
+records remain historical evidence, not qualification of the current source.
+
+The CLI crate owns the retained loopback socket, installation-local TLS identity,
+protected credential ledger and native scope validation. The MCP crate owns the
+Streamable HTTP adapter and canonical read handlers; Core owns transport-neutral
+contracts. The [local HTTPS API](local-https-api.md) exposes those same read
+handlers to ordinary local programs. CLI, Workbench and MCP preserve their full
+results and exact selected authority. HTTP does not expose private lifecycle or
+index-management commands.
+
+Asynchronous connections share bounded native query admission. Disconnecting a
+caller suppresses delivery but does not release capacity for accepted native work
+until completion or proven worker retirement. TLS writes retain credential and
+catalog delivery fences, including bytes buffered below TLS. A typed refusal
+before native acceptance may receive one 50 ms retry within its original budget;
+uncertain executions and management mutations are not replayed.
+
+Bootstrap and management remain on owner-checked named pipes on Windows and Unix
+sockets on macOS/Linux. Platform managers launch the sealed main executable
+directly. macOS uses its registered login-item service; the HTTPS CA is separate
+from Developer ID code signing. Upgrades close new admission, retain durable
+continuations and source intents, and replace the service only after the native
+checkpoint barriers complete. Recovery validates the checkpoint before reopening
+admission. See [One AIRK](one-airk.md) for the migration and acceptance requirements.
+
+Persistent in-process inference history and embedded-default model publications
+require registry contract 13. The first such write raises the existing SQLite
+version requirement; unchanged predecessor state can remain at contract 12.
+The installer checks the selected payload's capabilities before stopping the
+service or attempting rollback. It must not relabel new state as old helper
+history. An older binary launched manually may remain alive for diagnostics,
+but its canonical registry reader rejects the newer contract and cannot open
+that state for source/index work. This is a data-access fence, not a promise
+that every historical main process immediately exits.
 
 Explorer notice dismissal is a host-owned workspace presentation preference.
 Validated exact notice keys are persisted before the webview hides a notice;

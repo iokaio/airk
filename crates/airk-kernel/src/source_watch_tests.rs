@@ -15,6 +15,41 @@ fn binding(source: &Path, data: &Path, collection: &str) -> Result<Binding> {
     })
 }
 
+#[test]
+fn checkpoint_covers_all_bound_scopes_and_closes_native_notifications_without_debounce()
+-> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let base = owner.path().canonicalize()?;
+    let first = base.join("first");
+    let second = base.join("second");
+    std::fs::create_dir(&first)?;
+    std::fs::create_dir(&second)?;
+    let mut watcher = SourceWatcher::new();
+    let a = binding(&first, &base.join("data"), "a")?;
+    let b = binding(&second, &base.join("data"), "b")?;
+    let mut expected = vec![a.registration.binding, b.registration.binding];
+    expected.sort();
+    watcher.install(a)?;
+    watcher.install(b)?;
+    let notices = watcher.checkpoint_notices()?;
+    assert_eq!(
+        notices
+            .iter()
+            .map(|notice| notice.project)
+            .collect::<Vec<_>>(),
+        expected
+    );
+    assert!(
+        notices
+            .iter()
+            .all(|notice| notice.epoch == 1 && notice.sequence > 0)
+    );
+    assert!(watcher.watcher.is_none());
+    assert!(watcher.entries.is_empty());
+    assert!(watcher.checkpoint_notices()?.is_empty());
+    Ok(())
+}
+
 fn directory_plan(root: &Path, data: &Path) -> Result<(ProjectBinding, Plan)> {
     directory_plan_with_policy(root, data, None)
 }
@@ -261,7 +296,13 @@ fn directory_plans_share_indexing_ignores_negations_and_reload_changed_rules() -
     fs::write(root.join(".ignore"), "ignored/\n")?;
     fs::write(root.join(".airkignore"), "custom/\n")?;
     fs::write(root.join("src/.gitignore"), "cache/\n")?;
-    fs::write(base.join(".gitignore"), "source/parent-ignored/\n")?;
+    // Protected test roots can live beneath this repository's artifacts/ rule.
+    // Neutralize only this fixture branch; scenario rules remain authoritative.
+    let baseline = "!source/artifacts/\n!source/artifacts/**\n";
+    fs::write(
+        base.join(".gitignore"),
+        format!("{baseline}source/parent-ignored/\n"),
+    )?;
     fs::create_dir_all(root.join(".git/info"))?;
     fs::write(root.join(".git/info/exclude"), "local-excluded/\n")?;
     let (project, plan) = directory_plan(&root, &data)?;
@@ -285,7 +326,7 @@ fn directory_plans_share_indexing_ignores_negations_and_reload_changed_rules() -
 
     fs::write(root.join(".gitignore"), "")?;
     fs::write(root.join("src/.gitignore"), "")?;
-    fs::write(base.join(".gitignore"), "")?;
+    fs::write(base.join(".gitignore"), baseline)?;
     fs::write(root.join(".git/info/exclude"), "")?;
     let (_, refreshed) = directory_plan(&root, &data)?;
     assert!(refreshed.wanted.contains(&root.join("artifacts/private")));
@@ -379,6 +420,12 @@ fn ignored_unreadable_directory_is_pruned_but_an_included_denial_remains_a_failu
     let locked = root.join("artifacts/locked");
     fs::create_dir_all(&locked)?;
     fs::create_dir(&data)?;
+    // Retain a neutral owned ancestor for this branch even when the test root
+    // itself is beneath the repository's artifacts/ ignore rule.
+    fs::write(
+        base.join(".gitignore"),
+        "!source/artifacts/\n!source/artifacts/**\n",
+    )?;
     let restore = Restore {
         path: locked.clone(),
         tool: PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32/icacls.exe"),

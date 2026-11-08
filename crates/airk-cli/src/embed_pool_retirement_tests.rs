@@ -59,6 +59,8 @@ fn request(
             alive,
             worker_alive,
             reply,
+            charge: None,
+            authorization: None,
             native_worker: Some(identity(grant)),
         },
         receiver,
@@ -144,6 +146,7 @@ fn revocation_during_model_selection_never_starts_native_inference() -> Result<(
             memory_bytes: 8 << 20,
         },
         Some(RequestOwner {
+            authorization: None,
             connection: &connection,
             worker: &worker,
             closing: &closing,

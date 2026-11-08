@@ -17,7 +17,7 @@ fn call(root: &Path, state: &Path, args: &[&str]) -> Result<Value> {
 fn current_maintenance_replaces_retention_and_preserves_sources_and_token() -> Result<()> {
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
-    let service = common::Service::start(root.path(), state.path(), "default");
+    let service = common::Service::reviewed(root.path(), state.path(), "default");
     fs::write(root.path().join("note.txt"), "original source")?;
     call(root.path(), state.path(), &["index"])?;
     let before = common::published_status(root.path(), state.path(), "default")?;

@@ -1,16 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
-// Real trusted controller upgrade/rollback fixture. No VSIX, login or default user installation.
+// Historical schema-1 controller upgrade/rollback fixture; not modern qualification.
 const assert=require('node:assert/strict');
 const fs=require('node:fs/promises');
 const path=require('node:path');
 const crypto=require('node:crypto');
 const {execFile}=require('node:child_process');
-const {RuntimeHost,nativeRunner}=require('../packages/vscode/out/serviceBootstrap.js');
-const {ServiceConsoleController}=require('../packages/vscode/out/serviceConsoleController.js');
+const {requireHistoricalRuntime}=require('./historical-runtime-fixture.cjs');
 
 (async()=>{
     assert.equal(process.argv[2],'--runtime');assert.equal(process.argv[4],'--previous-runtime');
     const payload=await fs.realpath(process.argv[3]),previous=await fs.realpath(process.argv[5]);
+    await requireHistoricalRuntime(payload,'check-service-runtime-transitions.cjs candidate');
+    await requireHistoricalRuntime(previous,'check-service-runtime-transitions.cjs predecessor');
+    const {RuntimeHost,nativeRunner}=require('../packages/vscode/out/serviceBootstrap.js');
+    const {ServiceConsoleController}=require('../packages/vscode/out/serviceConsoleController.js');
     const parent=await fs.realpath(path.join(__dirname,'../target'));
     const fixture=await fs.mkdtemp(path.join(parent,'airk-transition-fixture-'));
     const install=path.join(fixture,'installation'),native=path.join(fixture,'native'),source=path.join(fixture,'source'),data=path.join(fixture,'data');

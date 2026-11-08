@@ -1,50 +1,56 @@
 # AIRK {{VERSION}} local build ({{PLATFORM}})
 
-Built {{BUILT}} from commit `{{COMMIT}}`{{DIRTY}} with the `{{PROFILE}}` profile by `build.ps1` or `build.sh`.
+Built {{BUILT}} from commit `{{COMMIT}}`{{DIRTY}} with the `{{PROFILE}}` profile.
 
-This build is for advanced users who fork AIRK and want to experiment with the native engine from a terminal, without VS Code. It runs directly from this folder. It does **not** install anything: no PATH or shell-profile edits, no login startup, no per-user runtime installation and no VS Code extension. Delete the folder to remove it. The binaries are unsigned local builds for this platform only; they are not a release.
+Building this folder changes no PATH, shell profile, login startup, default per-user AIRK installation or VS Code extension. This is a development candidate for this platform, not a published release. The Mac builder applies a development app signature; that does not establish Developer ID, notarization or other-platform qualification.
 
-## What is here
+## Rebuild from the checkout
+
+The default entrypoint verifies previously prepared pinned model/static-ORT inputs without downloading them. From the original checkout, run `python scripts/local-build.py --profile debug` (or select `release`). Add `--static-environment-file <complete-verified-handoff.json>` to use an existing host-matched static build, or `--static-ort <absolute-owned-static-destination>` to select its persistent cache. The handoff is reverified before its five compiler variables enter the build child; it does not change your shell's environment.
+
+For a new cache, `python scripts/local-build.py --profile release --download-inputs` explicitly permits the pinned model, tool and ORT source downloads plus the bounded two-job static C++ build. It does not install tools globally. An existing invalid cache is refused rather than replaced. Missing offline inputs fail before Cargo. `build.ps1` and `build.sh` forward the profile and retain that offline default; use the Python entrypoint for these input options.
+
+## Contents
 
 | Path | Purpose |
 |---|---|
-| `{{BIN}}` | The AIRK engine. Every process below is this executable started with a different command. |
-| `{{EMBED}}` | The offline embedding helper. The service starts it when vector search needs it; never start it yourself. |
-| `runtime/` | The complete runtime: ONNX Runtime libraries, the bundled offline model, `airk-install.json` (file digests), `airk-build.json` (build receipt) and license notices. Keep the files together. |
+| `{{BIN}}` | The single main image, including the pinned offline MiniLM model and statically linked CPU ORT. |
+| `runtime/` | Complete sealed payload, native inventory, build/input receipts and license notices. Keep these files together. |
+| `tools/check-service-clients.py` | Explicit disposable canonical experiment using the actual native setup, indexing, HTTPS and lifecycle paths. |
+| `tools/input-manifest.json` | Exact hashes and original public paths of copied support files. |
+| `examples/local_https_client.py` | Standalone standard-library JSON HTTPS API client. |
 
-## Processes, by name
+The service owns its in-process inference provider. Source and project workers use authenticated role commands in the same main image. Agent connections use the shared HTTPS endpoint; they do not launch a helper, launcher or per-connection AIRK frontend. Do not start private worker roles yourself.
 
-| Process | Started by | How |
-|---|---|---|
-| Service (`airk serve`) | You | `airk serve --runtime-dir <control>`. It is the metadata broker, job queue and resource admission for one private control directory, and keeps running until you shut it down. |
-| Source worker | The service | Watches registered roots when watching is on. Started automatically. |
-| Project workers | The service | Index and answer queries for one registered project each. Started automatically. |
-| Embedding helper (`airk-embed`) | The service | Shared offline inference for vector search. Started automatically. |
-| MCP frontend (`airk mcp`) | You or an agent | One stdio MCP server per connection; it talks to the service and project workers. |
-| CLI commands | You | Short-lived clients such as `service health`, `index`, `search`, `status` and `tools call`. |
+## Run the owned experiment
 
-Never start the hidden worker commands (`project-worker`, `source-worker`, `derived-worker`, `process-guardian`) by hand; the service launches and authenticates them.
+From this folder, run Python 3.11 or later (`python3` where needed):
 
-## Set up a test environment
+```text
+python tools/check-service-clients.py --runtime-dir runtime --files 1 --report experiment.json
+```
 
-Use a throwaway folder outside any repository. The commands below use PowerShell on Windows and a POSIX shell on macOS/Linux. Replace `<build>` with this folder's absolute path.
+This is a fixture-only experiment, not a way to register an arbitrary folder or connect an existing user account. It creates original throwaway source and separate private install/state/data roots. It approves this exact payload digest in that owned installation, activates native fresh catalog initialization, applies native-reviewed Index setup and exact Project membership/grant requests, indexes once and exercises complete CLI/HTTPS results. It then performs the exact instance-bound managed Stop and removes its owned temporary roots only after settlement. Failures retain their source, state and diagnostics; the script prints that path. It does not configure login startup or install machine-wide trust.
 
-{{SETUP}}
+Add `--model` for the separately bounded actual embedded inference/vector checks. The complete model inventory and actual embedded-model smoke already ran in the native builder; an experiment report records what this additional run actually observed.
 
-Notes:
+The copied dependency closure contains only public Python sources and the pinned model catalog. It runs without the original checkout or Cargo. Its supporting modules are not a new public administrative API. To experiment with different source/scope, use native Index setup preview/apply and explicit reviewed memberships/grants; a folder path, `init`, raw registration or a URL does not provide agent authority.
 
-- On macOS and Linux, keep the data directory private to your account (for example `mkdir -m 700`). AIRK never changes the permissions of an existing directory; `airk runtime inventory` reports storage other accounts may read as `storage_not_private`.
-- `service prepare-registration` is read-only and prints the canonical registration, including the project `binding`. `service register` stores it in the service registry. Run `index` to build the first index; `watch on` keeps it current from source changes.
-- `airk --help` and `airk <command> --help` describe every command. `airk tools list --json` and `airk tools help <tool>` describe the MCP tools, and `airk tools call airk_help` returns the engine's own guide.
-- `index` returns a job receipt. Job state and coverage are visible through `airk_status` and `airk_diagnostics` (`tools call`).
-- Add `.airkignore` files to exclude sources. Common credential files (`.npmrc`, `.netrc`, SSH private keys, kubeconfig, Terraform state and others) are skipped by default; AIRK is not a secret scanner.
+## Use the local developer API
+
+For an existing reviewed native selection, use the main's `setup --client <supported-client>` with its exact `--catalog-session` or `--combined-session` and explicit owned installation/control. Inspect the generated connection and trust instructions. Save native connection JSON in an owner-private file outside repositories. Token bytes stay in the protected credential file, never in command arguments or this folder.
+
+```text
+python examples/local_https_client.py --connection <absolute-private-connection-json>
+python examples/local_https_client.py --connection <absolute-private-connection-json> --tool search --arguments "<JSON argument object matching the returned schema>"
+```
+
+The first command calls `GET /api/v1/tools` and prints complete schemas. The second calls `POST /api/v1/tools/search` and prints the complete tool result. Use the actual advertised tool name and argument object. The example adds the approved local CA to normal roots, keeps chain/IP validation enabled, follows no redirects and sends bearer bytes only after TLS validation. The raw API needs no MCP SDK or Workbench. An expired/revoked credential, changed native scope or missing trust must be resolved through native setup, not by disabling TLS checks.
+
+The one-shot experiment above stops its service before returning; its earlier URL is not a persistent endpoint for these commands. A live custom experiment must keep its explicit reviewed native owner running and resolve fresh connection metadata after restart or relocation. Use the actual published port rather than assuming the preferred port is free.
 
 ## Inspect and clean up
 
-- `airk runtime inventory --install-dir <dir>` and `airk runtime purge` act on a real per-user installation; this local build has none, so delete the test folder instead.
-- Service logs: `airk service logs --runtime-dir <control> --limit 32 --format json`.
-- Stop the service with `airk service shutdown --runtime-dir <control>`, then delete the test folder. Deleting it removes the control state, indexes and logs of this experiment.
+`runtime/airk-install.json` describes the payload and `runtime/airk-build.json` preserves the actual profile, source seal, static-input identities, import inspection and embedded-model smoke. `static-environment.json`, when generated locally, is the verified compiler-input handoff, not a client credential.
 
-## Limits
-
-This is the same engine the extension installs, but it is started without the installer's verified-selection, upgrade and login-startup layers. The installed lifecycle (runtime staging, activation, launchers and uninstall) is not exercised here. Results from this build do not qualify an installed release or other platforms.
+Read complete `experiment.json` before claiming an experiment passed. It distinguishes native managed Stop evidence from a process exit status. Do not delete a retained failed fixture while native lifecycle settlement is unknown. This folder itself contains build artifacts and public tools only; deleting it does not uninstall an unrelated AIRK installation. The fixture recipe qualifies only what it actually ran, not reboot/logon, external agent trust or a published release.

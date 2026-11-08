@@ -19,9 +19,72 @@ fn origin(base: &Path) -> ManagedGenesisOrigin {
         source: base.join("provider"),
         runtime_sha256: digest,
         main_sha256: digest,
-        helper_sha256: digest,
+        helper_sha256: Some(digest),
         installer_identity: digest,
     }
+}
+
+#[test]
+fn managed_origin_preserves_legacy_bytes_and_requires_exact_executable_shape() -> Result<()> {
+    let temporary = tempfile::tempdir()?;
+    let legacy = origin(&temporary.path().canonicalize()?);
+    legacy.validate()?;
+    let fields = serde_json::to_value(&legacy)?;
+    assert!(fields["helper_sha256"].is_string());
+    // Frozen original field order and non-optional helper encoding. Existing
+    // schema-1 journal fingerprints must not change when read by this version.
+    let names = [
+        "schema",
+        "install",
+        "state",
+        "control",
+        "operation",
+        "namespace",
+        "policy_sha256",
+        "policy_version",
+        "policy_verification_basis",
+        "policy_lifecycle",
+        "source",
+        "runtime_sha256",
+        "main_sha256",
+        "helper_sha256",
+        "installer_identity",
+    ];
+    let bytes = format!(
+        "{{{}}}",
+        names
+            .iter()
+            .map(|name| format!("\"{name}\":{}", fields[*name]))
+            .collect::<Vec<_>>()
+            .join(",")
+    )
+    .into_bytes();
+    assert_eq!(serde_json::to_vec(&legacy)?, bytes);
+    assert_eq!(
+        legacy.digest()?,
+        airk_core::identity::framed_digest(b"airk/managed-genesis-origin/1", &[&bytes])
+    );
+    let decoded: ManagedGenesisOrigin = serde_json::from_slice(&bytes)?;
+    assert_eq!(decoded, legacy);
+    let mut modern = legacy.clone();
+    modern.schema = 2;
+    assert!(modern.validate().is_err());
+    modern.helper_sha256 = None;
+    modern.validate()?;
+    assert!(
+        serde_json::to_value(&modern)?
+            .get("helper_sha256")
+            .is_none()
+    );
+    assert_ne!(modern.digest()?, legacy.digest()?);
+    let mut changed = modern.clone();
+    changed.main_sha256 = Sha256Digest::from_bytes([126; 32]);
+    assert_ne!(changed.digest()?, modern.digest()?);
+    modern.schema = 1;
+    assert!(modern.validate().is_err());
+    modern.schema = 3;
+    assert!(modern.validate().is_err());
+    Ok(())
 }
 
 fn existing_owned_control(origin: &ManagedGenesisOrigin) -> Result<()> {

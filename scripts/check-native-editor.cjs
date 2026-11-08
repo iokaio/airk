@@ -8,8 +8,8 @@ let bundle;
 const profiles=new Map();
 const receiptPlans=new Map(),retainedProfileFolders=new Set();
 const {prepareOwnedReceipts,cleanupOwnedReceipts,verifyOwnedReceiptsAbsent}=require('./native-editor-receipts.cjs');
-const {waitForIndexIdle}=require('./native-editor-idle.cjs');
-const {editorUi,privateEditorEnvironment}=require('./editor-ui.cjs');
+const {verifyHealth:verifyIdleHealth,waitForIndexIdle}=require('./native-editor-idle.cjs');
+const {editorUi,privateEditorEnvironment,privateClientEnvironment}=require('./editor-ui.cjs');
 const root=path.resolve(__dirname,'..');
 const [editor,cli,source]=process.argv.slice(2).map(value=>path.resolve(value));
 if(!source)throw new Error('Expected editor, its cli.js, and an approved extension stage or VSIX.');
@@ -111,7 +111,7 @@ async function observeIndexIdle(folder,role,request,scenarioDeadline){
         if(before.payload_verified!==true||before.approval?.manifest_sha256!==bundle.digest||!/^[a-f0-9]{32}$/.test(before.registry_namespace))throw new Error('Index idle runtime approval unavailable');
         const control=await canonicalOwned(fixture,before.control_dir),pair=JSON.parse(await fs.readFile(path.join(bundle.source,'airk-runtime.json'),'utf8'));
         const health=await rpc(control,'health');
-        function verifyHealth(value){const observed=value.observation;if(value.status!=='health'||observed?.version!==bundle.version||observed.runtime_sha256!==bundle.digest||observed.executable_sha256!==pair.airk_sha256||observed.catalog_clock?.namespace!==before.registry_namespace||observed.policy?.accepting!==true||!/^[a-f0-9]{32}$/.test(observed.instance))throw new Error('Index idle service identity crossed its approved runtime/catalog');return observed;}
+        const verifyHealth=value=>verifyIdleHealth(value,{version:bundle.version,runtimeSha256:bundle.digest,executableSha256:pair.airk_sha256,namespace:before.registry_namespace});
         const service=verifyHealth(health);
         async function backing(){
             const response=await rpc(control,{catalog_detail:{entity:{kind:'index',id:request.index},expected_catalog_revision:null}}),detail=response.detail,index=detail?.item?.value;
@@ -151,7 +151,7 @@ async function verifyFreshFixtureLayout(folder){
     const nativeInstall=await canonicalLocation(location.install_dir),normalize=p=>process.platform==='win32'?path.toNamespacedPath(p).toLowerCase():p;
     if(normalize(nativeInstall)===normalize(install))throw new Error('Fixture would adopt the ambient native installation/state/log layout');
     // runtime_layout::planned_state uses this fresh non-default install itself;
-    // initialize then chooses state/logs. No ambient HOME/APPDATA is changed.
+    // initialize then chooses state/logs. Only the owned child client home is used.
     const expected={installDir:install,stateDir:install,controlDir:path.join(install,'control'),logsDir:path.join(install,'logs')};
     if(Object.values(expected).some(value=>!inside(fixture,value)))throw new Error('Planned fixture runtime state escaped the owned scenario');
     await fs.writeFile(path.join(folder,'fixture-layout.json'),JSON.stringify({nativeLocation:location,expected,source_contract:'runtime_layout.rs planned_state(non-default fresh install) + initialize logs=state/logs'},null,2));
@@ -181,7 +181,6 @@ async function legacyFixture(){
     const inventory=JSON.parse(installBytes),names=Object.keys(inventory.files);if(names.length>4096)throw new Error('Legacy payload inventory exceeds fixture bound');
     for(const name of names){const file=await ownedPath(runtime,path.resolve(runtime,name));if(sha(await fs.readFile(file))!==inventory.files[name])throw new Error('Legacy candidate payload changed: '+name);}
     const pair=JSON.parse(await fs.readFile(path.join(runtime,'airk-runtime.json'),'utf8'));
-    if(pair.schema!==1||pair.airk_sha256!==candidate.engine_sha256||pair.embed_sha256!==candidate.helper_sha256)throw new Error('Legacy candidate pair differs from actual native receipt');
     if(config.binding_kind==='pinned_predecessor'){
         const owner=value.predecessor,commandRuntime=await canonicalOwned(fixture,owner.runtime_dir),manifest=await fs.readFile(path.join(commandRuntime,'airk-install.json'));
         if(sha(manifest)!==owner.install_manifest_sha256)throw new Error('Actual predecessor payload manifest changed');
@@ -206,7 +205,8 @@ async function legacyFixture(){
     for(const record of native.evidence_files){await canonicalOwned(fixture,record.path);const bytes=await fs.readFile(record.path);nativeBytes+=bytes.length;if(bytes.length>1048576||nativeBytes>4194304||sha(bytes)!==record.sha256)throw new Error('Legacy native evidence changed or exceeds the disclosed 4 MiB bound');native.parsed_evidence.push({path:record.path,sha256:record.sha256,value:JSON.parse(bytes.toString('utf8'))});}
     const inspection=native.inspect;
     if(!inspection||!native.parsed_evidence.some(record=>same(record.value,inspection))||inspection.selection?.active!==candidate.install_manifest_sha256||inspection.approval?.manifest_sha256!==candidate.install_manifest_sha256||inspection.payload_verified!==true)throw new Error('Actual native candidate inspection evidence is missing or does not select the candidate');
-    if(config.binding_kind==='stable_launcher'&&inspection.launcher!==config.launcher_binding.installation_launcher.path)throw new Error('Actual native inspection disagrees with the installation launcher binding');
+    const {pairIdentity,qualifyCandidateRuntime,qualifyLegacyNative}=require('./native-editor-legacy.cjs');
+    const executableContract=qualifyCandidateRuntime(pair,candidate,inspection,inventory.files,config);
     const executable=await canonicalOwned(runtime,inspection.executable),relative=path.relative(runtime,executable).split(path.sep).join('/');
     if(inventory.files[relative]!==candidate.engine_sha256||sha(await fs.readFile(executable))!==candidate.engine_sha256)throw new Error('Actual native inspection did not select the verified candidate engine');
     if(!Object.keys(value.source_hashes_before??{}).length)throw new Error('Original native fixture source inventory is missing');
@@ -225,8 +225,7 @@ async function legacyFixture(){
     const previousMain=process.platform==='darwin'?'AIRK.app/Contents/MacOS/airk':process.platform==='win32'?'airk.exe':'airk';
     const previousHelper=process.platform==='darwin'?'AIRK.app/Contents/MacOS/airk-embed':process.platform==='win32'?'airk-embed.exe':'airk-embed';
     if(previousInventory.files[previousMain]!==previousPair.airk_sha256||previousInventory.files[previousHelper]!==previousPair.embed_sha256)throw new Error('Predecessor native pair differs from its verified inventory');
-    const {pairIdentity,qualifyLegacyNative}=require('./native-editor-legacy.cjs');
-    return {...value,qualification:qualifyLegacyNative(value,{candidateIdentity:pairIdentity(pair),predecessorIdentity:pairIdentity(previousPair)})};
+    return {...value,candidate_runtime:pair,qualification:qualifyLegacyNative(value,{candidateIdentity:executableContract.engineIdentity,predecessorIdentity:pairIdentity(previousPair),runtimeSchema:executableContract.runtimeSchema})};
 }
 /** Installed AIRK Explorer: Search shows a cited fixture hit and Management lists the registered project. */
 async function checkExplorer(ui){
@@ -289,13 +288,14 @@ async function cleanupServices(){
     return results;
 }
 async function main(){
-    const harnessPaths=['scripts/check-native-editor.cjs','scripts/editor-ui.cjs','scripts/native-editor-legacy.cjs','scripts/native-editor-receipts.cjs','scripts/native-editor-idle.cjs','packages/vscode/out/test/installedEditor.js','packages/vscode/out/test/installedEditorContracts.js'];
+    const harnessPaths=['scripts/check-native-editor.cjs','scripts/editor-ui.cjs','scripts/native-editor-legacy.cjs','scripts/native-editor-receipts.cjs','scripts/native-editor-idle.cjs','packages/vscode/out/test/installedEditor.js','packages/vscode/out/test/installedEditorContracts.js','packages/vscode/out/test/installedEditorHttp.js'];
     const harness=Object.fromEntries(await Promise.all(harnessPaths.map(async name=>[name,sha(await fs.readFile(path.join(root,name)))])));
     const stage=(await fs.lstat(source)).isDirectory();
     if(stage){const version=JSON.parse(await fs.readFile(path.join(source,'package.json'),'utf8')).version;
         bundle=await require(path.join(root,'packages/vscode/out/serviceBootstrap.js')).verifyBundledRuntime(source,version);}
     const base=path.join(root,'artifacts/editor-qualification');await fs.mkdir(base,{recursive:true});
     const run=await fs.realpath(await fs.mkdtemp(path.join(base,stage?'native-stage-':'native-installed-')));
+    const clientHome=path.join(run,'client-home');await fs.mkdir(clientHome,{mode:0o700});Object.assign(environment,privateClientEnvironment(environment,clientHome));
     const extensions=path.join(run,'extensions');await fs.mkdir(extensions);
     if(!stage)await runProcess([cli,'--user-data-dir',await privateProfile(run,'install'),'--extensions-dir',extensions,
         '--shared-data-dir',path.join(run,'shared-editor-data'),'--install-extension',source,'--force'],path.join(run,'install.log'),{ELECTRON_RUN_AS_NODE:'1'});
@@ -324,7 +324,9 @@ exports.activate=()=>{if(!process.env.AIRK_EDITOR_RUN)return;void require(${JSON
         for(const [name,symbol] of [['workspace-a','WindowAlphaEvidence'],['workspace-b','WindowBetaEvidence']]){const workspace=path.join(folder,name);await fs.mkdir(workspace);await fs.writeFile(path.join(workspace,'fixture.ts'),`export function ${symbol}() { return 42; }\n`);await fs.writeFile(path.join(workspace,'hidden.ts'),'export function HiddenPrivateEvidence() {}\n');}
         for(const name of ['shared-a','shared-b']){await fs.mkdir(path.join(folder,name));await fs.writeFile(path.join(folder,name,'shared.ts'),'export function SharedAllowedEvidence() { return 19; }\n');}
         const location=JSON.parse((await execute(bundle.main,['runtime','location','--channel','stable'],{windowsHide:true,env:environment,cwd:folder,timeout:30000,maxBuffer:65536})).stdout);
-        if(location.protocol!==1||typeof location.user_paths?.launcher!=='string')throw new Error('Actual native launcher location unavailable for exact fixture cleanup');
+        // This legacy-named directory remains the native account receipt base;
+        // observing it does not claim a modern launcher executable exists.
+        if(location.protocol!==1||typeof location.user_paths?.launcher!=='string')throw new Error('Actual native account receipt location unavailable for exact fixture cleanup');
         const receiptSources=legacy?[legacy.source_root]:[await fs.realpath(path.join(folder,'workspace-a')),await fs.realpath(path.join(folder,'workspace-b'))];
         // Windows native metadata can retain the namespaced spelling. Both
         // exact hashes remain bound to the same verified canonical fixture root.
@@ -420,12 +422,13 @@ exports.activate=()=>{if(!process.env.AIRK_EDITOR_RUN)return;void require(${JSON
         summary.scenarios.push(...results);
         if(legacy){if(sha(await fs.readFile(legacy.legacy_config.path))!==legacy.legacy_config.sha256)throw new Error('Legacy config changed after installed-editor probe');
             for(const [name,digest]of Object.entries(legacy.source_hashes_before)){const file=await ownedPath(legacy.source_root,path.resolve(legacy.source_root,name));if(sha(await fs.readFile(file))!==digest)throw new Error('Legacy source changed during installed-editor probe');}
-            summary.legacyUpgradeCoverage=true;}
+            const coverages=results.map(result=>require('./native-editor-legacy.cjs').qualifyLegacyEditorEvidence(result,legacy));
+            summary.legacyUpgradeCoverage=coverages.every(value=>value.legacyUpgradeCoverage);summary.legacyCoverage=coverages;}
         await cleanupServices();await cleanupProfiles();
         await fs.writeFile(path.join(run,'summary.json'),JSON.stringify(summary,null,2));console.log(`${scenario}: native editor passed`);
     }
     for(const [name,digest]of Object.entries(harness))if(sha(await fs.readFile(path.join(root,name)))!==digest)throw new Error('Installed-editor harness changed during qualification: '+name);
-    summary.status=summary.scenarios.some(row=>row.status==='unqualified')?'partial':'passed';
+    summary.status=summary.scenarios.some(row=>row.status==='unqualified')||(scenarios.includes('legacy')&&!summary.legacyUpgradeCoverage)?'partial':'passed';
     summary.qualifiesFullScenarioSelection=summary.status==='passed';
     await fs.writeFile(path.join(run,'summary.json'),JSON.stringify(summary,null,2));
     if(summary.status==='partial'){console.log(`Native editor coverage remains unqualified: ${run}`);process.exitCode=2;}

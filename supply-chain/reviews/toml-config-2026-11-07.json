@@ -1,0 +1,404 @@
+{
+  "schema": "airk.dependency-source-review-proposal/1",
+  "status": "REVIEWED_LIMITED_EXACT_VERSION_EXCEPTIONS",
+  "date": "2026-11-07",
+  "lock_sha256": "a67f0ab0e1247a62b43b5f57882aa8d7ca6e8323d9607e05f7f49c8b19169ec5",
+  "source_policy_before_sha256": "a794f79f597f025353d586bae48afb886096ed26626f86c66bed6d85f9508ddf",
+  "scope": "Exact cached registry archive identity, extracted-cache equality, licenses/build manifests and targeted source inspection for bounded original Codex TOML decoding. Not a full safe-to-deploy audit, publisher authentication, advisory clearance, legal approval or platform qualification.",
+  "packages": [
+    {
+      "identity": {
+        "name": "serde_spanned",
+        "version": "1.1.3",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "9c187e0a369471c550af028cba56d4f4fa2a489ad28151ae95a4d340a2a8b782"
+      },
+      "archive_bytes": 11176,
+      "archive_links": 0,
+      "cache_matches_all_packaged_files": true,
+      "packaged_files": 10,
+      "packaged_tree_sha256": "eaa5c3313606980b96dfb54859ba14aa072b068f1659c1baa5d84fd39e1ffd9c",
+      "manifest_sha256": "4a7ac85de17f8e18f69f3773d1879c602f0cc1d98daf2d7f863707b9131d85b6",
+      "original_manifest_sha256": "cefda0925a75ef0ddb4672567ce9ce0f338b43d76622392e1c1bb59bbcbd9386",
+      "declared_license": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 11349,
+          "sha256": "249fdb6694467dd615b259f7ddde07be3f8ae5a72cecebb0e24f6629af4215fe"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1062,
+          "sha256": "6efb0476a1cc085077ed49357026d8c173bf33017278ef440f222fb9cbcb66e6"
+        }
+      ],
+      "declared_repository": "https://github.com/toml-rs/toml",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "563cb1a5d133e39d1008d4d4148ef35d3bba379f"
+        },
+        "path_in_vcs": "crates/serde_spanned"
+      },
+      "effective_build_script": false,
+      "procedural_macro": false,
+      "source_bytes": 12526,
+      "targeted_source_files": [
+        {
+          "path": "src/lib.rs",
+          "bytes": 1042,
+          "sha256": "9177c41606d5a98e104b7dcceabb8b341d92a40089d75ffab271fe400aefbeac"
+        },
+        {
+          "path": "src/spanned.rs",
+          "bytes": 8732,
+          "sha256": "63ef6c841a03fd302b260b0af621db0b9677f5fb761fbeb1ac6a3877997b673a"
+        }
+      ],
+      "exception_rationale_and_limits": "Serde span/value adapter; src/lib.rs forbids unsafe. Span ranges are metadata and do not prove original source ownership. No build script or procedural macro; serde wire correctness was inspected narrowly, not exhaustively audited."
+    },
+    {
+      "identity": {
+        "name": "toml",
+        "version": "1.1.6+spec-1.1.0",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "920602543f0911ab71da12c50d59701da54c196d1a2bf5cb4b75667f137a406a"
+      },
+      "archive_bytes": 55947,
+      "archive_links": 0,
+      "cache_matches_all_packaged_files": true,
+      "packaged_files": 46,
+      "packaged_tree_sha256": "b75c78e54d1326fad8f67f697c2e0182576880d719c455566012f475302ca6f2",
+      "manifest_sha256": "bc28e3a3d98ba539f4933dae2e9cbd11c7c43360b09693e16a7ab197dd2af00a",
+      "original_manifest_sha256": "114d0b273b299e6465ce6f85ca3293b666c3bef9d2240ce97c3eaadb969adc20",
+      "declared_license": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 11358,
+          "sha256": "c6596eb7be8581c18be736c846fb9173b69eccf6ef94c5135893ec56bd92ba08"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1062,
+          "sha256": "6efb0476a1cc085077ed49357026d8c173bf33017278ef440f222fb9cbcb66e6"
+        }
+      ],
+      "declared_repository": "https://github.com/toml-rs/toml",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "572c005d80cca5f7bd163805c2f33ba0a5207b6d"
+        },
+        "path_in_vcs": "crates/toml"
+      },
+      "effective_build_script": false,
+      "procedural_macro": false,
+      "source_bytes": 276995,
+      "targeted_source_files": [
+        {
+          "path": "src/lib.rs",
+          "bytes": 5652,
+          "sha256": "74e4adbe1c1ac307ba00416b2faf7d04efe8e036c583fe815fa82f55cbd94ae2"
+        },
+        {
+          "path": "src/de/parser/mod.rs",
+          "bytes": 2608,
+          "sha256": "fa8b59a71e94ca16da04a6c07af425f64944d4f47d32aa9882e3b67ae19a7d5a"
+        },
+        {
+          "path": "src/de/parser/key.rs",
+          "bytes": 3745,
+          "sha256": "e591ddab749739f5ae15eecdd55c1fe5bf1bd0f54f2f5aef85b0703cea1344d8"
+        },
+        {
+          "path": "src/de/parser/array.rs",
+          "bytes": 4081,
+          "sha256": "3703713d23fde2f4a0d917e70c20d5aad23129c4783755c4506e2876a9654cff"
+        },
+        {
+          "path": "src/de/parser/inline_table.rs",
+          "bytes": 10312,
+          "sha256": "cc4e1b96824f9b51dc5a780dd7044b664e0c42f21f6fe3366aff3d6ce499164d"
+        },
+        {
+          "path": "src/de/parser/document.rs",
+          "bytes": 20191,
+          "sha256": "7153549e3c578fed66587ffc38164912f2d8db6f149e73f8307cdd35e115417a"
+        }
+      ],
+      "exception_rationale_and_limits": "Bounded original Codex TOML decoding for native legacy-origin inspection. src/lib.rs forbids unsafe; configured std/serde/parse without unbounded/debug/display. Parser recursion guard is 80 and dotted-key path depth is checked; lexer/events allocate proportionally to input and may amplify the existing 1 MiB caller bound. Not a complete adversarial complexity or parser-correctness audit."
+    },
+    {
+      "identity": {
+        "name": "toml_datetime",
+        "version": "1.1.3+spec-1.1.0",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "173f25c883cd2176a2d8212155638c0a60d484a9d84546d270866f40f56b6e49"
+      },
+      "archive_bytes": 18227,
+      "archive_links": 0,
+      "cache_matches_all_packaged_files": true,
+      "packaged_files": 11,
+      "packaged_tree_sha256": "51e29c8c332b30a995fca97f58225516fb2404a7f7898371534f375acfad9466",
+      "manifest_sha256": "6ccf973c519f51e72ef63307118837143f3cdc1d382f298b9faea12ee7c749fc",
+      "original_manifest_sha256": "5fabe45e337e9aaf5b721c47a05bca8c7b4e97ae625c3bb93c695286c5dc8d65",
+      "declared_license": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 11349,
+          "sha256": "249fdb6694467dd615b259f7ddde07be3f8ae5a72cecebb0e24f6629af4215fe"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1062,
+          "sha256": "6efb0476a1cc085077ed49357026d8c173bf33017278ef440f222fb9cbcb66e6"
+        }
+      ],
+      "declared_repository": "https://github.com/toml-rs/toml",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "563cb1a5d133e39d1008d4d4148ef35d3bba379f"
+        },
+        "path_in_vcs": "crates/toml_datetime"
+      },
+      "effective_build_script": false,
+      "procedural_macro": false,
+      "source_bytes": 45004,
+      "targeted_source_files": [
+        {
+          "path": "src/lib.rs",
+          "bytes": 1160,
+          "sha256": "bd75aa36e53f5a870d0605c0850d16e6a6ebda0bee1006a484c4e7fdd949eee3"
+        },
+        {
+          "path": "src/datetime.rs",
+          "bytes": 32049,
+          "sha256": "398619e45d1430468fa37ca325a7cc2a05c50497115be5bbd4d1b097d351b5e5"
+        },
+        {
+          "path": "src/de.rs",
+          "bytes": 4549,
+          "sha256": "480b1155e4ce4f3d22801845bc299fe55f44e48b326d7fd5a1f33df5da9f1817"
+        }
+      ],
+      "exception_rationale_and_limits": "TOML date/time scalar and serde adapter; src/lib.rs forbids unsafe. Numeric parsing and field-range validation inspected; no clock/network/filesystem/process access. Date/time semantic completeness is not certified."
+    },
+    {
+      "identity": {
+        "name": "toml_parser",
+        "version": "1.1.5+spec-1.1.0",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "baa693a8032d7e1cada7d0041e96126df243179ff061456783ac7f12bda4744c"
+      },
+      "archive_bytes": 36159,
+      "archive_links": 0,
+      "cache_matches_all_packaged_files": true,
+      "packaged_files": 22,
+      "packaged_tree_sha256": "9a7b856dacb74f8cb770b7538a5fb91a24b82107971acf9d921e3128c476f5e7",
+      "manifest_sha256": "d0e8ff64feee54087ec8e3b5a538eefe0330f7c09e30ce09cead91d0a49b6fa6",
+      "original_manifest_sha256": "1e9ce8a5ac7c0566861c4c641f2cb0e99cb283b0c4c9ff2d2922ff5364bc643c",
+      "declared_license": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 11349,
+          "sha256": "249fdb6694467dd615b259f7ddde07be3f8ae5a72cecebb0e24f6629af4215fe"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1062,
+          "sha256": "6efb0476a1cc085077ed49357026d8c173bf33017278ef440f222fb9cbcb66e6"
+        }
+      ],
+      "declared_repository": "https://github.com/toml-rs/toml",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "ceac6e4412420d5a5c19e4f7293ad005cf1a31b2"
+        },
+        "path_in_vcs": "crates/toml_parser"
+      },
+      "effective_build_script": false,
+      "procedural_macro": false,
+      "source_bytes": 214292,
+      "targeted_source_files": [
+        {
+          "path": "src/lib.rs",
+          "bytes": 1273,
+          "sha256": "d26e6723317857205b3c84bfc9c3e79c4f7c7ba0bd69d48b237263a4bebb9674"
+        },
+        {
+          "path": "src/source.rs",
+          "bytes": 12512,
+          "sha256": "88f17fc3876bc21971f73bf7c3155206271df3753171485e58572a770e3d48d0"
+        },
+        {
+          "path": "src/lexer/mod.rs",
+          "bytes": 20287,
+          "sha256": "32c92a17ce80c422622cb04e39915556ace7f58f501eeb934916c72201889477"
+        },
+        {
+          "path": "src/decoder/string.rs",
+          "bytes": 37472,
+          "sha256": "d74cc99092ec8866f763ad658d25e79fe44411f49681fe553ce319eccdefcd27"
+        },
+        {
+          "path": "src/decoder/scalar.rs",
+          "bytes": 27167,
+          "sha256": "95ee5f7b3d809efac3b3720a5a08fc8e12c36dd58140b02aceabf7bf4e5d0e0f"
+        },
+        {
+          "path": "src/parser/event.rs",
+          "bytes": 17079,
+          "sha256": "cd3beba847bb015d598995210a22c623edbc4fddb37c908d972a3b9c072c2cf0"
+        },
+        {
+          "path": "src/parser/document.rs",
+          "bytes": 57343,
+          "sha256": "a9c00e6755ea4c24e45d44b95e30713e9bd909d8a64c2418d70c7cd500477a80"
+        }
+      ],
+      "exception_rationale_and_limits": "Lexer/events/UTF-8 scalar decoder. Unchecked slicing is gated behind explicit unsafe feature, not requested by AIRK toml dependency. Checked source.get/split_at paths, lexer progress/capacity arithmetic and RecursionGuard handoff inspected. No full malformed-input or all-feature memory-safety proof."
+    },
+    {
+      "identity": {
+        "name": "toml_writer",
+        "version": "1.2.0+spec-1.1.0",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "009dbb7700f11c55ef83aebbe4c0e9cf1f1ac0844bd8d6f00dc38f302026e13a"
+      },
+      "archive_bytes": 19388,
+      "archive_links": 0,
+      "cache_matches_all_packaged_files": true,
+      "packaged_files": 13,
+      "packaged_tree_sha256": "fb2182c60a0fffc342a1a9a08b34c33ccb70164a6f3ce61585b327e42dfd088a",
+      "manifest_sha256": "4361019efd07a9f150de107772582244e528b20756178ee464b1a1617da3ada6",
+      "original_manifest_sha256": "eb493045cdcb9ab3da82c5bf0a3e273cd0d2d730c77ebd80eda22e1ffa042acb",
+      "declared_license": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 11349,
+          "sha256": "249fdb6694467dd615b259f7ddde07be3f8ae5a72cecebb0e24f6629af4215fe"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1062,
+          "sha256": "6efb0476a1cc085077ed49357026d8c173bf33017278ef440f222fb9cbcb66e6"
+        }
+      ],
+      "declared_repository": "https://github.com/toml-rs/toml",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "8ffe3c590d69fab440fedb2ebb396ae1596c3e34"
+        },
+        "path_in_vcs": "crates/toml_writer"
+      },
+      "effective_build_script": false,
+      "procedural_macro": false,
+      "source_bytes": 34036,
+      "targeted_source_files": [
+        {
+          "path": "src/lib.rs",
+          "bytes": 2568,
+          "sha256": "cfe8495977dd215fd689373305e2ba7ac92e2f3742fc2a9687648a042832d9b6"
+        },
+        {
+          "path": "src/string.rs",
+          "bytes": 14201,
+          "sha256": "6b5c1d486051ee358350786fb6d2cd972203aa90faeee3ea3ed7188c90775e67"
+        },
+        {
+          "path": "src/key.rs",
+          "bytes": 1405,
+          "sha256": "69e65eb19dfe3ce1b59528b5789fb51c2847276c26bb1a4f0a5ae25b7e7ec127"
+        },
+        {
+          "path": "src/value.rs",
+          "bytes": 7252,
+          "sha256": "2d45e58bf591ee99abc92c514fd15ba8d7c4558756a88d5829b96075cea656ea"
+        }
+      ],
+      "exception_rationale_and_limits": "Locked optional TOML formatting/escaping dependency; display is not requested by direct AIRK dependency. src/lib.rs forbids unsafe; output fmt::Write escapes special/control characters and is caller-owned, not filesystem output. No full formatting round-trip or downstream feature-unification certification."
+    },
+    {
+      "identity": {
+        "name": "winnow",
+        "version": "1.0.5",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "8c3b93199df0ab874cdf0c6a94f0a0dc3423fe41f1cafb62b8bd7b1deb277aef"
+      },
+      "archive_bytes": 188758,
+      "archive_links": 0,
+      "cache_matches_all_packaged_files": true,
+      "packaged_files": 107,
+      "packaged_tree_sha256": "c1d7303f5780c7a9a5d0c31f104cb19d55253d40e81576392387911866cd1363",
+      "manifest_sha256": "9a8446b60ff908e6bb7308245af47c78e551a80b507e05af11efce82822f30ad",
+      "original_manifest_sha256": "0bad9e486add8dd8d188d14ae22c554b93b9926fd708ae969ad21cce94a0c042",
+      "declared_license": "MIT",
+      "license_files": [
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1023,
+          "sha256": "cb5aedb296c5246d1f22e9099f925a65146f9f0d6b4eebba97fd27a6cdbbab2d"
+        }
+      ],
+      "declared_repository": "https://github.com/winnow-rs/winnow",
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "21b3ab2535a675768a170a851efda83253b9eb21"
+        },
+        "path_in_vcs": ""
+      },
+      "effective_build_script": false,
+      "procedural_macro": false,
+      "source_bytes": 1008750,
+      "targeted_source_files": [
+        {
+          "path": "src/lib.rs",
+          "bytes": 5215,
+          "sha256": "9948f6673a47234febcc55ccd697bd0064300e58594ea07f2a981973021f6565"
+        },
+        {
+          "path": "src/stream/mod.rs",
+          "bytes": 54564,
+          "sha256": "8166e4c07508d4e1907c359f5673a66b218cb01bc8c313c22024cac54629aecb"
+        },
+        {
+          "path": "src/stream/token.rs",
+          "bytes": 7883,
+          "sha256": "8eafe3939a5c17a020fefa9f3a95a97ffed1450e9d079bf64bf9966540a766a1"
+        },
+        {
+          "path": "src/stream/locating.rs",
+          "bytes": 7788,
+          "sha256": "24a0880648bc4474677e70aeecfd05a5da77d6f211a8944fba30f71e79c053b6"
+        }
+      ],
+      "exception_rationale_and_limits": "Parser stream support for TOML lexer/events; checked next_slice/peek_slice, token offsets and TokenSlice delegation inspected. Unsafe unchecked stream APIs require bounds/UTF-8 preconditions; those and all parser combinators are not exhaustively audited. Optional debug code reads COLUMNS/prints traces and is not requested. No build script or procedural macro."
+    }
+  ],
+  "proposal_evidence_sha256": "4a60e5f1943cbab190619710dc203512bb1d16091b4ba46537d3e69c1deafc58",
+  "decision_scope": "Primary agent independently inspected the configured native parser entrypoint, exact dependency/feature selection, source-policy changes, bounded recursion and checked/unsafe stream boundaries, and accepted these limited exact-version exceptions. Not a full safe-to-deploy audit, human approval, publisher authentication, advisory clearance or platform qualification.",
+  "configured_entrypoint": {
+    "manifest": "Cargo.toml",
+    "dependency": "toml",
+    "requested_features": [
+      "std",
+      "serde",
+      "parse"
+    ],
+    "default_features": false,
+    "caller": "crates/airk-cli/src/runtime_legacy_origin.rs",
+    "caller_input_max_bytes": 1048576,
+    "unbounded_feature_requested": false,
+    "toml_parser_unsafe_feature_requested": false
+  },
+  "checks_not_run": [
+    "Cargo build",
+    "cargo-vet",
+    "upstream tests/fuzzing",
+    "fresh advisory lookup",
+    "cross-platform runtime execution"
+  ]
+}

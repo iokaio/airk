@@ -251,6 +251,7 @@ pub(super) async fn configure(
         "managed payload must be separate from writable metadata and state"
     );
     let lock = install_lock(root)?;
+    require_manager_change_settled(root)?;
     let authority = InstallerAuthority { root, _lock: &lock };
     ensure!(
         !exists(&root.join(DETACH))? && !exists(&root.join("uninstall.json"))?,
@@ -484,18 +485,22 @@ mod setup_tests {
 }
 
 pub(super) async fn detach(root: &Path) -> Result<serde_json::Value> {
-    ensure!(
-        layout::managed_origin(root)?.is_none(),
-        "managed_catalog_detach_requires_supported_transition; preserve the reserved operation and use its approved configuration"
-    );
+    require_manager_change_settled(root)?;
+    layout::require_managed_ready(root)
+        .context("managed_catalog_detach_requires_supported_transition")?;
+    lifecycle::require_settled(root)?;
     let intent_path = root.join(DETACH);
     let policy: Managed = if exists(&intent_path)? {
         serde_json::from_slice(&read_bounded(&intent_path, MAX_POLICY)?)?
     } else {
-        let policy = read(root)?.context("managed policy missing")?;
+        // A removed user reference is recoverable only from the exact settled
+        // reservation. This never creates policy/selection or starts a service.
+        let policy = catalog::saved_policy(root)?.context("managed policy missing")?;
+        catalog::require_detach_policy(root, &policy)?;
         replace_json(root, DETACH, &policy)?;
         policy
     };
+    catalog::require_detach_policy(root, &policy)?;
     ensure!(
         policy.schema == 1 && policy.install == root.canonicalize()?,
         "managed detach ownership mismatch"
@@ -516,6 +521,9 @@ pub(super) async fn detach(root: &Path) -> Result<serde_json::Value> {
     } else {
         None
     };
+    if policy.lifecycle == ManagedLifecycle::UserOnDemand {
+        crate::http_endpoint::trust::remove_owned(&layout::saved_control(root)?)?;
+    }
     let selection_path = root.join("selected.json");
     if exists(&selection_path)? {
         let selection: Selection = serde_json::from_slice(&read_bounded(&selection_path, 4096)?)?;

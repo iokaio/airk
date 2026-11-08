@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Measure bounded saved-source checks on disposable original files through MCP.
 
-Uses an exact staged runtime pair and its own service; never installs AIRK or
-changes the normal project's sources. Logical bytes and end-to-end latency are
+Uses an exact staged runtime and its own disposable managed installation; never
+changes the normal installation or project's sources. Logical bytes and latency are
 observed; physical disk I/O, process peak memory and other platforms are not.
 """
 import argparse
@@ -12,7 +12,6 @@ import json
 import os
 import re
 from pathlib import Path
-import tempfile
 import time
 
 
@@ -21,6 +20,50 @@ def load(name, filename):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def verify_payload(builder, binary, runtime_receipt, build):
+    """Version-aware executable identity; an absent modern helper is intentional."""
+    version = runtime_receipt.get("version", "")
+    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+        raise ValueError("staged_runtime_version_invalid")
+    modern = tuple(map(int, version.split("."))) >= (1, 8, 14)
+    expected = {"schema", "version", "os", "arch", "airk_sha256"} | (set() if modern else {"embed_sha256"})
+    if (set(runtime_receipt) != expected or runtime_receipt["schema"] != (2 if modern else 1)
+            or build["runtime"] != runtime_receipt or builder.digest(binary) != runtime_receipt["airk_sha256"]):
+        raise ValueError("staged_runtime_payload_identity_mismatch")
+    if not modern:
+        helper = binary.with_name("airk-embed.exe" if runtime_receipt["os"] == "windows" else "airk-embed")
+        if builder.digest(helper) != runtime_receipt["embed_sha256"]:
+            raise ValueError("staged_runtime_payload_identity_mismatch")
+    return {"runtime_schema": runtime_receipt["schema"], "helper_sha256": None if modern else runtime_receipt["embed_sha256"],
+            "transport": "https" if modern else "historical_stdio"}
+
+
+def scoped_source_work(clients, service, status, deadline):
+    """Measure owned scheduler metadata separately from scoped evidence privacy."""
+    clients.assert_scoped_freshness_private(status)
+    project = service.projects["verification"]["binding"]
+    progress = service.rpc({"progress": {"project": project}}, deadline=deadline)
+    watch = service.rpc({"watch": {"project": project}}, deadline=deadline)
+    assert progress["status"] == "progress" and progress["project"] == project, "crossed_source_progress"
+    assert watch["status"] == "watch" and watch["project"] == project, "crossed_source_watch"
+    pending, queued, sample = progress["pending_job"], progress["queued_jobs"], progress["observation"]
+    assert pending is None or pending["project"] == project, "crossed_source_pending"
+    assert all(job["project"] == project for job in queued), "crossed_source_queue"
+    assert sample is None or sample["worker"]["project"] == project and sample["job"]["project"] == project, "crossed_source_sample"
+    observed = watch["observation"]
+    assert observed["enabled"] is False and observed["failure"] is None, "verification_watch_policy_changed"
+    assert observed["automatic_retries_exhausted"] is False and observed["automatic_retry_canceled"] is False, "source_work_blocked"
+    requested, completed = observed["requested_revision"], observed["completed_revision"]
+    assert type(requested) is int and type(completed) is int and 0 <= completed <= requested, "invalid_source_watermarks"
+    settled = (pending is None and not queued and progress["queue_truncated"] is False and progress["project_paused"] is False
+               and (sample is None or sample["job"]["state"] not in ("pending", "running")) and completed == requested)
+    # These two top-level sample clocks change on observation, not source work.
+    # Keep complete raw receipts alongside the comparison, including future fields.
+    stable = {"progress": {key: value for key, value in progress.items() if key != "observed_unix_ms"},
+              "watch": {**watch, "observation": {key: value for key, value in observed.items() if key != "observed_unix_ms"}}}
+    return settled, stable, {"progress": progress, "watch": watch}
 
 
 def run(args):
@@ -38,22 +81,21 @@ def run(args):
     binary = runtime / ("airk.exe" if os.name == "nt" else "airk")
     if not binary.is_file():
         binary = runtime / "AIRK.app/Contents/MacOS/airk"
-    helper = binary.with_name("airk-embed.exe" if os.name == "nt" else "airk-embed")
-    if builder.digest(binary) != build["runtime"]["airk_sha256"] or builder.digest(helper) != build["runtime"]["embed_sha256"]:
-        raise ValueError("staged_runtime_payload_identity_mismatch")
+    runtime_contract = verify_payload(builder, binary, runtime_receipt, build)
     report = {"schema": "airk.source-verification-measurement/1", "version": runtime_receipt["version"],
               "runtime_build": build, "native_source_before": source_before,
               "measurement_script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
               "launcher_sha256": builder.digest(binary),
+              "runtime_contract": runtime_contract,
               "samples_per_case_and_mode": args.samples, "cases": [], "checks": {},
               "limitations": ["Warm filesystem caches; no cache flush or physical disk I/O measurement.",
                               "Logical source bytes exclude ignore-policy and index metadata reads.",
                               "No whole-process peak memory, installed editor or cross-platform qualification."]}
     report["stage"] = "fixture_setup"
     try:
-        with tempfile.TemporaryDirectory(prefix="airk-verification-owned-", dir=os.environ.get("AIRK_PRIVATE_CENSUS_BASE")) as temporary:
+        with clients.owned_client_fixture() as temporary:
             owner = Path(temporary).resolve()
-            root, state = owner / "source", owner / "state"
+            root, state = owner / "source", owner / "index-data"
             root.mkdir()
             state.mkdir()
             contents = {"small.txt": b"Saved verification measurement.\n",
@@ -72,8 +114,7 @@ def run(args):
                 report["stage"] = "fixture_index"
                 service.job("verification", "index")
                 service.published_status("verification", time.monotonic() + 90)
-                configuration = {"command": str(service.binary), "args": [*service.arguments("verification"), "mcp"],
-                                 "expected_version": runtime_receipt["version"], "env": {"AIRK_MCP_RESPONSE_MODE": "full"}}
+                configuration = bench.owned_configuration(service, "verification", runtime)
                 with bench.Session(configuration, 30) as session:
                     publication = None
                     report["stage"] = "input_catalogs"
@@ -96,10 +137,13 @@ def run(args):
                     cli_tools = {tool["name"].removeprefix("airk_"): tool for tool in cli_catalog["tools"]}
                     expected_native = {tool.removeprefix("airk_") for tool in clients.TOOLS}
                     expected_operations = expected_native - {"parse"}
-                    assert len(cli_catalog["tools"]) == len(expected_native) and set(cli_tools) == expected_native, "native_cli_tool_inventory_changed"
+                    expected_cli = clients.MCP_TOOLS if service.single_image else expected_native
+                    assert len(cli_catalog["tools"]) == len(expected_cli) and set(cli_tools) == expected_cli, "native_cli_tool_inventory_changed"
                     assert set(operations) == expected_operations, "canonical_operation_inventory_changed"
                     public_names = [tool["name"] for tool in catalog["tools"]]
                     assert len(public_names) == len(clients.MCP_TOOLS) and set(public_names) == clients.MCP_TOOLS, "public_tool_inventory_changed"
+                    if service.single_image:
+                        assert cli_tools == {tool["name"]: tool for tool in catalog["tools"]}, "complete_cli_mcp_catalog_mismatch"
                     compared = 0
                     cli_compared = 0
                     for tool in catalog["tools"]:
@@ -121,7 +165,7 @@ def run(args):
                             assert (field in tool["inputSchema"].get("required", [])) == (field in operations[name].get("required", [])), "verification_required_input_mismatch"
                             compared += 1
                     assert compared == len(expected_operations) * len(controls), "canonical_operation_field_comparisons_incomplete"
-                    assert cli_compared == len(expected_native) * len(controls), "native_cli_tool_field_comparisons_incomplete"
+                    assert cli_compared == len(expected_cli) * len(controls), "native_cli_tool_field_comparisons_incomplete"
                     report["checks"]["native_mcp_workbench_verification_input_catalog_parity"] = True
                     report["input_catalog_field_comparisons"] = {"mcp_workbench": compared, "cli_mcp": cli_compared}
                     report["stage"] = "measurements"
@@ -140,20 +184,28 @@ def run(args):
                             publication = token
                         return envelope, value, timing
 
-                    _, before_status, _ = call("status", {})
+                    status_tool = "diagnostics" if service.single_image else "status"
+                    _, before_status, _ = call(status_tool, {})
                     work_fields = ("state", "requested_watermark", "completed_watermark", "running_watermark", "source_job", "last_success_unix_ms")
                     # A new frontend can initially expose a pending management
                     # observation even after the fixture's index job completed.
                     # Settle that observation before comparing source-work state.
                     settle_deadline = time.monotonic() + 20
                     report["source_work_warmup_observations"] = 1
-                    while before_status.get("freshness", {}).get("state") != "idle":
+                    while True:
+                        if service.single_image:
+                            settled, before_work, raw_work = scoped_source_work(clients, service, before_status, settle_deadline)
+                            report["source_work_before_raw"] = raw_work
+                        else:
+                            settled = before_status.get("freshness", {}).get("state") == "idle"
+                            before_work = {key: before_status.get("freshness", {}).get(key) for key in work_fields}
+                        if settled:
+                            break
                         if time.monotonic() >= settle_deadline:
                             raise AssertionError("source_work_observation_did_not_settle")
                         time.sleep(.05)
-                        _, before_status, _ = call("status", {})
+                        _, before_status, _ = call(status_tool, {})
                         report["source_work_warmup_observations"] += 1
-                    before_work = {key: before_status.get("freshness", {}).get(key) for key in work_fields}
                     report["source_work_before"] = before_work
                     cases = [(name, "file_info", {"path": name}, [name]) for name in ("small.txt", "medium.txt", "large.txt")]
                     cases.append(("eight-sources", "search", {"query": "VerificationMarker", "mode": "lexical", "limit": 8},
@@ -204,8 +256,13 @@ def run(args):
                     assert value["error"]["retryable"] is False
                     report["checks"]["require_mismatch_preserves_indexed_evidence"] = value["content_hash"] == hashlib.sha256(contents["small.txt"]).hexdigest()
                     (root / "small.txt").write_bytes(contents["small.txt"])
-                    _, after_status, _ = call("status", {})
-                    after_work = {key: after_status.get("freshness", {}).get(key) for key in work_fields}
+                    _, after_status, _ = call(status_tool, {})
+                    if service.single_image:
+                        settled, after_work, raw_work = scoped_source_work(clients, service, after_status, time.monotonic() + 20)
+                        report["source_work_after_raw"] = raw_work
+                        assert settled, "verification_queued_source_work"
+                    else:
+                        after_work = {key: after_status.get("freshness", {}).get(key) for key in work_fields}
                     report["source_work_after"] = after_work
                     assert before_work == after_work, "verification_changed_source_work"
                     report["checks"]["source_work_identity_and_watermarks_unchanged"] = True
@@ -221,7 +278,7 @@ def run(args):
     report["native_source_unchanged"] = report["native_source_after"] == source_before
     (output / "report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     return (report["status"] == "complete" and report.get("source_unchanged") and report["native_source_unchanged"]
-            and all(report["checks"].values()) and report.get("frontend_cleanup", {}).get("graceful_eof", False))
+            and all(report["checks"].values()) and bench.cleanup_ok(report.get("frontend_cleanup", {})))
 
 
 if __name__ == "__main__":

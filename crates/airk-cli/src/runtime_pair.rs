@@ -14,6 +14,10 @@ use std::{
 // Hashing is streamed; the same finite ceiling also bounds a concurrently growing file.
 const MAX_EXECUTABLE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
+#[cfg(test)]
+#[path = "runtime_pair_predecessor_tests.rs"]
+mod predecessor_tests;
+
 /// Bind a maintenance preview to executable behavior and the paired helper's
 /// expected identity. Missing/broken inference remains a separate availability
 /// observation; this function never loads a model or starts a helper.
@@ -54,16 +58,34 @@ pub fn engine_identity() -> Result<airk_core::identity::Sha256Digest> {
 /// Authenticity and paired-helper admission remain installer responsibilities.
 /// This does not start either executable or load a model.
 pub fn engine_identity_at(main: &Path) -> Result<airk_core::identity::Sha256Digest> {
+    engine_identity_at_version(main, env!("CARGO_PKG_VERSION"))
+}
+
+/// Observe an installer-verified image, including a predecessor or rollback
+/// target. The version must come from its verified Approval, not its own receipt.
+pub(crate) fn engine_identity_at_version(
+    main: &Path,
+    approved_version: &str,
+) -> Result<airk_core::identity::Sha256Digest> {
     let main = main.canonicalize()?;
-    engine_identity_from_receipt(
+    engine_identity_from_receipt_version(
         &payload_root(&main)?.join("airk-runtime.json"),
         digest_file(&main)?,
+        approved_version,
     )
 }
 
 fn engine_identity_from_receipt(
     manifest: &Path,
     digest: String,
+) -> Result<airk_core::identity::Sha256Digest> {
+    engine_identity_from_receipt_version(manifest, digest, env!("CARGO_PKG_VERSION"))
+}
+
+fn engine_identity_from_receipt_version(
+    manifest: &Path,
+    digest: String,
+    approved_version: &str,
 ) -> Result<airk_core::identity::Sha256Digest> {
     let bytes = match fs::symlink_metadata(manifest) {
         Ok(metadata) => {
@@ -85,16 +107,8 @@ fn engine_identity_from_receipt(
                 .read_to_end(&mut bytes)?;
             ensure!(bytes.len() <= 4096, "oversized engine pair receipt");
             let pair: RuntimePair = serde_json::from_slice(&bytes)?;
-            ensure!(
-                pair.schema == 1
-                    && pair.version == env!("CARGO_PKG_VERSION")
-                    && pair.os == std::env::consts::OS
-                    && pair.arch == std::env::consts::ARCH
-                    && pair.airk_sha256 == digest,
-                "engine pair identity mismatch"
-            );
-            pair.embed_sha256
-                .parse::<airk_core::identity::Sha256Digest>()?;
+            ensure!(pair.airk_sha256 == digest, "engine pair identity mismatch");
+            pair.validate_target(approved_version)?;
             serde_json::to_vec(&pair)?
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => digest.into_bytes(),
@@ -106,15 +120,138 @@ fn engine_identity_from_receipt(
     ))
 }
 
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Serialize)]
 pub struct RuntimePair {
     pub schema: u32,
     pub version: String,
     pub os: String,
     pub arch: String,
     pub airk_sha256: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub embed_sha256: String,
+}
+
+impl<'de> Deserialize<'de> for RuntimePair {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Wire {
+            schema: u32,
+            version: String,
+            os: String,
+            arch: String,
+            airk_sha256: String,
+            #[serde(default, deserialize_with = "present_digest")]
+            embed_sha256: Option<String>,
+        }
+        fn present_digest<'de, D: serde::Deserializer<'de>>(
+            d: D,
+        ) -> std::result::Result<Option<String>, D::Error> {
+            String::deserialize(d).map(Some)
+        }
+        let wire = Wire::deserialize(deserializer)?;
+        let embed_sha256 = match (wire.schema, wire.embed_sha256) {
+            (1, Some(digest)) => {
+                digest
+                    .parse::<airk_core::identity::Sha256Digest>()
+                    .map_err(serde::de::Error::custom)?;
+                digest
+            }
+            (2, None) => String::new(),
+            _ => {
+                return Err(serde::de::Error::custom(
+                    "invalid runtime executable contract",
+                ));
+            }
+        };
+        wire.airk_sha256
+            .parse::<airk_core::identity::Sha256Digest>()
+            .map_err(serde::de::Error::custom)?;
+        Ok(Self {
+            schema: wire.schema,
+            version: wire.version,
+            os: wire.os,
+            arch: wire.arch,
+            airk_sha256: wire.airk_sha256,
+            embed_sha256,
+        })
+    }
+}
+impl RuntimePair {
+    pub fn is_single_executable(&self) -> bool {
+        self.schema == 2
+    }
+    pub fn validate_target(&self, expected_version: &str) -> Result<()> {
+        ensure!(
+            matches!(self.schema, 1 | 2)
+                && self.version == expected_version
+                && self.os == std::env::consts::OS
+                && self.arch == std::env::consts::ARCH,
+            "incompatible runtime executable contract"
+        );
+        self.airk_sha256
+            .parse::<airk_core::identity::Sha256Digest>()?;
+        if self.schema == 1 {
+            self.embed_sha256
+                .parse::<airk_core::identity::Sha256Digest>()?;
+        } else {
+            ensure!(
+                self.embed_sha256.is_empty(),
+                "single executable cannot name a helper"
+            );
+        }
+        Ok(())
+    }
+}
+
+pub(crate) fn single_executable(main: &Path) -> Result<bool> {
+    let manifest = payload_root(main)?.join("airk-runtime.json");
+    if !manifest.try_exists()? {
+        return Ok(true);
+    } // uninstalled development image
+    let metadata = fs::symlink_metadata(&manifest)?;
+    ensure!(
+        metadata.is_file() && !metadata.file_type().is_symlink() && metadata.len() <= 4096,
+        "invalid runtime executable receipt"
+    );
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        ensure!(
+            metadata.file_attributes() & 0x400 == 0,
+            "redirected runtime executable receipt"
+        );
+    }
+    let mut bytes = Vec::new();
+    fs::File::open(&manifest)?
+        .take(4097)
+        .read_to_end(&mut bytes)?;
+    ensure!(
+        bytes.len() <= 4096,
+        "runtime executable receipt exceeds limit"
+    );
+    let pair: RuntimePair = serde_json::from_slice(&bytes)?;
+    Ok(pair.is_single_executable())
+}
+
+/// Historical stdio entry points must not resurrect a resident launcher or
+/// per-client MCP process after selecting a single-executable installation.
+pub fn require_legacy_stdio(main: &Path) -> Result<()> {
+    ensure!(
+        !single_executable(main)?,
+        "stdio_mcp_retired: AIRK 1.8.14 uses the service's localhost HTTPS MCP endpoint. Reconnect through AIRK Explorer or use `airk setup` with an existing catalog/combined selection; migrate older owned configurations with `runtime http-legacy-connection`. Do not launch `airk mcp`, `bridge`, or an AIRK launcher."
+    );
+    Ok(())
+}
+
+pub fn require_legacy_inference_process(main: &Path) -> Result<()> {
+    ensure!(
+        !single_executable(main)?,
+        "inference_helper_retired: AIRK 1.8.14 runs semantic inference inside the service; a shared inference guardian is not supported"
+    );
+    Ok(())
 }
 
 pub fn digest_file(path: &Path) -> Result<String> {
@@ -220,6 +357,10 @@ pub fn validate_native_image(path: &Path) -> Result<()> {
 }
 
 pub fn verify_helper(main: &Path) -> Result<PathBuf> {
+    ensure!(
+        !single_executable(main)?,
+        "this runtime embeds inference and has no helper executable"
+    );
     verify_installed_pair(main, env!("CARGO_PKG_VERSION"))
 }
 
@@ -246,7 +387,8 @@ fn payload_root_for_layout(main: &Path, app_layout: bool) -> Result<&Path> {
 pub fn verify_installed_pair(main: &Path, expected_version: &str) -> Result<PathBuf> {
     let (main, helper, pair) = read_installed_pair(main, expected_version)?;
     ensure!(
-        digest_file(&main)? == pair.airk_sha256 && digest_file(&helper)? == pair.embed_sha256,
+        digest_file(&main)? == pair.airk_sha256
+            && (pair.is_single_executable() || digest_file(&helper)? == pair.embed_sha256),
         "runtime executable pair digest mismatch"
     );
     Ok(helper)
@@ -290,20 +432,22 @@ pub(crate) fn read_installed_pair(
         .read_to_end(&mut bytes)?;
     ensure!(bytes.len() <= 4096, "runtime pair manifest exceeds limit");
     let pair: RuntimePair = serde_json::from_slice(&bytes)?;
-    ensure!(
-        pair.schema == 1
-            && pair.version == expected_version
-            && pair.os == std::env::consts::OS
-            && pair.arch == std::env::consts::ARCH,
-        "incompatible runtime pair"
-    );
-    let helper = parent.join(if cfg!(windows) {
-        "airk-embed.exe"
+    pair.validate_target(expected_version)?;
+    let helper = if pair.is_single_executable() {
+        main.to_path_buf()
     } else {
-        "airk-embed"
-    });
+        parent.join(if cfg!(windows) {
+            "airk-embed.exe"
+        } else {
+            "airk-embed"
+        })
+    };
     Ok((main.to_path_buf(), helper, pair))
 }
+
+#[cfg(test)]
+#[path = "runtime_single_tests.rs"]
+mod single_tests;
 
 #[cfg(test)]
 mod tests {

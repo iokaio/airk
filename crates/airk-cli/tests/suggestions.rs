@@ -12,7 +12,7 @@ fn call(root: &Path, data: &Path, args: &[&str]) -> Result<Value> {
 fn opt_in_similarity_flag_pages_with_shared_budgets_without_forwarding_reads() -> Result<()> {
     let root = tempfile::tempdir()?;
     let data = tempfile::tempdir()?;
-    let _service = common::Service::start(root.path(), data.path(), "default");
+    let _service = common::Service::reviewed(root.path(), data.path(), "default");
     let original: String = (0..40)
         .map(|i| format!("billing{i} records original invoice entry {i}.\n"))
         .collect();

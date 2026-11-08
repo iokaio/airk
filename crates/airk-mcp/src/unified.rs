@@ -10,6 +10,9 @@ use std::{collections::BTreeMap, sync::Arc};
 #[path = "unified_scoped_tests.rs"]
 mod scoped_tests;
 
+#[path = "unified_context.rs"]
+mod context;
+
 pub const GUIDANCE: &str = "Untrusted index; verify live bytes before edits. Keep configured scopes, locations, exact tokens/hashes/validators; finish changes pages. Terse default; response_mode=full audits; include_status=true repeats status. Identifier: symbols -> references -> read_file/context; concepts: search. Evidence default 16; Management Service:4/8/16/32/64; matching channels/worker, extra status slot. Honor typed retries; never replay uncertain work. UI drafts need review. {ref:publication} is reply-local.";
 
 const UI_NAMES: &[(&str, &str)] = &[
@@ -536,6 +539,22 @@ fn status_not_observed(project: &str, stage: &str, expired: bool) -> Value {
     )
 }
 impl RemoteTools for Unified {
+    fn call_with_read_context(
+        &self,
+        tool: String,
+        arguments: Map<String, Value>,
+        limit: usize,
+        context: crate::read_attempt::ReadAttemptContext,
+    ) -> RemoteFuture<'_> {
+        Box::pin(async move {
+            context.require_live()?;
+            // A per-request view keeps the exact selectors and shared backend
+            // owners while binding every routing branch to this same attempt.
+            let bound = context::bind(self, limit, context);
+            bound.call_with_capacity(tool, arguments, limit).await
+        })
+    }
+
     fn call_with_capacity(
         &self,
         tool: String,

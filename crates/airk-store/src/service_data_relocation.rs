@@ -348,7 +348,10 @@ fn relocate_at(
     );
     let mut header = [0; 100];
     fs::File::open(&database)?.read_exact(&mut header)?;
-    if u32::from_be_bytes(header[60..64].try_into()?) == 12 {
+    if matches!(
+        u32::from_be_bytes(header[60..64].try_into()?),
+        12 | super::runtime_contract::IN_PROCESS_SCHEMA
+    ) {
         let saved = ServiceRegistry::open_saved(control)?;
         ensure!(
             saved.catalog_state()?.is_some(),
@@ -623,6 +626,15 @@ mod tests {
 
     #[test]
     fn catalog_state_refuses_legacy_rewriting_before_intent_or_directory_move() -> Result<()> {
+        catalog_refuses_legacy_rewriting(false)
+    }
+
+    #[test]
+    fn schema13_catalog_refuses_legacy_rewriting_without_registry_side_effects() -> Result<()> {
+        catalog_refuses_legacy_rewriting(true)
+    }
+
+    fn catalog_refuses_legacy_rewriting(promote: bool) -> Result<()> {
         let owner = tempfile::tempdir()?;
         let base = owner.path().canonicalize()?;
         let control = base.join("control");
@@ -632,7 +644,24 @@ mod tests {
         fs::create_dir(&source)?;
         fs::write(source.join("sentinel"), b"do not move or rewrite")?;
         install_catalog_fixture(&control, Incarnation::from_bytes([81; 16]))?;
+        if promote {
+            let mut registry = ServiceRegistry::open(&control, Incarnation::from_bytes([81; 16]))?;
+            let tx = registry.connection.transaction()?;
+            super::super::catalog::apply_authority_v1_layout(&tx)?;
+            tx.execute(
+                "UPDATE index_catalog_meta SET authority_contract=1,activated=1 WHERE id=1",
+                [],
+            )?;
+            super::super::runtime_contract::arm_in_transaction(&tx)?;
+            tx.commit()?;
+        }
         let before = fs::read(control.join("service-1.4.sqlite3"))?;
+        let registry_sidecars = [
+            "service-1.4.sqlite3-wal",
+            "service-1.4.sqlite3-shm",
+            "service-1.4.sqlite3-journal",
+        ];
+        let before_sidecars = registry_sidecars.map(|name| fs::read(control.join(name)).ok());
         let lease = ServiceLease::acquire(&control)?;
         let error = relocate(&lease, &source, &destination).unwrap_err();
         assert!(
@@ -647,6 +676,10 @@ mod tests {
         );
         assert!(!destination.exists());
         assert!(!control.join(INTENT).exists());
+        assert_eq!(
+            registry_sidecars.map(|name| fs::read(control.join(name)).ok()),
+            before_sidecars
+        );
         assert!(require_settled(&control).is_ok());
         assert_eq!(
             framed_digest(

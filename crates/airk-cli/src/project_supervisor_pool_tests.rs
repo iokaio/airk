@@ -24,6 +24,7 @@ async fn search(worker: &mut ChildWorker, mode: &str) -> Result<serde_json::Valu
     local_ipc::write_message(
         &mut stream,
         &protocol::Query {
+            read_attempt: None,
             frontend: None,
             tool: "airk_search".into(),
             arguments:

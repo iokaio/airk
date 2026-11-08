@@ -15,6 +15,30 @@ spec.loader.exec_module(signing)
 
 
 class WindowsSigningContracts(unittest.TestCase):
+    def test_signing_action_receives_exact_versioned_components_after_full_inventory_validation(self):
+        fixture_spec = importlib.util.spec_from_file_location("windows_signing_fixture", Path(__file__).with_name("test_github_release.py"))
+        fixture = importlib.util.module_from_spec(fixture_spec)
+        fixture_spec.loader.exec_module(fixture)
+        for version, expected in (("1.4.4", ("airk.exe", "airk-embed.exe")), ("1.8.14", ("airk.exe",))):
+            with self.subTest(version=version), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                runtime = root / "runtime"
+                runtime.mkdir()
+                files, _ = fixture.pair_files(signing.TARGET, version=version)
+                for name, data in files.items():
+                    path = runtime / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(data)
+                output = root / "output"
+                with patch.object(signing, "guard"), patch.dict(os.environ, GITHUB_OUTPUT=str(output)):
+                    signing.signing_files(runtime)
+                self.assertEqual(output.read_text().splitlines(), ["files<<AIRK_SIGNING_COMPONENTS", *[str(runtime / name) for name in expected], "AIRK_SIGNING_COMPONENTS"])
+                output.unlink()
+                (runtime / "airk.exe").write_bytes(b"changed after staging")
+                with patch.object(signing, "guard"), patch.dict(os.environ, GITHUB_OUTPUT=str(output)), self.assertRaisesRegex(ValueError, "inventory differs"):
+                    signing.signing_files(runtime)
+                self.assertFalse(output.exists())
+
     def test_host_and_workflow_guards(self):
         environment = {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted",
                        "GITHUB_REF": "refs/heads/main", "GITHUB_EVENT_NAME": "workflow_dispatch",

@@ -658,7 +658,7 @@ impl CatalogGenesis {
         let mut receipt = self.receipt()?;
         let mut write = registry(&self.root, true)?;
         let version: u32 = write.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version == 12 {
+        if matches!(version, 12 | 13) {
             self.verify_migrated(&write, &receipt)?;
             receipt.stage = GenesisStage::Migrated;
             persist(&receipt, false)?;

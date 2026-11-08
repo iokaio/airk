@@ -62,7 +62,7 @@ export function singleRequiredMemberRetry(combined: Record<string, any>): Record
         if(Object.hasOwn(body,'scope_observation')){
             const scope=body.scope_observation;
             if(!object(scope)||!fields(scope,['schema','qualifier','fingerprint','provenance','grant','members'])||scope.schema!==1
-                ||scope.qualifier!=='selected_subset'||!digest(scope.fingerprint)||!['user_reviewed_project_grant','imported_legacy_snapshot'].includes(scope.provenance)
+                ||scope.qualifier!=='selected_subset'||!digest(scope.fingerprint)||!['user_reviewed_project_grant','imported_legacy_snapshot','imported_standalone_adoption'].includes(scope.provenance)
                 ||!object(scope.grant)||!fields(scope.grant,['id','revision'])||scope.grant.id!==selected.grant_id||scope.grant.revision!==selected.grant_revision
                 ||!Array.isArray(scope.members)||scope.members.length!==1||Buffer.byteLength(JSON.stringify(scope),'utf8')>16384)return;
             const scoped=scope.members[0];

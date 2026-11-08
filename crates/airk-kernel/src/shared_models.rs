@@ -5,7 +5,11 @@ use airk_core::{embedding::EmbeddingDescriptor, model_objects::ModelObjectSet};
 use airk_retrieval::model::EmbeddingModel;
 use airk_store::{FileStore, service::model_files::ServiceModelFiles};
 use anyhow::{Context, Result, ensure};
-use std::path::Path;
+use std::{path::Path, sync::Arc};
+
+#[cfg(test)]
+#[path = "shared_models_embedded_tests.rs"]
+mod embedded_tests;
 
 /// An old ONNX publication is retained evidence, not a compatible vector space.
 pub(crate) fn semantic_upgrade_pending(
@@ -24,7 +28,7 @@ pub(crate) fn semantic_upgrade_pending(
 
 pub(crate) fn open_model(store: &FileStore, objects: &ModelObjectSet) -> Result<EmbeddingModel> {
     if objects.shared.is_some() {
-        EmbeddingModel::open_shared(&store.installed_model(objects)?, objects)
+        EmbeddingModel::open_shared(&store.shared_model_source(objects)?, objects)
     } else {
         EmbeddingModel::open_objects(store.directory(), objects)
     }
@@ -35,7 +39,7 @@ pub(crate) fn descriptor(
 ) -> Result<EmbeddingDescriptor> {
     if objects.shared.is_some() {
         airk_retrieval::model::descriptor_from_asset_metadata(
-            &store.installed_model(objects)?,
+            &store.shared_model_source(objects)?,
             objects,
         )
     } else {
@@ -43,6 +47,30 @@ pub(crate) fn descriptor(
     }
 }
 impl Kernel {
+    /// Mutation-only runtime compatibility fence. Metadata reads and binding
+    /// never call this: only an actual embedded-default publication may arm it.
+    pub(crate) fn require_embedded_default_write(&self, objects: &ModelObjectSet) -> Result<()> {
+        let Some(binding) = self.store.embedded_model_binding() else {
+            return Ok(());
+        };
+        let runtime = self
+            .store
+            .shared_model_runtime()
+            .context("embedded model control root missing")?;
+        if !binding.matches(runtime, objects)? {
+            return Ok(());
+        }
+        let namespace = airk_store::service::registry::retained_namespace(runtime)?;
+        ensure!(
+            airk_store::service::data_scope::has_saved_binding(
+                &self.data_root,
+                runtime,
+                namespace
+            )?,
+            "embedded publication lacks exact native data/control namespace binding"
+        );
+        airk_store::service::registry::runtime_contract::require_embedded_default_write_for_namespace(runtime,namespace)
+    }
     pub fn with_service_models(mut self, runtime: &Path, default: ModelObjectSet) -> Result<Self> {
         ensure!(
             self.service_collection.is_some(),
@@ -59,6 +87,20 @@ impl Kernel {
         );
         self.store = self.store.with_service_models(&runtime, default)?;
         Ok(self)
+    }
+    /// The native adapter supplies authenticated embedded assets. This binding
+    /// permits metadata reads and remote inference, not a local ORT engine.
+    pub fn with_embedded_service_models(
+        self,
+        runtime: &Path,
+        default: ModelObjectSet,
+        source: Arc<dyn airk_core::model_objects::ModelAssetSource + Send + Sync>,
+    ) -> Result<Self> {
+        let mut kernel = self.with_service_models(runtime, default.clone())?;
+        kernel.store = kernel
+            .store
+            .with_embedded_service_models(runtime, default, source)?;
+        Ok(kernel)
     }
     pub(crate) fn configured_model_objects(
         &self,
@@ -92,7 +134,11 @@ impl Kernel {
                 objects.shared.is_some(),
                 "service model policy requires an installed reference"
             );
-            self.store.installed_model(&objects)?;
+            self.store.validate_model_reference(&objects, 0)?;
+            return Ok(Some(objects));
+        }
+        if let Some(objects) = self.store.embedded_default_reference()? {
+            self.store.validate_model_reference(&objects, 0)?;
             return Ok(Some(objects));
         }
         let expected = self
@@ -110,7 +156,7 @@ impl Kernel {
             objects.shared.is_some() && objects.local_set() == *expected,
             "shared helper default model differs from paired metadata"
         );
-        self.store.installed_model(&objects)?;
+        self.store.validate_model_reference(&objects, 0)?;
         Ok(Some(objects))
     }
     pub(crate) fn open_configured_model(&self, objects: &ModelObjectSet) -> Result<EmbeddingModel> {
@@ -128,6 +174,7 @@ impl Kernel {
                 reservation,
             )?;
         } else {
+            self.require_embedded_default_write(objects)?;
             self.store.validate_model_reference(objects, 0)?;
         }
         Ok(())
@@ -137,7 +184,12 @@ impl Kernel {
             self.store.shared_model_runtime(),
             self.store.shared_model_default(),
         ) {
-            (Some(runtime), Some(default)) => store.with_service_models(runtime, default.clone()),
+            (Some(runtime), Some(default)) => match self.store.embedded_model_binding() {
+                Some(binding) => {
+                    store.with_embedded_service_models(runtime, default.clone(), binding.source())
+                }
+                None => store.with_service_models(runtime, default.clone()),
+            },
             (None, None) => Ok(store),
             _ => anyhow::bail!("incomplete service model binding"),
         }?;

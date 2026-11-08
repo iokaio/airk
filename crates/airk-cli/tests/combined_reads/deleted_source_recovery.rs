@@ -107,6 +107,9 @@ async fn explicit_retirement_allows_fresh_subset_index_without_split() -> Result
         serde_json::to_string(&worker)?
     );
     f.assert_sources_unchanged()?;
+    // Physical removal can advance the catalog again after CatalogApplied.
+    // Capture a fresh delivery ticket only after that exact cleanup is terminal.
+    reconnect_healthy_after_catalog_commit(&f, &mut healthy, 3002)?;
     ensure!(
         healthy_deletion_read(&f, &mut healthy, 3).await? == baseline,
         "deleting one index changed the healthy index publication"
@@ -200,6 +203,9 @@ async fn explicit_retirement_allows_fresh_subset_index_without_split() -> Result
     );
     drop(registry);
     f.assert_sources_unchanged()?;
+    // Observe the completed setup's source/registration state before reconnecting;
+    // the original credential and immutable healthy selection are unchanged.
+    reconnect_healthy_after_catalog_commit(&f, &mut healthy, 4003)?;
     ensure!(
         healthy_deletion_read(&f, &mut healthy, 4).await? == baseline,
         "fresh overlapping-source setup changed the independent healthy index"
@@ -251,6 +257,101 @@ async fn healthy_deletion_read(f: &Fixture, mcp: &mut McpSession, id: u64) -> Re
             .context("healthy publication token missing")?
             .into(),
     )
+}
+
+/// Catalog commits fence the old socket's native delivery ticket, including
+/// sanitized error writes. Explicitly open a fresh transport with the SAME
+/// credential and selector; never catch/replay an uncertain evidence request.
+fn reconnect_healthy_after_catalog_commit(
+    f: &Fixture,
+    mcp: &mut McpSession,
+    id: u64,
+) -> Result<()> {
+    let before = mcp.transport.connection.clone();
+    let credential = Path::new(&before.credential_file);
+    let token_digest = airk_cli::runtime_pair::digest_file(credential)?;
+    let old = mcp.request(id, "ping", json!({}));
+    require_catalog_fenced_socket(old)?;
+    let mut fresh = McpSession {
+        transport: mcp.transport.reconnect(&f.control)?,
+    };
+    let initialized = fresh.request(1,"initialize",json!({"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"airk-combined-fixture","version":"1"}}))?;
+    ensure!(
+        initialized.get("error").is_none(),
+        "explicit reconnect initialization failed: {initialized}"
+    );
+    fresh
+        .transport
+        .send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
+    ensure!(
+        fresh.transport.connection == before,
+        "reconnect changed frozen scope or credential references"
+    );
+    ensure!(
+        airk_cli::runtime_pair::digest_file(credential)? == token_digest,
+        "reconnect rotated the existing credential"
+    );
+    *mcp = fresh;
+    Ok(())
+}
+
+/// Only a closed transport proves the raw TLS fence. Protocol/JSON errors,
+/// timeouts and arbitrary fixture failures are not accepted as fenced delivery.
+pub(crate) fn require_catalog_fenced_socket(reply: Result<Value>) -> Result<()> {
+    let error = reply
+        .err()
+        .context("pre-commit HTTPS socket emitted post-fence output")?;
+    let closed = error.chain().any(|cause| {
+        cause.downcast_ref::<std::io::Error>().is_some_and(|error| {
+            matches!(
+                error.kind(),
+                std::io::ErrorKind::UnexpectedEof
+                    | std::io::ErrorKind::ConnectionAborted
+                    | std::io::ErrorKind::ConnectionReset
+                    | std::io::ErrorKind::BrokenPipe
+                    | std::io::ErrorKind::NotConnected
+            )
+        }) || cause
+            .downcast_ref::<hyper::Error>()
+            .is_some_and(|error| error.is_closed() || error.is_incomplete_message())
+    });
+    ensure!(
+        closed,
+        "post-catalog socket failed without native transport closure: {error:#}"
+    );
+    Ok(())
+}
+
+#[test]
+fn catalog_socket_fence_does_not_accept_timeouts_protocol_errors_or_scope_responses() {
+    for kind in [
+        std::io::ErrorKind::UnexpectedEof,
+        std::io::ErrorKind::ConnectionAborted,
+        std::io::ErrorKind::ConnectionReset,
+        std::io::ErrorKind::BrokenPipe,
+    ] {
+        assert!(require_catalog_fenced_socket(Err(std::io::Error::from(kind).into())).is_ok());
+    }
+    for kind in [
+        std::io::ErrorKind::TimedOut,
+        std::io::ErrorKind::PermissionDenied,
+        std::io::ErrorKind::InvalidData,
+    ] {
+        assert!(require_catalog_fenced_socket(Err(std::io::Error::from(kind).into())).is_err());
+    }
+    assert!(require_catalog_fenced_socket(Err(anyhow::anyhow!("invalid JSON"))).is_err());
+    assert!(
+        require_catalog_fenced_socket(Ok(json!({"error":{"code":"combined_scope_expired"}})))
+            .is_err()
+    );
+    assert!(
+        require_catalog_fenced_socket(Err(http::HttpRefused {
+            status: 403,
+            body: json!({"schema":"airk.local-api-error/1","error":{"code":"native_grant_refused"}})
+        }
+        .into()))
+        .is_err()
+    );
 }
 
 // Missing storage is a failed member under Report, not an RPC or whole-union
@@ -441,6 +542,7 @@ async fn deleted_ancestor_case(data_lost: bool, policy_bearing: bool) -> Result<
     );
     let retirement = policy_draft(&f, 144, SourceMutationSelection::RetireIndex).await?;
     apply_policy(&f, &retirement).await?;
+    reconnect_healthy_after_catalog_commit(&f, &mut healthy, 7000)?;
     let evidence_method = ControlMethod::CatalogIndexRetirementEvidence {
         index_id: f.indexes[2],
     };
@@ -568,7 +670,7 @@ async fn post_p14_policy_bearing_missing_storage_settles_without_losing_policy()
 }
 
 // Uses the real native Index job, never a forged publication or watch event.
-#[cfg(feature = "embedding-worker")]
+#[cfg(feature = "local-inference")]
 #[tokio::test]
 async fn post_p14_individual_file_removal_keeps_healthy_index_and_reconciles_retained_paths()
 -> Result<()> {
@@ -635,6 +737,7 @@ async fn post_p14_individual_file_removal_keeps_healthy_index_and_reconciles_ret
     f.session = affected_session;
     let retirement = policy_draft(&f, 153, SourceMutationSelection::RetireIndex).await?;
     apply_policy(&f, &retirement).await?;
+    reconnect_healthy_after_catalog_commit(&f, &mut healthy, 10500)?;
     let deadline = Instant::now() + Duration::from_secs(90);
     loop {
         if ServiceRegistry::open_saved(&f.control)?
@@ -728,6 +831,7 @@ async fn post_p14_missing_collection_settles_ordinary_credit_without_poisoning_h
     );
     let retirement = policy_draft(&f, 162, SourceMutationSelection::RetireIndex).await?;
     apply_policy(&f, &retirement).await?;
+    reconnect_healthy_after_catalog_commit(&f, &mut healthy, 11200)?;
     let deadline = Instant::now() + Duration::from_secs(90);
     loop {
         let registry = ServiceRegistry::open_saved(&f.control)?;
@@ -795,7 +899,7 @@ async fn post_p14_missing_collection_settles_ordinary_credit_without_poisoning_h
 
 // Called ONLY after a real shared-root provider cutover and native two-participant
 // finalization/ack. No complete/release/current_owned bit is constructed by tests.
-#[cfg(feature = "embedding-worker")]
+#[cfg(feature = "local-inference")]
 pub(crate) async fn retire_completed_destination(
     f: &mut Fixture,
     service: &mut Option<OwnedProcess>,
@@ -1593,12 +1697,19 @@ async fn retire_default_union_and_review_same_project(
         .call("airk_search".into(), args.as_object().unwrap().clone())
         .await?;
     retired_union_refusal(&native, &old_session)?;
-    let wire = old_mcp.call(240, "airk_search", args.clone())?;
-    ensure!(
-        wire.get("error").is_none() && wire["result"].is_object(),
-        "old MCP scope transport failed unexpectedly: {wire}"
+    // The original socket's catalog delivery ticket is now fenced. Native and
+    // fresh CLI paths above/below retain their complete terminal scope refusal;
+    // HTTP must emit no old-generation evidence (even a sanitized error cannot
+    // cross that raw TLS fence). Do not replay the read on a new authority.
+    let wire = old_mcp.request(
+        240,
+        "tools/call",
+        json!({"name":"airk_search","arguments":args.clone()}),
     );
-    retired_union_refusal(&wire["result"], &old_session)?;
+    ensure!(
+        wire.is_err(),
+        "retired HTTP generation emitted a post-fence result: {wire:?}"
+    );
     old_native.close();
     old_native.shutdown().await?;
     // A fresh CLI cannot even construct the old scoped backend. Its documented

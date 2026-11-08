@@ -7,7 +7,7 @@ const obj = (value: unknown): Value => value && typeof value === 'object' && !Ar
 const count = (value: unknown): number | undefined => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 const pick = <T extends string>(value: unknown, allowed: readonly T[], fallback: T): T => allowed.find(entry => entry === value) ?? fallback;
 
-const SEMANTIC: readonly SemanticState[] = ['pending', 'partial', 'ready', 'failed', 'disabled'];
+const SEMANTIC: readonly SemanticState[] = ['pending', 'partial', 'ready', 'failed', 'disabled', 'unavailable'];
 const FRESHNESS: readonly FreshnessState[] = ['unregistered', 'unavailable', 'idle', 'pending', 'running', 'paused', 'blocked', 'failed'];
 
 /** Present the observed job's own work; semantic work reads retained inputs, not source files. */
@@ -54,6 +54,7 @@ export function sourceWorkExplanation(freshness?:string):string {
 /** Published readiness and the saved vector policy are independent observations. */
 export function semanticExplanation(status: Pick<StatusSummary, 'semantic' | 'vectorsEnabled' | 'localModelReady'> | undefined): { title: string; detail: string } {
     if (!status) { return { title: 'Semantic status not checked', detail: 'Refresh published status to check coverage and model configuration.' }; }
+    if (status.semantic === 'unavailable') { return { title: 'Semantic pipeline unavailable', detail: 'The native semantic pipeline is unavailable for this saved evidence. This is not a saved vector opt-out or semantic readiness. Source and lexical evidence have separate availability; review the complete native readiness and compatibility details.' }; }
     if (status.vectorsEnabled === false) { return { title: 'Vector search is turned off', detail: 'The saved project policy disables vector search. Review project settings to enable it. Published source evidence has separate availability.' }; }
     if (status.semantic === 'disabled' && status.vectorsEnabled === true && status.localModelReady !== false) {
         return { title: 'Semantic setup not yet published', detail: 'Semantic mode is enabled in the saved settings, but this publication has no semantic coverage. Model preparation or indexing may still be queued; Recent activity shows their outcome.' };
@@ -83,6 +84,8 @@ export function statusSummary(payload: Value, observedAt = Date.now(), rawPayloa
     const summary: StatusSummary = {
         indexState,
         semantic: pick(semantic.state, SEMANTIC, 'unknown'),
+        ...(Object.keys(semantic).length ? { semanticReadiness: structuredClone(semantic) } : {}),
+        ...(Object.keys(obj(payload.legacy_adoption)).length ? { legacyAdoption: structuredClone(obj(payload.legacy_adoption)) } : {}),
         freshness: pick(freshness.state, FRESHNESS, 'unknown'),
         observedAt,
         ...(typeof indexError.code === 'string' ? { indexError: indexError.code.slice(0, 128) } : {}),
@@ -130,9 +133,11 @@ function combinedStatusSummary(payload: Value, observedAt: number, rawPayload: V
     };
     const states = members.map(member => member.status.semantic);
     const semantic: SemanticState = states.length && states.every(state => state === 'ready') ? 'ready'
+        : states.length && states.every(state => state === 'unavailable') ? 'unavailable'
         : states.length && states.every(state => state === 'disabled') ? 'disabled'
         : states.some(state => state === 'ready' || state === 'partial') ? 'partial'
         : states.some(state => state === 'failed') ? 'failed'
+        : states.some(state => state === 'unavailable') ? 'unavailable'
         : states.length && states.every(state => state === 'pending') ? 'pending' : 'unknown';
     const freshness = (['failed', 'blocked', 'running', 'pending', 'paused', 'unavailable', 'unregistered', 'unknown', 'idle'] as const)
         .find(state => members.some(member => member.status.freshness === state)) ?? 'unknown';
@@ -163,6 +168,7 @@ export function headline(connection: ConnectionState, status: StatusSummary | un
     if (status.combined?.partial) { return { word: status.combined.available ? 'partial indexes' : 'member status unknown', severity: 'warn' }; }
     if (status.indexState !== 'available') { return { word: 'index unavailable', severity: 'warn' }; }
     if (status.freshness === 'failed' || status.freshness === 'blocked' || status.semantic === 'failed') { return { word: 'attention', severity: 'error' }; }
+    if (status.semantic === 'unavailable') { return { word: 'semantic unavailable', severity: 'warn' }; }
     if (connection === 'degraded') { return { word: 'degraded', severity: 'warn' }; }
     if (status.freshness === 'running' || status.freshness === 'pending') { return { word: 'indexing', severity: 'info' }; }
     return { word: 'ready', severity: 'ok' };

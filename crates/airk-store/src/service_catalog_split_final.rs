@@ -6,6 +6,120 @@ const PLAN_KIND: &str = "catalog_split_final_plan";
 const SLOT_KIND: &str = "catalog_split_final_slot";
 const ERROR_KIND: &str = "catalog_split_final_error";
 const ACK_KIND: &str = "catalog_split_final_ack";
+#[cfg(test)]
+#[path = "service_catalog_split_checkpoint_tests.rs"]
+mod checkpoint_tests;
+
+/// Classify immutable final-publication evidence only through its complete
+/// native parent. A slot's retained `prepared` stage is not a running plan.
+#[derive(Default)]
+pub(crate) struct CheckpointReceiptClassifier {
+    ack_operations: Option<BTreeMap<String, Incarnation>>,
+}
+impl CheckpointReceiptClassifier {
+    pub(crate) fn terminal(
+        &mut self,
+        db: &Connection,
+        id: &str,
+        kind: &str,
+        stage: &str,
+        revision: i64,
+        payload: &[u8],
+    ) -> Result<bool> {
+        if !matches!(kind, PLAN_KIND | SLOT_KIND | ACK_KIND) {
+            return Ok(false);
+        }
+        let operation = match kind {
+            PLAN_KIND => serde_json::from_slice::<SplitReceipt>(payload)?.operation_id,
+            SLOT_KIND => serde_json::from_slice::<TerminalSlot>(payload)?.operation,
+            ACK_KIND => {
+                // Ack bytes contain an exact funding census, not a caller-supplied
+                // operation. Resolve only its canonical native row identity.
+                self.ack_operation(db, id)?
+            }
+            _ => unreachable!(),
+        };
+        let value =
+            get(db, operation)?.context("checkpoint split evidence has no native parent")?;
+        let state = NativeSplitState(value.clone());
+        match kind {
+            PLAN_KIND => {
+                let terminal: SplitReceipt = serde_json::from_slice(payload)?;
+                terminal.validate_for(&value.request)?;
+                let (observed_revision, observed_stage, saved) =
+                    plan(db, operation)?.context("checkpoint split plan missing")?;
+                ensure!(
+                    identity(operation, b"plan")?.to_string() == id
+                        && observed_stage == stage
+                        && i64::try_from(observed_revision)? == revision
+                        && saved == terminal,
+                    "checkpoint split plan identity changed"
+                );
+            }
+            SLOT_KIND => {
+                let slot: TerminalSlot = serde_json::from_slice(payload)?;
+                slot.validate_for(&state)?;
+                let digest = slot.identity()?;
+                ensure!(
+                    stage == "prepared"
+                        && revision == 1
+                        && slot_row(digest)?.to_string() == id
+                        && value.receipt.terminal_publication_slots.get(&slot.index)
+                            == Some(&digest),
+                    "checkpoint split slot identity changed"
+                );
+            }
+            ACK_KIND => {
+                let acknowledged: BTreeSet<Sha256Digest> = serde_json::from_slice(payload)?;
+                ensure!(
+                    stage == "acknowledged"
+                        && revision > 0
+                        && value
+                            .finalization
+                            .as_ref()
+                            .is_some_and(|status| status.funding_acknowledged == acknowledged),
+                    "checkpoint split acknowledgment identity changed"
+                );
+            }
+            _ => unreachable!(),
+        }
+        Ok(value.finalization.as_ref().is_some_and(|status| {
+            status.progress == SplitFinalizationProgress::Complete && status.attention.is_none()
+        }))
+    }
+    fn ack_operation(&mut self, db: &Connection, id: &str) -> Result<Incarnation> {
+        if self.ack_operations.is_none() {
+            let maximum = super::super::super::checkpoint::MAX_ROWS;
+            let mut statement = db.prepare(&format!(
+                "SELECT operation_id FROM index_split_operations ORDER BY operation_id LIMIT {}",
+                maximum + 1
+            ))?;
+            let operations = statement
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            ensure!(
+                operations.len() <= maximum,
+                "checkpoint split roster exceeds capacity"
+            );
+            let mut mapping = BTreeMap::new();
+            for operation in operations {
+                let operation = operation.parse()?;
+                ensure!(
+                    mapping
+                        .insert(identity(operation, b"ack")?.to_string(), operation)
+                        .is_none(),
+                    "checkpoint split ack ambiguous"
+                );
+            }
+            self.ack_operations = Some(mapping);
+        }
+        Ok(*self
+            .ack_operations
+            .as_ref()
+            .and_then(|mapping| mapping.get(id))
+            .context("checkpoint split ack has no native parent")?)
+    }
+}
 fn identity(operation: Incarnation, part: &[u8]) -> Result<Incarnation> {
     framed_digest(b"airk/split-final-record/1", &[operation.as_bytes(), part]).to_string()[..32]
         .parse()

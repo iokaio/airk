@@ -13,7 +13,7 @@ import { restrictWindowsDirectory } from '../privateDirectory';
 import { assistanceDirectory, LAUNCH_SCHEMA, launchDescriptorPath, serverInvocation, writeLaunchDescriptor } from '../explorerAssistanceLaunch';
 import { SuggestionStore } from '../explorerSuggestions';
 import { serviceTestHost } from './serviceTestHost';
-import { contains } from '../explorerAssistance/attach';
+import { contains, windowChannel } from '../explorerAssistance/attach';
 
 const bundle = path.resolve(__dirname, '..', 'explorerAssistance.js');
 
@@ -163,8 +163,8 @@ test('trusted activation withdraws the old provider and attaches UI to one nativ
         assert.ok(provider, 'a separate provider id from airk.collections');
         assert.deepEqual(await provider.provideMcpServerDefinitions(),[],'retired provider withdraws cached legacy definitions');
         const [definition]=await f.api.getServerDefinitions();
-        assert.equal(definition.label,'AIRK');assert.equal(definition.command,f.binding.launcher);
-        assert.ok(definition.args.includes('--explorer-descriptor'));
+        assert.equal(definition.label,'AIRK');assert.equal(definition.uri.toString(),f.httpUrl);
+        assert.match(definition.headers.Authorization,/^Bearer airk1\.[a-f0-9]{32}\.[a-f0-9]{64}$/);assert.equal(definition.command,undefined);assert.equal(definition.args,undefined);
         const directory = path.join(f.root, 'editor-storage', 'explorer-assistance');
         await assert.rejects(async()=>provider.resolveMcpServerDefinition(definition),/legacy_mcp_definition_retired/);
         await f.refreshFolders();
@@ -275,4 +275,17 @@ test('Assistance ACL wait leaves executor responsive and trust loss publishes no
         trusted=false;release();await assert.rejects(pending,/no longer authorized/);
         assert.deepEqual(fs.readdirSync(windowsDirectory(directory)),[]);
     }finally{release?.();await fs.promises.rm(root,{recursive:true,force:true});}
+});
+
+test('credential-bound window sessions ignore cwd and never attach another window',async t=>{
+    const root=scratch(t),directory=path.join(root,'assistance'),source=path.join(root,'source'),other=path.join(root,'other');
+    fs.mkdirSync(source);fs.mkdirSync(other);
+    const first=await AssistanceIpcHost.start({directory,version:'1.8.14',roots:[source],explorerOpen:()=>true});assert.ok(first);t.after(()=>first.dispose());
+    const second=await AssistanceIpcHost.start({directory,version:'1.8.14',roots:[other],explorerOpen:()=>false});assert.ok(second);t.after(()=>second.dispose());
+    const descriptor=JSON.parse(fs.readFileSync(first.descriptorPath!,'utf8'));
+    const channel=windowChannel(directory,other,undefined,descriptor.session_id);
+    const reply=await channel({type:'status'});assert.equal(reply.ok,true);if(reply.ok){assert.ok('status' in reply.reply);assert.equal(reply.reply.status.explorer_open,true);}
+    first.dispose();assert.equal(first.descriptorPath,undefined);
+    assert.deepEqual(await channel({type:'status'}),{ok:false,code:'UI_NOT_ATTACHED'});
+    assert.deepEqual(await windowChannel(directory,other,undefined,'bad')({type:'status'}),{ok:false,code:'UI_NOT_ATTACHED'});
 });

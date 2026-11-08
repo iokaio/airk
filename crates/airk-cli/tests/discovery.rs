@@ -17,7 +17,7 @@ fn cli_and_mcp_resume_the_same_compact_outline_and_fact_pages() -> Result<()> {
         root.path().join("other.txt"),
         "Original discovery fixture.\n",
     )?;
-    let _service = common::Service::start(root.path(), state.path(), "default");
+    let _service = common::Service::reviewed(root.path(), state.path(), "default");
     let cli = |arguments: &[&str]| -> Result<Value> {
         common::call(root.path(), state.path(), "default", arguments)
     };

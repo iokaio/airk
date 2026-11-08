@@ -143,6 +143,32 @@ def selected_payload(root, install, old_payload, new_payload):
     return binary, selected
 
 
+def retained_launcher_snapshot(root, install):
+    """Observe exact owned fixture paths without reading an executable into RAM."""
+    result = {}
+    for name, maximum in (("airk-launcher.exe", 2 * 1024 * 1024 * 1024), ("launcher.json", 4096)):
+        path = contained(root, install / name, exists=False)
+        try:
+            info = path.lstat()
+        except FileNotFoundError:
+            result[name] = None
+            continue
+        plain(path)
+        assert path.is_file() and info.st_nlink == 1 and info.st_size <= maximum
+        result[name] = {"bytes": info.st_size, "sha256": sha(path), "device": info.st_dev, "inode": info.st_ino}
+    return result
+
+
+def qualify_launcher_repair(pair, proof, selected, before, after):
+    assert type(pair.get("schema")) is int and pair["schema"] in (1, 2), "Unknown runtime launcher contract"
+    expected = pair["schema"] == 1
+    assert proof == {"launcher_repaired": expected, "runtime": selected["active"]}
+    assert type(proof["launcher_repaired"]) is bool
+    if not expected:
+        assert before == after, "Modern all-role proof created or changed predecessor launcher state"
+    return proof
+
+
 def old_status_ready(value, project, indexed_job):
     # Actual public 1.8.7 Status exposes compact freshness even in full mode.
     # The completed Index receipt binds publication; full provenance is checked
@@ -415,10 +441,19 @@ class Fixture:
             except OSError:
                 assert time.monotonic() < deadline, "Existing owner leases did not drain"
                 time.sleep(0.05)
-        # One successful owning native call is the final all-role proof, including
-        # the native embedding-pool census. This edits only this fixture launcher.
+        # Keep the actual owning native call as the final all-role lease proof.
+        # Modern schema 2 must not edit the retained historical launcher at all.
+        pair_path = contained(self.root, binary.parent / "airk-runtime.json")
+        assert pair_path.stat().st_size <= 4096
+        expected_seal = next(item for item in (self.old_seal, self.new_seal)
+                             if item["manifest_sha256"] == selected["active"])
+        assert sha(pair_path) == expected_seal["files"]["airk-runtime.json"]
+        pair = json.loads(pair_path.read_text(encoding="utf-8"))
+        assert pair["airk_sha256"] == sha(binary)
+        before_launcher = retained_launcher_snapshot(self.root, self.install)
         proof = self.invoke(binary, "runtime", "repair-launcher", "--install-dir", self.install)
-        assert proof == {"launcher_repaired": True, "runtime": selected["active"]}
+        qualify_launcher_repair(pair, proof, selected, before_launcher,
+                                retained_launcher_snapshot(self.root, self.install))
         assert json.loads((self.install / "selected.json").read_text(encoding="utf-8")) == selected
         selected_after, _ = selected_payload(self.root, self.install, self.old_seal, self.new_seal)
         assert selected_after.samefile(binary)

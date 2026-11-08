@@ -15,6 +15,14 @@ const text = (value: unknown, max = 256): string | undefined => typeof value ===
 
 export type DirtyCheck = (file: string) => boolean;
 
+function legacyAvailability(value: Value): string {
+    const origin = obj(value.origin);
+    const availability = (input: unknown) => input === true ? 'available' : input === false ? 'unavailable' : 'not reported';
+    return `Original saved source bytes: ${availability(origin.source_available)}. Original saved profile bytes: ${availability(origin.profile_available)}. `
+        + `Vector selection: ${availability(value.vector_selection_available)}. Current profile-family reads: ${availability(value.profile_families_available)}. `
+        + 'Saved predecessor evidence does not establish current profile or vector readiness, or verify the live source.';
+}
+
 const LIVE_MESSAGE: Record<LiveCheck, string> = {
     matches_index: 'Saved bytes matched the indexed content hash during the native check.',
     changed_since_index: 'Saved bytes differ from the indexed content hash; cited lines may have moved.',
@@ -75,9 +83,11 @@ export async function inspect(session: EvidenceClient, refs: RefRegistry, projec
         : live === 'not_saved' ? `${LIVE_MESSAGE[live]} ${observed ?? ''}` : observed ?? LIVE_MESSAGE[live];
     const message = indexedHash !== ref.contentHash
         ? `${description} The index was republished since this citation was captured.` : description;
+    const saved = info.legacy_saved_evidence;
+    const legacySavedEvidence = saved && typeof saved === 'object' && !Array.isArray(saved) ? structuredClone(saved as Value) : undefined;
     return {
         ref: id!, path: ref.path, startLine: ref.startLine, endLine: ref.endLine, contentHash: indexedHash, live, liveMessage: message,
-        ...(publication ? { publication } : {}), ...(nativeFailure ? { nativeResult: nativeFailure, nativeFailure: true } : selected.nativeResult ? { nativeResult: result.rawPayload ?? selected.nativeResult } : {}),
+        ...(publication ? { publication } : {}), ...(nativeFailure ? { nativeResult: nativeFailure, nativeFailure: true } : selected.nativeResult ? { nativeResult: result.rawPayload ?? selected.nativeResult } : saved !== undefined ? { nativeResult: structuredClone(result.rawPayload ?? info) } : {}),
         ...(text(info.language) ? { language: text(info.language) } : {}), ...(text(info.parse_status) ? { parseStatus: text(info.parse_status) } : {}),
         ...(text(info.line_basis) ? { lineBasis: text(info.line_basis) } : {}), ...(text(info.extraction_method) ? { extractionMethod: text(info.extraction_method) } : {}),
         ...(count(info.indexed_lines) !== undefined ? { indexedLines: count(info.indexed_lines) } : {}),
@@ -85,6 +95,7 @@ export async function inspect(session: EvidenceClient, refs: RefRegistry, projec
         ...(count(info.chunks) !== undefined ? { chunks: count(info.chunks) } : {}), ...(count(info.facts) !== undefined ? { facts: count(info.facts) } : {}),
         ...(root ? { sourceRoot: root } : {}),
         ...(receipt ? { sourceVerification: receipt } : {}),
+        ...(legacySavedEvidence ? { legacySavedEvidence, legacyAvailabilityMessage: legacyAvailability(legacySavedEvidence) } : {}),
     };
 }
 

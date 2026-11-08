@@ -11,7 +11,6 @@ import queue
 import sqlite3
 from pathlib import Path
 import subprocess
-import tempfile
 import threading
 import time
 import uuid
@@ -19,6 +18,61 @@ import uuid
 spec = importlib.util.spec_from_file_location("airk_usage_fixture", Path(__file__).with_name("check-service-clients.py"))
 clients = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(clients)
+
+
+@contextmanager
+def usage_mcp(fixture, name, base):
+    """Exercise real transport with immutable native Codex attribution."""
+    if fixture.single_image:
+        spec = importlib.util.spec_from_file_location("usage_https_fixture", Path(__file__).with_name("http_fixture.py"))
+        transport = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(transport)
+        selected = fixture.scopes[name]
+        connection = fixture.enroll_http({"kind": "scoped", "selection": selected}, uuid.uuid4().hex, "codex")
+        health = fixture.rpc("health")["observation"]
+        fixture.assert_alive()
+        assert health["instance"] == fixture.managed_health["instance"]
+        transport.validate_native_identity(connection, health)
+        assert connection["selection"]["kind"] == "scoped"
+        actual, expected = connection["selection"]["selection"].copy(), selected.copy()
+        assert actual.pop("expected_catalog_revision") >= expected.pop("expected_catalog_revision")
+        assert actual == expected, "Usage HTTP enrollment changed reviewed scope"
+        network = transport.McpClient(connection, fixture.control)
+        try:
+            yield network.send, network.receive
+        finally:
+            network.close()
+        return
+    # Exact predecessor compatibility: modern images must never reach stdio.
+    with (base / "mcp-errors.log").open("w", encoding="utf-8") as errors:
+        child = subprocess.Popen([str(fixture.binary), *fixture.arguments(name), "mcp"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=errors, text=True,
+            encoding="utf-8", env=dict(fixture.environment, AIRK_CLIENT="codex"),
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+        responses = queue.Queue()
+        reader = threading.Thread(target=lambda: [responses.put(line) for line in child.stdout], daemon=True)
+        reader.start()
+        def send(value):
+            child.stdin.write(json.dumps(value) + "\n")
+            child.stdin.flush()
+        def receive(identifier):
+            deadline = time.monotonic() + 30
+            while True:
+                response = json.loads(responses.get(timeout=clients.remaining(deadline, 30)))
+                if response.get("id") == identifier:
+                    assert "error" not in response, response
+                    return response
+        try:
+            yield send, receive
+        finally:
+            child.stdin.close()
+            try:
+                child.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.wait(timeout=10)
+            reader.join(timeout=5)
+            child.stdout.close()
 
 
 # Diagnostics and setup only. The measured workload below remains unchanged.
@@ -72,16 +126,13 @@ class UsageFixture(clients.Fixture):
 
 @contextmanager
 def retained_usage_fixture():
-    temporary = tempfile.TemporaryDirectory(prefix="airk-usage-inputs-")
-    try:
-        yield temporary.name
-    except BaseException as error:
-        temporary._finalizer.detach()
-        error.add_note(f"Owned fictional usage fixture retained: {temporary.name}")
-        print(json.dumps({"status": "failed", "retained_fixture": temporary.name}), flush=True)
-        raise
-    else:
-        temporary.cleanup()
+    with clients.owned_client_fixture() as temporary:
+        try:
+            yield temporary
+        except BaseException as error:
+            error.add_note(f"Owned fictional usage fixture retained: {temporary}")
+            print(json.dumps({"status": "failed", "retained_fixture": temporary}), flush=True)
+            raise
 
 
 def usage_quiescence(fixture, project):
@@ -131,8 +182,11 @@ def hold_usage_reader(fixture, project, expected_publication):
     # This driver's source and state layout is explicit and fictional. Normalize
     # the registration's Windows extended prefix by same-file identity, rather
     # than treating lexical drive-prefix spellings as an ownership proof.
-    data = (fixture.owner / "state").resolve(strict=True)
-    assert data.samefile(Path(registration["data_root"]))
+    expected = fixture.owner / "index-data"
+    if getattr(fixture, "single_image", False):
+        expected /= registration["collection"]
+    data = expected.resolve(strict=True)
+    assert data.samefile(Path(registration["data_root"])), "Usage registration changed the exact fixture storage layout"
     assert data.is_relative_to(fixture.owner.resolve(strict=True))
     logical = data / "collections-1.4" / registration["collection"]
     for path in (data, logical.parent, logical):
@@ -261,6 +315,14 @@ def stable_usage_publication(fixture, project, expected_publication=None):
 
 
 
+def usage_arguments(fixture, project, command):
+    """Accounting/policy uses owned management; measured evidence keeps its grant."""
+    assert command == ("index",) or command[:2] in (("usage", "report"), ("usage", "policy"),
+        ("usage", "import"), ("usage", "calibrate"), ("usage", "configure"), ("usage", "clear")), \
+        "Unsupported usage fixture administrative command"
+    return fixture.management_arguments(project)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True)
@@ -270,7 +332,7 @@ def main():
         root = base / "sources"
         root.mkdir()
         (root / "fixture.txt").write_text("Original bounded usage fixture.\n", encoding="utf-8")
-        state = base / "state"
+        state = base / "index-data"
         state.mkdir()
         fixture = UsageFixture(binary.parent, base)
         assert fixture.binary == binary
@@ -285,7 +347,7 @@ def main():
             if command[0] not in ("index", "usage"):
                 assert not fails
                 return fixture.query("usage-fixture", *command, retry=False, admission_only=True)
-            result = fixture.run(*fixture.arguments("usage-fixture"), *command, check=False)
+            result = fixture.run(*usage_arguments(fixture, "usage-fixture", command), *command, check=False)
             if result.returncode:
                 assert fails, result.stderr
                 return None
@@ -327,49 +389,26 @@ def main():
             assert concurrent["report"]["baseline_unavailable"] == {}
             assert int(comparisons["returned_utf8_bytes"]) > 0
             assert int(comparisons["token_estimate"]["nominal_reduction"]) < 0, "Tiny complete-file results must preserve expansion from response overhead"
-            # Exercise the actual stdio adapter, including a conditional response
-            # with no evidence payload. No fake provider/token measurements.
-            with (base / "mcp-errors.log").open("w", encoding="utf-8") as errors:
-                child = subprocess.Popen([str(binary), *fixture.arguments("usage-fixture"), "mcp"], stdin=subprocess.PIPE,
-                                         stdout=subprocess.PIPE, stderr=errors, text=True, encoding="utf-8",
-                                         env=dict(environment, AIRK_CLIENT="codex"))
-                responses = queue.Queue()
-                reader = threading.Thread(target=lambda: [responses.put(line) for line in child.stdout], daemon=True)
-                reader.start()
-
+            # Exercise actual HTTPS for modern images (stdio for predecessors),
+            # including conditional evidence and native Codex usage attribution.
+            with usage_mcp(fixture, "usage-fixture", base) as (send, receive):
                 def rpc(identifier, method, params):
-                    child.stdin.write(json.dumps({"jsonrpc": "2.0", "id": identifier, "method": method, "params": params}) + "\n")
-                    child.stdin.flush()
-                    deadline = time.monotonic() + 30
-                    while True:
-                        response = json.loads(responses.get(timeout=clients.remaining(deadline, 30)))
-                        if response.get("id") == identifier:
-                            assert "error" not in response, response
-                            return response["result"]
-
-                try:
-                    rpc(1, "initialize", {"protocolVersion": "2025-11-25", "capabilities": {},
-                                          "clientInfo": {"name": "codex", "version": "airk-native-fixture-1"}})
-                    child.stdin.write(json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n")
-                    child.stdin.flush()
-                    arguments = {"path": "fixture.txt", "start_line": 1, "end_line": 1, "max_bytes": 200, "response_mode": "full"}
-                    reply = rpc(2, "tools/call", {"name": "airk_read_file", "arguments": arguments})
-                    assert not reply.get("isError"), reply
-                    read = json.loads(reply["content"][0]["text"])
-                    reply = rpc(3, "tools/call", {"name": "airk_read_file", "arguments": {**arguments, "if_evidence": read["read"]["validator"]}})
-                    assert not reply.get("isError"), reply
-                    assert json.loads(reply["content"][0]["text"])["read"]["status"] == "not_modified"
-                    reply = rpc(4, "tools/call", {"name": "airk_search", "arguments": {"query": "fixture", "mode": "lexical"}})
-                    assert not reply.get("isError"), reply
-                finally:
-                    child.stdin.close()
-                    try:
-                        child.wait(timeout=10)
-                    except subprocess.TimeoutExpired:
-                        child.kill()
-                        child.wait(timeout=10)
-                    reader.join(timeout=5)
-                    child.stdout.close()
+                    send({"jsonrpc": "2.0", "id": identifier, "method": method, "params": params})
+                    response = receive(identifier)
+                    assert "error" not in response, response
+                    return response["result"]
+                rpc(1, "initialize", {"protocolVersion": "2025-11-25", "capabilities": {},
+                                      "clientInfo": {"name": "codex", "version": "airk-native-fixture-1"}})
+                send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+                arguments = {"path": "fixture.txt", "start_line": 1, "end_line": 1, "max_bytes": 200, "response_mode": "full"}
+                reply = rpc(2, "tools/call", {"name": "airk_read_file", "arguments": arguments})
+                assert not reply.get("isError"), reply
+                read = json.loads(reply["content"][0]["text"])
+                reply = rpc(3, "tools/call", {"name": "airk_read_file", "arguments": {**arguments, "if_evidence": read["read"]["validator"]}})
+                assert not reply.get("isError"), reply
+                assert json.loads(reply["content"][0]["text"])["read"]["status"] == "not_modified"
+                reply = rpc(4, "tools/call", {"name": "airk_search", "arguments": {"query": "fixture", "mode": "lexical"}})
+                assert not reply.get("isError"), reply
             native_calls += 3
             mcp_report = run("usage", "report")["report"]
             assert mcp_report["calls"] == native_calls
@@ -429,7 +468,7 @@ def main():
         assert scenario["session_input_equivalents"][0]["unpriced_input_tokens_unknown_cache_split"] == "120"
         assert scenario["session_input_equivalents"][0]["uncached_input_equivalent"] is None
         assert scenario["session_input_equivalents"][0]["output_equivalent"] == "0.000120000000"
-        ledger = state / "collections-1.4" / "usage-fixture" / "usage.sqlite3"
+        ledger = Path(fixture.projects["usage-fixture"]["data_root"]) / "collections-1.4" / "usage-fixture" / "usage.sqlite3"
         assert b"hellohello" not in ledger.read_bytes()
         run("usage", "configure", "--mode", "disabled")
         before = hashlib.sha256(ledger.read_bytes()).digest()

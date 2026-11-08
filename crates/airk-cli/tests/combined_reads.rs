@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Actual native readers and CLI/MCP transports over an isolated authority-1
 //! component-format fixture. This is not Genesis or installer qualification.
+#[path = "common/http.rs"]
+mod http;
 #[path = "common/read_retry.rs"]
 mod read_retry;
 #[path = "combined_reads/single_member_retry.rs"]
@@ -12,11 +14,11 @@ mod permanent_trim;
 #[path = "combined_reads/changes_verification.rs"]
 mod changes_verification;
 
-#[cfg(feature = "embedding-worker")]
+#[cfg(feature = "local-inference")]
 #[path = "combined_reads/reference_refresh.rs"]
 mod reference_refresh;
 
-#[cfg(feature = "embedding-worker")]
+#[cfg(feature = "local-inference")]
 #[path = "combined_reads/retention.rs"]
 mod retention;
 #[path = "combined_reads/split.rs"]
@@ -36,10 +38,8 @@ use rusqlite::{Connection, params};
 use serde_json::{Value, json};
 use std::{
     fs,
-    io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::mpsc,
     time::{Duration, Instant},
 };
 
@@ -49,45 +49,38 @@ fn binary() -> PathBuf {
         .unwrap_or_else(|| env!("CARGO_BIN_EXE_airk").into())
 }
 
-fn fixture_candidate(base: &Path, helper: bool) -> Result<PathBuf> {
+fn fixture_candidate(base: &Path, inference: bool) -> Result<PathBuf> {
     let candidate = binary();
-    // An explicitly supplied immutable runtime remains the selected producer.
-    // Lexical fixtures need only Cargo's main image and never require inference.
-    if std::env::var_os("AIRK_CATALOG_CANDIDATE_BINARY").is_some() || !helper {
+    // A supplied immutable image retains its existing build provenance.
+    if std::env::var_os("AIRK_CATALOG_CANDIDATE_BINARY").is_some() || !inference {
         return Ok(candidate);
     }
-    #[cfg(feature = "embedding-worker")]
+    #[cfg(feature = "local-inference")]
     {
-        // Match the existing owning helper fixtures: Cargo builds the two
-        // images, while this disposable owner supplies their exact pair receipt.
-        let pair = base.join("pair");
-        let main = pair.join(airk_cli::runtime_install::main_name());
-        let embed = main.with_file_name(if cfg!(windows) {
-            "airk-embed.exe"
-        } else {
-            "airk-embed"
-        });
-        fs::create_dir_all(main.parent().context("owned pair main parent missing")?)?;
+        // This disposable component fixture seals only the current main image.
+        // It is not an installed-payload or deployment qualification fixture.
+        let payload = base.join("runtime");
+        let main = payload.join(airk_cli::runtime_install::main_name());
+        fs::create_dir_all(main.parent().context("owned main parent missing")?)?;
         fs::copy(&candidate, &main)?;
-        fs::copy(env!("CARGO_BIN_EXE_airk-embed"), &embed)?;
         let receipt = airk_cli::runtime_pair::RuntimePair {
-            schema: 1,
+            schema: 2,
             version: env!("CARGO_PKG_VERSION").into(),
             os: std::env::consts::OS.into(),
             arch: std::env::consts::ARCH.into(),
             airk_sha256: airk_cli::runtime_pair::digest_file(&main)?,
-            embed_sha256: airk_cli::runtime_pair::digest_file(&embed)?,
+            embed_sha256: String::new(),
         };
         fs::write(
-            pair.join("airk-runtime.json"),
+            payload.join("airk-runtime.json"),
             serde_json::to_vec(&receipt)?,
         )?;
         Ok(main)
     }
-    #[cfg(not(feature = "embedding-worker"))]
+    #[cfg(not(feature = "local-inference"))]
     {
         let _ = base;
-        anyhow::bail!("owned helper fixture requires embedding-worker feature")
+        anyhow::bail!("owned inference fixture requires local-inference feature")
     }
 }
 
@@ -166,8 +159,8 @@ impl Fixture {
         Self::with_runtime(dedicated_is_indexed, count, false)
     }
 
-    #[cfg(feature = "embedding-worker")]
-    fn with_helper() -> Result<Self> {
+    #[cfg(feature = "local-inference")]
+    fn with_inference() -> Result<Self> {
         Self::with_runtime(true, 3, true)
     }
 
@@ -405,7 +398,7 @@ impl Fixture {
             .stdout(Stdio::null())
             .stderr(Stdio::from(fs::File::create(&log)?));
         // This enclosing fixture job contains the service, source watcher,
-        // embedding helper and all 32 admitted resident workers. Each native
+        // in-process inference provider and all 32 admitted resident workers. Each native
         // owner retains its own unchanged admission and descendant limits.
         let mut service = OwnedProcess::start_with_process_limit(command, 32 + 3)?;
         let deadline = Instant::now() + Duration::from_secs(20);
@@ -540,7 +533,7 @@ impl Fixture {
         serde_json::from_slice(&output.stdout).context("convenience search omitted its result")
     }
 
-    #[cfg(feature = "embedding-worker")]
+    #[cfg(feature = "local-inference")]
     async fn native_cli(&self, index: usize, arguments: Vec<String>) -> Result<Value> {
         let mut command = Command::new(&self.candidate);
         command
@@ -992,92 +985,47 @@ fn assert_parity(label: &str, left: &Value, right: &Value) -> Result<()> {
 }
 
 struct McpSession {
-    process: Option<OwnedProcess>,
-    #[cfg(unix)]
-    input: Option<fs::File>,
-    #[cfg(not(unix))]
-    input: Option<std::process::ChildStdin>,
-    replies: mpsc::Receiver<Result<Value, String>>,
-    reader: Option<std::thread::JoinHandle<()>>,
+    transport: http::HttpMcpSession,
 }
 impl McpSession {
     fn start(f: &Fixture) -> Result<Self> {
         Self::start_selected(f, &f.session)
     }
     fn start_selected(f: &Fixture, selected: &CombinedConnectRequest) -> Result<Self> {
-        let mut command = Command::new(&f.candidate);
-        command
-            .arg("--combined-session")
-            .arg(serde_json::to_string(selected)?)
-            .arg("--service-runtime-dir")
-            .arg(&f.control)
-            .arg("mcp");
-        Self::start_command(f, command)
+        Self::start_selection(
+            f,
+            airk_core::service_http::HttpSelection::Combined {
+                selection: selected.clone(),
+            },
+        )
     }
     fn start_scoped(f: &Fixture, selected: &ScopedConnectRequest) -> Result<Self> {
-        let mut command = Command::new(&f.candidate);
-        command
-            .arg("--catalog-session")
-            .arg(serde_json::to_string(selected)?)
-            .arg("--service-runtime-dir")
-            .arg(&f.control)
-            .arg("mcp");
-        Self::start_command(f, command)
+        Self::start_selection(
+            f,
+            airk_core::service_http::HttpSelection::Scoped {
+                selection: selected.clone(),
+            },
+        )
     }
-    fn start_command(f: &Fixture, mut command: Command) -> Result<Self> {
-        command
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::from(fs::File::create(
-                f.owner.path().join("mcp.log"),
-            )?));
-        let mut process = OwnedProcess::start(command)?;
-        let input = process.child.stdin.take().context("MCP stdin missing")?;
-        let output = process.child.stdout.take().context("MCP stdout missing")?;
-        let (sender, replies) = mpsc::channel();
-        let reader = std::thread::spawn(move || {
-            for line in BufReader::new(output).lines() {
-                let reply = line.map_err(|error| error.to_string()).and_then(|line| {
-                    serde_json::from_str(&line).map_err(|error| error.to_string())
-                });
-                if sender.send(reply).is_err() {
-                    break;
-                }
-            }
-        });
+    fn start_selection(
+        f: &Fixture,
+        selection: airk_core::service_http::HttpSelection,
+    ) -> Result<Self> {
         let mut session = Self {
-            process: Some(process),
-            input: Some(input),
-            replies,
-            reader: Some(reader),
+            transport: http::HttpMcpSession::start(&f.control, selection)?,
         };
         let initialized = session.request(1, "initialize", json!({"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"airk-combined-fixture","version":"1"}}))?;
         ensure!(
             initialized.get("error").is_none(),
             "initialize failed: {initialized}"
         );
-        session.send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
+        session
+            .transport
+            .send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
         Ok(session)
     }
-    fn send(&mut self, value: Value) -> Result<()> {
-        let input = self.input.as_mut().context("MCP input closed")?;
-        serde_json::to_writer(&mut *input, &value)?;
-        input.write_all(b"\n")?;
-        input.flush()?;
-        Ok(())
-    }
     fn request(&mut self, id: u64, method: &str, params: Value) -> Result<Value> {
-        self.send(json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}))?;
-        let deadline = Instant::now() + Duration::from_secs(30);
-        loop {
-            let reply = self
-                .replies
-                .recv_timeout(deadline.saturating_duration_since(Instant::now()))?
-                .map_err(anyhow::Error::msg)?;
-            if reply.get("id") == Some(&json!(id)) {
-                return Ok(reply);
-            }
-        }
+        self.transport.request(id.try_into()?, method, params)
     }
     fn call(&mut self, mut id: u64, name: &str, arguments: Value) -> Result<Value> {
         let deadline = Instant::now() + Duration::from_secs(60);
@@ -1089,15 +1037,6 @@ impl McpSession {
             };
             std::thread::sleep(retry.delay);
             id += 100;
-        }
-    }
-}
-impl Drop for McpSession {
-    fn drop(&mut self) {
-        drop(self.input.take());
-        drop(self.process.take());
-        if let Some(reader) = self.reader.take() {
-            let _ = reader.join();
         }
     }
 }
@@ -2250,9 +2189,94 @@ async fn owned_combined_benchmark_replays_one_two_four_and_thirty_two_indexes() 
     fs::create_dir_all(output.parent().context("benchmark output has no parent")?)?;
     fs::create_dir(&output).context("benchmark output must be a new directory")?;
     let candidate = f.candidate.canonicalize()?;
+    // This component fixture has no installed runtime. Only its native owner
+    // submits private enrollment; the Python console surface is read-only.
+    let enrollment_deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+    let health = tokio::time::timeout_at(
+        enrollment_deadline,
+        airk_cli::service_runtime::request(&f.control, ControlMethod::Health),
+    )
+    .await??;
+    let ControlResponse::Health {
+        observation: health,
+    } = health
+    else {
+        anyhow::bail!("combined benchmark native health unavailable");
+    };
+    let mut enrolled = Vec::new();
+    let health_executable: airk_core::identity::Sha256Digest = health
+        .executable_sha256
+        .parse()
+        .context("combined benchmark native health executable digest invalid")?;
+    for count in [1, 2, 4, 32] {
+        let mut selection = f.session.clone();
+        selection.index_ids = Some(f.indexes[..count].to_vec());
+        let id = airk_kernel::service_broker::new_instance_id()?;
+        let response = tokio::time::timeout_at(
+            enrollment_deadline,
+            airk_cli::service_runtime::request(
+                &f.control,
+                ControlMethod::HttpEnroll {
+                    connection_id: id,
+                    client: airk_core::usage::ClientFamily::Unknown,
+                    selection: Box::new(airk_core::service_http::HttpSelection::Combined {
+                        selection: selection.clone(),
+                    }),
+                    explorer_descriptor: None,
+                },
+            ),
+        )
+        .await??;
+        let ControlResponse::HttpConnection { connection } = response else {
+            anyhow::bail!("combined benchmark native enrollment refused");
+        };
+        connection.validate()?;
+        let airk_core::service_http::HttpSelection::Combined {
+            selection: observed,
+        } = &connection.selection
+        else {
+            anyhow::bail!("combined benchmark enrollment changed selection kind");
+        };
+        ensure!(
+            observed.expected_catalog_revision >= selection.expected_catalog_revision,
+            "combined benchmark enrollment moved catalog backwards"
+        );
+        selection.expected_catalog_revision = observed.expected_catalog_revision;
+        ensure!(
+            selection == *observed
+                && connection.connection_id == id
+                && connection.endpoint.service_instance == health.instance
+                && connection.endpoint.user == health.user
+                && health
+                    .catalog_clock
+                    .is_some_and(|clock| connection.endpoint.namespace == clock.namespace)
+                && connection.endpoint.executable_sha256 == health_executable,
+            "combined benchmark enrollment changed native authority or owner"
+        );
+        enrolled.push(connection);
+    }
+    let connections_file = f.control.join("http-1").join(format!(
+        "benchmark-connections-{}.json",
+        airk_kernel::service_broker::new_instance_id()?
+    ));
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    // Windows inherits the existing native control/http-1 owner-only ACL.
+    use std::io::Write;
+    options
+        .open(&connections_file)?
+        .write_all(&serde_json::to_vec(&json!({
+            "schema":1,"client":"unknown","connections":enrolled
+        }))?)?;
     let configuration = json!({
-        "command":candidate,"args":["--service-runtime-dir",f.control,
-            "--combined-session",serde_json::to_string(&f.session)?,"mcp"],
+        "schema":2,"transport":"https","command":candidate,"args":[],
+        "control":f.control,"selection":{"kind":"combined","selection":f.session},
+        "connections_file":connections_file,
         "launcher_sha256":airk_cli::runtime_pair::digest_file(&candidate)?,
         "expected_version":env!("CARGO_PKG_VERSION"),"route":"isolated-approved-runtime",
         "cwd":repository
@@ -2356,7 +2380,7 @@ async fn owned_combined_benchmark_replays_one_two_four_and_thirty_two_indexes() 
     Ok(())
 }
 
-#[cfg(feature = "embedding-worker")]
+#[cfg(feature = "local-inference")]
 async fn wait_fixture_job(f: &Fixture, id: Sha256Digest) -> Result<airk_core::service::JobRecord> {
     let deadline = Instant::now() + Duration::from_secs(90);
     loop {
@@ -2379,7 +2403,7 @@ async fn wait_fixture_job(f: &Fixture, id: Sha256Digest) -> Result<airk_core::se
     }
 }
 
-#[cfg(feature = "embedding-worker")]
+#[cfg(feature = "local-inference")]
 async fn fixture_job(f: &Fixture, index: usize, kind: airk_core::service::JobKind) -> Result<()> {
     let prepared = f
         .native_cli(
@@ -2437,7 +2461,7 @@ async fn fixture_job(f: &Fixture, index: usize, kind: airk_core::service::JobKin
     Ok(())
 }
 
-#[cfg(feature = "embedding-worker")]
+#[cfg(feature = "local-inference")]
 async fn fixture_pause(f: &Fixture, index: usize, paused: bool) -> Result<()> {
     let response = airk_cli::service_runtime::request(
         &f.control,
@@ -2455,7 +2479,7 @@ async fn fixture_pause(f: &Fixture, index: usize, paused: bool) -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "embedding-worker")]
+#[cfg(feature = "local-inference")]
 async fn fixture_install_model(f: &Fixture, index: usize, model: &Path) -> Result<()> {
     let draft = f.owner.path().join(format!("install-model-{index}.json"));
     fs::write(
@@ -2493,15 +2517,15 @@ async fn fixture_install_model(f: &Fixture, index: usize, model: &Path) -> Resul
     Ok(())
 }
 
-#[cfg(feature = "embedding-worker")]
+#[cfg(feature = "local-inference")]
 #[tokio::test]
 async fn actual_helper_outage_keeps_fresh_selected_source_publications_under_fanout() -> Result<()>
 {
     use airk_core::readiness::DefaultSearchPolicy;
     use airk_core::service::JobKind;
-    let f = Fixture::with_helper()?;
+    let f = Fixture::with_inference()?;
     // Configure the saved policy before the native owner starts. Provisioning
-    // below still goes through actual service configuration and the real helper.
+    // below still goes through actual service configuration and the in-process provider.
     for registration in f.registrations.iter().take(2) {
         let kernel = airk_kernel::Kernel::open_service_collection(
             &registration.root,
@@ -2550,7 +2574,7 @@ async fn actual_helper_outage_keeps_fresh_selected_source_publications_under_fan
     let warm = native_read(backend.as_ref(), "airk_search", &vector_args).await?;
     assert_ne!(
         warm["isError"], true,
-        "real helper never served the selected members: {warm}"
+        "in-process provider never served the selected members: {warm}"
     );
     let warm = body(&warm)?;
     assert!(
@@ -2581,7 +2605,7 @@ async fn actual_helper_outage_keeps_fresh_selected_source_publications_under_fan
     } = helper
     else {
         anyhow::bail!(
-            "real helper was unavailable before deliberate stop: {}",
+            "in-process provider was unavailable before deliberate stop: {}",
             serde_json::to_string(&helper)?
         );
     };
@@ -2593,10 +2617,49 @@ async fn actual_helper_outage_keeps_fresh_selected_source_publications_under_fan
         },
     )
     .await?;
+    // Stop is submitted exactly once. In-process FFI cannot be killed: an
+    // accepted drain can outlive the acknowledgment budget. Observe its owned
+    // retirement to completion without replaying an uncertain mutation.
     ensure!(
-        matches!(stopped,ControlResponse::EmbeddingStopped {worker:actual} if actual==worker),
-        "exact helper stop was not acknowledged"
+        matches!(&stopped,ControlResponse::EmbeddingStopped {worker:actual} if *actual==worker)
+            || matches!(&stopped,ControlResponse::Failure{code} if code=="embedding_stop_outcome_unknown"),
+        "exact provider stop was refused: {}",
+        serde_json::to_string(&stopped)?
     );
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        let observation = tokio::time::timeout_at(
+            deadline,
+            airk_cli::service_runtime::request(&f.control, ControlMethod::EmbeddingStatus),
+        )
+        .await??;
+        match &observation {
+            ControlResponse::EmbeddingStatus {
+                available: false,
+                worker: None,
+                process_id: None,
+                ..
+            } => break,
+            ControlResponse::EmbeddingStatus {
+                worker: Some(current),
+                ..
+            } if *current == worker => {}
+            ControlResponse::Failure { code } if code == "embedding_observation_busy" => {}
+            _ => anyhow::bail!(
+                "provider retirement changed ownership: {}",
+                serde_json::to_string(&observation)?
+            ),
+        }
+        ensure!(
+            tokio::time::Instant::now() < deadline,
+            "exact provider retirement did not settle: {}",
+            serde_json::to_string(&observation)?
+        );
+        tokio::time::sleep_until(
+            (tokio::time::Instant::now() + Duration::from_millis(25)).min(deadline),
+        )
+        .await;
+    }
     let default_args = json!({"query":"boundaryneedle","project_ids":f.session.project_ids,"limit":4,"max_bytes":2048,
         "verification":"off","response_mode":"full","member_availability":"require"});
     let before = native_read(backend.as_ref(), "airk_search", &default_args).await?;

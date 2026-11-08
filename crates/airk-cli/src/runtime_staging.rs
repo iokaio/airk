@@ -120,10 +120,37 @@ pub(super) fn pending(root: &Path) -> Result<Vec<String>> {
     Ok(identities)
 }
 
+#[cfg(test)]
 fn occupied_slots(root: &Path) -> Result<usize> {
+    occupied_slots_for(root, None)
+}
+
+fn occupied_slots_for(root: &Path, incoming: Option<&str>) -> Result<usize> {
     let runtimes = root.join("runtimes");
-    let mut slots = fs::read_dir(&runtimes)?.take(5).count();
-    ensure!(slots <= 4, "runtime directory count exceeds bound");
+    let backup = incoming
+        .map(|identity| payload_repair::reserved_backup(root, identity))
+        .transpose()?
+        .flatten();
+    let mut physical = 0;
+    let mut slots = 0;
+    let mut backup_seen = false;
+    for entry in fs::read_dir(&runtimes)?.take(7) {
+        physical += 1;
+        ensure!(
+            physical <= 5 + usize::from(backup.is_some()),
+            "runtime directory count exceeds bound"
+        );
+        if backup.as_ref() == Some(&entry?.path()) {
+            backup_seen = true;
+        } else {
+            slots += 1;
+        }
+    }
+    ensure!(
+        backup.is_none() || backup_seen,
+        "reviewed repair archive disappeared"
+    );
+    ensure!(slots <= 5, "runtime slot count exceeds bound");
     for identity in pending(root)? {
         let (intent, _) = StageIntent::read(root, &identity)?;
         if !intent.directory(root).try_exists()? && !runtimes.join(identity).try_exists()? {
@@ -131,6 +158,58 @@ fn occupied_slots(root: &Path) -> Result<usize> {
         }
     }
     Ok(slots)
+}
+
+/// One modern candidate may temporarily coexist with four approved retained
+/// payloads so migration can finish before removal. Unknown/reserved slots never
+/// earn this allowance, and a crash can resume only the same staged candidate.
+fn slot_limit(root: &Path, incoming: &str, modern: bool, resume: bool) -> Result<usize> {
+    if payload_repair::reserved_restore(root, incoming)? {
+        let pending = pending(root)?;
+        ensure!(
+            pending.is_empty() || resume && pending.len() == 1 && pending[0] == incoming,
+            "unrelated staging cannot use a reviewed repair reservation"
+        );
+        return Ok(5);
+    }
+    if !modern || !root.join("selected.json").try_exists()? {
+        return Ok(4);
+    }
+    let pending = pending(root)?;
+    if !(pending.is_empty() || resume && pending.len() == 1 && pending[0] == incoming) {
+        return Ok(4);
+    }
+    activation::require_settled(root)?;
+    retirement::require_previous_settled(root)?;
+    legacy_launchers::require_settled(root)?;
+    legacy_caches::require_settled(root)?;
+    payload_repair::require_settled(root)?;
+    let selected = selection_record(root)?;
+    let ignored = if resume {
+        Some(StageIntent::read(root, incoming)?.0.directory(root))
+    } else {
+        None
+    };
+    let mut approved = 0;
+    let mut selected_seen = false;
+    for (count, entry) in fs::read_dir(root.join("runtimes"))?.take(6).enumerate() {
+        ensure!(count < 5, "runtime escrow directory count exceeds bound");
+        let path = entry?.path();
+        if ignored.as_ref() == Some(&path) {
+            continue;
+        }
+        let identity = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .context("invalid runtime escrow directory")?;
+        if digest(identity).is_err() {
+            return Ok(4);
+        }
+        verify_runtime_inventory(root, identity)?;
+        selected_seen |= identity == selected.active;
+        approved += 1;
+    }
+    Ok(if approved == 4 && selected_seen { 5 } else { 4 })
 }
 
 fn validate(
@@ -239,6 +318,7 @@ fn validate(
 }
 
 pub(super) fn abort(root: &Path, identity: &str) -> Result<()> {
+    require_issuer_rotation_settled(root)?;
     let (intent, inventory) = StageIntent::read(root, identity)?;
     let directory = intent.directory(root);
     if directory.try_exists()? {
@@ -306,6 +386,28 @@ pub(super) fn stage_locked(
     channel: RuntimeChannel,
     launcher: bool,
 ) -> Result<Approval> {
+    stage_locked_with_verifier(
+        source,
+        root,
+        approved,
+        basis,
+        state,
+        channel,
+        (launcher, self_test),
+    )
+}
+
+pub(super) fn stage_locked_with_verifier(
+    source: &Path,
+    root: &Path,
+    approved: &str,
+    basis: VerificationBasis,
+    state: Option<&Path>,
+    channel: RuntimeChannel,
+    execution: (bool, impl FnOnce(&Path) -> Result<()>),
+) -> Result<Approval> {
+    let (launcher, verify) = execution;
+    require_issuer_rotation_settled(root)?;
     managed::require_unmanaged(root)?;
     ensure!(
         !root.join("uninstall.json").try_exists()?,
@@ -334,8 +436,14 @@ pub(super) fn stage_locked(
         return Ok(approval);
     }
     let intent = if StageIntent::path(root, approved).try_exists()? {
+        let limit = slot_limit(
+            root,
+            approved,
+            runtime_pair::single_executable(&source.join(main_name()))?,
+            true,
+        )?;
         ensure!(
-            occupied_slots(root)? <= 4,
+            occupied_slots_for(root, Some(approved))? <= limit,
             "four retained runtimes/staging reservations occupy this installation"
         );
         let (intent, _) = StageIntent::read(root, approved)?;
@@ -345,8 +453,19 @@ pub(super) fn stage_locked(
         );
         intent
     } else {
+        let slots = occupied_slots_for(root, Some(approved))?;
+        let limit = if slots >= 4 {
+            slot_limit(
+                root,
+                approved,
+                runtime_pair::single_executable(&source.join(main_name()))?,
+                false,
+            )?
+        } else {
+            4
+        };
         ensure!(
-            occupied_slots(root)? < 4,
+            slots < limit,
             "four retained runtimes/staging directories occupy this installation"
         );
         let lengths = inventory
@@ -388,7 +507,7 @@ pub(super) fn stage_locked(
         sync_directory(root)?;
         intent
     };
-    let result = copy_payload(&source, root, &intent, &inventory, self_test, launcher);
+    let result = copy_payload(&source, root, &intent, &inventory, verify, launcher);
     if result.is_err() {
         let _ = abort(root, approved);
     }

@@ -75,7 +75,12 @@ impl Kernel {
             .collection_state()?
             .context("current collection configuration missing")?;
         let policy = super::enrichment::read_policy(&read, &self.store)?;
-        let semantic = super::enrichment::readiness_with_state(&read, &self.store, &state, policy)?;
+        let mut semantic =
+            super::enrichment::readiness_with_state(&read, &self.store, &state, policy)?;
+        let legacy_adoption = crate::legacy_adoption::current_observation(&self.store, &read)?;
+        if let Some(legacy) = &legacy_adoption {
+            legacy.qualify(&mut semantic);
+        }
         let discovery = super::progress::readiness_with_state(&read, &self.store, &state)?;
         let pending = crate::shared_models::semantic_upgrade_pending(
             &self.store,
@@ -115,6 +120,15 @@ impl Kernel {
             "discovery_readiness":{"state":discovery.state},"semantic_readiness":{"state":semantic.state,"completed_artifacts":semantic.completed_artifacts,"selected_artifacts":semantic.selected_artifacts}});
         if let Some(source_policy) = source_policy {
             result["source_policy"] = source_policy;
+        }
+        if state.counts.vector_unavailable > 0 {
+            result["vector_unavailable_artifacts"] = state.counts.vector_unavailable.into();
+        }
+        if let Some(legacy) = legacy_adoption {
+            // Adopted semantics need the same complete readiness qualification
+            // in summary and diagnostics, not a misleading Disabled shorthand.
+            result["semantic_readiness"] = serde_json::to_value(&semantic)?;
+            result["legacy_adoption"] = legacy.observation;
         }
         Ok(result)
     }
@@ -190,9 +204,14 @@ impl Kernel {
             .context("current collection configuration missing")?;
         let analysis = read.analysis(&self.store)?;
         let c = &state.configuration;
-        let semantic_readiness = super::enrichment::readiness(&read, &self.store)?;
+        let mut semantic_readiness = super::enrichment::readiness(&read, &self.store)?;
+        let legacy_adoption = crate::legacy_adoption::current_observation(&self.store, &read)?;
+        if let Some(legacy) = &legacy_adoption {
+            legacy.qualify(&mut semantic_readiness);
+        }
         let discovery_readiness = super::progress::readiness(&read, &self.store)?;
         Ok(Status {
+            legacy_adoption: legacy_adoption.map(|legacy| legacy.observation),
             source_policy: self.source_policy_observation()?,
             source_availability: self.service_source_observation(),
             execution: self.execution_status()?,
@@ -237,6 +256,7 @@ impl Kernel {
             vector_selection_digest: Some(c.vector_selection.digest()?),
             vector_eligible_artifacts: usize::try_from(state.counts.vector_eligible)?,
             vector_excluded_artifacts: usize::try_from(state.counts.vector_excluded)?,
+            vector_unavailable_artifacts: usize::try_from(state.counts.vector_unavailable)?,
             semantic_producer: analysis.as_ref().map(|a| a.manifest.producer.clone()),
             imported_facts: analysis.as_ref().map_or(0, |a| a.facts.len()),
             imported_relationships: analysis.as_ref().map_or(0, |a| a.relationships.len()),
@@ -356,8 +376,17 @@ impl Kernel {
     ) -> Result<Artifact> {
         let compact = read.artifact(path)?.context("indexed file not found")?;
         let mut artifact = self.store.load_retained(&compact)?;
-        let bytes = self.store.read_retained_source(&compact)?;
+        let retained = compact
+            .retained
+            .as_ref()
+            .context("current retained extraction missing")?;
+        let bytes = if retained.legacy_origin.is_some() && !retained.raw_source {
+            None
+        } else {
+            Some(self.store.read_retained_source(&compact)?)
+        };
         if source_lines
+            && retained.legacy_origin.is_none()
             && artifact.extraction_method == "utf8"
             && compact
                 .retained
@@ -365,7 +394,9 @@ impl Kernel {
                 .and_then(|r| r.profile.as_ref())
                 .is_some_and(|p| p.contract_version == 2)
         {
-            artifact.chunks = airk_ingest::chunk(std::str::from_utf8(&bytes)?);
+            artifact.chunks = airk_ingest::chunk(std::str::from_utf8(
+                bytes.as_deref().context("source bytes unavailable")?,
+            )?);
         }
         Ok(artifact)
     }
@@ -380,7 +411,11 @@ impl Kernel {
         max_bytes: usize,
     ) -> Result<SearchResponse> {
         let compact = read.artifact(path)?.context("indexed file not found")?;
-        if read.private_query_eligible()? {
+        let retained = compact
+            .retained
+            .as_ref()
+            .context("current retained extraction missing")?;
+        if retained.legacy_origin.is_none() && read.private_query_eligible()? {
             let selected = if let Some(lines) =
                 read.observe_private_integrity(read.native_line_projection(&self.store, path))?
             {
@@ -449,18 +484,24 @@ impl Kernel {
             }
         }
         let artifact = self.store.load_retained(&compact)?;
-        let bytes = self.store.read_retained_source(&compact)?;
+        let bytes = if retained.legacy_origin.is_some() && !retained.raw_source {
+            None
+        } else {
+            Some(self.store.read_retained_source(&compact)?)
+        };
         let mut metadata = self.empty_snapshot();
         metadata.generation = read.head().sequence;
         let publication = Some(envelope(read)?);
         if artifact.extraction_method == "utf8"
+            && retained.legacy_origin.is_none()
             && compact
                 .retained
                 .as_ref()
                 .and_then(|r| r.profile.as_ref())
                 .is_some_and(|p| p.contract_version == 2)
         {
-            let source = std::str::from_utf8(&bytes)?;
+            let source =
+                std::str::from_utf8(bytes.as_deref().context("source bytes unavailable")?)?;
             let lines = source.split_inclusive('\n').count();
             let (start, end) = selection.range(lines)?;
             airk_core::validate_budget(1, max_bytes)?;
@@ -524,10 +565,12 @@ impl Kernel {
             .retained
             .as_ref()
             .context("current extraction missing")?;
-        let profile = retained
-            .profile
-            .as_ref()
-            .context("current extraction profile missing")?;
+        let legacy = retained.legacy_origin.as_ref();
+        let profile = retained.profile.as_ref();
+        ensure!(
+            legacy.is_some() || profile.is_some(),
+            "current extraction profile missing"
+        );
         let state = read
             .collection_state()?
             .context("current configuration missing")?;
@@ -545,18 +588,25 @@ impl Kernel {
                     .indexed_lines
             }
         };
-        let profile_families = if include_profile_families {
+        let profile_families = if include_profile_families && legacy.is_none() {
             Some(self.current_profile_families(
                 read,
                 path,
                 &artifact.content_hash,
-                profile,
+                profile.context("current extraction profile missing")?,
                 &state.configuration,
             )?)
         } else {
             None
         };
         Ok(FileInfo {
+            legacy_saved_evidence: legacy.cloned().map(|origin| {
+                crate::legacy_adoption::LegacySavedFileCompatibility {
+                    origin,
+                    vector_selection_available: false,
+                    profile_families_available: false,
+                }
+            }),
             profile_families,
             publication: Some(envelope(read)?),
             source: airk_store::roots::source_location(
@@ -575,12 +625,25 @@ impl Kernel {
             chunks: retained.chunks,
             facts: retained.facts,
             indexed_lines,
-            line_basis: if artifact.extraction_method == "utf8" {
+            line_basis: if legacy.is_some() {
+                "saved-extracted-text; cite original location"
+            } else if artifact.extraction_method == "utf8" {
                 "source"
             } else {
                 "extracted-text; cite original location"
             },
-            vector_selection: selection.decision(path, profile, &artifact.language)?,
+            vector_selection: if legacy.is_some() {
+                airk_core::vector_selection::VectorSelectionDecision {
+                    eligible: false,
+                    excluded_by: None,
+                }
+            } else {
+                selection.decision(
+                    path,
+                    profile.context("current extraction profile missing")?,
+                    &artifact.language,
+                )?
+            },
             vector_selection_digest: selection.digest()?,
         })
     }

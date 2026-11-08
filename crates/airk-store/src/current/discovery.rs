@@ -474,7 +474,9 @@ impl CurrentRead {
                 let result = (|| {
                     let artifact =
                         store.load_retained_bounded(&compact, retained.object_bytes as u64)?;
-                    store.verify_retained_source(&compact)?;
+                    if retained.legacy_origin.is_none() || retained.raw_source {
+                        store.verify_retained_source(&compact)?;
+                    }
                     Ok(artifact)
                 })();
                 if private {

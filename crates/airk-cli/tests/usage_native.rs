@@ -186,67 +186,40 @@ fn direct_usage_counts_outer_clients_once_and_exact_clear_replay_preserves_later
 }
 
 #[test]
-fn explorer_mcp_client_info_is_recorded_as_its_own_family() -> Result<()> {
+fn explorer_mcp_client_info_cannot_override_its_enrolled_family() -> Result<()> {
     let root = tempfile::tempdir()?;
     let data = tempfile::tempdir()?;
     std::fs::write(
         root.path().join("explorer.rs"),
         "pub fn explorer_fixture() -> bool { true }\n",
     )?;
-    let service = common::Service::start(root.path(), data.path(), "usage");
+    let service = common::Service::reviewed(root.path(), data.path(), "usage");
     service.configure(airk_cli::service_configuration::Draft::Vectors { enabled: false });
     service.configure(airk_cli::service_configuration::Draft::Usage {
         mode: RecordingMode::AggregatesOnly,
     });
     service.job(JobKind::Index);
     let collection = airk_store::service::collection::Collection::existing(
-        data.path(),
+        std::path::Path::new(&service.project.data_root),
         &service.project.root,
-        "usage",
+        &service.project.collection,
     )?;
     let store = collection.selected_store()?;
     let writer = hold_writer(&store)?;
-    // The frontend's own environment opts out of usage, as the extension once tried;
-    // attribution and recording are decided by the worker from clientInfo alone.
-    let mut child = common::command(root.path(), data.path(), "usage")
-        .env("AIRK_CLIENT", "vscode")
-        .arg("mcp")
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .spawn()?;
-    let mut input = child.stdin.take().expect("stdin");
-    let (sender, output) = std::sync::mpsc::channel::<String>();
-    let stdout = child.stdout.take().expect("stdout");
-    std::thread::spawn(move || {
-        use std::io::BufRead;
-        for line in std::io::BufReader::new(stdout)
-            .lines()
-            .map_while(Result::ok)
-        {
-            if sender.send(line).is_err() {
-                break;
-            }
-        }
-    });
+    // HTTPS attribution belongs to the native credential. Client-supplied MCP
+    // initialization must not overwrite Explorer's enrolled family.
+    let mut session = common::http::HttpMcpSession::start_for_client(
+        &service.control,
+        service.http_selection(),
+        ClientFamily::Explorer,
+    )?;
     let mut exchange = |message: Value, id: Option<u64>| -> Result<Option<Value>> {
-        use std::io::Write;
-        writeln!(input, "{message}")?;
-        input.flush()?;
+        session.send(message)?;
         let Some(id) = id else { return Ok(None) };
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-        loop {
-            let remaining = deadline
-                .checked_duration_since(std::time::Instant::now())
-                .ok_or_else(|| anyhow::anyhow!("stdio reply deadline exhausted"))?;
-            let value: Value = serde_json::from_str(&output.recv_timeout(remaining)?)?;
-            if value["id"] == id {
-                return Ok(Some(value));
-            }
-        }
+        Ok(Some(session.receive(id.try_into()?)?))
     };
     exchange(
-        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"airk-explorer","version":"1"}}}),
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"vscode","version":"1"}}}),
         Some(1),
     )?;
     exchange(
@@ -261,9 +234,7 @@ fn explorer_mcp_client_info_is_recorded_as_its_own_family() -> Result<()> {
     )?
     .unwrap();
     ensure!(reply["result"]["isError"] != true, "{reply}");
-    drop(input);
-    let _ = child.kill();
-    let _ = child.wait();
+    session.close()?;
     drop(writer);
     let report = native_report(root.path(), data.path())
         .context("native CLI usage report after Explorer MCP read")?;

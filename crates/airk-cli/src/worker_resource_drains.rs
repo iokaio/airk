@@ -21,6 +21,8 @@ pub(super) enum DrainProgress {
 struct ResourceOwner {
     identity: WorkerIdentity,
     helpers: Vec<Incarnation>,
+    in_process: bool,
+    completed: Option<airk_core::inference_provider::CompletionLedgerObservation>,
     child_reaped: bool,
     providers_done: bool,
     released: bool,
@@ -39,18 +41,49 @@ impl WorkerResourceDrains {
         let identity = worker
             .identity
             .context("native exit identity unavailable")?;
-        self.reserve_history(identity, worker.provider_helpers.clone())?;
+        self.reserve_history_completed(
+            identity,
+            worker.provider_helpers.clone(),
+            worker.provider_in_process,
+            worker.completed_authorizations(),
+        )?;
         Ok(identity)
     }
 
     /// Only an existing native ChildWorker history or the exact validated
     /// durable retirement obligation may supply this history. Missing history
     /// must never be represented by an empty list.
+    #[cfg(test)]
     pub fn reserve_history(
         &mut self,
         identity: WorkerIdentity,
-        mut helpers: Vec<Incarnation>,
+        helpers: Vec<Incarnation>,
     ) -> Result<()> {
+        self.reserve_history_kind(identity, helpers, false)
+    }
+    #[cfg(test)]
+    pub fn reserve_history_kind(
+        &mut self,
+        identity: WorkerIdentity,
+        helpers: Vec<Incarnation>,
+        in_process: bool,
+    ) -> Result<()> {
+        self.reserve_history_completed(identity, helpers, in_process, None)
+    }
+    pub fn reserve_history_completed(
+        &mut self,
+        identity: WorkerIdentity,
+        mut helpers: Vec<Incarnation>,
+        in_process: bool,
+        completed: Option<airk_core::inference_provider::CompletionLedgerObservation>,
+    ) -> Result<()> {
+        if let Some(anchor) = &completed {
+            anchor.validate()?;
+            ensure!(
+                in_process && anchor.service_instance == identity.service,
+                "foreign native exit completion ledger"
+            );
+        }
         helpers.sort();
         helpers.dedup();
         ensure!(
@@ -59,7 +92,10 @@ impl WorkerResourceDrains {
         );
         if let Some(old) = self.owners.get(&identity.worker) {
             ensure!(
-                old.identity == identity && old.helpers == helpers,
+                old.identity == identity
+                    && old.helpers == helpers
+                    && old.in_process == in_process
+                    && old.completed == completed,
                 "native exit owner changed"
             );
             return Ok(());
@@ -73,6 +109,8 @@ impl WorkerResourceDrains {
             ResourceOwner {
                 identity,
                 helpers,
+                in_process,
+                completed,
                 child_reaped: false,
                 providers_done: false,
                 released: false,
@@ -105,11 +143,23 @@ impl WorkerResourceDrains {
     /// One bounded polling turn, sharing the existing helper reply lane. The
     /// proof callback accepts only opaque native exact-generation reap facts.
     /// Never-authorized is known solely from the monotonic captured empty list.
+    #[cfg(test)]
     pub fn poll(
         &mut self,
         identity: WorkerIdentity,
         pool: Option<&mut Pool>,
-        mut actually_reaped: impl FnMut(Incarnation, Incarnation) -> Result<bool>,
+        mut actually_reaped: impl FnMut(Incarnation, Incarnation, bool) -> Result<bool>,
+    ) -> Result<DrainProgress> {
+        self.poll_completed(identity, pool, &mut actually_reaped, |_| Ok(false))
+    }
+    pub fn poll_completed(
+        &mut self,
+        identity: WorkerIdentity,
+        pool: Option<&mut Pool>,
+        mut actually_reaped: impl FnMut(Incarnation, Incarnation, bool) -> Result<bool>,
+        mut ledger_completed: impl FnMut(
+            &airk_core::inference_provider::CompletionLedgerObservation,
+        ) -> Result<bool>,
     ) -> Result<DrainProgress> {
         let owner = self.owner_mut(identity)?;
         if !owner.child_reaped {
@@ -118,20 +168,26 @@ impl WorkerResourceDrains {
         if owner.providers_done {
             return Ok(DrainProgress::Ready);
         }
+        if let Some(anchor) = &owner.completed
+            && !ledger_completed(anchor)?
+        {
+            return Ok(DrainProgress::ProviderPending);
+        }
         let mut pool = pool;
         for helper in &owner.helpers {
-            if actually_reaped(identity.service, *helper)? {
+            if actually_reaped(identity.service, *helper, owner.in_process)? {
                 continue;
             }
-            let Some(current) = pool
-                .as_deref_mut()
-                .filter(|pool| pool.identity() == *helper)
-            else {
+            let Some(current) = pool.as_deref_mut().filter(|pool| {
+                pool.identity() == *helper
+                    && crate::service_inference::in_process(pool) == owner.in_process
+            }) else {
                 return Ok(DrainProgress::ProviderPending);
             };
-            if current
-                .reap_witness()
-                .is_some_and(|proof| proof.matches(identity.service, *helper))
+            if !owner.in_process
+                && current
+                    .reap_witness()
+                    .is_some_and(|proof| proof.matches(identity.service, *helper))
             {
                 continue;
             }
@@ -186,10 +242,32 @@ impl WorkerResourceDrains {
     pub fn helpers(&self, identity: WorkerIdentity) -> Result<Vec<Incarnation>> {
         Ok(self.owner(identity)?.helpers.clone())
     }
+    pub fn in_process(&self, identity: WorkerIdentity) -> Result<bool> {
+        Ok(self.owner(identity)?.in_process)
+    }
+    pub fn completed_authorizations(
+        &self,
+        identity: WorkerIdentity,
+    ) -> Result<Option<airk_core::inference_provider::CompletionLedgerObservation>> {
+        Ok(self.owner(identity)?.completed.clone())
+    }
+    pub fn referenced_ledgers(&self) -> Vec<airk_core::identity::Sha256Digest> {
+        self.owners
+            .values()
+            .filter_map(|owner| owner.completed.as_ref().map(|anchor| anchor.head_sha256))
+            .collect()
+    }
     pub fn referenced_helpers(&self) -> Vec<Incarnation> {
         self.owners
             .values()
-            .flat_map(|owner| owner.helpers.iter().copied())
+            .flat_map(|owner| {
+                owner.helpers.iter().copied().chain(
+                    owner
+                        .completed
+                        .iter()
+                        .map(|anchor| anchor.factory_generation),
+                )
+            })
             .collect()
     }
 

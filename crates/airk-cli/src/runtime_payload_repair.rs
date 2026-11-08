@@ -134,6 +134,39 @@ pub(super) fn require_settled(root: &Path) -> Result<()> {
     );
     Ok(())
 }
+
+/// Restoring the reviewed active slot after its intact preservation does not
+/// add a retained version. It remains stopped until explicit user Start.
+pub(super) fn reserved_restore(root: &Path, incoming: &str) -> Result<bool> {
+    let Some(intent) = pending(root)? else {
+        return Ok(false);
+    };
+    if intent.selection.active != incoming {
+        return Ok(false);
+    }
+    let preserved = backup(root, incoming)?;
+    if !exists(&preserved)? {
+        return Ok(false);
+    }
+    ensure!(
+        selection_record(root)? == intent.selection
+            && lifecycle::inspect(root)?["explicitly_stopped"] == true,
+        "reviewed payload restore selection or Stop changed"
+    );
+    ensure!(
+        guard(root, &intent.selection, &capture(&preserved)?)? == intent.preview,
+        "preserved repair payload changed"
+    );
+    Ok(true)
+}
+/// Only this pending, preview-bound restore may discount its intact archive.
+pub(super) fn reserved_backup(root: &Path, incoming: &str) -> Result<Option<PathBuf>> {
+    if reserved_restore(root, incoming)? {
+        Ok(Some(backup(root, incoming)?))
+    } else {
+        Ok(None)
+    }
+}
 pub(super) fn saved_identity(root: &Path) -> Result<Option<snapshot::SavedRuntime>> {
     let Some(intent) = pending(root)? else {
         return Ok(None);
@@ -265,6 +298,7 @@ fn apply_with(
     stage: impl FnOnce(&Path, &Path, &Approval) -> Result<Approval>,
 ) -> Result<serde_json::Value> {
     let _lock = install_lock(root)?;
+    require_issuer_rotation_settled(root)?;
     managed::require_unmanaged(root)?;
     if exists(&root.join(RESULT))? {
         let result: Intent = serde_json::from_slice(&read_bounded(&root.join(RESULT), 16_384)?)?;
@@ -341,10 +375,18 @@ fn apply_with(
             !exists(&preserved)?,
             "a preserved damaged slot already exists; review it before another repair"
         );
-        ensure!(
-            fs::read_dir(root.join("runtimes"))?.take(5).count() < 4,
-            "repair needs one free retained runtime slot"
-        );
+        for (count, entry) in fs::read_dir(root.join("runtimes"))?.take(6).enumerate() {
+            ensure!(count < 5, "repair retained runtime count exceeds bound");
+            let path = entry?.path();
+            let identity = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .context("invalid repair retained runtime")?;
+            digest(identity)?;
+            if identity != approved {
+                owned_inventory(&root, identity)?;
+            }
+        }
         ensure!(
             staging::pending(&root)?.is_empty(),
             "finish pending staging before payload repair"

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Native adapter primitives shared by service/client executable modes.
+extern crate self as airk_cli;
 pub(crate) mod catalog_admission;
 pub(crate) mod catalog_authority;
 pub(crate) mod catalog_coordinator;
@@ -17,9 +18,18 @@ pub mod embedding_pool_bootstrap;
 pub mod embedding_pool_client;
 mod embedding_pool_process;
 pub mod embedding_pool_protocol;
+mod http_backend;
+pub mod http_endpoint;
+mod http_gateway;
+#[cfg(feature = "local-inference")]
+pub(crate) mod inference_completion_ledger;
+#[cfg(feature = "local-inference")]
+pub(crate) mod inference_engine;
 pub mod local_ipc;
 mod native_admin_connections;
+pub(crate) mod read_attempt;
 mod reference_refresh_control;
+pub(crate) mod service_inference;
 /// Leaf Windows file-ACL check shared with the Explorer Assistance forwarder,
 /// which must not depend on service or IPC protocol code.
 #[cfg(windows)]
@@ -49,6 +59,8 @@ mod service_resource_policy;
 mod legacy_processes;
 pub mod legacy_startup;
 pub mod runtime_install;
+mod runtime_legacy_authority;
+mod runtime_legacy_origin;
 pub mod service_manager;
 
 mod child_job;

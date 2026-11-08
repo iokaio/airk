@@ -3,11 +3,11 @@ import {strict as assert} from 'node:assert';
 import {test} from 'node:test';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import * as os from 'node:os';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {RuntimeHost} from '../serviceBootstrap';
 import {record} from '../serviceClient';
-import {assistanceEntry} from '../model';
 import {probeAssistance,runText} from '../native';
 import {writeLaunchDescriptor,assistanceDirectory,launchDescriptorPath} from '../explorerAssistanceLaunch';
 import {NativeServiceFixture} from './nativeServiceFixture';
@@ -15,6 +15,22 @@ import {serviceTestHost} from './serviceTestHost';
 const binary=process.env.AIRK_TEST_BINARY;
 const qualify=process.env.AIRK_TEST_F09_QUALIFICATION==='1';
 const extension=path.resolve(__dirname,'../..');
+
+test('source qualification preserves a null launcher and never publishes synthetic trust into native control',async context=>{
+    const owner=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'airk-source-host-contract-')));
+    const control=path.join(owner,'control');await fs.mkdir(path.join(control,'http-1'),{recursive:true});
+    const certificate=path.join(control,'http-1','ca.pem');await fs.writeFile(certificate,'retained native issuer marker');
+    const binding={installDir:owner,controlDir:control,executable:path.join(owner,'main'),launcher:null,runtimeSha256:'ab'.repeat(32),version:'1.8.14',lifecycle:'on-demand' as const,verificationBasis:'trusted_distribution'};
+    let editor:Awaited<ReturnType<typeof serviceTestHost>>|undefined;
+    try{
+        editor=await serviceTestHost(context,{trusted:false,bundledVersion:'1.8.14',nativeSourceScope:{binding,source:owner,collection:'fixture'}});
+        assert.equal(editor.binding.launcher,null);assert.equal(editor.binding.executable,binding.executable);
+        const host=new RuntimeHost(extension,'1.8.14',{channel:'stable',installDir:owner});
+        await assert.rejects(host.httpConnection(binding,{} as any,'unused-selection','11'.repeat(16),'native-test'),/fixture_http_enrollment_unavailable_for_native_control/);
+        assert.equal(await fs.readFile(certificate,'utf8'),'retained native issuer marker');
+        assert.deepEqual(await fs.readdir(path.dirname(certificate)),['ca.pem']);
+    }finally{await editor?.close();await fs.rm(owner,{recursive:true,force:true});}
+});
 
 test('F09 real RuntimeHost source port publishes selected host scope without invoke mock',
     {skip:!binary||!qualify,timeout:360000},async context=>{
@@ -67,7 +83,7 @@ test('F09 real RuntimeHost source port publishes selected host scope without inv
             const packageJson=JSON.parse(await fs.readFile(path.join(extension,'package.json'),'utf8'));
             // Actual default async fixed-system whoami/icacls; no runner replacement.
             await writeLaunchDescriptor(storage,extension,packageJson.version,{path:process.execPath,electron:false});
-            const descriptor=launchDescriptorPath(storage),entry=assistanceEntry(spec,descriptor)!;
+            const descriptor=launchDescriptorPath(storage),entry={key:'airk_explorer',label:'Native Assistance',command:fixture.binary,args:['explorer-assistance','--descriptor',descriptor]};
             assert.equal((await probeAssistance(entry,spec.root,version)).version,version);
             const directory=assistanceDirectory(storage),system=process.env.SystemRoot;
             assert.ok(system&&path.isAbsolute(system),'actual Windows system directory required');

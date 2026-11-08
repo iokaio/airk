@@ -10,7 +10,7 @@ import { agentChoices, assistancePrompt, codexConfigPath, connectionAction, crea
 export interface AgentSetupHost {
     trusted(): void;
     chooseSpec(): Promise<LaunchSpec | undefined>;
-    resolveAgentSpec(spec: LaunchSpec): Promise<LaunchSpec>;
+    resolveAgentSpec(spec: LaunchSpec,client?:Client): Promise<LaunchSpec>;
     registrationEnabled(): boolean;
     registrationChanged(): void;
     manageVscodeMcp(): Promise<void>;
@@ -51,7 +51,7 @@ export async function setupAgent(host: AgentSetupHost): Promise<void> {
         });
         if (!selected) { return; }
         const spec = await vscode.window.withProgress({location:vscode.ProgressLocation.Notification,title:`Checking AIRK project for ${selected.label}`},async()=>{
-            const chosen=await host.chooseSpec();return chosen?host.resolveAgentSpec(chosen):undefined;
+            const chosen=await host.chooseSpec();return chosen?host.resolveAgentSpec(chosen,selected.client):undefined;
         }); if (!spec) { return; }
         const client = selected.client;
         const entries = host.connectionEntries(spec);
@@ -116,10 +116,11 @@ export async function setupAgent(host: AgentSetupHost): Promise<void> {
                 checkCurrent();
                 status='Working on the selected agent connection…';render();
                 if(['createCodex','updateCodex','installJson','reviewLegacy'].includes(action)){
-                    const current=await host.resolveAgentSpec(spec);checkCurrent();
-                    if(current.command!==spec.command||JSON.stringify(launchArgs(current))!==JSON.stringify(launchArgs(spec)))throw new Error('The native project registration changed. Reopen Connect Coding Agent to use the current index.');
+                    const current=await host.resolveAgentSpec(spec,client);checkCurrent();
+                    if(current.command!==spec.command||JSON.stringify(launchArgs(current))!==JSON.stringify(launchArgs(spec))||JSON.stringify(current.http)!==JSON.stringify(spec.http))throw new Error('The native project registration changed. Reopen Connect Coding Agent to use the current index.');
                 }
-                if (action === 'copy' || action === 'copyPrompt' || action === 'copyAssistancePrompt') {
+                if(action==='trustIssuer'){const result=await vscode.commands.executeCommand<Record<string,unknown>>('airk.trustHttpIssuer');checkCurrent();status=result?.trusted===true?'The native issuer is trusted. Retry VS Code MCP and verify its actual tool discovery; existing host trust caches may still need its own refresh controls.':String(result?.guidance??'Trust was not changed. Review the actual host prerequisite before connecting.');}
+                else if (action === 'copy' || action === 'copyPrompt' || action === 'copyAssistancePrompt') {
                     await vscode.env.clipboard.writeText(action === 'copy' ? serializeServers(client, entries) : action === 'copyPrompt' ? verificationPrompt(spec) : assistancePrompt());
                     status = action === 'copy' ? 'Configuration copied. Merge it into the selected agent’s configuration; copying does not install it.' : 'Verification prompt copied. Send it in the selected agent to check its actual connection.';
                 } else if (action === 'createCodex') {

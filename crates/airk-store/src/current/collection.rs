@@ -109,6 +109,12 @@ pub struct CollectionCounts {
     pub extracted_bytes: u64,
     pub vector_eligible: u64,
     pub vector_excluded: u64,
+    #[serde(default, skip_serializing_if = "is_zero_count")]
+    pub vector_unavailable: u64,
+}
+
+fn is_zero_count(value: &u64) -> bool {
+    *value == 0
 }
 
 impl CollectionCounts {
@@ -122,13 +128,22 @@ impl CollectionCounts {
             .retained
             .as_ref()
             .context("current collection requires retained metadata")?;
-        let profile = retained
-            .profile
-            .as_ref()
-            .context("current collection profile missing")?;
-        let eligible = selection
-            .decision(&artifact.path, profile, &artifact.language)?
-            .eligible;
+        let unavailable = retained.legacy_origin.is_some();
+        let eligible = if let Some(origin) = &retained.legacy_origin {
+            origin.validate()?;
+            false
+        } else {
+            selection
+                .decision(
+                    &artifact.path,
+                    retained
+                        .profile
+                        .as_ref()
+                        .context("current collection profile missing")?,
+                    &artifact.language,
+                )?
+                .eligible
+        };
         for (count, amount) in [
             (&mut self.files, 1),
             (&mut self.chunks, retained.chunks as u64),
@@ -136,7 +151,11 @@ impl CollectionCounts {
             (&mut self.source_bytes, artifact.bytes as u64),
             (&mut self.extracted_bytes, retained.extracted_bytes as u64),
             (&mut self.vector_eligible, u64::from(eligible)),
-            (&mut self.vector_excluded, u64::from(!eligible)),
+            (
+                &mut self.vector_excluded,
+                u64::from(!eligible && !unavailable),
+            ),
+            (&mut self.vector_unavailable, u64::from(unavailable)),
         ] {
             *count = if insert {
                 count.checked_add(amount)
@@ -297,6 +316,21 @@ impl CollectionPlan {
                     .update(previous, &self.prior_selection, false)?;
             }
             if let Some(next) = next {
+                let legacy = next
+                    .retained
+                    .as_ref()
+                    .and_then(|retained| retained.legacy_origin.as_ref());
+                if let Some(origin) = legacy {
+                    origin.validate()?;
+                    ensure!(
+                        state.configuration.model.is_none(),
+                        "saved legacy evidence cannot claim current model coverage"
+                    );
+                    state
+                        .counts
+                        .update(next, &state.configuration.vector_selection, true)?;
+                    return Ok(());
+                }
                 let profile = next
                     .retained
                     .as_ref()
@@ -375,6 +409,7 @@ mod selected_configuration_guard_tests {
             parse_status: "ok".into(),
             facts: vec![],
             retained: Some(ArtifactRef {
+                legacy_origin: None,
                 source_encoding: None,
                 payload_encoding: None,
                 object: "01".repeat(32),

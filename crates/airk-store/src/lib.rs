@@ -2,6 +2,7 @@
 //! Derived state only. Source workspaces remain authoritative.
 use airk_core::identity::{PublicationReceipt, RevisionToken, Sha256Digest};
 use airk_core::{SCHEMA_VERSION, Snapshot, SnapshotStore};
+pub mod legacy_adoption;
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -45,6 +46,7 @@ pub struct FileStore {
     directory: PathBuf,
     shared_model_runtime: Option<PathBuf>,
     shared_model_default: Option<airk_core::model_objects::ModelObjectSet>,
+    embedded_model: Option<service::embedded_model::EmbeddedModelBinding>,
     pub(crate) funding: Option<quota::funding::FundingUse>,
     pub(crate) split_access: Option<service::collection::SplitBuildPermit>,
 }
@@ -117,6 +119,7 @@ impl FileStore {
             directory: directory.into(),
             shared_model_runtime: None,
             shared_model_default: None,
+            embedded_model: None,
             funding: None,
             split_access: None,
         }
@@ -150,7 +153,55 @@ impl FileStore {
         default.validate()?;
         self.shared_model_runtime = Some(runtime.canonicalize()?);
         self.shared_model_default = Some(default);
+        self.embedded_model = None;
         Ok(self)
+    }
+    /// Bind authenticated executable-owned default assets without creating files.
+    pub fn with_embedded_service_models(
+        self,
+        runtime: &Path,
+        default: airk_core::model_objects::ModelObjectSet,
+        source: Arc<dyn airk_core::model_objects::ModelAssetSource + Send + Sync>,
+    ) -> Result<Self> {
+        let binding = service::embedded_model::EmbeddedModelBinding::new(default.clone(), source)?;
+        let mut store = self.with_service_models(runtime, default)?;
+        store.embedded_model = Some(binding);
+        Ok(store)
+    }
+    pub fn embedded_model_binding(&self) -> Option<&service::embedded_model::EmbeddedModelBinding> {
+        self.embedded_model.as_ref()
+    }
+    pub fn embedded_default_reference(
+        &self,
+    ) -> Result<Option<airk_core::model_objects::ModelObjectSet>> {
+        self.embedded_model
+            .as_ref()
+            .map(|binding| {
+                binding.reference(
+                    self.shared_model_runtime()
+                        .context("shared model runtime is not bound")?,
+                )
+            })
+            .transpose()
+    }
+    pub fn shared_model_source(
+        &self,
+        set: &airk_core::model_objects::ModelObjectSet,
+    ) -> Result<service::embedded_model::SharedModelSource<'_>> {
+        if let Some(binding) = &self.embedded_model
+            && binding.matches(
+                self.shared_model_runtime()
+                    .context("shared model runtime is not bound")?,
+                set,
+            )?
+        {
+            return Ok(service::embedded_model::SharedModelSource::Embedded(
+                binding,
+            ));
+        }
+        Ok(service::embedded_model::SharedModelSource::Installed(
+            self.installed_model(set)?,
+        ))
     }
     pub fn shared_model_runtime(&self) -> Option<&Path> {
         self.shared_model_runtime.as_deref()
@@ -177,7 +228,7 @@ impl FileStore {
             use airk_core::model_objects::ModelAssetSource;
             // Publication captures installed identity, not live model availability.
             // Inference and explicit verification hash their actual asset bytes.
-            self.installed_model(set)?
+            self.shared_model_source(set)?
                 .read_asset(airk_core::model_objects::ModelAssetName::ModelJson, 16384)?;
         } else {
             model_objects::ModelObjects::new(self.directory()).verify(set, maximum_local_bytes)?;

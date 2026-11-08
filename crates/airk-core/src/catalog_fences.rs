@@ -121,7 +121,14 @@ pub struct WorkerProviderObligation {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum WorkerProviderHistory {
     NativeNeverAuthorized,
-    Helpers { generations: Vec<Incarnation> },
+    Helpers {
+        generations: Vec<Incarnation>,
+    },
+    InProcess {
+        generations: Vec<Incarnation>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        completed_authorizations: Option<crate::inference_provider::CompletionLedgerObservation>,
+    },
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -218,10 +225,33 @@ impl FencePlan {
                     *worker == provider.worker,
                     "catalog provider census identity mismatch"
                 );
-                if let WorkerProviderHistory::Helpers { generations } = &provider.history {
+                let generations = match &provider.history {
+                    WorkerProviderHistory::NativeNeverAuthorized => continue,
+                    WorkerProviderHistory::Helpers { generations } => {
+                        ensure!(!generations.is_empty(), "empty helper provider history");
+                        generations
+                    }
+                    WorkerProviderHistory::InProcess {
+                        generations,
+                        completed_authorizations,
+                    } => {
+                        if let Some(completed) = completed_authorizations {
+                            completed.validate()?;
+                            ensure!(
+                                completed.service_instance == self.service,
+                                "catalog completion ledger service mismatch"
+                            );
+                        }
+                        ensure!(
+                            !generations.is_empty() || completed_authorizations.is_some(),
+                            "empty native provider history lacks completion ledger"
+                        );
+                        generations
+                    }
+                };
+                {
                     ensure!(
-                        !generations.is_empty()
-                            && generations.len() <= 32
+                        generations.len() <= 32
                             && generations.windows(2).all(|pair| pair[0] < pair[1]),
                         "catalog provider generations must be bounded unique and canonical"
                     );
@@ -233,6 +263,20 @@ impl FencePlan {
     }
     pub fn validate_for(&self, request: &CatalogRequest) -> Result<()> {
         self.validate()?;
+        if let Some(obligation) = &self.worker_obligation {
+            for provider in &obligation.providers {
+                if let WorkerProviderHistory::InProcess {
+                    completed_authorizations: Some(anchor),
+                    ..
+                } = &provider.history
+                {
+                    ensure!(
+                        anchor.namespace == request.key.namespace,
+                        "catalog completion ledger namespace mismatch"
+                    );
+                }
+            }
+        }
         match (&request.operation, &self.worker_obligation) {
             (
                 CatalogOperation::RetireIndex { id, .. }
@@ -259,7 +303,9 @@ impl FencePlan {
             .providers
             .sort_by_cached_key(|provider| worker_key(&provider.worker));
         for provider in &mut obligation.providers {
-            if let WorkerProviderHistory::Helpers { generations } = &mut provider.history {
+            if let WorkerProviderHistory::Helpers { generations }
+            | WorkerProviderHistory::InProcess { generations, .. } = &mut provider.history
+            {
                 generations.sort();
             }
         }
@@ -545,3 +591,7 @@ pub enum FencePreparation {
     Prepared(FenceIntent),
     Replay(FencedReceipt),
 }
+
+#[cfg(test)]
+#[path = "catalog_fences_provider_tests.rs"]
+mod provider_tests;

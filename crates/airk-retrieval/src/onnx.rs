@@ -85,6 +85,7 @@ impl OnnxModel {
         source: &dyn airk_core::model_objects::ModelAssetSource,
         manifest_bytes: &[u8],
     ) -> Result<Self> {
+        crate::native_inference::require_service_compute()?;
         use airk_core::model_objects::ModelAssetName;
         let (manifest, identity) = model::onnx_manifest(manifest_bytes)?;
         crate::model_catalog::approved_manifest(&manifest)?;
@@ -176,7 +177,7 @@ impl OnnxModel {
         let pad_id = tokenizer
             .token_to_id("[PAD]")
             .context("BERT padding token missing")?;
-        let bytes = model::verified_source_asset(
+        let bytes = model::verified_source_bytes(
             source,
             ModelAssetName::ModelOnnx,
             MAX_MODEL_BYTES,
@@ -292,6 +293,7 @@ impl OnnxModel {
         input: &EncodedInput,
         memory_budget: usize,
     ) -> Result<(Vec<f32>, EmbeddingCacheStats)> {
+        crate::native_inference::require_service_compute()?;
         ensure!(
             memory_budget >= EXECUTION_RESERVE_BYTES,
             "INT8 execution exceeds working-memory budget"
@@ -395,73 +397,39 @@ impl OnnxModel {
     }
 }
 
-/// Load only pinned offline libraries alongside the helper. Never search PATH,
-/// the current directory or ORT_DYLIB_PATH. Debug builds can use prepared inputs.
+/// Initialize the engine linked into the authenticated service image. No
+/// environment variable, ambient search path, or external ORT image is read.
 fn initialize_runtime() -> Result<()> {
+    crate::native_inference::require_service_compute()?;
     static READY: std::sync::OnceLock<std::result::Result<(), String>> = std::sync::OnceLock::new();
     READY
         .get_or_init(|| {
             (|| -> Result<()> {
-                let catalog: serde_json::Value =
-                    serde_json::from_str(include_str!("ort_runtime_catalog.json"))?;
-                let platform = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
-                let assets = catalog["platforms"][&platform]
-                    .as_array()
-                    .context("unsupported INT8 runtime platform")?;
-                let executable = std::env::current_exe()?;
-                #[allow(unused_mut)]
-                let mut directory = executable
-                    .parent()
-                    .context("helper directory missing")?
-                    .to_path_buf();
-                #[cfg(debug_assertions)]
-                if !directory.join(assets[0]["name"].as_str().unwrap()).exists() {
-                    directory = std::env::var_os("AIRK_BUNDLED_RUNTIME_DIR")
-                        .map(std::path::PathBuf::from)
-                        .unwrap_or_else(|| {
-                            Path::new(env!("CARGO_MANIFEST_DIR"))
-                                .join("../../target/local-onnx-runtime")
-                        })
-                        .join(platform);
-                }
-                for asset in assets {
-                    #[cfg(target_os = "macos")]
-                    if let Some(expected) = asset["macho_payload_sha256"].as_str() {
-                        let bytes = model::read_asset(
-                            &directory,
-                            asset["name"].as_str().unwrap(),
-                            64 << 20,
-                        )?;
-                        ensure!(
-                            crate::macho_identity::payload_digest(&bytes)? == expected,
-                            "signed inference library content differs"
-                        );
-                        continue;
-                    }
-                    model::verified_asset(
-                        &directory,
-                        asset["name"].as_str().unwrap(),
-                        asset["bytes"].as_u64().unwrap(),
-                        asset["sha256"].as_str().unwrap(),
-                    )?;
-                }
-                let library = directory
-                    .join(assets[0]["name"].as_str().unwrap())
-                    .canonicalize()?;
+                // SAFETY: the pinned static ONNX Runtime API base and its version
+                // string have process lifetime. Neither call creates an OrtEnv.
+                let version = unsafe {
+                    let base = ort::sys::OrtGetApiBase();
+                    ensure!(!base.is_null(), "linked INT8 runtime API base unavailable");
+                    let text = ((*base).GetVersionString)();
+                    ensure!(!text.is_null(), "linked INT8 runtime version unavailable");
+                    std::ffi::CStr::from_ptr(text).to_str()?
+                };
                 ensure!(
-                    ort::init_from(library.to_string_lossy())
-                        .with_name("AIRK INT8")
-                        .commit()?,
+                    version == "1.22.1",
+                    "linked INT8 runtime version differs from approved 1.22.1"
+                );
+                ensure!(
+                    ort::init().with_name("AIRK INT8").commit()?,
                     "INT8 runtime was initialized outside AIRK"
                 );
                 #[cfg(target_os = "macos")]
                 process_environment::install()?;
                 Ok(())
             })()
-            .map_err(|e| format!("{e:#}"))
+            .map_err(|error| format!("{error:#}"))
         })
         .as_ref()
-        .map_err(|e| anyhow::anyhow!(e.clone()))?;
+        .map_err(|error| anyhow::anyhow!(error.clone()))?;
     Ok(())
 }
 

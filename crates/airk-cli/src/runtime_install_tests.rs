@@ -10,9 +10,11 @@ fn launcher_source_selection_binds_the_declared_mac_image_and_preserves_legacy_l
         Some(MAC_LAUNCHER_IMAGE)
     );
     assert_eq!(
-        standalone_launcher_name("macos", "1.9.0")?,
+        standalone_launcher_name("macos", "1.8.13")?,
         Some(MAC_LAUNCHER_IMAGE)
     );
+    assert_eq!(standalone_launcher_name("macos", "1.8.14")?, None);
+    assert_eq!(standalone_launcher_name("macos", "1.9.0")?, None);
     assert_eq!(standalone_launcher_name("linux", "1.9.0")?, None);
     assert_eq!(standalone_launcher_name("windows", "1.9.0")?, None);
     for version in ["1.8", "1.8.8.1", "1.8.8-dev"] {
@@ -64,8 +66,9 @@ fn launcher_source_selection_binds_the_declared_mac_image_and_preserves_legacy_l
 
 #[cfg(target_os = "macos")]
 #[test]
-fn mac_initial_and_repaired_launchers_use_the_independently_admitted_image() -> Result<()> {
-    let (_owner, root, identity) = unselected_fixture()?;
+fn historical_mac_initial_and_repaired_launchers_use_the_independently_admitted_image() -> Result<()>
+{
+    let (_owner, root, identity) = unselected_historical_fixture()?;
     let (main, _, inventory) = verify_runtime_inventory(&root, &identity)?;
     let image = launcher_image(runtime_pair::payload_root(&main)?, &inventory)?;
     assert_ne!(
@@ -136,6 +139,8 @@ fn catalog_activation_checks_formats_instead_of_trusting_equal_application_versi
     assert!(require_catalog_capabilities(&state, &current).is_err());
     state.policy_contract = 0;
     state.schema = 13;
+    require_catalog_capabilities(&state, &current)?;
+    state.schema = 14;
     assert!(require_catalog_capabilities(&state, &current).is_err());
     Ok(())
 }
@@ -181,7 +186,15 @@ async fn stopped_upgrade_checks_v6_without_migration_and_reports_damage_immediat
     Ok(())
 }
 
+// Inert component fixture only; these bytes were never built by a predecessor.
+pub(super) const HISTORICAL_PAIR_VERSION: &str = "1.8.13";
+pub(super) fn historical_pair_fixture(root: &Path) -> Result<String> {
+    fixture_with_layout(root, true)
+}
 pub(super) fn fixture(root: &Path) -> Result<String> {
+    fixture_with_layout(root, false)
+}
+fn fixture_with_layout(root: &Path, historical: bool) -> Result<String> {
     local_ipc::prepare_root(&root.join("notices"))?;
     let mut directory = root.to_path_buf();
     for component in Path::new(main_name())
@@ -193,8 +206,10 @@ pub(super) fn fixture(root: &Path) -> Result<String> {
         local_ipc::prepare_root(&directory)?;
     }
     fs::write(root.join(main_name()), b"Original inert main fixture.")?;
-    fs::write(root.join(helper_name()), b"Original inert helper fixture.")?;
-    if cfg!(target_os = "macos") {
+    if historical {
+        fs::write(root.join(helper_name()), b"Original inert helper fixture.")?;
+    }
+    if historical && cfg!(target_os = "macos") {
         fs::write(
             root.join(MAC_LAUNCHER_IMAGE),
             b"Original inert standalone launcher fixture.",
@@ -203,22 +218,33 @@ pub(super) fn fixture(root: &Path) -> Result<String> {
     fs::write(root.join("LICENSE"), b"Original fictional license fixture.")?;
     fs::write(root.join("notices/inventory.json"), b"[]")?;
     let pair = runtime_pair::RuntimePair {
-        schema: 1,
-        version: env!("CARGO_PKG_VERSION").into(),
+        schema: if historical { 1 } else { 2 },
+        version: if historical {
+            HISTORICAL_PAIR_VERSION
+        } else {
+            env!("CARGO_PKG_VERSION")
+        }
+        .into(),
         os: std::env::consts::OS.into(),
         arch: std::env::consts::ARCH.into(),
         airk_sha256: runtime_pair::digest_file(&root.join(main_name()))?,
-        embed_sha256: runtime_pair::digest_file(&root.join(helper_name()))?,
+        embed_sha256: if historical {
+            runtime_pair::digest_file(&root.join(helper_name()))?
+        } else {
+            String::new()
+        },
     };
     fs::write(root.join("airk-runtime.json"), serde_json::to_vec(&pair)?)?;
     let mut names = vec![
         main_name(),
-        helper_name(),
         "LICENSE",
         "notices/inventory.json",
         "airk-runtime.json",
     ];
-    if cfg!(target_os = "macos") {
+    if historical {
+        names.push(helper_name());
+    }
+    if historical && cfg!(target_os = "macos") {
         names.push(MAC_LAUNCHER_IMAGE);
     }
     let files = names
@@ -260,6 +286,14 @@ fn startup_circuit_retains_failed_attempts_across_reopen_and_backwards_clock() -
 }
 
 pub(super) fn unselected_fixture() -> Result<(tempfile::TempDir, PathBuf, String)> {
+    unselected_fixture_with_layout(false)
+}
+pub(super) fn unselected_historical_fixture() -> Result<(tempfile::TempDir, PathBuf, String)> {
+    unselected_fixture_with_layout(true)
+}
+fn unselected_fixture_with_layout(
+    historical: bool,
+) -> Result<(tempfile::TempDir, PathBuf, String)> {
     let owner = tempfile::tempdir()?;
     let root = owner.path().canonicalize()?.join("install");
     local_ipc::prepare_root(&root)?;
@@ -267,7 +301,7 @@ pub(super) fn unselected_fixture() -> Result<(tempfile::TempDir, PathBuf, String
     local_ipc::prepare_root(&root.join("runtimes"))?;
     let temporary = root.join("fixture");
     local_ipc::prepare_root(&temporary)?;
-    let identity = fixture(&temporary)?;
+    let identity = fixture_with_layout(&temporary, historical)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -279,12 +313,49 @@ pub(super) fn unselected_fixture() -> Result<(tempfile::TempDir, PathBuf, String
         &Approval {
             schema: 1,
             manifest_sha256: identity.clone(),
-            version: env!("CARGO_PKG_VERSION").into(),
+            version: if historical {
+                HISTORICAL_PAIR_VERSION
+            } else {
+                env!("CARGO_PKG_VERSION")
+            }
+            .into(),
             verification_basis: VerificationBasis::OrganizationDigest,
         },
     )?;
     fs::rename(temporary, root.join("runtimes").join(&identity))?;
     Ok((owner, root, identity))
+}
+
+#[test]
+fn current_inert_fixture_has_one_main_and_client_preparation_creates_no_launcher() -> Result<()> {
+    let (_owner, root, identity) = unselected_fixture()?;
+    let (main, approval, inventory) = verify_runtime_inventory(&root, &identity)?;
+    let payload = runtime_pair::payload_root(&main)?;
+    let pair_bytes = fs::read(payload.join("airk-runtime.json"))?;
+    let pair: runtime_pair::RuntimePair = serde_json::from_slice(&pair_bytes)?;
+    assert_eq!(pair.schema, 2);
+    assert_eq!(pair.version, env!("CARGO_PKG_VERSION"));
+    assert!(pair.embed_sha256.is_empty());
+    assert!(!String::from_utf8(pair_bytes)?.contains("embed_sha256"));
+    assert!(!payload.join(helper_name()).exists());
+    assert!(!payload.join(MAC_LAUNCHER_IMAGE).exists());
+    crate::process_roles::install(&main)?;
+    for role in [
+        crate::process_roles::Role::Service,
+        crate::process_roles::Role::Index,
+        crate::process_roles::Role::Source,
+    ] {
+        assert_eq!(crate::process_roles::executable(&main, role)?, main);
+        assert!(!payload.join(role.name()).exists());
+    }
+    for _ in 0..2 {
+        prepare_launcher(&root, &main, &inventory)?;
+        prepare_client_launcher(&root, &main, &approval, &inventory)?;
+        assert!(!launcher_path(&root).exists());
+        assert!(!root.join("launcher.json").exists());
+    }
+    manifest(payload, &identity)?;
+    Ok(())
 }
 
 #[tokio::test]
@@ -502,7 +573,7 @@ fn approved_offline_inventory_rejects_wrong_identity_tampering_aliases_and_escap
         );
     }
     assert!(manifest(&root, &"0".repeat(64)).is_err());
-    fs::write(root.join(helper_name()), b"Changed fixture.")?;
+    fs::write(root.join(main_name()), b"Changed fixture.")?;
     assert!(manifest(&root, &approved).is_err());
     let approved = fixture(&root)?;
     fs::hard_link(root.join("LICENSE"), root.join("alias"))?;
@@ -623,47 +694,56 @@ async fn damaged_payload_cannot_authorize_stopping_an_unowned_login_job() -> Res
 
 #[test]
 fn manifest_hashes_every_inventory_file_once_and_still_checks_pair_fields() -> Result<()> {
-    let (_owner, root, identity) = unselected_fixture()?;
-    let payload = root.join("runtimes").join(&identity);
-    let mut hashes = BTreeMap::<PathBuf, usize>::new();
-    let (_, inventory) = manifest_with_hasher(&payload, &identity, |path| {
-        *hashes.entry(path.to_path_buf()).or_default() += 1;
-        runtime_pair::digest_file(path)
-    })?;
-    assert_eq!(hashes.len(), inventory.files.len());
-    for name in inventory.files.keys() {
-        assert_eq!(hashes.get(&payload.join(name)), Some(&1), "{name}");
+    for historical in [false, true] {
+        let (_owner, root, identity) = unselected_fixture_with_layout(historical)?;
+        let payload = root.join("runtimes").join(&identity);
+        let mut hashes = BTreeMap::<PathBuf, usize>::new();
+        let (_, inventory) = manifest_with_hasher(&payload, &identity, |path| {
+            *hashes.entry(path.to_path_buf()).or_default() += 1;
+            runtime_pair::digest_file(path)
+        })?;
+        assert_eq!(hashes.len(), inventory.files.len());
+        for name in inventory.files.keys() {
+            assert_eq!(hashes.get(&payload.join(name)), Some(&1), "{name}");
+        }
+        assert_eq!(hashes.get(&payload.join(main_name())), Some(&1));
+        assert_eq!(
+            hashes.get(&payload.join(helper_name())),
+            if historical { Some(&1) } else { None }
+        );
+        // Authenticate a deliberately inconsistent pair receipt through a new
+        // manifest; successful file hashes alone must not qualify this pair.
+        let mut pair: runtime_pair::RuntimePair =
+            serde_json::from_slice(&fs::read(payload.join("airk-runtime.json"))?)?;
+        if historical {
+            pair.embed_sha256 = "a".repeat(64);
+        } else {
+            pair.airk_sha256 = "a".repeat(64);
+        }
+        fs::write(
+            payload.join("airk-runtime.json"),
+            serde_json::to_vec(&pair)?,
+        )?;
+        let mut changed = inventory;
+        changed.files.insert(
+            "airk-runtime.json".into(),
+            runtime_pair::digest_file(&payload.join("airk-runtime.json"))?,
+        );
+        let approved = write_manifest(&payload, &changed)?;
+        let error = manifest(&payload, &approved)
+            .err()
+            .context("inconsistent pair was accepted")?;
+        assert!(
+            error
+                .to_string()
+                .contains("runtime executable pair digest mismatch")
+        );
     }
-    assert_eq!(hashes.get(&payload.join(main_name())), Some(&1));
-    assert_eq!(hashes.get(&payload.join(helper_name())), Some(&1));
-    // Authenticate a deliberately inconsistent pair receipt through a new
-    // manifest; successful file hashes alone must not qualify this pair.
-    let mut pair: runtime_pair::RuntimePair =
-        serde_json::from_slice(&fs::read(payload.join("airk-runtime.json"))?)?;
-    pair.embed_sha256 = "a".repeat(64);
-    fs::write(
-        payload.join("airk-runtime.json"),
-        serde_json::to_vec(&pair)?,
-    )?;
-    let mut changed = inventory;
-    changed.files.insert(
-        "airk-runtime.json".into(),
-        runtime_pair::digest_file(&payload.join("airk-runtime.json"))?,
-    );
-    let approved = write_manifest(&payload, &changed)?;
-    let error = manifest(&payload, &approved)
-        .err()
-        .context("inconsistent pair was accepted")?;
-    assert!(
-        error
-            .to_string()
-            .contains("runtime executable pair digest mismatch")
-    );
     Ok(())
 }
 
 #[test]
-fn locked_selection_keeps_full_topology_and_distinct_role_verification() -> Result<()> {
+fn locked_selection_keeps_full_topology_and_rejects_role_copies() -> Result<()> {
     let (_owner, root, identity) = unselected_fixture()?;
     replace_json(
         &root,
@@ -685,22 +765,17 @@ fn locked_selection_keeps_full_topology_and_distinct_role_verification() -> Resu
     assert_eq!(verified.main_sha256, runtime_pair::digest_file(&main)?);
     let role =
         crate::process_roles::executable(&verified.main, crate::process_roles::Role::Service)?;
-    if cfg!(target_os = "macos") {
-        assert_eq!(role, verified.main);
-        let alias =
-            runtime_pair::payload_root(&main)?.join(crate::process_roles::Role::Service.name());
-        fs::write(&alias, b"unexpected independent service alias")?;
-    } else {
-        assert_ne!(role, verified.main);
-        fs::write(&role, b"modified independent service alias")?;
-    }
+    assert_eq!(role, verified.main);
+    let alias = runtime_pair::payload_root(&main)?.join(crate::process_roles::Role::Service.name());
+    fs::write(&alias, b"unexpected independent service alias")?;
+
     assert!(
         crate::process_roles::executable(&verified.main, crate::process_roles::Role::Service)
             .is_err()
     );
     assert!(
         selected_verified(&authority).is_err(),
-        "topology must still hash an independently modified alias"
+        "topology must refuse an unlisted alias instead of treating it as the main"
     );
     Ok(())
 }
@@ -728,7 +803,7 @@ fn locked_selection_still_refuses_unlisted_and_tampered_payload_files() -> Resul
     fs::write(&unknown, b"original unknown neighboring fixture")?;
     assert!(selected_verified(&authority).is_err());
     fs::remove_file(unknown)?;
-    fs::write(payload.join(helper_name()), b"modified helper fixture")?;
+    fs::write(payload.join(main_name()), b"modified main fixture")?;
     assert!(selected_verified(&authority).is_err());
     Ok(())
 }
@@ -842,8 +917,12 @@ async fn direct_stopped_ensure_refuses_start_before_qualifying_a_missing_payload
 
 #[test]
 fn final_image_checkpoint_refuses_mutation_during_later_inventory_hash() -> Result<()> {
-    for image in [main_name(), helper_name()] {
-        let (_owner, root, identity) = unselected_fixture()?;
+    for (image, historical) in [
+        (main_name(), false),
+        (main_name(), true),
+        (helper_name(), true),
+    ] {
+        let (_owner, root, identity) = unselected_fixture_with_layout(historical)?;
         let payload = root.join("runtimes").join(&identity);
         let changed = payload.join(image);
         let mut injected = false;
@@ -943,13 +1022,10 @@ fn metadata_preflight_reads_no_executable_bytes_and_common_preparation_verifies_
     let (_owner, root, identity) = selected_connection_fixture()?;
     let payload = root.join("runtimes").join(&identity);
     let main = fs::read(payload.join(main_name()))?;
-    let helper = fs::read(payload.join(helper_name()))?;
     fs::remove_file(payload.join(main_name()))?;
-    fs::remove_file(payload.join(helper_name()))?;
     let preflight = selected_preflight(&root)?;
     // A missing image cannot have been opened/hashed by metadata preflight.
     fs::write(payload.join(main_name()), main)?;
-    fs::write(payload.join(helper_name()), helper)?;
     let lock = install_lock(&root)?;
     let authority = InstallerAuthority {
         root: &root,
@@ -1558,7 +1634,6 @@ fn frontend_metadata_defers_missing_payload_to_locked_native_verification() -> R
     let control = layout::control(&root)?;
     let payload = root.join("runtimes").join(&identity);
     fs::remove_file(payload.join(main_name()))?;
-    fs::remove_file(payload.join(helper_name()))?;
     fs::write(payload.join("LICENSE"), b"changed inert ancillary fixture")?;
     assert_eq!(installed_metadata_control(&root)?, control);
     let lock = install_lock(&root)?;
@@ -1627,7 +1702,6 @@ fn managed_frontend_metadata_authenticates_both_modes_without_reading_payload() 
         fs::write(provider.join("LICENSE"), license)?;
         managed.verify().context("restored provider must qualify")?;
         fs::remove_file(provider.join(main_name()))?;
-        fs::remove_file(provider.join(helper_name()))?;
         assert_eq!(installed_metadata_control(&root)?, layout::control(&root)?);
         let missing_error = managed.verify().unwrap_err();
         assert_ne!(format!("{missing_error:#}"), format!("{ancillary_error:#}"));
@@ -1711,5 +1785,194 @@ async fn lifecycle_install_admission_timeout_preserves_unaccepted_state() -> Res
         fs::read(&selection)? == before && !root.join("control").try_exists()?,
         "invalid lock admission changed lifecycle state"
     );
+    Ok(())
+}
+
+fn issuer_gate_fixture() -> Result<(
+    tempfile::TempDir,
+    PathBuf,
+    PathBuf,
+    crate::http_endpoint::rotation::Record,
+)> {
+    use crate::http_endpoint::{
+        self, TlsIdentity,
+        rotation::{self, PreparationBasis, PrepareReview},
+    };
+    use airk_core::{
+        identity::{Incarnation, Sha256Digest},
+        service_http::{EndpointDescriptor, EndpointState, LoopbackMcpUrl},
+    };
+    let owner = tempfile::tempdir()?;
+    let root = owner.path().canonicalize()?.join("install");
+    local_ipc::prepare_root(&root)?;
+    layout::initialize(
+        &root,
+        Some(&owner.path().join("state")),
+        RuntimeChannel::Stable,
+    )?;
+    let control = layout::control(&root)?;
+    local_ipc::prepare_root(&control)?;
+    let lease = airk_store::service::ServiceLease::acquire(&control)?;
+    layout::record_control(&lease)?;
+    let registry = airk_store::service::registry::ServiceRegistry::open(
+        &control,
+        Incarnation::from_bytes([31; 16]),
+    )?;
+    let namespace = registry.incarnation()?;
+    layout::record_registry(&lease, namespace)?;
+    drop(registry);
+    drop(lease);
+    let binding = http_endpoint::installation_binding(&control, namespace)?;
+    let now = 1_800_000_000_000;
+    let tls = TlsIdentity::load_or_create(&control.join("http-1"), binding.clone(), now)?;
+    let endpoint = EndpointDescriptor {
+        schema: 1,
+        installation: binding.installation,
+        user: binding.user.clone(),
+        namespace,
+        generation: 1,
+        service_instance: Incarnation::from_bytes([32; 16]),
+        executable_sha256: Sha256Digest::from_bytes([33; 32]),
+        url: LoopbackMcpUrl::new(57421)?,
+        ca_sha256: tls.ca_sha256(),
+        certificate_sha256: tls.certificate_sha256(),
+        state: EndpointState::Ready,
+        predecessor_digest: None,
+    };
+    let record = rotation::prepare(
+        &control,
+        Incarnation::from_bytes([34; 16]),
+        endpoint.clone(),
+        PrepareReview {
+            expected_ca: endpoint.ca_sha256,
+            expected_descriptor: endpoint.digest()?,
+            overlap_seconds: 60,
+            now,
+            basis: PreparationBasis::LiveNativeHealth,
+        },
+    )?;
+    Ok((owner, root, control, record))
+}
+
+#[tokio::test]
+async fn pending_issuer_blocks_installer_intents_before_checkpoint_or_payload_effects() -> Result<()>
+{
+    use crate::http_endpoint::rotation::{self, Phase};
+    let (_owner, root, control, record) = issuer_gate_fixture()?;
+    let candidate = "a".repeat(64);
+    let before = fs::read(control.join("http-1/issuer-rotation.json"))?;
+    let error = activate(&root, &candidate)
+        .await
+        .err()
+        .context("activation unexpectedly accepted")?;
+    assert!(
+        error
+            .to_string()
+            .contains("issuer_rotation_pending_before_runtime_mutation")
+    );
+    assert!(activation::pending(&root)?.is_none());
+    assert!(
+        staging::stage(
+            &root.join("missing-source"),
+            &root,
+            &candidate,
+            VerificationBasis::OrganizationDigest
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("issuer_rotation_pending_before_runtime_mutation")
+    );
+    assert!(
+        payload_repair::apply(
+            &root,
+            &root.join("missing-source"),
+            &candidate,
+            airk_core::identity::Sha256Digest::from_bytes([0; 32])
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("issuer_rotation_pending_before_runtime_mutation")
+    );
+    assert!(
+        retirement::uninstall(&root)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("issuer_rotation_pending_before_runtime_mutation")
+    );
+    assert!(!root.join("uninstall.json").exists() && !root.join("payload-repair.json").exists());
+    assert_eq!(
+        fs::read(control.join("http-1/issuer-rotation.json"))?,
+        before
+    );
+    let stopped = rotation::advance(&control, &record, Phase::Stopping, 1_800_000_000_001, None)?;
+    assert!(
+        activate(&root, &candidate)
+            .await
+            .err()
+            .context("activation unexpectedly accepted")?
+            .to_string()
+            .contains("issuer_rotation_pending_before_runtime_mutation")
+    );
+    assert!(activation::pending(&root)?.is_none());
+    assert_eq!(
+        rotation::read(&control)?.unwrap().digest()?,
+        stopped.digest()?
+    );
+    assert!(staging::pending(&root)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn issuer_installer_gate_preserves_fresh_staging_terminal_recovery_and_unknown_records()
+-> Result<()> {
+    use crate::http_endpoint::{
+        TlsIdentity,
+        rotation::{self, Phase},
+    };
+    let fresh = tempfile::tempdir()?;
+    require_issuer_rotation_settled(fresh.path())?;
+    let (_owner, root, control, record) = issuer_gate_fixture()?;
+    // Ordinary startup still accepts the original issuer while preparation is
+    // awaiting review; this installer-only gate does not replace startup policy.
+    rotation::require_start_allowed(&control)?;
+    let path = control.join("http-1/issuer-rotation.json");
+    let original = fs::read(&path)?;
+    fs::write(&path, b"{broken")?;
+    assert!(require_issuer_rotation_settled(&root).is_err());
+    assert_eq!(fs::read(&path)?, b"{broken");
+    fs::write(&path, original)?;
+    TlsIdentity::retire_staged_private_key(record.old_root()?, &record.old_bundle)?;
+    TlsIdentity::retire_staged_private_key(record.new_root()?, &record.new_bundle)?;
+    rotation::advance(&control, &record, Phase::Aborted, 1_800_000_000_001, None)?;
+    require_issuer_rotation_settled(&root)?;
+    rotation::require_start_allowed(&control)?;
+    Ok(())
+}
+
+#[test]
+fn login_registration_changes_refuse_pending_issuer_but_preserve_stop_and_observation() -> Result<()>
+{
+    let (_owner, root, control, _record) = issuer_gate_fixture()?;
+    let journal = control.join("http-1/issuer-rotation.json");
+    let original = fs::read(&journal)?;
+    for action in [LoginCommand::Install, LoginCommand::Uninstall] {
+        let error = commands::require_login_registration_change(&root, &action)
+            .expect_err("manager registration must preserve captured issuer owner");
+        assert!(
+            error
+                .to_string()
+                .contains("issuer_rotation_pending_before_runtime_mutation")
+        );
+    }
+    for action in [
+        LoginCommand::Plan,
+        LoginCommand::Status,
+        LoginCommand::Start,
+        LoginCommand::Stop,
+    ] {
+        commands::require_login_registration_change(&root, &action)?;
+    }
+    assert_eq!(fs::read(journal)?, original);
     Ok(())
 }

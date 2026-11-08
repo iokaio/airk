@@ -259,6 +259,39 @@ impl SetupDirectory {
         drop(file);
         self.sync()
     }
+    /// Windows deletion targets the exact opened child, never a recursive path.
+    pub(crate) fn unlink_empty_dir_if_identity(&self, name: &OsStr, owned: &Self) -> Result<()> {
+        let current = Self::from_file(self.relative(
+            name,
+            DELETE | FILE_TRAVERSE | FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES,
+            FILE_OPEN,
+            FILE_DIRECTORY_FILE,
+        )?)?;
+        ensure!(
+            current.identity()? == owned.identity()?,
+            "setup empty-directory identity changed"
+        );
+        ensure!(
+            current.entries()?.next().transpose()?.is_none(),
+            "setup deletion directory is not empty"
+        );
+        let disposition = FILE_DISPOSITION_INFO { DeleteFile: true };
+        // SAFETY: retained exact directory handle and bounded native structure;
+        // Windows refuses deletion if a child appears before the operation.
+        ensure!(
+            unsafe {
+                SetFileInformationByHandle(
+                    current.file.as_raw_handle().cast(),
+                    FileDispositionInfo,
+                    (&disposition as *const FILE_DISPOSITION_INFO).cast(),
+                    size_of::<FILE_DISPOSITION_INFO>() as u32,
+                )
+            } != 0,
+            std::io::Error::last_os_error()
+        );
+        drop(current);
+        self.sync()
+    }
     pub(crate) fn publish_no_replace(
         &self,
         name: &OsStr,

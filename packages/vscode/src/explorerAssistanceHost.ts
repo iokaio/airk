@@ -124,6 +124,8 @@ export class AssistanceIpcHost {
         } catch (error) { host.dispose(); throw error; }
     }
 
+    /** Exact live window attachment, never the global launch metadata. */
+    get descriptorPath(): string | undefined { return this.disposed ? undefined : this.file; }
     private get file(): string { return path.join(windowsDirectory(this.port.directory), `${this.session}.json`); }
 
     private async publish(credential=this.credential):Promise<void> {

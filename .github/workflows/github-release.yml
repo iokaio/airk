@@ -210,6 +210,10 @@ jobs:
         if: runner.os == 'Windows'
         run: python scripts/ci-windows-sign.py prepare --pair
         working-directory: ${{ env.AIRK_RELEASE_SOURCE_ROOT }}
+      - name: Select exact versioned Windows signing components
+        id: signing_components
+        if: runner.os == 'Windows'
+        run: python scripts/ci-windows-sign.py list --runtime-dir "${{ env.AIRK_RELEASE_SOURCE_ROOT }}/artifacts/signed/${{ matrix.target }}/runtime"
       - name: Authenticate AIRK's environment through Azure OIDC
         id: azure
         if: runner.os == 'Windows'
@@ -218,16 +222,14 @@ jobs:
           client-id: ${{ vars.AZURE_SIGNING_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_SIGNING_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SIGNING_SUBSCRIPTION_ID }}
-      - name: Sign Windows helper using Ioka's existing Azure profile
+      - name: Sign Windows runtime using Ioka's existing Azure profile
         if: runner.os == 'Windows'
         uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2
         with:
           endpoint: https://wus2.codesigning.azure.net
           signing-account-name: ioka-llc-signing
           certificate-profile-name: WritingForgePro
-          files: |
-            ${{ github.workspace }}\${{ env.AIRK_RELEASE_SOURCE_ROOT }}\artifacts\signed\x86_64-pc-windows-msvc\runtime\airk.exe
-            ${{ github.workspace }}\${{ env.AIRK_RELEASE_SOURCE_ROOT }}\artifacts\signed\x86_64-pc-windows-msvc\runtime\airk-embed.exe
+          files: ${{ steps.signing_components.outputs.files }}
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256

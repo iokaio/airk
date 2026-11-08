@@ -2,14 +2,18 @@
 //! Service-backed extension activation. Native ownership outlives editor windows.
 import * as vscode from 'vscode';
 import * as fs from 'node:fs/promises';
-import { readdirSync, statSync } from 'node:fs';
-import { randomBytes } from 'node:crypto';
+import { readdirSync, statSync, watch, type FSWatcher } from 'node:fs';
+import { randomBytes, createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
+import { HttpSelection, HttpConnectionInfo, validateHttpConnection, preservedImportedHttpServerKey, matchesImportedHttpOrigin, sameHttpAuthority, credentialEnvironment, httpMaterial, httpPublicTrustFile, publishNativeInput, removeNativeInput } from './serviceHttp';
 import * as path from 'node:path';
+import * as os from 'node:os';
+import {inventoryGlobalAgentConfigs,globalConfigDeclarations,transformGlobalContainer,type GlobalAgent,type GlobalConfigFile} from './globalAgentInventory';
 import { setupAgent, AgentSetupHost } from './agentSetup';
 import { launchArgs, LaunchSpec, McpVerification, unifiedEntry, ServerEntry, UNIFIED_TOOLS } from './model';
 import { probeMcp, runText } from './native';
 import { LegacyRetirementSession, retirementJson, retirementMarkdown } from './runtimeLegacyRetirement';
-import { automaticUpgrade, BootstrapObservation, nativeRunner, RuntimeBinding, RuntimeHost } from './serviceBootstrap';
+import { automaticUpgrade, BootstrapObservation, nativeRunner, RuntimeBinding, RuntimeHost, legacyOriginLocatorIdentity, type LegacyOriginLocator } from './serviceBootstrap';
 import { ConsoleRuntime, ServiceConsole, serviceRuntimeOptions } from './serviceConsole';
 import { identifier, record, ServiceError } from './serviceClient';
 import { IntentJournal } from './serviceIntents';
@@ -25,15 +29,17 @@ import type { SearchDraft } from './explorerDrafts';
 import { ExplorerSidebar } from './explorerSidebar';
 import { WorkbenchView } from './workbenchView';
 import type { ExplorerController, ExplorerHost } from './explorerController';
-import { hasUnifiedVscodeConfig, migrateLocalAgents } from './agentMigration';
-import { readJsonConfig } from './agentConfig';
+import { hasUnifiedVscodeConfig, migrateAgentConfig, migrateLocalAgents, locations as localAgentLocations, LocalAgent, httpConfigurationConnectionId, refreshHttpAgentConfig, migrateStandaloneHttpEntry } from './agentMigration';
+import { readJsonConfig, vscodeCredentialConfiguration, vscodeManualConnectionIds, vscodeManualConfiguration } from './agentConfig';
 import { AssistanceIpcHost } from './explorerAssistanceHost';
+import {ClientTrustPublicationError,IssuerRotationStatus,publishOwnedIssuerBundle,updateOwnedIssuerBundles} from './httpIssuerRotation';
 import { HandoffStore } from './explorerHandoffs';
 import { SuggestionStore } from './explorerSuggestions';
 import { assistanceDirectory, launchDescriptorPath, writeLaunchDescriptor } from './explorerAssistanceLaunch';
 import { rememberShellIntegration, rememberUninstallTarget, shellProfiles } from './extensionUninstall';
 import { recordDiagnosticFailure } from './diagnosticLogs';
 import { nativeExecutionAllowed, NativeExecutionDisabled, setNativeExecutionGate } from './nativeGate';
+import type {ServiceConsoleState} from './serviceConsoleView';
 import type { RuntimeUpgradeProgress } from './explorerContracts';
 import { applyLocalSearchScope, saveLocalIndexSet, localScopeChoice, managedScopeProject, type ManagedScopeProject, type LocalScopeAdapter } from './localSearchScope';
 
@@ -109,6 +115,31 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     private migratedConnections=false;
     private installationWarnings=false;
     private installationFailed=false;
+    private migrationPredecessors:LaunchSpec[]=[];
+    private legacyLauncherInspection?:Record<string,unknown>;
+    private legacyCachePreparation?:Record<string,unknown>;
+    private legacyMigrationFiles=new Map<string,{agent:LocalAgent;file:GlobalConfigFile}>();
+    private migrationAbsentConfigurations=new Set<string>();
+    private migratedConfigurationSnapshots=new Map<string,string>();
+    private migrationHttpConnections=new Map<string,HttpConnectionInfo>();
+    private migrationGlobalVerifier?:()=>Promise<void>;
+    private readonly httpOwnershipLookups=new Map<string,Promise<Record<string,unknown>>>();
+    private httpConfigurationRefresh?:Promise<void>;
+    private observedHttpInstance?:string;
+    private httpRefreshRetry?:{instance:string;attempt:number;next:number};
+    private httpRefreshWarnedInstance?:string;
+    private httpRefreshTimer?:ReturnType<typeof setTimeout>;
+    private httpWatchKey?:string;
+    private httpWatchParent?:FSWatcher;
+    private httpWatchEndpoint?:FSWatcher;
+    private httpWatchTimer?:ReturnType<typeof setTimeout>;
+    private httpWatchRearm?:ReturnType<typeof setTimeout>;
+    private httpWatchRead?:ReturnType<RuntimeHost['client']>;
+    private httpWatchReading=false;
+    private httpWatchFailures=0;
+    private httpWatchHealthRetry?:ReturnType<typeof setTimeout>;
+    private httpWatchPending=false;
+    private latestHttpOwner?:{runtime:string;instance:string};
     private installProgress?:vscode.Progress<{message?:string}>;
     private explorer?:Promise<ExplorerController>;
     private explorerLoaded?:ExplorerController;
@@ -218,6 +249,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
                 this.checks.delete(project);this.definitions.fire();
             }
         }});
+        context.subscriptions.push(this.console.onDidChangeState(state=>this.observeHttpOwner(state)));
         this.status.text='AIRK';this.status.command='airk.explorer.open';this.status.show();
         this.publishNativeCommandAvailability();
     }
@@ -280,7 +312,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             // only after metadata revalidation of its exact existing grant.
             if(!this.binding||JSON.stringify(this.binding)!==JSON.stringify(binding)){
                 this.specs=[];this.roots=[];this.retireSelectedEligibility();this.explicitCatalogScope=undefined;
-                this.binding=binding;
+                this.binding=binding;this.syncHttpEndpointWatcher();
             }
             this.observedFolders=JSON.stringify(this.folders().map(folder=>folder.uri.fsPath));
             const previous=this.currentWindowContext();
@@ -342,7 +374,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             selection=reviewCombinedScopeSelection({...common,...(subset?{index_ids:subset}:{})},descriptor,grant.detail,indexes.map(value=>value.detail));
         }
         if(this.localScopeLabelChoice)selection.label=this.scopeLabel(this.localScopeLabelChoice);
-        const spec=nativeScopeLaunchSpec(binding,selection);current();
+        const spec=await this.enrollHttpSpec(nativeScopeLaunchSpec(binding,selection),'vscode');current();
         // Withdrawal survives reload; legacy preferences stay inert. The separate
         // local-user selection can restore only this exact native-revalidated grant.
         await this.context.workspaceState.update('airk.scope.explicitWithdrawal.1',scopeSelectionPreference(selection));current();
@@ -482,7 +514,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         const selected=this.currentCatalogScope();
         if(!spec.catalogSession&&!spec.combinedSession&&(this.explicitCatalogScope||this.hasScopeWithdrawal()))return false;
         const candidates=spec.catalogSession||spec.combinedSession?selected?[selected.spec]:[]:this.specs;
-        return candidates.some(current=>current.command===spec.command&&current.dataDir===spec.dataDir&&current.collection===spec.collection&&current.service?.project===spec.service?.project&&JSON.stringify(launchArgs(current))===JSON.stringify(launchArgs(spec)));
+        return candidates.some(current=>same(current.command,spec.command)&&same(current.root,spec.root)&&same(current.dataDir,spec.dataDir)&&current.collection===spec.collection&&current.service?.project===spec.service?.project&&same(current.service!.installDir,spec.service!.installDir)&&isDeepStrictEqual(current.catalogSession,spec.catalogSession)&&isDeepStrictEqual(current.combinedSession,spec.combinedSession));
     }
     subscribe(panel:vscode.WebviewPanel):void{this.context.subscriptions.push(panel);}
     verification(spec:LaunchSpec):McpVerification|undefined{return this.checks.get(spec.service!.project);}
@@ -590,7 +622,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
                 this.status.text='AIRK: selected project ready';this.output.appendLine(`Other workspace preparation needs attention: ${String(error)}`);
             }else{clear();if(!this.renderSetupFailed())this.status.text='AIRK: inspect service';this.output.appendLine(String(error));}
         }}
-        finally{if(!this.disposed&&generation===this.generation){this.treeChanges.fire();if(previous!==JSON.stringify(this.specs.map(spec=>[spec.command,launchArgs(spec)])))this.definitions.fire();}}
+        finally{if(!this.disposed&&generation===this.generation){this.syncHttpEndpointWatcher();this.treeChanges.fire();if(previous!==JSON.stringify(this.specs.map(spec=>[spec.command,launchArgs(spec)])))this.definitions.fire();}}
     }
     async registerWorkspace():Promise<void>{
         this.trusted();await this.showManagement('#indexing/library');
@@ -638,10 +670,143 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             ||backing.binding!==chosen.backing.binding||backing.root!==chosen.backing.root||backing.data_root!==chosen.backing.data_root||backing.collection!==chosen.backing.collection)throw new ServiceError('crossed_native_index_administration');
         return catalogHex(backing.binding,64);
     }
-    async resolveAgentSpec(spec:LaunchSpec):Promise<LaunchSpec>{
+    private readonly httpSetups=new Map<string,Promise<LaunchSpec>>();
+    private async enrollHttpSpec(spec:LaunchSpec,client:string):Promise<LaunchSpec>{
+        this.trusted();const binding=this.binding,generation=this.generation;
+        if(!binding||!spec.service||!same(binding.installDir,spec.service.installDir))throw new ServiceError('workspace_registration_changed');
+        const selection:HttpSelection=spec.combinedSession?{kind:'combined',selection:spec.combinedSession}:spec.catalogSession?{kind:'scoped',selection:spec.catalogSession}:spec.http?.selection.kind==='imported_legacy'?spec.http.selection:(()=>{throw new ServiceError('http_connection_requires_reviewed_scope');})();
+        const identity={...selection.selection};delete (identity as any).expected_catalog_revision;
+        const key=createHash('sha256').update(JSON.stringify([client,selection.kind,identity,binding.installDir])).digest('hex');
+        const active=this.httpSetups.get(key);if(active)return active;
+        const pending=(async()=>{
+            const current=()=>{this.trusted();if(binding!==this.binding||generation!==this.generation)throw new ServiceError('workspace_registration_changed');};current();
+            const saved=this.context.globalState.get<string>('airk.http.connection.1.'+key),connectionId=saved&&/^[a-f0-9]{32}$/.test(saved)?saved:randomBytes(16).toString('hex');
+            if(connectionId!==saved)await this.context.globalState.update('airk.http.connection.1.'+key,connectionId);current();
+            const storage=await fs.realpath(this.context.globalStorageUri.fsPath);
+            const selectionBytes=JSON.stringify(selection);if(Buffer.byteLength(selectionBytes)>49152)throw new ServiceError('http_selection_bound');
+            const file=await publishNativeInput(binding.controlDir,selectionBytes,current);
+            try{
+                const info=await this.runtime().httpConnection(binding,selection,file,connectionId,client,this.assistanceEnabled()?this.assistanceHost?.descriptorPath:undefined);current();
+                await this.provisionHttpInfo(info,client,current,storage);
+                return {...spec,http:info};
+            }finally{await removeNativeInput(file);}
+        })().finally(()=>{if(this.httpSetups.get(key)===pending)this.httpSetups.delete(key);});
+        this.httpSetups.set(key,pending);return pending;
+    }
+    private async provisionHttpInfo(info:HttpConnectionInfo,client:string,current:()=>void,storage:string):Promise<void>{
+                const material=await httpMaterial(info);current();
+                current();
+                if(client==='codex'||client==='claude'){
+                    const variable=client==='codex'?'CODEX_CA_CERTIFICATE':'NODE_EXTRA_CA_CERTS';
+                    const existing=this.context.environmentVariableCollection.get?.(variable);
+                    if(existing&&existing.type!==vscode.EnvironmentVariableMutatorType.Replace)throw new ServiceError('http_client_trust_requires_review');
+                    const prior=existing?.value??process.env[variable]??(client==='codex'?process.env.SSL_CERT_FILE:undefined);
+                    let trust=material.ca;
+                    if(prior&&prior!==info.ca_certificate_file){
+                        const stat=await fs.lstat(prior);if(!stat.isFile()||stat.isSymbolicLink()||stat.size>2097152)throw new ServiceError('http_client_trust_requires_review');
+                        const previous=await httpPublicTrustFile(prior);if(previous.length!==stat.size||previous.includes('PRIVATE KEY')||!previous.includes('-----BEGIN CERTIFICATE-----'))throw new ServiceError('http_client_trust_requires_review');
+                        if(path.dirname(prior)===path.join(storage,'http-trust')&&!previous.includes(material.ca))throw new ServiceError('http_owned_issuer_rotation_requires_review');
+                        trust=previous.includes(material.ca)?previous:Buffer.concat([previous,Buffer.from('\n'),material.ca]);
+                    }
+                    const trustRoot=path.join(storage,'http-trust');await fs.mkdir(trustRoot,{recursive:true,mode:0o700});if(!same(await fs.realpath(trustRoot),trustRoot)||(await fs.lstat(trustRoot)).isSymbolicLink())throw new ServiceError('unsafe_http_trust_directory');
+                    const trustFile=await publishOwnedIssuerBundle(trustRoot,trust,current);
+                    current();this.context.environmentVariableCollection.persistent=false;this.context.environmentVariableCollection.replace(variable,trustFile);this.context.environmentVariableCollection.replace(credentialEnvironment(info),material.credential);
+                }
+    }
+    /** Only a recognized, CAS-guarded owned configuration supplies this receipt.
+     * Registration paths alone never manufacture a reviewed grant. */
+    private async enrollLegacyHttpSpec(spec:LaunchSpec,client:string,receipt:string,migration?:{binding:RuntimeBinding;valid:()=>void}):Promise<LaunchSpec>{
+        this.trusted();migration?.valid();const binding=migration?.binding??this.binding,generation=this.generation;
+        if(!binding||!spec.service||!migration&&!this.isCurrent(spec)||!/^[a-f0-9]{64}$/.test(receipt))throw new ServiceError('workspace_registration_changed');
+        const registration={binding:spec.service.project,root:spec.root,data_root:spec.dataDir,collection:spec.collection};
+        const key=createHash('sha256').update(JSON.stringify([client,binding.installDir,registration])).digest('hex');
+        const active=this.httpSetups.get(key);if(active)return active;
+        const pending=(async()=>{
+            const current=()=>{this.trusted();migration?.valid();if(generation!==this.generation||!migration&&(binding!==this.binding||!this.isCurrent(spec)))throw new ServiceError('workspace_registration_changed');};current();
+            const prior=this.context.globalState.get<unknown>('airk.http.legacy.1.'+key);
+            let previous:HttpConnectionInfo|undefined;
+            if(prior!==undefined){previous=validateHttpConnection(prior,undefined,path.join(binding.controlDir,'http-1'));if(previous.selection.kind!=='imported_legacy'||!matchesImportedHttpOrigin(previous.selection.selection,registration))throw new ServiceError('crossed_http_legacy_record');}
+            const configurationReceipt=previous?.selection.kind==='imported_legacy'?previous.selection.selection.configuration_receipt:receipt;
+            const savedId=this.context.globalState.get<string>('airk.http.legacy.id.1.'+key);
+            const connectionId=previous?.connection_id??(savedId&&/^[a-f0-9]{32}$/.test(savedId)?savedId:randomBytes(16).toString('hex'));
+            if(connectionId!==savedId)await this.context.globalState.update('airk.http.legacy.id.1.'+key,connectionId);current();
+            const storage=await fs.realpath(this.context.globalStorageUri.fsPath);
+            if(previous){
+                const info=validateHttpConnection(await this.runtime().httpConnectionInfo(binding,previous.connection_id),previous.selection,path.join(binding.controlDir,'http-1'));current();
+                if(info.connection_id!==previous.connection_id)throw new ServiceError('crossed_http_legacy_connection');
+                await this.provisionHttpInfo(info,client,current,storage);current();
+                await this.context.globalState.update('airk.http.legacy.1.'+key,info);current();return {...spec,http:info};
+            }
+            const file=await publishNativeInput(binding.controlDir,JSON.stringify(registration),current);
+            try{
+                const info=await this.runtime().httpLegacyConnection(binding,registration,file,configurationReceipt,connectionId,client,this.assistanceEnabled()?this.assistanceHost?.descriptorPath:undefined);current();
+                await this.provisionHttpInfo(info,client,current,storage);current();
+                await this.context.globalState.update('airk.http.legacy.1.'+key,info);current();return {...spec,http:info};
+            }finally{await removeNativeInput(file);}
+        })().finally(()=>{if(this.httpSetups.get(key)===pending)this.httpSetups.delete(key);});
+        this.httpSetups.set(key,pending);return pending;
+    }
+    private async enrollLegacyUnion(specs:LaunchSpec[],binding:RuntimeBinding,valid:()=>void):Promise<LaunchSpec>{
+        valid();const registrations=specs.map(spec=>{
+            const receipt=this.workspace.providerConfigurationReceipt(binding,spec);if(!receipt)throw new ServiceError('legacy_selection_review_required');
+            return {registration:{binding:spec.service!.project,root:spec.root,data_root:spec.dataDir,collection:spec.collection},configuration_receipt:receipt};
+        }).sort((left,right)=>left.registration.binding.localeCompare(right.registration.binding));
+        const key=createHash('sha256').update(JSON.stringify(['legacy-union',binding.installDir,registrations])).digest('hex');
+        const active=this.httpSetups.get(key);if(active)return active;
+        const pending=(async()=>{
+            const savedId=this.context.globalState.get<string>('airk.http.union.id.1.'+key),id=savedId&&/^[a-f0-9]{32}$/.test(savedId)?savedId:randomBytes(16).toString('hex');
+            if(savedId!==id)await this.context.globalState.update('airk.http.union.id.1.'+key,id);valid();
+            const storage=await fs.realpath(this.context.globalStorageUri.fsPath);
+            const request=JSON.stringify({schema:1,registrations,no_default_project:true});if(Buffer.byteLength(request)>49152)throw new ServiceError('http_selection_bound');
+            const file=await publishNativeInput(binding.controlDir,request,valid);
+            try{
+                const info=await this.runtime().httpLegacyUnionConnection(binding,registrations,file,id,'vscode',this.assistanceEnabled()?this.assistanceHost?.descriptorPath:undefined);valid();
+                await this.provisionHttpInfo(info,'vscode',valid,storage);valid();return {...specs[0],http:info};
+            }finally{await removeNativeInput(file);}
+        })().finally(()=>{if(this.httpSetups.get(key)===pending)this.httpSetups.delete(key);});
+        this.httpSetups.set(key,pending);return pending;
+    }
+    private previousLegacyHttp(spec:LaunchSpec,client:string,binding=this.binding):HttpConnectionInfo|undefined{
+        const registration={binding:spec.service!.project,root:spec.root,data_root:spec.dataDir,collection:spec.collection};
+        const key=createHash('sha256').update(JSON.stringify([client,spec.service!.installDir,registration])).digest('hex');
+        const raw=this.context.globalState.get<unknown>('airk.http.legacy.1.'+key);if(raw===undefined)return;
+        if(!binding||!same(binding.installDir,spec.service!.installDir))throw new ServiceError('workspace_registration_changed');
+        const info=validateHttpConnection(raw,undefined,path.join(binding.controlDir,'http-1'));
+        if(info.selection.kind!=='imported_legacy'||!matchesImportedHttpOrigin(info.selection.selection,registration))throw new ServiceError('crossed_http_legacy_record');return info;
+    }
+    private migrationCandidate(spec:LaunchSpec,agent:LocalAgent,before:string,previous?:LaunchSpec,binding?:RuntimeBinding,selectedKey?:string){
+        const client=agent==='copilot'?'vscode':agent;
+        const supported=['codex','claude','vscode'].includes(client);
+        const prior=supported?this.previousLegacyHttp(spec,client,binding):undefined;
+        const universal=this.legacyLauncherInspection?.universal_launcher;
+        const old=prior?{...spec,http:prior}:previous??(universal?{...spec,command:String(record(universal).path),service:{...spec.service!,universal:true}}:undefined);
+        // Detect actual owned declarations before enrollment. Unrelated client
+        // settings must not trigger a new credential or an unsupported-client error.
+        const candidate=prior?{...spec,http:prior}:{...spec,http:undefined};
+        const declarations=globalConfigDeclarations(agent==='codex'?'codex':agent==='copilot'?'copilot':'claude',before).filter(row=>selectedKey===undefined||row.serverKey===selectedKey);
+        const commands=[spec.command,path.join(spec.service!.installDir,process.platform==='win32'?'airk-launcher.exe':'airk-launcher'),...(old?[old.command]:[])];
+        const ownCommand=declarations.some(row=>typeof row.fields.command==='string'&&path.isAbsolute(row.fields.command)&&commands.some(command=>same(command,String(row.fields.command))));
+        const ownHttp=!!prior&&before.toLowerCase().includes(prior.connection_id);
+        let removed:string;
+        try{removed=migrateAgentConfig(agent,candidate,this.context.globalStorageUri.fsPath,before,true,()=>undefined,false,true,old,selectedKey);}
+        catch(error){if(!ownCommand&&!ownHttp)return {client,supported,candidate,old,owned:false};throw error;}
+        if(removed===before&&ownCommand)throw new ServiceError('owned_agent_alias_requires_review');
+        if(removed!==before&&!prior&&!declarations.some(row=>row.serverKey!=='airk_explorer'&&Array.isArray(row.fields.args)&&row.fields.args.includes('mcp')))throw new ServiceError('owned_assistance_scope_requires_review');
+        return {client,supported,candidate,old,owned:removed!==before};
+    }
+    private async prepareOwnedHttpMigration(spec:LaunchSpec,agent:LocalAgent,before:string,previous?:LaunchSpec,migration?:{binding:RuntimeBinding;valid:()=>void;configurationReceipt?:string;selectedKey?:string}):Promise<{spec:LaunchSpec;previous?:LaunchSpec;skip?:boolean}>{
+        const {client,supported,candidate,old,owned}=this.migrationCandidate(spec,agent,before,previous,migration?.binding,migration?.selectedKey);
+        if(!owned)return {spec:candidate,previous:old,skip:true};
+        if(!supported)throw new ServiceError('http_client_compatibility_unverified');
+        const next=spec.catalogSession||spec.combinedSession?await this.enrollHttpSpec(spec,client):await this.enrollLegacyHttpSpec(spec,client,migration?.configurationReceipt??createHash('sha256').update(before).digest('hex'),migration);
+        if(next.http)this.migrationHttpConnections.set(next.http.connection_id,next.http);
+        return {spec:next,previous:old};
+    }
+    async resolveAgentSpec(spec:LaunchSpec,clientKind='vscode'):Promise<LaunchSpec>{
         this.trusted();
         if(!this.binding||!this.isCurrent(spec))throw new ServiceError('workspace_registration_changed');
-        if(spec.catalogSession||spec.combinedSession)return spec;
+        if(!['vscode','codex','claude','airk-workbench','airk-explorer'].includes(clientKind))throw new ServiceError('http_client_compatibility_unverified');
+        if(spec.catalogSession||spec.combinedSession)return this.enrollHttpSpec(spec,clientKind);
         const binding=this.binding,generation=this.generation,client=this.runtime().client(binding);
         try{
             const selected=await this.workspace.resolveConnection(binding,spec,async(after,revision)=>{
@@ -662,7 +827,18 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             const registration=catalogObject(eligibility.registration);
             if(registration.binding!==selected.service!.project||typeof registration.root!=='string'||typeof registration.data_root!=='string'||!same(registration.root,selected.root)||!same(registration.data_root,selected.dataDir)||registration.collection!==selected.collection)throw new ServiceError('crossed_native_legacy_registration');
             this.specs=this.specs.map(current=>current.service?.project===spec.service?.project?selected:current);
-            this.definitions.fire();return selected;
+            const agent=clientKind==='vscode'?'copilot':clientKind as LocalAgent;
+            const location=localAgentLocations[agent];
+            const previous=this.previousLegacyHttp(selected,clientKind);
+            if(previous){const resolved=await this.enrollLegacyHttpSpec(selected,clientKind,previous.selection.kind==='imported_legacy'?previous.selection.selection.configuration_receipt:'');return resolved;}
+            const providerReceipt=this.workspace.providerConfigurationReceipt(binding,selected);
+            if(providerReceipt){const resolved=await this.enrollLegacyHttpSpec(selected,clientKind,providerReceipt);return resolved;}
+            if(!location)throw new ServiceError('legacy_selection_review_required');
+            const destination=path.join(selected.root,...location),directory=path.dirname(destination);
+            const stat=await fs.lstat(directory).catch(()=>undefined);
+            if(!stat?.isDirectory()||stat.isSymbolicLink()||!same(await fs.realpath(directory),directory))throw new ServiceError('legacy_selection_review_required');
+            const before=await readJsonConfig(destination);if(before===undefined)throw new ServiceError('legacy_selection_review_required');
+            const resolved=await this.prepareOwnedHttpMigration(selected,agent,before);return resolved.spec;
         }finally{client.dispose();}
     }
     async index(requested?:LaunchSpec):Promise<void>{
@@ -727,7 +903,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             selected??=await this.chooseSpec(undefined,false);this.trusted();
             if(!selected)throw new Error('No project selected. Select a registered project and check again.');
             publish({phase:'preparing',message:`Checking the native registration for ${selected.name}…`});
-            selected=await this.resolveAgentSpec(selected);
+            if(!selected.http)selected=await this.resolveAgentSpec(selected);else if(!this.isCurrent(selected))throw new ServiceError('workspace_registration_changed');
             const result=await probeMcp(selected,UNIFIED_TOOLS.length,this.runningVersion,this.connectionEntries(selected)[0],
                 message=>publish({phase:'checking',message}));
             publish({phase:'verified',tools:result.tools,checkedAt:Date.now(),handshakeMs:result.handshakeMs,
@@ -809,12 +985,12 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         const detail=catalogObject(response.detail),item=catalogObject(detail.item),index=catalogObject(item.value),backing=catalogObject(index.backing);
         if(detail.namespace!==descriptor.namespace||detail.revision!==descriptor.catalog_revision||item.kind!=='index'||index.id!==chosen.id||index.tombstone!==false||index.source_import!=='complete'
             ||backing.binding!==chosen.backing.binding||backing.root!==chosen.backing.root||backing.data_root!==chosen.backing.data_root||backing.collection!==chosen.backing.collection)throw new ServiceError('crossed_native_index_administration');
-        const command=binding.universalLauncher??binding.launcher;
-        if(!command||binding.payloadVerified===false)throw new ServiceError('stable_launcher_unavailable');
+        const command=binding.executable;
+        if(!command||binding.payloadVerified===false)throw new ServiceError('native_executable_unavailable');
         const administration:AdministrativeIndexSelection & {nativeObservation:{host_context:CatalogObject;index_detail:CatalogObject}}={purpose:'index_administration',label:ADMINISTRATIVE_USAGE_LABEL,namespace:descriptor.namespace,catalogRevision:descriptor.catalog_revision,indexId:String(index.id),backing:catalogHex(backing.binding,64),
             runtime:{installDir:binding.installDir,controlDir:binding.controlDir,runtimeSha256:binding.runtimeSha256},nativeObservation:{host_context:context.response,index_detail:response}};
         const administrativeSpec:LaunchSpec={command,root:chosen.backing.root,dataDir:chosen.backing.data_root,collection:chosen.backing.collection,
-            name:`${chosen.name} · Entire Index administration`,service:{installDir:binding.installDir,project:administration.backing,...(binding.universalLauncher?{universal:true}:{})}};
+            name:`${chosen.name} · Entire Index administration`,service:{installDir:binding.installDir,project:administration.backing}};
         const authorized=()=>{try{current();return true;}catch{return false;}};current();
         await openUsagePanel(administrativeSpec,authorized,this.usageWriter(administrativeSpec,authorized),undefined,{administration});
     }
@@ -834,18 +1010,74 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         this.installationWarnings=false;
         this.reportInstall('Checking selected runtime…');
         this.trusted();const binding=await this.runtime().ensure();this.trusted();
-        if(!binding.launcher)throw new ServiceError('stable_launcher_unavailable');
+        if(!binding.executable)throw new ServiceError('native_executable_unavailable');
         this.reportInstall('Installing the terminal command…');
         const touched:ShellTouch[]=[];
-        const errors=await installLauncherCli(binding.universalLauncher??binding.launcher,this.context,this.shellScope(),touched);this.trusted();
+        const errors=await installLauncherCli(binding.executable,this.context,this.shellScope(),touched);this.trusted();
         // Uninstall cleanup reverses exactly these startup-file edits.
         if(this.uninstallDirectory)await rememberShellIntegration(this.uninstallDirectory,this.context.globalStorageUri.fsPath,touched)
             .catch(error=>errors.push(`Could not record terminal integration for uninstall cleanup: ${String(error)}`));
         for(const error of errors){this.installationWarnings=true;this.output.appendLine(error);}
-        this.reportInstall('Cleaning up previous runtime…');
-        await this.runtime().retirePrevious(binding);this.trusted();
-        // Runtime completion is independent of project registration/indexing.
-        if(!errors.length)await this.context.globalState.update(`airk.installComplete.1.${binding.installDir}`,`${this.runningVersion}:${binding.runtimeSha256}`);
+    }
+    private async verifyMigrationSnapshots():Promise<void>{
+        await this.migrationGlobalVerifier?.();
+        for(const destination of this.migrationAbsentConfigurations)if(await readJsonConfig(destination)!==undefined)throw new ServiceError('agent_configuration_appeared_after_migration');
+        for(const [destination,expected]of this.migratedConfigurationSnapshots){
+            const source=await readJsonConfig(destination);this.trusted();
+            if(source===undefined||createHash('sha256').update(source).digest('hex')!==expected)throw new ServiceError('agent_http_migration_incomplete',false,{destination,reason:'configuration_changed_after_migration'});
+        }
+    }
+    private async finalizeLegacyLauncherRemoval(binding:RuntimeBinding,publishCompletion=true,forcePayloadRetirement=false):Promise<void>{
+        this.trusted();const generation=this.generation;
+        await this.verifyMigrationSnapshots();
+        if(!this.legacyCachePreparation)throw new ServiceError('legacy_cache_inspection_unconfirmed');
+        let cacheReceipt:Record<string,unknown>;
+        try{cacheReceipt=await this.runtime().retireLegacyCaches(binding,this.legacyCachePreparation);}
+        catch(original){
+            this.output.appendLine('AIRK cache retirement was not confirmed: '+String(original));
+            if(original instanceof ServiceError&&original.nativeResponse)this.output.appendLine(JSON.stringify(original.nativeResponse));
+            // Explicit native recovery checks actual inventory and refuses
+            // pending/unknown work. An unchanged plan never authorizes replay.
+            const previous=this.legacyCachePreparation;
+            const recoveryCurrent=()=>{this.trusted();if(generation!==this.generation)throw new ServiceError('workspace_registration_changed');};
+            const client=await this.migrationClient(binding);let inventory:Awaited<ReturnType<typeof readWorkspaceRegistrations>>;
+            try{inventory=await readWorkspaceRegistrations(binding,async(after,revision,inactive)=>client.projects(after,revision,32,inactive));}finally{client.dispose();}recoveryCurrent();
+            const roots=[...this.folders().map(folder=>folder.uri.fsPath),...this.workspace.rememberedRoots(binding),...[...inventory.active,...inventory.inactive].map(row=>row.root)];
+            const locators=await this.scanLegacyCacheOrigins(roots,recoveryCurrent);
+            const replacement=await this.withLegacyOriginFile(binding,locators,recoveryCurrent,file=>this.runtime().reprepareLegacyCaches(binding,previous,file));recoveryCurrent();
+            if(generation!==this.generation)throw new ServiceError('workspace_registration_changed');
+            if(replacement.inspection_sha256===previous.inspection_sha256)throw original;
+            this.output.appendLine('AIRK native cache inventory changed; repeating the complete guarded configuration review once.');
+            await this.migrateAgentConnections(binding,this.migrationPredecessors);this.trusted();await this.verifyMigrationSnapshots();
+            if(!this.legacyCachePreparation||this.legacyCachePreparation.inspection_sha256!==replacement.inspection_sha256)throw new ServiceError('legacy_cache_reprepare_unconfirmed');
+            cacheReceipt=await this.runtime().retireLegacyCaches(binding,this.legacyCachePreparation);
+        }
+        this.trusted();if(generation!==this.generation)throw new ServiceError('workspace_registration_changed');
+        this.output.appendLine('AIRK old helper cache removal ('+String(cacheReceipt.scope)+'): '+JSON.stringify(cacheReceipt));
+        this.reportInstall('Removing old AIRK launchers...');
+        const receipt=await this.runtime().retireLegacyLaunchers(binding);this.trusted();
+        if(generation!==this.generation)throw new ServiceError('workspace_registration_changed');
+        this.output.appendLine('AIRK legacy launcher removal: '+JSON.stringify(receipt));
+        // Native removal leaves the current service and explicit Stop untouched.
+        // Retire old payloads only after original declarations have migrated and
+        // held native identities prove their obsolete launchers are gone.
+        const alreadyComplete=this.context.globalState.get<string>(`airk.installComplete.2.${binding.installDir}`)===`${binding.version}:${binding.runtimeSha256}`;
+        const obsolete=this.legacyLauncherInspection?.legacy_runtime_images;
+        const retired=forcePayloadRetirement||!alreadyComplete||Array.isArray(obsolete)&&obsolete.length?await this.runtime().retirePrevious(binding):undefined;this.trusted();
+        // Previous-payload retirement can restart the native owner. Only that
+        // actual native receipt warrants replacing its pipe and endpoint refs.
+        if(retired?.complete!==true&&retired?.retired_previous!==undefined&&retired.retired_previous!==null){
+            this.console.reset();const connected=await this.runtime().reconnect(await this.runtime().discover());this.trusted();
+            if(connected.runtimeSha256!==binding.runtimeSha256||!same(connected.controlDir,binding.controlDir))throw new ServiceError('runtime_selection_changed_review_again');
+            await this.migrateAgentConnections(connected,this.migrationPredecessors);
+        }
+        for(const info of this.migrationHttpConnections.values()){
+            const current=validateHttpConnection(await this.runtime().httpConnectionInfo(binding,info.connection_id),info.selection,path.join(binding.controlDir,'http-1'));this.trusted();
+            if(current.connection_id!==info.connection_id||!isDeepStrictEqual(current.endpoint,info.endpoint)||current.ca_certificate_file!==info.ca_certificate_file||current.credential_file!==info.credential_file)throw new ServiceError('agent_http_migration_incomplete',false,{reason:'native_http_endpoint_changed_after_cleanup'});
+        }
+        await this.verifyMigrationSnapshots();
+        if(this.installationWarnings)throw new ServiceError('installation_cleanup_incomplete');
+        if(publishCompletion)await this.context.globalState.update(`airk.installComplete.2.${binding.installDir}`,`${this.runningVersion}:${binding.runtimeSha256}`);
     }
     async installationComplete(manual=false):Promise<void>{
         this.trusted();
@@ -870,51 +1102,372 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             if(action==='Review details')this.output.show();
         }).then(undefined,error=>this.output.appendLine(`Installation action failed: ${String(error)}`));
     }
-    private async migrateAgentConnections(binding:RuntimeBinding,restored:readonly LaunchSpec[]=[]):Promise<void>{
-        this.trusted();
-        const generation=this.generation,folders=this.folders().map(folder=>folder.uri.fsPath);
-        const specs=await this.workspace.definitions(binding,folders);
-        for(const savedSpec of specs){
-            // Extension receipts may survive storage replacement. Never rewrite an
-            // agent's corrected configuration from those receipts alone.
-            const client=this.runtime().client(binding);
-            let spec:LaunchSpec;
-            try{spec=await this.workspace.resolveConnection(binding,savedSpec,async(after,revision)=>{
-                const page=await client.projects(after,revision,32);this.trusted();
-                if(generation!==this.generation)throw new ServiceError('workspace_registration_changed');
-                return page;
-            });}finally{client.dispose();}
-            if(this.uninstallDirectory)await rememberUninstallTarget(this.uninstallDirectory,binding.installDir,this.context.globalStorageUri.fsPath,spec);
-            const opened: string[]=[];
-            for(const folder of folders){try{if(same(await fs.realpath(folder),spec.root))opened.push(folder);}catch{/* Missing sources cannot host configuration edits. */}}
-            if(!opened.length)continue;
-            const check=()=>{
-                this.trusted();
-                if(generation!==this.generation||!opened.some(root=>this.folders().some(folder=>same(folder.uri.fsPath,root))))throw new ServiceError('workspace_registration_changed');
-            };
-            const messages=await migrateLocalAgents(spec,this.context.globalStorageUri.fsPath,check,async(destination,before,after)=>{
-                check();
-                const matches=vscode.workspace.textDocuments.filter(document=>same(document.uri.fsPath,destination)
-                    ||opened.some(root=>same(document.uri.fsPath,path.join(root,path.relative(spec.root,destination)))));
-                if(matches.some(document=>document.isDirty))throw new Error('Agent configuration has unsaved edits; save it and retry Install or Repair CLI.');
-                const document=matches[0]??await vscode.workspace.openTextDocument(vscode.Uri.file(destination));
-                if(document.isDirty||document.getText()!==before||await readJsonConfig(destination)!==before)throw new Error('Agent configuration changed; retry Install or Repair CLI.');
-                // VS Code normalizes inserted newlines to the document's EOL mode.
-                // A compact one-line JSON file can inherit Windows CRLF even when the transform uses LF.
-                const editorAfter=document.eol===2?after.replace(/\r?\n/g,'\r\n'):document.eol===1?after.replace(/\r\n/g,'\n'):after;
-                check();const version=document.version,edit=new vscode.WorkspaceEdit();
-                edit.replace(document.uri,new vscode.Range(document.positionAt(0),document.positionAt(before.length)),editorAfter);
-                if(document.version!==version||!await vscode.workspace.applyEdit(edit))throw new Error('Agent configuration edit failed.');
-                check();
-                if(document.getText()!==editorAfter||!await document.save())throw new Error('Agent configuration was not saved; review the editor changes.');
-            },vscode.workspace.getConfiguration('airk').get<boolean>('explorer.assistance.enabled',true),false,
-                restored.find(previous=>same(previous.root,spec.root)&&previous.collection===spec.collection));
-            for(const message of messages){
-                this.output.appendLine(message);
-                if(message.startsWith('Updated '))this.migratedConnections=true;
-                if(message.startsWith('Could not update'))this.installationWarnings=true;
+    private migrationCommandPaths(binding:RuntimeBinding,specs:readonly LaunchSpec[]):string[]{
+        const inspected=this.legacyLauncherInspection,paths=[binding.executable,path.join(binding.installDir,process.platform==='win32'?'airk-launcher.exe':'airk-launcher'),...specs.map(spec=>spec.command),...this.migrationPredecessors.map(spec=>spec.command)];
+        for(const field of ['launcher','universal_launcher'])if(inspected?.[field])paths.push(String(record(inspected[field]).path));
+        if(Array.isArray(inspected?.legacy_runtime_images))for(const item of inspected.legacy_runtime_images)paths.push(String(record(item).path));
+        if(Array.isArray(this.legacyCachePreparation?.caches))for(const item of this.legacyCachePreparation.caches)paths.push(String(record(item).executable));
+        return [...new Set(paths)];
+    }
+    private legacyCommandKnown(command:unknown,paths:readonly string[]):boolean{
+        if(typeof command!=='string'||!path.isAbsolute(command))return false;
+        if(paths.some(value=>same(value,command)))return true;
+        const relative=path.relative(this.context.globalStorageUri.fsPath,command).split(path.sep),name=process.platform==='win32'?'airk.exe':'airk';
+        return relative.join('/')==='cli/bin/'+name||relative.length===3&&relative[0]==='helpers'&&/^[A-Za-z0-9._-]+$/.test(relative[1])&&relative[2]===name;
+    }
+    private async saveMigrationConfiguration(destination:string,before:string,after:string,check:()=>void):Promise<string>{
+        const validate=async()=>{const parent=path.dirname(destination),stat=await fs.lstat(parent);check();if(!stat.isDirectory()||stat.isSymbolicLink()||!same(await fs.realpath(parent),parent))throw new ServiceError('unsafe_agent_configuration_directory');return readJsonConfig(destination);};
+        check();const matches=vscode.workspace.textDocuments.filter(document=>same(document.uri.fsPath,destination));
+        if(matches.some(document=>document.isDirty)){const error=new ServiceError('agent_configuration_has_unsaved_edits');error.message='Agent configuration has unsaved edits; save it and retry Install or Repair CLI.';throw error;}
+        const document=matches[0]??await vscode.workspace.openTextDocument(vscode.Uri.file(destination));
+        if(document.isDirty||document.getText()!==before||await validate()!==before)throw new ServiceError('agent_configuration_changed');
+        const editorAfter=document.eol===2?after.replace(/\r?\n/g,'\r\n'):document.eol===1?after.replace(/\r\n/g,'\n'):after;
+        check();const version=document.version,edit=new vscode.WorkspaceEdit();edit.replace(document.uri,new vscode.Range(document.positionAt(0),document.positionAt(before.length)),editorAfter);
+        if(document.version!==version||!await vscode.workspace.applyEdit(edit))throw new ServiceError('agent_configuration_edit_failed');
+        check();if(document.getText()!==editorAfter||!await document.save())throw new ServiceError('agent_configuration_save_failed');
+        const saved=await validate();check();if(saved!==editorAfter)throw new ServiceError('agent_configuration_save_unconfirmed');return saved;
+    }
+    private closeHttpEndpointWatcher():void{
+        this.httpWatchParent?.close();this.httpWatchParent=undefined;this.httpWatchEndpoint?.close();this.httpWatchEndpoint=undefined;
+        clearTimeout(this.httpWatchTimer);this.httpWatchTimer=undefined;clearTimeout(this.httpWatchRearm);this.httpWatchRearm=undefined;
+        clearTimeout(this.httpWatchHealthRetry);this.httpWatchHealthRetry=undefined;this.httpWatchFailures=0;
+        this.httpWatchRead?.dispose();this.httpWatchRead=undefined;this.httpWatchKey=undefined;this.httpWatchPending=false;
+    }
+    /** Filesystem notifications are hints only. Native Health authenticates the
+     * selected owner; no descriptor contents, client election or UI polling. */
+    private syncHttpEndpointWatcher():void{
+        const binding=this.binding;
+        if(this.disposed||!vscode.workspace.isTrusted||!nativeExecutionAllowed()||!binding||binding.version!==this.runningVersion){this.closeHttpEndpointWatcher();return;}
+        const key=JSON.stringify([binding.controlDir,binding.runtimeSha256,this.generation]);
+        if(this.httpWatchKey===key&&this.httpWatchParent&&this.httpWatchEndpoint)return;
+        const initial=this.httpWatchKey!==key;
+        if(initial){this.closeHttpEndpointWatcher();this.httpWatchKey=key;}
+        const attach=(directory:string,parent:boolean):FSWatcher|undefined=>{
+            try{
+                const watcher=watch(directory,{persistent:false},(_event,name)=>{
+                    if(this.httpWatchKey!==key)return;
+                    if(name!==null&&String(name)!==(parent?'http-1':'endpoint.json'))return;
+                    if(parent){this.httpWatchEndpoint?.close();this.httpWatchEndpoint=undefined;}
+                    this.queueHttpOwnerHint();
+                });
+                watcher.on('error',()=>{watcher.close();if(this.httpWatchKey!==key)return;if(parent)this.httpWatchParent=undefined;else this.httpWatchEndpoint=undefined;this.queueHttpOwnerHint();this.rearmHttpEndpointWatcher();});
+                return watcher;
+            }catch{return undefined;}
+        };
+        if(!this.httpWatchParent)this.httpWatchParent=attach(binding.controlDir,true);
+        if(!this.httpWatchEndpoint)this.httpWatchEndpoint=attach(path.join(binding.controlDir,'http-1'),false);
+        if(!this.httpWatchParent||!this.httpWatchEndpoint)this.rearmHttpEndpointWatcher();
+        else{clearTimeout(this.httpWatchRearm);this.httpWatchRearm=undefined;}
+        if(initial)this.queueHttpOwnerHint();
+    }
+    private rearmHttpEndpointWatcher():void{
+        if(this.disposed||this.httpWatchRearm)return;
+        this.httpWatchRearm=setTimeout(()=>{this.httpWatchRearm=undefined;this.syncHttpEndpointWatcher();this.queueHttpOwnerHint();},30000);
+    }
+    private queueHttpOwnerHint():void{
+        if(this.disposed||this.httpWatchTimer)return;
+        this.httpWatchTimer=setTimeout(()=>{this.httpWatchTimer=undefined;this.syncHttpEndpointWatcher();void this.readHttpOwnerHint();},200);
+    }
+    private async readHttpOwnerHint():Promise<void>{
+        if(this.httpWatchReading){this.httpWatchPending=true;return;}
+        const binding=this.binding,key=this.httpWatchKey;
+        if(!key||!binding||this.disposed||this.settingUp||!vscode.workspace.isTrusted||!nativeExecutionAllowed())return;
+        clearTimeout(this.httpWatchHealthRetry);this.httpWatchHealthRetry=undefined;
+        this.httpWatchReading=true;let client:ReturnType<RuntimeHost['client']>|undefined;
+        try{
+            client=this.runtime().client(binding,3000);this.httpWatchRead=client;
+            const response=await client.rpc('health','health');this.httpWatchFailures=0;
+            if(!this.disposed&&this.httpWatchKey===key&&this.binding===binding)this.observeHttpIdentity(record(response.observation),binding);
+        }catch(error){
+            // A publication hint may precede listener readiness. Bound retries;
+            // stopped owners remain stopped, and healthy watches need no polling.
+            if(!this.disposed&&this.httpWatchKey===key&&vscode.workspace.isTrusted&&nativeExecutionAllowed()&&!(error instanceof ServiceError&&error.code==='service_explicitly_stopped')&&this.httpWatchFailures<3){
+                const delay=1000*2**++this.httpWatchFailures;
+                this.httpWatchHealthRetry=setTimeout(()=>{this.httpWatchHealthRetry=undefined;void this.readHttpOwnerHint();},delay);
             }
         }
+        finally{client?.dispose();if(this.httpWatchRead===client)this.httpWatchRead=undefined;this.httpWatchReading=false;if(this.httpWatchPending){this.httpWatchPending=false;this.queueHttpOwnerHint();}}
+    }
+    private observeHttpOwner(state:ServiceConsoleState):void{
+        if(state.health.state!=='live')return;
+        const health=state.health.value?.observation as Record<string,unknown>|undefined,binding=this.binding??this.console.controller.connectedRuntimeBinding;
+        if(health&&binding)this.observeHttpIdentity(health,binding);
+    }
+    private observeHttpIdentity(health:Record<string,unknown>,binding:RuntimeBinding):void{
+        if(this.disposed||this.settingUp||!vscode.workspace.isTrusted||!nativeExecutionAllowed()||binding.version!==this.runningVersion||health.version!==this.runningVersion||health.runtime_sha256!==binding.runtimeSha256||typeof health.instance!=='string'||!/^[a-f0-9]{32}$/.test(health.instance))return;
+        const instance=health.instance;this.latestHttpOwner={runtime:binding.runtimeSha256,instance};
+        if(this.httpConfigurationRefresh||this.observedHttpInstance===instance)return;
+        if(this.httpRefreshRetry?.instance===instance&&Date.now()<this.httpRefreshRetry.next)return;
+        clearTimeout(this.httpRefreshTimer);this.httpRefreshTimer=undefined;
+        const pending=this.refreshHttpConfigurationFiles(binding,instance).then(()=>{
+            this.observedHttpInstance=instance;this.httpRefreshRetry=undefined;
+            if(!this.disposed)this.definitions.fire();
+        },error=>{
+            const attempt=this.httpRefreshRetry?.instance===instance?Math.min(6,this.httpRefreshRetry.attempt+1):1;
+            const delay=Math.min(30000,1000*2**attempt);
+            this.httpRefreshRetry={instance,attempt,next:Date.now()+delay};
+            if(!this.disposed)this.httpRefreshTimer=setTimeout(()=>{this.httpRefreshTimer=undefined;void this.readHttpOwnerHint();},delay);
+            if(!this.disposed){
+                this.output.appendLine('AIRK saved HTTPS connection refresh deferred: '+String(error));
+                if(this.httpRefreshWarnedInstance!==instance){this.httpRefreshWarnedInstance=instance;void vscode.window.showWarningMessage('AIRK restarted. Some saved HTTPS connections still need refreshing. AIRK will retry with their current file contents; review AIRK output for blocked or edited configurations.');}
+            }
+        }).finally(()=>{if(this.httpConfigurationRefresh===pending)this.httpConfigurationRefresh=undefined;});
+        this.httpConfigurationRefresh=pending;
+    }
+    /** Read-only discovery through the management channel refreshes only existing
+     * owned HTTP declarations; it never enrolls, changes grants or retires files. */
+    private async refreshHttpConfigurationFiles(binding:RuntimeBinding,instance?:string):Promise<void>{
+        const generation=this.generation,check=()=>{this.trusted();const owner=this.latestHttpOwner;if(generation!==this.generation||this.settingUp||instance&&owner?.runtime===binding.runtimeSha256&&owner.instance!==instance)throw new ServiceError('workspace_registration_changed');};
+        // Serialize with installation migration; retain a separate request cache.
+        if(this.settingUp)return;this.httpOwnershipLookups.clear();check();
+        const roots=new Set([...this.folders().map(folder=>folder.uri.fsPath),...this.workspace.rememberedRoots(binding)]);
+        const client=this.runtime().client(binding);try{const native=await readWorkspaceRegistrations(binding,async(after,revision,inactive)=>client.projects(after,revision,32,inactive));for(const row of [...native.active,...native.inactive])roots.add(row.root);}finally{client.dispose();}check();
+        for(const root of roots)for(const agent of ['codex','claude','copilot'] as const){
+            const destination=path.join(root,...localAgentLocations[agent]),source=await readJsonConfig(destination);if(source===undefined)continue;
+            const refreshed=await this.refreshOwnedHttpConfiguration(agent,source,binding,check,true);check();if(refreshed.source!==source)await this.saveMigrationConfiguration(destination,source,refreshed.source,check);
+        }
+        const globals=await inventoryGlobalAgentConfigs({home:os.homedir(),env:{...process.env},globalStoragePath:this.context.globalStorageUri.fsPath,check});check();
+        if(globals.blockers.length)throw new ServiceError('http_configuration_refresh_unconfirmed',false,{blockers:globals.blockers});
+        for(const original of globals.files){let file=original;
+            for(const container of [...new Map(file.declarations.map(row=>[JSON.stringify(row.containerPath),row.containerPath])).values()]){
+                if(file.agent==='codex'&&(container.length!==1||container[0]!=='mcp_servers')){
+                    const declarations=file.declarations.filter(row=>JSON.stringify(row.containerPath)===JSON.stringify(container));
+                    if(await this.hasOwnedHttpDeclarations(file.agent,declarations,binding,check))throw new ServiceError('owned_http_profile_requires_review',false,{destination:file.destination});
+                    continue;
+                }
+                let before='';transformGlobalContainer(file,container,source=>{before=source;return source;});
+                const refreshed=await this.refreshOwnedHttpConfiguration(file.agent,before,binding,check,true);check();
+                if(refreshed.source!==before){const source=transformGlobalContainer(file,container,()=>refreshed.source);file={...file,source,declarations:globalConfigDeclarations(file.agent,source)};}
+            }
+            if(file.source!==original.source)await this.saveMigrationConfiguration(file.destination,original.source,file.source,check);
+        }
+    }
+    private lookupHttpOwnership(binding:RuntimeBinding,id:string){
+        const key=binding.installDir+':'+binding.runtimeSha256+':'+id;
+        let pending=this.httpOwnershipLookups.get(key);
+        if(!pending){pending=this.runtime().lookupHttpConnection(binding,id);this.httpOwnershipLookups.set(key,pending);}
+        return pending;
+    }
+    private async hasOwnedHttpDeclarations(agent:GlobalAgent,declarations:GlobalConfigFile['declarations'],binding:RuntimeBinding,check:()=>void):Promise<boolean>{
+        for(const row of declarations){
+            const id=httpConfigurationConnectionId(agent,row.fields);if(!id)continue;
+            const lookup=await this.lookupHttpOwnership(binding,id);check();if(lookup.status==='owned')return true;
+        }
+        return false;
+    }
+    private async refreshOwnedHttpConfiguration(agent:LocalAgent,source:string,binding:RuntimeBinding,check:()=>void,onlyEndpointChanges=false):Promise<{source:string;owned:boolean}>{
+        if(!['codex','claude','copilot'].includes(agent))return {source,owned:false};
+        const declarations=globalConfigDeclarations(agent as GlobalAgent,source);
+        let result=source,owned=false;
+        for(const row of declarations){
+            const id=httpConfigurationConnectionId(agent,row.fields);if(!id)continue;
+            const lookup=await this.lookupHttpOwnership(binding,id);check();if(lookup.status==='not_owned')continue;
+            if(row.containerPath.length!==1)throw new ServiceError('owned_http_alias_requires_review',false,{connection_id:id});
+            const info=validateHttpConnection(lookup.connection,undefined,path.join(binding.controlDir,'http-1'));
+            if(row.serverKey!=='airk'&&preservedImportedHttpServerKey(info,row.serverKey)!==row.serverKey)throw new ServiceError('owned_http_alias_requires_review',false,{connection_id:id});
+            const storage=await fs.realpath(this.context.globalStorageUri.fsPath);check();
+            await this.provisionHttpInfo(info,agent==='copilot'?'vscode':agent,check,storage);check();
+            if(!onlyEndpointChanges||row.fields.url!==info.endpoint.url)result=refreshHttpAgentConfig(agent,result,info,String(row.fields.url),row.serverKey);
+            this.migrationHttpConnections.set(id,info);owned=true;
+        }
+        return {source:result,owned};
+    }
+    private originalMigrationReceipt(destination:string,fallback:string):string{
+        const original=Array.isArray(this.legacyCachePreparation?.origin_proofs)?this.legacyCachePreparation.origin_proofs.map(record).filter(value=>same(String(value.config_path),destination)):[];
+        const digests=new Set(original.map(value=>String(value.config_sha256)));
+        if(digests.size>1)throw new ServiceError('legacy_original_configuration_changed');
+        return [...digests][0]??[...this.legacyMigrationFiles.values()].find(value=>same(value.file.destination,destination))?.file.sha256??fallback;
+    }
+    private async migrateGeneratedServiceConfiguration(binding:RuntimeBinding,agent:LocalAgent,before:string,specs:readonly LaunchSpec[],restored:readonly LaunchSpec[],check:()=>void,configurationReceipt:string,destination:string,originContainer?:readonly string[]):Promise<{source:string;owned:boolean}>{
+        const refreshed=await this.refreshOwnedHttpConfiguration(agent,before,binding,check);let source=refreshed.source,owned=refreshed.owned;
+        const parser=agent==='codex'?'codex':agent==='copilot'?'copilot':'claude',commands=this.migrationCommandPaths(binding,specs),rows=globalConfigDeclarations(parser,source);
+        const ownedReadRows=rows.filter(row=>row.serverKey!=='airk_explorer'&&this.legacyCommandKnown(row.fields.command,commands));
+        const independent=rows.some(row=>typeof row.fields.url==='string')||ownedReadRows.length>1||rows.some(row=>row.serverKey==='airk'&&!this.legacyCommandKnown(row.fields.command,commands));
+        for(const row of rows){
+            if(row.containerPath.length!==1||!this.legacyCommandKnown(row.fields.command,commands))continue;
+            if(!globalConfigDeclarations(parser,source).some(current=>current.serverKey===row.serverKey&&current.fields.command===row.fields.command))continue;
+            if(Array.isArray(this.legacyCachePreparation?.caches)&&this.legacyCachePreparation.caches.some(cache=>same(String(record(cache).executable),String(row.fields.command)))){
+                const managed=this.legacyCachePreparation?.managed_locators;
+                if(!Array.isArray(managed)||!managed.some(value=>{const locator=value as unknown as LegacyOriginLocator,container=locator.container_path??[locator.format==='codex_toml'?'mcp_servers':locator.format==='vscode_servers_json'?'servers':'mcpServers'];if(!same(locator.path,destination)||locator.server!==row.serverKey||!isDeepStrictEqual(container,originContainer??row.containerPath))return false;return (this.legacyCachePreparation!.origin_proofs as unknown[]).map(record).some(origin=>origin.config_path===locator.path&&origin.server===locator.server&&isDeepStrictEqual(origin.container_path,container)&&same(String(origin.executable),String(row.fields.command))&&isDeepStrictEqual(record(origin.declaration).argv,row.fields.args));}))throw new ServiceError('standalone_index_adoption_required');
+            }
+            const args=row.fields.args;if(!Array.isArray(args)||args.some(value=>typeof value!=='string'))throw new ServiceError('owned_global_scope_unproven');
+            if(args[0]==='runtime'&&(args[1]!=='launch'||args[2]!=='--install-dir'||!same(String(args[3]),binding.installDir)||args[4]!=='--'))throw new ServiceError('owned_global_scope_unproven');
+            const candidates=specs.filter(spec=>{
+                const at=args.indexOf('--root');if(at<0||typeof args[at+1]!=='string'||!same(args[at+1],spec.root))return false;
+                for(const [flag,value]of [['--collection',spec.collection],['--service-project',spec.service!.project],['--data-dir',spec.dataDir]]){const index=args.indexOf(flag);if(index>=0&&(typeof args[index+1]!=='string'||(flag==='--data-dir'?!same(args[index+1],value):args[index+1]!==value)))return false;}
+                return true;
+            });
+            if(candidates.length!==1)throw new ServiceError(candidates.length?'ambiguous_global_scope':'owned_global_scope_unproven');
+            const spec=candidates[0];if(row.serverKey!=='airk'&&row.serverKey!=='airk-'+spec.collection)throw new ServiceError('owned_agent_alias_requires_review');
+            const previous=restored.find(value=>same(value.root,spec.root)&&value.collection===spec.collection&&same(value.command,String(row.fields.command)))??{...spec,command:String(row.fields.command),http:undefined,service:{...spec.service!,direct:true}};
+            const selectedKey=independent?row.serverKey:undefined;
+            if(!this.migrationCandidate(spec,agent,source,previous,binding,selectedKey).owned)throw new ServiceError('owned_global_scope_unproven');
+            const resolved=await this.prepareOwnedHttpMigration(spec,agent,source,previous,{binding,valid:check,configurationReceipt,selectedKey});check();
+            source=migrateAgentConfig(agent,resolved.spec,this.context.globalStorageUri.fsPath,source,this.assistanceEnabled(),()=>undefined,false,false,resolved.previous,selectedKey);owned=true;
+        }
+        return {source,owned};
+    }
+    private async migrateGlobalAgentConnections(binding:RuntimeBinding,specs:readonly LaunchSpec[],restored:readonly LaunchSpec[],check:()=>void,observe:(destination:string,source:string)=>void):Promise<void>{
+        const options={home:os.homedir(),env:{...process.env},globalStoragePath:this.context.globalStorageUri.fsPath,check};
+        const inventory=await inventoryGlobalAgentConfigs(options);check();
+        if(inventory.blockers.length)throw new ServiceError('agent_http_migration_incomplete',false,{blockers:inventory.blockers});
+        const commands=this.migrationCommandPaths(binding,specs),sameCommand=(value:unknown)=>this.legacyCommandKnown(value,commands);
+        for(const original of inventory.files){
+            let file:GlobalConfigFile=original,relevant=false;
+            const containers=[...new Map(file.declarations.map(row=>[JSON.stringify(row.containerPath),row.containerPath])).values()];
+            for(const container of containers){
+                const declarations=file.declarations.filter(row=>JSON.stringify(row.containerPath)===JSON.stringify(container));
+                const ownedCommand=declarations.some(row=>sameCommand(row.fields.command));
+                if(file.agent==='codex'&&(container.length!==1||container[0]!=='mcp_servers')){
+                    const knownHttp=await this.hasOwnedHttpDeclarations(file.agent,declarations,binding,check);
+                    if(ownedCommand||knownHttp)throw new ServiceError('agent_http_migration_incomplete',false,{destination:file.destination,reason:'owned_profile_transform_unverified'});
+                    continue;
+                }
+                let before='';transformGlobalContainer(file,container,source=>{before=source;return source;});
+                const refreshed=await this.migrateGeneratedServiceConfiguration(binding,file.agent,before,specs,restored,check,this.originalMigrationReceipt(file.destination,original.sha256),file.destination,container);check();
+                if(refreshed.owned){relevant=true;const source=transformGlobalContainer(file,container,()=>refreshed.source);file={...file,source,declarations:globalConfigDeclarations(file.agent,source)};}
+
+            }
+            if(file.source!==original.source){const saved=await this.saveMigrationConfiguration(file.destination,original.source,file.source,check);file={...file,source:saved,declarations:globalConfigDeclarations(file.agent,saved)};this.migratedConnections=true;}
+            // A recognized old image under an unsupported alias cannot escape
+            // finalization merely because it was not a canonical AIRK key.
+            if(file.declarations.some(row=>sameCommand(row.fields.command)))throw new ServiceError('agent_http_migration_incomplete',false,{destination:file.destination,reason:'legacy_global_declaration_remains'});
+            if(relevant)observe(file.destination,file.source);
+        }
+        this.migrationGlobalVerifier=async()=>{
+            const fresh=await inventoryGlobalAgentConfigs(options);check();
+            if(fresh.blockers.length)throw new ServiceError('agent_http_migration_incomplete',false,{blockers:fresh.blockers});
+            for(const file of fresh.files){
+                if(file.declarations.some(row=>sameCommand(row.fields.command)))throw new ServiceError('agent_http_migration_incomplete',false,{destination:file.destination,reason:'legacy_global_declaration_appeared'});
+                if(!this.migratedConfigurationSnapshots.has(file.destination)&&file.declarations.some(row=>{const id=httpConfigurationConnectionId(file.agent,row.fields);return !!id&&this.migrationHttpConnections.has(id);}))throw new ServiceError('agent_http_migration_incomplete',false,{destination:file.destination,reason:'owned_global_configuration_appeared'});
+            }
+        };
+    }
+    private async scanLegacyCacheOrigins(roots:readonly string[],check:()=>void):Promise<LegacyOriginLocator[]>{
+        const locators:LegacyOriginLocator[]=[],seen=new Set<string>();this.legacyMigrationFiles.clear();
+        const collect=(destination:string,agent:GlobalAgent,source:string,actualAgent:LocalAgent=agent)=>{
+            const declarations=globalConfigDeclarations(agent,source);this.legacyMigrationFiles.set(destination,{agent:actualAgent,file:{agent,destination,source,sha256:createHash('sha256').update(source).digest('hex'),declarations}});
+            for(const row of declarations){
+                if(actualAgent!==agent&&(row.containerPath.length!==1||row.containerPath[0]!=='mcpServers'))continue;
+                const command=row.fields.command;
+                if(typeof command!=='string'||!path.isAbsolute(command)||path.basename(path.dirname(path.dirname(command))).toLowerCase()!=='helpers'||path.basename(path.dirname(path.dirname(path.dirname(command)))).toLowerCase()!=='iokaio.airk')continue;
+                if(!['airk','airk.exe'].includes(path.basename(command).toLowerCase()))continue;
+                const locator:LegacyOriginLocator={path:destination,format:agent==='codex'?'codex_toml':agent==='copilot'?'vscode_servers_json':'mcp_servers_json',server:row.serverKey,...(agent==='claude'?{container_path:row.containerPath}:{})};
+                const key=JSON.stringify(locator);if(!seen.has(key)){seen.add(key);locators.push(locator);}
+            }
+        };
+        for(const root of new Set(roots))for(const [agent,parts]of Object.entries(localAgentLocations)){
+            const destination=path.join(root,...parts),source=await readJsonConfig(destination);check();if(source!==undefined)collect(destination,agent==='codex'?'codex':agent==='copilot'?'copilot':'claude',source,agent as LocalAgent);
+        }
+        const globals=await inventoryGlobalAgentConfigs({home:os.homedir(),env:{...process.env},globalStoragePath:this.context.globalStorageUri.fsPath,check});check();
+        if(globals.blockers.length)throw new ServiceError('agent_http_migration_incomplete',false,{blockers:globals.blockers});
+        for(const file of globals.files)collect(file.destination,file.agent,file.source);
+        if(locators.length>128||Buffer.byteLength(JSON.stringify(locators))>524288)throw new ServiceError('legacy_cache_locator_inventory_oversize');
+        return locators;
+    }
+    private async withLegacyOriginFile<T>(binding:RuntimeBinding,locators:readonly LegacyOriginLocator[],check:()=>void,action:(file:string|undefined)=>Promise<T>):Promise<T>{
+        let locatorFile:string|undefined;
+        try{
+            if(locators.length){locatorFile=await publishNativeInput(binding.controlDir,JSON.stringify(locators),check);check();}
+            const result=await action(locatorFile);check();return result;
+        }finally{if(locatorFile)await removeNativeInput(locatorFile);}
+    }
+    private async prepareLegacyCacheMigration(binding:RuntimeBinding,roots:readonly string[],check:()=>void):Promise<void>{
+        const locators=await this.scanLegacyCacheOrigins(roots,check);
+        const storage=await fs.realpath(this.context.globalStorageUri.fsPath);check();
+        this.legacyCachePreparation=await this.withLegacyOriginFile(binding,locators,check,file=>this.runtime().prepareLegacyCaches(binding,path.dirname(storage),file));check();
+    }
+    private async adoptStandaloneConfigurations(binding:RuntimeBinding,check:()=>void,observe:(destination:string,source:string)=>void):Promise<void>{
+        const prepared=this.legacyCachePreparation;if(!prepared)throw new ServiceError('legacy_cache_inspection_unconfirmed');
+        const classifications=Array.isArray(prepared.origin_classifications)?prepared.origin_classifications.map(record):[];
+        if(classifications.some(value=>value.kind==='unsupported'))throw new ServiceError('legacy_original_configuration_unsupported',false,prepared);
+        const candidates=Array.isArray(prepared.adoption_locators)?prepared.adoption_locators as unknown as LegacyOriginLocator[]:[];
+        if(!candidates.length)return;
+        const container=(locator:LegacyOriginLocator)=>locator.container_path??[locator.format==='codex_toml'?'mcp_servers':locator.format==='vscode_servers_json'?'servers':locator.format==='open_code_json'?'mcp':'mcpServers'];
+        const files=new Map<string,{agent:LocalAgent;file:GlobalConfigFile;locators:LegacyOriginLocator[]}>(),needed:LegacyOriginLocator[]=[];
+        for(const locator of candidates){
+            const current=[...this.legacyMigrationFiles.values()].find(value=>same(value.file.destination,locator.path));
+            if(!current){if(await readJsonConfig(locator.path)===undefined){this.migrationAbsentConfigurations.add(locator.path);continue;}throw new ServiceError('legacy_client_configuration_location_unverified');}
+            if(!['codex','claude','copilot'].includes(current.agent))throw new ServiceError('http_client_compatibility_unverified');
+            const row=current.file.declarations.find(row=>row.serverKey===locator.server&&isDeepStrictEqual(row.containerPath,container(locator)));
+            if(!row||typeof row.fields.command!=='string')continue;
+            const origin=(prepared.origin_proofs as unknown[]).map(record).find(value=>value.config_path===locator.path&&value.server===locator.server&&isDeepStrictEqual(value.container_path,container(locator)));
+            if(!origin||!same(String(row.fields.command),String(origin.executable))||current.file.sha256!==origin.config_sha256)throw new ServiceError('legacy_original_configuration_changed',false,prepared);
+            if(vscode.workspace.textDocuments.some(document=>same(document.uri.fsPath,locator.path)&&document.isDirty))throw new ServiceError('agent_configuration_has_unsaved_edits');
+            const group=files.get(current.file.destination)??{...current,locators:[]};group.locators.push(locator);files.set(current.file.destination,group);needed.push(locator);
+        }
+        if(!needed.length)return;
+        const storage=await fs.realpath(this.context.globalStorageUri.fsPath);check();
+        const input=await publishNativeInput(binding.controlDir,JSON.stringify(needed),check,'native-input-legacy-batch-'+String(prepared.inspection_sha256)+'.json');let accepted:LegacyOriginLocator[];
+        const stat=await fs.lstat(input);if(!stat.isFile()||stat.isSymbolicLink()||stat.nlink!==1||stat.size>1048576||!same(await fs.realpath(input),input))throw new ServiceError('legacy_batch_input_unconfirmed');accepted=JSON.parse(await fs.readFile(input,'utf8'));
+
+        const allowed=new Set(candidates.map(legacyOriginLocatorIdentity));
+        if(!Array.isArray(accepted)||!accepted.length||accepted.length>32||new Set(accepted.map(legacyOriginLocatorIdentity)).size!==accepted.length||accepted.some(locator=>!allowed.has(legacyOriginLocatorIdentity(locator)))||needed.some(locator=>!accepted.some(value=>legacyOriginLocatorIdentity(value)===legacyOriginLocatorIdentity(locator))))throw new ServiceError('legacy_batch_input_changed');
+        const operation=createHash('sha256').update(JSON.stringify(['airk-standalone-batch/1',binding.installDir,binding.runtimeSha256,prepared.inspection_sha256])).digest('hex').slice(0,32);
+        // The native owner chooses shared physical backings and retains the
+        // complete frozen batch; all authority checks precede any config save.
+        const batch=await this.runtime().adoptLegacyIndexes(binding,prepared,operation,input,accepted);check();
+        this.output.appendLine('AIRK saved evidence adoption: '+JSON.stringify(batch));
+        const mapped=(batch.claims as unknown[]).map(record),pending=new Map<string,GlobalConfigFile>();
+        for(const [destination,entry]of files){
+            let file=entry.file;
+            if(await readJsonConfig(destination)!==entry.file.source)throw new ServiceError('agent_configuration_changed');check();
+            for(const locator of entry.locators){
+                const mapping=mapped.find(value=>legacyOriginLocatorIdentity(value.locator as unknown as LegacyOriginLocator)===legacyOriginLocatorIdentity(locator));if(!mapping||mapping.config_sha256!==entry.file.sha256)throw new ServiceError('legacy_original_configuration_changed');
+                const original=record(mapping.original_registration),origin=String(mapping.origin_sha256),client=entry.agent==='copilot'?'vscode':entry.agent;
+                const key=createHash('sha256').update(JSON.stringify(['standalone-http/1',binding.installDir,legacyOriginLocatorIdentity(locator),origin,client])).digest('hex'),id=key.slice(0,32),savedKey='airk.http.standalone.1.'+key;
+                const prior=this.context.globalState.get<unknown>(savedKey);let info:HttpConnectionInfo;
+                if(prior!==undefined){const old=validateHttpConnection(prior,undefined,path.join(binding.controlDir,'http-1'));info=validateHttpConnection(await this.runtime().httpConnectionInfo(binding,old.connection_id),old.selection,path.join(binding.controlDir,'http-1'));}
+                else{const registrationFile=await publishNativeInput(binding.controlDir,JSON.stringify(original),check);try{check();info=await this.runtime().httpLegacyConnection(binding,original as unknown as {binding:string;root:string;data_root:string;collection:string},registrationFile,String(mapping.config_sha256),id,client,this.assistanceEnabled()?this.assistanceHost?.descriptorPath:undefined,origin);}finally{await removeNativeInput(registrationFile);}}
+                check();if(info.selection.kind!=='imported_legacy'||!matchesImportedHttpOrigin(info.selection.selection,original as unknown as {binding:string;root:string;data_root:string;collection:string},String(mapping.config_sha256))||!isDeepStrictEqual(info.selection.selection.registration,mapping.registration)||!((info.selection.selection.grant.provenance.adoption.configuration_claims as Record<string,unknown>[]).some(claim=>claim.origin_sha256===origin&&claim.config_sha256===mapping.config_sha256)))throw new ServiceError('standalone_http_authority_changed');
+                await this.provisionHttpInfo(info,client,check,storage);check();await this.context.globalState.update(savedKey,info);check();this.migrationHttpConnections.set(info.connection_id,info);
+                const originalRow=entry.file.declarations.find(row=>row.serverKey===locator.server&&isDeepStrictEqual(row.containerPath,container(locator)));if(!originalRow)throw new ServiceError('legacy_original_configuration_changed');
+                const after=transformGlobalContainer(file,container(locator),source=>migrateStandaloneHttpEntry(entry.agent,source,locator.server,originalRow.fields,info,String(mapping.config_sha256),origin,container(locator)));
+                file={...file,source:after,declarations:globalConfigDeclarations(file.agent,after)};
+            }
+            pending.set(destination,file);
+        }
+        // One CAS per complete original file, preserving distinct entries and
+        // policies even when several claims share one native publication.
+        for(const [destination,file]of pending){const before=files.get(destination)!.file.source,saved=await this.saveMigrationConfiguration(destination,before,file.source,check);check();observe(destination,saved);this.migratedConnections=true;this.output.appendLine('Updated '+destination);}
+    }
+    private migrationClient(binding:RuntimeBinding){return binding.version===this.runningVersion?Promise.resolve(this.runtime().client(binding)):this.runtime().migrationClient(binding);}
+    private async migrateAgentConnections(binding:RuntimeBinding,restored:readonly LaunchSpec[]=[]):Promise<void>{
+        this.trusted();
+        const generation=this.generation,host=this.host,folders=this.folders().map(folder=>folder.uri.fsPath);
+        this.legacyCachePreparation=undefined;this.migrationAbsentConfigurations.clear();this.migrationHttpConnections=new Map();this.migrationGlobalVerifier=undefined;this.httpOwnershipLookups.clear();
+        this.legacyLauncherInspection=await this.runtime().inspectLegacyLaunchers(binding);this.trusted();
+        if(generation!==this.generation||host!==this.host)throw new ServiceError('workspace_registration_changed');
+        const known=[...new Set([...folders,...this.workspace.rememberedRoots(binding)])];
+        const specs=await this.workspace.definitions(binding,known),failures:string[]=[],snapshots=new Map<string,string>();
+        const observed=(destination:string,source:string,terminal=true)=>{
+            const agent=destination.endsWith('.toml')?'codex':path.basename(path.dirname(destination))==='.vscode'?'copilot':'claude';
+            const rows=globalConfigDeclarations(agent,source);
+            if(terminal&&rows.some(row=>this.legacyCommandKnown(row.fields.command,this.migrationCommandPaths(binding,specs))))throw new ServiceError('agent_http_migration_incomplete',false,{destination,reason:'legacy_owned_declaration_remains'});
+            snapshots.set(destination,createHash('sha256').update(source).digest('hex'));
+        };
+        const inventoryClient=await this.migrationClient(binding);let inventory:Awaited<ReturnType<typeof readWorkspaceRegistrations>>;
+        try{inventory=await readWorkspaceRegistrations(binding,async(after,revision,inactive)=>inventoryClient.projects(after,revision,32,inactive));}finally{inventoryClient.dispose();}
+        this.trusted();if(generation!==this.generation||host!==this.host)throw new ServiceError('workspace_registration_changed');
+        for(const row of [...inventory.active,...inventory.inactive])if(!specs.some(spec=>spec.service!.project===row.binding))specs.push({command:binding.executable,root:row.root,dataDir:row.data_root,collection:row.collection,name:row.collection,service:{installDir:binding.installDir,project:row.binding,direct:true}});
+        const preparationCurrent=()=>{this.trusted();if(generation!==this.generation||host!==this.host)throw new ServiceError('workspace_registration_changed');};
+        // Capture original cache/config preimages before either legacy migration
+        // or a modern endpoint-only rewrite saves any configuration bytes.
+        await this.prepareLegacyCacheMigration(binding,[...known,...specs.map(spec=>spec.root)],preparationCurrent);
+        await this.adoptStandaloneConfigurations(binding,preparationCurrent,(destination,source)=>observed(destination,source,false));
+        const localFiles=new Set<string>();
+        for(const root of new Set([...known,...specs.map(spec=>spec.root)]))for(const [agent,parts]of Object.entries(localAgentLocations)){
+            const destination=path.join(root,...parts);if(localFiles.has(destination))continue;localFiles.add(destination);
+            const source=await readJsonConfig(destination);preparationCurrent();if(source===undefined)continue;
+            const changed=await this.migrateGeneratedServiceConfiguration(binding,agent as LocalAgent,source,specs,restored,preparationCurrent,this.originalMigrationReceipt(destination,createHash('sha256').update(source).digest('hex')),destination);preparationCurrent();
+            if(!changed.owned)continue;
+            const saved=changed.source===source?source:await this.saveMigrationConfiguration(destination,source,changed.source,preparationCurrent);
+            observed(destination,saved);if(saved!==source){this.migratedConnections=true;this.output.appendLine('Updated '+destination);}
+        }
+        if(failures.length)throw new ServiceError('agent_http_migration_incomplete',false,{failures});
+        const current=()=>{this.trusted();if(generation!==this.generation||host!==this.host)throw new ServiceError('workspace_registration_changed');};
+        await this.migrateGlobalAgentConnections(binding,specs,restored,current,observed);
+        this.migratedConfigurationSnapshots=snapshots;await this.verifyMigrationSnapshots();
     }
     private shellScope(){return shellIntegration(vscode.workspace.getConfiguration('airk').inspect<string>('cli.shellIntegration')?.globalValue);}
     /** Before the first installation only: show persistent effects and let the user
@@ -1119,8 +1672,8 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     }
     private async automaticSetup(notify:boolean,explicit:boolean):Promise<void>{
         if(!vscode.workspace.isTrusted||!explicit&&vscode.workspace.getConfiguration('airk').inspect<boolean>('cli.autoInstall')?.globalValue===false)return;
-        this.installationFailed=false;
-        let runtimeInstalled=false;
+        this.installationFailed=false;this.installationWarnings=false;
+        let runtimeInstalled=false,finalized=false;
         let setupObservation:BootstrapObservation|undefined;
         try{
             this.reportInstall('Connecting to AIRK; checking the installed runtime…');
@@ -1139,7 +1692,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
                 const binding=this.runtime().binding(installed.inspection,installed.installDir);
                 const identity=`${this.runningVersion}:${binding.runtimeSha256}`;
                 if(binding.version===this.runningVersion&&binding.runtimeSha256===installed.bundle.digest
-                    &&!installed.diagnosis?.pending_activation&&this.context.globalState.get<string>(`airk.installComplete.1.${binding.installDir}`)===identity){
+                    &&!installed.diagnosis?.pending_activation&&this.context.globalState.get<string>(`airk.installComplete.2.${binding.installDir}`)===identity){
                     runtimeInstalled=true;
                     if(installed.inspection.lifecycle&&record(installed.inspection.lifecycle).explicitly_stopped===true)throw new ServiceError('service_explicitly_stopped');
                     // A completed installation does not prove that its on-demand service survived editor/OS shutdown.
@@ -1147,7 +1700,8 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
                     if(connected.runtimeSha256!==binding.runtimeSha256||!same(connected.controlDir,binding.controlDir))throw new ServiceError('runtime_selection_changed_review_again');
                     const generation=this.generation;
                     await this.prepareWorkspaceProjects(binding);
-                    await this.refresh(installed);
+                    await this.finalizeLegacyLauncherRemoval(binding);finalized=true;
+                    await this.refresh();
                     this.reportInstall('Connected to AIRK. Saved project work remains with the service.');
                     this.setupSucceeded(binding,generation);
                     await this.openWorkbenchAfterSetup();
@@ -1169,12 +1723,16 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
                 if(!installed.inspection)throw new ServiceError('runtime_selection_changed_review_again');
                 const current=this.runtime().binding(installed.inspection,installed.installDir),target=this.runningVersion as string;
                 if(automaticUpgrade(current.version,target)&&(current.version!==target||current.runtimeSha256!==installed.bundle.digest)){
-                    this.reportUpgrade('checking',`Upgrading ${current.version} → ${target}… Checking the installed runtime and saved indexes.`,current.version);
-                    // Finish a prior installation's deferred cleanup before staging another replacement.
-                    if(!installed.diagnosis?.pending_activation){
-                        this.reportUpgrade('draining','Settling previous runtime cleanup before activating the update…');
-                        await this.runtime().retirePrevious(current);
+                    if(current.launcher===null&&current.payloadVerified!==false){
+                        // A fully occupied approved installation must finish its
+                        // preceding modern transaction before staging another.
+                        await this.migrateAgentConnections(current,this.migrationPredecessors);
+                        await this.finalizeLegacyLauncherRemoval(current,false,true);
                     }
+                    this.reportUpgrade('checking',`Upgrading ${current.version} → ${target}… Checking the installed runtime and saved indexes.`,current.version);
+                    // Native bounded staging retains every approved predecessor until
+                    // recognized clients have migrated and final removal is proven.
+                    this.migrationPredecessors=await this.workspace.definitions(current,[...new Set([...this.folders().map(folder=>folder.uri.fsPath),...this.workspace.rememberedRoots(current)])]);
                     const review=await this.runtime().reviewTransition(current,installed.diagnosis?.pending_activation?'resume':'upgrade');this.trusted();
                     await this.runtime().transition(current,review,(message,stage)=>this.reportUpgrade(stage,message));this.trusted();
                 }
@@ -1187,7 +1745,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             runtimeInstalled=true;
             const completed=await this.runtime().discover();
             const generation=this.generation;
-            await this.prepareWorkspaceProjects(binding);await this.refresh(completed);
+            await this.prepareWorkspaceProjects(binding);await this.finalizeLegacyLauncherRemoval(binding,true,true);finalized=true;await this.refresh();
             this.reportInstall(this.installationWarnings?'Runtime installation finished with issues to review.':'Runtime ready. Set up new indexes explicitly in Indexing; existing native work remains in Management.');
             this.setupSucceeded(binding,generation);
             await this.openWorkbenchAfterSetup();
@@ -1202,6 +1760,15 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             if(error instanceof ServiceError&&error.code==='extension_reload_required')return;
             if(String(error).includes('service_explicitly_stopped')){
                 this.output.appendLine('AIRK service_explicitly_stopped. Start the service from Management > Service when ready. Saved project work is retained.');return;
+            }
+            if(runtimeInstalled&&!finalized){
+                this.installationFailed=true;this.installationWarnings=true;
+                this.reportInstall('AIRK upgrade is incomplete. Old launcher removal or HTTPS configuration needs attention; review AIRK output and retry Install or Repair CLI.');
+                this.output.appendLine('AIRK upgrade completion blocked: '+String(error));
+                const details=error instanceof ServiceError?error.nativeResponse:undefined;
+                if(details)this.output.appendLine('AIRK upgrade completion details: '+JSON.stringify(details));
+                const guidance=details&&typeof details.guidance==='string'?details.guidance:String(error);
+                void vscode.window.showErrorMessage('AIRK upgrade did not complete: '+guidance);return;
             }
             if(runtimeInstalled){
                 if(this.startup)this.startup={...this.startup,message:`Project preparation needs attention: ${String(error)}`,failed:true};
@@ -1268,31 +1835,145 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
                 `No native index is registered for ${folder.uri.fsPath}. Open Indexing → Index library to choose source and storage locations and review setup. Opening folders does not create indexes.`);
         }
         this.reportInstall('Checking saved agent connections…');
-        await this.migrateAgentConnections(binding);
+        await this.migrateAgentConnections(binding,this.migrationPredecessors);
         await this.context.workspaceState.update('airk.projectStartupNotice.1',undefined);
+    }
+    async reviewHttpTrust(remove=false):Promise<Record<string,unknown>|undefined>{
+        this.trusted();const binding=this.binding,generation=this.generation;if(!binding)throw new ServiceError('native_service_connection_required');
+        const current=()=>{this.trusted();if(binding!==this.binding||generation!==this.generation)throw new ServiceError('workspace_registration_changed');};
+        const observed=await this.runtime().httpTrust(binding,'inspect');current();
+        this.output.appendLine('AIRK HTTPS issuer trust: '+JSON.stringify(observed));
+        if(observed.outcome==='unsupported'){void vscode.window.showWarningMessage('Automatic per-user VS Code trust is unavailable on this platform. Linux VS Code requires the reviewed issuer in the distro system store and user NSS store, installed by an administrator. Keep TLS verification enabled. '+String(observed.guidance));return observed;}
+        if(observed.outcome==='outcome_unknown')throw new ServiceError(String(observed.outcome),false,observed);
+        if(remove&&observed.owned!==true)throw new ServiceError('http_issuer_trust_not_owned',false,observed);
+        if(!remove&&observed.trusted===true)return observed;
+        const action=remove?'Remove owned trust':'Trust for this user';
+        const accepted=await vscode.window.showWarningMessage(`${remove?'Remove':'Trust'} AIRK's local HTTPS issuer in ${String(observed.store)}? Certificate SHA256: ${String(observed.ca_sha256)}.`,{modal:true},action);current();
+        if(accepted!==action)return;
+        const result=await this.runtime().httpTrust(binding,remove?'remove':'install',String(observed.ca_sha256));current();
+        this.output.appendLine('AIRK HTTPS issuer trust result: '+JSON.stringify(result));this.definitions.fire();
+        void vscode.window.showInformationMessage(String(result.guidance));return result;
+    }
+    async httpIssuerRotationStatus():Promise<IssuerRotationStatus>{
+        this.trusted();const binding=this.binding,generation=this.generation;if(!binding)throw new ServiceError('native_service_connection_required');
+        const result=await this.runtime().httpIssuerRotation(binding,'status');this.trusted();if(binding!==this.binding||generation!==this.generation)throw new ServiceError('workspace_registration_changed');
+        const document=await vscode.workspace.openTextDocument({content:JSON.stringify(result,null,2),language:'json'});await vscode.window.showTextDocument(document,{preview:true});return result;
+    }
+    async reviewHttpIssuerRotation():Promise<Record<string,unknown>|undefined>{
+        this.trusted();const binding=this.binding,generation=this.generation;if(!binding)throw new ServiceError('native_service_connection_required');
+        const current=()=>{this.trusted();if(binding!==this.binding||generation!==this.generation)throw new ServiceError('workspace_registration_changed');};
+        const runtime=this.runtime(),observed=await runtime.httpIssuerRotation(binding,'status');current();
+        const options=[{label:'Open complete native rotation receipt',action:'status'},...(!observed.rotation||['finalized','aborted'].includes(observed.rotation.phase)?[{label:'Prepare a new issuer rotation',action:'prepare'},...(observed.rotation?[{label:'Finish this window’s terminal rotation bundle cleanup',action:'cleanup'}]:[])]:[
+            {label:'Prepare old/new trust in this window’s owned client bundles',action:'bundles'},
+            {label:'Trust the staged issuer for this OS user',action:'trust-new'},
+            {label:'Activate the reviewed new issuer',action:'commit'},
+            {label:'Finalize expired overlap and retire owned old trust',action:'finalize'},
+            ...(observed.rotation.phase==='prepared'?[{label:'Abort the prepared rotation and retain the old issuer',action:'abort'}]:[]),
+        ])];
+        const picked=await vscode.window.showQuickPick(options,{title:'AIRK HTTPS issuer rotation'});current();if(!picked)return;
+        if(picked.action==='status')return this.httpIssuerRotationStatus();
+        const rotation=observed.rotation,detail=rotation?`Operation ${rotation.operation_id}. Old CA ${rotation.old_ca_sha256}. New CA ${rotation.new_ca_sha256}. Native phase ${rotation.phase}.`:`Current CA ${observed.current_endpoint?.ca_sha256}. Descriptor ${observed.current_descriptor_sha256}.`;
+        const descriptions:Record<string,string>={
+            prepare:'Stage a new local issuer without activating it. Ordinary overlap is 24 hours; existing grants, credentials and selections stay unchanged.',
+            bundles:'Add the staged issuer to this window’s exact AIRK-owned Codex/Claude trust bundles. Preserve the old issuer and unrelated roots. Existing external hosts and other windows are not acknowledged by this action.',
+            'trust-new':'Install only the reviewed staged issuer in this user’s supported OS trust store. Preexisting trust remains separately owned.',
+            commit:'Stop/drain and restart the selected native service with the reviewed issuer. Prepare client and OS trust first. Active requests can disconnect; reconnect and verify each client. Unobserved hosts remain pending.',
+            finalize:'The native overlap must have expired. Remove only recorded owned old OS trust, then update this window’s owned bundles. Other windows and external trust are not proven cleaned.',
+            cleanup:'Retry only this window’s exact owned bundle cleanup for a finalized or aborted native transaction. Preserve unrelated roots and unknown client configuration.',
+            abort:'Abort only the prepared native transaction. Preserve the old issuer; remove only owned staged-new trust and this window’s staged certificate. Activation that began cannot be aborted here.',
+        };
+        const accepted=await vscode.window.showWarningMessage(descriptions[picked.action]+' '+detail,{modal:true},'Apply reviewed rotation action');current();if(accepted!=='Apply reviewed rotation action')return;
+        let result=observed;
+        if(picked.action==='bundles'||picked.action==='cleanup'){
+            if(!rotation)throw new ServiceError('http_rotation_review_required');
+            const verified=await runtime.httpIssuerRotation(binding,'status');current();if(verified.receipt_sha256!==observed.receipt_sha256)throw new ServiceError('http_rotation_review_changed');
+            let updates;
+            try{updates=await updateOwnedIssuerBundles(await fs.realpath(this.context.globalStorageUri.fsPath),this.context.environmentVariableCollection,rotation,picked.action==='cleanup'?(rotation.phase==='aborted'?'abort':'finalize'):'overlap',vscode.EnvironmentVariableMutatorType.Replace,current);current();}
+            catch(error){const failure={...verified,client_cleanup_error:error instanceof Error?error.message:'unknown',...(error instanceof ClientTrustPublicationError?{client_bundle_updates:error.updates,published_variables:error.published}:{})};this.output.appendLine('AIRK HTTPS issuer bundles require review: '+JSON.stringify(failure));throw new ServiceError('http_rotation_client_bundle_requires_review',error instanceof ClientTrustPublicationError,failure);}
+            result={...verified,client_bundle_updates:updates,client_scope:'this_window_only',external_clients:'pending_actual_reconnect_and_read'};
+        }else{
+            const action=picked.action as 'prepare'|'trust-new'|'commit'|'finalize'|'abort';
+            result=await runtime.httpIssuerRotation(binding,action,observed,action==='prepare'?randomBytes(16).toString('hex'):undefined);current();
+            if((action==='finalize'&&result.rotation?.phase==='finalized')||(action==='abort'&&result.rotation?.phase==='aborted')){
+                try{const updates=await updateOwnedIssuerBundles(await fs.realpath(this.context.globalStorageUri.fsPath),this.context.environmentVariableCollection,result.rotation!,action==='abort'?'abort':'finalize',vscode.EnvironmentVariableMutatorType.Replace,current);result={...result,client_bundle_updates:updates,client_scope:'this_window_only'};}
+                catch(error){const failure={...result,client_cleanup_error:error instanceof Error?error.message:'unknown',...(error instanceof ClientTrustPublicationError?{client_bundle_updates:error.updates,published_variables:error.published}:{})};this.output.appendLine('AIRK HTTPS issuer cleanup requires review: '+JSON.stringify(failure));throw new ServiceError('http_rotation_client_cleanup_requires_review',error instanceof ClientTrustPublicationError,failure);}
+            }
+        }
+        if(picked.action==='commit'&&result.rotation?.phase==='activated'){
+            try{await this.migrateAgentConnections(binding);current();result={...result,configuration_updates:'guarded_owned_config_migration_attempted',external_clients:'pending_actual_reconnect_and_read'};}
+            catch(error){result={...result,configuration_updates:'requires_review',configuration_error:error instanceof Error?error.message:'unknown',external_clients:'pending_actual_reconnect_and_read'};}
+        }
+        this.output.appendLine('AIRK HTTPS issuer rotation: '+JSON.stringify(result));this.definitions.fire();
+        const document=await vscode.workspace.openTextDocument({content:JSON.stringify(result,null,2),language:'json'});await vscode.window.showTextDocument(document,{preview:true});return result;
+    }
+    private async vscodeCredentialSources(check:()=>void):Promise<{file:string;before:string;root?:string}[]>{
+        check();const sources:{file:string;before:string;root?:string}[]=[];
+        const add=(file:string,before:string,root?:string)=>{
+            const previous=sources.find(value=>same(value.file,file));
+            if(previous){if(previous.before!==before)throw new ServiceError('http_credential_configuration_changed');return;}
+            sources.push({file,before,...(root?{root}:{})});
+        };
+        const folders=this.folders();if(folders.length>32)throw new ServiceError('http_credential_workspace_capacity');
+        for(const folder of folders){
+            const root=await fs.realpath(folder.uri.fsPath),directory=path.join(root,'.vscode');check();
+            const stat=await fs.lstat(directory).catch(error=>{if((error as NodeJS.ErrnoException).code==='ENOENT')return;throw error;});
+            if(!stat)continue;if(!stat.isDirectory()||stat.isSymbolicLink()||!same(await fs.realpath(directory),directory))throw new ServiceError('unsafe_http_credential_configuration');
+            const file=path.join(directory,'mcp.json'),before=await readJsonConfig(file);check();if(before!==undefined)add(file,before,root);
+        }
+        // Use the same native user/profile inventory as guarded migration. A
+        // command argument never chooses a file, profile, or credential path.
+        const inventory=await inventoryGlobalAgentConfigs({home:os.homedir(),env:{...process.env},globalStoragePath:this.context.globalStorageUri.fsPath,check});check();
+        if(inventory.blockers.length)throw new ServiceError('http_credential_configuration_inventory_unavailable',false,{blockers:inventory.blockers});
+        for(const file of inventory.files.filter(file=>file.agent==='copilot')){
+            const before=await readJsonConfig(file.destination);check();
+            if(before===undefined||before!==file.source)throw new ServiceError('http_credential_configuration_changed');add(file.destination,before);
+        }
+        if(sources.length>96||sources.reduce((total,value)=>total+Buffer.byteLength(value.before),0)>8*1024*1024)throw new ServiceError('http_credential_configuration_capacity');
+        return sources;
+    }
+    /** VS Code input-command resolution, never a generic file/secret reader.
+     * The native getter validates the live grant, expiry, verifier and file ACL;
+     * only the matching current workspace configuration receives the token. */
+    async httpCredential(input:unknown):Promise<string>{
+        this.trusted();const value=record(input);if(Object.keys(value).join(',')!=='connection_id'||typeof value.connection_id!=='string'||!/^[a-f0-9]{32}$/.test(value.connection_id))throw new ServiceError('invalid_http_credential_input');
+        if(!this.currentBinding())await this.refresh();this.trusted();const binding=this.binding,generation=this.generation;
+        if(!binding)throw new ServiceError('native_service_connection_required');
+        const current=()=>{this.trusted();if(binding!==this.binding||generation!==this.generation)throw new ServiceError('workspace_registration_changed');};
+        const info=await this.runtime().httpConnectionInfo(binding,value.connection_id);current();
+        const sources=await this.vscodeCredentialSources(current),matches=sources.filter(value=>vscodeCredentialConfiguration(value.before,info));
+        if(matches.length!==1)throw new ServiceError('http_credential_requires_matching_workspace_configuration');
+        const material=await httpMaterial(info);current();
+        const after=await this.vscodeCredentialSources(current);current();
+        if(!isDeepStrictEqual(after,sources))throw new ServiceError('http_credential_configuration_changed');
+        return material.credential;
     }
     async manageVscodeMcp():Promise<void>{this.trusted();await vscode.commands.executeCommand('workbench.mcp.listServer');}
     private async hasManualVscodeConnection():Promise<boolean>{
         // The file owns client policies, including explicit disable. Do not bypass
         // it by registering a second copy through the extension provider.
-        for(const spec of this.specs){
+        const binding=this.binding,generation=this.generation;
+        const check=()=>{this.trusted();if(binding!==this.binding||generation!==this.generation)throw new ServiceError('workspace_registration_changed');};
+        const sources=await this.vscodeCredentialSources(check);
+        for(const {root,before:source}of sources){
             try{
-                const source=await readJsonConfig(path.join(spec.root,'.vscode','mcp.json'));
-                if(source&&hasUnifiedVscodeConfig(spec,this.context.globalStorageUri?.fsPath??'',source))return true;
+                const selected=this.currentCatalogScope()?.spec,spec=root?(selected&&same(selected.root,root)?selected:this.specs.find(spec=>same(spec.root,root))):undefined;
+                if(root&&spec){const known=spec.http??this.previousLegacyHttp(spec,'vscode');if(hasUnifiedVscodeConfig(known?{...spec,http:known}:spec,this.context.globalStorageUri?.fsPath??'',source))return true;}
+                for(const id of vscodeManualConnectionIds(source))if(binding){try{const info=await this.runtime().httpConnectionInfo(binding,id);check();if(vscodeManualConfiguration(source,info))return true;}catch{check();}}
             }catch{/* Unsafe/custom configurations remain for review; never execute them here. */}
         }
         return false;
     }
-    async provideDefinitions():Promise<vscode.McpStdioServerDefinition[]>{
+    async provideDefinitions():Promise<vscode.McpHttpServerDefinition[]>{
         if(this.checkForExtensionUpdate())return [];
         if(!vscode.workspace.isTrusted||!this.registrationEnabled()||!nativeExecutionAllowed())return [];
         if(!this.currentBinding())await this.refresh();if(!vscode.workspace.isTrusted||!this.registrationEnabled())return [];
         if(await this.hasManualVscodeConnection())return [];
         const observation=await this.workspaceConnection();if(!observation)return [];
         this.trusted();if(observation.generation!==this.generation||observation.identity!==this.console.controller.observationIdentity||!this.registrationEnabled())throw new ServiceError('workspace_registration_changed');const entry=observation.entry;
-        const definition=new vscode.McpStdioServerDefinition('AIRK',entry.command,[...entry.args],
-            {AIRK_CLIENT:'vscode',AIRK_MCP_RESPONSE_MODE:this.responseMode()},`${this.runningVersion}:${JSON.stringify(entry.args)}:${this.responseMode()}`);
-        definition.cwd=vscode.Uri.file(path.dirname(entry.command));return [definition];
+        if(!entry.http)throw new ServiceError('http_connection_requires_reviewed_scope');
+        const material=await httpMaterial(entry.http);this.trusted();
+        if(observation.generation!==this.generation||observation.identity!==this.console.controller.observationIdentity)throw new ServiceError('workspace_registration_changed');
+        return [new vscode.McpHttpServerDefinition('AIRK',vscode.Uri.parse(material.url),{Authorization:'Bearer '+material.credential,'X-AIRK-Response-Mode':this.responseMode()},`${this.runningVersion}:${entry.http.connection_id}:${entry.http.endpoint.generation}:${this.responseMode()}`)];
     }
     async resolveDefinition(definition:vscode.McpServerDefinition):Promise<vscode.McpServerDefinition>{
         this.trusted();if(!this.registrationEnabled())throw new ServiceError('mcp_registration_disabled');
@@ -1300,11 +1981,13 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         if(await this.hasManualVscodeConnection())throw new ServiceError('manual_mcp_configuration_owns_connection');
         const observation=await this.workspaceConnection(),entry=observation?.entry;
         this.trusted();if(observation&&(observation.generation!==this.generation||observation.identity!==this.console.controller.observationIdentity))throw new ServiceError('workspace_registration_changed');
-        if(!(definition instanceof vscode.McpStdioServerDefinition)||!entry||entry.command!==definition.command||JSON.stringify(entry.args)!==JSON.stringify(definition.args))throw new ServiceError('workspace_registration_changed');
+        if(!(definition instanceof vscode.McpHttpServerDefinition)||!observation||!entry?.http)throw new ServiceError('workspace_registration_changed');
+        if(entry.http.endpoint.url!==definition.uri.toString()){this.definitions.fire();throw new ServiceError('http_endpoint_changed_refresh_definition');}
         const selected=this.currentCatalogScope();
         await this.runtime().ensure();this.trusted();if(!this.registrationEnabled())throw new ServiceError('mcp_registration_disabled');
         if(observation.generation!==this.generation||observation.identity!==this.console.controller.observationIdentity||selected!==this.currentCatalogScope())throw new ServiceError('workspace_registration_changed');
-        return definition;
+        const material=await httpMaterial(entry.http);this.trusted();
+        return new vscode.McpHttpServerDefinition('AIRK',vscode.Uri.parse(material.url),{Authorization:'Bearer '+material.credential,'X-AIRK-Response-Mode':this.responseMode()},`${this.runningVersion}:${entry.http.connection_id}:${entry.http.endpoint.generation}:${this.responseMode()}`);
     }
     getTreeItem(spec:LaunchSpec):vscode.TreeItem {
         const item=new vscode.TreeItem(spec.name);item.id=spec.service!.project;item.description=spec.collection;item.tooltip=spec.root;item.contextValue='airkServiceProject';
@@ -1318,7 +2001,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     }
     /** The AIRK Explorer is loaded on first use; it shares this extension's console and registrations. */
     explorerHandoff():{open:boolean;route?:string}{return {open:this.explorerLoaded?.panelOpen??false,route:this.explorerLoaded?.assistanceStatus.active_route};}
-    async prepareForUpdate():Promise<void>{const explorer=this.explorerLoaded;this.dispose();await Promise.all([this.workbench?.finishPendingSaves(),explorer?.finishPendingNoticeWrites()]);}
+    async prepareForUpdate():Promise<void>{const explorer=this.explorerLoaded;this.dispose();await Promise.allSettled([...this.httpSetups.values()]);await Promise.all([this.workbench?.finishPendingSaves(),explorer?.finishPendingNoticeWrites()]);}
     explorerController():Promise<ExplorerController>{
         this.explorer??=Promise.all(['explorerController.js','explorerWebview.js','explorerWebview.css'].map(name=>fs.access(path.join(this.context.extensionUri.fsPath,'out',name))))
         .then(()=>import('./explorerController')).then(({ExplorerController})=>{
@@ -1347,6 +2030,16 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
 
     explorerHost():ExplorerHost{
         return {extensionUri:this.context.extensionUri,version:this.runningVersion,
+            prepareEvidenceConnection:async(spec,client='airk-explorer')=>{
+                this.trusted();const active=this.currentCatalogScope()?.spec;
+                if(!active){if(spec.catalogSession||spec.combinedSession||!this.isCurrent(spec))throw new ServiceError('http_connection_requires_reviewed_scope');return this.resolveAgentSpec(spec,client);}
+                if(spec.combinedSession&&active.combinedSession){
+                    const {index_ids:indexes,expected_catalog_revision:requestedRevision,...requested}=spec.combinedSession;
+                    const {index_ids:allowed,expected_catalog_revision:originalRevision,...original}=active.combinedSession;
+                    if(requestedRevision<originalRevision||!isDeepStrictEqual(requested,original)||allowed&&(!indexes||indexes.some(id=>!allowed.includes(id))))throw new ServiceError('http_connection_selection_changed');
+                }else if(!this.isCurrent(spec))throw new ServiceError('http_connection_selection_changed');
+                return this.enrollHttpSpec(spec,client);
+            },
             extensionUpdate:()=>this.extensionUpdate,reloadUpdatedExtension:()=>this.reloadUpdatedExtension(),
             connectionCheck:()=>this.connectionCheck,startup:()=>this.startup,runtimeUpgrade:()=>this.runtimeUpgrade,
             workbenchVisible:()=>this.workbench?.visible??false,toggleWorkbench:async()=>{await this.workbench?.toggle();},
@@ -1419,12 +2112,12 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     }
     private async workspaceConnection():Promise<{entry:ServerEntry;identity:string;generation:number}|undefined>{
         const selected=this.currentCatalogScope();
-        if(selected)return {entry:unifiedEntry(selected.spec,this.explorerDescriptor()),identity:this.console.controller.observationIdentity,generation:this.generation};
+        if(selected){const identity=this.console.controller.observationIdentity,generation=this.generation,spec=await this.enrollHttpSpec(selected.spec,'vscode');this.trusted();if(generation!==this.generation||selected!==this.currentCatalogScope()||identity!==this.console.controller.observationIdentity)throw new ServiceError('workspace_registration_changed');return {entry:unifiedEntry(spec),identity,generation};}
         if(this.explicitCatalogScope||this.hasScopeWithdrawal())return undefined;
         const specs=[...this.specs],binding=this.binding,generation=this.generation,controller=this.console.controller;
         if(!binding||!specs.length)return undefined;
         if(specs.length>32)throw new ServiceError('legacy_mcp_binding_capacity_exceeded');
-        const current=()=>{this.trusted();if(binding!==this.binding||generation!==this.generation||controller!==this.console.controller||this.explicitCatalogScope||this.hasScopeWithdrawal()||JSON.stringify(specs)!==JSON.stringify(this.specs))throw new ServiceError('workspace_registration_changed');};
+        const current=()=>{this.trusted();if(binding!==this.binding||generation!==this.generation||controller!==this.console.controller||this.explicitCatalogScope||this.hasScopeWithdrawal()||specs.length!==this.specs.length||!specs.every(spec=>this.isCurrent(spec)))throw new ServiceError('workspace_registration_changed');};
         current();if(!controller.state.connected){await controller.whenIdle();current();if(!controller.state.connected)await controller.refresh();current();if(!controller.state.connected)throw new ServiceError('catalog_control_connection_unavailable');}
         const controlIdentity=controller.observationIdentity,resolved:LaunchSpec[]=[];let namespace:string|undefined,revision:number|null|undefined;
         for(const spec of specs){
@@ -1442,7 +2135,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
                 ||!same(registration.root,spec.root)||!same(registration.data_root,spec.dataDir)||registration.collection!==spec.collection)throw new ServiceError('crossed_native_legacy_registration');
             resolved.push({...spec,root:registration.root,dataDir:registration.data_root});
         }
-        current();const [first,...additional]=resolved;return {entry:unifiedEntry(first,this.explorerDescriptor(),additional),identity:controlIdentity,generation};
+        current();const first=resolved.length>1?await this.enrollLegacyUnion(resolved,binding,current):await this.resolveAgentSpec(resolved[0],'vscode');current();return {entry:unifiedEntry(first),identity:controlIdentity,generation};
     }
     async verifyAssistance(spec:LaunchSpec):Promise<string[]>{
         this.trusted();
@@ -1466,14 +2159,14 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         if(nativeExecutionAllowed()){this.status.text='AIRK';this.status.command='airk.explorer.open';this.status.tooltip=undefined;}
         this.reset();this.definitions.fire();void this.start();
     }
-    reset():void{this.localScopeEpoch++;this.legacyRetirement?.stop();this.legacyRetirement=undefined;this.generation++;this.windowContextValue=undefined;this.publishNativeCommandAvailability();this.host=undefined;this.selectedEligible=undefined;this.selectedScope=undefined;this.specs=[];this.binding=undefined;this.checks.clear();this.checking=undefined;this.connectionCheck=undefined;this.console.reset();void this.refresh();}
-    dispose():void{if(this.disposed)return;this.localScopeEpoch++;this.legacyRetirement?.stop();this.legacyRetirement=undefined;this.host=undefined;this.disposed=true;this.generation++;this.windowContextValue=undefined;this.publishNativeCommandAvailability();this.windowContextChanges.dispose();this.assistanceGeneration++;this.assistanceHost?.dispose();this.assistanceDefinitions.dispose();void this.explorer?.then(explorer=>explorer.dispose(),()=>undefined);this.console.dispose();this.status.dispose();this.definitions.dispose();this.treeChanges.dispose();this.output.dispose();}
+    reset():void{this.closeHttpEndpointWatcher();this.localScopeEpoch++;this.legacyRetirement?.stop();this.legacyRetirement=undefined;this.generation++;this.windowContextValue=undefined;this.publishNativeCommandAvailability();this.host=undefined;this.selectedEligible=undefined;this.selectedScope=undefined;this.specs=[];this.binding=undefined;this.checks.clear();this.checking=undefined;this.connectionCheck=undefined;this.console.reset();void this.refresh();}
+    dispose():void{if(this.disposed)return;this.localScopeEpoch++;this.legacyRetirement?.stop();this.legacyRetirement=undefined;this.host=undefined;this.disposed=true;this.closeHttpEndpointWatcher();clearTimeout(this.httpRefreshTimer);this.httpRefreshTimer=undefined;this.generation++;this.windowContextValue=undefined;this.publishNativeCommandAvailability();this.windowContextChanges.dispose();this.assistanceGeneration++;this.assistanceHost?.dispose();this.assistanceDefinitions.dispose();void this.explorer?.then(explorer=>explorer.dispose(),()=>undefined);this.console.dispose();this.status.dispose();this.definitions.dispose();this.treeChanges.dispose();this.output.dispose();}
 }
 
 let active:ServiceExtension|undefined;
 export function deactivate():void{active?.dispose();active=undefined;}
 /** Activated by the final 1.4 adapter cutover, after native/package contract checks. */
-export async function activate(context:vscode.ExtensionContext):Promise<{getServerDefinitions():Promise<vscode.McpStdioServerDefinition[]>;whenReady():Promise<void>;explorerHandoff():{open:boolean;route?:string};prepareForUpdate():Promise<void>}>{
+export async function activate(context:vscode.ExtensionContext):Promise<{getServerDefinitions():Promise<vscode.McpServerDefinition[]>;whenReady():Promise<void>;explorerHandoff():{open:boolean;route?:string};prepareForUpdate():Promise<void>}>{
     setNativeExecutionGate(nativeExecutionSetting);
     const controller=new ServiceExtension(context);active=controller;context.subscriptions.push(controller);
     const explorerOpen=(route?:unknown)=>controller.explorerController().then(explorer=>explorer.open(typeof route==='string'?route:undefined));
@@ -1515,6 +2208,11 @@ export async function activate(context:vscode.ExtensionContext):Promise<{getServ
     commands.status=()=>controller.showTool('airk_status');
     commands.chooseStorage=()=>controller.registerWorkspace();
     commands.installCli=()=>controller.repairInstallation();
+    commands.httpCredential=input=>controller.httpCredential(input);
+    commands.trustHttpIssuer=()=>controller.reviewHttpTrust();
+    commands.removeHttpIssuerTrust=()=>controller.reviewHttpTrust(true);
+    commands.httpIssuerRotationStatus=()=>controller.httpIssuerRotationStatus();
+    commands.rotateHttpIssuer=()=>controller.reviewHttpIssuerRotation();
     commands.enableNativeExecution=()=>controller.enableNativeExecution();
     commands.manageWorkspaceTrust=(...args)=>{if(args.length)throw new ServiceError('invalid_manage_workspace_trust_arguments');return controller.manageWorkspaceTrust();};
     commands.setUp=()=>controller.repairInstallation();

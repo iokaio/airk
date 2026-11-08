@@ -15,7 +15,7 @@ fn selected_policy_preview_is_read_only_and_guarded_configuration_requests_publi
     let source = root.path().join("original.rs");
     let original = b"pub fn original_fixture() -> u32 { 7 }\n";
     fs::write(&source, original)?;
-    let service = common::Service::start(root.path(), state.path(), "default");
+    let service = common::Service::reviewed(root.path(), state.path(), "default");
     service.configure(airk_cli::service_configuration::Draft::Vectors { enabled: false });
     common::call(root.path(), state.path(), "default", &["index"])?;
     let before = common::call(
@@ -78,7 +78,7 @@ fn invalid_bounded_policy_files_and_foreign_bindings_preserve_configuration() ->
     let state = tempfile::tempdir()?;
     let input = tempfile::tempdir()?;
     fs::write(root.path().join("original.rs"), "fn original() {}\n")?;
-    let service = common::Service::start(root.path(), state.path(), "default");
+    let service = common::Service::reviewed(root.path(), state.path(), "default");
     service.configure(airk_cli::service_configuration::Draft::Vectors { enabled: false });
     common::call(root.path(), state.path(), "default", &["index"])?;
     let before = common::call(

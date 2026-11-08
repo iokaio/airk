@@ -4,10 +4,14 @@ import importlib.util
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
+from types import SimpleNamespace
+import time
+import threading
 
 
 SPEC = importlib.util.spec_from_file_location(
@@ -17,6 +21,113 @@ SPEC.loader.exec_module(QUALITY)
 
 
 class RetrievalQualityTests(unittest.TestCase):
+    def test_additional_root_requires_native_review_and_updated_grant_without_legacy_fallback(self):
+        selected = {"grant_id": "original", "index_id": "same-index"}
+        service = SimpleNamespace(single_image=True, scopes={"qualification": selected}, configure=Mock())
+        complete = {"completion": {"catalog_revision": 7}, "future_evidence": {"retained": True}}
+        def apply(change):
+            self.assertEqual(change, {"operation": "add_root", "alias": "specs", "path": str(Path("original-alias"))})
+            service.scopes["qualification"] = {"grant_id": "new-reviewed", "index_id": "same-index"}
+            return complete
+        reviewer = Mock()
+        reviewer.source_change.side_effect = apply
+        with patch.object(QUALITY.reviewed_source, "SourceReview", return_value=reviewer) as constructor:
+            self.assertEqual(QUALITY.add_fixture_root(service, "qualification", "specs", Path("original-alias")), complete)
+            constructor.assert_called_once_with(service, "qualification")
+            self.assertEqual(selected, {"grant_id": "original", "index_id": "same-index"})
+            self.assertEqual(service.scopes["qualification"]["grant_id"], "new-reviewed")
+            reviewer.source_change.side_effect = RuntimeError("unknown source admission")
+            with self.assertRaisesRegex(RuntimeError, "unknown source admission"):
+                QUALITY.add_fixture_root(service, "qualification", "specs", Path("original-alias"))
+        service.configure.assert_not_called()
+        service.single_image = False
+        with patch.object(QUALITY.reviewed_source, "SourceReview", side_effect=AssertionError("legacy cannot use modern grant")):
+            QUALITY.add_fixture_root(service, "qualification", "specs", Path("original-alias"))
+        service.configure.assert_called_once_with("qualification", {"operation": "add_root", "alias": "specs", "path": str(Path("original-alias"))})
+
+    def test_both_workloads_leave_private_native_state_creation_to_installer(self):
+        for representative in (False, True):
+            with self.subTest(representative=representative), tempfile.TemporaryDirectory() as temporary:
+                base = Path(temporary) / "fixture"
+                binary = Path(temporary) / "airk"
+                def before_native_start(runtime, owner):
+                    self.assertEqual(owner, base)
+                    self.assertFalse((owner / "state").exists(), "Native state must not inherit an ordinary fixture-directory ACL")
+                    self.assertTrue((owner / "index-data").is_dir())
+                    self.assertTrue((owner / "root").is_dir())
+                    raise RuntimeError("verified separate roots before native start")
+                with patch.object(QUALITY.clients, "Fixture", side_effect=before_native_start) as start:
+                    with self.assertRaisesRegex(RuntimeError, "verified separate roots"):
+                        if representative:
+                            QUALITY.representative_fixture(binary, base, {"sources": {"file.txt": "original"}}, "fixture-hash", 2, "balanced", Path("model"))
+                        else:
+                            QUALITY.fixture(binary, base, 2, 2, Mock())
+                    start.assert_called_once()
+
+    def test_modern_session_uses_exact_native_scope_https_and_same_ranking_contract(self):
+        selected = {"namespace": "native", "expected_catalog_revision": 3, "grant_id": "exact", "index_id": "one"}
+        health = {"instance": "owner"}
+        service = SimpleNamespace(single_image=True, scopes={"fixture": selected}, control=Path("control"), managed_health=health)
+        requests = []
+        def rpc(method):
+            self.assertEqual(method, "health")
+            return {"observation": health}
+        def enroll(selection, identity):
+            requests.append(selection)
+            return {"connection_id": identity, "selection": {"kind": "scoped", "selection": {**selected, "expected_catalog_revision": 4}}}
+        service.rpc = rpc
+        service.enroll_http = enroll
+        network = Mock()
+        network.connection = SimpleNamespace(timeout=None, sock=Mock())
+        network.session = "actual-session"
+        def receive(identifier):
+            return {"jsonrpc": "2.0", "id": identifier, "result": {"content": [{"text": json.dumps({"publication": {"token": "fixed"}, "hits": [self.hit("wanted.txt")]})}]}}
+        network.receive.side_effect = receive
+        with patch.object(QUALITY.http_fixture, "McpClient", return_value=network), patch.object(QUALITY.http_fixture, "validate_native_identity") as validate, patch.object(QUALITY.subprocess, "Popen", side_effect=AssertionError("no stdio child")):
+            session = QUALITY.open_session(service, "fixture")
+            self.assertEqual(session.search(self.case())["recall_at_5"], 1)
+            session.close(); session.close()
+        self.assertEqual(requests, [{"kind": "scoped", "selection": selected}])
+        validate.assert_called_once()
+        network.close.assert_called_once()
+        self.assertTrue(all(call.args[0].get("params", {}).get("arguments", {}).get("response_mode", "full") == "full" for call in network.send.call_args_list))
+
+    def test_http_enrollment_cannot_silently_change_reviewed_grant(self):
+        selected = {"expected_catalog_revision": 1, "grant_id": "original"}
+        service = SimpleNamespace(scopes={"fixture": selected})
+        def enroll(selection, identity):
+            return {"connection_id": identity, "selection": {"kind": "scoped", "selection": {"expected_catalog_revision": 2, "grant_id": "broader"}}}
+        service.enroll_http = enroll
+        with patch.object(QUALITY.http_fixture, "McpClient") as network, self.assertRaisesRegex(AssertionError, "changed reviewed scope"):
+            QUALITY.HttpSession(service, "fixture")
+        network.assert_not_called()
+
+    def test_http_request_absolute_deadline_interrupts_slow_body(self):
+        session = QUALITY.HttpSession.__new__(QUALITY.HttpSession)
+        session.closed, session.sequence = False, 0
+        stopped = threading.Event()
+        sock = Mock()
+        sock.shutdown.side_effect = lambda *_: stopped.set()
+        session.network = Mock()
+        session.network.connection = SimpleNamespace(timeout=None, sock=sock)
+        session.network.send.side_effect = lambda *_: self.assertTrue(stopped.wait(1))
+        session.network.receive.return_value = {"id": 1, "result": {}}
+        started = time.monotonic()
+        with self.assertRaises(TimeoutError):
+            session.request("tools/list", {}, started + 0.03)
+        self.assertLess(time.monotonic() - started, 0.5)
+        sock.shutdown.assert_called_once()
+        before = session.network.send.call_count
+        with self.assertRaises(QUALITY.clients.ObservationTimeout):
+            session.request("tools/list", {}, time.monotonic() - 1)
+        self.assertEqual(session.network.send.call_count, before)
+
+    def test_explicit_historical_fixture_retains_stdio_adapter(self):
+        service = SimpleNamespace(single_image=False, binary=Path("old-airk"), arguments=lambda _: ["--service-project", "old"])
+        with patch.object(QUALITY, "Session") as historical, patch.object(QUALITY, "HttpSession", side_effect=AssertionError("wrong transport")):
+            QUALITY.open_session(service, "fixture")
+        historical.assert_called_once_with(["old-airk", "--service-project", "old"])
+
     def test_combined_publication_refs_preserve_raw_and_reject_wrong_member(self):
         value, sources = self.combined()
         for number, rank in enumerate(value["ranking"]):
@@ -171,6 +282,7 @@ class RetrievalQualityTests(unittest.TestCase):
                     patch.object(QUALITY, "source_identity", return_value={"fixture": "fixed"}), \
                     patch.object(QUALITY.subprocess, "check_output", return_value="airk fixture"), \
                     patch.object(QUALITY.platform, "platform", return_value="fixture platform"), \
+                    patch.dict(os.environ, {"AIRK_PRIVATE_CENSUS_BASE": temporary}), \
                     patch.object(QUALITY, "fixture", side_effect=RuntimeError("private path and source")), \
                     contextlib.redirect_stdout(io.StringIO()):
                 with self.assertRaisesRegex(SystemExit, "qualification failed"):
@@ -178,8 +290,51 @@ class RetrievalQualityTests(unittest.TestCase):
             receipt = json.loads(output.read_text(encoding="utf-8"))
             self.assertFalse(receipt["passed"])
             self.assertEqual(receipt["failure_class"], "RuntimeError")
+            self.assertTrue(1 <= len(receipt["failure_frames"]) <= 12)
+            self.assertTrue(all(set(frame) == {"file", "line"} and Path(frame["file"]).name == frame["file"]
+                                and type(frame["line"]) is int and frame["line"] > 0 for frame in receipt["failure_frames"]))
             self.assertEqual(receipt["platform"], "fixture platform")
             self.assertNotIn("private path and source", output.read_text(encoding="utf-8"))
+            self.assertEqual(Path(receipt["retained_fixture"]).name, receipt["retained_fixture"])
+            self.assertTrue((Path(temporary) / receipt["retained_fixture"]).is_dir())
+
+    def test_stage_diagnostic_filesystem_failure_preserves_primary_failed_receipt(self):
+        stage = {}
+        exec(compile("def run(*args):\n    raise AssertionError('original stage refusal private/source')\n",
+                     "check-service-clients.py", "exec"), stage)
+        with tempfile.TemporaryDirectory() as temporary:
+            binary = Path(temporary) / "airk"
+            binary.write_bytes(b"fixture identity only")
+            private = Path(temporary) / "private"
+            private.mkdir(mode=0o700)
+            output = Path(temporary) / "receipt.json"
+            original_mkdtemp = QUALITY.tempfile.mkdtemp
+            def fail_diagnostic(suffix=None, prefix=None, dir=None):
+                if prefix == "airk-retrieval-stage-diagnostic-":
+                    raise PermissionError("diagnostic private path must not escape")
+                return original_mkdtemp(suffix=suffix, prefix=prefix, dir=dir)
+            def failed_stage(*_, **__):
+                stage["run"]("runtime", "stage")
+            with patch("sys.argv", ["check-retrieval-quality", "--binary", str(binary),
+                                    "--output", str(output), "--trials", "2"]), \
+                    patch.dict(os.environ, {"AIRK_PRIVATE_CENSUS_BASE": str(private)}), \
+                    patch.object(QUALITY, "source_identity", return_value={"fixture": "fixed"}), \
+                    patch.object(QUALITY.subprocess, "check_output", return_value="airk fixture"), \
+                    patch.object(QUALITY.platform, "platform", return_value="fixture platform"), \
+                    patch.object(QUALITY, "fixture", side_effect=failed_stage), \
+                    patch.object(QUALITY.tempfile, "mkdtemp", side_effect=fail_diagnostic), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaisesRegex(SystemExit, "qualification failed"):
+                    QUALITY.main()
+            receipt = json.loads(output.read_text(encoding="utf-8"))
+            self.assertFalse(receipt["passed"])
+            self.assertEqual(receipt["failure_class"], "AssertionError")
+            self.assertEqual(receipt["private_stage_diagnostic_error"], "PermissionError")
+            self.assertNotIn("private_stage_diagnostic", receipt)
+            self.assertTrue(1 <= len(receipt["failure_frames"]) <= 12)
+            public = output.read_text(encoding="utf-8")
+            self.assertNotIn("original stage refusal private/source", public)
+            self.assertNotIn("diagnostic private path must not escape", public)
 
 
 if __name__ == "__main__":

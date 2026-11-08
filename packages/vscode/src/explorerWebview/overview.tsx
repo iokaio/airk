@@ -83,6 +83,7 @@ export function Overview(props: { state: ExplorerViewState; project?: ProjectSum
                 </article>
             <article class="card semantic-status">
                 <div class="section-head"><h2>Semantic search — {semantic.title}</h2>{state.selectedProject&&<CopyDetails section="semantic" project={state.selectedProject} />}</div><p>{semantic.detail}</p>
+                {(status?.semanticReadiness || status?.legacyAdoption) && <details><summary>Complete semantic readiness and saved-evidence compatibility</summary><pre>{JSON.stringify({semantic_readiness:status.semanticReadiness,legacy_adoption:status.legacyAdoption},null,2)}</pre></details>}
                 <Facts rows={[
                     ['Saved vector policy', status?.vectorsEnabled === undefined ? 'Not checked' : status.vectorsEnabled ? 'Enabled' : 'Disabled'],
                     ['Model configured in publication', status?.localModelReady === undefined ? 'Not checked' : status.localModelReady ? 'Yes (not proof of a running helper)' : 'No'],

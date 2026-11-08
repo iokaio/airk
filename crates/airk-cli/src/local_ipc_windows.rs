@@ -3,7 +3,9 @@
 #[path = "local_ipc_windows_job.rs"]
 mod job;
 use anyhow::{Context, Result, ensure};
-pub(crate) use job::{require_job_user, with_current_user_job_security};
+pub(crate) use job::require_job_user;
+#[cfg(any(not(feature = "local-inference"), test))]
+pub(crate) use job::with_current_user_job_security;
 use std::{
     ffi::c_void,
     io, mem,
@@ -134,6 +136,41 @@ fn descriptor(sddl: &str) -> Result<Allocation> {
     Ok(Allocation(pointer))
 }
 
+/// Rust filesystem operations support extended paths automatically; raw Win32
+/// calls require the prefix explicitly. This is lexical only: resolving a
+/// junction here would hide it from the caller's existing reparse checks.
+fn filesystem_path(path: &Path) -> Result<Vec<u16>> {
+    use std::path::{Component, Prefix};
+    ensure!(
+        !path
+            .components()
+            .any(|part| matches!(part, Component::ParentDir)),
+        "parent traversal is not a native filesystem path"
+    );
+    let absolute = std::path::absolute(path)?;
+    let input = absolute.as_os_str().encode_wide().collect::<Vec<_>>();
+    ensure!(!input.contains(&0), "NUL in native filesystem path");
+    let prefix = match absolute.components().next() {
+        Some(Component::Prefix(prefix)) => prefix.kind(),
+        _ => anyhow::bail!("native filesystem path has no volume"),
+    };
+    let mut wide = match prefix {
+        Prefix::Disk(_) => r"\\?\".encode_utf16().chain(input).collect::<Vec<_>>(),
+        Prefix::UNC(_, _) => r"\\?\UNC\"
+            .encode_utf16()
+            .chain(input.into_iter().skip(2))
+            .collect(),
+        Prefix::VerbatimDisk(_) | Prefix::VerbatimUNC(_, _) => input,
+        _ => anyhow::bail!("unsupported native filesystem namespace"),
+    };
+    ensure!(
+        wide.len() < 32767,
+        "native filesystem path exceeds Windows allowance"
+    );
+    wide.push(0);
+    Ok(wide)
+}
+
 fn create_directory(root: &Path, user: &str, allow_existing: bool) -> Result<()> {
     let security = descriptor(&format!("O:{user}D:P(A;OICI;FA;;;{user})"))?;
     let attributes = SECURITY_ATTRIBUTES {
@@ -141,7 +178,7 @@ fn create_directory(root: &Path, user: &str, allow_existing: bool) -> Result<()>
         lpSecurityDescriptor: security.0,
         bInheritHandle: 0,
     };
-    let wide: Vec<u16> = root.as_os_str().encode_wide().chain(Some(0)).collect();
+    let wide = filesystem_path(root)?;
     // SAFETY: descriptor, attributes and path remain live until directory creation returns.
     if unsafe { CreateDirectoryW(wide.as_ptr(), &attributes) } == 0 {
         let error = io::Error::last_os_error();
@@ -182,7 +219,7 @@ fn validate_existing_root(root: &Path, user: &str) -> Result<()> {
             "redirected native runtime directory"
         );
     }
-    let wide: Vec<u16> = root.as_os_str().encode_wide().chain(Some(0)).collect();
+    let wide = filesystem_path(root)?;
     let mut security = std::ptr::null_mut();
     let mut owner = std::ptr::null_mut();
     let mut dacl = std::ptr::null_mut();
@@ -246,7 +283,7 @@ pub(crate) fn require_owner_private(path: &Path) -> Result<()> {
     const SYSTEM: &str = "S-1-5-18";
     const ADMINISTRATORS: &str = "S-1-5-32-544";
     let user = current_user()?;
-    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    let wide = filesystem_path(path)?;
     let (mut security, mut owner, mut dacl) = (
         std::ptr::null_mut(),
         std::ptr::null_mut(),
@@ -438,3 +475,7 @@ impl AsyncWrite for Stream {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "local_ipc_windows_path_tests.rs"]
+mod path_tests;

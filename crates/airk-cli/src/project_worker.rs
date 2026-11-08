@@ -273,9 +273,17 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
             // Wait briefly for its slot rather than making the agent replay it;
             // authorization and ownership are rechecked on every attempt.
             let received = tokio::time::Instant::now();
+            let wire_attempt = request.read_attempt;
+            let retry_budget_complete = request.native.is_none()
+                || wire_attempt.is_some_and(|budget| budget.native_retry_expires_monotonic_ns.is_some());
+            let read_context = wire_attempt.map(crate::read_attempt::decode).transpose()?
+                .map(|context| context.narrowed(authorized_until));
+            // Accepted blocking work keeps the existing hard reap boundary; a
+            // shorter caller deadline must not kill this shared worker early.
             let query_deadline = received + Duration::from_secs(125);
             let admission_deadline = (received + Duration::from_secs(2))
-                .min(tokio::time::Instant::from_std(authorized_until));
+                .min(tokio::time::Instant::from_std(authorized_until))
+                .min(read_context.as_ref().map_or(query_deadline, |context| tokio::time::Instant::from_std(context.deadline())));
             let Some(admission) = state.admission.while_open(&mut stream, admission_deadline, || {
                 use airk_core::service::AdmissionError;
                 if state.closing.load(Ordering::Acquire) {
@@ -320,13 +328,20 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
             let native_read = request.native.is_some();
             let response = match tokio::time::timeout_at(query_deadline, async {
                 match request.native {
-                    Some(native) => tools.read_native(native, state.identity.project).await,
+                    Some(native) => match &read_context {
+                        Some(context) => tools.read_native_with_context(native, state.identity.project, context.clone()).await,
+                        None => tools.read_native(native, state.identity.project).await,
+                    },
                     None => {
                         if request.tool == "airk_diagnostics" && grant.scope.is_none() {
                             tools.set_runtime(crate::runtime_metadata::bundle(&state.control, state.identity, request.frontend).await);
                             tools.set_work(crate::runtime_metadata::work(&state.control, state.identity).await);
                         }
-                        Ok(serde_json::to_value(tools.call(request.tool, request.arguments).await?)?)
+                        let result = match &read_context {
+                            Some(context) => tools.call_with_read_context(request.tool, request.arguments, context.clone()).await?,
+                            None => tools.call(request.tool, request.arguments).await?,
+                        };
+                        Ok(serde_json::to_value(result)?)
                     },
                 }
             }).await {
@@ -346,7 +361,11 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 if native_read { serde_json::json!({"error":{"code":"native_read_failed","message":format!("{error:#}").chars().take(1024).collect::<String>()}}) }
                 else { unscoped_worker_error(&error) }
             });
-            let reply = protocol::QueryResult { result: value, status_receipt: tools.status_receipt(), rebind: false };
+            let read_admission = wire_attempt.zip(read_context.as_ref()).filter(|(_, context)| retry_budget_complete && context.selection_admission_refused())
+                .map(|(budget, _)| protocol::SelectionReadAdmission {
+                    request_id: budget.request_id, identity: state.identity, scope: grant.scope,
+                });
+            let reply = protocol::QueryResult { read_admission, result: value, status_receipt: tools.status_receipt(), rebind: false };
             let result = deliver(&mut stream, &reply, &state, grant.scope, purpose).await;
             state
                 .broker
@@ -439,6 +458,7 @@ fn admission_rejection(error: airk_core::service::AdmissionError) -> protocol::Q
         "query_submitted":false,"retryable":busy,"retry_after_ms":if busy {Some(25)} else {None},
         "fresh_brokerage_required":!busy}});
     protocol::QueryResult {
+        read_admission: None,
         result: serde_json::json!({"content":[{"type":"text","text":detail.to_string()}],"isError":true}),
         status_receipt: Default::default(),
         rebind: !busy,
@@ -715,8 +735,7 @@ pub async fn run() -> Result<()> {
     // Bind immutable bundled model descriptors only. This creates no model,
     // reserves no quota and grants no staged evidence access. Keeping this
     // metadata on the ordinary Kernel also supports reads after activation.
-    let kernel =
-        kernel.with_service_models(&init.runtime, crate::bundled_assets::default_plan()?)?;
+    let kernel = crate::bundled_assets::bind_service_models(kernel, &init.runtime)?;
     airk_kernel::service_execution::install(Path::new(&registration.data_root), identity)?;
     let receipt = if split_write_fenced {
         None
@@ -1610,6 +1629,7 @@ pub async fn run() -> Result<()> {
     let permits = Arc::new(Semaphore::new(1024));
     let mut connections = JoinSet::new();
     let mut idle = Instant::now();
+    let mut checkpoint_sealed = false;
     let mut tick = tokio::time::interval(Duration::from_secs(1));
     loop {
         if closing.load(Ordering::Acquire) {
@@ -1618,6 +1638,29 @@ pub async fn run() -> Result<()> {
         tokio::select! {
             command=commands.recv()=>{
                 match command {
+                    Some(Command::Checkpoint { identity: expected, operation_id, seal }) => {
+                        ensure!(expected == identity, "checkpoint worker identity changed");
+                        let active_queries = {
+                            let mut broker = state.broker.lock().map_err(|_| anyhow::anyhow!("query policy unavailable"))?;
+                            broker.pause_evidence();
+                            broker.status(Instant::now()).active_queries
+                        };
+                        state.admission.close();
+                        let status = work_status.lock().map_err(|_| anyhow::anyhow!("work status unavailable"))?;
+                        let durable_boundary = !busy.load(Ordering::Acquire) && status.active.is_none() && active_queries == 0;
+                        if seal && durable_boundary {
+                            checkpoint_sealed = true;
+                            crate::embedding_pool_client::close();
+                        }
+                        let observation = protocol::WorkerCheckpointObservation {
+                            schema:1, identity, operation_id, engine_sha256:init.engine,
+                            admission_closed:true, sealed:checkpoint_sealed, active_work_grant:status.active,
+                            active_queries,
+                            durable_boundary,
+                        };
+                        service_ipc::write_frame(&mut std::io::stdout().lock(), &Reply::Checkpoint { observation })?;
+                        idle = Instant::now();
+                    },
                     Some(Command::GrantAdmin { identity: expected, caller, nonce }) => {
                         let grant = if expected == identity && !closing.load(Ordering::Acquire) {
                             state.broker.lock().map_err(|_| anyhow::anyhow!("query policy unavailable"))?
@@ -1690,7 +1733,7 @@ pub async fn run() -> Result<()> {
                         service_ipc::write_frame(&mut std::io::stdout().lock(), &if accepted{Reply::PoolConfigured}else{Reply::Failed})?;
                     },
                     Some(Command::RunJob{identity:expected, allowance})=>{
-                        let accepted=expected==identity && allowance.identity==identity && allowance.validate().is_ok()
+                        let accepted=!checkpoint_sealed && expected==identity && allowance.identity==identity && allowance.validate().is_ok()
                             && !busy.swap(true, Ordering::AcqRel);
                         let accepted=if accepted {
                             airk_kernel::service_execution::activate(&allowance)?;

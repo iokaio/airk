@@ -4,6 +4,9 @@ use super::*;
 
 #[path = "runtime_catalog_activation.rs"]
 mod catalog_upgrade;
+#[path = "runtime_checkpoint.rs"]
+mod checkpoint;
+pub(super) use checkpoint::prepare_native_checkpoint;
 
 const INTENT: &str = "activation.json";
 const MAX_INTENT: u64 = 16384;
@@ -50,6 +53,20 @@ pub(super) fn result(root: &Path) -> Result<Option<Receipt>> {
     }
     Ok(Some(receipt))
 }
+pub(super) fn checkpoint_status(root: &Path) -> Result<Option<serde_json::Value>> {
+    checkpoint::status(root)
+}
+pub(super) fn checkpoint_retiring(root: &Path, candidate: &str) -> Result<()> {
+    checkpoint::retiring(root, candidate)
+}
+pub(crate) fn verify_admission_release(
+    root: &Path,
+    control: &Path,
+    operation: airk_core::identity::Incarnation,
+    selected_inventory: &str,
+) -> Result<()> {
+    checkpoint::verify_release(root, control, operation, selected_inventory)
+}
 fn record(root: &Path, intent: &Intent, outcome: Outcome) -> Result<()> {
     result(root)?; // Never overwrite a foreign or malformed historical receipt.
     let receipt = Receipt {
@@ -86,6 +103,8 @@ pub(super) struct Intent {
     prior: Option<Selection>,
     manager: bool,
     phase: Phase,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    checkpoint: Option<String>,
 }
 
 fn exists(path: &Path) -> Result<bool> {
@@ -115,7 +134,16 @@ impl Intent {
             serde_json::to_vec(self)?.len() as u64 <= MAX_INTENT,
             "activation intent exceeds bound"
         );
-        replace_json(root, INTENT, self)
+        let mut saved = self.clone();
+        if self.phase == Phase::Rollback
+            && self.checkpoint.is_some()
+            && !checkpoint::predecessor_checkpoint_capable(root, self)?
+        {
+            // Predecessors reject unknown schema-1 fields. The exact current
+            // journal restores this reference for the new installer on resume.
+            saved.checkpoint = None;
+        }
+        replace_json(root, INTENT, &saved)
     }
     fn phase(&mut self, root: &Path, phase: Phase) -> Result<()> {
         self.phase = phase;
@@ -142,6 +170,15 @@ impl Intent {
                 digest(previous)?;
             }
         }
+        if let Some(operation) = &self.checkpoint {
+            ensure!(
+                operation.len() == 32
+                    && operation
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+                "invalid activation checkpoint operation"
+            );
+        }
         let actual = selection(root)?;
         ensure!(
             actual == self.prior || (self.phase == Phase::Probe && actual == Some(self.selected())),
@@ -155,8 +192,10 @@ pub(super) fn pending(root: &Path) -> Result<Option<Intent>> {
     if !exists(&root.join(INTENT))? {
         return Ok(None);
     }
-    let intent: Intent = serde_json::from_slice(&read_bounded(&root.join(INTENT), MAX_INTENT)?)?;
+    let mut intent: Intent =
+        serde_json::from_slice(&read_bounded(&root.join(INTENT), MAX_INTENT)?)?;
     intent.validate(root)?;
+    checkpoint::reattach_legacy_rollback(root, &mut intent)?;
     Ok(Some(intent))
 }
 pub(super) fn require_settled(root: &Path) -> Result<()> {
@@ -296,7 +335,28 @@ fn manager(root: &Path, intent: &Intent) -> Result<crate::service_manager::Servi
 }
 
 async fn probe(root: &Path, approval: &Approval, main: &Path, manager: bool) -> Result<()> {
-    start_selected(root, approval, main, Some(manager)).await?;
+    let observed = start_selected(root, approval, main, Some(manager)).await?;
+    if let Some(intent) = pending(root)?
+        && let Some(operation) = &intent.checkpoint
+        && service_runtime::checkpoint::admission_closed(&intent.control)?
+    {
+        let operation = operation.parse()?;
+        let response = service_runtime::request_for_version_and_instance(
+            &intent.control,
+            ControlMethod::UpgradeRecoveryProbe {
+                operation_id: operation,
+            },
+            &approval.version,
+            observed.instance,
+        )
+        .await?;
+        let expected_namespace = checkpoint::expected_namespace(root, &intent)?;
+        ensure!(
+            matches!(response,ControlResponse::UpgradeRecoveryReady {operation_id,service_instance,execution_sha256,namespace} if operation_id==operation && service_instance==observed.instance && execution_sha256.to_string()==observed.executable_sha256 && expected_namespace.is_none_or(|expected|namespace==Some(expected))),
+            "candidate recovery registry is not ready"
+        );
+        return Ok(());
+    }
     ensure!(
         matches!(
             service_runtime::request_for_version(
@@ -318,6 +378,10 @@ async fn rollback(root: &Path, intent: &Intent) -> Result<()> {
         selection(root)? == intent.prior,
         "committed activation requires an explicit verified rollback"
     );
+    if let Some(prior) = &intent.prior {
+        let (main, _) = verify_runtime(root, &prior.active)?;
+        checkpoint::require_target(&intent.control, &main)?;
+    }
     let manager = manager(root, intent)?;
     if intent.manager {
         manager.stop()?;
@@ -347,6 +411,8 @@ async fn rollback(root: &Path, intent: &Intent) -> Result<()> {
         start_selected(root, &approval, &main, Some(intent.manager)).await?;
     }
     record(root, intent, Outcome::AbortedOrFailed)?;
+    checkpoint::stage(root, intent, checkpoint::Stage::Aborted)?;
+    checkpoint::settle_admission(root, intent).await?;
     finish(root)
 }
 
@@ -414,9 +480,9 @@ pub(super) fn legacy_retirement_candidate(
                 || (intent.prior.is_none() && selection(root)?.is_none())),
         "legacy retirement requires its exact saved installer activation"
     );
-    let (main, _) = verify_runtime(root, &intent.candidate)?;
+    let (main, approval) = verify_runtime(root, &intent.candidate)?;
     ensure!(
-        runtime_pair::engine_identity_at(&main)? == installer,
+        runtime_pair::engine_identity_at_version(&main, &approval.version)? == installer,
         "pending legacy activation candidate changed"
     );
     Ok(intent.candidate)
@@ -424,6 +490,7 @@ pub(super) fn legacy_retirement_candidate(
 
 /// Resume under the same installer ownership, preserving the public selection.
 pub(super) async fn resume(root: &Path) -> Result<()> {
+    require_issuer_rotation_settled(root)?;
     let mut intent = pending(root)?.context("no pending activation")?;
     result(root)?;
     let fresh = intent.phase == Phase::Probe
@@ -455,10 +522,23 @@ pub(super) async fn resume(root: &Path) -> Result<()> {
     }
     let owner = manager(root, &intent)?;
     if intent.phase == Phase::Drain {
+        checkpoint::preflight(root, &intent)?;
+        checkpoint::stage(root, &intent, checkpoint::Stage::Quiescing)?;
+        checkpoint::prepare_graceful(root, &intent).await?;
         if intent.manager {
             owner.stop()?;
         }
         if let Some(prior) = &intent.prior {
+            #[cfg(target_os = "macos")]
+            {
+                let (main, approval) = verify_runtime(root, &prior.active)?;
+                // Healthy predecessors still upgrade on supported old systems
+                // without the newer atomic hard-stop API. If graceful stop
+                // fails, retain its first diagnostic before exact-token stop.
+                if let Err(error) = drain(root, &main, &approval).await {
+                    checkpoint::predecessor_shutdown_failed(root, &intent, &error)?;
+                }
+            }
             upgrade_stop::stop(root, &prior.active)?;
         }
     }
@@ -474,7 +554,11 @@ pub(super) async fn resume(root: &Path) -> Result<()> {
             drain(root, &main, &approval).await?;
         }
         owner.require_stopped_for_maintenance()?;
-        drop(quiescent(root)?);
+        let quiescence = quiescent(root)?;
+        checkpoint::capture(root, &intent, &quiescence)?;
+        checkpoint::arm_recovery(root, &intent, &quiescence)?;
+        checkpoint::stage(root, &intent, checkpoint::Stage::OldStopped)?;
+        drop(quiescence);
         intent.phase(root, Phase::Launcher)?;
     }
     if intent.phase == Phase::Launcher {
@@ -482,12 +566,14 @@ pub(super) async fn resume(root: &Path) -> Result<()> {
         let quiescence = quiescent(root)?;
         let (main, approval) = verify_runtime(root, &intent.candidate)?;
         quiescence.require_catalog_compatible(&main)?;
+        checkpoint::verify(root, &intent)?;
         launcher_repair::repair(root, &intent.candidate)?;
         if approval.version == env!("CARGO_PKG_VERSION") {
             crate::process_roles::install(&main)?;
         }
         intent.phase(root, Phase::Probe)?;
     }
+    checkpoint::stage(root, &intent, checkpoint::Stage::ActivationPrepared)?;
     let (main, approval) = verify_runtime(root, &intent.candidate)?;
     let committed = selection(root)? == Some(intent.selected());
     if intent.prior.is_none()
@@ -505,13 +591,13 @@ pub(super) async fn resume(root: &Path) -> Result<()> {
         if !committed {
             replace_json(root, "selected.json", &intent.selected())?;
         }
-        return complete_selected(root, &intent);
+        return complete_selected(root, &intent).await;
     }
     // A fenced catalog cannot pass ordinary readiness or legacy directory
     // lookup. Resume its exact candidate before either of those operations.
     if committed && catalog_upgrade::resume_if_enabled(root, &intent).await? {
         probe(root, &approval, &main, intent.manager).await?;
-        return complete_selected(root, &intent);
+        return complete_selected(root, &intent).await;
     }
     if committed && data_migration::needed(root)? {
         migrate_selected(root, &intent, &main, &approval).await?;
@@ -531,7 +617,7 @@ pub(super) async fn resume(root: &Path) -> Result<()> {
             if catalog_upgrade::begin_if_enabled(root, &intent).await? {
                 probe(root, &approval, &main, intent.manager).await?;
             }
-            complete_selected(root, &intent)
+            complete_selected(root, &intent).await
         }
         Err(error) if committed => {
             Err(error
@@ -547,8 +633,11 @@ pub(super) async fn resume(root: &Path) -> Result<()> {
     }
 }
 
-fn complete_selected(root: &Path, intent: &Intent) -> Result<()> {
+async fn complete_selected(root: &Path, intent: &Intent) -> Result<()> {
+    checkpoint::stage(root, intent, checkpoint::Stage::CandidateStarted)?;
     record(root, intent, Outcome::Selected)?;
+    checkpoint::stage(root, intent, checkpoint::Stage::Committed)?;
+    checkpoint::settle_admission(root, intent).await?;
     finish(root)
 }
 
@@ -591,7 +680,7 @@ mod setup_tests {
         let mut completion = Box::pin(setup::settle_then_checkpoint(
             async {
                 released.await?;
-                complete_selected(&root, &intent)
+                complete_selected(&root, &intent).await
             },
             Some(&cancel),
         ));
@@ -672,6 +761,7 @@ pub(super) fn reviewed_request(root: &Path, candidate: &str, expected: &str) -> 
 }
 
 pub(super) async fn begin(root: &Path, candidate: &str) -> Result<Selection> {
+    require_issuer_rotation_settled(root)?;
     managed::require_unmanaged(root)?;
     verify_runtime(root, candidate)?;
     ensure!(
@@ -688,6 +778,7 @@ pub(super) async fn begin(root: &Path, candidate: &str) -> Result<Selection> {
         let control = layout::control(root)?;
         launcher_repair::require_settled(root)?;
         let (main, approval) = verify_runtime(root, candidate)?;
+        checkpoint::require_target(&control, &main)?;
         let prior = selection(root)?;
         if prior
             .as_ref()
@@ -696,11 +787,12 @@ pub(super) async fn begin(root: &Path, candidate: &str) -> Result<Selection> {
             start_selected(root, &approval, &main, None).await?;
             return prior.context("selection disappeared");
         }
+        legacy_caches::require_settled(root)?;
         if let Some(prior) = &prior {
             verify_runtime(root, &prior.active)?;
         }
         let manager = crate::service_manager::ServiceManager::for_runtime(root)?.owns_restart()?;
-        Intent {
+        let mut intent = Intent {
             schema: 1,
             install: root.canonicalize()?,
             control,
@@ -708,8 +800,10 @@ pub(super) async fn begin(root: &Path, candidate: &str) -> Result<Selection> {
             prior,
             manager,
             phase: Phase::Drain,
-        }
-        .save(root)?;
+            checkpoint: None,
+        };
+        checkpoint::initialize(root, &mut intent)?;
+        intent.save(root)?;
     }
     resume(root).await?;
     let selected = selection_record(root)?;
@@ -721,6 +815,7 @@ pub(super) async fn begin(root: &Path, candidate: &str) -> Result<Selection> {
 }
 
 pub(super) async fn abort(root: &Path) -> Result<()> {
+    require_issuer_rotation_settled(root)?;
     let Some(mut intent) = pending(root)? else {
         return Ok(());
     };

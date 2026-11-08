@@ -41,8 +41,8 @@ extern "C" fn release_environment() {
     }
     let environment = ENVIRONMENT.swap(std::ptr::null_mut(), Ordering::AcqRel);
     if !environment.is_null() {
-        // SAFETY: AIRK exclusively created this environment, its dynamic library
-        // stays pinned by ort, and every AIRK session has released its lease.
+        // SAFETY: AIRK exclusively created this environment, the engine is statically linked
+        // into the authenticated image, and every AIRK session has released its lease.
         // ort 2.0.0-rc.10 retains its Environment in a Rust static which is never
         // dropped. Release the C object once before ONNX's C++ static mutexes.
         unsafe { (ort::api().ReleaseEnv)(environment) };

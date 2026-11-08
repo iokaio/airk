@@ -113,6 +113,11 @@ pub(super) fn require_settled(root: &Path) -> Result<()> {
 /// publishing activation intent or draining owners, and retain it through the
 /// handoff so a new executable mapping cannot race that proof. No bytes change.
 pub(super) fn replacement_guard(root: &Path, main: &Path) -> Result<Option<File>> {
+    if runtime_pair::single_executable(main)? {
+        // Modern clients use HTTPS. A retained predecessor launcher is migration
+        // state, not a destination for this payload or a replacement lock.
+        return Ok(None);
+    }
     #[cfg(windows)]
     {
         let destination = launcher_path(root);
@@ -165,6 +170,10 @@ fn begin(root: &Path, runtime: &str) -> Result<Intent> {
 }
 
 fn begin_verified(root: &Path, runtime: &str, main: &Path) -> Result<Intent> {
+    ensure!(
+        !runtime_pair::single_executable(main)?,
+        "single executable runtime has no standalone launcher to repair"
+    );
     let target = runtime_pair::digest_file(main)?;
     let bytes = fs::metadata(main)?.len();
     ensure!(
@@ -274,13 +283,21 @@ fn finish(root: &Path, intent: &Intent) -> Result<()> {
 }
 
 /// Caller owns the installer lock, stopped-manager proof and all process leases.
-pub(super) fn repair(root: &Path, runtime: &str) -> Result<()> {
+pub(super) fn repair(root: &Path, runtime: &str) -> Result<bool> {
     // One complete payload verification belongs to this locked operation. A
     // resumed intent revalidates exactly as a fresh one does; do not hash every
     // embedding payload twice when creating the initial intent.
     let (main, _, inventory) = verify_runtime_inventory(root, runtime)?;
+    if runtime_pair::single_executable(&main)? {
+        require_issuer_rotation_settled(root)?;
+        require_settled(root)?;
+        // Never copy a sealed application main outside its bundle. Preserve any
+        // genuine predecessor launcher and receipt until explicit retirement.
+        return Ok(false);
+    }
     let main = launcher_image(runtime_pair::payload_root(&main)?, &inventory)?;
-    repair_verified(root, runtime, &main)
+    repair_verified(root, runtime, &main)?;
+    Ok(true)
 }
 
 /// Prepare Client owns the installer lock and an exact fully verified selection.
@@ -288,6 +305,10 @@ pub(super) fn repair(root: &Path, runtime: &str) -> Result<()> {
 /// service's sealed executable, manager state, selected payload or source data.
 /// Unlike activation repair, this route neither needs nor acquires service drain.
 pub(super) fn repair_client_verified(root: &Path, runtime: &str, image: &Path) -> Result<()> {
+    ensure!(
+        !runtime_pair::single_executable(image)?,
+        "single executable runtime has no standalone client launcher"
+    );
     ensure!(
         cfg!(target_os = "macos"),
         "standalone client refresh is Mac-only"
@@ -304,6 +325,7 @@ pub(super) fn repair_client_verified(root: &Path, runtime: &str, image: &Path) -
 }
 
 fn repair_verified(root: &Path, runtime: &str, main: &Path) -> Result<()> {
+    require_issuer_rotation_settled(root)?;
     let intent = if exists(&root.join(INTENT))? {
         Intent::read(root)?
     } else {
@@ -337,6 +359,7 @@ fn repair_verified(root: &Path, runtime: &str, main: &Path) -> Result<()> {
 }
 
 pub(super) fn abort(root: &Path) -> Result<()> {
+    require_issuer_rotation_settled(root)?;
     if !exists(&root.join(INTENT))? {
         return Ok(());
     }

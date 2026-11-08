@@ -202,7 +202,7 @@ class WorkflowSplitTests(unittest.TestCase):
             self.assertNotIn(command, validation)
         self.assertLess(validation.index("ci-runtime.py restore"), validation.index("check-service-clients.py"))
         self.assertLess(validation.index("mcp-smoke-1"), validation.index("package-native.py"))
-        self.assertIn("--test-name-pattern '^four cold (pinned|source)", validation)
+        self.assertIn("--test-name-pattern '^four cold HTTPS (sequential|concurrent) clients observe first status without diagnostic warmup$'", validation)
         self.assertIn('if [ "$AIRK_QUALIFICATION" = "true" ]', validation)
         self.assertIn("CARGO_PROFILE_DEV_DEBUG: '0'", build)
         self.assertIn("CARGO_PROFILE_TEST_DEBUG: '0'", build)

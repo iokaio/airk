@@ -86,10 +86,45 @@ version = "2.18.2"
 criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
 
+[[exemptions.asn1-rs]]
+version = "0.7.2"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. Owned certificate ASN.1 parsing; src/lib.rs forbids unsafe; BER parser default recursion 50. Parser correctness and arbitrary malformed input are not fully audited. Not a full security audit or current advisory clearance."
+
+[[exemptions.asn1-rs-derive]]
+version = "0.6.0"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. Compiler procedural macro for ASN.1 derives; inspected token parsing/emission has no external I/O or process execution. Generated semantics are not formally proved. Not a full security audit or current advisory clearance."
+
+[[exemptions.asn1-rs-impl]]
+version = "0.2.0"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. Compiler procedural macro encodes fixed OID/integer token literals; no external I/O/process found. Compile-time input handling is not a complete macro audit. Declares MIT OR Apache-2.0 but packages no standalone license text; retain this provenance qualification. Not a full security audit or current advisory clearance."
+
+[[exemptions.async-trait]]
+version = "0.1.92"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. RMCP async interface procedural macro; token AST to boxed future expansion, no external I/O/process found; generated lifetime/Send behavior not fully audited. Not a full security audit or current advisory clearance."
+
+[[exemptions.atomic-waker]]
+version = "1.1.2"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. Hyper wake coordination; atomic state guards unsafe interior-cell access and Send/Sync; callback panic/concurrency behavior not formally proved. Retain LICENSE-THIRD-PARTY. Not a full security audit or current advisory clearance."
+
 [[exemptions.autocfg]]
 version = "1.5.1"
 criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
+
+[[exemptions.base64]]
+version = "0.23.1"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. PEM/HTTP encoding; default features include simd-unsafe. Inspected AVX2/NEON dispatch and unchecked encoding operations; no autonomous I/O/process. No all-architecture SIMD soundness claim. Not a full security audit or current advisory clearance."
+
+[[exemptions.bit-vec]]
+version = "0.9.1"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. ASN.1 bit strings; bitmap indexing/allocation source inspected; no autonomous I/O/process found. Resource limits remain caller responsibility. Not a full security audit or current advisory clearance."
 
 [[exemptions.bitflags]]
 version = "2.13.2"
@@ -286,10 +321,25 @@ version = "0.3.9"
 criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
 
+[[exemptions.data-encoding]]
+version = "2.11.1"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. Certificate data encoding; unsafe slice chunking/UTF8 views rely on checked bounds/alphabet contracts. No autonomous I/O/process found; no complete soundness proof. Not a full security audit or current advisory clearance."
+
 [[exemptions.dekobon-tree-sitter-groovy]]
 version = "0.3.0"
 criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
+
+[[exemptions.der-parser]]
+version = "10.0.0"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. Certificate DER/BER parser; forbids unsafe and default recursion 50. ber/tagged.rs explicitly resets a depth counter and ignores trailing bytes in one generic combinator; not a universal recursion/completeness guarantee. Native owned certificate files are separately bounded. Not a full security audit or current advisory clearance."
+
+[[exemptions.deranged]]
+version = "0.5.9"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. Certificate time bounded integer helpers; unsafe unchecked constructors/range assumptions inspected; no autonomous I/O/process found. Range-contract correctness not fully proved. Not a full security audit or current advisory clearance."
 
 [[exemptions.derive_builder]]
 version = "0.20.2"
@@ -437,6 +487,11 @@ criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
 
 [[exemptions.getrandom]]
+version = "0.2.17"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. Ring OS entropy; unsafe OS FFI, Linux /dev/urandom fallback; no downloader/subprocess found. Other target/custom/JS/RDRAND paths are not platform-qualified. Not a full security audit or current advisory clearance."
+
+[[exemptions.getrandom]]
 version = "0.3.4"
 criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
@@ -465,6 +520,41 @@ notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03
 version = "0.12.2"
 criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
+
+[[exemptions.http]]
+version = "1.5.0"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. Canonical HTTP types; unsafe header-map/byte representations. HeaderValue sensitivity is opt-in, not default credential redaction. Packaged VCS dirty flag retained. Not a full security audit or current advisory clearance."
+
+[[exemptions.http-body]]
+version = "1.1.0"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. HTTP streaming trait; unsafe pin projections; size hints are not enforced budgets. Packaged VCS dirty flag retained. Not a full security audit or current advisory clearance."
+
+[[exemptions.http-body-util]]
+version = "0.1.5"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. Bounded HTTP body adapters; Limited checks frame bytes, plain collect accumulates without its own cap. Unsafe pin projection inspected; callers must retain explicit limits. Not a full security audit or current advisory clearance."
+
+[[exemptions.httparse]]
+version = "1.10.1"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. HTTP/1 parser with unsafe cursors/SIMD; build script runs configured RUSTC --version and emits cfgs, no download. No complete parser/request-smuggling/all-target soundness audit. Not a full security audit or current advisory clearance."
+
+[[exemptions.httpdate]]
+version = "1.0.3"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. Hyper date formatting/parsing; forbids unsafe, no autonomous I/O/process found. Not a general calendar validation audit. Not a full security audit or current advisory clearance."
+
+[[exemptions.hyper]]
+version = "1.12.0"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. Native HTTP/1 transport; caller-provided I/O/executor. Unsafe read buffers/upgrades/wakers; caller TLS/auth/budgets/deadlines retained. Optional HTTP2/C FFI not qualified. Not a full security audit or current advisory clearance."
+
+[[exemptions.hyper-util]]
+version = "0.1.21"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. Tokio I/O adapter with unsafe ReadBuf projection. Optional legacy DNS/socket/proxy-environment paths exist; direct declaration selects tokio. Unified feature graph not executed. Not a full security audit or current advisory clearance."
 
 [[exemptions.iana-time-zone]]
 version = "0.1.65"
@@ -576,6 +666,11 @@ version = "1.1.2"
 criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
 
+[[exemptions.lazy_static]]
+version = "1.5.1"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. Parser shared initialization; Once/MaybeUninit unsafe publication inspected, no autonomous I/O/process found. User initializer behavior is outside this crate's guarantee. Not a full security audit or current advisory clearance."
+
 [[exemptions.libc]]
 version = "0.2.190"
 criteria = "safe-to-deploy"
@@ -686,15 +781,30 @@ version = "2.1.0"
 criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
 
+[[exemptions.num-bigint]]
+version = "0.4.8"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. ASN.1 arbitrary precision integers; unsafe ASCII/UTF8 conversion and CPU arithmetic intrinsics inspected. Not constant-time crypto assurance; caller allocation limits remain required. Not a full security audit or current advisory clearance."
+
 [[exemptions.num-complex]]
 version = "0.4.6"
 criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
 
+[[exemptions.num-conv]]
+version = "0.2.2"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. Time integer conversions; pure arithmetic/traits, no external I/O/process or unsafe found in inspected source. No exhaustive arithmetic proof. Not a full security audit or current advisory clearance."
+
 [[exemptions.num-integer]]
 version = "0.1.47"
 criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
+
+[[exemptions.oid-registry]]
+version = "0.8.1"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. Certificate OID names; build script reads packaged assets/oid_db.txt and writes OUT_DIR/oid_db.rs. No subprocess/download; fixed verified archive DB is a compiler input. Runtime forbids unsafe. Not a full security audit or current advisory clearance."
 
 [[exemptions.once_cell]]
 version = "1.21.4"
@@ -715,6 +825,11 @@ notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03
 version = "0.12.1"
 criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
+
+[[exemptions.pem]]
+version = "4.0.0"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. Owned CA PEM armor; pure parse/encode, no unsafe/external I/O/process found in inspected source. Decoding is not certificate trust validation. Not a full security audit or current advisory clearance."
 
 [[exemptions.pin-project-lite]]
 version = "0.2.17"
@@ -745,6 +860,11 @@ notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03
 version = "0.1.6"
 criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
+
+[[exemptions.powerfmt]]
+version = "0.2.1"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. Time formatting; unsafe MaybeUninit buffers rely on initialized width/precision contracts. No autonomous I/O/process found; full soundness not proved. Not a full security audit or current advisory clearance."
 
 [[exemptions.ppv-lite86]]
 version = "0.2.21"
@@ -841,6 +961,11 @@ version = "1.13.0"
 criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
 
+[[exemptions.rcgen]]
+version = "0.14.10"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. Owner-private CA/leaf issuance using ring SystemRandom; forbids unsafe, no build script. Issuer CA parser assumes rather than validates CA. Private key DER clones are not automatically zeroized; optional zeroize omitted by AIRK. Not a full security audit or current advisory clearance."
+
 [[exemptions.ref-cast]]
 version = "1.0.26"
 criteria = "safe-to-deploy"
@@ -866,6 +991,11 @@ version = "0.8.11"
 criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
 
+[[exemptions.ring]]
+version = "0.17.14"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. TLS cryptography and OS entropy via Rust/C/ASM FFI and CPU dispatch. Build script executes compiler/assembler, can consume shipped pregenerated objects, optional regeneration Perl/NASM; no download found. Packaged dirty VCS metadata and nested Apache/ISC notices retained; no crypto/prebuilt reproducibility audit. Not a full security audit or current advisory clearance."
+
 [[exemptions.rmcp]]
 version = "3.2.0"
 criteria = "safe-to-deploy"
@@ -886,10 +1016,30 @@ version = "0.40.1@git:2a71e35d94b2a02f7dd4a0c4cfd59c339370e747"
 criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
 
+[[exemptions.rusticata-macros]]
+version = "4.1.0"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. ASN.1 parser combinator macros; inspected source has no unsafe/autonomous I/O/process. Composed parser completeness/resource bounds remain caller responsibilities. Not a full security audit or current advisory clearance."
+
 [[exemptions.rustix]]
 version = "1.1.5"
 criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
+
+[[exemptions.rustls]]
+version = "0.23.46"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for rustls 0.23.46 native HTTPS; exact registry archive identity and complete 0.23.45-to-0.23.46 packaged source delta reviewed 2026-11-07. Patches RUSTSEC-2026-0346/0347/0348/0349; preserve normal CA/hostname validation, declared ring/std/tls12 bounds, no session-secret logging, caller deadlines and I/O budgets. Buildscript, dependency/feature declarations and license texts unchanged. TLS sequence/key updates, fatal-error propagation, session-cache eviction, ECH/HPKE and protocol validation also changed. Targeted technical review and exact-version exception, not a full safe-to-deploy audit, current scanner clearance, cryptographic proof or platform qualification. See supply-chain/reviews/rustls-0.23.46-2026-11-07.md."
+
+[[exemptions.rustls-pki-types]]
+version = "1.15.1"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. TLS key/certificate/name containers; explicit caller PEM file APIs and fixed-layout unsafe IPv6 conversion. Zeroization is API-specific, not all copies. No independent trust validation in types. Not a full security audit or current advisory clearance."
+
+[[exemptions.rustls-webpki]]
+version = "0.103.16"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. TLS chain and identity validation with explicit work budgets; no unsafe/autonomous I/O/process found in inspected source. Chain and name validation are separate caller obligations; no complete cryptographic/parser audit. Not a full security audit or current advisory clearance."
 
 [[exemptions.rustversion]]
 version = "1.0.23"
@@ -951,6 +1101,11 @@ version = "1.0.151"
 criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
 
+[[exemptions.serde_spanned]]
+version = "1.1.3"
+criteria = "safe-to-deploy"
+notes = "Limited exact-version exception from targeted source inspection on 2026-11-07; see supply-chain/reviews/toml-config-2026-11-07.json. Serde span/value adapter; src/lib.rs forbids unsafe. Span ranges are metadata and do not prove original source ownership. No build script or procedural macro; serde wire correctness was inspected narrowly, not exhaustively audited. Not a full safe-to-deploy audit, human certification, publisher trust or fresh advisory clearance."
+
 [[exemptions.sha2]]
 version = "0.10.9"
 criteria = "safe-to-deploy"
@@ -991,6 +1146,11 @@ version = "0.5.5"
 criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
 
+[[exemptions.sse-stream]]
+version = "0.2.6"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. RMCP SSE parser; unfinished lines/event data grow without intrinsic byte bound; optional tracing logs invalid content. Exception conditional on caller byte/event/deadline limits and logging policy. Not a full security audit or current advisory clearance."
+
 [[exemptions.stable_deref_trait]]
 version = "1.2.1"
 criteria = "safe-to-deploy"
@@ -1006,6 +1166,11 @@ version = "0.1.5"
 criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
 
+[[exemptions.subtle]]
+version = "2.6.1"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. Constant-time selection helpers use unsafe volatile optimization barrier; no external I/O/process. Best-effort compiler barrier, not universal constant-time proof. Not a full security audit or current advisory clearance."
+
 [[exemptions.syn]]
 version = "2.0.119"
 criteria = "safe-to-deploy"
@@ -1015,6 +1180,11 @@ notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03
 version = "3.0.6"
 criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
+
+[[exemptions.synstructure]]
+version = "0.13.2"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. ASN.1 derive token AST helper; no external I/O/process or unsafe found in inspected source. Generated-code behavior not fully audited. Not a full security audit or current advisory clearance."
 
 [[exemptions.synstructure]]
 version = "0.14.0"
@@ -1046,6 +1216,21 @@ version = "2.0.21"
 criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
 
+[[exemptions.time]]
+version = "0.3.55"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. CA certificate validity intervals; private unsafe validated date/range operations. Optional local-offset has OS FFI; declared default std/macros are not full resolved feature proof. No autonomous process/download found. Not a full security audit or current advisory clearance."
+
+[[exemptions.time-core]]
+version = "0.1.9"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. Shared time/calendar constants and arithmetic; no unsafe/external I/O/process found in inspected source. No exhaustive calendar arithmetic proof. Not a full security audit or current advisory clearance."
+
+[[exemptions.time-macros]]
+version = "0.2.32"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. Compiler-executed date/time literal macros; unsafe UTF8/slice and emitted unchecked validated constructors. No external I/O/process found; no full generated-code soundness proof. Not a full security audit or current advisory clearance."
+
 [[exemptions.tinystr]]
 version = "0.8.4"
 criteria = "safe-to-deploy"
@@ -1066,6 +1251,11 @@ version = "2.7.2"
 criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
 
+[[exemptions.tokio-rustls]]
+version = "0.26.6"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. Async TLS over caller-provided I/O, no autonomous dial/resolve; no unsafe/build script found. Caller owns deadlines, authorization, CA validation and cancellation. Not a full security audit or current advisory clearance."
+
 [[exemptions.tokio-stream]]
 version = "0.1.19"
 criteria = "safe-to-deploy"
@@ -1075,6 +1265,31 @@ notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03
 version = "0.7.19"
 criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
+
+[[exemptions.toml]]
+version = "1.1.6+spec-1.1.0"
+criteria = "safe-to-deploy"
+notes = "Limited exact-version exception from targeted source inspection on 2026-11-07; see supply-chain/reviews/toml-config-2026-11-07.json. Bounded original Codex TOML decoding for native legacy-origin inspection. src/lib.rs forbids unsafe; configured std/serde/parse without unbounded/debug/display. Parser recursion guard is 80 and dotted-key path depth is checked; lexer/events allocate proportionally to input and may amplify the existing 1 MiB caller bound. Not a complete adversarial complexity or parser-correctness audit. Not a full safe-to-deploy audit, human certification, publisher trust or fresh advisory clearance."
+
+[[exemptions.toml_datetime]]
+version = "1.1.3+spec-1.1.0"
+criteria = "safe-to-deploy"
+notes = "Limited exact-version exception from targeted source inspection on 2026-11-07; see supply-chain/reviews/toml-config-2026-11-07.json. TOML date/time scalar and serde adapter; src/lib.rs forbids unsafe. Numeric parsing and field-range validation inspected; no clock/network/filesystem/process access. Date/time semantic completeness is not certified. Not a full safe-to-deploy audit, human certification, publisher trust or fresh advisory clearance."
+
+[[exemptions.toml_parser]]
+version = "1.1.5+spec-1.1.0"
+criteria = "safe-to-deploy"
+notes = "Limited exact-version exception from targeted source inspection on 2026-11-07; see supply-chain/reviews/toml-config-2026-11-07.json. Lexer/events/UTF-8 scalar decoder. Unchecked slicing is gated behind explicit unsafe feature, not requested by AIRK toml dependency. Checked source.get/split_at paths, lexer progress/capacity arithmetic and RecursionGuard handoff inspected. No full malformed-input or all-feature memory-safety proof. Not a full safe-to-deploy audit, human certification, publisher trust or fresh advisory clearance."
+
+[[exemptions.toml_writer]]
+version = "1.2.0+spec-1.1.0"
+criteria = "safe-to-deploy"
+notes = "Limited exact-version exception from targeted source inspection on 2026-11-07; see supply-chain/reviews/toml-config-2026-11-07.json. Locked optional TOML formatting/escaping dependency; display is not requested by direct AIRK dependency. src/lib.rs forbids unsafe; output fmt::Write escapes special/control characters and is caller-owned, not filesystem output. No full formatting round-trip or downstream feature-unification certification. Not a full safe-to-deploy audit, human certification, publisher trust or fresh advisory clearance."
+
+[[exemptions.tower-service]]
+version = "0.3.3"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. Readiness/call trait, forbids unsafe; implementers must release admission reservations on cancellation. No independent scheduler/admission guarantee. Not a full security audit or current advisory clearance."
 
 [[exemptions.tracing]]
 version = "0.1.44"
@@ -1356,6 +1571,11 @@ version = "1.1.2"
 criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
 
+[[exemptions.try-lock]]
+version = "0.2.5"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. CONDITIONAL: deprecated safe try_lock_order is documented unsound for weak ordering. Inspected want callers use checked try_lock_explicit SeqCst only; no deprecated callers found in AIRK/Hyper/want. Do not certify crate-wide soundness; reject future unchecked/weak-order usage. Not a full security audit or current advisory clearance."
+
 [[exemptions.ts-parser-perl]]
 version = "2.0.0"
 criteria = "safe-to-deploy"
@@ -1406,6 +1626,11 @@ version = "0.1.1"
 criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
 
+[[exemptions.untrusted]]
+version = "0.9.0"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. Checked bounded input reader/read_all rejects trailing input; no unsafe/build script/autonomous I/O/process found. Does not validate higher-level certificate semantics. Not a full security audit or current advisory clearance."
+
 [[exemptions.url]]
 version = "2.5.8"
 criteria = "safe-to-deploy"
@@ -1425,6 +1650,11 @@ notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03
 version = "2.5.0"
 criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
+
+[[exemptions.want]]
+version = "0.3.2"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. Hyper readiness uses checked try_lock_explicit SeqCst at both inspected calls, atomic state and caller wakers; no unsafe/external I/O found. Conditional on try-lock checked usage; no concurrency proof. Not a full security audit or current advisory clearance."
 
 [[exemptions.wasi]]
 version = "0.11.1+wasi-snapshot-preview1"
@@ -1492,6 +1722,11 @@ criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
 
 [[exemptions.windows-sys]]
+version = "0.52.0"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. Getrandom Windows OS bindings: generated unsafe extern declarations/macros; platform ABI/handle lifetime is caller responsibility. No build script. No cross-target execution qualification. Not a full security audit or current advisory clearance."
+
+[[exemptions.windows-sys]]
 version = "0.60.2"
 criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
@@ -1502,9 +1737,19 @@ criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
 
 [[exemptions.windows-targets]]
+version = "0.52.6"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. Architecture-specific Windows linking macros select OS import libraries/raw-dylib. No downloader/process/build script. Imported ABI correctness and other targets not runtime-qualified. Not a full security audit or current advisory clearance."
+
+[[exemptions.windows-targets]]
 version = "0.53.5"
 criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
+
+[[exemptions.windows_aarch64_gnullvm]]
+version = "0.52.6"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. Windows architecture import-library package; build.rs only emits CARGO_MANIFEST_DIR/lib link search. Published binary import libraries are exact registry-checksummed bytes, not independently regenerated or qualified on this architecture. No network/subprocess found. Not a full security audit or current advisory clearance."
 
 [[exemptions.windows_aarch64_gnullvm]]
 version = "0.53.1"
@@ -1512,9 +1757,19 @@ criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
 
 [[exemptions.windows_aarch64_msvc]]
+version = "0.52.6"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. Windows architecture import-library package; build.rs only emits CARGO_MANIFEST_DIR/lib link search. Published binary import libraries are exact registry-checksummed bytes, not independently regenerated or qualified on this architecture. No network/subprocess found. Not a full security audit or current advisory clearance."
+
+[[exemptions.windows_aarch64_msvc]]
 version = "0.53.1"
 criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
+
+[[exemptions.windows_i686_gnu]]
+version = "0.52.6"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. Windows architecture import-library package; build.rs only emits CARGO_MANIFEST_DIR/lib link search. Published binary import libraries are exact registry-checksummed bytes, not independently regenerated or qualified on this architecture. No network/subprocess found. Not a full security audit or current advisory clearance."
 
 [[exemptions.windows_i686_gnu]]
 version = "0.53.1"
@@ -1522,9 +1777,19 @@ criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
 
 [[exemptions.windows_i686_gnullvm]]
+version = "0.52.6"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. Windows architecture import-library package; build.rs only emits CARGO_MANIFEST_DIR/lib link search. Published binary import libraries are exact registry-checksummed bytes, not independently regenerated or qualified on this architecture. No network/subprocess found. Not a full security audit or current advisory clearance."
+
+[[exemptions.windows_i686_gnullvm]]
 version = "0.53.1"
 criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
+
+[[exemptions.windows_i686_msvc]]
+version = "0.52.6"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. Windows architecture import-library package; build.rs only emits CARGO_MANIFEST_DIR/lib link search. Published binary import libraries are exact registry-checksummed bytes, not independently regenerated or qualified on this architecture. No network/subprocess found. Not a full security audit or current advisory clearance."
 
 [[exemptions.windows_i686_msvc]]
 version = "0.53.1"
@@ -1532,9 +1797,19 @@ criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
 
 [[exemptions.windows_x86_64_gnu]]
+version = "0.52.6"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. Windows architecture import-library package; build.rs only emits CARGO_MANIFEST_DIR/lib link search. Published binary import libraries are exact registry-checksummed bytes, not independently regenerated or qualified on this architecture. No network/subprocess found. Not a full security audit or current advisory clearance."
+
+[[exemptions.windows_x86_64_gnu]]
 version = "0.53.1"
 criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
+
+[[exemptions.windows_x86_64_gnullvm]]
+version = "0.52.6"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. Windows architecture import-library package; build.rs only emits CARGO_MANIFEST_DIR/lib link search. Published binary import libraries are exact registry-checksummed bytes, not independently regenerated or qualified on this architecture. No network/subprocess found. Not a full security audit or current advisory clearance."
 
 [[exemptions.windows_x86_64_gnullvm]]
 version = "0.53.1"
@@ -1542,14 +1817,34 @@ criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
 
 [[exemptions.windows_x86_64_msvc]]
+version = "0.52.6"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. Windows architecture import-library package; build.rs only emits CARGO_MANIFEST_DIR/lib link search. Published binary import libraries are exact registry-checksummed bytes, not independently regenerated or qualified on this architecture. No network/subprocess found. Not a full security audit or current advisory clearance."
+
+[[exemptions.windows_x86_64_msvc]]
 version = "0.53.1"
 criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
+
+[[exemptions.winnow]]
+version = "1.0.5"
+criteria = "safe-to-deploy"
+notes = "Limited exact-version exception from targeted source inspection on 2026-11-07; see supply-chain/reviews/toml-config-2026-11-07.json. Parser stream support for TOML lexer/events; checked next_slice/peek_slice, token offsets and TokenSlice delegation inspected. Unsafe unchecked stream APIs require bounds/UTF-8 preconditions; those and all parser combinators are not exhaustively audited. Optional debug code reads COLUMNS/prints traces and is not requested. No build script or procedural macro. Not a full safe-to-deploy audit, human certification, publisher trust or fresh advisory clearance."
 
 [[exemptions.writeable]]
 version = "0.6.4"
 criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
+
+[[exemptions.x509-parser]]
+version = "0.18.1"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. Owned CA metadata parsing; forbids unsafe, explicit Read/PEM APIs; parsing is not trust/chain validation. Rustls WebPKI validates peer certificates separately. No complete parser audit. Not a full security audit or current advisory clearance."
+
+[[exemptions.yasna]]
+version = "0.6.0"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. RCGen ASN.1 DER writer/reader; forbids unsafe, no autonomous I/O/process/build script found. Encoding correctness not exhaustively proved. Not a full security audit or current advisory clearance."
 
 [[exemptions.yoke]]
 version = "0.8.3"
@@ -1580,6 +1875,11 @@ notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03
 version = "0.1.8"
 criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
+
+[[exemptions.zeroize]]
+version = "1.9.1"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. Volatile writes/compiler barriers and Drop wrapper; unsafe slice operations inspected. Copies/reallocation/explicit unwrapped buffers remain outside blanket erasure guarantee. Not a full security audit or current advisory clearance."
 
 [[exemptions.zerotrie]]
 version = "0.2.5"

@@ -14,12 +14,18 @@ from pathlib import Path
 import platform
 import statistics
 import subprocess
-import tempfile
 import time
 
 spec = importlib.util.spec_from_file_location("airk_usage_fixture", Path(__file__).with_name("check-service-clients.py"))
 clients = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(clients)
+
+
+def usage_command(fixture, arguments):
+    assert arguments[:2] in (["usage", "report"], ["usage", "configure"], ["usage", "clear"]), \
+        "Unexpected usage management command"
+    # Reports inspect complete owned accounting, not a selected evidence grant.
+    return [str(fixture.binary), *fixture.management_arguments("usage-benchmark"), *arguments]
 
 
 def main():
@@ -33,21 +39,21 @@ def main():
     if not (2 <= args.trials <= 1000 and 1 <= args.workers <= 16):
         parser.error("trials must be 2..1000; workers must be 1..16")
     binary = args.binary.resolve(strict=True)
-    with tempfile.TemporaryDirectory(prefix="airk-usage-benchmark-") as temporary, ExitStack() as stack:
+    with clients.owned_client_fixture() as temporary, ExitStack() as stack:
         base = Path(temporary).resolve(strict=True)
         root = base / "sources"
         root.mkdir()
         for i in range(16):
             (root / f"sample-{i}.txt").write_text((f"Original telemetry fixture {i}. Bounded evidence saves reading.\n" * 100), encoding="utf-8")
-        state = base / "state"
+        state = base / "index-data"
         state.mkdir()
         fixture = stack.enter_context(clients.Fixture(binary.parent, base))
-        assert fixture.binary == binary
+        assert hashlib.sha256(fixture.binary.read_bytes()).digest() == hashlib.sha256(binary.read_bytes()).digest()
+        fixture.assert_alive()
         fixture.environment.pop("AIRK_USAGE_MODE", None)
         fixture.register("usage-benchmark", root, state)
         fixture.configure("usage-benchmark", {"operation": "vectors", "enabled": False})
         fixture.configure("usage-benchmark", {"operation": "usage", "mode": "aggregates_only"})
-        command = [str(binary), *fixture.arguments("usage-benchmark")]
 
         def run(arguments, writer_held=False):
             env = dict(fixture.environment)
@@ -59,7 +65,7 @@ def main():
                 if arguments[0] == "search":
                     value = fixture.query("usage-benchmark", *arguments, retry=False, admission_only=True)
                 else:
-                    result = subprocess.run(command + arguments, env=env, capture_output=True, timeout=120)
+                    result = subprocess.run(usage_command(fixture, arguments), env=env, capture_output=True, timeout=120)
                     value = json.loads(result.stdout) if result.stdout else {}
                     if result.returncode or value.get("isError"):
                         raise RuntimeError(f"Synthetic native client failed: exit {result.returncode}")
@@ -94,7 +100,7 @@ def main():
         recorded_after = after["report"]["operations"].get("search", {}).get("calls", 0)
         result = {"schema": "airk-usage-overhead/1", "platform": platform.system(), "architecture": platform.machine(),
                   "runtime_manifest_sha256": hashlib.sha256((fixture.runtime / "airk-install.json").read_bytes()).hexdigest(),
-                  "binary_version": subprocess.check_output([str(binary), "--version"], text=True, timeout=30).strip(),
+                  "binary_version": subprocess.check_output([str(fixture.binary), "--version"], text=True, timeout=30).strip(),
                   "trials_per_mode": args.trials, "workers": args.workers,
                   "enabled": stats(durations["enabled"]), "disabled": stats(durations["disabled"]),
                   "median_difference_ms": statistics.median(durations["enabled"]) - statistics.median(durations["disabled"]),

@@ -61,12 +61,11 @@ fn qualify(
     // Match the ordinary native worker's read-only model context. This binds
     // immutable descriptors/runtime only: no provisioning, model weights,
     // inference, source scan or Current mutation is performed by qualification.
-    let kernel = airk_kernel::Kernel::open_existing_service_observer(&index.backing)?
-        .with_expected_source_policy(registry.catalog_source_policy(index.id)?)?
-        .with_service_models(
-            registry.control_root(),
-            crate::bundled_assets::default_plan()?,
-        )?;
+    let kernel = crate::bundled_assets::bind_service_models(
+        airk_kernel::Kernel::open_existing_service_observer(&index.backing)?
+            .with_expected_source_policy(registry.catalog_source_policy(index.id)?)?,
+        registry.control_root(),
+    )?;
     let scoped_kernel = kernel.with_scoped_reads(authority.clone())?;
     // First-wave selected refresh AND full fallback require full-index metadata
     // authority. Partial Project/path grants are unsupported; never broaden them.

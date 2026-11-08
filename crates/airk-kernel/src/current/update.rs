@@ -782,6 +782,17 @@ impl CurrentUpdater<'_> {
                             captured_bytes <= MAX_CAPTURED_BYTES,
                             "current changed batch exceeds evidence byte budget"
                         );
+                        if reference.legacy_origin.is_some() {
+                            ensure!(
+                                planning.is_none(),
+                                "legacy saved evidence cannot enter semantic planning"
+                            );
+                            store.load_legacy_saved_artifact(&input.artifact)?;
+                            if reference.raw_source {
+                                store.verify_retained_source(&input.artifact)?;
+                            }
+                            continue;
+                        }
                         let retained = store.load_retrieval_artifact(&input.artifact)?;
                         store.verify_retained_source(&input.artifact)?;
                         let Some((model, selection, defer)) = planning else {

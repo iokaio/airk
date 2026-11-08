@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Exercise an exact native service pair in private, disposable project scopes."""
+"""Exercise an approved native runtime in private, disposable project scopes."""
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing, contextmanager
 import errno
 import hashlib
+import importlib.util
 import json
 import math
 import os
@@ -21,6 +22,38 @@ import sys
 TOOLS = {"airk_" + name for name in (
     "capabilities", "changes", "code_facts", "context", "document_facts", "file_info", "help", "imports",
     "list_files", "outline", "parse", "query_scope", "read_file", "references", "relationships", "search", "status", "diagnostics", "symbols")}
+
+
+@contextmanager
+def owned_client_fixture():
+    parent = None
+    configured = os.environ.get("AIRK_PRIVATE_CENSUS_BASE")
+    if configured:
+        selected = Path(configured)
+        if not selected.is_absolute():
+            raise RuntimeError("AIRK_PRIVATE_CENSUS_BASE must name an existing absolute directory")
+        parent = selected.resolve(strict=True)
+        if parent != selected.absolute() or not parent.is_dir():
+            raise RuntimeError("AIRK_PRIVATE_CENSUS_BASE must be an unaliased existing directory")
+        for component in (selected,*selected.parents):
+            metadata = component.lstat()
+            if component.is_symlink() or getattr(metadata,"st_file_attributes",0)&0x400:
+                raise RuntimeError("AIRK_PRIVATE_CENSUS_BASE contains a redirected directory")
+        if os.name != "nt":
+            metadata = parent.stat()
+            if metadata.st_uid != os.geteuid() or metadata.st_mode & 0o077:
+                raise RuntimeError("AIRK_PRIVATE_CENSUS_BASE must remain private to its owner")
+    # Only a new random child is created. Existing base permissions/ACL stay intact.
+    temporary = tempfile.TemporaryDirectory(prefix="airk-service-clients-",dir=parent)
+    try:
+        yield temporary.name
+    except BaseException:
+        # Uncertain native lifecycle outcomes retain their exact owned state.
+        temporary._finalizer.detach()
+        print("Preserving failed owned native client fixture: " + temporary.name, file=sys.stderr)
+        raise
+    else:
+        temporary.cleanup()
 
 # Plan execution can already have partial work; never replay a whole plan here.
 RETRYABLE_TOOLS = TOOLS - {"airk_parse"}
@@ -39,10 +72,36 @@ def assert_legacy_query_scope(value):
     assert value.get("grant") is None and value.get("scope_revision") is None, value
     assert value.get("truncated") is False and value.get("continuation") is None, value
 
+
+def assert_frozen_query_scope(value, selection, observation):
+    """A single-index enrollment exposes its frozen authority, not catalog discovery."""
+    assert value.get("schema") == "airk.query-scope/1", value
+    assert value.get("mode") == "frozen_single_index" and value.get("status") == "configuration_required", value
+    assert value.get("catalog_discovery") == "unavailable_on_this_connection", value
+    assert all(value.get(key) == [] for key in ("projects", "indexes", "sources")), value
+    assert "scope_revision" in value and "continuation" in value, value
+    assert value["scope_revision"] is None and value["continuation"] is None and value.get("truncated") is False, value
+    grant = {"id": selection["grant_id"], "revision": selection["expected_grant_revision"]}
+    assert value.get("grant") == grant, value
+    assert value.get("observed_selection") == {"project_ids": selection["project_ids"], "index_ids": [selection["index_id"]]}, value
+    assert isinstance(observation, dict) and observation.get("schema") == 1, observation
+    assert observation.get("qualifier") == "selected_subset" and observation.get("provenance") == "user_reviewed_project_grant", observation
+    assert observation.get("grant") == grant, observation
+    members = observation.get("members")
+    assert isinstance(members, list) and len(members) == 1 and members[0]["index_id"] == selection["index_id"], observation
+    assert members[0]["memberships"] == [{"project_id": project, "membership_revision": 1} for project in selection["project_ids"]], observation
+    # Compare the complete independent search observation: source IDs/revision,
+    # policy, fingerprint and future provenance fields cannot disappear or change.
+    assert value.get("scope_observation") == observation, value
+    assert isinstance(value.get("reason"), str) and value["reason"], value
+
 # Match service_management::execute_request's registry-contention contract.
 # RequestEpoch prunes receipts and is deliberately not a read-only observation.
 REGISTRY_READS = {"job", "request_receipt", "configuration_result", "plan", "plan_items", "projects", "events",
-                  "maintenance", "watch", "progress", "inspection", "console", "inactive_console"}
+                  "maintenance", "watch", "progress", "inspection", "console", "inactive_console",
+                  "catalog_source_mutation_draft", "catalog_host_context", "catalog_page",
+                  "catalog_grant_draft", "catalog_source_change_observation", "catalog_receipt",
+                  "catalog_index_retirement_evidence"}
 
 
 def tool_value(envelope):
@@ -254,6 +313,18 @@ def verify_inference_worker_result(result, version, identity, dimensions):
 
 
 def inference_worker_clean_exit(fixture):
+    if fixture.single_image:
+        # This probe owns an isolated ServiceLease and loads embedded assets in
+        # its main image. There is no embedding/helper executable.
+        result = fixture.run("--verify-model-smoke", check=False, timeout=120)
+        assert result.returncode == 0, "Embedded inference probe failed or aborted during exit"
+        report = json.loads(result.stdout)
+        assert report["schema"] == 1 and report["source"] == "embedded"
+        assert report["engine"] == "onnxruntime-cpu/1.22.1" and report["dimensions"] == 384
+        assert report["repeat_equal"] is True
+        assert not fixture.binary.with_name("airk-embed.exe" if os.name == "nt" else "airk-embed").exists()
+        fixture.assert_alive()
+        return report
     references = list((fixture.control / "model-files-1.4").glob("default-*.json"))
     assert len(references) == 1, "Expected one verified shared default model"
     identity = json.loads(references[0].read_text(encoding="utf-8"))["legacy_identity"]
@@ -298,7 +369,18 @@ class Fixture:
             self.binary = self.runtime / "AIRK.app/Contents/MacOS/airk"
         self.control = owner / "control"
         self.projects = {}
+        self.scopes = {}
+        self.single_image = json.loads((self.runtime / "airk-runtime.json").read_text(encoding="utf-8"))["schema"] == 2
+        self.install = owner / "install"
+        if self.single_image:
+            self.control = owner / "state" / "control"
+        self.managed_started, self.managed_stop = False, None
+        self.managed_health = None
         self.environment = {**os.environ, "AIRK_MCP_RESPONSE_MODE": "full"}
+        specification = importlib.util.spec_from_file_location("client_fixture_git_config", Path(__file__).with_name("check-runtime-upgrade.py"))
+        fixture_config = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(fixture_config)
+        self.environment.update(fixture_config.isolated_git_environment(self.owner))
         self.log = (owner / "service.stderr").open("wb")
         self.child = None
         self.command_timeout = command_timeout
@@ -312,8 +394,36 @@ class Fixture:
             raise
         return self
 
-    def __exit__(self, *_):
-        self.close()
+    def __exit__(self, error_type, primary, traceback):
+        try:
+            self.close()
+        except BaseException as cleanup:
+            # A pending checkpoint can truthfully refuse ordinary Stop. Retain
+            # both failures and the exact owned state; never clear a fence or
+            # kill a discovered PID merely to make fixture teardown pass.
+            def failure(error):
+                message = str(error)
+                return {"type": type(error).__name__, "message": message[:4096],
+                        "message_truncated": len(message) > 4096}
+            record = {"schema": 1, "fixture": str(self.owner), "fixture_preserved": True,
+                      "primary_error": failure(primary) if primary is not None else None,
+                      "cleanup_error": failure(cleanup)}
+            self.cleanup_failure = record
+            note = "Owned fixture cleanup also failed; preserve and recover its native operation: " + str(self.owner)
+            try:
+                evidence = self.owner / ("managed-cleanup-error-" + uuid.uuid4().hex + ".json")
+                with evidence.open("x", encoding="utf-8") as output:
+                    json.dump(record, output, ensure_ascii=False, indent=2)
+                    output.write("\n")
+                note += "; evidence: " + str(evidence)
+            except Exception as recording:
+                note += "; cleanup evidence could not be written (" + type(recording).__name__ + ")"
+            if primary is None:
+                cleanup.add_note(note)
+                raise
+            primary.add_note(note)
+            # Returning false preserves the original exception and traceback.
+        return False
 
     def run(self, *args, input=None, check=True, timeout=None):
         result = subprocess.run([str(self.binary), *map(str, args)], input=input, capture_output=True,
@@ -324,6 +434,24 @@ class Fixture:
         return result
 
     def start(self):
+        if self.single_image:
+            identity = hashlib.sha256((self.runtime / "airk-install.json").read_bytes()).hexdigest()
+            staged = json.loads(self.run("runtime", "stage", "--source", self.runtime, "--install-dir", self.install,
+                "--state-dir", self.owner / "state", "--approved-sha256", identity,
+                "--verification-basis", "organization-digest").stdout)
+            self.managed_started = True  # Activation may start before an uncertain response.
+            activated = json.loads(self.run("runtime", "activate", "--install-dir", self.install, "--runtime-sha256", identity).stdout)
+            inspection = json.loads(self.run("runtime", "inspect", "--install-dir", self.install).stdout)
+            expected_main = self.install / "runtimes" / identity / self.binary.relative_to(self.runtime)
+            assert Path(inspection["control_dir"]).samefile(self.control)
+            assert Path(inspection["executable"]).samefile(expected_main)
+            assert hashlib.sha256(expected_main.read_bytes()).hexdigest() == hashlib.sha256(self.binary.read_bytes()).hexdigest()
+            self.binary = expected_main
+            self.managed_health = self.rpc("health")["observation"]
+            assert self.managed_health["runtime_sha256"] == identity
+            assert self.managed_health["executable_sha256"] == hashlib.sha256(self.binary.read_bytes()).hexdigest()
+            (self.owner / "managed-start.json").write_text(json.dumps({"stage":staged,"activation":activated,"inspect":inspection,"health":self.managed_health},indent=2)+"\n")
+            return
         self.child = subprocess.Popen([str(self.binary), "serve", "--runtime-dir", str(self.control)],
                                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=self.log,
                                       cwd=self.runtime, env=self.environment,
@@ -337,13 +465,43 @@ class Fixture:
             time.sleep(0.05)
         raise AssertionError("Owned native service did not become healthy")
 
+    def assert_alive(self):
+        if self.single_image:
+            actual = self.rpc("health")["observation"]
+            assert actual["instance"] == self.managed_health["instance"]
+            assert actual["runtime_sha256"] == self.managed_health["runtime_sha256"]
+            assert actual["executable_sha256"] == self.managed_health["executable_sha256"]
+        else:
+            assert self.child.poll() is None, "Owned shared service disappeared"
+
     def close(self):
         try:
+            if self.single_image and self.managed_started and self.managed_stop is None:
+                actual = self.rpc("health")["observation"]
+                if self.managed_health is not None:
+                    self.assert_alive()
+                inspection = json.loads(self.run("runtime","inspect","--install-dir",self.install).stdout)
+                assert inspection["selection"]["active"] == actual["runtime_sha256"]
+                assert actual["executable_sha256"] == hashlib.sha256(self.binary.read_bytes()).hexdigest()
+                epoch = self.rpc("request_epoch")
+                request = {"caller":uuid.uuid4().hex,"key":{"namespace":epoch["namespace"],"epoch":epoch["epoch"],"nonce":uuid.uuid4().hex},
+                           "action":"stop","expected_instance":actual["instance"],"runtime":actual["runtime_sha256"],"force":False}
+                (self.owner / "managed-stop-request.json").write_text(json.dumps(request,indent=2)+"\n")
+                response = json.loads(self.run("runtime","lifecycle","--install-dir",self.install,input=json.dumps(request)).stdout)
+                (self.owner / "managed-stop-result.json").write_text(json.dumps(response,indent=2)+"\n")
+                expected = {key:value for key,value in request.items() if key != "force"}
+                expected["manager"] = False
+                assert response["status"] == "lifecycle" and response["record"]["phase"] == "complete"
+                assert response["record"]["request"] == expected
+                assert self.run("service","health","--runtime-dir",self.control,check=False).returncode != 0
+                self.managed_stop = response
+                return
             if self.child is not None:
                 if self.child.poll() is None:
                     self.run("service", "shutdown", "--runtime-dir", self.control, check=False)
                 try:
                     self.child.wait(timeout=45)
+                    assert self.child.returncode == 0, "Owned native service failed during graceful shutdown"
                 except subprocess.TimeoutExpired:
                     # Only this Popen child can be terminated; never discover/kill a PID.
                     self.child.kill()
@@ -359,6 +517,14 @@ class Fixture:
         return metadata_rpc(invoke, method, deadline)
 
     def register(self, name, root, data):
+        if self.single_image:
+            spec = importlib.util.spec_from_file_location("runtime_reviewed_fixture", Path(__file__).with_name("check-runtime-upgrade.py"))
+            reviewed = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(reviewed)
+            # Each Index has its exact owned storage leaf; no ambient machine grant.
+            registration, selection = reviewed.reviewed_fixture(self.rpc, root, data / name, collection=name)
+            self.projects[name], self.scopes[name] = registration, selection
+            return
         prepared = json.loads(self.run("--root", root, "--data-dir", data, "--collection", name,
                                        "service", "prepare-registration").stdout)
         observed = self.rpc({"register": {"project": prepared}})
@@ -366,6 +532,21 @@ class Fixture:
         self.projects[name] = prepared
 
     def arguments(self, name):
+        project = self.projects[name]
+        if self.single_image:
+            selected = self.scopes[name].copy()
+            descriptor = self.rpc({"catalog_host_context": {"key": selected["context_key"], "expected_catalog_revision": None}})["descriptor"]
+            assert descriptor["namespace"] == selected["namespace"]
+            selected["expected_catalog_revision"] = descriptor["catalog_revision"]
+            return ["--service-runtime-dir", str(self.control), "--catalog-session", json.dumps(selected)]
+        return self.management_arguments(name)
+
+    def management_arguments(self, name):
+        """Owned fixture accounting/admin path; never derived from an evidence grant.
+
+        Only a registration returned by this fixture's native setup is accepted.
+        Evidence queries must keep using arguments()/query()/tool() instead.
+        """
         project = self.projects[name]
         return ["--service-runtime-dir", str(self.control), "--service-project", project["binding"],
                 "--root", project["root"], "--data-dir", project["data_root"], "--collection", project["collection"]]
@@ -452,7 +633,12 @@ class Fixture:
         raise AssertionError("Native job did not finish")
 
     def job(self, project, command, expected="succeeded"):
-        return self.wait(json.loads(self.run(*self.arguments(project), command).stdout), expected)
+        registered = self.projects[project]
+        # Maintenance is a single explicit owner submission. A reviewed read
+        # selector never turns into administrative authority for this command.
+        owner = ["--service-runtime-dir", str(self.control), "--service-project", registered["binding"],
+                 "--root", registered["root"], "--data-dir", registered["data_root"], "--collection", registered["collection"]]
+        return self.wait(json.loads(self.run(*owner, command).stdout), expected)
 
     def enqueue(self, project, kind):
         epoch = self.rpc("request_epoch")
@@ -468,6 +654,7 @@ class Fixture:
 
     def remove(self, project):
         """Submit once; removal proof survives pruning of detailed job receipts."""
+        assert not self.single_image, "Reviewed indexes require canonical Catalog retirement, not legacy unregister"
         self.wait(self.enqueue(project, "inspect"))
         prepared = self.prepare_configuration(project, {"operation": "unregister"})
         saved = json.loads((self.control / "client-requests" / (prepared["prepared"] + ".json")).read_text(encoding="utf-8"))
@@ -513,6 +700,8 @@ class Fixture:
         return self.wait(receipt, expected)
 
     def stdio(self, name, lifecycle="initialize", client="airk-native-check", *, workbench=False):
+        if self.single_image:
+            return self.http_mcp(name, lifecycle, client, workbench=workbench)
         child = subprocess.Popen([str(self.binary), *self.arguments(name), "mcp"], cwd=self.runtime,
                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                  text=True, encoding="utf-8", env=self.environment,
@@ -535,83 +724,7 @@ class Fixture:
                 pending[value["id"]] = value
             raise AssertionError("Matching stdio response missing")
         try:
-            assert lifecycle in ("initialize", "fallback", "inline")
-            meta = {"io.modelcontextprotocol/protocolVersion": "2026-07-28",
-                    "io.modelcontextprotocol/clientCapabilities": {},
-                    "io.modelcontextprotocol/clientInfo": {"name": client, "version": "fixture"}}
-            if lifecycle != "initialize":
-                send({"jsonrpc": "2.0", "id": 0, "method": "server/discover", "params": {"_meta": meta}})
-            if lifecycle != "inline":
-                # Deliberately pipeline a timed-out probe's fallback before reading
-                # discovery. 1.5.8 initialized successfully then rejected tools/list.
-                send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-                    "protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": client, "version": "1"}}})
-                initialized = receive(1)["result"]
-                assert initialized["serverInfo"]["name"] == "airk" and "response_mode=full" in initialized["instructions"]
-                send({"jsonrpc": "2.0", "method": "notifications/initialized"})
-            if lifecycle != "initialize":
-                discovered = receive(0)["result"]
-                assert "2026-07-28" in discovered["supportedVersions"]
-            params = {"_meta": meta} if lifecycle == "inline" else {}
-            send({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": params})
-            catalog = receive(2)["result"]["tools"]
-            assert len(catalog) == len(MCP_TOOLS) and {item["name"] for item in catalog} == MCP_TOOLS, [item["name"] for item in catalog]
-            assert all(not any(key in item["inputSchema"] for key in
-                               ("oneOf", "anyOf", "allOf", "not", "if", "then", "else"))
-                       for item in catalog), "Assistant-facing tool schemas must use plain object roots"
-            drafts = {"draft_search", "draft_strategy", "draft_plan", "suggest_view"}
-            assert all(item["annotations"]["readOnlyHint"] == (item["name"] not in drafts) for item in catalog)
-            request = {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
-                **params, "name": "search", "arguments": {"query": "polaronlymarker", "mode": "lexical", "response_mode": "full"}}}
-            def read(until):
-                send(request)
-                return receive(3, until)["result"]
-            result, _ = read_envelope(read, time.monotonic() + 60)
-            assert json.loads(result["content"][0]["text"])["hits"]
-            send({"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {
-                **params, "name": "projects", "arguments": {}}})
-            scopes = tool_value(receive(4)["result"])
-            assert scopes["default_project"] == self.projects[name]["binding"]
-            assert len(scopes["projects"]) == 1
-            # This metadata-only call must preserve the exact native CLI body,
-            # while granting no new Project or machine-library discovery.
-            send({"jsonrpc": "2.0", "id": 8, "method": "tools/call", "params": {
-                **params, "name": "query_scope", "arguments": {"view": "projects"}}})
-            scope_reply = receive(8)["result"]
-            assert scope_reply.get("isError") is not True, scope_reply
-            query_scope = tool_value(scope_reply)
-            assert_legacy_query_scope(query_scope)
-            assert query_scope == self.tool(name, "airk_query_scope", {"view": "projects"}), query_scope
-            if workbench:
-                # Keep learned review and finite conversational execution distinct.
-                # Each execution is sent once, never replayed after uncertainty.
-                with self.hold_publication(name):
-                    send({"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {
-                        **params, "name": "parse", "arguments": {"schema": "airk.parse.request/1", "mode": "execute",
-                            "text": "Please fetch the source contents of fixture_0.py", "response_mode": "full"}}})
-                    proposed_reply = receive(5)["result"]
-                    assert proposed_reply.get("isError") is not True, proposed_reply
-                    proposed = tool_value(proposed_reply)
-                    assert proposed["status"] == "needs_input" and proposed["executed"] is False, proposed
-                    assert proposed["plan"]["steps"][0]["args"]["path"] == "fixture_0.py", proposed
-                    send({"jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": {
-                        **params, "name": "parse", "arguments": {"schema": "airk.parse.request/1", "mode": "execute",
-                            "plan": proposed["plan"], "response_mode": "full"}}})
-                    confirmed_reply = receive(6)["result"]
-                    assert confirmed_reply.get("isError") is not True, confirmed_reply
-                    confirmed = tool_value(confirmed_reply)
-                    assert confirmed["executed"] is True and confirmed["status"] == "complete", confirmed
-                    assert confirmed["evidence"][0]["citation"]["path"] == "fixture_0.py", confirmed
-                    send({"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {
-                        **params, "name": "parse", "arguments": {"schema": "airk.parse.request/1", "mode": "execute",
-                            "text": "Please retrieve the source contents of fixture_0.py", "response_mode": "full"}}})
-                    parsed_reply = receive(7)["result"]
-                    assert parsed_reply.get("isError") is not True, parsed_reply
-                    parsed = tool_value(parsed_reply)
-                    assert parsed["status"] == "complete" and parsed["executed"] is True, parsed
-                    assert parsed["plan"]["tier"] == "parsed", parsed
-                    assert parsed["evidence"][0]["citation"]["path"] == "fixture_0.py", parsed
-            return len(catalog)
+            return self.exercise_mcp(name, send, receive, lifecycle, client, workbench)
         finally:
             child.stdin.close()
             try:
@@ -620,10 +733,141 @@ class Fixture:
                 child.kill()
                 child.wait(timeout=15)
 
+    def enroll_http(self, selection, connection_id, client="unknown", *, deadline=None):
+        spec = importlib.util.spec_from_file_location("native_https_enrollment", Path(__file__).with_name("http_fixture.py"))
+        transport = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(transport)
+        return transport.enroll_native(self.run, self.install, self.control, selection, connection_id,
+                                      client, deadline=deadline)
+
+    def http_mcp(self, name, lifecycle, client, *, workbench=False):
+        assert lifecycle in ("initialize", "disconnect", "reconnect")
+        spec = importlib.util.spec_from_file_location("native_https_fixture", Path(__file__).with_name("http_fixture.py"))
+        transport = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(transport)
+        selected = self.scopes[name]
+        family = {"codex": "codex", "claude-code": "claude_code", "github-copilot": "copilot_cli"}.get(client, "unknown")
+        connection = self.enroll_http({"kind": "scoped", "selection": selected}, uuid.uuid4().hex, family)
+        health = self.rpc("health")["observation"]
+        self.assert_alive()
+        assert health["instance"] == self.managed_health["instance"], "HTTP enrollment returned another service instance"
+        transport.validate_native_identity(connection, health)
+        assert connection["selection"]["kind"] == "scoped"
+        actual = connection["selection"]["selection"].copy()
+        expected = selected.copy()
+        actual.pop("expected_catalog_revision"); expected.pop("expected_catalog_revision")
+        assert actual == expected, "HTTP enrollment changed the immutable reviewed scope"
+        network = transport.McpClient(connection, self.control)
+        try:
+            # Network clients negotiate their real HTTP protocol. Historical
+            # stdio discovery/fallback/inline cases remain in the schema-1 path.
+            count = self.exercise_mcp(name, network.send, network.receive, "initialize", client, workbench)
+            network.send({"jsonrpc": "2.0", "id": 100, "method": "tools/list", "params": {}})
+            mcp_catalog = network.receive(100)["result"]["tools"]
+            api_catalog = network.api_catalog()
+            assert api_catalog["schema"] == "airk.local-api/1" and api_catalog["contract_version"] == 1
+            read_names = {tool.removeprefix("airk_") for tool in TOOLS} | {"projects", "list_templates", "get_template", "validate_draft", "proposal_status", "get_handoff"}
+            def catalog_value(rows):
+                return {row["name"].removeprefix("airk_"): {key: value for key, value in row.items() if key != "name"}
+                        for row in rows if row["name"].removeprefix("airk_") in read_names}
+            assert len(api_catalog["tools"]) == len(read_names), "JSON API read catalog is incomplete or duplicated"
+            assert catalog_value(api_catalog["tools"]) == catalog_value(mcp_catalog), "Complete MCP/API input/output schemas or annotations differ"
+            scope = tool_value(network.api_read("query_scope", {"view": "projects"}))
+            assert scope == self.tool(name, "airk_query_scope", {"view": "projects"}), "Complete CLI/API query scope differs"
+            return count
+        finally:
+            network.close(delete=lifecycle != "disconnect")
+
+    def exercise_mcp(self, name, send, receive, lifecycle, client, workbench):
+        assert lifecycle in ("initialize", "fallback", "inline")
+        meta = {"io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {},
+                "io.modelcontextprotocol/clientInfo": {"name": client, "version": "fixture"}}
+        if lifecycle != "initialize":
+            send({"jsonrpc": "2.0", "id": 0, "method": "server/discover", "params": {"_meta": meta}})
+        if lifecycle != "inline":
+            # Deliberately pipeline a timed-out probe's fallback before reading
+            # discovery. 1.5.8 initialized successfully then rejected tools/list.
+            send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+                "protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": client, "version": "1"}}})
+            initialized = receive(1)["result"]
+            # Guidance documents the explicit audit override for every transport;
+            # the per-connection display preference does not rewrite guidance.
+            assert initialized["serverInfo"]["name"] == "airk" and "response_mode=full" in initialized["instructions"]
+            send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        if lifecycle != "initialize":
+            discovered = receive(0)["result"]
+            assert "2026-07-28" in discovered["supportedVersions"]
+        params = {"_meta": meta} if lifecycle == "inline" else {}
+        send({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": params})
+        catalog = receive(2)["result"]["tools"]
+        assert len(catalog) == len(MCP_TOOLS) and {item["name"] for item in catalog} == MCP_TOOLS, [item["name"] for item in catalog]
+        assert all(not any(key in item["inputSchema"] for key in
+                           ("oneOf", "anyOf", "allOf", "not", "if", "then", "else"))
+                   for item in catalog), "Assistant-facing tool schemas must use plain object roots"
+        drafts = {"draft_search", "draft_strategy", "draft_plan", "suggest_view"}
+        assert all(item["annotations"]["readOnlyHint"] == (item["name"] not in drafts) for item in catalog)
+        request = {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
+            **params, "name": "search", "arguments": {"query": "polaronlymarker", "mode": "lexical", "response_mode": "full"}}}
+        def read(until):
+            send(request)
+            return receive(3, until)["result"]
+        result, _ = read_envelope(read, time.monotonic() + 60)
+        search_body = tool_value(result)
+        assert search_body["hits"]
+        send({"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {
+            **params, "name": "projects", "arguments": {}}})
+        scopes = tool_value(receive(4)["result"])
+        assert scopes["default_project"] == self.projects[name]["binding"]
+        assert len(scopes["projects"]) == 1
+        # This metadata-only call must preserve the exact native CLI body,
+        # while granting no new Project or machine-library discovery.
+        send({"jsonrpc": "2.0", "id": 8, "method": "tools/call", "params": {
+            **params, "name": "query_scope", "arguments": {"view": "projects"}}})
+        scope_reply = receive(8)["result"]
+        assert scope_reply.get("isError") is not True, scope_reply
+        query_scope = tool_value(scope_reply)
+        if self.single_image:
+            assert_frozen_query_scope(query_scope, self.scopes[name], search_body.get("scope_observation"))
+        else:
+            assert_legacy_query_scope(query_scope)
+        assert query_scope == self.tool(name, "airk_query_scope", {"view": "projects"}), query_scope
+        if workbench:
+            # Keep learned review and finite conversational execution distinct.
+            # Each execution is sent once, never replayed after uncertainty.
+            with self.hold_publication(name):
+                send({"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {
+                    **params, "name": "parse", "arguments": {"schema": "airk.parse.request/1", "mode": "execute",
+                        "text": "Please fetch the source contents of fixture_0.py", "response_mode": "full"}}})
+                proposed_reply = receive(5)["result"]
+                assert proposed_reply.get("isError") is not True, proposed_reply
+                proposed = tool_value(proposed_reply)
+                assert proposed["status"] == "needs_input" and proposed["executed"] is False, proposed
+                assert proposed["plan"]["steps"][0]["args"]["path"] == "fixture_0.py", proposed
+                send({"jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": {
+                    **params, "name": "parse", "arguments": {"schema": "airk.parse.request/1", "mode": "execute",
+                        "plan": proposed["plan"], "response_mode": "full"}}})
+                confirmed_reply = receive(6)["result"]
+                assert confirmed_reply.get("isError") is not True, confirmed_reply
+                confirmed = tool_value(confirmed_reply)
+                assert confirmed["executed"] is True and confirmed["status"] == "complete", confirmed
+                assert confirmed["evidence"][0]["citation"]["path"] == "fixture_0.py", confirmed
+                send({"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {
+                    **params, "name": "parse", "arguments": {"schema": "airk.parse.request/1", "mode": "execute",
+                        "text": "Please retrieve the source contents of fixture_0.py", "response_mode": "full"}}})
+                parsed_reply = receive(7)["result"]
+                assert parsed_reply.get("isError") is not True, parsed_reply
+                parsed = tool_value(parsed_reply)
+                assert parsed["status"] == "complete" and parsed["executed"] is True, parsed
+                assert parsed["plan"]["tier"] == "parsed", parsed
+                assert parsed["evidence"][0]["citation"]["path"] == "fixture_0.py", parsed
+        return len(catalog)
+
 
 def mixed_mcp_clients(fixture, project):
     """Actual native processes, not claims about proprietary assistant UI testing."""
-    modes = [("initialize", "codex"), ("fallback", "claude-code"), ("inline", "github-copilot")]
+    modes = ([("initialize", "codex"), ("disconnect", "claude-code"), ("reconnect", "github-copilot")]
+             if fixture.single_image else [("initialize", "codex"), ("fallback", "claude-code"), ("inline", "github-copilot")])
     # Reconnect all three with the same saved project, without setup or indexing.
     for _ in range(2):
         with ThreadPoolExecutor(max_workers=3) as pool:
@@ -635,7 +879,7 @@ def mixed_mcp_clients(fixture, project):
 
 def retained_job_failure(fixture, project):
     """Break only this disposable fixture's derived metadata, then restore exact bytes."""
-    data = (fixture.owner / "data").resolve(strict=True)
+    data = (fixture.owner / "data" / project if fixture.single_image else fixture.owner / "data").resolve(strict=True)
     assert data.is_relative_to(fixture.owner), "Diagnostic fixture escaped its private owner"
     # Native Windows registrations use extended paths; samefile verifies identity
     # without treating the \\?\ spelling as a different parent directory.
@@ -674,6 +918,34 @@ def retained_job_failure(fixture, project):
     return {"receipt_and_log_match": True, "code": code, "metadata_restored": True}
 
 
+def source_work_settled(progress, watch, project):
+    """Owner management observations, never inferred from a scoped evidence grant."""
+    assert progress["status"] == "progress" and progress["project"] == project, progress
+    assert watch["status"] == "watch" and watch["project"] == project, watch
+    pending, queued, sample = progress["pending_job"], progress["queued_jobs"], progress["observation"]
+    assert isinstance(queued, list), progress
+    assert pending is None or pending["project"] == project, progress
+    assert all(job["project"] == project for job in queued), progress
+    assert sample is None or sample["worker"]["project"] == project and sample["job"]["project"] == project, progress
+    observed = watch["observation"]
+    requested, completed = observed["requested_revision"], observed["completed_revision"]
+    assert type(requested) is int and type(completed) is int and 0 <= completed <= requested, watch
+    assert observed["failure"] is None and observed["automatic_retries_exhausted"] is False and observed["automatic_retry_canceled"] is False, watch
+    return (pending is None and not queued and progress["queue_truncated"] is False
+            and progress["project_paused"] is False
+            and (sample is None or sample["job"]["state"] not in ("pending", "running"))
+            and observed["enabled"] is True and observed["configuration_observed"] is True
+            and completed == requested)
+
+
+def assert_scoped_freshness_private(status):
+    freshness = status["freshness"]
+    assert freshness["state"] == "unavailable" and freshness["error"] == "scoped_freshness_unavailable", freshness
+    assert freshness["live_source_verified"] is False, freshness
+    assert all(key in freshness and freshness[key] is None for key in
+               ("requested_watermark", "completed_watermark", "running_watermark", "last_success_unix_ms")), freshness
+
+
 def automatic_orphan_recovery(fixture, root):
     """Inject one obsolete job only into this campaign's disposable registry, then require automatic publication."""
     project = fixture.projects["project-a"]["binding"]
@@ -694,14 +966,30 @@ def automatic_orphan_recovery(fixture, root):
     settled = fixture.wait({"job": {"id": job}}, expected="failed")
     assert settled["outcome"] == {"state": "failed", "code": "maintenance_request_obsolete"}, settled
     deadline = time.monotonic() + 120
+    last = {"before_publication": before, "obsolete_job": settled}
     while True:
-        status = fixture.published_status("project-a", deadline)
-        freshness = status.get("freshness", {})
-        if (status["publication"]["token"] != before and freshness.get("state") == "idle"
-                and freshness.get("completed_watermark", 0) >= freshness.get("requested_watermark", 1)):
-            break
-        assert time.monotonic() < deadline, "Automatic source work did not publish after obsolete request settlement"
-        time.sleep(0.1)
+        try:
+            status = fixture.published_status("project-a", deadline)
+            last["status"] = status
+            if fixture.single_image:
+                assert_scoped_freshness_private(status)
+                progress = fixture.rpc({"progress": {"project": project}}, deadline=deadline)
+                last["progress"] = progress
+                watch = fixture.rpc({"watch": {"project": project}}, deadline=deadline)
+                last["watch"] = watch
+                idle = source_work_settled(progress, watch, project)
+            else:
+                freshness = status.get("freshness", {})
+                idle = (freshness.get("state") == "idle"
+                        and freshness.get("completed_watermark", 0) >= freshness.get("requested_watermark", 1))
+            if status["publication"]["token"] != before and idle:
+                break
+            assert time.monotonic() < deadline, "Automatic source work did not publish after obsolete request settlement"
+            time.sleep(min(0.1, remaining(deadline, 120)))
+        except (ObservationTimeout, subprocess.TimeoutExpired, queue.Empty) as error:
+            raise ObservationTimeout("Automatic source work deadline exhausted; last complete observations: " + json.dumps(last)) from error
+        finally:
+            (fixture.owner / "automatic-orphan-observation.json").write_text(json.dumps(last, indent=2) + "\n", encoding="utf-8")
     result = fixture.tool("project-a", "airk_read_file", {"path": changed.name, "start_line": 1, "end_line": 2, "response_mode": "full"})
     assert "restored_after_obsolete_request" in result["hits"][0]["text"]
     assert changed.read_text(encoding="utf-8") == "def restored_after_obsolete_request():\n    return 1578\n"
@@ -711,7 +999,7 @@ def automatic_orphan_recovery(fixture, root):
 def qualify(runtime, files, model):
     runtime = runtime_root(runtime)
     started = time.monotonic()
-    with tempfile.TemporaryDirectory(prefix="airk-service-clients-") as temporary:
+    with owned_client_fixture() as temporary:
         owner = Path(temporary)
         data = owner / "data"
         data.mkdir()
@@ -792,13 +1080,16 @@ def qualify(runtime, files, model):
                       "runtime_manifest_sha256": hashlib.sha256((runtime / "airk-install.json").read_bytes()).hexdigest(),
                       "projects": 2, "files_per_project": files, "tools": len(TOOLS), "mcp_tools": mcp_tools, "model_checked": model, "missing_source_recovered_same_job": True,
                       "obsolete_request_automatically_published": automatic_healed,
-                      "inference_worker_clean_exit": worker_clean_exit,
+                      "inference_worker_clean_exit": worker_clean_exit if not fixture.single_image else None,
+                      "in_process_model_smoke": worker_clean_exit if fixture.single_image else None,
                       "mcp_lifecycles": mcp_lifecycles,
                       "failure_diagnostics": failure_diagnostics,
                       "terse_bytes": len(json.dumps(terse).encode()), "full_bytes": len(json.dumps(full).encode()),
                       "elapsed_seconds": round(time.monotonic() - started, 3), "source_bytes_preserved": True}
         finally:
             fixture.close()
+        report["service_clean_exit"] = fixture.child.returncode == 0 if not fixture.single_image else None
+        report["managed_stop_complete"] = fixture.managed_stop["record"]["phase"] == "complete" if fixture.single_image else None
         return report
 
 

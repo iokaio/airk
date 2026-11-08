@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Owned native-service fixtures; no installed runtime or user state is touched.
+//! Owned native-service fixtures. Raw owner/admin fixtures exercise component
+//! transports; reviewed fixtures use a real private managed installation and
+//! canonical catalog setup. Neither qualifies release signatures or predecessors.
 #![allow(dead_code)]
+pub mod http;
 pub mod read_retry;
+mod reviewed;
 use airk_core::service::{
     ControlMethod as Method, ControlResponse as Response, JobKind, JobOutcome, JobRecord,
     ProjectRegistration, RequestKey,
@@ -26,7 +30,8 @@ fn diagnostic(stage: &str) {
 }
 
 pub struct Service {
-    child: Mutex<Child>,
+    child: Mutex<Option<Child>>,
+    reviewed: Option<reviewed::ReviewedService>,
     owner: tempfile::TempDir,
     pub control: PathBuf,
     pub project: ProjectRegistration,
@@ -124,6 +129,115 @@ pub fn native_command() -> Command {
 }
 
 impl Service {
+    /// Fresh canonical catalog fixture, approved only by its exact local digest.
+    /// Existing indexed data must use an explicit retained-state test journey.
+    pub fn reviewed(root: &Path, data: &Path, collection: &str) -> Arc<Self> {
+        let mut owner = tempfile::tempdir().unwrap();
+        // Activation can own a service even if a later setup assertion fails.
+        // Only exact lifecycle settlement below authorizes directory cleanup.
+        owner.disable_cleanup(true);
+        let managed =
+            reviewed::start(root, data, collection, owner.path()).unwrap_or_else(|error| {
+                panic!(
+                    "reviewed fixture failed; retained {}: {error:#}",
+                    owner.path().display()
+                )
+            });
+        let requested = (
+            root.canonicalize().unwrap(),
+            data.canonicalize().unwrap(),
+            collection.into(),
+        );
+        let service = Arc::new(Self {
+            child: Mutex::new(None),
+            control: managed.control.clone(),
+            project: managed.project.clone(),
+            reviewed: Some(managed),
+            owner,
+        });
+        let mut fixtures = FIXTURES.get_or_init(Default::default).lock().unwrap();
+        fixtures.insert(requested, Arc::downgrade(&service));
+        fixtures.insert(service.scope(), Arc::downgrade(&service));
+        service
+    }
+    pub fn shutdown_reviewed(&self) -> anyhow::Result<()> {
+        reviewed::shutdown(
+            self.reviewed
+                .as_ref()
+                .context("shutdown requires reviewed fixture")?,
+        )
+    }
+
+    pub fn with_stopped_owner<T>(
+        &self,
+        callback: impl FnOnce(&ProjectRegistration) -> anyhow::Result<T>,
+    ) -> anyhow::Result<T> {
+        reviewed::with_stopped_owner(
+            self.reviewed
+                .as_ref()
+                .context("offline policy requires reviewed fixture")?,
+            callback,
+        )
+    }
+
+    pub fn http_selection(&self) -> airk_core::service_http::HttpSelection {
+        self.reviewed
+            .as_ref()
+            .expect("HTTP evidence requires an explicit reviewed fixture")
+            .selection
+            .clone()
+    }
+    pub fn install_dir(&self) -> &Path {
+        &self
+            .reviewed
+            .as_ref()
+            .expect("installed root requires reviewed fixture")
+            .install
+    }
+    pub fn retire_index(&self) -> anyhow::Result<serde_json::Value> {
+        reviewed::retire_index(
+            self.reviewed
+                .as_ref()
+                .context("retirement requires reviewed fixture")?,
+        )
+    }
+    pub fn installed_command(&self, root: &Path, data: &Path, collection: &str) -> Command {
+        let managed = self
+            .reviewed
+            .as_ref()
+            .expect("installed command requires reviewed fixture");
+        let mut command = Command::new(&managed.executable);
+        reviewed::git_environment(&mut command, managed.install.parent().unwrap());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x08000000);
+        }
+        command
+            .arg("--service-install-dir")
+            .arg(&managed.install)
+            .arg("--root")
+            .arg(root)
+            .arg("--data-dir")
+            .arg(data)
+            .args(["--collection", collection]);
+        command
+    }
+    pub fn additional_project(
+        &self,
+        root: &Path,
+        data: &Path,
+        collection: &str,
+    ) -> anyhow::Result<ProjectRegistration> {
+        reviewed::additional_project(
+            self.reviewed
+                .as_ref()
+                .context("additional canonical Index requires reviewed fixture")?,
+            root,
+            data,
+            collection,
+        )
+    }
     pub fn start(root: &Path, data: &Path, collection: &str) -> Arc<Self> {
         Self::start_inner(root, data, collection, false)
     }
@@ -212,7 +326,8 @@ impl Service {
         diagnostic("service process started; probing health");
         // Install the guard immediately so failed assertions still reap the owned child.
         let service = Arc::new(Self {
-            child: Mutex::new(child),
+            child: Mutex::new(Some(child)),
+            reviewed: None,
             owner,
             control,
             project,
@@ -244,7 +359,15 @@ impl Service {
                 std::fs::read_to_string(service.owner.path().join("stderr")).unwrap_or_default()
             );
             assert!(
-                service.child.lock().unwrap().try_wait().unwrap().is_none(),
+                service
+                    .child
+                    .lock()
+                    .unwrap()
+                    .as_mut()
+                    .unwrap()
+                    .try_wait()
+                    .unwrap()
+                    .is_none(),
                 "fixture service exited"
             );
             std::thread::sleep(Duration::from_millis(25));
@@ -300,6 +423,23 @@ impl Service {
     pub fn request(&self, method: Method) -> Response {
         rpc(&self.control, method)
     }
+    pub fn request_until(&self, method: Method, until: Instant) -> anyhow::Result<Response> {
+        anyhow::ensure!(
+            Instant::now() < until,
+            "fixture metadata deadline exhausted"
+        );
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+            .block_on(async {
+                tokio::time::timeout_at(
+                    until.into(),
+                    airk_cli::service_runtime::request(&self.control, method),
+                )
+                .await
+                .context("fixture metadata deadline exhausted")?
+            })
+    }
     // Fixture setup may outlive one bounded metadata response. Only these
     // read-only operations and receipt-keyed mutations may be repeated, with
     // the complete original request retained across every attempt. Tests of
@@ -313,11 +453,20 @@ impl Service {
                 | Method::Enqueue { .. }
                 | Method::ConfigureProject { .. }
                 | Method::PlanCreate { .. }
+                | Method::Progress { .. }
+                | Method::Watch { .. }
+                | Method::Inspection { .. }
         ));
         loop {
-            let response = self.request(method.clone());
+            assert!(
+                Instant::now() < until,
+                "fixture metadata deadline exhausted"
+            );
+            let response = self
+                .request_until(method.clone(), until)
+                .expect("fixture metadata request failed");
             if matches!(&response, Response::Failure { code } if matches!(code.as_str(), "registry_busy" | "registry_response_unknown_retry_with_key"))
-                && Instant::now() < until
+                && Instant::now() + Duration::from_millis(25) < until
             {
                 std::thread::sleep(Duration::from_millis(25));
                 continue;
@@ -351,7 +500,13 @@ impl Service {
         job
     }
     pub fn wait_outcome(&self, id: airk_core::identity::Sha256Digest) -> JobRecord {
-        let until = Instant::now() + Duration::from_secs(90);
+        self.wait_outcome_until(id, Instant::now() + Duration::from_secs(90))
+    }
+    fn wait_outcome_until(
+        &self,
+        id: airk_core::identity::Sha256Digest,
+        until: Instant,
+    ) -> JobRecord {
         loop {
             let response = self.metadata(Method::Job { id }, until);
             let Response::Job { job } = response else {
@@ -370,17 +525,7 @@ impl Service {
                 return job;
             }
             if Instant::now() >= until {
-                let resources = self.request(Method::Resources);
-                let worker = self.request(Method::Worker {
-                    project: self.project.binding,
-                });
-                let source = self.request(Method::SourceStatus);
-                panic!(
-                    "native job timed out: {job:?}; resources: {}; worker: {}; source: {}",
-                    serde_json::to_string(&resources).unwrap(),
-                    serde_json::to_string(&worker).unwrap(),
-                    serde_json::to_string(&source).unwrap()
-                );
+                panic!("native job timed out at original observation deadline: {job:?}");
             }
             std::thread::sleep(Duration::from_millis(25));
         }
@@ -401,14 +546,261 @@ impl Service {
         };
         self.wait(job.id)
     }
+    // A successful text Index receipt can precede its automatically scheduled
+    // semantic publication. Baseline fixtures observe that native work; they
+    // never enqueue a second mutation or disable the selected model.
+    pub fn background_pending_until(
+        &self,
+        project: airk_core::service::ProjectBinding,
+        until: Instant,
+    ) -> anyhow::Result<bool> {
+        // Progress exposes accepted jobs, not the native owner's durable future
+        // phase flags. After its idle sample and a completed source watermark,
+        // inspect those existing canonical flags before pinning a baseline.
+        // This is strictly read-only fixture observation, never job injection.
+        let registry = airk_store::service::registry::ServiceRegistry::open_saved_before(
+            &self.control,
+            Some(until),
+        )?;
+        if registry.project_background_pending(project)? {
+            return Ok(true);
+        }
+        let mut after = None;
+        loop {
+            anyhow::ensure!(
+                Instant::now() < until,
+                "native background observation deadline exhausted"
+            );
+            // Include a just-claimed Running job whose first cached Progress
+            // sample has not arrived. Paused pending jobs remain in Progress's
+            // complete queued list, checked by the caller's native barrier.
+            let page = registry.pending_project_page(after, 32)?;
+            anyhow::ensure!(
+                Instant::now() < until,
+                "native background observation deadline exhausted"
+            );
+            for seen in &page {
+                if *seen == project {
+                    return Ok(true);
+                }
+                if *seen > project {
+                    return Ok(false);
+                }
+            }
+            if page.len() < 32 {
+                return Ok(false);
+            }
+            let next = *page.last().context("native background cursor missing")?;
+            anyhow::ensure!(
+                after.is_none_or(|old| next > old),
+                "native background cursor did not advance"
+            );
+            after = Some(next);
+        }
+    }
+    pub fn settle_reviewed_index(
+        &self,
+        root: &Path,
+        data: &Path,
+        until: Instant,
+    ) -> anyhow::Result<()> {
+        if self.reviewed.is_none() {
+            return Ok(());
+        }
+        loop {
+            anyhow::ensure!(Instant::now() < until, "reviewed Index work did not settle");
+            let progress = self.metadata(
+                Method::Progress {
+                    project: self.project.binding,
+                },
+                until,
+            );
+            let Response::Progress {
+                project,
+                observation,
+                pending_job,
+                queued_jobs,
+                queue_truncated,
+                ..
+            } = &progress
+            else {
+                anyhow::bail!(
+                    "native Index progress unavailable: {}",
+                    serde_json::to_string(&progress)?
+                );
+            };
+            anyhow::ensure!(
+                *project == self.project.binding,
+                "Index progress crossed project"
+            );
+            anyhow::ensure!(
+                pending_job
+                    .as_ref()
+                    .is_none_or(|job| job.project == self.project.binding)
+                    && queued_jobs
+                        .iter()
+                        .all(|job| job.project == self.project.binding)
+                    && observation
+                        .as_ref()
+                        .is_none_or(|value| value.job.project == self.project.binding),
+                "native Index progress contains crossed job"
+            );
+            let idle = pending_job.is_none()
+                && queued_jobs.is_empty()
+                && *queue_truncated == Some(false)
+                && observation.as_ref().is_none_or(|value| {
+                    !matches!(
+                        value.job.state,
+                        airk_core::service::JobState::Pending
+                            | airk_core::service::JobState::Running
+                    )
+                });
+            let watch = self.metadata(
+                Method::Watch {
+                    project: self.project.binding,
+                },
+                until,
+            );
+            let Response::Watch {
+                project,
+                observation: watch,
+            } = watch
+            else {
+                anyhow::bail!(
+                    "native Index watch unavailable: {}",
+                    serde_json::to_string(&watch)?
+                );
+            };
+            anyhow::ensure!(
+                project == self.project.binding,
+                "Index watch crossed project"
+            );
+            watch.validate()?;
+            anyhow::ensure!(
+                watch.failure.is_none() && !watch.automatic_retries_exhausted,
+                "native Index source watch failed: {watch:?}"
+            );
+            // IndexSetup Ready seals the catalog/storage transaction; its initial
+            // source job can still be pending. Observe that job's native state
+            // before evidence exists instead of retrying a nonretryable read.
+            let inspection = self.metadata(
+                Method::Inspection {
+                    project: self.project.binding,
+                },
+                until,
+            );
+            let Response::Inspection {
+                project,
+                observation,
+                ..
+            } = &inspection
+            else {
+                anyhow::bail!(
+                    "native Index inspection unavailable: {}",
+                    serde_json::to_string(&inspection)?
+                );
+            };
+            anyhow::ensure!(
+                *project == self.project.binding
+                    && observation
+                        .as_ref()
+                        .is_none_or(|value| value.snapshot.project == self.project.binding),
+                "Index inspection crossed project"
+            );
+            let indexed = observation.as_ref().is_some_and(|value| {
+                value.snapshot.index_state == airk_core::service_inspection::IndexState::Ready
+                    && value.snapshot.publication.is_some()
+            });
+            if !idle || watch.completed_revision != watch.requested_revision || !indexed {
+                anyhow::ensure!(
+                    Instant::now() + Duration::from_millis(25) < until,
+                    "native initial Index did not settle: progress={},watch={watch:?},inspection={}",
+                    serde_json::to_string(&progress)?,
+                    serde_json::to_string(&inspection)?
+                );
+                std::thread::sleep(Duration::from_millis(25));
+                continue;
+            }
+            if self.background_pending_until(self.project.binding, until)? {
+                anyhow::ensure!(
+                    Instant::now() + Duration::from_millis(25) < until,
+                    "native background phase did not settle"
+                );
+                std::thread::sleep(Duration::from_millis(25));
+                continue;
+            }
+            let envelope = call_until(
+                root,
+                data,
+                &self.project.collection,
+                &["tools", "call", "airk_diagnostics"],
+                until,
+            )?;
+            anyhow::ensure!(envelope["isError"] != true, "{envelope}");
+            let status: serde_json::Value = serde_json::from_str(
+                envelope["content"][0]["text"]
+                    .as_str()
+                    .context("Index diagnostic content missing")?,
+            )?;
+            if !read_retry::publication_pending(
+                &status,
+                &self.project.collection,
+                &self.project.binding.to_string(),
+            )? {
+                let semantic: airk_core::readiness::SemanticReadiness =
+                    serde_json::from_value(status["semantic_readiness"].clone())?;
+                anyhow::ensure!(
+                    semantic.state != airk_core::readiness::SemanticState::Failed,
+                    "native Index semantic work failed: {status}"
+                );
+                if idle
+                    && watch.completed_revision == watch.requested_revision
+                    && matches!(
+                        semantic.state,
+                        airk_core::readiness::SemanticState::Ready
+                            | airk_core::readiness::SemanticState::Disabled
+                    )
+                {
+                    return Ok(());
+                }
+            }
+            anyhow::ensure!(
+                Instant::now() + Duration::from_millis(25) < until,
+                "native Index settlement deadline exhausted: {status}"
+            );
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
     #[cfg(feature = "embedding-worker")]
     pub fn wait_semantic(&self, artifacts: u64) -> anyhow::Result<serde_json::Value> {
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?
             .block_on(async {
-                let connection =
-                    airk_cli::project_client::tools(self.control.clone(), self.project.binding);
+                let connection = if let Some(managed) = &self.reviewed {
+                    let airk_core::service_http::HttpSelection::Scoped { selection } =
+                        &managed.selection
+                    else {
+                        anyhow::bail!("fresh semantic fixture requires its exact scoped selection");
+                    };
+                    let refreshed = airk_cli::service_frontend::resolve_scoped(
+                        None,
+                        Some(&self.control),
+                        selection,
+                    )
+                    .await?;
+                    anyhow::ensure!(
+                        refreshed.project.registration == self.project,
+                        "semantic fixture scope crossed native backing"
+                    );
+                    airk_cli::project_client::scoped_tools(
+                        self.control.clone(),
+                        self.project.binding,
+                        refreshed.selection,
+                    )?
+                } else {
+                    airk_cli::project_client::tools(self.control.clone(), self.project.binding)
+                };
                 let deadline = Instant::now() + Duration::from_secs(90);
                 loop {
                     let envelope = tokio::time::timeout_at(
@@ -571,6 +963,24 @@ pub fn bind_data(control: &Path, data: &Path) -> anyhow::Result<()> {
 
 impl Drop for Service {
     fn drop(&mut self) {
+        let retain_http = self.control.join("http-fixture-failure.json").exists();
+        if retain_http {
+            self.owner.disable_cleanup(true);
+        }
+        if let Some(managed) = &self.reviewed {
+            match reviewed::shutdown(managed) {
+                Ok(()) if !retain_http => self.owner.disable_cleanup(false),
+                Ok(()) => eprintln!(
+                    "HTTP fixture failure evidence retained at {}",
+                    self.owner.path().display()
+                ),
+                Err(error) => eprintln!(
+                    "reviewed fixture cleanup uncertain; retained {}: {error:#}",
+                    self.owner.path().display()
+                ),
+            }
+            return;
+        }
         if let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -580,7 +990,7 @@ impl Drop for Service {
                 Method::Shutdown,
             ));
         }
-        let child = self.child.get_mut().unwrap();
+        let child = self.child.get_mut().unwrap().as_mut().unwrap();
         let until = Instant::now() + Duration::from_secs(15);
         loop {
             if child.try_wait().ok().flatten().is_some() {
@@ -596,40 +1006,179 @@ impl Drop for Service {
     }
 }
 
-pub fn command(root: &Path, data: &Path, collection: &str) -> Command {
-    let mut command = native_command();
-    command
-        .arg("--root")
-        .arg(root)
-        .arg("--data-dir")
-        .arg(data)
-        .args(["--collection", collection])
-        .env("AIRK_MCP_RESPONSE_MODE", "full")
-        .env("AIRK_USAGE_MODE", "disabled");
+fn fixture(root: &Path, data: &Path, collection: &str) -> Option<Arc<Service>> {
     let scope = (
         root.canonicalize().unwrap_or_else(|_| root.into()),
         data.canonicalize().unwrap_or_else(|_| data.into()),
         collection.into(),
     );
-    let service = FIXTURES
+    FIXTURES
         .get_or_init(Default::default)
         .lock()
         .unwrap()
         .get(&scope)
-        .and_then(Weak::upgrade);
-    if let Some(service) = service {
+        .and_then(Weak::upgrade)
+}
+
+pub fn http_fixture(root: &Path, data: &Path, collection: &str) -> Arc<Service> {
+    let service = fixture(root, data, collection).expect("HTTP fixture binding missing");
+    assert!(
+        service.reviewed.is_some(),
+        "HTTP evidence requires an explicit reviewed fixture"
+    );
+    service
+}
+
+pub fn command(root: &Path, data: &Path, collection: &str) -> Command {
+    let service = fixture(root, data, collection);
+    let mut command = if let Some(managed) = service.as_ref().and_then(|s| s.reviewed.as_ref()) {
+        let mut command = Command::new(&managed.executable);
+        reviewed::git_environment(
+            &mut command,
+            managed
+                .install
+                .parent()
+                .expect("reviewed fixture owner missing"),
+        );
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x08000000);
+        }
         command
-            .arg("--service-runtime-dir")
+    } else {
+        native_command()
+    };
+    if let Some(service) = &service {
+        command
+            .arg("--root")
+            .arg(&service.project.root)
+            .arg("--data-dir")
+            .arg(&service.project.data_root)
+            .args([
+                "--collection",
+                &service.project.collection,
+                "--service-runtime-dir",
+            ])
             .arg(&service.control)
             .arg("--service-project")
             .arg(service.project.binding.to_string());
     } else {
-        // Metadata-only help must work without attempting the real user installation.
         command
+            .arg("--root")
+            .arg(root)
+            .arg("--data-dir")
+            .arg(data)
+            .args(["--collection", collection])
             .arg("--service-install-dir")
             .arg(data.join("not-an-installed-runtime"));
     }
     command
+        .env("AIRK_MCP_RESPONSE_MODE", "full")
+        .env("AIRK_USAGE_MODE", "disabled");
+    command
+}
+
+pub fn http_selection(
+    root: &Path,
+    data: &Path,
+    collection: &str,
+) -> anyhow::Result<airk_core::service_http::HttpSelection> {
+    let service = fixture(root, data, collection).context("HTTP fixture binding missing")?;
+    let managed = service
+        .reviewed
+        .as_ref()
+        .context("HTTP read requires an explicit reviewed fixture")?;
+    Ok(managed.selection.clone())
+}
+
+pub fn reviewed_http_selection(
+    control: &Path,
+    project: &ProjectRegistration,
+) -> airk_core::service_http::HttpSelection {
+    reviewed::reviewed_http_selection(control, project)
+        .expect("canonical reviewed HTTP selection failed")
+}
+
+pub fn scoped_command(root: &Path, data: &Path, collection: &str) -> Command {
+    let service = fixture(root, data, collection).expect("scoped read has no owned fixture");
+    let managed = service
+        .reviewed
+        .as_ref()
+        .expect("scoped read requires explicit reviewed fixture");
+    let airk_core::service_http::HttpSelection::Scoped { selection } = &managed.selection else {
+        panic!("fresh fixture selection is not scoped")
+    };
+    let mut command = Command::new(&managed.executable);
+    reviewed::git_environment(
+        &mut command,
+        managed
+            .install
+            .parent()
+            .expect("reviewed fixture owner missing"),
+    );
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+    command
+        .arg("--service-runtime-dir")
+        .arg(&service.control)
+        .arg("--catalog-session")
+        .arg(serde_json::to_string(selection).unwrap())
+        .env("AIRK_MCP_RESPONSE_MODE", "full")
+        .env("AIRK_USAGE_MODE", "disabled");
+    command
+}
+
+/// Evidence reads use the exact reviewed grant; owner mutations retain their
+/// independent native control arguments. Legacy fixtures remain explicit.
+pub fn evidence_command(root: &Path, data: &Path, collection: &str) -> Command {
+    if fixture(root, data, collection).is_some_and(|service| service.reviewed.is_some()) {
+        scoped_command(root, data, collection)
+    } else {
+        command(root, data, collection)
+    }
+}
+
+fn evidence_arguments(args: &[&str]) -> bool {
+    args.starts_with(&["tools", "call"])
+        || matches!(
+            args.first(),
+            Some(
+                &("status"
+                    | "search"
+                    | "files"
+                    | "read"
+                    | "info"
+                    | "outline"
+                    | "symbol"
+                    | "imports"
+                    | "facts"
+                    | "refs"
+                    | "context"
+                    | "changes"
+                    | "code-facts"
+                    | "relationships")
+            )
+        )
+}
+
+pub fn scoped_call(
+    root: &Path,
+    data: &Path,
+    collection: &str,
+    args: &[&str],
+) -> anyhow::Result<serde_json::Value> {
+    let output = read_retry::output(scoped_command(root, data, collection).args(args))?;
+    anyhow::ensure!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    Ok(serde_json::from_slice(&output.stdout)?)
 }
 
 pub fn call(
@@ -694,42 +1243,24 @@ fn call_until(
 ) -> anyhow::Result<serde_json::Value> {
     let mut invocation_started = false;
     let mut invocation_returned = false;
+    let read = evidence_arguments(args);
     let output = loop {
         if !invocation_started {
             diagnostic("first native CLI invocation started");
             invocation_started = true;
         }
-        let output = if args == ["status"] || args == ["tools", "call", "airk_diagnostics"] {
-            read_retry::once_until(command(root, data, collection).args(args), deadline)?
+        let mut native = if read {
+            evidence_command(root, data, collection)
         } else {
-            command(root, data, collection).args(args).output()?
+            command(root, data, collection)
         };
+        let output = read_retry::once_until(native.args(args), deadline)?;
         if !invocation_returned {
             diagnostic("native CLI invocation returned");
             invocation_returned = true;
         }
         // Evidence commands are read-only. A typed rejection repeats these exact
         // arguments (including revision/cursor); never retry an accepted mutation.
-        let read = args.starts_with(&["tools", "call"])
-            || matches!(
-                args.first(),
-                Some(
-                    &("status"
-                        | "search"
-                        | "files"
-                        | "read"
-                        | "info"
-                        | "outline"
-                        | "symbol"
-                        | "imports"
-                        | "facts"
-                        | "refs"
-                        | "context"
-                        | "changes"
-                        | "code-facts"
-                        | "relationships")
-                )
-            );
         let delay = if read {
             read_retry::from_output(&output, deadline).map(|retry| retry.delay)
         } else {
@@ -801,7 +1332,15 @@ fn call_until(
             .get(&scope)
             .and_then(Weak::upgrade)
             .unwrap();
-        service.wait(serde_json::from_value(value["job"]["id"].clone())?);
+        let job = service.wait_outcome_until(
+            serde_json::from_value(value["job"]["id"].clone())?,
+            deadline,
+        );
+        anyhow::ensure!(
+            matches!(job.outcome, Some(JobOutcome::Succeeded { .. })),
+            "native index failed: {job:?}"
+        );
+        service.settle_reviewed_index(root, data, deadline)?;
     }
     if args.first() != Some(&"tools") && value.get("content").is_some() {
         anyhow::ensure!(value["isError"] != true, "{value}");

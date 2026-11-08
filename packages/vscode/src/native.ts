@@ -4,6 +4,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { McpSessionError, McpStdioSession } from './mcpStdioSession';
+import { McpHttpSession } from './mcpHttpSession';
+import { httpMaterial } from './serviceHttp';
 import { readRetryDelay } from './readRetry';
 import { ASSISTANCE_SERVER_NAME, ASSISTANCE_TOOLS } from './explorerContracts';
 import { LaunchSpec, launchArgs, ServerEntry, UNIFIED_TOOLS } from './model';
@@ -232,15 +234,17 @@ export async function probeMcp(spec: LaunchSpec, expectedTools: 14 | 15 | 16 | 2
     report: (message:string)=>void = ()=>{}): Promise<{ tools: string[]; status: unknown; handshakeMs?:number }> {
     const startedAt=Date.now(),deadline = startedAt + (spec.service ? 90000 : 15000);
     const remaining = () => Math.max(1, deadline - Date.now());
-    let session: McpStdioSession | undefined;
-    let stage='starting the launcher and waiting for the MCP handshake';
+    let session: McpStdioSession|McpHttpSession|undefined;
+    let stage='connecting to AIRK and waiting for the MCP handshake';
     try {
-        report('Starting the launcher and waiting for the MCP handshake…');
+        report('Connecting to AIRK and waiting for the MCP handshake…');
         const selectedArgs=entry?[...entry.args]:launchArgs(spec);
         const selectors=selectedArgs.flatMap((arg,index)=>arg==='--catalog-session'?[selectedArgs[index+1]]:[]);
         let expectedScope:unknown;
         if(selectors.length===1){try{expectedScope=JSON.parse(selectors[0]);}catch{/* No scoped retry without the original validated selector. */}}
-        session = (await McpStdioSession.open({ command: entry?.command??spec.command, args:selectedArgs, cwd: spec.service ? path.dirname(spec.command) : spec.root,
+        const http=entry?.http??spec.http;
+        if(http){expectedScope=http.selection.kind==='scoped'?http.selection.selection:undefined;session=(await McpHttpSession.open({...await httpMaterial(http),clientName:'airk-extension-check',clientVersion},remaining())).session;}
+        else session = (await McpStdioSession.open({ command: entry?.command??spec.command, args:selectedArgs, cwd: spec.service ? path.dirname(spec.command) : spec.root,
             env: { AIRK_CLIENT: 'vscode' }, clientName: 'airk-extension-check', clientVersion }, remaining())).session;
         const handshakeMs=Date.now()-startedAt;
         stage='listing MCP tools';report(`MCP handshake completed in ${(handshakeMs/1000).toFixed(1)} seconds. Reading the tool list…`);

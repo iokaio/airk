@@ -100,14 +100,14 @@ def verify_native(directory, target, commit, version, signed, *, tree=None):
         raise ValueError("Native candidate provenance or signing state differs")
     os_name = "windows" if "windows" in target else "macos" if "apple" in target else "linux"
     builder = native.runtime_builder()
-    executable, helper = builder.runtime_names(os_name) if paired else (
-        "airk.exe" if "windows" in target else "airk", None)
-    required = {executable, helper, "airk-runtime.json", "airk-build.json", "airk-install.json", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"} if paired else {executable, "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"}
+    executables = builder.runtime_executables(os_name, version) if paired else ("airk.exe" if "windows" in target else "airk",)
+    executable = executables[0]
+    required = {*executables, "airk-runtime.json", "airk-build.json", "airk-install.json", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"} if paired else {executable, "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"}
     bundle_files = builder.macos_bundle_files(version) if paired and os_name == "macos" else {}
     required.update(bundle_files)
     if paired:
         required.add(builder.launcher_name(os_name, version))
-    inference_assets = builder.inference_assets(os_name, "aarch64" if target.startswith("aarch64-") else "x86_64") if builder.int8_version(version) else {}
+    inference_assets = builder.inference_assets(os_name, "aarch64" if target.startswith("aarch64-") else "x86_64", version) if builder.int8_version(version) else {}
     required.update(inference_assets)
     if builder.int8_version(version):
         builder.load_script("int8-policy").verify_embedded(receipt.get("embedded_models", {}))
@@ -126,6 +126,11 @@ def verify_native(directory, target, commit, version, signed, *, tree=None):
             raise ValueError("Native archive exceeds verification budget")
         if any(stat.S_ISLNK(p.external_attr >> 16) or p.is_dir() for p in zipped.infolist()):
             raise ValueError("Native archive links/directories rejected")
+        if builder.single_image_version(version):
+            notice_name = "notices/static-onnx-runtime/inventory.json"
+            if zipped.getinfo(notice_name).file_size > 524_288:
+                raise ValueError("Static ORT notice inventory exceeds bound")
+            builder.static_notice_inventory(json.loads(zipped.read(notice_name)), target, payload)
         for name, expected in bundle_files.items():
             if zipped.read(name) != expected:
                 raise ValueError("Mac service bundle resources differ")
@@ -140,14 +145,14 @@ def verify_native(directory, target, commit, version, signed, *, tree=None):
             pair = json.loads(zipped.read("airk-runtime.json"))
             build = json.loads(zipped.read("airk-build.json"))
             architecture = "aarch64" if target.startswith("aarch64-") else "x86_64"
-            if any(metadata.get("schema") != 1 or metadata.get("version") != version or metadata.get("os") != os_name or metadata.get("arch") != architecture for metadata in (install, pair)):
+            if (install.get("schema") != 1 or install.get("version") != version or install.get("os") != os_name or install.get("arch") != architecture
+                    or not builder.runtime_metadata_matches(pair, version, os_name, architecture, payload)):
                 raise ValueError("Native pair installer platform/version differs")
             if (install.get("files") != {name: value for name, value in payload.items() if name != "airk-install.json"}
                     or receipt.get("install_manifest_sha256") != payload["airk-install.json"]
-                    or pair.get("airk_sha256") != payload[executable] or pair.get("embed_sha256") != payload[helper]
                     or build.get("schema") != 1 or build.get("runtime") != pair or build.get("source") != receipt.get("source")):
                 raise ValueError("Native pair build/installer identities differ")
-    executable_names = tuple(dict.fromkeys((executable, helper, builder.launcher_name(os_name, version)))) if paired else executable
+    executable_names = tuple(dict.fromkeys((*executables, builder.launcher_name(os_name, version)))) if paired else executable
     native.verify_archive(archive, payload, executable_names)
     signing = receipt.get("signing")
     if signed:
@@ -211,7 +216,7 @@ def stage_signing(directory, target, commit, version, output_root=None, *, tree=
     receipt, archive = verify_native(directory, target, commit, version, False, tree=tree)
     paired = receipt["schema"] == "airk-native-candidate/2"
     executable = "airk.exe" if "windows" in target else "airk"
-    executables = native.runtime_builder().runtime_names("windows" if "windows" in target else "macos") if paired else (executable,)
+    executables = native.runtime_builder().runtime_executables("windows" if "windows" in target else "macos", version) if paired else (executable,)
     if paired:
         builder = native.runtime_builder()
         executables = tuple(dict.fromkeys((*executables, builder.launcher_name("windows" if "windows" in target else "macos", version))))
@@ -354,7 +359,7 @@ def assemble(directory, output, commit, version, tag, channel, run_id, attempt, 
              f"Build and checks: https://github.com/{REPOSITORY}/actions/runs/{build_run}/attempts/{build_attempt}\n"
              f"Signing and assembly: https://github.com/{REPOSITORY}/actions/runs/{run_id}/attempts/{attempt}\n\n"
              "Downloads include native ZIPs and matching platform VSIX files. Windows uses Ioka LLC "
-             "Azure Artifact Signing. Both macOS helpers use Developer ID signing and accepted Apple "
+             "Azure Artifact Signing. macOS runtime executables use Developer ID signing and accepted Apple "
              + ("notarization and a stapled app ticket. Linux is unsigned.\n\n" if tuple(map(int, version.split(".")[:2])) >= (1, 4)
                 else "notarization; the standalone CLI has no stapled offline ticket. Linux is unsigned.\n\n") +
              "Use the ZIP matching your OS/architecture, or install the matching VSIX from VS Code's "

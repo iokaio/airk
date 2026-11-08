@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Finite child supervision; allocation survives timeout until child exit is proven.
 use crate::{
-    embedding_pool_process::Pool,
     local_ipc,
     project_protocol::{self as protocol, Command as WorkerCommand, Reply},
+    service_inference::Pool,
     service_ipc,
 };
 use airk_core::{
@@ -28,9 +28,14 @@ use tokio::sync::oneshot;
 #[path = "helper_recovery.rs"]
 mod helper_recovery;
 use helper_recovery::PoolRecovery;
+#[cfg(all(test, feature = "local-inference"))]
+pub(crate) use helper_recovery::PoolRecovery as TestPoolRecovery;
 #[path = "worker_resource_drains.rs"]
 mod worker_resource_drains;
 use worker_resource_drains::{DrainProgress, WorkerResourceDrains};
+#[path = "worker_read_settlement.rs"]
+mod worker_read_settlement;
+use worker_read_settlement::ReadSettlement;
 #[path = "catalog_control.rs"]
 mod catalog;
 #[cfg(all(test, feature = "embedding-worker"))]
@@ -75,6 +80,7 @@ impl std::error::Error for ConnectionSetupPending {}
 
 struct ChildWorker {
     exiting: bool,
+    read_settlement: Option<ReadSettlement>,
     catalog_gate: Option<crate::catalog_admission::NativeCatalogAdmission>,
     catalog_pending: Option<catalog::Pending>,
     catalog_quarantined: bool,
@@ -91,6 +97,9 @@ struct ChildWorker {
     last_renewal: Instant,
     pool_binding: Option<Incarnation>,
     provider_helpers: Vec<Incarnation>,
+    provider_in_process: bool,
+    #[cfg(feature = "local-inference")]
+    provider_completed: Option<crate::inference_completion_ledger::NativeLedgerWitness>,
     pool_pending: bool,
     last_status: Instant,
     waiting: Option<(
@@ -98,6 +107,36 @@ struct ChildWorker {
         airk_core::service_resources::WaitReason,
         Instant,
     )>,
+}
+
+#[cfg(feature = "local-inference")]
+pub(crate) fn complete_provider_authorizations(
+    service: Incarnation,
+    in_process: bool,
+    generations: &mut Vec<Incarnation>,
+    completed: &mut Option<crate::inference_completion_ledger::NativeLedgerWitness>,
+    event: &crate::service_inference::CompletedProvider,
+) -> Result<()> {
+    let provider = event.completion.observation().provider;
+    if !in_process || service != provider.service_instance {
+        return Ok(());
+    }
+    if generations.contains(&provider.provider_generation) || completed.is_some() {
+        ensure!(
+            event
+                .completion
+                .matches(service, provider.provider_generation)
+                && event
+                    .ledger
+                    .matches(event.ledger.observation().namespace, service)
+                && event.ledger.observation().approved_execution_sha256
+                    == provider.approved_execution_sha256,
+            "crossed native provider completion delivery"
+        );
+        generations.retain(|generation| *generation != provider.provider_generation);
+        *completed = Some(event.ledger.clone());
+    }
+    Ok(())
 }
 
 fn clean_disconnected_exit(child: &mut Child, error: &anyhow::Error) -> bool {
@@ -130,9 +169,20 @@ fn retire_helper(
     recovery: &mut PoolRecovery,
 ) {
     if let Some(mut old) = pool.take() {
+        #[cfg(feature = "local-inference")]
+        if old.terminate().is_err() {
+            // A pending FFI call cannot be killed or unloaded. Keep its actual
+            // owner and charged resources for the next bounded actor turn.
+            *pool = Some(old);
+            return;
+        }
+        #[cfg(not(feature = "local-inference"))]
         while old.terminate().is_err() {
             std::thread::sleep(Duration::from_millis(100));
         }
+        // Modern terminate queues the joined, durably appended completion in
+        // its factory. The actor ingests/acknowledges that owned event before
+        // discarding any live worker authorization generation.
         if let Some(witness) = old.reap_witness() {
             let retained = match gate {
                 Some(gate) => gate.observe_provider_reaped(witness),
@@ -187,13 +237,49 @@ impl Drop for ChildWorker {
         }
         if let (Some(gate), Some(identity)) = (&self.catalog_gate, self.identity) {
             let _ = gate.observe_worker_reaped(identity);
-            let _ = gate.observe_worker_provider_history(identity, self.provider_helpers.clone());
+            let _ = gate.observe_worker_provider_history_completed(
+                identity,
+                self.provider_helpers.clone(),
+                self.provider_in_process,
+                self.completed_authorizations(),
+            );
         }
     }
 }
 
 impl ChildWorker {
-    fn record_provider_delivery(&mut self, helper: Option<Incarnation>) -> Result<()> {
+    fn completed_authorizations(
+        &self,
+    ) -> Option<airk_core::inference_provider::CompletionLedgerObservation> {
+        #[cfg(feature = "local-inference")]
+        return self
+            .provider_completed
+            .as_ref()
+            .map(|proof| proof.observation().clone());
+        #[cfg(not(feature = "local-inference"))]
+        None
+    }
+    #[cfg(feature = "local-inference")]
+    fn complete_provider(
+        &mut self,
+        event: &crate::service_inference::CompletedProvider,
+    ) -> Result<()> {
+        let Some(identity) = self.identity else {
+            return Ok(());
+        };
+        complete_provider_authorizations(
+            identity.service,
+            self.provider_in_process,
+            &mut self.provider_helpers,
+            &mut self.provider_completed,
+            event,
+        )
+    }
+    fn record_provider_delivery(
+        &mut self,
+        helper: Option<Incarnation>,
+        in_process: bool,
+    ) -> Result<()> {
         ensure!(!self.exiting, "native worker resources are draining");
         if let Some(helper) = helper
             && !self.provider_helpers.contains(&helper)
@@ -204,6 +290,11 @@ impl ChildWorker {
             );
             // Set BEFORE the credential can enter a worker stdin; a late or
             // missing reply never turns uncertain authorization into NEVER.
+            ensure!(
+                self.provider_helpers.is_empty() || self.provider_in_process == in_process,
+                "native provider execution kind changed"
+            );
+            self.provider_in_process = in_process;
             self.provider_helpers.push(helper);
         }
         Ok(())
@@ -266,6 +357,7 @@ impl ChildWorker {
         let (sender, receiver) = mpsc::sync_channel(1);
         let mut process = Self {
             exiting: false,
+            read_settlement: None,
             catalog_gate: None,
             catalog_pending: None,
             catalog_quarantined: false,
@@ -282,6 +374,9 @@ impl ChildWorker {
             last_renewal: Instant::now(),
             pool_binding: None,
             provider_helpers: Vec::new(),
+            provider_in_process: false,
+            #[cfg(feature = "local-inference")]
+            provider_completed: None,
             pool_pending: false,
             last_status: Instant::now(),
             waiting: None,
@@ -336,6 +431,10 @@ impl ChildWorker {
     }
 
     fn grant(&mut self) -> Result<ControlResponse> {
+        ensure!(
+            self.read_settlement.is_none(),
+            "native read worker is retiring"
+        );
         self.require_catalog_ready()?;
         service_ipc::write_frame(
             self.input.as_mut().context("project input missing")?,
@@ -369,9 +468,16 @@ impl ChildWorker {
         pool: Option<crate::embedding_pool_protocol::Access>,
         helper_pending: bool,
     ) -> Result<()> {
+        ensure!(
+            self.read_settlement.is_none(),
+            "native read worker is retiring"
+        );
         self.require_catalog_ready()?;
         let pool_binding = pool.as_ref().map(|access| access.grant.pool);
-        self.record_provider_delivery(pool_binding)?;
+        self.record_provider_delivery(
+            pool_binding,
+            pool.as_ref().is_some_and(|access| access.in_process),
+        )?;
         let pool_pending = helper_pending && !self.derived && pool_binding.is_none();
         service_ipc::write_frame(
             self.input.as_mut().context("project input missing")?,
@@ -401,7 +507,10 @@ impl ChildWorker {
     ) -> Result<()> {
         self.require_catalog_ready()?;
         let pool_binding = pool.as_ref().map(|access| access.grant.pool);
-        self.record_provider_delivery(pool_binding)?;
+        self.record_provider_delivery(
+            pool_binding,
+            pool.as_ref().is_some_and(|access| access.in_process),
+        )?;
         service_ipc::write_frame(
             self.input.as_mut().context("project input missing")?,
             &WorkerCommand::ConfigurePool {
@@ -429,6 +538,13 @@ impl ChildWorker {
         helper_pending: bool,
     ) -> Result<Option<(Option<crate::embedding_pool_protocol::Access>, bool)>> {
         ensure!(!self.exiting, "native worker resources are draining");
+        if self
+            .read_settlement
+            .as_ref()
+            .is_some_and(ReadSettlement::sealed)
+        {
+            return Ok(None);
+        }
         if let Some(gate) = &self.catalog_gate
             && gate
                 .require_worker_start(self.identity.context("project identity missing")?.project)
@@ -450,7 +566,10 @@ impl ChildWorker {
                 // Register itself may have reached the native helper even if
                 // its reply/access construction later fails. Retain that exact
                 // generation before any wire effect, not merely on success.
-                self.record_provider_delivery(Some(pool.identity()))?;
+                self.record_provider_delivery(
+                    Some(pool.identity()),
+                    crate::service_inference::in_process(pool),
+                )?;
                 Some(pool.access_worker(identity, registry.get(identity.project)?.registration)?)
             }
             None => None,
@@ -474,6 +593,10 @@ impl ChildWorker {
         Ok(result)
     }
     fn run_job(&mut self, allowance: airk_core::service_resources::WorkAllowance) -> Result<()> {
+        ensure!(
+            self.read_settlement.is_none(),
+            "native read worker is retiring"
+        );
         self.require_catalog_ready()?;
         let identity = self.identity.context("project identity missing")?;
         service_ipc::write_frame(
@@ -618,6 +741,21 @@ impl ResourceCache {
     }
 }
 enum Envelope {
+    SettleRead {
+        identity: WorkerIdentity,
+        operation_id: Incarnation,
+    },
+    Checkpoint {
+        operation_id: Incarnation,
+        seal: bool,
+        reply: oneshot::Sender<Result<Vec<protocol::WorkerCheckpointObservation>>>,
+    },
+    CheckpointInference {
+        operation_id: Incarnation,
+        workers: Vec<WorkerIdentity>,
+        reply:
+            oneshot::Sender<Result<Option<airk_core::inference_provider::CompletionObservation>>>,
+    },
     Catalog {
         gate: crate::catalog_admission::NativeCatalogAdmission,
         operation: Box<catalog::Operation>,
@@ -649,9 +787,66 @@ enum Envelope {
     },
 }
 pub struct Supervisor {
+    checkpoint_closed: Arc<std::sync::atomic::AtomicBool>,
     resources: Arc<Mutex<ResourceCache>>,
     sender: Option<Arc<SyncSender<Envelope>>>,
     thread: Option<std::thread::JoinHandle<()>>,
+}
+
+#[derive(Debug)]
+pub(crate) struct CheckpointResourcesPending;
+impl std::fmt::Display for CheckpointResourcesPending {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("checkpoint_predecessor_resources_pending")
+    }
+}
+impl std::error::Error for CheckpointResourcesPending {}
+
+fn checkpoint_workers(
+    workers: &mut BTreeMap<ProjectBinding, ChildWorker>,
+    operation_id: Incarnation,
+    seal: bool,
+) -> Result<Vec<protocol::WorkerCheckpointObservation>> {
+    let until = Instant::now() + Duration::from_secs(10);
+    let engine = crate::runtime_pair::engine_identity()?;
+    let mut observed = Vec::new();
+    for worker in workers.values_mut() {
+        ensure!(worker.read_settlement.is_none(), CheckpointResourcesPending);
+        ensure!(
+            Instant::now() < until,
+            "worker checkpoint observation budget expired"
+        );
+        let identity = worker
+            .identity
+            .context("checkpoint worker identity missing")?;
+        service_ipc::write_frame(
+            worker
+                .input
+                .as_mut()
+                .context("checkpoint worker input missing")?,
+            &WorkerCommand::Checkpoint {
+                identity,
+                operation_id,
+                seal,
+            },
+        )?;
+        let Reply::Checkpoint { observation } = worker
+            .output
+            .recv_timeout(until.saturating_duration_since(Instant::now()))?
+        else {
+            anyhow::bail!("worker checkpoint acknowledgment unavailable");
+        };
+        ensure!(
+            observation.schema == 1
+                && observation.operation_id == operation_id
+                && observation.identity == identity
+                && observation.engine_sha256 == engine
+                && observation.admission_closed,
+            "crossed worker checkpoint acknowledgment"
+        );
+        observed.push(observation);
+    }
+    Ok(observed)
 }
 impl Drop for Supervisor {
     fn drop(&mut self) {
@@ -780,16 +975,32 @@ fn poll_worker_exits(
     let mut first_error = None;
     for identity in drains.identities() {
         let result = (|| -> Result<()> {
-            let progress = drains.poll(identity, pool.as_mut(), |service, helper| {
-                if recovery
-                    .reap_witnesses()
-                    .iter()
-                    .any(|proof| proof.matches(service, helper))
-                {
-                    return Ok(true);
-                }
-                recover_retired_helper(root, instance, service, helper, gate, recovery)
-            })?;
+            let ledger_ready = match drains.completed_authorizations(identity)? {
+                Some(anchor) => recover_completed_ledger(root, instance, &anchor, gate, recovery)?,
+                None => true,
+            };
+            let progress = drains.poll_completed(
+                identity,
+                pool.as_mut(),
+                |service, helper, in_process| {
+                    if !in_process
+                        && recovery
+                            .reap_witnesses()
+                            .iter()
+                            .any(|proof| proof.matches(service, helper))
+                    {
+                        return Ok(true);
+                    }
+                    #[cfg(feature = "local-inference")]
+                    if in_process && recovery.provider_was_completed(service, helper) {
+                        return Ok(true);
+                    }
+                    recover_retired_helper(
+                        root, instance, service, helper, in_process, gate, recovery,
+                    )
+                },
+                |_| Ok(ledger_ready),
+            )?;
             if progress != DrainProgress::Ready {
                 return Ok(());
             }
@@ -832,16 +1043,24 @@ fn recover_retired_helper(
     current: Incarnation,
     service: Incarnation,
     helper: Incarnation,
+    in_process: bool,
     gate: Option<&crate::catalog_admission::NativeCatalogAdmission>,
     recovery: &mut PoolRecovery,
 ) -> Result<bool> {
     if let Some(gate) = gate
-        && gate.provider_was_reaped(service, helper)?
+        && gate.provider_was_completed(service, helper, in_process)?
     {
         return Ok(true);
     }
     if service == current {
         return Ok(false);
+    }
+    if in_process {
+        let witness = recovery.predecessor_exclusion(root, current, service, helper)?;
+        if let Some(gate) = gate {
+            gate.observe_provider_excluded(witness)?;
+        }
+        return Ok(true);
     }
     let Some(witness) = crate::embedding_pool_process::recover_shared_helper(
         root,
@@ -855,6 +1074,37 @@ fn recover_retired_helper(
         gate.observe_provider_reaped(witness)?;
     } else {
         recovery.record_reaped(witness)?;
+    }
+    Ok(true)
+}
+
+fn recover_completed_ledger(
+    root: &Path,
+    current: Incarnation,
+    anchor: &airk_core::inference_provider::CompletionLedgerObservation,
+    gate: Option<&crate::catalog_admission::NativeCatalogAdmission>,
+    recovery: &mut PoolRecovery,
+) -> Result<bool> {
+    anchor.validate()?;
+    if recovery.ledger_was_completed(anchor)
+        || match gate {
+            Some(gate) => gate.ledger_was_completed(anchor)?,
+            None => false,
+        }
+    {
+        return Ok(true);
+    }
+    if anchor.service_instance == current {
+        return Ok(false);
+    }
+    let witness = recovery.predecessor_exclusion(
+        root,
+        current,
+        anchor.service_instance,
+        anchor.factory_generation,
+    )?;
+    if let Some(gate) = gate {
+        gate.observe_provider_excluded(witness)?;
     }
     Ok(true)
 }
@@ -894,6 +1144,10 @@ fn start_worker(
     }
     if let Some(worker) = workers.get(&project) {
         ensure!(!worker.exiting, ConnectionSetupPending::Draining);
+        ensure!(
+            worker.read_settlement.is_none(),
+            ConnectionSetupPending::Draining
+        );
         ensure!(worker.derived == derived, "project owner role is draining");
         return Ok(());
     }
@@ -981,7 +1235,11 @@ fn start_worker(
     resources.resident_started(identity)?;
     // Native Register can create membership before its ACK is observed. The
     // monotonic history covers uncertainty as well as delivered credentials.
-    worker.record_provider_delivery(pool.as_ref().filter(|_| !derived).map(Pool::identity))?;
+    worker.record_provider_delivery(
+        pool.as_ref().filter(|_| !derived).map(Pool::identity),
+        pool.as_ref()
+            .is_some_and(crate::service_inference::in_process),
+    )?;
     let access = match pool.as_mut().filter(|_| !derived) {
         Some(helper) => match helper.access_worker(identity, registration) {
             Ok(access) => Some(access),
@@ -1070,6 +1328,9 @@ impl Supervisor {
             "foreign native supervisor owner"
         );
         let (sender, receiver) = mpsc::sync_channel::<Envelope>(32);
+        let checkpoint_closed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let checkpoint_pause = checkpoint_closed.clone();
+        let recovery_fenced = crate::service_runtime::checkpoint::admission_closed(&root)?;
         let loaded = crate::service_resource_policy::load(&root);
         let configuration_error = loaded.is_err();
         let mut initial =
@@ -1089,13 +1350,16 @@ impl Supervisor {
             waiting: BTreeMap::new(),
         }));
         let resource_cache = resources.clone();
+        #[cfg(feature = "local-inference")]
+        let mut inference_factory =
+            crate::service_inference::InferenceFactory::new(ownership.clone(), instance)?;
         let thread = std::thread::Builder::new()
             .name("airk-project-supervisor".into())
             .spawn(move || {
                 let mut workers = BTreeMap::<ProjectBinding, ChildWorker>::new();
-                let mut catalog_gate = None;
+                let mut catalog_gate: Option<crate::catalog_admission::NativeCatalogAdmission> = None;
                 let mut pool: Option<Pool> = None;
-                let mut pool_recovery = PoolRecovery::new(Instant::now());
+                let mut pool_recovery = PoolRecovery::new_owned(Instant::now(),ownership.clone(),instance);
                 let mut registry: Option<ServiceRegistry> = None;
                 let mut backoff = BTreeMap::<ProjectBinding, (Instant, u32)>::new();
                 let mut waiting = BTreeMap::<ProjectBinding, WaitSample>::new();
@@ -1117,7 +1381,43 @@ impl Supervisor {
                 let mut next_receipt_maintenance = Instant::now();
                 let mut endpoints_ready = false;
                 let mut next_recovery_check=Instant::now();
+                let mut checkpoint_frozen = false;
                 loop {
+                    #[cfg(feature = "local-inference")]
+                    {
+                        if let Ok(events) = inference_factory.take_completed() {
+                            for event in events { pool_recovery.record_completed(event); }
+                        }
+                        let fallback_ready=match &catalog_gate {
+                            Some(gate)=>pool_recovery.transfer_fallback(gate).is_ok(),
+                            None=>true,
+                        };
+                        if fallback_ready {
+                            let _ = pool_recovery.transfer_completed(catalog_gate.as_ref(), |event| {
+                                for worker in workers.values_mut() { worker.complete_provider(event)?; }
+                                Ok(())
+                            });
+                        }
+                    }
+                    if checkpoint_frozen {
+                        match receiver.recv_timeout(Duration::from_millis(250)) {
+                            Ok(Envelope::Checkpoint { operation_id, seal, reply }) => { let _ = reply.send(checkpoint_workers(&mut workers, operation_id, seal)); },
+                            Ok(Envelope::CheckpointInference {operation_id, workers, reply}) => {
+                                #[cfg(feature = "local-inference")]
+                                let result = match pool.as_mut() {
+                                    Some(pool) => pool.checkpoint_drain(operation_id, workers),
+                                    None => inference_factory.empty_checkpoint(operation_id, workers),
+                                };
+                                #[cfg(not(feature = "local-inference"))]
+                                let result = { let _ = (operation_id, workers); Err(anyhow::anyhow!("in-process inference is unavailable in this build")) };
+                                let _ = reply.send(result);
+                            },
+                            Ok(other) => drop(other),
+                            Err(mpsc::RecvTimeoutError::Timeout) => {},
+                            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                        }
+                        continue;
+                    }
                     let exiting: Vec<_> = workers.iter().filter(|(_, worker)| worker.exiting).map(|(project, _)| *project).collect();
                     for project in exiting {
                         let _ = begin_worker_exit(&mut workers, project, &mut pool, &mut resource_drains);
@@ -1128,10 +1428,14 @@ impl Supervisor {
 &mut resources,
 &policy,
 WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref() });
-                    if let Some(gate) = &catalog_gate {
+                    {
                         let mut referenced = resource_drains.referenced_helpers();
                         referenced.extend(workers.values().flat_map(|worker| worker.provider_helpers.iter().copied()));
-                        let _ = gate.prune_provider_reaps(&referenced);
+                        let mut ledger_heads = resource_drains.referenced_ledgers();
+                        ledger_heads.extend(workers.values().filter_map(|worker| worker.completed_authorizations().map(|anchor| anchor.head_sha256)));
+                        if let Some(gate) = &catalog_gate { let _ = gate.prune_provider_reaps(&referenced, &ledger_heads); }
+                        #[cfg(feature = "local-inference")]
+                        pool_recovery.prune_completed(&referenced,&ledger_heads);
                     }
                     if registry.is_none() {
                         registry = ServiceRegistry::open(&root, instance).ok();
@@ -1258,12 +1562,12 @@ WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref() });
                     #[cfg(unix)]
                     let provider_rss = registry
                         .as_ref()
-                        .and_then(|registry| crate::unix_guardian::rss(registry,pool.as_ref().map(Pool::process_id)).ok());
+                        .and_then(|registry| crate::unix_guardian::rss(registry,pool.as_ref().and_then(crate::service_inference::process_id)).ok());
                     #[cfg(windows)]
                     let provider_rss = pool.as_ref().map(Pool::descendant_rss).transpose().ok().map(Option::unwrap_or_default);
                     let observations = std::iter::once(std::process::id())
                         .chain(workers.values().map(|worker| worker.child.id()))
-                        .chain(pool.as_ref().map(Pool::process_id))
+                        .chain(pool.as_ref().and_then(crate::service_inference::process_id))
                         .chain(
                             std::iter::once(source_pid.load(std::sync::atomic::Ordering::Acquire))
                                 .filter(|pid| *pid != 0),
@@ -1328,7 +1632,8 @@ WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref() });
                         cache.idle_safe = idle_safe;
                         cache.waiting = sampled_waits;
                     }
-                    match pool.as_mut().map(Pool::exit_status) {
+                    #[cfg(not(feature = "local-inference"))]
+                    {                    match pool.as_mut().map(Pool::exit_status) {
                         Some(Ok(Some(status))) => {
                             let code = crate::embedding_pool_process::exit_code(status);
                             log.record_code(airk_core::service_logs::LogKind::ModelFailed, None, None, Some(&code));
@@ -1372,6 +1677,29 @@ WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref() });
                             }
                         },
                         None => {},
+                    }
+                    }
+                    #[cfg(feature = "local-inference")]
+                    if let Some(current) = pool.as_mut() {
+                        if current.retiring() {
+                            retire_helper(&mut pool,catalog_gate.as_ref(),&mut pool_recovery);
+                            if pool.is_none() {log.record_code(airk_core::service_logs::LogKind::ModelStopped,None,None,Some("inference_native_drain_complete"));}
+                        } else { match current.failure() {
+                            Ok(Some(code)) => {
+                                log.record_code(airk_core::service_logs::LogKind::ModelFailed,None,None,Some(&code));
+                                retire_helper(&mut pool,catalog_gate.as_ref(),&mut pool_recovery);
+                                pool_recovery.failed(Instant::now());
+                            }
+                            Err(_) => { pool_recovery.suppressed = true; }
+                            Ok(None) => {
+                                let health = current.health();
+                                let reset = (|| -> Result<bool> {
+                                    pool_recovery.healthy(registry.as_mut().context("registry unavailable")?,crate::runtime_pair::engine_identity()?,health,Instant::now())
+                                })();
+                                if matches!(reset, Ok(true)) {log.record_code(airk_core::service_logs::LogKind::ModelRecovery,None,None,Some("inference_healthy_reset"));}
+                            }
+                        }
+                    }
                     }
                     if predecessors.is_none()
                         && let Some(registry) = registry.as_ref()
@@ -1419,11 +1747,10 @@ WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref() });
                             || pool_recovery.requested)
                     {
                         pool_recovery.attempted();
-                        let started = Pool::start(
-                            &root,
-                            instance,
-                            resources.snapshot().inference_threads_limit,
-                        );
+                        #[cfg(feature = "local-inference")]
+                        let started = inference_factory.start(resources.snapshot().inference_threads_limit);
+                        #[cfg(not(feature = "local-inference"))]
+                        let started = Pool::start(&root, instance, resources.snapshot().inference_threads_limit);
                         match started {
                             Ok(started) => {
                                 pool_recovery.started(started.identity());
@@ -1474,6 +1801,22 @@ WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref() });
                         let _ = begin_worker_exit(&mut workers, project, &mut pool, &mut resource_drains);
                     }
                     let mut failed_renewals = Vec::new();
+                    let settled_reads = workers.iter_mut().filter_map(|(project, worker)| {
+                        match worker.poll_read_settlement() {
+                            Ok(true) if resources.running(*project).is_none() => Some(*project),
+                            Err(_) => {
+                                log.record_code(airk_core::service_logs::LogKind::MetadataUnavailable,
+                                    Some(*project), None, Some("worker_read_settlement_unavailable"));
+                                None
+                            }
+                            _ => None,
+                        }
+                    }).collect::<Vec<_>>();
+                    for project in settled_reads {
+                        // The exact native census sealed this worker only after
+                        // its accepted work and read charges reached zero.
+                        let _ = begin_worker_exit(&mut workers, project, &mut pool, &mut resource_drains);
+                    }
                     let mut clean_renewals = std::collections::BTreeSet::new();
                     let mut pool_control_failure = None;
                     for (project, worker) in &mut workers {
@@ -1572,6 +1915,28 @@ WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref() });
                         let _ = begin_worker_exit(&mut workers, project, &mut pool, &mut resource_drains);
                     }
                     match receiver.recv_timeout(Duration::from_millis(250)) {
+                        Ok(Envelope::SettleRead { identity, operation_id }) => {
+                            if let Some(worker) = workers.get_mut(&identity.project)
+                                && worker.identity == Some(identity)
+                                && worker.read_settlement.is_none()
+                            {
+                                worker.read_settlement = Some(ReadSettlement::new(operation_id));
+                                resources.forget_pending(identity.project);
+                            }
+                        },
+                        Ok(Envelope::Checkpoint { operation_id, seal, reply }) => {
+                            let result = (|| -> Result<Vec<protocol::WorkerCheckpointObservation>> {
+                                ensure!(checkpoint_pause.load(std::sync::atomic::Ordering::Acquire), "worker checkpoint admission is not closed");
+                                ensure!(resource_drains.is_empty() && restarting.is_empty(), CheckpointResourcesPending);
+                                checkpoint_workers(&mut workers, operation_id, seal)
+                            })();
+                            if seal && result.as_ref().is_ok_and(|workers| workers.iter().all(|worker| worker.sealed && worker.durable_boundary)) { checkpoint_frozen = true; }
+                            let _ = reply.send(result);
+                        },
+                        Ok(Envelope::CheckpointInference {operation_id, workers, reply}) => {
+                            let _ = (operation_id, workers);
+                            let _ = reply.send(Err(anyhow::anyhow!("worker checkpoint is not sealed")));
+                        },
                         Ok(Envelope::Catalog { gate, operation, reply }) => {
                             let result = catalog::execute(&mut catalog_gate, gate, *operation, &mut workers,
                                 &mut registry, &root, instance, may_allocate, &mut backoff,
@@ -1624,6 +1989,12 @@ WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref() });
                                     code: "resource_configuration_rejected".into(),
                                 }
                             };
+                            {
+                                let mut cache = resource_cache.lock().unwrap_or_else(|error| error.into_inner());
+                                cache.snapshot = resources.snapshot();
+                                cache.observed = Instant::now();
+                                cache.configuration_error = configuration_error;
+                            }
                             let _ = reply.send(response);
                         }
                         Ok(Envelope::Connect { project, reply }) => {
@@ -1670,8 +2041,8 @@ WorkerAdmission {
                         }
                         Ok(Envelope::EmbeddingStatus { reply }) => {
                             let response = match pool.as_mut().map(|pool| {
-                                let id = pool.process_id();
-                                pool.status().map(|status| (id, status))
+                                let id = crate::service_inference::process_id(pool);
+                                pool.status().and_then(|status|crate::service_inference::provider_status(pool).map(|provider|(id,status,provider)))
                             }) {
                                 Some(Ok((
                                     id,
@@ -1681,14 +2052,16 @@ WorkerAdmission {
                                         sessions,
                                         age_ms,
                                     },
+                                    provider,
                                 ))) => ControlResponse::EmbeddingStatus {
-                                    available: true,
-                                    process_id: Some(id),
+                                    available: provider.as_ref().is_none_or(|provider|provider.admission_open&&provider.failure.is_none()),
+                                    process_id: id,
                                     worker: pool.as_ref().map(Pool::identity),
                                     loads,
                                     reuses,
                                     sessions,
                                     observation_age_ms: Some(age_ms),
+                                    provider,
                                 },
                                 None => ControlResponse::EmbeddingStatus {
                                     available: false,
@@ -1698,6 +2071,7 @@ WorkerAdmission {
                                     reuses: 0,
                                     sessions: 0,
                                     observation_age_ms: None,
+                                    provider:None,
                                 },
                                 _ => ControlResponse::Failure {
                                     code: "embedding_observation_busy".into(),
@@ -1755,7 +2129,7 @@ WorkerAdmission {
                                 if registry.as_mut().is_none_or(|r|r.reset_recovery_budget("helper").is_err()) {
                                     let _=reply.send(ControlResponse::Failure{code:"recovery_retry_not_saved".into()});continue;
                                 }
-                                pool_recovery = PoolRecovery::new(Instant::now());
+                                pool_recovery = PoolRecovery::new_owned(Instant::now(),ownership.clone(),instance);
                                 pool_recovery.requested = true;
                                 log.record_code(airk_core::service_logs::LogKind::ModelRecovery, None, None, Some("helper_explicit_start"));
                                 ControlResponse::EmbeddingStarting
@@ -1780,13 +2154,13 @@ WorkerAdmission {
                                 let failed = force
                                     && pool.as_mut().is_some_and(|pool| pool.terminate().is_err());
                                 retire_helper(&mut pool,catalog_gate.as_ref(),&mut pool_recovery);
-                                log.record_code(
+                                if pool.is_none() {log.record_code(
                                     airk_core::service_logs::LogKind::ModelStopped,
                                     None,
                                     None,
                                     Some("helper_explicit_stop"),
-                                );
-                                if failed {
+                                );}
+                                if failed || pool.is_some() {
                                     ControlResponse::Failure {
                                         code: "embedding_stop_outcome_unknown".into(),
                                     }
@@ -1807,11 +2181,17 @@ WorkerAdmission {
                         .duration_since(std::time::UNIX_EPOCH)
                         .map_or(0, |time| time.as_millis().min(u64::MAX as u128) as u64);
                     if let Some(registry) = registry.as_mut() {
-                        if Instant::now() >= next_receipt_maintenance {
+                        let recovering = recovery_fenced && crate::service_runtime::checkpoint::admission_closed(&root).unwrap_or(true);
+                        let checkpointing = checkpoint_pause.load(std::sync::atomic::Ordering::Acquire) || recovering;
+                        if !checkpointing && Instant::now() >= next_receipt_maintenance {
                             let _ = registry.maintain_job_receipts();
                             next_receipt_maintenance = Instant::now() + Duration::from_secs(2);
                         }
-                        if let Ok(due) = registry.due_source_projects(source_after, now_ms, 32) {
+                        // Source observation is already fenced. These calls
+                        // materialize only committed desired-state continuations
+                        // (including follow-up work from an accepted job), not
+                        // fresh watch events or new periodic maintenance/audits.
+                        if !checkpointing && let Ok(due) = registry.due_source_projects(source_after, now_ms, 32) {
                             source_after = due.last().map(|(project, _)| *project);
                             for (project, revision) in due {
                                 let Ok(nonce) = new_instance_id() else {
@@ -1825,7 +2205,7 @@ WorkerAdmission {
                         // Source admission gets the existing writer opportunity first.
                         // Store also fences Vector admission transactionally, including
                         // admissible source projects beyond this bounded source page.
-                        if let Ok(due) = registry.due_background_jobs(background_after, now_ms, 8) {
+                        if !checkpointing && let Ok(due) = registry.due_background_jobs(background_after, now_ms, 8) {
                             background_after = if due.len() == 8 {
                                 due.last().map(|item| item.0)
                             } else {
@@ -1839,14 +2219,14 @@ WorkerAdmission {
                                 }
                             }
                         }
-                        if let Ok(due) = registry.due_automatic_audits(now_ms, 8) {
+                        if !checkpointing && let Ok(due) = registry.due_automatic_audits(now_ms, 8) {
                             for (project,revision) in due {
                                 if let Ok(nonce)=new_instance_id() {
                                     let _=registry.enqueue_automatic_audit(project,revision,instance,nonce,now_ms);
                                 }
                             }
                         }
-                        if let Ok(due) = registry.due_maintenance(now_ms) {
+                        if !checkpointing && let Ok(due) = registry.due_maintenance(now_ms) {
                             for project in due {
                                 if resources.running(project).is_none() {
                                     let Ok(nonce) = new_instance_id() else {
@@ -1903,7 +2283,8 @@ WorkerAdmission {
                                 };
                                 sample_wait(&mut waiting, project, job.id, reason);
                             }
-                            if !may_allocate || restarting.contains_key(&project) {
+                            if !may_allocate || restarting.contains_key(&project)
+                                || workers.get(&project).is_some_and(|worker| worker.read_settlement.is_some()) {
                                 continue;
                             }
                             let derived = registry.derived_work_pending(project).unwrap_or(false);
@@ -1941,7 +2322,8 @@ WorkerAdmission {
                                 resources.forget_pending(project);
                                 continue;
                             }
-                            if restarting.contains_key(&project) {
+                            if restarting.contains_key(&project)
+                                || workers.get(&project).is_some_and(|worker| worker.read_settlement.is_some()) {
                                 resources.forget_pending(project);
                                 continue;
                             }
@@ -2183,12 +2565,64 @@ WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref() });
                 if let Ok(mut policy) = policy.lock() { policy.ownership_lost(); }
             })?;
         Ok(Self {
+            checkpoint_closed,
             resources,
             sender: Some(Arc::new(sender)),
             thread: Some(thread),
         })
     }
 
+    pub(crate) fn begin_checkpoint(&self) {
+        self.checkpoint_closed
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    pub(crate) fn read_settlement_requester(
+        &self,
+    ) -> airk_mcp::read_attempt::WorkerSettlementRequester {
+        // A read must not keep the actor channel alive while Supervisor::drop
+        // joins it. Only the actual supervisor owns the strong sender lifetime.
+        worker_read_settlement::requester(self.sender.as_ref().map(Arc::downgrade))
+    }
+    pub(crate) async fn observe_checkpoint(
+        &self,
+        operation_id: Incarnation,
+        seal: bool,
+    ) -> Result<Vec<protocol::WorkerCheckpointObservation>> {
+        self.begin_checkpoint();
+        let (reply, receive) = oneshot::channel();
+        self.sender
+            .as_ref()
+            .context("checkpoint supervisor closed")?
+            .try_send(Envelope::Checkpoint {
+                operation_id,
+                seal,
+                reply,
+            })?;
+        tokio::time::timeout(Duration::from_secs(15), receive)
+            .await
+            .map_err(|_| anyhow::anyhow!("worker checkpoint acknowledgment pending"))?
+            .map_err(|_| anyhow::anyhow!("worker checkpoint owner closed"))?
+    }
+    pub(crate) async fn observe_inference_checkpoint(
+        &self,
+        operation_id: Incarnation,
+        workers: Vec<WorkerIdentity>,
+    ) -> Result<Option<airk_core::inference_provider::CompletionObservation>> {
+        let (reply, receive) = oneshot::channel();
+        self.sender
+            .as_ref()
+            .context("checkpoint supervisor closed")?
+            .try_send(Envelope::CheckpointInference {
+                operation_id,
+                workers,
+                reply,
+            })?;
+        tokio::time::timeout(Duration::from_secs(5), receive)
+            .await
+            .map_err(|_| anyhow::anyhow!("inference checkpoint acknowledgment pending"))?
+            .map_err(|_| anyhow::anyhow!("inference checkpoint owner closed"))?
+    }
     pub fn can_idle_exit(&self) -> bool {
         self.resources
             .lock()
@@ -2205,6 +2639,19 @@ WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref() });
                 code: "resource_observation_unavailable".into(),
             },
         }
+    }
+    pub(crate) fn query_capacity_reader(
+        &self,
+    ) -> crate::service_resource_policy::QueryCapacityReader {
+        let resources = self.resources.clone();
+        Arc::new(move || {
+            resources
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .snapshot
+                .configuration
+                .query_concurrency
+        })
     }
     pub async fn configure_resources(
         &self,

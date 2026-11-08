@@ -283,10 +283,11 @@ impl ServiceRegistry {
                 i64::try_from(super::maintenance::clock_ms()?)?
             ],
         )?;
-        let retained_catalog_index = if tx
-            .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))?
-            == 12
-        {
+        let schema = tx.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))?;
+        let retained_catalog_index = if matches!(
+            schema,
+            12 | super::runtime_contract::IN_PROCESS_SCHEMA
+        ) {
             tx.query_row(
                 "SELECT EXISTS(SELECT 1 FROM index_definitions WHERE legacy_binding=?1 AND active_registration=?1 AND tombstone=1)",
                 [project.to_string()],

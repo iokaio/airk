@@ -12,38 +12,60 @@ fn present(path: &Path) -> Result<bool> {
 }
 
 const PREVIOUS_RETIREMENT: &str = "previous-retirement.json";
+#[path = "runtime_superseded.rs"]
+mod superseded;
+pub(super) fn superseded_images(root: &Path, active: &str) -> Result<Vec<serde_json::Value>> {
+    superseded::inspect_images(root, active)
+}
 
 #[cfg(test)]
 mod previous_tests {
     use super::*;
 
     #[test]
-    fn uninstall_inventory_includes_all_process_roles_and_rejects_modified_images() -> Result<()> {
-        let (_owner, root, identity) = super::super::tests::unselected_fixture()?;
-        let directory = root.join("runtimes").join(&identity);
-        let main = directory.join(main_name());
-        crate::process_roles::install(&main)?;
-        let paths = uninstall_process_paths(&root, std::slice::from_ref(&identity))?;
-        assert_eq!(paths.len(), if cfg!(target_os = "macos") { 3 } else { 5 });
-        for name in [main_name(), helper_name()] {
-            assert!(paths.contains(&directory.join(name)));
-        }
-        if cfg!(target_os = "macos") {
-            assert!(paths.contains(&directory.join(MAC_LAUNCHER_IMAGE)));
-        } else {
-            for role in [
-                crate::process_roles::Role::Service,
-                crate::process_roles::Role::Index,
-                crate::process_roles::Role::Source,
-            ] {
-                assert!(paths.contains(&directory.join(role.name())));
+    fn uninstall_inventory_binds_current_main_and_historical_roles_and_refuses_modified_images()
+    -> Result<()> {
+        for historical in [false, true] {
+            let (_owner, root, identity) = if historical {
+                super::super::tests::unselected_historical_fixture()?
+            } else {
+                super::super::tests::unselected_fixture()?
+            };
+            let directory = root.join("runtimes").join(&identity);
+            let main = directory.join(main_name());
+            crate::process_roles::install(&main)?;
+            let paths = uninstall_process_paths(&root, std::slice::from_ref(&identity))?;
+            let expected = if historical {
+                if cfg!(target_os = "macos") { 3 } else { 5 }
+            } else {
+                1
+            };
+            assert_eq!(paths.len(), expected);
+            assert!(paths.contains(&main));
+            if historical {
+                assert!(paths.contains(&directory.join(helper_name())));
+                if cfg!(target_os = "macos") {
+                    assert!(paths.contains(&directory.join(MAC_LAUNCHER_IMAGE)));
+                } else {
+                    for role in [
+                        crate::process_roles::Role::Service,
+                        crate::process_roles::Role::Index,
+                        crate::process_roles::Role::Source,
+                    ] {
+                        assert!(paths.contains(&directory.join(role.name())));
+                    }
+                }
+            } else {
+                assert!(!directory.join(helper_name()).exists());
+                assert!(!launcher_path(&root).exists());
             }
+            // An unapproved role copy is refused for current main-only layouts;
+            // an altered owned alias is refused for historical pair layouts.
+            let changed = directory.join(crate::process_roles::Role::Index.name());
+            fs::write(&changed, b"modified unapproved process image")?;
+            assert!(uninstall_process_paths(&root, &[identity]).is_err());
+            assert_eq!(fs::read(changed)?, b"modified unapproved process image");
         }
-        fs::write(
-            directory.join(crate::process_roles::Role::Index.name()),
-            b"modified",
-        )?;
-        assert!(uninstall_process_paths(&root, &[identity]).is_err());
         Ok(())
     }
 
@@ -51,85 +73,104 @@ mod previous_tests {
     #[tokio::test]
     async fn uninstall_stops_owned_clients_and_prevents_relaunch_without_stopping_foreign_processes()
     -> Result<()> {
-        let (owner, root, old) = super::super::tests::unselected_fixture()?;
-        let directory = root.join("runtimes").join(&old);
-        let main = directory.join(main_name());
-        fs::copy(std::env::current_exe()?, &main)?;
-        let hash = runtime_pair::digest_file(&main)?;
-        let pair_path = directory.join("airk-runtime.json");
-        let mut pair: runtime_pair::RuntimePair = serde_json::from_slice(&fs::read(&pair_path)?)?;
-        pair.airk_sha256 = hash.clone();
-        fs::write(&pair_path, serde_json::to_vec(&pair)?)?;
-        let mut inventory: InstallManifest =
-            serde_json::from_slice(&fs::read(directory.join("airk-install.json"))?)?;
-        inventory.files.insert(main_name().into(), hash.clone());
-        inventory.files.insert(
-            "airk-runtime.json".into(),
-            runtime_pair::digest_file(&pair_path)?,
-        );
-        let bytes = serde_json::to_vec(&inventory)?;
-        let identity = format!("{:x}", Sha256::digest(&bytes));
-        fs::write(directory.join("airk-install.json"), bytes)?;
-        replace_json(
-            &directory,
-            "approval.json",
-            &Approval {
-                schema: 1,
-                manifest_sha256: identity.clone(),
-                version: env!("CARGO_PKG_VERSION").into(),
-                verification_basis: VerificationBasis::OrganizationDigest,
-            },
-        )?;
-        let installed = root.join("runtimes").join(&identity);
-        fs::rename(directory, &installed)?;
-        let main = installed.join(main_name());
-        let index = installed.join(crate::process_roles::Role::Index.name());
-        fs::copy(&main, &index)?;
-        let launcher = launcher_path(&root);
-        fs::copy(&main, &launcher)?;
-        replace_json(
-            &root,
-            "launcher.json",
-            &LauncherReceipt {
-                schema: 1,
-                sha256: hash,
-            },
-        )?;
-        let foreign = owner.path().join(if cfg!(windows) {
-            "foreign-airk.exe"
-        } else {
-            "foreign-airk"
-        });
-        fs::copy(&main, &foreign)?;
-        let spawn = |image: &Path| -> Result<crate::native_process::ContainedChild> {
-            let mut command = Command::new(image);
-            command
-                .args(["--exact", "service_manager::tests::manager_command_fixture"])
-                .env("AIRK_MANAGER_COMMAND_FIXTURE", "blocked-input")
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null());
-            crate::native_process::ContainedChild::spawn(&mut command)
-        };
-        let mut client = spawn(&main)?;
-        let mut worker = spawn(&index)?;
-        let mut forwarding = spawn(&launcher)?;
-        let mut unrelated = spawn(&foreign)?;
-        assert!(client.try_wait()?.is_none() && worker.try_wait()?.is_none());
-        let result = uninstall(&root).await?;
-        assert_eq!(result["uninstalled"], true);
-        assert!(
-            client.try_wait()?.is_some()
-                && worker.try_wait()?.is_some()
-                && forwarding.try_wait()?.is_some()
-        );
-        assert!(unrelated.try_wait()?.is_none());
-        assert!(!launcher.exists() && !main.exists() && !index.exists());
-        assert!(Command::new(&launcher).spawn().is_err());
-        assert!(selected(&root).is_err());
-        assert_eq!(uninstall(&root).await?["uninstalled"], true);
-        unrelated.kill()?;
-        unrelated.wait()?;
+        // These are process-path ownership component fixtures. The historical
+        // receipt uses current test-executable bytes, not a predecessor build.
+        for historical in [false, true] {
+            let (owner, root, old) = if historical {
+                super::super::tests::unselected_historical_fixture()?
+            } else {
+                super::super::tests::unselected_fixture()?
+            };
+            let directory = root.join("runtimes").join(&old);
+            let main = directory.join(main_name());
+            fs::copy(std::env::current_exe()?, &main)?;
+            let hash = runtime_pair::digest_file(&main)?;
+            let pair_path = directory.join("airk-runtime.json");
+            let mut pair: runtime_pair::RuntimePair =
+                serde_json::from_slice(&fs::read(&pair_path)?)?;
+            pair.airk_sha256 = hash.clone();
+            fs::write(&pair_path, serde_json::to_vec(&pair)?)?;
+            let mut inventory: InstallManifest =
+                serde_json::from_slice(&fs::read(directory.join("airk-install.json"))?)?;
+            inventory.files.insert(main_name().into(), hash.clone());
+            inventory.files.insert(
+                "airk-runtime.json".into(),
+                runtime_pair::digest_file(&pair_path)?,
+            );
+            let bytes = serde_json::to_vec(&inventory)?;
+            let identity = format!("{:x}", Sha256::digest(&bytes));
+            fs::write(directory.join("airk-install.json"), bytes)?;
+            replace_json(
+                &directory,
+                "approval.json",
+                &Approval {
+                    schema: 1,
+                    manifest_sha256: identity.clone(),
+                    version: inventory.version.clone(),
+                    verification_basis: VerificationBasis::OrganizationDigest,
+                },
+            )?;
+            let installed = root.join("runtimes").join(&identity);
+            fs::rename(directory, &installed)?;
+            let main = installed.join(main_name());
+            let index = if historical {
+                crate::process_roles::install(&main)?;
+                installed.join(crate::process_roles::Role::Index.name())
+            } else {
+                main.clone()
+            };
+            let launcher = if historical {
+                let launcher = launcher_path(&root);
+                fs::copy(&main, &launcher)?;
+                replace_json(
+                    &root,
+                    "launcher.json",
+                    &LauncherReceipt {
+                        schema: 1,
+                        sha256: hash,
+                    },
+                )?;
+                launcher
+            } else {
+                assert!(!launcher_path(&root).exists());
+                main.clone()
+            };
+            let foreign = owner.path().join(if cfg!(windows) {
+                "foreign-airk.exe"
+            } else {
+                "foreign-airk"
+            });
+            fs::copy(&main, &foreign)?;
+            let spawn = |image: &Path| -> Result<crate::native_process::ContainedChild> {
+                let mut command = Command::new(image);
+                command
+                    .args(["--exact", "service_manager::tests::manager_command_fixture"])
+                    .env("AIRK_MANAGER_COMMAND_FIXTURE", "blocked-input")
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null());
+                crate::native_process::ContainedChild::spawn(&mut command)
+            };
+            let mut client = spawn(&main)?;
+            let mut worker = spawn(&index)?;
+            let mut forwarding = spawn(&launcher)?;
+            let mut unrelated = spawn(&foreign)?;
+            assert!(client.try_wait()?.is_none() && worker.try_wait()?.is_none());
+            let result = uninstall(&root).await?;
+            assert_eq!(result["uninstalled"], true);
+            assert!(
+                client.try_wait()?.is_some()
+                    && worker.try_wait()?.is_some()
+                    && forwarding.try_wait()?.is_some()
+            );
+            assert!(unrelated.try_wait()?.is_none());
+            assert!(!launcher.exists() && !main.exists() && !index.exists());
+            assert!(Command::new(&launcher).spawn().is_err());
+            assert!(selected(&root).is_err());
+            assert_eq!(uninstall(&root).await?["uninstalled"], true);
+            unrelated.kill()?;
+            unrelated.wait()?;
+        }
         Ok(())
     }
 
@@ -216,6 +257,7 @@ struct PreviousRetirement {
 }
 
 pub(super) fn require_previous_settled(root: &Path) -> Result<()> {
+    superseded::require_settled(root)?;
     ensure!(
         !present(&root.join(PREVIOUS_RETIREMENT))?,
         "previous runtime retirement is pending; resume retire-previous before another activation"
@@ -294,15 +336,23 @@ fn finish_previous(root: &Path, intent: &PreviousRetirement) -> Result<()> {
 }
 
 pub(super) async fn retire_previous(root: &Path, expected: &str) -> Result<serde_json::Value> {
+    let canonical = root.canonicalize()?;
+    let root = canonical.as_path();
     let _lock = install_lock(root)?;
+    require_issuer_rotation_settled(root)?;
     managed::require_unmanaged(root)?;
     activation::require_settled(root)?;
     payload_repair::require_settled(root)?;
     lifecycle::require_settled(root)?;
+    let (selected_main, _) = verify_runtime(root, expected)?;
+    if runtime_pair::single_executable(&selected_main)? {
+        return superseded::retire(root, expected);
+    }
     lifecycle::require_start_allowed(root)?;
     let Some(intent) = previous_intent(root, expected)? else {
         return Ok(serde_json::json!({"active":expected,"retired_previous":null}));
     };
+    activation::checkpoint_retiring(root, expected)?;
     let (main, approval) = verify_runtime(root, expected)?;
     let manager = crate::service_manager::ServiceManager::for_runtime(root)?;
     let owned_manager = manager.owns_restart()?;
@@ -387,6 +437,15 @@ fn validated_inventory(root: &Path, identity: &str) -> Result<InstallManifest> {
 }
 
 pub(super) fn remove(root: &Path, identity: &str) -> Result<()> {
+    remove_with(root, identity, true)
+}
+
+fn preflight_remove(root: &Path, identity: &str) -> Result<()> {
+    remove_with(root, identity, false)
+}
+
+fn remove_with(root: &Path, identity: &str, perform: bool) -> Result<()> {
+    require_issuer_rotation_settled(root)?;
     let mut inventory = validated_inventory(root, identity)?;
     crate::process_roles::inventory(&mut inventory.files);
     // Preflight ancillary receipts before deleting any payload bytes. This also
@@ -394,7 +453,11 @@ pub(super) fn remove(root: &Path, identity: &str) -> Result<()> {
     validate_startup(root, identity)?;
     let directory = root.join("runtimes").join(identity);
     if !present(&directory)? {
-        return finish(root, identity);
+        return if perform {
+            finish(root, identity)
+        } else {
+            Ok(())
+        };
     }
     local_ipc::prepare_root(&directory)?;
     let mut allowed_files: BTreeSet<_> = inventory.files.keys().cloned().collect();
@@ -459,6 +522,9 @@ pub(super) fn remove(root: &Path, identity: &str) -> Result<()> {
                 }
             }
         }
+    }
+    if !perform {
+        return Ok(());
     }
     // Executing Windows images fail before legal/metadata files are touched.
     let mut names = vec![main_name(), helper_name()];
@@ -563,6 +629,7 @@ fn uninstall_process_paths(root: &Path, runtimes: &[String]) -> Result<Vec<PathB
 }
 
 pub(super) async fn uninstall(root: &Path) -> Result<serde_json::Value> {
+    require_issuer_rotation_settled(root)?;
     if managed::is_configured(root)? {
         return managed::detach(root).await;
     }
@@ -589,8 +656,8 @@ pub(super) async fn uninstall(root: &Path) -> Result<serde_json::Value> {
         let directory = root.join("runtimes");
         if present(&directory)? {
             local_ipc::prepare_root(&directory)?;
-            for (count, entry) in fs::read_dir(directory)?.take(5).enumerate() {
-                ensure!(count < 4, "runtime uninstall inventory exceeds bound");
+            for (count, entry) in fs::read_dir(directory)?.take(6).enumerate() {
+                ensure!(count < 5, "runtime uninstall inventory exceeds bound");
                 let entry = entry?;
                 if preserved_payload.as_ref().is_some_and(|preserved| {
                     entry.file_name() == preserved.file_name().unwrap_or_default()
@@ -608,7 +675,7 @@ pub(super) async fn uninstall(root: &Path) -> Result<serde_json::Value> {
             }
         }
         ensure!(
-            runtimes.len() <= 4,
+            runtimes.len() <= 5,
             "runtime uninstall inventory exceeds bound"
         );
         let intent = UninstallIntent {
@@ -619,7 +686,7 @@ pub(super) async fn uninstall(root: &Path) -> Result<serde_json::Value> {
         intent
     };
     ensure!(
-        intent.schema == 1 && intent.runtimes.len() <= 4,
+        intent.schema == 1 && intent.runtimes.len() <= 5,
         "invalid runtime uninstall intent"
     );
     // Persist uninstall intent before stopping clients: a racing launcher must
@@ -643,6 +710,7 @@ pub(super) async fn uninstall(root: &Path) -> Result<serde_json::Value> {
     crate::universal_launcher::retire_for(root, channel)?;
     let _quiescence = quiescent(root)
         .context("service/project/embedding ownership must release before runtime removal")?;
+    crate::http_endpoint::trust::remove_owned(&layout::saved_control(root)?)?;
     let selected = root.join("selected.json");
     if present(&selected)? {
         let selection: Selection = serde_json::from_slice(&read_bounded(&selected, 4096)?)?;
@@ -692,6 +760,8 @@ pub(super) async fn uninstall(root: &Path) -> Result<serde_json::Value> {
         digest(&receipt_value.sha256)?;
         fs::remove_file(receipt)?;
     }
+    legacy_launchers::finish_for_uninstall(root, &intent.runtimes)?;
+    superseded::finish_for_uninstall(root, &intent.runtimes)?;
     fs::remove_file(intent_path)?;
     sync_directory(root)?;
     Ok(

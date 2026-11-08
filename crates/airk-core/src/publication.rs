@@ -273,6 +273,7 @@ impl InventoryV2 {
                         parse_status: file.parse_status.clone(),
                         facts: vec![],
                         retained: Some(ArtifactRef {
+                            legacy_origin: None,
                             source_encoding: None,
                             payload_encoding: None,
                             object: file.state.payload_digest.to_string(),

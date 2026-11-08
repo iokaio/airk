@@ -24,7 +24,10 @@ MAIN_TARGETS = tuple(row["target"] for row in NATIVE_ROWS[3:])
 # Dependency caches are written only by main push. A change to their key inputs,
 # or to CI itself, therefore rebuilds every target on main instead of promoting.
 FULL_MAIN_INPUTS = ("Cargo.lock", "Cargo.toml", "rust-toolchain.toml", "Dockerfile", "scripts/ci-prune-target.py",
-                    ".github/workflows/ci.yml", ".config/nextest.toml")
+                    ".github/workflows/ci.yml", ".config/nextest.toml",
+                    "scripts/provision-static-onnx-runtime.py", "scripts/static-onnx-runtime-lock.json",
+                    "scripts/provision-static-onnx-tools.py", "scripts/static-onnx-tools-lock.json",
+                    "scripts/static-onnx-link-closure.py")
 FULL_MAIN_PREFIXES = (".cargo/",)
 
 

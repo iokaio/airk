@@ -1,10 +1,10 @@
 # GitHub CI, native artifacts and spending controls
 
-A one-release exception covers the [pinned 1.4.4 tooling repair](release-workflow.md#pinned-144-release-tool-repair). Its complete cumulative diff must stay within an explicit release-tool/test/document allowlist, retain version 1.4.4 and match the original 664-file runtime identity. Only then do PR/main CI run quick checks and Python contracts on all four hosts without repeating native/container builds. Other changes, missing history, manual CI dispatches and version 1.4.5 restore the ordinary plan. The original full main CI remains the authenticated producer.
+A historical one-release exception covered the [pinned 1.4.4 tooling repair](release-workflow.md#pinned-144-release-tool-repair). That pinned repair required its complete cumulative diff to stay within an explicit release-tool/test/document allowlist, retain version 1.4.4 and match the original 664-file runtime identity. Only that exact repair allowed PR/main CI to run quick checks and Python contracts on all four hosts without repeating native/container builds. Other changes, missing history, manual CI dispatches and version 1.4.5 restore the ordinary plan. The original full main CI remained its authenticated producer. This exception does not apply to 1.8.14.
 
 For local development, use the [scoped Rust iteration workflow](../CONTRIBUTING.md#local-rust-iteration): one coordinated Cargo owner, warm per-checkout targets and retained timings. Its Windows incremental override applies to development Clippy only. Required CI/release scopes and checked-in compilation profiles below are unchanged; a local scoped pass does not qualify them.
 
-The current manual-test working version is **1.8.8** toward the planned 1.9.0 release; see [the working-build record](releases/release-1.8.8.md). The separate [dependency audit](dependency-advisories.md) workflow runs only when lockfiles or the advisory policy change, weekly, and on request; routine CI is unchanged. Prior release and qualification records retain their original scope.
+The current implementation version is **1.8.14**; the single-executable migration is in progress and is not a qualified release. See [the current release record](releases/release-1.8.14.md) and [the implementation plan](one-airk.md). The 1.8.8 and 1.8.12 checkpoints below remain dated historical evidence. The separate [dependency audit](dependency-advisories.md) workflow runs only when lockfiles or the advisory policy change, weekly, and on request; routine CI is unchanged. Prior release and qualification records retain their original scope.
 
 Container compilation and ownership tests run as UID/GID 10001. Every cache-using
 build step first repairs only its three mounted Cargo/target cache directories,
@@ -18,23 +18,79 @@ Rust code and runs before the normal container build.
 
 Native smoke jobs, the container adapter, service-pool campaign and installed-console fixture share one metadata retry policy. It honors only the native actor's explicit `registry_busy` contract within finite attempt/time budgets; an accepted index/configuration job is polled by the same receipt, never resubmitted. Deliberate negative tests require an exact expected failure code and do not retry it. The document-table smoke retains its original source, coordinate, extraction, budget and usage assertions. See [the protocol](service-protocol.md) for retry exclusions.
 
-Native smoke and qualification tools distinguish a raw diagnostic status from an available publication. They share scoped, bounded observation helpers and preserve explicit failed readiness, typed read-retry limits and exact usage accounting; see the [MCP consumer contract](mcp.md). The mandatory 16-file/model service-client and document-table smokes remain routine on every native host. Local verification uses a freshly constructed matching release pair before a corrective push; hosted CI is not the primary debugging loop.
+Native smoke and qualification tools distinguish a raw diagnostic status from an available publication. They share scoped, bounded observation helpers and preserve explicit failed readiness, typed read-retry limits and exact usage accounting; see the [MCP consumer contract](mcp.md). The mandatory 16-file/model service-client and document-table smokes remain routine on every native host. Local verification uses a freshly constructed matching source-sealed runtime (one modern main; pairs only for qualified predecessor fixtures) before a corrective push; hosted CI is not the primary debugging loop.
 
-MCP smoke checks require the exact unified 29-tool catalog, including rejection of missing, duplicate and retired advertised names. Container and native client checks share that expected public catalog, while standalone extension frontend checks use the current 29-tool probe. The 19 prefixed native `airk tools` aliases remain a separate CLI compatibility contract.
+MCP smoke checks require the exact unified 29-tool catalog, including rejection of missing, duplicate and retired advertised names. Container and native client checks share that expected public catalog, while standalone extension frontend checks use the current 29-tool probe. In the unpublished 1.8.14 implementation, CLI `tools list/help/call/shell` and public HTTPS use the same public catalog and alias validation. The 19 native evidence/help/plan/scope operations remain a backend subset; native administrative commands retain their separate authority.
 
-The existing model-enabled native-client check also starts an owned inference worker, verifies real inference replies and requires a zero exit status after input EOF. Successful replies followed by a native shutdown abort fail qualification. This runs inside the existing native smoke jobs without another build matrix.
+The model-enabled native-client gate must exercise actual inference through the modern in-process owner, real scoped HTTPS reads and native shutdown. The schema-1 predecessor branch retains its actual helper/EOF/zero-exit checks; successful replies followed by a native shutdown abort are not qualification. These remain existing smoke gates, not an extra speculative matrix.
 
-Mac contract jobs compile a tiny helper/library fixture to verify that development bundle signatures permit loading their ad-hoc library. Development candidates clear runtime flags because they have no Team ID; [Developer ID release signing](native-signing.md) applies hardened runtime and verifies the exact team on every signing component.
+Historical Mac loader-contract coverage compiles a tiny helper/library fixture to verify that development bundle signatures permit loading their ad-hoc library. Those ad-hoc fixture candidates clear runtime flags because they have no Team ID; [Developer ID release signing](native-signing.md) applies hardened runtime and verifies the exact team on every signing component.
 
 The full extension suite's two simultaneous-project scenarios declare their required resident capacity on the disposable service through `configure_resources`, verify admission and stay within detected host memory. An 8 GiB host's default 2 GiB service budget intentionally has one resident slot; waiting longer cannot satisfy a two-live-project test under that budget. Production defaults and low-budget admission checks remain unchanged. Mock onboarding/trust fixtures use canonical temporary roots so the real uninstall-receipt directory guard stays enabled on macOS.
 
-Native builds embed the two pinned INT8 MiniLM exports. Before Cargo checks/builds, run `python scripts/provision-local-model.py --destination target/local-vector-model --download`, or supply verified offline assets there (or through `AIRK_BUNDLED_MODEL_DIR`). Also prepare native CPU libraries with `python scripts/provision-onnx-runtime.py --download`. Cargo never downloads model assets or runtime libraries. See [model provisioning](onnx-models.md).
+Native builds embed the two pinned INT8 MiniLM exports. Before Cargo checks/builds, run `python scripts/provision-local-model.py --destination target/local-vector-model --download`, or supply verified offline assets there (or through `AIRK_BUNDLED_MODEL_DIR`). Modern 1.8.14 builds require verified static CPU ORT 1.22.1 inputs; the historical `provision-onnx-runtime.py` NuGet archive supplies dynamic libraries and cannot satisfy that requirement. Static provisioning and each target's actual model/import qualification remain required before release. Cargo must not download or substitute model assets, an ambient ORT installation or Pyke's different ORT version. See [model provisioning](onnx-models.md).
+
+The modern builder compiles only `airk` with `local-inference`, which embeds the approved assets. Its schema-2 `airk-runtime.json` binds that one executable; the separate complete installer inventory still binds every legal/resource/build file. No embedding executable, launcher copy, external model or ORT library belongs in a modern payload. Schema-1 historical pair receipts remain strictly decoded for predecessor qualification. The build inspects actual native imports and runs both embedded inventory verification and `--verify-model-smoke`; the archive packager repeats the real embedded model smoke after extraction. These checks are distinct from client parity, process ancestry, minimum-OS and numerical-oracle qualification.
+
+On macOS the modern main stays inside `AIRK.app`. Signing seals and verifies that exact bundle, then reseals the runtime/build/installer metadata outside it. The 1.8.8–1.8.13 standalone copied-launcher checks remain historical format checks. Modern signing must preserve the exact channel plists and the complete native/VSIX/promotion/Marketplace inventory graph; it never copies the sealed main out of its app or drops final signed payload verification.
 
 The opt-in kernel vector-component qualification selects the S8 profile on ARM64 and the U8 profile on x64. Its `AIRK_TEST_MODEL_DIR` must match the native CPU policy; selecting the other verified export is still refused. The Neo P6 campaign exposed and corrected the previous x64-only fixture selection without changing the component workloads, assertions or routine CI selection.
 
 The [CI workflow](../.github/workflows/ci.yml) uses standard GitHub-hosted runners. No self-hosted machine, Docker account, Azure account, Apple account, custom repository secret or repository variable is needed for the current builds. GitHub supplies the job token and artifact-upload authorization automatically. Repository Actions must be enabled and permitted to use the SHA-pinned actions, including rust-cache, install-action and the Docker cache-mount adapter.
 
 Main requires PRs and the stable `Required checks` / `signed-off` gates. Use **Actions → CI** for manual builds. **GitHub release** signs and assembles the authenticated main candidates; **Extension release** consumes that exact signed assembly for Marketplace through `signed_run_id`. Final Marketplace publication requires matching published GitHub assets first. The [release workflow guide](release-workflow.md) describes artifact verification and external Entra identity/publisher membership prerequisites. Publishing jobs are separate from read-only builds.
+
+## Current 1.8.14 source gates
+
+The implementation is unpublished. No older hosted run, source-only test,
+reused static-library receipt or renderer mock qualifies a new native installer.
+The [working record](releases/release-1.8.14.md) records actual commands, identities,
+failures/skips and remaining Windows/Mac Neo acceptance. Keep dated evidence
+below attributable to its original source and payload.
+
+The native build uses `airk --features local-inference` only for the distributed
+runtime. Verify embedded assets with `--verify-bundled-models`, execute
+`--verify-model-smoke`, inspect real target imports and validate the complete
+archive/VSIX/signed-promotion graph. Default lightweight test targets and explicit
+legacy-helper components remain separate gates, not modern payload roles.
+Registry contract 13 requires in-process-provider/embedded-source semantics
+regardless of schema-12 physical DDL compatibility; target capability checks,
+checkpoint recovery and old-process ownership must be exercised by native tests.
+
+CI/native/release static provisioning runs
+`provision-static-onnx-runtime.py --download --download-tools --build --parallel 2`
+for the exact target and consumes its five verified environment fields through
+`--github-env`. Local runners may use `--environment-file`; never evaluate that
+JSON as shell code or import arbitrary environment keys. Modern builds reject
+missing/mismatched static input receipts. Original compiled library reuse keeps
+its original build identity and does not become a fresh build observation.
+
+The container uses a dedicated cached static-inference build stage. Production
+runtime contains no Python; the test/smoke target adds Python for actual HTTPS
+checks under `--network none`. Its public-copy input receipt is
+`actual-public-container-copy-inputs/1`, not invented Git provenance. No sources,
+private state, credentials or build caches belong in exported artifacts. See the
+[container builder](../scripts/build-service-container.py).
+
+MCP qualification uses the actual saved HTTPS URL and protected native
+connection/grant, not a per-client stdio helper or assumed fixed port. Actual
+Code/client CA/auth provisioning, port relocation, complete CLI/MCP/Workbench
+results and typed read-retry exclusions remain required. Internal HTTPS success
+is not external-client trust qualification. Linux Code's explicit distro/NSS
+trust prerequisite remains disclosed in [agent setup](agent-integration.md).
+
+Modern native-client fixtures stage and activate an approved managed payload,
+create reviewed native authority and use actual HTTPS for the lifecycle checks.
+Their successful shutdown evidence is the exact managed Stop receipt:
+`managed_stop_complete` requires that proof. `service_clean_exit` is null because
+the fixture does not own the manager's service process as a `Popen` child.
+Predecessor-upgrade fixtures retain the genuine 1.8.12 pair/launcher baseline,
+compare complete read envelopes and honor only typed safe read retries. Held
+Windows HANDLE/Linux pidfd observations bind exact approved old private images
+to PID/start identity/file hash, then observe exit and rescan. Those bounded
+observations do not certify global process completeness or authorize killing
+unrecognized owners. Actual runs of the updated fixtures remain qualification
+work; their implementation is not a passing result.
 
 ## Build matrix
 
@@ -50,12 +106,21 @@ These are standard labels from [GitHub's runner documentation](https://docs.gith
 Jobs install the repository-pinned Rust compiler/components, Python 3.11 and Node.js 24.15.0. They restore the checked-in npm lock with dependency scripts disabled and build with the locked Cargo graph. Routine checks are deliberately small on standard hosted runners:
 
 - Linux runs workspace Clippy, all-feature workspace tests with the `ci` default filter, and doctests once. The separate extension job runs its mocked contracts; Python packaging/protocol contracts run on each host.
-- Every native host runs the short `airk-process` ownership regressions. Windows and both Macs compile only the CLI library plus `native_read_retry`, `legacy_native`, `pdf_worker`, `unix_guardian`, `native_worker_storage` and `combined_reads` integration binaries, plus the lightweight `explorer_assistance` adapter tests. These use the default lightweight-main features and at most two test processes. The selected targets do not require inference/model features; the earlier Windows inventory before the new storage worker fixture contained the same 157 default/all-feature test identities (156 runnable, one ignored). These cover installer behavior, typed contention, source preservation and the native process regressions without compiling the entire workspace test matrix.
-- All four hosts build the release executable pair, exercise short direct-client/shared offline-model and DOCX/XLSX smoke, verify managed installation and registered MCP before first publication, and verify native archives and platform VSIX packages. The VSIX includes digest-verified listing illustrations. The managed-install/MCP smoke runs once per host, followed by two extra cold-client regression passes retained after the earlier Intel setup-deadline regression. Qualification runs three full passes; no failed pass is retried.
+- Every native host runs the short `airk-process` ownership regressions and a separate `cargo check -p airk-cli --no-default-features --all-targets` lightweight component gate. Routine Windows and both Mac CLI regressions select the actual shipping features with `--no-default-features --features local-inference`, at most two test processes, and the library plus `native_read_retry`, `legacy_native`, `pdf_worker`, `unix_guardian`, `native_worker_storage`, `combined_reads` and `explorer_assistance` integration binaries. They cover installer behavior, inference-owner receipts, typed contention, source preservation and native process regressions without compiling the entire workspace test matrix. The earlier 157-test lightweight Windows inventory is historical evidence; it does not identify the current shipping-feature test set.
+- All four hosts must build the release runtime, exercise short direct-client/shared offline-model and DOCX/XLSX smoke, verify managed installation and registered MCP before first publication, and verify native archives and platform VSIX packages. The VSIX includes digest-verified listing illustrations. The managed-install/MCP smoke runs once per host, followed by two extra cold-client regression passes retained after the earlier Intel setup-deadline regression. Qualification runs three full passes; no failed pass is retried.
 - PR CI runs the Linux x64, Windows x64 and Apple Silicon native jobs. macOS Intel runs on main after merge. The [plan script](../scripts/ci-plan.py) emits the native matrix; manual and qualification dispatches always cover all four hosts.
 - The Linux container job builds the runtime image and runs the one-container collection smoke. It does not repeat workspace compilation/tests in routine builds. Container timing reports explicitly record this scope and contain no synthetic test results.
 
 Dispatch **Actions / CI** with `qualification` enabled to restore workspace Clippy/tests/doctests on every native host, the full real native extension lifecycle and multi-project suite, container workspace tests/doctests, and the long workload, performance and fault campaigns. Those campaigns include the 200-edit retention plateau, large-catalog measurements, multi-page maintenance backlog, sparse-catalog measurements, ignored real-model performance regressions, model retrieval, code benchmark, ranking/recall, quota/relocation lifecycle, usage calibration and process-termination checks. Full qualification uses `--ignore-default-filter`; its assertions and workloads remain intact. Local `cargo test` is still unfiltered. A local container qualification build uses `docker build --build-arg AIRK_QUALIFICATION=true .`; default container builds omit the duplicate workspace suite.
+
+The separate [Extended qualification workflow](../.github/workflows/qualification.yml)
+is an explicit Linux x64/Windows x64 scale and abrupt-publication-recovery
+campaign, with optional pinned public corpus and transformer checks. Its matrix
+records the exact native target, provisions pinned model assets and static ORT
+with `--download --download-tools --build --parallel 2 --github-env`, and builds
+the verified single-executable runtime before the campaign. It does not use the
+historical dynamic ORT provisioner and does not replace four-host or installed
+client qualification.
 
 On October 29, 2026, at the repository owner's request, main stopped rebuilding the targets that the merged PR had already tested. Measured runs for one change had built the full matrix twice: PR CI 40824252870 took 41 minutes and main CI 40828289966 took 38 minutes on the same tree. The releases that followed took 7 and 2 minutes. In the 16 failed CI runs from October 25 to 29, Windows failed most often (10 runs), so it stays in the PR gate. Every CI failure on macOS Intel coincided with an Apple Silicon failure, so Intel moved after merge, where it is also the slowest host. Main CI 40985769764 then failed on Windows in the pinned quick-status smoke, while PR CI 40980983335 passed on the identical tree. That fixture treated a documented typed read refusal as fatal. Shared retry helpers, repeated smoke passes and a local four-processor runner now target that class of failure; see [focused status regressions](#focused-status-and-mac-loader-regressions).
 
@@ -63,9 +128,9 @@ This policy changed on October 26, 2026 at the repository owner's request after 
 
 ## Native build reuse and Darwin failure diagnostics
 
-**Unreleased CI follow-up, November 1, 2026.** Native compilation/regressions and runtime validation are separate jobs on the same selected host matrix. `Native build / <target>` runs the existing selected native checks, builds the release pair and seals a complete allowlisted payload. `Native / <target>` downloads that handoff, verifies the exact commit/tree, source identity, run, target, qualification mode, release profile and every payload hash before executing it, then runs the existing client/model, installer, document and MCP gates and packages the native/VSIX candidates. Release optimization, supported targets, assertions, deadlines and release provenance checks remain intact.
+**Unreleased CI follow-up, November 1, 2026.** Native compilation/regressions and runtime validation are separate jobs on the same selected host matrix. `Native build / <target>` runs the existing selected native checks, builds the versioned release runtime and seals a complete allowlisted payload. `Native / <target>` downloads that handoff, verifies the exact commit/tree, source identity, run, target, qualification mode, release profile and every payload hash before executing it, then runs the existing client/model, installer, document and MCP gates and packages the native/VSIX candidates. Release optimization, supported targets, assertions, deadlines and release provenance checks remain intact.
 
-The intermediate artifact is `airk-runtime-<target>-<commit>-<run-id>` and contains only `runtime.zip` and `transfer.json`. It is an **unqualified build handoff**, not a release candidate. The nested ZIP preserves executable modes across GitHub's artifact transport. Full install inventory, source/build receipts and both executable hashes are verified again after extraction. It contains no test state, sources, indexes or credentials. It expires after seven days.
+The intermediate artifact is `airk-runtime-<target>-<commit>-<run-id>` and contains only `runtime.zip` and `transfer.json`. It is an **unqualified build handoff**, not a release candidate. The nested ZIP preserves executable modes across GitHub's artifact transport. Full install inventory, source/build receipts and every versioned image hash are verified again after extraction: one sealed main for modern schema 2, both original roles only for schema-1 predecessor coverage. It contains no test state, sources, indexes or credentials. It expires after seven days.
 
 A failed validation job can rerun against the retained build without compiling again. For a releasable candidate, retain the existing complete-attempt rule: **rerun all CI jobs** after a partial failure. The build jobs now reuse an earlier successful build in that same run after authenticating the GitHub artifact digest, run origin, its creation inside one successful build job's interval, the original build attempt and all local source/payload checks. They explicitly skip already-passed compile/regression work; validation and packaging run again. Missing/expired handoffs and uploads bound only to a failed/cancelled build rebuild normally; ambiguous, corrupt or mismatched evidence fails closed. `fresh_build` disables this reuse as well as compiler/Docker cache restores. No cross-run or changed-source reuse is introduced, and failed tests are never converted into successful observations. Existing final candidate names and per-attempt release authentication remain unchanged.
 
@@ -134,7 +199,7 @@ The related process-return/error-message audit covers native adapters/tests, ext
 
 ## Storage concurrency and fixture capacity
 
-The `native_read_retry`, `legacy_native`, `pdf_worker`, `unix_guardian`, `native_worker_storage` and `combined_reads` binaries contain complete owned service/process fixtures. CI assigns them a nextest group with one slot, preserving concurrency exercised inside each test and leaving unrelated library cases parallel. The one-slot group also applies to these six binaries in Linux and full qualification; only the focused Windows/macOS step has the two-process global cap. Existing timeouts, exact registration/read assertions and zero automatic retries remain in force. The focused step enables existing process/fixture phase diagnostics for failure output. All-feature coverage remains on Linux and in explicit qualification; every native release still builds and exercises the real inference helper.
+The `native_read_retry`, `legacy_native`, `pdf_worker`, `unix_guardian`, `native_worker_storage` and `combined_reads` binaries contain complete owned service/process fixtures. CI assigns them a nextest group with one slot, preserving concurrency exercised inside each test and leaving unrelated library cases parallel. The one-slot group also applies to these six binaries in Linux and full qualification; only the focused Windows/macOS step has the two-process global cap. Existing timeouts, exact registration/read assertions and zero automatic retries remain in force. The focused step enables existing process/fixture phase diagnostics for failure output. All-feature coverage remains on Linux and in explicit qualification; every modern native release still builds and exercises the real in-process inference owner; explicit schema-1 fixtures retain historical helper coverage.
 
 The October 26 Windows run at `59887cd` passed 154 focused tests but timed out the PDF fixture and failed another fixture during registration with repeated unknown registry responses. Both Macs passed that selection; all three other native hosts passed release/model/install/package gates. A local two-core/four-process reproduction passed the overlapping startup cluster, so CPU contention and the exact hosted actor stall remain unproven. The CI correction removes unnecessary debug inference payloads and bounds independent fixture concurrency as resource policy; it does not label that unknown cause as diagnosed. A local default-feature run with the new scheduling passes all 156 runnable tests in 25.5 seconds. See the [dated release record](releases/release-1.4.4.md).
 
@@ -150,7 +215,7 @@ Usage accounting has a separate best-effort contract: successful and failed jobs
 
 ## Downloadable candidates
 
-Ordinary CI and local extension packaging default to the stable channel for the checked-in version. A stable candidate is still an unpublished build artifact; release workflows verify and publish it separately. The [1.8.8 working-build record](releases/release-1.8.8.md) describes current implementation and qualification limits, while the [October 17 release summary](releases/releases-2026-10-17.md) records earlier published versions. The container smoke verifies the exact unified 29-tool MCP catalog; the unsupported history endpoint remains absent. Future previews require an explicit channel and a distinct version.
+Ordinary CI and local extension packaging default to the stable channel for the checked-in version. A stable candidate is still an unpublished build artifact; release workflows verify and publish it separately. The [1.8.14 working-build record](releases/release-1.8.14.md) describes current implementation and qualification limits, while the [October 17 release summary](releases/releases-2026-10-17.md) records earlier published versions. The container smoke verifies the exact unified 29-tool MCP catalog; the unsupported history endpoint remains absent. Future previews require an explicit channel and a distinct version.
 
 Successful native jobs upload an artifact named `airk-native-<target>-<commit>-<run-id>-<attempt>` to the workflow run's Artifacts section. It contains:
 
@@ -162,14 +227,14 @@ Successful native jobs upload an artifact named `airk-native-<target>-<commit>-<
 
 The manifest is a build record, not a signature or a complete reproducible-build attestation. Current dependency notice gaps remain documented in [third-party notices](../THIRD_PARTY_NOTICES.md). Public release qualification, signing and installed-editor tests are separate from candidate construction. The same run also uploads `airk-vsix-<target>-<commit>-<run-id>-<attempt>` containing the platform VSIX, extension manifest and SHA256SUMS. The VSIX manifest binds the native archive, its receipt, the npm lock and all staged runtime payload hashes. The extension package includes the pinned MIT-licensed `jsonc-parser` runtime and its original license for configuration editing; build dependencies remain excluded. See [extension deployment](extension-deployment.md) and [Windows local builds](windows-local-build.md).
 
-To reproduce a candidate locally, substitute the target matching your Rust host:
+To reproduce a candidate locally, first provision/verify the pinned model and static ORT inputs as described in [CONTRIBUTING](../CONTRIBUTING.md), and pass the verified five-variable child environment. The following runtime/package commands require those prerequisites and the target matching your Rust host:
 
 ```console
-cargo build --release --locked -p airk-cli --target x86_64-pc-windows-msvc
-python scripts/package-native.py --target x86_64-pc-windows-msvc
+python scripts/build-service-runtime.py --profile release --destination artifacts/runtime/x86_64-pc-windows-msvc
+python scripts/package-native.py --target x86_64-pc-windows-msvc --runtime-dir artifacts/runtime/x86_64-pc-windows-msvc
 ```
 
-Use Python 3.9+ locally. Output is under ignored `artifacts/native/<target>/`. Retain or deliberately remove only that generated candidate directory before packaging again. Local uncommitted work is recorded as a dirty checkout.
+Use Python 3.11+ locally (the native builder imports standard-library `tomllib`). Output is under ignored `artifacts/native/<target>/`. Retain or deliberately remove only that generated candidate directory before packaging again. Local uncommitted work is recorded as a dirty checkout.
 
 ## Checks selected by the change
 
@@ -263,7 +328,14 @@ Under repository **Settings → Actions → General**, require approval for work
 
 The separate [Signed macOS candidates workflow](../.github/workflows/macos-signing.yml) consumes only the four documented macOS environment secrets, on an explicit dispatch from main. The [GitHub release workflow](../.github/workflows/github-release.yml) promotes authenticated main CI artifacts, signs Windows through Azure OIDC and both Mac architectures through the Apple environment, then optionally publishes the complete verified download set under a clean package-version tag. [Native signing instructions](native-signing.md) describe provisioning, cleanup and artifact verification. Ordinary CI and Extension release do not consume native-signing secrets. Marketplace publication remains separate. See [release workflow](release-workflow.md), [extension deployment](extension-deployment.md) and [macOS build instructions](macos-build.md).
 
-The separate [Extended qualification workflow](../.github/workflows/qualification.yml) is manual only. It measures a configurable original corpus on Windows/Linux, runs process-kill recovery, and optionally downloads the pinned public CPython corpus or MiniLM model. It uploads numeric reports only, never source trees, model assets or index state. This longer workflow is separate from required PR checks and is not automatically started by a code change. macOS installed-service qualification remains separate from signing.
+The separate [Extended qualification workflow](../.github/workflows/qualification.yml) is manual only. It measures a configurable original corpus on Windows/Linux and runs abrupt-publication recovery; optional inputs add the pinned public CPython corpus and transformer qualification. Its modern runtime always requires the pinned embedded model and static ORT build inputs. It uploads numeric reports only, never source trees, model assets or index state. This longer workflow is separate from required PR checks and is not automatically started by a code change. GUI/agent-host qualification remains separate from signing. Both hosted Mac
+signing workflows now share a schema-2 post-sign gate: after removing temporary
+signing credentials, execute the actual signed app's embedded-model smoke and
+the canonical private service-install fixture, then check that its full runtime
+inventory stayed unchanged. A failed probe blocks packaging/promotion. The
+structured `post-sign-validation.json` is outside the sealed runtime and is
+printed to the job log; this gate is not evidence of a successful hosted run
+until that run actually completes. See [native signing](native-signing.md).
 
 Debug/test builds optimize the SHA-256 dependency because integration fixtures authenticate complete native images and offline model assets. Existing digest, ownership and deadline checks remain enabled; release builds retain their existing optimization profile. macOS installer fixtures use canonical temporary roots and app-bundle-aware payload paths rather than relaxing redirect checks.
 
@@ -306,7 +378,7 @@ python scripts/benchmark-real-corpora.py --runtime-dir $runtime --runtime-sha256
 
 The one-sample default is for development smoke; request `--samples 30` explicitly for the comparison campaign. `--state-parent` defaults to the system temporary directory and must remain inside it. Runtime, control, models, indexes, logs and reports stay outside both source roots. The runner verifies the approved inventory, executable pair and compiled versions before corpus registration; it disables watchers and submits owned jobs once. Read-only Git-visible source identities are checked before and after work; a changed identity invalidates the campaign. Public reports contain aliases, opaque identities, aggregate counts, timings and fixed failure codes, never source paths, queries, excerpts or raw errors. Existing reports are not overwritten.
 
-Initial indexing, fresh MCP sessions, retained-index reopen and unchanged-source reconcile are separate observations. Each session records its exact first status reply before other tools; a transport/protocol failure retains timing and prior measurements and aborts without replay. Detailed diagnostics collect semantic identities only after the initial measured observations. Healthy reopen restarts the owned service once per corpus, records shutdown/start duration and the exact first frontend sample, then makes at most 32 separately counted independent availability observations before any remaining requested frontend samples. It retains failed first rows and records elapsed time from restart to each first usable probe; uncertain transport/protocol failures abort without replay. Cancellation runs after this healthy-reopen scenario, targets an unchanged reconcile and records when completion wins the race. `--semantic` and an existing common `--excerpt-path` are needed for vector/hybrid and excerpt evidence; missing usable probes remain visible.
+Modern single-main campaigns use the shared authenticated HTTPS client and exact reviewed scope; fresh-session timings measure a new TLS/MCP session, not a new frontend process or a cold filesystem. Historical schema-1 campaigns retain stdio and label their fresh-process basis separately. Managed reopen uses canonical exact-instance Stop followed by explicit Start, and uncertain Stop retains the owned fixture for inspection. Initial indexing, fresh MCP sessions, retained-index reopen and unchanged-source reconcile are separate observations. Each session records its exact first status reply before other tools; a transport/protocol failure retains timing and prior measurements and aborts without replay. Detailed diagnostics collect semantic identities only after the initial measured observations. Healthy reopen restarts the owned service once per corpus, records shutdown/start duration and the exact first frontend sample, then makes at most 32 separately counted independent availability observations before any remaining requested frontend samples. It retains failed first rows and records elapsed time from restart to each first usable probe; uncertain transport/protocol failures abort without replay. Cancellation runs after this healthy-reopen scenario, targets an unchanged reconcile and records when completion wins the race. `--semantic` and an existing common `--excerpt-path` are needed for vector/hybrid and excerpt evidence; missing usable probes remain visible.
 
 Reports identify probe order and lexical/vector/hybrid mode and retain an opaque query SHA-256 for comparison without query text. They record OS/release, architecture, logical CPU count and Python version; storage class, antivirus activity and effective affinity remain unmeasured, and cache eviction is not performed. Registration/model-setup durations are separate from timed indexing; model setup may already publish an initial head, whose pre-index identity is deliberately unobserved to preserve first-status measurement.
 

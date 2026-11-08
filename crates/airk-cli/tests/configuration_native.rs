@@ -15,7 +15,7 @@ fn accepted_index_waits_for_restored_source_without_another_request() -> Result<
     fs::create_dir(&root)?;
     fs::write(root.join("original.txt"), "Preserve the restored source\n")?;
     let data = tempfile::tempdir()?;
-    let service = common::Service::start(&root, data.path(), "restore-source");
+    let service = common::Service::reviewed(&root, data.path(), "restore-source");
     service.configure(airk_cli::service_configuration::Draft::Vectors { enabled: false });
     service.job(JobKind::Index);
     fs::rename(&root, &absent)?;
@@ -82,6 +82,9 @@ fn semantic_preference_accepted_while_paused_prepares_itself_and_publishes() -> 
         root.path().join("file.txt"),
         "Native durable semantic preference\n",
     )?;
+    #[cfg(feature = "local-inference")]
+    let service = common::Service::reviewed(root.path(), data.path(), "desired-semantic");
+    #[cfg(not(feature = "local-inference"))]
     let service = common::Service::with_helper(root.path(), data.path(), "desired-semantic");
     service.configure(airk_cli::service_configuration::Draft::Vectors { enabled: false });
     service.job(JobKind::Index);
@@ -276,6 +279,9 @@ fn setup_without_editor(helper: bool) -> Result<()> {
     let other = tempfile::tempdir()?;
     let original = b"Native setup preserves this original source.\n";
     fs::write(other.path().join("original.txt"), original)?;
+    #[cfg(feature = "local-inference")]
+    let service = common::Service::reviewed(source.path(), data.path(), "existing");
+    #[cfg(not(feature = "local-inference"))]
     let service = if helper {
         #[cfg(feature = "embedding-worker")]
         {
@@ -288,21 +294,31 @@ fn setup_without_editor(helper: bool) -> Result<()> {
     } else {
         common::Service::start(source.path(), data.path(), "existing")
     };
-    let absent = data.path().join("reserved").join("new-data");
-    let project = airk_cli::service_registration::prepare(other.path(), &absent, "setup")?;
+    let reserved = tempfile::tempdir()?;
+    // Reviewed custom storage requires an existing parent; the native setup
+    // creates only the explicitly selected missing leaf.
+    fs::create_dir(reserved.path().join("reserved"))?;
+    let absent = reserved.path().join("reserved").join("new-data");
     assert!(!absent.exists());
-    let reply = service.request(Method::ReserveProject {
-        project: project.clone(),
-        setup_watch: Some(false),
-        only_if_missing: false,
-    });
-    ensure!(
-        matches!(reply, Response::Registered { .. }),
-        "setup registration failed"
-    );
-    // No prepare-storage, model_setup or index command follows this request.
-    // Without a helper, model failure must leave text work queued. With one,
-    // semantic work and its cached readiness must finish without UI inspection.
+    #[cfg(feature = "local-inference")]
+    let project = service.additional_project(other.path(), &absent, "setup")?;
+    #[cfg(not(feature = "local-inference"))]
+    let project = {
+        let project = airk_cli::service_registration::prepare(other.path(), &absent, "setup")?;
+        let reply = service.request(Method::ReserveProject {
+            project: project.clone(),
+            setup_watch: Some(false),
+            only_if_missing: false,
+        });
+        ensure!(
+            matches!(reply, Response::Registered { .. }),
+            "setup registration failed"
+        );
+        project
+    };
+    // The modern path executes the real reviewed IndexSetup storage journey.
+    // No separate prepare-storage, model_setup or index command follows it.
+    // The component legacy path retains its original reservation contract.
     let until = Instant::now() + Duration::from_secs(90);
     loop {
         if let Response::Inspection {

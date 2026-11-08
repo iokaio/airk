@@ -1,21 +1,27 @@
 # CLI developer guide
 
-The 1.8.8 working build supplies optional [evidence guidance](evidence-guidance.md)
+AIRK supplies optional [evidence guidance](evidence-guidance.md)
 from returned metadata. Advice is bounded and inert; CLI/MCP/Workbench and
 complete/selected exports retain applicable reasons without additional reads.
 
-Current command behavior for the **AIRK 1.8.8 manual-test working build**, inheriting the 1.8.7 read contracts. This guide explains why each public command exists, how it behaves and where developers should follow its implementation. The generated [CLI reference](cli-reference.md) remains authoritative for every flag, default and complete parser help; [CLI workflows](cli.md) and [headless feature mapping](headless-cli.md) provide task-oriented walkthroughs. Current candidate qualification is tracked in the [1.8.8 record](releases/release-1.8.8.md); [1.8.7 evidence](releases/release-1.8.7.md) remains dated history.
+Current command behavior for the **unpublished AIRK 1.8.14 implementation**. This guide explains why each public command exists, how it behaves and where developers should follow its implementation. The generated [CLI reference](cli-reference.md) remains authoritative for every flag, default and complete parser help; [CLI workflows](cli.md) and [headless feature mapping](headless-cli.md) provide task-oriented walkthroughs. Current implementation and qualification limits are tracked in the [1.8.14 record](releases/release-1.8.14.md); [1.8.8](releases/release-1.8.8.md) and [1.8.7 evidence](releases/release-1.8.7.md) remain dated history.
 
 **Related developer reference: [MCP developer guide](mcp-developer-guide.md)** explains every unified MCP tool, inputs, examples, limitations and implementation/test ownership.
 
 ## Native and unified catalogs
 
-`airk tools list --json` describes the selected connection. Ordinary native
-sessions expose 19 prefixed operations, including `airk_query_scope`; a reviewed
-`--combined-session` adds Project/index selectors to eligible reads. Unified MCP adds
-legacy `projects`, granted-only `query_scope` and nine Assistance operations.
+`airk tools list --json` describes the selected connection. In the unpublished
+1.8.14 implementation, CLI `tools list/help/call/shell` and public HTTPS share
+the 29-tool unified catalog, public aliases and argument validation. Its 19 native
+evidence/help/plan/scope operations are a backend subset; `projects` and nine
+Assistance operations retain their distinct connection/proposal authority. A
+reviewed `--combined-session` adds Project/index selectors to eligible reads.
 A legacy connection's `query_scope` reports `configuration_required`. Use the
 actual catalog rather than treating a tool count as a capability check.
+Scope calls and the tools shell resolve the configured native authority; an
+absent installation is an error, not an empty legacy scope. A fresh reviewed
+grant requires its explicit session rather than inferring access from a root
+or registration. Tool lists and help remain available without a runtime.
 
 Use `--project-ids` and optional `--index-ids` to narrow a combined convenience
 read, or pass the same fields through `tools call`/shell. `--member-availability`
@@ -24,16 +30,16 @@ IDs, saved defaults and the Workbench dropdown cannot grant access. Complete
 member results, qualified ranking, publication vectors and typed failures survive
 CLI and MCP output. See [combined reads](combined-reads.md).
 
-| Unified MCP capability | Terminal entrypoint | Scope or workflow difference |
+| Unified MCP capability | Unified terminal entrypoint | Separate convenience or administrative command |
 |---|---|---|
-| Native operations | `airk tools list/help/call/shell`, e.g. `airk tools call airk_search` | Prefixed native names; direct commands such as `airk search` provide convenient flags. |
-| `projects` | `airk projects` | MCP lists connection-configured bindings; CLI lists the selected service registry. |
-| `list_templates`, `get_template` | `airk explorer list-templates/get-template` | CLI writes results to an explicit output file. |
-| `draft_search`, `draft_strategy`, `draft_plan`, `suggest_view`, `validate_draft` | Corresponding hyphenated `airk explorer` commands | Ordinary CLI proposals are offline files; MCP can propose to an attached trusted Explorer for user review. Neither executes the proposed work. |
-| `proposal_status` | `airk explorer proposal-status` | MCP reads an admitted proposal receipt; CLI reads a CLI-produced draft file. |
-| `get_handoff` | `airk explorer get-handoff` | Requires a user-created expiring share token from a trusted window. |
+| Native operations | `airk tools call search`, or the same public name in `tools help`/shell | Direct commands such as `airk search` provide convenient flags. Historical `airk_<operation>` aliases remain accepted. |
+| `projects` | `airk tools call projects` lists connection-configured bindings | `airk projects` lists the selected service registry and is a distinct administrative read. |
+| `list_templates`, `get_template` | `airk tools call list_templates` or `airk tools call get_template` | `airk explorer list-templates/get-template` writes results to an explicit output file. |
+| `draft_search`, `draft_strategy`, `draft_plan`, `suggest_view`, `validate_draft` | `airk tools call <public-name>` retains the same connection/proposal authority as MCP | Corresponding hyphenated `airk explorer` commands produce offline files. Connected proposals require an attached trusted Explorer and user review; neither route executes the proposed work. |
+| `proposal_status` | `airk tools call proposal_status` reads an admitted proposal receipt | `airk explorer proposal-status` reads a CLI-produced draft file. |
+| `get_handoff` | `airk tools call get_handoff` | `airk explorer get-handoff` also requires a user-created expiring share token from a trusted window. |
 
-The public parser reference has 120 command sections including root and command groups. This guide also includes the explicitly implemented `airk tools help` command, which the reference walker omits as a help-named child. These are documentation entry counts, not 121 independent evidence tools.
+The public parser reference enumerates commands and command groups. This guide also includes the explicitly implemented `airk tools help` command, which the reference walker omits as a help-named child. Command sections are not independent evidence tools.
 
 ## Developer contracts and examples
 
@@ -477,9 +483,9 @@ Usage: airk info [OPTIONS] <PATH>
 
 ## airk init
 
-**Purpose:** Register --root as a project of the installed runtime and prepare its index storage.
+**Purpose:** Acknowledge an existing reviewed index mapping and prepare its reserved storage.
 
-**Behavior and developer use:** Use for first-time headless registration. It prepares separate owned index storage; it does not copy or modify the source tree.
+**Behavior and developer use:** In a current authority-1 catalog, the exact root, data directory and collection must already identify a ready reviewed index. `init` acknowledges that registration and prepares its reserved storage; it creates no index or grant and refuses a fresh unmapped root before creating storage. Use the [reviewed IndexSetup draft/apply/receipt journey](cli.md#reviewed-index-and-project-setup-in-188) through `service rpc` for a new index. Authority-zero services retain their explicitly historical registration behavior. Source files remain unchanged.
 
 ```text
 Usage: airk init [OPTIONS]
@@ -1508,7 +1514,7 @@ Usage: airk symbol [OPTIONS] <NAME>
 
 ## airk tools
 
-**Purpose:** List, describe or call the read-only MCP tools from the terminal.
+**Purpose:** List, describe or call unified evidence and Explorer proposal tools.
 
 **Behavior and developer use:** Command group: choose a child listed below or run --help. The group itself does not run all child operations.
 
@@ -1522,7 +1528,7 @@ Usage: airk tools [OPTIONS] <COMMAND>
 
 **Purpose:** Invoke an MCP tool and print its unchanged result envelope as JSON
 
-**Behavior and developer use:** Accepts one JSON object through --args or --args-file (maximum 64 KiB) and returns the native tool envelope. Use prefixed names such as airk_search.
+**Behavior and developer use:** Accepts one JSON object through --args or --args-file (maximum 64 KiB) and returns the unchanged unified tool envelope. Use public names such as `search`; historical native aliases such as `airk_search` remain accepted. Proposal tools retain their connection and user-review requirements and do not execute proposed work.
 
 ```text
 Usage: airk tools call [OPTIONS] <TOOL>
@@ -1532,7 +1538,7 @@ Usage: airk tools call [OPTIONS] <TOOL>
 
 ## airk tools help
 
-**Purpose:** Describe a native tool's schema, defaults and argument template without opening a project.
+**Purpose:** Describe a unified tool's schema, defaults and argument template without opening a project.
 
 **Behavior and developer use:** Works offline without a registration or index. Use it to obtain the exact schema before constructing tools call arguments.
 
@@ -1544,9 +1550,9 @@ Usage: airk tools help [OPTIONS] <TOOL>
 
 ## airk tools list
 
-**Purpose:** List the selected connection's native prefixed tools; `--json` includes schemas.
+**Purpose:** List the connection's unified tools; `--json` includes complete schemas and annotations.
 
-**Behavior and developer use:** Lists the canonical schemas for the selected session, including combined selector and discovery inputs when configured. Explorer Assistance has separate CLI commands.
+**Behavior and developer use:** Lists the same 29 public definitions as MCP for the selected session, including combined selector and discovery inputs when configured. The 19 native operations are an internal subset. Assistance tools are in this unified catalog; separate `airk explorer` commands retain their documented offline-file or trusted-window workflows.
 
 ```text
 Usage: airk tools list [OPTIONS]
@@ -1556,9 +1562,9 @@ Usage: airk tools list [OPTIONS]
 
 ## airk tools shell
 
-**Purpose:** Open a collection-bound interactive console with help and examples
+**Purpose:** Open a connection-bound interactive console with help and examples
 
-**Behavior and developer use:** Interactive collection-bound tool console with help/examples. Its session lifetime and prompts differ from one-shot JSON commands.
+**Behavior and developer use:** Interactive console using the selected connection's unified tool catalog and authority, with help/examples. Its session lifetime and prompts differ from one-shot JSON commands.
 
 ```text
 Usage: airk tools shell [OPTIONS]

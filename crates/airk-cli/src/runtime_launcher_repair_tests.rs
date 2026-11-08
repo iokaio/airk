@@ -8,7 +8,7 @@ fn fixture() -> Result<(tempfile::TempDir, PathBuf, String)> {
     local_ipc::prepare_root(&root.join("runtimes"))?;
     let directory = root.join("fixture");
     local_ipc::prepare_root(&directory)?;
-    let identity = super::super::tests::fixture(&directory)?;
+    let identity = super::super::tests::historical_pair_fixture(&directory)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -20,7 +20,7 @@ fn fixture() -> Result<(tempfile::TempDir, PathBuf, String)> {
         &Approval {
             schema: 1,
             manifest_sha256: identity.clone(),
-            version: env!("CARGO_PKG_VERSION").into(),
+            version: super::super::tests::HISTORICAL_PAIR_VERSION.into(),
             verification_basis: VerificationBasis::OrganizationDigest,
         },
     )?;
@@ -45,6 +45,51 @@ fn old_launcher(root: &Path) -> Result<Vec<u8>> {
 fn image(root: &Path, runtime: &str) -> Result<PathBuf> {
     let (main, _, inventory) = verify_runtime_inventory(root, runtime)?;
     launcher_image(runtime_pair::payload_root(&main)?, &inventory)
+}
+
+#[test]
+fn modern_repair_never_creates_or_replaces_predecessor_launcher_or_receipt() -> Result<()> {
+    for retained in [false, true] {
+        let (_owner, root, identity) = super::super::tests::unselected_fixture()?;
+        let (main, _) = verify_runtime(&root, &identity)?;
+        let original = retained.then(|| old_launcher(&root)).transpose()?;
+        let receipt = root.join("launcher.json");
+        let receipt_before = retained.then(|| fs::read(&receipt)).transpose()?;
+        assert!(replacement_guard(&root, &main)?.is_none());
+        assert!(!repair(&root, &identity)?);
+        assert!(begin_verified(&root, &identity, &main).is_err());
+        assert!(!root.join(INTENT).try_exists()?);
+        if retained {
+            assert_eq!(fs::read(launcher_path(&root))?, original.unwrap());
+            assert_eq!(fs::read(&receipt)?, receipt_before.unwrap());
+        } else {
+            assert!(!launcher_path(&root).try_exists()? && !receipt.try_exists()?);
+        }
+        // A pending historical transaction cannot be silently called repaired
+        // or destroyed just because the new selected transport is HTTPS.
+        let pending = b"Retain unresolved predecessor repair intent";
+        fs::write(root.join(INTENT), pending)?;
+        assert!(repair(&root, &identity).is_err());
+        assert_eq!(fs::read(root.join(INTENT))?, pending);
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+#[test]
+fn modern_repair_does_not_require_write_access_to_retained_launcher() -> Result<()> {
+    use std::os::windows::fs::OpenOptionsExt;
+    let (_owner, root, identity) = super::super::tests::unselected_fixture()?;
+    let (main, _) = verify_runtime(&root, &identity)?;
+    let original = old_launcher(&root)?;
+    let _held = OpenOptions::new()
+        .read(true)
+        .share_mode(1)
+        .open(launcher_path(&root))?;
+    assert!(replacement_guard(&root, &main)?.is_none());
+    assert!(!repair(&root, &identity)?);
+    assert_eq!(fs::read(launcher_path(&root))?, original);
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]

@@ -208,7 +208,27 @@ fn native_retirement_evidence_rejects_ambiguous_full_saved_lineage() -> Result<(
 
 #[test]
 fn completed_native_purge_preserves_retirement_evidence_across_new_same_root_setup() -> Result<()> {
+    completed_purge_preserves_retirement_evidence(false)
+}
+
+#[test]
+fn schema13_native_purge_preserves_retirement_evidence_across_new_same_root_setup() -> Result<()> {
+    completed_purge_preserves_retirement_evidence(true)
+}
+
+fn completed_purge_preserves_retirement_evidence(promote: bool) -> Result<()> {
     let (temp, mut registry, original) = fixture()?;
+    if promote {
+        let tx = registry.connection.unchecked_transaction()?;
+        crate::service::registry::runtime_contract::arm_in_transaction(&tx)?;
+        tx.commit()?;
+        assert_eq!(
+            registry
+                .connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))?,
+            crate::service::registry::runtime_contract::IN_PROCESS_SCHEMA
+        );
+    }
     let request = retire_request(&mut registry, &original)?;
     let index = id(&request);
     let retired = apply(&mut registry, &request)?;
@@ -309,6 +329,7 @@ fn completed_native_purge_preserves_retirement_evidence_across_new_same_root_set
         &setup.key,
         prepared.request_digest,
         &SetupCompletion {
+            legacy_adoption: None,
             prepared_digest: prepared.preparation.as_ref().unwrap().digest,
             expected_catalog_revision: prepared.catalog_revision,
             expected_source_revision: prepared.source_revision,

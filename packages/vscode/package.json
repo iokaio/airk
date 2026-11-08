@@ -2,7 +2,7 @@
   "name": "airk",
   "displayName": "AIRK: Local Search for Coding Agents",
   "description": "Local code and document search for agents and AIRK Workbench, with complete cited results and configurable concurrent retrieval.",
-  "version": "1.8.12",
+  "version": "1.8.14",
   "icon": "images/icon.png",
   "publisher": "iokaio",
   "license": "Apache-2.0",
@@ -306,6 +306,26 @@
         },
         {
           "command": "airk.manageVscodeMcp",
+          "when": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
+        },
+        {
+          "command": "airk.trustHttpIssuer",
+          "when": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
+        },
+        {
+          "command": "airk.removeHttpIssuerTrust",
+          "when": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
+        },
+        {
+          "command": "airk.httpCredential",
+          "when": "false"
+        },
+        {
+          "command": "airk.httpIssuerRotationStatus",
+          "when": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
+        },
+        {
+          "command": "airk.rotateHttpIssuer",
           "when": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
         }
       ],
@@ -630,6 +650,36 @@
         "command": "airk.manageWorkspaceTrust",
         "title": "Manage Workspace Trust",
         "category": "AIRK"
+      },
+      {
+        "command": "airk.trustHttpIssuer",
+        "title": "Trust Local HTTPS Issuer",
+        "category": "AIRK",
+        "enablement": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
+      },
+      {
+        "command": "airk.removeHttpIssuerTrust",
+        "title": "Remove Owned Local HTTPS Trust",
+        "category": "AIRK",
+        "enablement": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
+      },
+      {
+        "command": "airk.httpCredential",
+        "title": "Resolve Protected MCP Credential",
+        "category": "AIRK",
+        "enablement": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
+      },
+      {
+        "command": "airk.httpIssuerRotationStatus",
+        "title": "Open HTTPS Issuer Rotation Receipt",
+        "category": "AIRK",
+        "enablement": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
+      },
+      {
+        "command": "airk.rotateHttpIssuer",
+        "title": "Review HTTPS Issuer Rotation",
+        "category": "AIRK",
+        "enablement": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
       }
     ],
     "configuration": [

@@ -288,11 +288,13 @@ async fn actual_combined_mcp_and_public_routes_preserve_complete_native_results(
         member_body: backend.result["structuredContent"].clone(),
         observed_capacity: AtomicUsize::new(0),
     });
-    let bridge = Bridge {
-        backend: backend.clone(),
-        admission: Arc::new(Admission::default()),
-        response_mode: crate::response::ResponseMode::Full,
-    };
+    let bridge = ReadSessionFactory::default().session(
+        backend.clone(),
+        ReadSessionPreferences {
+            response_mode: crate::response::ResponseMode::Full,
+            client: airk_core::usage::ClientFamily::Unknown,
+        },
+    );
     let (client_transport, server_transport) = tokio::io::duplex(128 * 1024);
     let (mut client, mut server) = tokio::try_join!(
         async { Ok::<_, anyhow::Error>(().serve(client_transport).await?) },
@@ -413,11 +415,13 @@ async fn actual_combined_mcp_and_public_routes_preserve_complete_native_results(
     // frontend supplies capacity. Neither direct nor public MCP may then alter
     // it or drop its delivery receipt while mapping a prepared plan.
     let public = Arc::new(crate::unified::Unified::combined(finalized.clone(), None)?);
-    let bridge = Bridge {
-        backend: public,
-        admission: Arc::new(Admission::default()),
-        response_mode: crate::response::ResponseMode::Full,
-    };
+    let bridge = ReadSessionFactory::default().session(
+        public,
+        ReadSessionPreferences {
+            response_mode: crate::response::ResponseMode::Full,
+            client: airk_core::usage::ClientFamily::Unknown,
+        },
+    );
     let (client_io, server_io) = tokio::io::duplex(128 * 1024);
     let (mut client, mut server) = tokio::try_join!(
         async { Ok::<_, anyhow::Error>(().serve(client_io).await?) },

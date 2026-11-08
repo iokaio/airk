@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
+import {credentialEnvironment,httpUrl,validateHttpConnection,standaloneHttpServerKey,preservedImportedHttpServerKey,type HttpConnectionInfo} from './serviceHttp';
 import { consolidateJson, consolidateToml } from './unifiedAgentConfig';
-import { LaunchSpec, unifiedEntry } from './model';
+import { LaunchSpec, unifiedEntry, httpServerFields } from './model';
 import { launchDescriptorPath } from './explorerAssistanceLaunch';
-import { readJsonConfig } from './agentConfig';
+import { readJsonConfig, syncVscodeHttpInput } from './agentConfig';
 import { parse } from 'jsonc-parser';
 
 export type LocalAgent = 'codex' | 'claude' | 'copilot' | 'gemini' | 'antigravity' | 'cursor' | 'roo' | 'junie';
-const locations: Record<LocalAgent, string[]> = { codex: ['.codex', 'config.toml'], claude: ['.mcp.json'], copilot: ['.vscode', 'mcp.json'],
+export const locations: Record<LocalAgent, string[]> = { codex: ['.codex', 'config.toml'], claude: ['.mcp.json'], copilot: ['.vscode', 'mcp.json'],
     gemini: ['.gemini','settings.json'], antigravity: ['.agents','mcp_config.json'], cursor: ['.cursor','mcp.json'], roo: ['.roo','mcp.json'], junie: ['.junie','mcp','mcp.json'] };
 function same(left: string, right: string): boolean {
     return path.relative(process.platform === 'win32' ? path.toNamespacedPath(left) : left,
@@ -57,16 +59,44 @@ function recognizedAssistance(spec: LaunchSpec, storage: string, command: unknow
     return !!rest && rest.length === 3 && rest[0] === 'explorer-assistance' && rest[1] === '--descriptor' && same(rest[2], launchDescriptorPath(storage));
 }
 
+/** One original native-authenticated standalone declaration changes transport
+ * under the same server key. Disjoint scopes and aliases are never merged. */
+export function migrateStandaloneHttpEntry(agent:LocalAgent,source:string,serverKey:string,originalFields:Record<string,unknown>,connection:HttpConnectionInfo,originalConfigurationSha256:string,originSha256?:string,originContainer?:readonly string[]):string{
+    const info=validateHttpConnection(connection);
+    if(!['codex','claude','copilot'].includes(agent)||info.selection.kind!=='imported_legacy'||info.selection.selection.configuration_receipt!==originalConfigurationSha256)throw Error('standalone_http_origin_unconfirmed');
+    const provenance=info.selection.selection.grant.provenance;
+    if(provenance?.kind!=='imported_standalone_adoption'||standaloneHttpServerKey(info,serverKey,originContainer)!==serverKey||!(provenance.adoption.configuration_claims as Record<string,unknown>[]).some(claim=>claim.config_sha256===originalConfigurationSha256&&claim.original_server===serverKey&&(originSha256===undefined||claim.origin_sha256===originSha256)&&(originContainer===undefined||isDeepStrictEqual(claim.container_path,originContainer))))throw Error('standalone_http_origin_unconfirmed');
+    const options={retrievalKey:serverKey,targetKey:serverKey,onlyKey:true,selectedFamily:'retrieval' as const,entry:{key:serverKey,label:serverKey,command:'',args:[],http:info},fields:httpServerFields(agent==='copilot'?'vscode':agent,info),warn:()=>undefined,
+        recognizes:(_family:unknown,fields:Record<string,unknown>)=>isDeepStrictEqual(JSON.parse(JSON.stringify(fields)),JSON.parse(JSON.stringify(originalFields)))};
+    if(agent==='codex')return consolidateToml(source,options);
+    const transformed=consolidateJson(source,agent==='copilot'?'servers':'mcpServers',options);
+    return agent==='copilot'?syncVscodeHttpInput(transformed,info):transformed;
+}
+
 /** Consolidate only recognized connections in one guarded file save. */
-export function migrateAgentConfig(agent: LocalAgent, spec: LaunchSpec, storage: string, source: string, includeAssistance = true, warn: (message: string) => void = () => undefined, rebind = false, remove = false, previous?:LaunchSpec): string {
+export function migrateAgentConfig(agent: LocalAgent, spec: LaunchSpec, storage: string, source: string, includeAssistance = true, warn: (message: string) => void = () => undefined, rebind = false, remove = false, previous?:LaunchSpec,selectedKey?:string): string {
     if (!spec.service) { throw new Error('Registered service binding required.'); }
     if (Buffer.byteLength(source) > 1_048_576) { throw new Error('Configuration exceeds 1 MiB.'); }
     const descriptor=launchDescriptorPath(storage);
     const matches=(command:unknown,args:unknown)=>recognized(spec,storage,command,args,rebind)
         ||!!previous&&!!previous.service&&same(previous.root,spec.root)&&same(previous.service.installDir,spec.service!.installDir)
             &&previous.collection===spec.collection&&recognized(previous,storage,command,args);
-    const options={retrievalKey:`airk-${spec.collection}`,entry:unifiedEntry(spec,includeAssistance?descriptor:undefined),warn,remove,
+    const fields=spec.http?httpServerFields(agent==='copilot'?'vscode':agent,spec.http):undefined;
+    const options={retrievalKey:selectedKey??`airk-${spec.collection}`,...(selectedKey?{onlyKey:true,targetKey:selectedKey,selectedFamily:selectedKey==='airk'?'unified' as const:'retrieval' as const}:{}),entry:unifiedEntry(spec,includeAssistance?descriptor:undefined),fields,warn,remove,
         recognizes:(family:'retrieval'|'explorer'|'unified',fields:Record<string,unknown>)=>{
+            if(spec.http&&family==='unified'&&typeof fields.url==='string'){
+                const candidate=fields.url===spec.http.endpoint.url?spec:previous?.http&&fields.url===previous.http.endpoint.url?previous:undefined;
+                if(!candidate?.http)return false;
+                const expected=httpServerFields(agent==='copilot'?'vscode':agent,candidate.http);
+                if('command'in fields||'args'in fields||'serverUrl'in fields||fields.type!==expected.type)return false;
+                if(agent==='codex'){
+                    const headers=fields.http_headers as Record<string,unknown>|undefined;
+                    return fields.bearer_token_env_var===expected.bearer_token_env_var&&fields.headers===undefined&&fields.env_http_headers===undefined&&(!headers||typeof headers==='object'&&!Array.isArray(headers)&&Object.keys(headers).every(key=>key==='X-AIRK-Response-Mode')&&(headers['X-AIRK-Response-Mode']==='terse'||headers['X-AIRK-Response-Mode']==='full'));
+                }
+                const headers=fields.headers;if(!headers||typeof headers!=='object'||Array.isArray(headers))return false;
+                const {['X-AIRK-Response-Mode']:mode,...actual}=headers as Record<string,unknown>;
+                return (mode===undefined||mode==='full'||mode==='terse')&&(isDeepStrictEqual(actual,{Authorization:(expected.headers as Record<string,unknown>).Authorization})||agent==='copilot'&&isDeepStrictEqual(actual,{Authorization:'Bearer ${env:'+credentialEnvironment(candidate.http)+'}'}));
+            }
             if(family==='explorer')return recognizedAssistance(spec,storage,fields.command,fields.args);
             if(family==='retrieval')return matches(fields.command,fields.args);
             if(!strings(fields.args))return false;
@@ -74,9 +104,39 @@ export function migrateAgentConfig(agent: LocalAgent, spec: LaunchSpec, storage:
             if(at>=0){if(at!==args.length-2||!same(args[at+1],descriptor))return false;args.splice(at,2);}
             return matches(fields.command,args);
         }};
-    const result=agent==='codex'?consolidateToml(source,options):consolidateJson(source,agent==='copilot'?'servers':'mcpServers',options);
+    let result=agent==='codex'?consolidateToml(source,options):consolidateJson(source,agent==='copilot'?'servers':'mcpServers',options);
+    if(agent==='copilot'&&spec.http&&result!==source)result=syncVscodeHttpInput(result,spec.http,remove);
+    else if(agent==='copilot'&&spec.http&&!remove&&result===source)result=syncVscodeHttpInput(result,spec.http);
     if(Buffer.byteLength(result)>1_048_576){throw new Error('Updated configuration would exceed 1 MiB; existing file preserved.');}
     return result;
+}
+
+/** Existing HTTP credentials carry their native selection. Endpoint refresh
+ * must never reconstruct that authority from a configuration directory. */
+export function httpConfigurationConnectionId(agent:LocalAgent,fields:Record<string,unknown>):string|undefined{
+    if(typeof fields.url!=='string')return;try{httpUrl(fields.url);}catch{return;}
+    if(agent==='codex'){const value=fields.bearer_token_env_var;return typeof value==='string'?/^AIRK_MCP_TOKEN_([A-F0-9]{32})$/.exec(value)?.[1].toLowerCase():undefined;}
+    const headers=fields.headers;if(!headers||typeof headers!=='object'||Array.isArray(headers))return;
+    const value=(headers as Record<string,unknown>).Authorization;if(typeof value!=='string')return;
+    const match=/^Bearer \$\{(?:(?:env:)?AIRK_MCP_TOKEN_([A-F0-9]{32})|input:airkToken_([a-f0-9]{32}))\}$/.exec(value);
+    return match?(match[1]??match[2]).toLowerCase():undefined;
+}
+export function refreshHttpAgentConfig(agent:LocalAgent,source:string,connection:HttpConnectionInfo,previousUrl:string,serverKey='airk'):string{
+    const info=validateHttpConnection(connection),url=httpUrl(previousUrl),client=agent==='copilot'?'vscode':agent;
+    const expected=httpServerFields(client,info);
+    if(serverKey!=='airk'&&preservedImportedHttpServerKey(info,serverKey)!==serverKey)throw Error('standalone_http_alias_unconfirmed');
+    const options={retrievalKey:serverKey,targetKey:serverKey,onlyKey:true,selectedFamily:'unified' as const,entry:{key:serverKey,command:'',args:[],label:'AIRK',http:info},fields:expected,warn:()=>undefined,
+        recognizes:(family:string,fields:Record<string,unknown>)=>{
+            if(family!=='unified'||fields.url!==url||httpConfigurationConnectionId(agent,fields)!==info.connection_id||'command'in fields||'args'in fields||'serverUrl'in fields||fields.type!==expected.type)return false;
+            if(agent==='codex'){
+                const headers=fields.http_headers;return fields.headers===undefined&&fields.env_http_headers===undefined&&(!headers||typeof headers==='object'&&!Array.isArray(headers)&&Object.keys(headers).every(key=>key==='X-AIRK-Response-Mode')&&['full','terse'].includes(String((headers as Record<string,unknown>)['X-AIRK-Response-Mode'])));
+            }
+            const headers=fields.headers as Record<string,unknown>,{['X-AIRK-Response-Mode']:mode,...authorization}=headers;
+            return (mode===undefined||mode==='full'||mode==='terse')&&(isDeepStrictEqual(authorization,{Authorization:(expected.headers as Record<string,unknown>).Authorization})||agent==='copilot'&&isDeepStrictEqual(authorization,{Authorization:'Bearer ${env:'+credentialEnvironment(info)+'}'}));
+        }};
+    let result=agent==='codex'?consolidateToml(source,options):consolidateJson(source,agent==='copilot'?'servers':'mcpServers',options);
+    if(agent==='copilot')result=syncVscodeHttpInput(result,info);
+    if(Buffer.byteLength(result)>1_048_576)throw Error('Updated configuration would exceed 1 MiB.');return result;
 }
 
 /** A manually configured VS Code connection owns its disabled/tool policies. */
@@ -90,7 +150,7 @@ export function hasUnifiedVscodeConfig(spec: LaunchSpec, storage: string, source
 
 /** Local workspace files only; editor save owns unsaved-edit/version/conflict checks. */
 export async function migrateLocalAgents(spec: LaunchSpec, storage: string, check: () => void,
-    save: (destination: string, before: string, after: string) => Promise<void>, includeAssistance = true, remove = false, previous?:LaunchSpec): Promise<string[]> {
+    save: (destination: string, before: string, after: string) => Promise<void>, includeAssistance = true, remove = false, previous?:LaunchSpec, resolve?: (agent:LocalAgent,before:string)=>Promise<{spec:LaunchSpec;previous?:LaunchSpec;skip?:boolean}>,observe?:(destination:string,source:string)=>void): Promise<string[]> {
     const messages: string[] = [];
     for (const agent of Object.keys(locations) as LocalAgent[]) {
         check();
@@ -107,12 +167,17 @@ export async function migrateLocalAgents(spec: LaunchSpec, storage: string, chec
         try {
             const before = await validate();
             if (before === undefined) { continue; }
-            const after = migrateAgentConfig(agent, spec, storage, before, includeAssistance,
-                warning => messages.push(`Updated ${agent} AIRK tool policy: ${warning} (${destination})`),false,remove,previous);
-            if (after === before) { continue; }
+            const resolved=resolve&&!remove?await resolve(agent,before):{spec,previous};check();
+            if(resolved.skip){observe?.(destination,before);continue;}
+            const after = migrateAgentConfig(agent, resolved.spec, storage, before, includeAssistance,
+                warning => messages.push(`Updated ${agent} AIRK tool policy: ${warning} (${destination})`),false,remove,resolved.previous);
+            if (after === before) { observe?.(destination,before);continue; }
             check();
             if (await validate() !== before) { throw new Error('Configuration changed during migration.'); }
             check(); await save(destination, before, after); check();
+            const saved=await validate();
+            if(saved===undefined||saved.replace(/\r\n/g,'\n')!==after.replace(/\r\n/g,'\n'))throw new Error('Agent configuration save is unconfirmed; launcher cleanup is blocked.');
+            observe?.(destination,saved);
             messages.push(`${remove?'Removed':'Updated'} ${agent} AIRK connection: ${destination}. Restart the agent to reload MCP.`);
         } catch (error) {
             if ((error as NodeJS.ErrnoException).code !== 'ENOENT') { messages.push(`Could not ${remove?'remove':'update'} ${agent} AIRK connection: ${String(error)} (${destination})`); }

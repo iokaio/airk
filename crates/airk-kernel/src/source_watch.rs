@@ -685,6 +685,35 @@ impl SourceWatcher {
             .filter(|entry| entry.dirty.is_some() || entry.inflight.is_some())
             .count() as u16
     }
+    /// Close native notifications and retain one reconciliation cursor for
+    /// every bound scope. Debounced/queued hints are covered without claiming
+    /// that transient watcher buffers are restorable execution state.
+    pub fn checkpoint_notices(&mut self) -> Result<Vec<Notice>> {
+        ensure!(
+            self.entries.len() <= 1024,
+            "source checkpoint roster exceeds capacity"
+        );
+        self.watcher.take();
+        self.watched.clear();
+        self.plan = None;
+        let mut notices = Vec::with_capacity(self.entries.len());
+        for (project, entry) in &mut self.entries {
+            entry.sequence = entry
+                .sequence
+                .checked_add(1)
+                .filter(|sequence| *sequence <= i64::MAX as u64)
+                .ok_or_else(|| anyhow::anyhow!("source checkpoint sequence exhausted"))?;
+            notices.push(Notice {
+                project: *project,
+                epoch: entry.binding.epoch,
+                sequence: entry.sequence,
+            });
+        }
+        self.entries.clear();
+        self.root_index.clear();
+        self.observations.clear();
+        Ok(notices)
+    }
     pub fn counts(&self) -> (u16, u16) {
         (self.watched.len() as u16, self.entries.len() as u16)
     }

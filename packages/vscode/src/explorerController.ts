@@ -37,6 +37,8 @@ import { ServiceError } from './serviceClient';
 
 /** The narrow surface of the service extension that the Explorer may use. */
 export interface ExplorerHost {
+    /** Resolve an already reviewed selection against protected native HTTPS setup. */
+    prepareEvidenceConnection?(spec:LaunchSpec,client?:'airk-explorer'|'airk-workbench'):Promise<LaunchSpec>;
     /** Validate the active frozen combined selection and prefill an inert form. */
     prefillCombinedSearch?(search: SearchDraft): Promise<void>;
     prefillRecommendedSearch?(search: SearchDraft): Promise<void>;
@@ -467,7 +469,7 @@ export class ExplorerController implements vscode.Disposable {
         this.requireAuthorization(true);
         const spec = this.host.specs().find(entry => entry.service?.project === this.selected);
         if (!spec) { throw new EvidenceFailure(explorerError('NO_PROJECT')); }
-        if (!this.evidence) { this.evidence = new EvidenceClient(spec, this.host.version); }
+        if (!this.evidence) { this.evidence = new EvidenceClient(spec, this.host.version,{resolveConnection:this.host.prepareEvidenceConnection?.bind(this.host)}); }
         return this.evidence;
     }
 
@@ -765,8 +767,8 @@ export class ExplorerController implements vscode.Disposable {
             case 'manage.command': {
                 this.requireAuthorization();
                 const command=(message as WebviewMessageOf<'manage.command'>).command;
-                await vscode.commands.executeCommand(command, ...(command==='airk.verifyMcp'?[this.selected]:[]));
-                return;
+                const result=await vscode.commands.executeCommand(command, ...(command==='airk.verifyMcp'?[this.selected]:[]));
+                return command==='airk.httpIssuerRotationStatus'||command==='airk.rotateHttpIssuer'?result:undefined;
             }
             case 'search.form': {
                 const { project, selectionEpoch, query, mode, pathPrefix, limit, maxBytes, fullChunks } = message;

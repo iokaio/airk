@@ -142,6 +142,11 @@ impl ModelObjectSet {
 /// Implementations verify bytes before returning them. They never fetch assets.
 pub trait ModelAssetSource {
     fn read_asset(&self, name: ModelAssetName, maximum: u64) -> Result<Vec<u8>>;
+    /// Executable-owned immutable bytes may be borrowed without allocating a
+    /// second graph buffer. Consumers still enforce exact bounds and digests.
+    fn borrowed_asset(&self, _name: ModelAssetName, _maximum: u64) -> Result<Option<&[u8]>> {
+        Ok(None)
+    }
 }
 
 #[cfg(test)]

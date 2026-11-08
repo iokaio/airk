@@ -24,6 +24,12 @@ pub const MAX_PROJECTS: usize = 1024;
 #[path = "service_catalog.rs"]
 pub mod catalog;
 
+#[path = "service_checkpoint.rs"]
+pub mod checkpoint;
+
+#[path = "service_runtime_contract.rs"]
+pub mod runtime_contract;
+
 #[path = "service_source_relationships.rs"]
 mod source_relationships;
 pub use source_relationships::source_relation;
@@ -438,9 +444,34 @@ impl ServiceRegistry {
         Self::open_saved_before(root, None)
     }
     pub fn open_saved_before(root: &Path, deadline: Option<std::time::Instant>) -> Result<Self> {
+        Self::open_existing(root, deadline, None)
+    }
+
+    /// Mutate only an existing activated registry while the actual native owner
+    /// exclusion remains borrowed. Never create, migrate, or rewrite its owner.
+    pub fn with_existing_maintenance<T>(
+        lease: &super::ServiceLease,
+        expected_namespace: Incarnation,
+        action: impl FnOnce(&mut Self) -> Result<T>,
+    ) -> Result<T> {
+        let mut registry = Self::open_existing(lease.root(), None, Some(expected_namespace))?;
+        action(&mut registry)
+    }
+
+    fn open_existing(
+        root: &Path,
+        deadline: Option<std::time::Instant>,
+        writable_namespace: Option<Incarnation>,
+    ) -> Result<Self> {
         scope::scope_remaining(deadline)?;
         let root = root.canonicalize()?;
         let namespace = retained_namespace(&root)?;
+        if let Some(expected) = writable_namespace {
+            ensure!(
+                namespace == expected,
+                "maintenance registry namespace changed"
+            );
+        }
         let path = root.join("service-1.4.sqlite3");
         for suffix in ["-wal", "-shm"] {
             ensure!(
@@ -452,20 +483,31 @@ impl ServiceRegistry {
         }
         #[cfg(test)]
         scope::record_saved_open();
-        let connection =
-            Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        let flags = if writable_namespace.is_some() {
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
+        } else {
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+        };
+        let connection = Connection::open_with_flags(&path, flags)?;
         connection.busy_timeout(scope::scope_remaining(deadline)?)?;
-        connection.execute_batch("PRAGMA query_only=ON; PRAGMA cache_size=-8192;")?;
+        if writable_namespace.is_none() {
+            connection.execute_batch("PRAGMA query_only=ON;")?;
+        }
+        connection.execute_batch("PRAGMA cache_size=-8192;")?;
         connection.busy_timeout(scope::scope_remaining(deadline)?)?;
         let application: i64 =
             connection.pragma_query_value(None, "application_id", |row| row.get(0))?;
         connection.busy_timeout(scope::scope_remaining(deadline)?)?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
         ensure!(
-            application == APPLICATION && (2..=12).contains(&version),
+            application == APPLICATION && (2..=13).contains(&version),
             "unsupported saved service registry format"
         );
-        if version == 12 {
+        ensure!(
+            writable_namespace.is_none() || matches!(version, 12 | 13),
+            "maintenance requires an existing activated catalog registry"
+        );
+        if matches!(version, 12 | 13) {
             catalog::validate_existing(&connection)?;
             ensure!(
                 catalog::state(&connection)?.activated,
@@ -490,6 +532,16 @@ impl ServiceRegistry {
         );
         scope::scope_remaining(deadline)?;
         Ok(registry)
+    }
+
+    /// Read-only planning fence before a native adapter creates derived storage.
+    /// The authoritative reservation repeats the same checks in its transaction.
+    pub fn preflight_source_isolation(
+        &self,
+        proposed: &ProjectRegistration,
+        additional: &[String],
+    ) -> Result<()> {
+        source_isolation::preflight(&self.connection, &self.root, proposed, additional)
     }
 
     /// Native adapter establishes owner-only directory permissions before opening this ledger.
@@ -552,10 +604,10 @@ impl ServiceRegistry {
                 initialize = true;
             } else {
                 ensure!(
-                    application == APPLICATION && (1..=12).contains(&version),
+                    application == APPLICATION && (1..=13).contains(&version),
                     "unsupported service registry format"
                 );
-                if version == 12 {
+                if matches!(version, 12 | 13) {
                     catalog::validate_existing(&connection)?;
                     ensure!(
                         catalog::state(&connection)?.activated,

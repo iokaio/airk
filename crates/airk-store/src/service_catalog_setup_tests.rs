@@ -81,6 +81,7 @@ fn no_work(registry: &ServiceRegistry) -> Result<()> {
 }
 fn completion(receipt: &IndexSetupReceipt, revision: CatalogRevision) -> SetupCompletion {
     SetupCompletion {
+        legacy_adoption: None,
         prepared_digest: receipt.preparation.as_ref().unwrap().digest,
         expected_catalog_revision: revision,
         expected_source_revision: receipt.source_revision,
@@ -92,6 +93,10 @@ fn reservation_and_native_preparation_remain_pending_until_exact_once_ready() ->
     let (_temp, mut registry, request) = fixture()?;
     let reserved = registry.reserve_index_setup(&request)?;
     assert_eq!(reserved.stage, SetupStage::Reserved);
+    let checkpoint = crate::service::registry::checkpoint::snapshot(&registry.root)?;
+    assert!(checkpoint.unfinished.iter().any(|work| work.kind == KIND
+        && work.id == reserved.operation_id.to_string()
+        && work.state == "reserved"));
     assert_eq!(
         registry.get(request.registration.binding)?.registration,
         request.registration
@@ -123,6 +128,12 @@ fn reservation_and_native_preparation_remain_pending_until_exact_once_ready() ->
         &proof,
     )?;
     assert_eq!(prepared.stage, SetupStage::Prepared);
+    assert!(
+        crate::service::registry::checkpoint::snapshot(&registry.root)?
+            .unfinished
+            .iter()
+            .any(|work| work.kind == KIND && work.state == "prepared")
+    );
     assert!(registry.index_setup_pending(request.registration.binding)?);
     no_work(&registry)?;
     let finish = completion(&prepared, prepared.catalog_revision);
@@ -133,6 +144,18 @@ fn reservation_and_native_preparation_remain_pending_until_exact_once_ready() ->
         &finish,
     )?;
     assert_eq!(ready.stage, SetupStage::Ready);
+    let checkpoint = crate::service::registry::checkpoint::snapshot(&registry.root)?;
+    assert!(
+        checkpoint.unfinished.is_empty(),
+        "completed setup is immutable history, not accepted running work"
+    );
+    assert!(
+        checkpoint
+            .tables
+            .iter()
+            .any(|table| table.name == "index_operation_receipts" && table.rows == Some(1)),
+        "terminal receipt remains in the full checkpoint digest"
+    );
     assert_eq!(ready.source_revision, CatalogRevision::INITIAL.next()?);
     assert!(!registry.index_setup_pending(request.registration.binding)?);
     let state:(bool,i64,i64,bool,i64)=registry.connection.query_row("SELECT w.enabled,w.configuration_epoch,w.requested,b.source_pending,(SELECT count(*) FROM service_setup_pending) FROM service_watch w JOIN service_background b ON b.project=w.project",[],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?)))?;
@@ -177,6 +200,124 @@ fn reservation_and_native_preparation_remain_pending_until_exact_once_ready() ->
                 .get::<_, i64>(0))?,
         0
     );
+    Ok(())
+}
+
+#[test]
+fn checkpoint_setup_terminal_requires_exact_valid_owner_and_preserves_unknown_work() -> Result<()> {
+    let (_temp, mut registry, request) = fixture()?;
+    let reserved = registry.reserve_index_setup(&request)?;
+    let proof = native(&reserved, reserved.catalog_revision)?;
+    let prepared = registry.record_index_preparation(
+        request.caller,
+        &request.key,
+        reserved.request_digest,
+        &proof,
+    )?;
+    let ready = registry.complete_index_setup(
+        request.caller,
+        &request.key,
+        reserved.request_digest,
+        &completion(&prepared, prepared.catalog_revision),
+    )?;
+    let id = ready.operation_id.to_string();
+    let original = serde_json::to_vec(&ready)?;
+    let observe =
+        |registry: &ServiceRegistry| crate::service::registry::checkpoint::snapshot(&registry.root);
+    assert!(observe(&registry)?.unfinished.is_empty());
+    let before = registry.connection.total_changes();
+    let first = observe(&registry)?.digest()?;
+    assert_eq!(first, observe(&registry)?.digest()?);
+    assert_eq!(
+        before,
+        registry.connection.total_changes(),
+        "checkpoint is a nonmutating read"
+    );
+    for (kind, stage) in [
+        ("unknown_owner", "ready"),
+        ("unknown_owner", "complete"),
+        (KIND, "unknown_phase"),
+    ] {
+        registry.connection.execute(
+            "UPDATE index_operation_receipts SET kind=?1,stage=?2 WHERE id=?3",
+            params![kind, stage, id],
+        )?;
+        assert!(
+            observe(&registry)?
+                .unfinished
+                .iter()
+                .any(|work| work.id == id && work.kind == kind && work.state == stage)
+        );
+    }
+    registry.connection.execute(
+        "UPDATE index_operation_receipts SET kind=?1,stage='ready',payload=X'7b7d' WHERE id=?2",
+        params![KIND, id],
+    )?;
+    assert!(
+        observe(&registry).is_err(),
+        "ready text cannot authorize malformed proof"
+    );
+    registry.connection.execute(
+        "UPDATE index_operation_receipts SET payload=?1,revision=revision+1 WHERE id=?2",
+        params![original, id],
+    )?;
+    assert!(
+        observe(&registry).is_err(),
+        "crossed SQL revision cannot authorize a terminal receipt"
+    );
+    registry.connection.execute(
+        "UPDATE index_operation_receipts SET revision=revision-1,id=?1 WHERE id=?2",
+        params![Incarnation::from_bytes([222; 16]).to_string(), id],
+    )?;
+    assert!(
+        observe(&registry).is_err(),
+        "crossed SQL operation cannot authorize a terminal receipt"
+    );
+    Ok(())
+}
+
+#[test]
+fn checkpoint_completed_history_at_canonical_receipt_capacity_remains_readable() -> Result<()> {
+    // Component capacity fixture: exact typed receipt encoding under the
+    // unchanged canonical 1024-row trigger; no claim of mutation admission.
+    let (_temp, mut registry, request) = fixture()?;
+    let tx = registry.connection.transaction()?;
+    for n in 0u128..1024 {
+        let key = RequestKey {
+            nonce: Incarnation::from_bytes(n.to_be_bytes()),
+            ..request.key.clone()
+        };
+        let saved = airk_core::catalog_management::CatalogReceipt {
+            schema: 1,
+            operation_id: catalog_operation_id(request.caller, &key)?,
+            caller: request.caller,
+            key,
+            request_digest: Sha256Digest::from_bytes([41; 32]),
+            catalog_revision: CatalogRevision::INITIAL,
+            authority_fence_required: false,
+        };
+        tx.execute("INSERT INTO index_operation_receipts VALUES(?1,'catalog_management','metadata_applied',1,?2)",
+            params![saved.operation_id.to_string(),serde_json::to_vec(&saved)?])?;
+    }
+    assert!(
+        tx.execute(
+            "INSERT INTO index_operation_receipts VALUES(?1,'unknown_owner','prepared',1,X'7b7d')",
+            [Incarnation::from_bytes([255; 16]).to_string()]
+        )
+        .is_err(),
+        "checkpoint coverage must preserve the native receipt capacity guard"
+    );
+    tx.commit()?;
+    let changes = registry.connection.total_changes();
+    let checkpoint = crate::service::registry::checkpoint::snapshot(&registry.root)?;
+    assert!(checkpoint.unfinished.is_empty());
+    assert!(
+        checkpoint
+            .tables
+            .iter()
+            .any(|table| table.name == "index_operation_receipts" && table.rows == Some(1024))
+    );
+    assert_eq!(changes, registry.connection.total_changes());
     Ok(())
 }
 
@@ -569,6 +710,7 @@ fn terminal_receipt_budget_is_reserved_before_setup_acceptance() -> Result<()> {
     // the native worst-revision reservation therefore cannot safely accept it.
     let prepared_digest = Sha256Digest::from_bytes([255; 32]);
     let terminal = IndexSetupReceipt {
+        legacy_adoption: None,
         schema: 1,
         operation_id: catalog_operation_id(request.caller, &request.key)?,
         request: request.clone(),
@@ -579,6 +721,7 @@ fn terminal_receipt_budget_is_reserved_before_setup_acceptance() -> Result<()> {
         catalog_revision: CatalogRevision::INITIAL.next()?.next()?,
         source_revision: CatalogRevision::INITIAL.next()?,
         preparation: Some(PreparationEvidence {
+            legacy_adoption: None,
             digest: prepared_digest,
             storage_identity: prepared_digest,
             source_configuration_digest: prepared_digest,
@@ -588,6 +731,7 @@ fn terminal_receipt_budget_is_reserved_before_setup_acceptance() -> Result<()> {
             },
         }),
         completion: Some(SetupCompletion {
+            legacy_adoption: None,
             prepared_digest,
             expected_catalog_revision: CatalogRevision::INITIAL.next()?,
             expected_source_revision: CatalogRevision::INITIAL,

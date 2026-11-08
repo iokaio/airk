@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 from pathlib import Path
 import tempfile
+import tomllib
 import unittest
 
 SCRIPT = Path(__file__).resolve().parents[1] / "license-notices.py"
@@ -13,6 +14,26 @@ SPEC.loader.exec_module(MODULE)
 
 
 class DeclarationTests(unittest.TestCase):
+    def test_asn1_impl_uses_actual_texts_at_its_published_source_revision(self):
+        import json
+        root = Path(__file__).resolve().parents[2]
+        records = json.loads((root / "third_party/licenses/sources.json").read_text(encoding="utf-8"))
+        record = next(row for row in records if (row["name"],row["version"]) == ("asn1-rs-impl","0.2.0"))
+        locked = next(row for row in tomllib.loads((root / "Cargo.lock").read_text(encoding="utf-8"))["package"]
+                      if (row["name"],row["version"]) == ("asn1-rs-impl","0.2.0"))
+        self.assertEqual(record["revision"], "a20e5f7319c896737ad0f2557037817b91ad854f")
+        self.assertEqual(record["revision_basis"]["crate_sha256"], locked["checksum"])
+        self.assertEqual(record["revision_basis"]["path_in_vcs"], "impl")
+        self.assertTrue(record["revision_basis"]["upstream_manifest_matches_published_original"])
+        self.assertFalse(record["missing_text"])
+        self.assertNotIn("release_disposition", record, "Actual texts must not masquerade as a human declaration exception")
+        directory = root / "third_party/licenses/asn1-rs-impl-0.2.0"
+        self.assertEqual({row["file"] for row in record["files"]}, {"LICENSE-MIT","LICENSE-APACHE"})
+        for item in record["files"]:
+            self.assertEqual(item["url"], f'https://raw.githubusercontent.com/rusticata/asn1-rs/{record["revision"]}/{item["file"]}')
+            self.assertEqual(hashlib.sha256((directory / item["file"]).read_bytes()).hexdigest(), item["sha256"])
+        self.assertIn("Copyright (c) 2017 Pierre Chifflier", (directory / "LICENSE-MIT").read_text())
+
     def test_original_manifest_is_authenticated_and_tampering_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory)

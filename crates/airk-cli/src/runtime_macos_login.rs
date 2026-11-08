@@ -44,18 +44,56 @@ pub(crate) fn candidate(root: &Path) -> Result<(PathBuf, Approval)> {
 pub(crate) fn require_start_allowed(root: &Path) -> Result<()> {
     lifecycle::require_start_allowed(root)
 }
-fn job_scope(text: &str, main: &Path, plist: &Path, channel: RuntimeChannel) -> Result<()> {
+pub(crate) const LEGACY_ENTRY: &str = "login-foreground";
+pub(crate) const DIRECT_ENTRY: &str = "login-serve";
+
+fn entry_for_version(version: &str) -> Result<&'static str> {
+    ensure!(version.len() <= 64, "invalid Mac login runtime version");
+    let numbers = version
+        .split('.')
+        .map(|part| {
+            ensure!(
+                !part.is_empty()
+                    && part.bytes().all(|byte| byte.is_ascii_digit())
+                    && (part.len() == 1 || !part.starts_with('0')),
+                "invalid Mac login runtime version"
+            );
+            Ok(part.parse::<u64>()?)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    ensure!(numbers.len() == 3, "invalid Mac login runtime version");
+    Ok(if numbers.as_slice() >= [1, 8, 14].as_slice() {
+        DIRECT_ENTRY
+    } else {
+        LEGACY_ENTRY
+    })
+}
+
+pub(crate) fn entry(root: &Path, identity: &str) -> Result<&'static str> {
+    let directory = payload_path(root, &format!("runtimes/{identity}/airk-install.json"))?
+        .parent()
+        .context("Mac payload parent missing")?
+        .to_path_buf();
+    let (approval, _) = saved_payload_identity(&directory, identity)?;
+    entry_for_version(&approval.version)
+}
+
+fn job_scope(
+    text: &str,
+    main: &Path,
+    plist: &Path,
+    channel: RuntimeChannel,
+    entry: &str,
+) -> Result<()> {
+    ensure!(
+        matches!(entry, LEGACY_ENTRY | DIRECT_ENTRY),
+        "invalid Mac login entry"
+    );
     verify_job_scope(
         text,
         main,
         plist,
-        &[
-            "airk",
-            "runtime",
-            "login-foreground",
-            "--channel",
-            channel_name(channel),
-        ],
+        &["airk", "runtime", entry, "--channel", channel_name(channel)],
     )
 }
 pub(crate) fn verify_job_scope(
@@ -123,7 +161,40 @@ pub(crate) fn verify_job_scope(
     );
     Ok(())
 }
-fn observe_job(main: &Path, channel: RuntimeChannel) -> Result<Option<String>> {
+fn job_pid(text: &str) -> Result<Option<u32>> {
+    ensure!(
+        text.len() <= 65_536,
+        "Mac launchd observation exceeds budget"
+    );
+    let mut depth = 0isize;
+    let mut pid = None;
+    for line in text.lines() {
+        let value = line.trim();
+        if depth == 1
+            && let Some(value) = value.strip_prefix("pid = ")
+        {
+            let observed = value.parse::<u32>()?;
+            ensure!(
+                observed != 0 && pid.replace(observed).is_none(),
+                "invalid or duplicate Mac job PID"
+            );
+        }
+        if value.ends_with('{') {
+            depth += 1;
+        }
+        if value == "}" {
+            depth -= 1;
+        }
+        ensure!(
+            (0..=16).contains(&depth),
+            "unsupported Mac job observation structure"
+        );
+    }
+    ensure!(depth == 0, "unsupported Mac job observation structure");
+    Ok(pid)
+}
+
+fn observe_job(main: &Path, channel: RuntimeChannel, entry: &str) -> Result<Option<String>> {
     let domain = format!("gui/{}", crate::local_ipc::current_user()?);
     let (domain_available, _) = crate::service_manager::execute_native_observation(
         Path::new("/bin/launchctl"),
@@ -131,7 +202,7 @@ fn observe_job(main: &Path, channel: RuntimeChannel) -> Result<Option<String>> {
     )?;
     ensure!(
         domain_available,
-        "Mac GUI user domain is unavailable; retain on-demand mode"
+        "Mac GUI user domain is unavailable; use the explicit direct foreground workflow"
     );
     let label = format!("io.iokaio.airk.service.{}", channel_name(channel));
     let target = format!("{domain}/{label}");
@@ -149,8 +220,27 @@ fn observe_job(main: &Path, channel: RuntimeChannel) -> Result<Option<String>> {
     let plist = bundle(main)?
         .join("Contents/Library/LaunchAgents")
         .join(format!("{label}.plist"));
-    job_scope(&text, main, &plist, channel)?;
+    job_scope(&text, main, &plist, channel, entry)?;
     Ok(Some(text))
+}
+
+pub(crate) struct ObservedJob {
+    pub process_id: Option<u32>,
+}
+
+pub(crate) fn observed_job(
+    root: &Path,
+    identity: &str,
+    channel: RuntimeChannel,
+) -> Result<Option<ObservedJob>> {
+    let main = approved_main(root, identity, false)?;
+    observe_job(&main, channel, entry(root, identity)?)?
+        .map(|text| {
+            Ok(ObservedJob {
+                process_id: job_pid(&text)?,
+            })
+        })
+        .transpose()
 }
 pub(crate) fn bundle(main: &Path) -> Result<PathBuf> {
     let payload = runtime_pair::payload_root(main)?;
@@ -261,7 +351,8 @@ pub(crate) fn native(
         std::env::current_exe()?.canonicalize()? == main.canonicalize()?,
         "Mac login API must execute from the captured app"
     );
-    let prior = observe_job(&main, expected_channel)?;
+    let entry = entry(root, identity)?;
+    let prior = observe_job(&main, expected_channel, entry)?;
     if operation == 1 {
         ensure!(
             prior.is_none(),
@@ -307,11 +398,11 @@ pub(crate) fn native(
         _ => bail!("unknown Mac registration state"),
     };
     if observed == 1 {
-        observe_job(&main, expected_channel)?;
+        observe_job(&main, expected_channel, entry)?;
     }
     if observed == 0 {
         ensure!(
-            observe_job(&main, expected_channel)?.is_none(),
+            observe_job(&main, expected_channel, entry)?.is_none(),
             "launchd job remains without verifiable Service Management ownership; preserve it for diagnosis"
         );
     }
@@ -321,6 +412,18 @@ pub(crate) fn target_main(root: &Path, identity: &str) -> Result<PathBuf> {
     approved_main(root, identity, false)
 }
 pub(crate) fn foreground_root(expected_channel: RuntimeChannel) -> Result<PathBuf> {
+    startup_root(expected_channel, LEGACY_ENTRY, false)
+}
+
+pub(crate) fn direct_root(expected_channel: RuntimeChannel) -> Result<PathBuf> {
+    startup_root(expected_channel, DIRECT_ENTRY, true)
+}
+
+fn startup_root(
+    expected_channel: RuntimeChannel,
+    expected_entry: &str,
+    require_manager_process: bool,
+) -> Result<PathBuf> {
     let current = std::env::current_exe()?.canonicalize()?;
     let payload = runtime_pair::payload_root(&current)?;
     let identity = payload
@@ -342,11 +445,23 @@ pub(crate) fn foreground_root(expected_channel: RuntimeChannel) -> Result<PathBu
         "Mac foreground channel differs"
     );
     crate::service_manager::verify_macos_login_intent(&root, identity, expected_channel)?;
+    ensure!(
+        entry(&root, identity)? == expected_entry,
+        "Mac login command differs from the approved runtime layout"
+    );
     let (selected, _) = startup_selected(&root)?;
     ensure!(
         selected.canonicalize()? == current,
         "Mac login entry is not the active startup candidate"
     );
+    if require_manager_process {
+        let text = observe_job(&current, expected_channel, DIRECT_ENTRY)?
+            .context("Mac direct service has no observed owned launchd job")?;
+        ensure!(
+            job_pid(&text)? == Some(std::process::id()),
+            "Mac direct service is not the process launched by the captured registration"
+        );
+    }
     Ok(root)
 }
 pub(crate) fn quiet(root: &Path) -> Result<bool> {
@@ -371,6 +486,45 @@ pub(crate) fn quiet(root: &Path) -> Result<bool> {
 mod tests {
     use super::*;
     #[test]
+    fn sealed_entry_retains_predecessor_definitions_and_rejects_noncanonical_versions() -> Result<()>
+    {
+        for version in ["1.4.0", "1.8.7", "1.8.13"] {
+            assert_eq!(entry_for_version(version)?, LEGACY_ENTRY);
+        }
+        for version in ["1.8.14", "1.9.0", "2.0.0"] {
+            assert_eq!(entry_for_version(version)?, DIRECT_ENTRY);
+        }
+        for version in [
+            "",
+            "1.8",
+            "1.8.14.0",
+            "01.8.14",
+            "1.8.+14",
+            "1.8.14-beta",
+            "1.8.18446744073709551616",
+        ] {
+            assert!(entry_for_version(version).is_err(), "{version}");
+        }
+        Ok(())
+    }
+    #[test]
+    fn launchd_pid_uses_only_the_unique_top_level_process() -> Result<()> {
+        assert_eq!(
+            job_pid("job = {\n pid = 42\n child = {\n pid = 99\n }\n}\n")?,
+            Some(42)
+        );
+        assert_eq!(job_pid("job = {\n child = {\n pid = 99\n }\n}\n")?, None);
+        for text in [
+            "job = {\n pid = 0\n}\n",
+            "job = {\n pid = 42\n pid = 42\n}\n",
+            "job = {\n pid = nope\n}\n",
+            "job = {\n pid = 42\n",
+        ] {
+            assert!(job_pid(text).is_err());
+        }
+        Ok(())
+    }
+    #[test]
     fn launchd_scope_refuses_foreign_origin_arguments_and_nested_or_duplicate_identity()
     -> Result<()> {
         let main = Path::new("/fixture path/é/AIRK.app/Contents/MacOS/airk");
@@ -382,14 +536,19 @@ mod tests {
             plist.display(),
             main.display()
         );
-        job_scope(&text, main, plist, RuntimeChannel::Preview)?;
-        assert!(job_scope(&text, main, plist, RuntimeChannel::Stable).is_err());
+        job_scope(&text, main, plist, RuntimeChannel::Preview, LEGACY_ENTRY)?;
+        let direct = text.replace("login-foreground", "login-serve");
+        job_scope(&direct, main, plist, RuntimeChannel::Preview, DIRECT_ENTRY)?;
+        assert!(job_scope(&direct, main, plist, RuntimeChannel::Preview, LEGACY_ENTRY).is_err());
+        assert!(job_scope(&text, main, plist, RuntimeChannel::Preview, DIRECT_ENTRY).is_err());
+        assert!(job_scope(&text, main, plist, RuntimeChannel::Stable, LEGACY_ENTRY).is_err());
         assert!(
             job_scope(
                 &text.replace(&main.display().to_string(), "/foreign/airk"),
                 main,
                 plist,
-                RuntimeChannel::Preview
+                RuntimeChannel::Preview,
+                LEGACY_ENTRY
             )
             .is_err()
         );
@@ -398,7 +557,8 @@ mod tests {
                 &text.replace(&plist.display().to_string(), "/foreign/agent.plist"),
                 main,
                 plist,
-                RuntimeChannel::Preview
+                RuntimeChannel::Preview,
+                LEGACY_ENTRY
             )
             .is_err()
         );
@@ -407,7 +567,8 @@ mod tests {
                 &text.replace("\t\tlogin-foreground", "\t\tserve"),
                 main,
                 plist,
-                RuntimeChannel::Preview
+                RuntimeChannel::Preview,
+                LEGACY_ENTRY
             )
             .is_err()
         );
@@ -416,14 +577,42 @@ mod tests {
                 &text.replace("\targuments = {", "\targuments = {\n\t}\n\targuments = {"),
                 main,
                 plist,
-                RuntimeChannel::Preview
+                RuntimeChannel::Preview,
+                LEGACY_ENTRY
             )
             .is_err()
         );
         let nested_only = text.replacen(&format!("\tprogram = {}\n", main.display()), "", 1);
-        assert!(job_scope(&nested_only, main, plist, RuntimeChannel::Preview).is_err());
-        assert!(job_scope(&format!("{text}}}"), main, plist, RuntimeChannel::Preview).is_err());
-        assert!(job_scope(&"x".repeat(65_537), main, plist, RuntimeChannel::Preview).is_err());
+        assert!(
+            job_scope(
+                &nested_only,
+                main,
+                plist,
+                RuntimeChannel::Preview,
+                LEGACY_ENTRY
+            )
+            .is_err()
+        );
+        assert!(
+            job_scope(
+                &format!("{text}}}"),
+                main,
+                plist,
+                RuntimeChannel::Preview,
+                LEGACY_ENTRY
+            )
+            .is_err()
+        );
+        assert!(
+            job_scope(
+                &"x".repeat(65_537),
+                main,
+                plist,
+                RuntimeChannel::Preview,
+                LEGACY_ENTRY
+            )
+            .is_err()
+        );
         Ok(())
     }
 }

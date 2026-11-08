@@ -149,6 +149,7 @@ fn execute_inner(
                 .catalog_state()?
                 .context("setup catalog disappeared")?;
             let completion = SetupCompletion {
+                legacy_adoption: None,
                 prepared_digest: prepared
                     .preparation
                     .as_ref()

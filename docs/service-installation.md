@@ -1,270 +1,361 @@
 # Offline service installation and lifecycle
 
-## Unavailable legacy index during upgrade
-
-The unpublished 1.8.8 working source adds explicit recovery for a **fresh upgrade
-from 1.8.7** whose saved index configuration is `pending_metadata`, for example
-after its source and storage ancestor disappeared. [Selected local qualification](releases/release-1.8.8.md#6-november-2026---final-local-test-package-checkpoint)
-is recorded; manual acceptance and broader platform qualification remain separate. Missing source files alone do not require this path when the saved
-index configuration is still available. The installer otherwise fails closed;
-it does not grant access to an unknown old index or treat it as an empty source.
-
-In VS Code, run **AIRK: Review unavailable legacy upgrade index retirement**.
-Choose the saved unavailable index and inspect its complete native review: exact
-source/storage registration, accepting candidate, original backup and affected
-work. **Authorize reviewed retirement** saves that exact authorization only.
-**Resume accepted same-candidate activation** is a separate confirmed action.
-The native owner can then retire that index logically and finish activation
-without changing a healthy index's original source, registration or retained
-publication. Returned storage is preserved for separately guarded cleanup.
-
-**Check exact receipt** reads the original saved request. Missing or uncertain
-receipts do not authorize a new key or automatic resubmission. Complete details,
-JSON/Markdown copies and exports retain the full native result. An **Applied**
-receipt records historical logical retirement with physical cleanup pending; it
-is not current activation readiness or an evidence grant. Reopening the view
-selects no evidence scope. The evidence MCP interface remains read-only.
-
-Invoke these commands through the verified 1.8.8 candidate executable that owns
-the saved installer identity. The normal stable launcher may still select 1.8.7
-during a blocked upgrade.
-
-The equivalent local CLI commands are `runtime legacy-retirement-candidates`,
-`runtime legacy-retirement-review`, `runtime legacy-retirement-authorize`,
-`runtime legacy-retirement-receipt` and `runtime legacy-retirement-resume`, each
-with the exact `--install-dir`. Review also takes `--index-id`; candidate pages
-accept the returned `--after` continuation. Authorization receives the exact
-native `preview` and `review_digest` JSON on stdin; receipt/resume receive the
-original native request JSON. Preserve the returned caller and key. These are
-runtime administration commands, not an additional MCP mutation route.
-
-Recovery must use the candidate that owns the saved installer identity. This
-fresh-upgrade path does not let another binary take over an older pending
-activation. A changed unconfirmed review requires a new explicit review; an
-already accepted retirement remains durable if genuine source metadata returns.
-Physical cleanup still checks the actual ownership and absence conditions in
-[guarded index retirement](service-project-retirement.md).
-
-See [process counts and ownership](process-model.md) for the purpose of each executable, Windows launcher chains, the observed installed 1.6.3 topology and the limits of identifying obsolete agent sessions from a process list.
-
-Since 1.5.4, upgrade behavior is: after validating and recording the exact candidate and predecessor intent, the installer stops the verified optional manager and forcibly terminates same-user processes using the approved predecessor main/helper and receipt-verified stable launcher on Windows and Linux. Captured native process handles (Windows) or pidfds (Linux) prevent PID reuse from redirecting termination. This works with previous releases without requiring a new shutdown protocol. The shared exit wait is five seconds; payload verification, manager control, copying and startup are additional. Connected AIRK clients are disconnected and must reconnect. macOS retains authenticated control/manager shutdown pending a native forced-stop implementation and qualification. Unknown executables and foreign installations are preserved. The new installer must run outside the predecessor payload/launcher. Previous-payload retirement uses the same verified hard stop before cleanup and restarts the selected service afterward. An exactly verified healthy instance deliberately stopped for cleanup restarts without crash backoff; unobserved or failed startup retains the existing circuit.
-
-Ownership checks inspect the existing registry read-only and do not migrate it during drain. Only lock/SQLite contention is retried; schema, ownership, I/O and corruption errors retain their cause immediately. At startup, registry format 6 migrates transactionally to format 7 to add watcher traversal diagnostics. Saved format-6 diagnostics remain readable without migration. A missing diagnostics table in completed format 7 is damage and is refused. Older binaries that support only registry format 6 cannot restart against format 7; payload rollback does not downgrade metadata.
-
-The following migration behavior was introduced in **1.6.4**; see [its historical release record](releases/release-1.6.4.md). The [1.8.7 predecessor record](releases/release-1.8.7.md) retains the preparation and publication evidence for the consolidated 1.8.0-1.8.6 work. Current **1.8.8** working-build validation and the local test package are recorded [separately](releases/release-1.8.8.md); they do not establish publication.
-
-From 1.6.4, after candidate health and selection are confirmed, installation drains the matching runtime again and renames its registered historical default index-data root to index-v1. Store journals metadata edits and updates path-derived project bindings and service references transactionally; publication tokens, collection identities, settings and source bytes are preserved. Interrupted migration blocks service startup until the same installation resumes it. Directory migration is not automatically rolled back to an older metadata reader; executable rollback does not downgrade metadata. Custom data roots, runtime/state directories and internal compatibility filenames are outside this index-data migration. The extension also updates a saved storage preference that exactly names the missing historical default, so later project registration follows the renamed directory; other custom locations and existing roots are preserved. See [storage formats](storage-formats.md). Prior 1.4.0/1.4.1 build and qualification records below retain their original scope.
-
-1.6.1 corrects the automatic-upgrade policy that omitted the 1.6 line. Supported forward upgrades from 1.4/1.5/1.6 activate the bundled runtime before opening its service connection. A verified unfinished older activation may be aborted at the native pre-probe boundary; it does not gain permission to run under a mismatched extension. The upgrade tests derive the target from the extension manifest, so a version bump must pass the existing-installation path.
-
-Extension uninstall uses the packaged `vscode:uninstall` hook when VS Code completes removal after restart. Since VS Code gives that hook five seconds, it starts a separate, verified cleanup worker outside the extension directory. The worker removes recorded, recognized project AIRK connections and invokes native uninstall for default and recorded custom installations. Native uninstall records its intent first, stops owned process images on Windows/Linux, removes the per-installation and universal launchers, and preserves project/index data. A retained agent entry cannot recreate a deleted executable. Unsafe/custom entries, changed payloads or incomplete cleanup produce a failure result with a finite local log; external managed payloads retain their ownership policy. macOS retains graceful authenticated drain. See [1.6.1](releases/release-1.6.1.md) for the timing, evidence and platform limits.
-
-In 1.5.12, editor activation finishes before native verification so Explorer can show connection progress immediately. Concurrent discovery calls in one host share work. Once a completed installation has been inspected, matching authenticated live health reconnects without running native startup again. Explicit Stop, managed ownership and pending lifecycle/activation operations still use native policy. Initial payload verification remains required per extension host; this change does not bypass integrity checks or create a persistent verification cache.
-
-The 1.8.0 candidate adds `runtime source-scope --install-dir <install> --expected-control <control> --expected-runtime <digest> --source-root <root> [--index-collection <collection>]` for an authenticated saved-registration observation. Use `control_dir` and `approval.manifest_sha256` from current `runtime inspect` output for the expected pins, preserving the returned native control-path spelling. It validates existing private installation and control metadata without creating directories, lock files or a missing registry. It reports exact registry namespace/revision and registered, missing, removed or ambiguous scope; Stop does not prohibit reading this metadata. The result is not permission to start a process or submit evidence requests. Managed payload pins remain checked. The extension uses this observation only after its own startup eligibility checks, while native execution retains its existing authority. See [F09 implementation and qualification](optimizations.md#f09-selected-binding-and-asynchronous-editor-setup).
-
-Historical 1.5.3 preflight behavior: for Windows on-demand installations, activation checked whether the owned stable launcher can be replaced before publishing an activation intent or draining the working service. A connected client that holds the launcher blocks the update at this preflight boundary. The extension shows MCP Servers, Retry Update and Show Details, and keeps the preceding service running. After clients disconnect, Retry Update performs the fenced activation and cleanup. The native owner drain polls every 100 ms with a 45-second deadline after shutdown acknowledgment; executable verification and control/setup work are additional steps. External MCP clients are not killed by this drain. Verified OS-managed login services retain their existing owned stop/maintenance path because that manager can itself hold the launcher; that platform/lifecycle matrix remains separately qualified.
-
-Historical 1.5.3 installation showed a completion notification with MCP Servers, Reload Window and Show Details actions. Copilot users can restart AIRK from MCP Servers; external coding-agent sessions and existing terminals need their own restart. Routine activation does not repeat the notice for the same runtime, while explicit Install or Repair CLI shows it again. Connection or cleanup issues produce a warning instead of a clean success message. The dashboard retains restart guidance, including the distinction between an editor reload and a full restart required before a rejected VSIX reinstall.
-
-Trusted VSIX installation and **Install or Repair CLI** refresh recognized existing workspace AIRK connections in Codex (`.codex/config.toml`), Claude Code (`.mcp.json`) and GitHub Copilot (`.vscode/mcp.json`) to the installed stable launcher and registered service arguments. Other servers, environment and tool policies remain intact; missing entries do not enable an agent. Foreign/custom launches, unsupported TOML, unsaved edits and unsafe files remain for manual review with a visible warning. Restart connected agents after installation. Targeted Windows installation is covered by the local installer harness; broader platform qualification remains pending.
-
-VSIX CLI installation removes obsolete extension-managed terminal executables and calls `runtime retire-previous --install-dir <installation> --expected-active <selected-digest>` after successful replacement activation. This removes the previous owned native payload and clears rollback, with durable interrupted-cleanup recovery and active-selection fencing. Locked or unknown files defer cleanup explicitly. The selected runtime, sources, indexes and settings remain intact; managed provider payloads are excluded. See [installation cleanup](service-console.md).
-
-This is the development installation contract for the [1.4 service plan](airkservice-architecture.md). The extension and public CLI now use native service defaults at version 1.4.2. These commands do not establish signed distribution, macOS notarization or installed-platform qualification.
-
-The CLI owns OS lifecycle adapters. Kernel owns collection and admission policy; it no longer invokes Task Scheduler, systemd or launchd. The public 1.4 CLI retires the root scheduler's commands; existing 1.3 processes/configuration remain for explicit review. Shared-service login definitions use separate `airksvc-…` identities and ownership receipts, so they cannot overwrite old `airk-…` scheduler definitions.
-
-## Process lifetime and recognizable names
-
-User-owned Windows/Linux installations and historical Mac layouts create verified `airk-service`, `airk-index` and `airk-source` executable copies locally (`.exe` on Windows). These identify the shared broker, project workers and source watcher. The copies use the main engine's approved digest, reject hard-linked/redirected files and participate in owned runtime retirement. Read-only organization-managed and development payloads retain their original role executable names.
-
-The macOS 1.8.8 layout executes those three roles through the sealed main inside `AIRK.app`, with no out-of-bundle role copies. Its native download and VSIX add a separately inventoried and signed `airk-launcher-image`; only that image supplies stable/universal launcher copies. `airk-embed` remains the inference helper and the sealed main retains the pair/health identity. Preparing a Mac client can resume an exact approved launcher repair without changing service/manager state or explicit Stop. Unknown files remain preserved. See [signing and copied-image qualification](native-signing.md).
-
-MCP frontends and launcher forwarders now watch their originating client. EOF remains normal shutdown; a lost client also ends its frontend if inherited handles leave stdin open. Windows holds process handles and checks creation times through preceding launcher parents, including an older universal launcher; Unix detects reparenting. OS-supervised or PID-namespace sessions without an observable ordinary parent retain transport EOF/container shutdown. This does not time out idle live sessions or scan and kill unrelated processes. The shared service and index workers retain their independent service ownership. An identical verified universal/per-installation launcher can skip the intermediate forwarder; differing versions retain compatibility delegation. Separate agents and sessions can legitimately have separate MCP processes even in one VS Code window.
+**1.8.14 source implementation; unpublished and not yet platform-qualified.**
+The current sources implement a shared localhost HTTPS service, one distributed
+native executable with embedded default inference, direct manager entries and
+checkpointed upgrades. Final Windows installer, actual client/OS trust and Mac
+Neo acceptance are separate pending gates. Use the [working record](releases/release-1.8.14.md)
+for observed results, not older release evidence.
 
 ## Approval and immutable staging
 
-`scripts/build-service-runtime.py` builds `airk-embed` and the inference-free `airk` in separate Cargo invocations. It includes the Apache license, model notices, dependency license bundle, build receipt, executable-pair manifest and complete `airk-install.json` inventory. Before/after source fingerprints reject a mixed build. The inventory digest identifies the entire offline payload, including notices; it is not publisher authentication by itself.
+The installed platform VSIX or explicitly approved native distribution pins the
+complete runtime inventory. Verification checks version/platform, every allowed
+file and digest, physical file identity and bounded topology before execution.
+Workspace settings do not approve arbitrary code. A changed payload or unknown
+file fails closed; inspection and reviewed repair remain distinct from launch.
 
-`airk runtime stage --source <payload> --install-dir <absolute-user-location> --approved-sha256 <digest> --verification-basis organization-digest` requires an independently approved digest of `airk-install.json`. A trusted distributor may supply `trusted-distribution` instead. This is a declared verification basis supplied by the trusted caller; a manifest cannot approve itself. Workspace settings may not choose this policy or install path. The extension derives its approval from the trusted installed platform VSIX or machine/user organization policy.
+Modern `airk-runtime.json` is **schema 2** and binds only `airk`/`airk.exe`.
+The separate complete `airk-install.json` file inventory remains schema 1; that
+inventory schema is not the historical two-role runtime contract. On macOS the
+main stays at `AIRK.app/Contents/MacOS/airk`, inside its sealed signed bundle.
+Modern payloads contain no separate embedding executable, launcher image/copy,
+dynamic ORT runtime or external default model assets. Legal files, signed app
+resources and build/inventory receipts remain fully inventoried. Historical
+schema-1 main/helper payloads are decoded strictly for predecessor handling;
+they are not rebuilt or republished as modern packages.
 
-Automatic service connection serializes startup under the native installation lock with a sixty-second asynchronous contention budget. Only a native would-block result is retried; invalid files and other OS errors fail immediately. After acquiring ownership, it rechecks pending repair, lifecycle/explicit stop, managed policy and the selected payload. Explicit installation mutations retain immediate lock refusal. This lets racing read-only bridges join startup without taking over another installer's ownership or repeating project work.
+Activation, rollback and `runtime repair-launcher` never create or replace a
+launcher for a schema-2 payload. The repair command reports
+`launcher_repaired: false` for that layout. A retained predecessor launcher and
+its receipt remain unchanged migration state until explicit owned retirement;
+an unresolved historical repair transaction must still be settled explicitly.
 
-In the unpublished 1.8.0 candidate, an unmanaged connection uses bounded authenticated metadata for preflight, then performs full current payload verification under that lock. It reuses the resulting private proof only when no lifecycle/activation settlement is needed. Pending or uncertain work discards the proof and requires replacement verification after effects, including when the selected identity is unchanged. Managed routes and direct STOP preserve their existing checks. Consequently, lock contention can be reported before executable-byte damage; malformed preflight metadata and incompatible versions still fail before waiting. Main/helper digests are checked once at the existing final pair checkpoint against both manifest and pair receipts; topology and distinct role-image checks remain. If both an executable and another payload file are damaged, the other file's failure can now be reported first. A mature healthy service avoids rewriting absent/empty startup-attempt receipts, while malformed/nonempty receipts retain guarded reset behavior. See the [phase's gates and qualification limits](optimizations.md).
+A successful modern installer must then migrate recognized owned MCP
+configurations to HTTPS and remove the old launchers. After guarded
+configuration saves and connection verification, it calls
+`airk runtime retire-legacy-launchers --install-dir PATH --expected-active SHA`.
+The native transaction verifies the selected schema-2 payload, the per-install
+launcher receipt and any universal pointer for that installation. It stops only
+verified legacy image owners, removes the exact owned launcher files and
+receipts, and returns an absence receipt. It does not stop or restart the modern
+service, change User Stop, remove source/index data, or retain a launcher fallback
+after successful completion. Incomplete migration or cleanup is an explicit
+installation failure, with owned transaction state retained for retry.
 
-F04's candidate MCP construction authenticates bounded selection or managed-provider metadata without reading every payload byte. Initialize/catalog/help can therefore remain available when actual payload bytes are missing or damaged; the first native request still requires complete verification before election or evidence. Managed policy, host/version, manifest/pair metadata and control binding remain checked. Setup runs on a session-owned blocking worker, with cooperative hash/topology checkpoints. EOF closes new setup admission before SDK reply draining, then joins owned work; an exact operation accepted before close can finish its own settlement. An OS call already blocked has no promised hard exit bound. F04's tests and native qualification remain tracked separately in the [optimization ledger](optimizations.md).
+`airk runtime inspect-legacy-launchers --install-dir PATH --expected-active SHA`
+provides read-only, hash-verified old command lineage for migration; a basename
+alone is insufficient. Changed files, partial/unknown universal publications
+and foreign ownership are preserved and reported. A valid universal entry owned
+by another installation is outside this transaction. Windows/Linux termination
+uses held native process identities. The macOS adapter authenticates native
+audit-token execution identity before signaling an owned predecessor; unsupported
+or incomplete native observations block completion. Raw observations retain unknowns and do not claim a
+complete whole-machine census. Windows records the exact image path/hash roster
+and a durable witness while write/image-exclusion handles are held, before
+unlinking. A partial retry cannot reuse that witness for another image; an
+already-missing historical image without it needs a complete native observation
+or reports cleanup incomplete. Fresh installations have no historical image
+roster to retire. Modern Ensure never republishes a universal launcher.
+Activation preserves predecessors only until
+this required post-migration cleanup finishes.
 
-Staging verifies native OS/architecture, version, hashes, safe paths and regular unaliased files, then copies into a new private directory. The file inventory is bounded to 2,048 entries, metadata to 512 KiB, individual files to 2 GiB and payload bytes to 4 GiB. At most four runtime/staging directories are admitted per installation. A failed native self-test leaves the old selection intact. Existing immutable runtime directories are verified and reused; they are never overwritten. Unknown or redirected files are preserved and rejected.
+For a selected schema-2 runtime, `airk runtime retire-previous --install-dir PATH
+--expected-active SHA` then retires **every approved nonselected runtime** in the
+managed installation, including approved orphans no longer named by `previous`.
+It supports skipped version numbers and repeated schema-2 replacements through
+the same inventory contract. A successful receipt has `complete: true`, the
+full `retired_runtimes` list and native process observations. It does not stop or
+restart the selected service, clear User Stop, or modify source/index state.
+Historical schema-1 selected runtimes keep the older one-previous command
+behavior; current installation orchestration uses the modern branch only after
+configuration migration and verified launcher absence.
 
-Installed-runtime selection and execution also validate the complete bounded directory topology, allowing only inventoried payload files and the install/approval metadata. An unlisted neighboring library or directory prevents startup even when every approved file still hashes correctly. Retirement uses separate inventory ownership proof: unknown files still defer deletion, while its durable receipt permits cleanup to resume after the user removes the unknown content. Cleanup never makes an unverified payload executable.
+The native transaction freezes the complete original manifests and process-image
+roster before removal. Missing files in an interrupted cleanup remain part of
+that roster; a reduced list, changed inventory, newly appeared payload or unknown
+file blocks completion. Removal resumes under the same selected-runtime binding.
+One bounded fifth candidate slot allows an installation already retaining four
+approved payloads to stage its modern replacement before deleting predecessors.
+Unknown directories and unresolved staging do not earn this allowance. A crash
+resumes the same candidate; an additional candidate cannot accumulate another
+slot. Startup must finish the current migration/cleanup before another upgrade.
+Reviewed payload repair can restore its exact preserved active slot at this
+bound, without starting the service or deleting the damaged original.
 
-A durable staging intent binds the canonical installation, approved manifest, exact file lengths, approval basis and a fresh staging identity before the copy directory is created. A reservation without a directory still consumes one of the four slots. Repeating staging from the same approved offline source resumes verified completed files and recopies at most one bounded unfinished file. Pending metadata uses the same owned partial-file protocol before atomic rename. The installer never writes an extra byte beyond a component allowance while checking for input growth. Physical free-space checks retain the native safety margin; they are observations, not OS reservations.
+Modified/unknown repair quarantines remain explicit
+`preserved_damaged_payload_requires_review` blockers to complete obsolete-image
+removal. An older interrupted cleanup that lost both its original payload and
+sealed ownership inventory reports `superseded_ownership_manifest_unavailable`
+with recovery guidance. Neither case invents process ownership or silently
+declares completion. Arbitrary user-downloaded flat executables are outside the
+owned runtime and editor-cache inventories; their names do not authorize deletion.
 
-`runtime diagnose` lists at most four pending staging identities independently of live service health. `runtime abort-stage --install-dir <location> --runtime-sha256 <digest>` removes only an intent-proven partial copy, with bounded traversal, exact completed-file hashes and no source deletion. Unknown, modified, aliased or oversized files defer cleanup. The intent remains until deletion completes, so partial deletion can resume. A promoted immutable runtime is preserved. Uninstall first handles these owned pending copies. Ordinary failed self-tests attempt safe owned cleanup; process death leaves the intent and copy for resumption. Final topology and hashes are checked again after the native self-test before promotion.
+## Pre-managed saved indexes and owned editor caches
 
-Payload filenames use portable ASCII components and reject case aliases across files and directories, reserved staging names, traversal and Windows device aliases. The installation/source directory paths may still contain Unicode. Staging intent metadata is bounded to just over 4 MiB per reserved slot, separately from the 512 KiB install manifest.
+For the official standalone families beginning at 0.2.1, the native origin adapter
+captures the actual original MCP declaration and complete configuration digest,
+native user/file identities and full executable hash. Generated editor-cache
+layout and digest-prefix consistency establish cache ownership, not distribution
+approval or permission to execute those bytes. Current, future, altered, aliased
+and unknown cache entries are preserved with an explicit blocker.
 
-The native self-test rejects malformed/wrong-target PE, ELF or Mach-O headers before process creation, checks the executable pair and the helper's exact role/version without loading the model or opening a collection. Its bounded 4 KiB result must bind the actual native version to the approved inventory and report the required state-layout and foreground-dispatch capabilities. Successful process exit alone is insufficient. Reader, parse and timeout failures reap the owned child; Windows retains descendant containment. An installed helper failure never launches a standalone inference fallback. The stable launcher is a copy of the lightweight main executable outside every runtime and extension-version directory. Its separate digest receipt prevents replacement of an unknown launcher. This adds an installed launcher file; the runtime/VSIX payload still has two executable roles. It does not embed another model.
+`runtime prepare-legacy-caches --install-dir PATH --expected-active SHA
+--global-storage GLOBAL_STORAGE [--origin-locators-file PRIVATE_JSON]` freezes
+the exact ownership inventory before configuration changes. Actual default
+installations include known native Code/Insiders/VSCodium user profiles; custom
+installations use the actual current editor storage and storage roots proven by
+original declarations. Other custom profiles without native context or recorded
+lineage cannot be discovered automatically. VS Code owns its extension-package
+directories; this operation does not delete those or unrelated downloads.
 
-`runtime repair-launcher --install-dir <location>` restores a missing launcher or replaces a known older one using the selected approved offline payload. The installer lock, stopped optional-manager proof and exclusive service/project/embedding/watcher leases must all be held; live owners cause refusal before a repair intent is written. Stop an owned login service explicitly before this maintenance operation. A changed or unknown launcher is preserved. If Windows has the launcher image open, run repair from an external approved runtime after stopping its owners; the command preserves its durable intent on replacement failure.
+`runtime adopt-legacy-indexes --install-dir PATH --expected-active SHA
+--operation-id BATCH_ID --locators-file PRIVATE_JSON_ARRAY
+--expected-cache-inspection-sha256 DIGEST` adopts saved evidence from the exact
+original declarations. Native grouping verifies physical collection identity,
+historical layout, saved publication and source inventory. Codex and Claude
+declarations for the same saved index share one archive, one Current publication,
+one adopted index and one immutable grant containing every authenticated original
+configuration claim. Client credentials remain distinct and independently
+revocable. A file can contain several aliases; exact server/container/origin
+identity remains separate from its whole-file digest. Grouping is never inferred
+by the frontend from folder strings.
 
-One repair intent, bounded to 16 KiB, binds the installation, approved runtime, preceding/target hashes, a random partial-file identity and an image allowance of at most 2 GiB. The reservation precedes copying. Copying uses bounded blocks, rejects source growth without writing an extra byte, preserves the native free-space margin, verifies the final hash and syncs before atomic replacement. Repeating repair recopies an owned unfinished partial or finalizes a verified rename that preceded process death. Pending repair blocks activation and launcher startup until settled. `runtime diagnose` reports its target and an independent bounded error. `runtime abort-launcher-repair` removes only an owned unfinished copy; an already replaced image must be finalized. Uninstall settles existing repair bytes without recopying. Durable activation coordinates this operation automatically after proving the optional manager stopped and before candidate startup.
+The preparation retains the original typed locator vector for interrupted
+configuration-save retries. The native batch operation, each derived group
+operation and the catalog's canonical operation remain explicitly distinguished.
+The singular `adopt-legacy-index --locator-file PRIVATE_JSON` is the one-element
+form of this same implementation. Native maintenance checkpoints accepted work, drains the
+selected service and holds its owner leases across catalog writes. It withdraws
+the full accepted cache-image roster, disables the ownership-proven original
+scheduler, stops exact old owners, and holds the existing historical writer
+lease while archiving the selected collection. The original tree stays intact;
+validation and compatibility conversion operate on separate private copies.
+Only actual Current publication, native catalog completion and imported original
+authority permit success. No source extraction, watcher, indexing or model job is
+created. `source_availability: not_observed_saved_only` deliberately does not
+certify current source availability, freshness or semantic readiness.
+
+Enrollment uses the group's original registration and the selected original
+configuration digest. `http-legacy-connection --origin-sha256 DIGEST` additionally
+selects the exact native configuration claim when one original file/logical
+registration refers to different historical physical indexes. An unknown claim
+or omitted ambiguous selector cannot fall back to another imported grant.
+
+After immutable adoption and authority completion, exact predecessor images are
+restored only for the unfinished guarded configuration transition. Successful
+installation still requires all recognized configurations to use HTTPS, then
+`runtime retire-legacy-caches --install-dir PATH --expected-active SHA
+--expected-inspection-sha256 DIGEST`. Native retirement checks saved original
+configuration containers for remaining accepted stdio references, stops exact
+image owners and removes only captured owned images and empty generated leaves.
+It retains full process/absence receipts and preserves sources and old index data.
+
+A newly appeared cache prevents completion. Explicit bounded
+`runtime reprepare-legacy-caches` with the previous inspection digest archives the
+original proofs and returns a new accepted inventory; configuration review and
+guarded saves must run again against that inventory. Pending withdrawals,
+changed file identities and unknown entries require recovery rather than silent
+inventory widening. Final real predecessor, process, Windows and Mac acceptance
+remain separate qualification gates recorded in the working release ledger.
+
+The source owners are [runtime verification](../crates/airk-cli/src/runtime_install.rs),
+[the native builder](../scripts/build-service-runtime.py), and
+[extension verification](../packages/vscode/src/serviceBootstrap.ts).
+
+## Process lifetime and recognizable names
+
+A per-user native service owns the loopback listener, native grants and shared
+in-process MiniLM engine. Model status identifies its service instance, approved
+execution digest, provider generation, admission and outstanding work. A null
+inference process ID does not mean the engine is missing. Index/project workers
+can still execute independent work using the same approved native image; one
+distributed executable is not a claim that every workload uses one OS process.
+
+MCP clients connect directly to the saved native HTTPS URL. They do not spawn an
+AIRK process, Node proxy or launcher for each connection/request. Verified setup,
+inspection and administrative CLI commands remain bounded one-shot operations.
+Interactive terminal tools execute the sealed main directly, retaining the exact
+installation and native selection. The optional terminal wrapper is a shell/PATH
+convenience, not an MCP transport or another engine copy.
+
+Optional OS startup uses owned per-user definitions bound to the sealed main.
+Windows Task Scheduler, Linux user systemd and macOS login management retain
+separate platform checks. No modern manager entry is generated through a copied
+launcher. External organization supervisors retain their ownership policy.
+See [process ownership](process-model.md) and [native signing](native-signing.md).
 
 ## Native user defaults
 
-Activation development evidence on October 23, 2026: Windows passed seventy-three CLI adapters and all-feature workspace Clippy. Non-root Debian 12 x64 passed seventy adapters, twelve native process regressions and the storage/publication/resource/watcher/progress suites, with CLI Clippy (local image `9a04d5ba61ae4b601467edfdbcc76bf3613bba8e9d8aa21fb541fea623fe77af`). The later portable macOS directory-separation regression passed on Windows; it is not native macOS execution evidence. The Windows on-demand crash fixture passed durable drain/probe interruption, explicit abort, exact candidate resumption and owned cleanup. Stage21 records source `379a63c255570e27d73951ec6a34ed09a993cf28bb8d92e5c658d082b6f44cfc` across 579 inputs, main `992045c331521db576d1c03c2d0d29c92d7a74e91795e4cd2ad429b6bcc08bd9` and helper `0425d9f5f43941e9b28f73fd4356bf008dfc53bffab34aaaba3aaf477f4e4f16`. Its non-elevated Task Scheduler fixture also passed complete interruption/abort/recovery, confirmed the candidate remained OS-managed, removed its owned registration and completed native uninstall. This qualifies that local fixture, not all installed targets. A broader Windows test run exposed one intermittent managed-file alias validation error; isolated and four concurrent reproductions passed, and diagnostics now retain the offending path/link count for investigation. No alias rule was weakened.
+`airk runtime location [--channel stable|preview]` reports defaults without
+creating an installation. Native OS account/known-folder lookup, rather than a
+workspace-supplied home path, identifies the user. Linux accepts supported
+absolute XDG overrides. Stable and preview retain separate locations and manager
+identities. Existing installations use their recorded layout; selecting a
+version does not silently create another service or relocate an index.
 
-`airk runtime location [--channel stable|preview]` reports native user defaults without creating directories. Fresh installations use `runtime`, separate `index-v1` data and `service-v1` state leaves; preview appends `-preview`. See [storage formats](storage-formats.md) for the full mapping. Existing installations at historical `service-1.4` locations retain their bound paths instead of silently creating a second service or relocating owned data. Explicit install paths remain available to trusted user/machine deployment policy; preview live-data cutover and managed policy presentation remain open.
-
-The report includes distinct configuration, data, state, cache and log defaults. Windows queries known folders with an explicit current-process token; the implicit-token API still expands process environment values for AppData and is deliberately avoided. Unix resolves the current effective user's home through the OS account database. Inherited `HOME`, `USERPROFILE`, `APPDATA` and `LOCALAPPDATA` values do not choose those native defaults. Linux honors absolute XDG configuration/data/state/cache overrides and ignores relative or empty values, with account-bound home defaults. On macOS, fresh configuration, data and state use separate `AIRK/configuration/settings`, `AIRK/data/index-v1` and `AIRK/state/service-v1` directories under Application Support; none is nested in the install directory. Existing legacy layouts keep their recorded leaves. Log/cache defaults use their native Library locations. The installer now uses the state default for a matching native install; custom install roots retain an explicit choice as described below.
+Install/payload, writable state/control, index data, cache, logs and client
+configuration are distinct locations. Explicit custom installations require
+reviewed ownership and state binding. See [storage formats](storage-formats.md).
 
 ## Writable state binding
 
-`runtime stage` accepts `--state-dir <absolute-private-location>` and `--channel stable|preview`. A matching native install defaults to that channel's native state directory, including `XDG_STATE_HOME` on Linux. An explicit custom installation without a state override uses its own installation directory. Approved staging pins the canonical install/state/channel binding before copying; later staging cannot silently change it. State cannot live inside an immutable runtime payload.
+Installation/layout and initialization receipts bind the original private state
+and control namespace independently of the payload. Missing, redirected or
+conflicting initialized state is a recovery condition, not permission to create
+an empty registry. Unknown directories and partial receipts are preserved.
+Source/index isolation also protects proven private installation/state paths.
 
-The install-side layout intent and state-side ownership receipt are each bounded to 32 KiB. An OS claim lock serializes ownership, and initialization resumes after interruption before or after lock creation. Unknown nonempty state directories, foreign install/channel claims, changed metadata, aliases and redirected paths are preserved and refused. A pending or missing layout never falls back to another control directory. When a selected installation loses its layout, recovery requires an explicitly reviewed, previously claimed state location; it cannot create a fresh empty ledger automatically.
+Canonical databases, journals and committed publications remain the state
+owners. A checkpoint packet records bounded identities, digests and safe
+progress references; it does not copy source text, private keys or live model
+pointers into an installer backup. Index-data privacy remains separate from
+control/credential privacy: inventory can report existing public storage and
+its limits without claiming that every ancestor or ACL was audited.
 
-Before an installed runtime creates its registry, the singleton service owner publishes a bounded initialization receipt in the writable state directory, beside the control directory. Installer quiescence does the same before opening a registry. The receipt binds the exact install/state/channel layout and survives loss of the control directory. Installed startup, explicit foreground startup and lifecycle discovery then refuse a missing or redirected initialized control directory; they never create another empty registry. Restore the original owned control state to recover its exact durable namespace. `runtime diagnose` reports initialized/interrupted receipt state and a bounded control error without opening project evidence. Matching partial receipt bytes resume only while the original control directory remains present; unknown or changed receipts are preserved and refused. Raw explicit development namespaces remain distinct from installed bindings.
+## HTTPS connection and certificate trust
 
-Owned external native logs can still be exported after the control directory disappears, using the verified install/state/log receipts and the original log-owner identity. This read does not recreate the control directory. A missing external log directory or missing/conflicting ownership remains an explicit failure; a ring located inside the lost directory is unavailable. Loss of the entire writable state, including its independent ownership receipts, is a separate recovery condition.
+The service binds the saved IPv4 loopback port, preferring 57421 only for initial
+selection. If that port is occupied it holds a newly bound ephemeral listener
+and publishes the actual endpoint; clients must use the returned URL. The old
+port is not assumed safe or available. Namespace, installation/user identity,
+service instance, generation and certificate fingerprints remain native-bound.
 
-Ownership writes use one intent-recognized partial file rather than an untracked temporary name. A matching bounded byte prefix can resume after process death; changed content or a partial file predating the claim is preserved and refused. Native exclusive rename publishes the receipt without replacement or a hard-link fallback. A filesystem lacking that operation reports failure and retains the pending claim for diagnosis.
+Enrollment uses an explicitly reviewed single/combined selector, or genuine
+owned predecessor configuration/provider lineage plus a live imported grant.
+A multi-root predecessor retains all original members with no default project.
+Missing, revoked, authority-zero or ambiguous state requires review. Setup
+returns protected connection references, never a raw bearer or private key.
 
-`runtime inspect` reports the resolved control directory or a bounded state error independently of verified payload identity. `runtime diagnose` reports layout/claim state independently of live health. `runtime abort-layout` removes only an unfinished install-side reference, preserving state directories, receipts, locks and contents; ready layouts require an explicit transition. Earlier development installations without this binding need their original lifecycle tools or a fresh reviewed installation, rather than implicit adoption of an old ledger.
+TLS validates normally against the exact loopback IP. Install the reviewed public
+issuer through supported additive client trust or per-user OS trust; preserve
+existing enterprise/public roots. Do not disable TLS validation or replace the
+endpoint with plain HTTP. Normal CA validation is not a unique-issuer pin.
 
-On-demand startup, exact-payload health, drain, project/embedding/watcher quiescence, foreground dispatch, repair and uninstall all resolve the same bound state directory. Uninstall preserves the ledger and its state ownership. A stable launcher delegates foreground lifecycle to the selected runtime; optional login startup requires its launcher to match the selected native executable. Stop owners and repair a known older launcher before starting that registration. Organization-provisioned read-only payload references are described below; extension lifecycle-policy presentation and complete log placement remain separate integration work.
+`runtime http-trust --install-dir <installation> --action inspect` observes the
+owned trust state. Install/remove require `--expected-ca-sha256 <reviewed-digest>`;
+mutation rechecks that fingerprint. Windows uses CurrentUser Root; macOS uses the
+native user's login keychain. The ownership receipt distinguishes preexisting
+issuers from AIRK additions. Interrupted or changed outcomes remain for review,
+not blind retry. Verified saved identity permits inspecting/removing owned trust
+after Stop without starting a service. Uninstall's guarded cleanup preserves
+preexisting or unproven trust and reports incomplete cleanup explicitly.
 
-The registry also matches both ready layout/ownership receipts before protecting the whole installed state and install directories from source registration or capture. It retains proven private paths if a receipt is later missing, and refuses changed or mismatched receipts. Raw `serve` fixtures protect only their explicit control root rather than inferring ownership of its parent. Registered project data roots receive the same source isolation independently of the installer.
+Automatic per-user Linux OS-store enrollment is unsupported. Linux VS Code MCP
+needs explicit administrator provisioning in its distro system store and user
+NSS store; see [official VS Code certificate guidance](https://code.visualstudio.com/docs/setup/network#_ssl-certificates).
+An internal AIRK HTTPS check does not qualify that external host. Client formats,
+protected VS Code input resolution, remote/container limits and actual connection
+checks are documented in [agent integration](agent-integration.md).
 
-## Organization-managed read-only payloads
-
-`runtime managed --source <approved-payload> --install-dir <user-metadata> --state-dir <private-state> --approved-sha256 <digest> --verification-basis organization-digest --lifecycle external|user-on-demand` pins a provider-owned payload without copying executables or creating a launcher. The source must be disjoint from writable installation metadata and state. The same inventory, executable-pair, native-version and bounded self-test checks apply; the self-test must also report managed-reference capability 1. Every execution verifies the pin, hashes and bounded complete payload topology. Unknown or changed provider files are preserved and prevent execution.
-
-`external` leaves process startup and recovery to the organization's supervisor. Configuration can remain pending while that supervisor is unavailable; ensure never starts a competing user process, writes an on-demand attempt or commits a healthy selection without exact executable and payload identity. The supervisor starts the approved executable with `serve --runtime-dir <reported-control-directory>`. `user-on-demand` permits ordinary user-owned process election from the approved source. Machine/user policy must choose this mode; workspace content cannot choose an executable or approval.
-
-Managed policy disables staging, activation, rollback, launcher replacement and user login registration. `runtime prepare-client --install-dir <user-metadata>` explicitly creates a verified lightweight launcher copy in writable user metadata, without copying the helper or writing to the provider payload. It requires the selected approved payload and settled activation/launcher state, preserves a changed client file, and does not start, stop or change ownership of the service. The extension requests this client after ensuring the reviewed managed service; agent configurations can then use its stable path. Inspection reports the verified client path when present, alongside the provider executable, policy and writable control directory. Diagnosis remains possible when provider files disappear. Uninstall detaches only the user reference and selection, retaining provider files, the client copy and service state. The retained client fails explicitly until a valid selection exists. User-on-demand detachment authenticates and drains its saved exact process identity even if the payload is missing; external detachment leaves the organization-owned process running. A bounded durable detach receipt resumes after interruption.
+The source owners are [HTTP setup](../crates/airk-cli/src/runtime_http_commands.rs),
+[private identity/credential storage](../crates/airk-cli/src/http_endpoint.rs) and
+[owned trust](../crates/airk-cli/src/http_endpoint_trust.rs).
+Issuer replacement uses an explicit receipt-backed prepare/trust/commit/finalize
+transaction, with prepared-only abort and an ordinary 24-hour overlap. Expiry
+does not remove trust automatically. See [issuer rotation](local-https-api.md#explicit-issuer-rotation)
+for exact review inputs, owned client-bundle CAS and remaining host qualification.
 
 ## Selection and lifetime
 
-Activation now records a bounded durable intent before stopping the preceding runtime. It binds the canonical install/control directories, candidate, preceding public selection, restart ownership and current phase: drain, launcher repair, candidate probe or predecessor restoration. `runtime ensure` resumes that accepted operation after process death. A different activation cannot replace its target. Only foreground OS startup follows a probing/restoring intent; clients retain the preceding public selection until candidate executable/payload health and a registry request both succeed.
+Explicit Stop and pause preferences remain native. Observation is not authority
+to start a stopped owner or replay a request. Newer runtime versions cannot
+implicitly widen a configured search selection. Accepted source/index work
+retains its native request identity and durable status independently of Explorer.
 
-When an owned login manager exists, activation verifies its actual definition, drains the old service, stops restart ownership, waits for native owner leases, repairs the known launcher and starts the candidate through that same manager. It never falls back to a detached process when manager ownership is missing, changed or unavailable. Launcher repair performs one complete payload verification within its locked operation; an identical verified launcher copy can dispatch the selected service without delegating through another complete inventory scan. A different executable implementation still delegates lifecycle interpretation to the selected runtime.
+Upgrades journal `staged_verified`, `quiescing`, `checkpoint_ready`, `old_stopped`,
+`activation_prepared`, `candidate_started`, `committed` and `retiring` boundaries,
+with an explicit `aborted` terminal path. The journal binds the installation,
+control namespace, candidate/predecessor inventories, manager definition and
+checkpoint digest. Modern owners close admission and reach their canonical
+checkpoint boundary before replacement. Provider callbacks/delivery and worker
+ownership participate; an immediate pending/unknown drain is not completion.
 
-`runtime abort-activation` restores the preceding verified launcher/selection and process before the candidate is publicly committed, preserving both payloads. A committed selection requires explicit `runtime rollback`; an old intent cannot undo it. Unknown live processes, changed selection/control bindings, malformed receipts and ambiguous OS ownership preserve the intent and report failure. `runtime diagnose` reports pending activation, its latest bounded outcome and independent errors without depending on service availability. Remove/uninstall and competing launcher/login mutations require resolving a pending activation first. Native self-test capability `activation_resume: 1` is required for newly approved payloads.
+Older multi-process installations cannot implement a new graceful protocol
+retroactively. Their adapter captures committed-store state only after verified
+old-image/manager ownership and exit observations, and records that weaker
+boundary explicitly. Unknown or foreign processes are preserved. PID reuse,
+missing observations and unsupported saved jobs are not interpreted as safe
+completion. Original request keys, publications and source bytes remain intact.
 
-Shared login ownership receipts now live at the private install-side `startup-owner.json`; OS definitions remain in native user configuration. On-demand startup reads no login configuration unless that private receipt opts into manager ownership. New parents are private, existing safe Unix 0755 user-unit directories retain their permissions, and redirected/other-writable ancestry or aliased configuration files are rejected before writing. Legacy `airk-…` collection schedulers retain their existing receipt location. Earlier development shared registrations need their original cleanup tools rather than implicit adoption.
+Resume and rollback use the same operation/selection fences and actual durable
+outcome; they do not submit an uncertain mutation again. The implementation is in
+[checkpointed activation](../crates/airk-cli/src/runtime_checkpoint.rs) and
+[service checkpointing](../crates/airk-cli/src/service_runtime_checkpoint.rs).
+Actual predecessor/version/OS campaign coverage remains a release gate.
 
-Windows Task Scheduler may export a logon trigger's SID as an account name. The verifier resolves both to native SIDs and then compares the complete normalized definition, preserving different accounts, actions, privilege settings and other execution differences as mismatches. The shared Mac adapter still refuses registration before writing/bootstrap because its complete native LaunchAgent proof remains unimplemented; on-demand operation remains available.
+## Registry 13 and downgrade compatibility
 
-`runtime activate --install-dir <location> --runtime-sha256 <digest>` verifies a staged runtime, drains the preceding service and waits for service/project/embedding OS leases to release. Selection changes atomically only after the candidate reports compatible native health with its exact executable and install-manifest identities. A failed candidate preserves the previous selection and attempts to restart it. The selected runtime and one preceding identity remain recorded for `runtime rollback`. Staging, selection and on-demand election serialize through a persistent OS-locked install file. Repeating activation of the active identity preserves its rollback reference.
+The current registry contract is **13**: it retains schema-12 physical catalog
+DDL while requiring in-process provider and embedded-default-source semantics.
+A version string, a copied SQLite file or unchanged DDL does not establish
+compatibility. Required registry/authority/policy capabilities are read from
+retained state and compared with the candidate's native self-test before an
+unsupported target can take over. `runtime_state_contract_unsupported` preserves
+the current selection and requires a compatible runtime or explicitly validated
+snapshot restoration. Executable rollback does not downgrade metadata.
 
-`runtime ensure --install-dir <location>` starts the selected service without a login registration, PATH change, shell command or administrator rights. Ordinary user startup is hidden on Windows with handle inheritance disabled, and detached into a new session on Unix. Background Windows startup suppresses OS error dialogs while preserving execution failures. Host process policies still apply. Startup attempts persist per approved runtime: exponential backoff and at most three attempts in two minutes; a backwards clock does not replenish capacity. A healthy observation after sixty seconds clears the circuit. `runtime reset-startup` is an explicit trusted recovery action.
+See [capability declarations](../crates/airk-core/src/index_catalog.rs) and
+[persistent requirements](../crates/airk-store/src/service_runtime_contract.rs).
+An older main may remain diagnostic-only; that is not permission for old
+workers/model semantics to reopen modern state.
 
-The on-demand service exits after 180 seconds without clients/workers, accepted metadata operations, runnable jobs or enabled background monitoring. Health polling does not prolong that grace. Enabled saved-source monitoring keeps ownership during quiet periods and while indexing is paused; disable monitoring to permit idle exit. Accepted background work continues without an editor until completion or explicit pause/cancellation; exposing that preference remains console work. Explicit foreground `serve` has no idle timeout unless `--idle-exit-seconds` is supplied. A manager-controlled foreground runtime uses that continuous mode.
+## Organization-managed read-only payloads
 
-`runtime launch --install-dir <location> -- <arguments>` forwards stdio and exit status to the selected executable without a shell. Unix replaces the launcher process. Windows uses descendant containment; project and embedding children also have kill-on-close Job Objects. Denied nested-job attachment fails explicitly rather than changing host policy or requesting breakaway. Windows native fixtures exercise those adapters; actual editor-host and managed-policy scenarios remain qualification gates.
+Managed installations pin an approved provider-owned payload and separate user
+metadata/state. `external` leaves service election to the organization;
+`user-on-demand` uses its explicitly allowed lifecycle. Unknown/changed payloads
+are refused. Modern clients use direct HTTPS enrollment and the sealed main;
+`prepare-client` does not manufacture a modern launcher. User detach/uninstall
+preserves provider files and external ownership. Detachment requires the exact
+managed configuration's native catalog initialization to be settled; an
+unfinished or changed reservation is preserved and refused. User-on-demand
+detachment authenticates and drains its saved runtime and proves native owner
+exclusion. External detachment leaves the organization's supervisor running.
 
-**Universal launcher (1.5.0).** The per-installation launcher lives inside the owned install root (for example `%LOCALAPPDATA%\AIRK\runtime\airk-launcher.exe` for a fresh installation; existing installations keep their recorded location). For the native default installation, `runtime ensure` also publishes a version-free **universal launcher** in the sibling `launcher` directory (`launcher-preview` for the preview channel): `%LOCALAPPDATA%\AIRK\launcher\airk-launcher.exe` on Windows, `~/.local/lib/airk/launcher/airk-launcher` on Linux and `~/Library/Application Support/AIRK/launcher/airk-launcher` on macOS. Beside it, `airk-launcher.json` names the current install root and the universal binary's SHA-256. Every invocation reads that file again, checks the binary digest (and on Unix that the file and directory belong to the user and are not group/other writable), and hands its arguments and stdio unchanged to the named installation's own verified launcher, before parsing them, so arguments added by later versions still reach the installation that understands them. A later installation only rewrites the pointer; the universal binary is copied once and never replaced, and an unrecognized binary at that location is refused. Custom, managed and test install roots get no universal launcher. Agent configurations written by the extension name the universal launcher with no `--install-dir`, so they carry no versioned path; a pointer to a missing installation fails with an explicit "reopen VS Code" error instead of guessing. A running MCP session keeps the process it started with; the next launch follows the current pointer.
-
-The hidden `explorer-assistance --descriptor <path>` subcommand lets external agents start the extension-owned AIRK Explorer Assistance MCP server through the same launcher (`runtime launch --install-dir <location> -- explorer-assistance --descriptor <globalStorage>/explorer-assistance/launch-1.json`). It opens no service endpoint, store, registry or AIRK state. It reads a bounded (16 KiB) launch descriptor that the trusted extension rewrites atomically on activation, refuses unknown fields, requires the path to end in `explorer-assistance/launch-1.json`, checks the extension identity (`iokaio.airk`) and version, requires the server to be `<extension root>/out/explorerAssistance.js` with a matching SHA-256 and requires an existing runtime file; on Unix the descriptor must be owned by the current user and not group/other writable. It then runs the runtime on the server with `--assistance-dir <descriptor directory>` (where trusted windows publish their attachment descriptors) and inherited stdio, sets `ELECTRON_RUN_AS_NODE=1` only for an Electron runtime, removes `NODE_OPTIONS` and `NODE_PATH`, and returns the server's exit status. A rejected descriptor never starts the runtime and writes nothing to the MCP stream.
-
-Durable service metadata stays separate from socket placement. Unix uses a short owner-only directory under a valid XDG runtime directory or `/tmp`, with a full runtime/user identity receipt. It rejects unsafe owners, aliases and socket paths exceeding the portable bound. The service replaces only its own fixed stale control socket while holding election ownership. Recognized stale child sockets are cleaned in bounded passes after predecessor leases release; unknown entries survive.
+The durable detach intent supports interrupted retries, including after user
+policy or selection references have been removed. Saved index data and the
+immutable managed reservation remain intact. Detachment does not convert the
+installation to an unmanaged runtime, and Ensure or Start cannot recreate the
+removed references. Reattach explicitly with the same approved managed
+configuration; changing its policy requires a separately supported transition.
+Saved state capabilities and checkpoint requirements still apply; read-only
+payload policy is not bypassed by a new transport.
 
 ## Optional startup and removal
 
-`runtime login --install-dir <location> plan|status|install|start|stop|uninstall` uses per-user Task Scheduler, systemd-user or the [Mac signed-bundle adapter](service-macos-login.md). Only explicit install enables persistence. Plans are read-only and manager failures remain visible. On-demand operation does not require login integration. Complete installed-target qualification remains open; do not treat rendering fixtures as installed acceptance.
+Startup registration is opt-in and definition/image ownership is checked before
+changing it. Uninstall removes only recorded owned native/terminal/client
+integration with the required preimage/identity checks; source and independent
+index data are preserved. A trust or process cleanup uncertainty is reported and
+retained rather than converted into success. Stop, logical index deletion,
+physical derived-data cleanup and full data purge are distinct operations.
 
-Shared-service mutations now require proof of the configuration held by the OS manager, in addition to the local definition receipt. Windows reads only the exact task through Task Scheduler's native schema, compares normalized actions, principal, triggers and settings, and ignores generated registration metadata. It finds lifecycle tools through the native system-directory API. Linux inspects typed systemd properties over the local native user's bus, pins the loaded unit while reading, and rejects changed commands, extra lifecycle commands, drop-ins, pending reloads, environment/path overrides or changed execution policy. The optional SDK loads only from protected OS library paths; it is not required for on-demand operation. Both SDK inspection and systemctl select the same `/run/user/<uid>/bus`, independently of inherited session-bus overrides.
+`runtime inventory` is read-only. Purge requires its exact reviewed plan/digest
+and excludes unknown or redirected locations. Index deletion uses the native
+retirement contract. See [index retirement](service-project-retirement.md) and
+[extension cleanup](vscode-extension.md#removing-the-terminal-command-and-uninstalling).
 
-`registered_definition_matches` distinguishes a match from a mismatch or unavailable proof; bounded `registration_verification_error` preserves inspection failures separately from manager status. Start, stop and removal refuse unverified registrations, including inactive ones. Windows/Linux diagnosis and stop do not require a healthy launcher; installation and start verify it. Registration never force-replaces an existing task. The Mac adapter invokes only the captured signed app's native Service Management object and additionally verifies launchd origin/program/arguments; unknown raw agents remain preserved. Its native SDK/lifecycle/signing qualification remains pending. On-demand operation remains separate.
+## Unavailable legacy index during upgrade
 
-Native manager commands now retain a cleanup guard across pipe and wait errors. One command deadline covers execution, input completion and both output streams; blocked input never causes an unbounded thread join. Oversized output and read failures are explicit errors instead of truncated registration evidence. Windows command descendants use the same confirmed cleanup as extraction and supervision.
-
-`runtime inspect` verifies the selected payload without starting it. `runtime diagnose` reads bounded bootstrap observations independently of a running service, preserving their observation times and reporting selection failures. Bootstrap records contain state, PID, time and exit code, with no source/query content. Complete rotated service logs and console diagnostics remain open.
-
-`runtime remove --install-dir <location> --runtime-sha256 <digest>` removes an unused owned runtime only after all service owners have stopped. Active and rollback selections are protected. `runtime uninstall --install-dir <location>` drains the service, removes its exact owned optional login registration when present, and retires payloads from authenticated inventories. It preserves project/index data and durable service metadata. Unknown files, modified payloads and executing Windows images defer removal. A durable uninstall/retirement receipt permits retry after interruption; no recursive installation-directory deletion is used. Run the uninstaller from an approved external payload if the currently executing Windows image prevents its own removal.
-
-Removal also supports an initialized installation with no first selection. Without a saved exact process identity it requires exclusive service/project/embedding/watcher ownership instead of attempting shutdown. An absent runtime directory is valid for an interrupted empty installation. Retirement preflights approval and bounded startup receipts before deleting payload bytes, syncs directory removal, and resumes ancillary cleanup when a crash already removed the payload directory. Malformed or changed receipts remain available for diagnosis.
-
-## Development evidence
-
-Installed-topology evidence on October 23, 2026: Windows passed sixty-one CLI adapters and CLI all-target Clippy; non-root Debian 12 x64 passed fifty-nine adapters, twelve native process regressions and the storage/publication/resource/watcher/progress suites, with CLI Clippy (local image d141af0c257a92d27e841b5b2ea888a3058fd547a7e215c74d1e4db778d61bff). The new regression proves that an unlisted installed library blocks selection/execution while selected-runtime uninstall preserves the unknown file, records deferred cleanup and resumes after its removal. The fresh stage18 debug pair has source identity `349e3efbbb902598eb7dd7f7e1d1ab967fabcd4368a2b2d282601f78ee0164ab` across 577 inputs; main `5a2fef47190fb4132af6ff6873244bba3beaa2983257264247e274d987311014`, helper `7ee7e912d33c02252c5276c9b044e4de6688814ea39a607580a5233ad6f5473d`. Real offline installation and both managed-reference lifecycle smokes passed against that pair; no VSIX has been built.
-
-Unselected-install/removal evidence on October 23, 2026: Windows passed fifty-nine adapters and CLI all-target Clippy; non-root Debian 12 x64 passed fifty-seven adapters, ten native process regressions, the storage/publication/resource/watcher/progress suites and CLI Clippy (local image 4bb930e1abcccc1cdcf2afeee7a70b823d64f92a13d995df8b29cb5d8d72fcd2). New tests cover approval/startup preflight before deletion, resumption after payload-directory removal, live-owner refusal before first activation, retained-state preservation and repeated uninstall with no runtime directory. Full workspace testing continues against the preceding managed-reference snapshot.
-
-Managed-reference evidence on October 23, 2026: Windows passed fifty-six CLI adapter tests; non-root Debian 12 x64 passed fifty-four adapters, ten native process tests, the storage/publication/resource/watcher/progress suites and CLI all-target Clippy (local image b6849bb1a75e427f08e77e5a63542d1d1b67c355dd2636a943dba988643a7b31). Eight new regressions cover provider identity/topology, foreign policy, external unavailability without user startup, external-owner preservation, missing provider files during user drain, interrupted detach and invalid selection. The Linux run precedes the final inspection/policy-message refinements, which passed Windows adapter and workspace Clippy checks. Python contracts passed 129 tests with four skips; extension tests passed 143 with six skips. Repository and whitespace checks passed; notices were generated for 411 packages with the existing three license-text review items.
-
-`python scripts/check-managed-runtime.py --runtime target/airksvc-runtime-stage17` passed the real Windows read-only provider fixture in both lifetime modes: exact payload health, no executable copying, policy refusals, clean user drain, external-process survival after detach and unchanged provider bytes/topology. Its debug source identity is `648060e2b438a0d7a50950e05672355b9c1d28eb5b9e3377141fddd0a5d7d8f8` across 575 inputs; main SHA-256 `bd842f5e25c9309f1750674908645f4a454e33e28d044f7ff32c2193a3b25f32` and helper `1b57073617cf56f83bff54ae4fb88251260af6ab40da2968aa7c304c5306e808`. It predates the final inspection fields and explicit rollback/reset-policy messages. Full workspace testing is continuing; this stage does not close the implementation or packaging gate.
-
-On October 23, 2026, Windows passed seventeen CLI adapter tests plus the dedicated detached-handle regression and its child fixtures. Coverage includes inventory tampering/aliases/path escape, failed self-test selection preservation, persisted startup limits and resumable removal that preserves unknown/changed files. Eight native process tests passed, including idle shutdown during health polling and Job Object-backed supervision. Workspace/all-target/all-feature Clippy passed. A non-root Debian 12 x64 run passed seventeen adapter tests and eight native tests, plus the existing store/publication/resource suites, using the already validated local base after a Docker registry 520 error; image `3bdcb9212f8dc64d507b46ec995f57c083f0e6dd5b8674cc1cfefc8995b6d4c7` predates the final common topology bound. These are development checks, not the release matrix.
-
-The development pair `target/airksvc-runtime-stage11` records source identity `ba5664517f662e5ca100fd42cd73b71c05169527fbdac8c5141fef45e9b2d5ae` across 549 inputs. Main SHA-256: `cfda3062cd6f4100643cfdf60a9d07d728035cfb7944b47dd1123f1b327545ef`; embedding helper: `05dc3e92d380c64df9713249ce85401fa3e0ec2a9a234b681336307449d761a1`. This is a local debug pair with complete offline notices, not a VSIX or a published/signed runtime. It predates final portable-path/topology guards and the command-module split; those guards have separate unit validation.
-
-`python scripts/check-service-install.py --runtime target/airksvc-runtime-stage11` passed the isolated offline staging, election, exact-payload health, upgrade, rollback, stable-launcher and resumable-uninstall fixture. Its two approved payloads deliberately share native executable hashes but differ in legal inventory, proving that health binds the complete selected payload. The fixture never operates on an installed user service. The same pair also passed the two-project offline MiniLM smoke: one loaded model, direct hybrid citations through replacement, and lexical/health/source preservation after terminating its owned helper.
-
-Before default cutover, finish native LaunchAgent configuration proof, rotated logs and extension policy presentation. Durable activation now coordinates launcher maintenance and manager-owned startup as described above. Native user/XDG state placement and managed references are implemented. Native macOS installation/signing and actual multi-window editor-host acceptance remain separate gates.
-
-Interrupted-staging development evidence on October 23, 2026: Windows passed twenty-seven adapter tests, including an actual owned-process exit before promotion, bounded resumption, safe abort, reservations preceding directory creation, portable topology checks and rejection of unlisted native self-test output. The non-root Debian 12 x64 run passed twenty-four adapter tests, nine native process tests and the store/publication/resource/watcher/progress suites (local image `683970137148db16fdc650428c480b05de4c715d5f47f228f3532fbb7df0343d`). Linux caught and verified the fix for creating new directories with owner-only mode rather than relying on the default umask. Windows workspace/all-target/all-feature Clippy and repository checks passed.
-
-Development pair `target/airksvc-runtime-stage13` records source `e7c475432606cdfe30e56eadf35052dc7e44e529eaeb8932b7764e7ad76f1730` (566 files), main `8285d4cdbf7a404f2b5d184d380b22e31da6e56b1c6b94c6cf5a806b1df1961c` and helper `755c2bc502f3be563a3ae3d71296f017bfa561bc089594519db5336a35515fce`. Its Windows offline installer smoke passed staging/self-test, service election, stable launcher, exact-payload upgrade, rollback and resumable uninstall preserving unknown files and project data. That pair predates the Unix-only directory-mode refinement, which has the separate Linux evidence above. No VSIX was built. Registered-manager proof/upgrades, launcher repair, managed state/policy, rotated logs and installed macOS/editor acceptance remain open.
-
-Registered-manager development evidence on October 23, 2026: Windows passed twenty-nine adapter tests, including in-memory native Task Scheduler schema comparison for changed commands, additional actions, principal elevation and generated metadata. Read-only native inspection confirmed a uniquely named absent task without creating a registration. Non-root Debian 12 x64 passed twenty-seven adapter tests, nine native process tests and the existing storage/publication/resource/watcher/progress suites. Required-SDK tests additionally validated protected library loading, unavailable local-bus handling, native user-namespace selection and the shared five-second inspection deadline; Linux Clippy passed (final deadline image fc9d0e05ec9ae8991bfa7c2ccc7d61f4eb2624383fb8def9ad91da2a34330029). No persistent startup registration was created. Loaded-unit acceptance against a real user systemd manager, native LaunchAgent proof and installed-platform qualification remain open.
-
-Launcher-repair development evidence on October 23, 2026: Windows passed thirty-four adapter tests, including an actual process exit after launcher rename, bounded partial-copy recovery, preservation of changed/oversized/aliased files, and safe uninstall settlement. Native Task Scheduler schema fixtures additionally distinguish ready, queued and unknown execution states. Non-root Debian 12 x64 passed thirty-two adapter tests, ten native process regressions and the storage/publication/resource/watcher/progress suites (local image 5dca919c8977dd3c7fc5c72c0cd572ba4fd2830dc9c056781dffc6295eb440a1). Windows CLI all-target Clippy and repository checks passed. Automatic upgrade coordination and native macOS/installed-editor acceptance remain open.
-
-Native-default development evidence on October 23, 2026: Windows passed thirty-seven adapter tests and CLI all-target Clippy. A child-process fixture overrides HOME, USERPROFILE, APPDATA and LOCALAPPDATA and verifies that native home and every reported default remain unchanged; it caught and verified the fix for implicit-token AppData expansion. Non-root Debian 12 x64 passed thirty-five adapter tests, ten native process regressions, CLI all-target Clippy and the storage/publication/resource/watcher/progress suites (local image acf06433deb726633e6fa37e250216bddbed36c272d6f58c343f5f33d387e08f). Discovery tests cover absolute/relative/empty XDG policy, distinct stable/preview defaults and absence of directory creation. Native macOS qualification remains unavailable.
-
-The earlier development pair target/airksvc-runtime-stage14 completed the extended Windows offline lifecycle smoke: staging/self-test, exact-payload health, election, refusal of live-owner launcher repair, missing-launcher restoration, preservation of modified launcher bytes, repaired forwarding, upgrade, rollback and resumable uninstall preserving unknown payload files and project data. Its source identity is dd92c21e5c429b620c5ed028cdad12d0d25a24a9b2dfe13e384df2d496813335 across 570 inputs; main SHA-256 78480093f576a7b78da94716d72c410e9fbedf4cb9a3e4f502bb434a4a6df42c and helper 684127aaf92da0465fe51ba2c7eba60b86b88073418f4465570583a244ae4d84. It predates native user-directory discovery and the final unknown Task Scheduler-state refinement, which have separate adapter evidence above. It is a debug runtime pair, not a VSIX.
-
-Writable-state development evidence on October 23, 2026: Windows passed forty-four adapter tests and CLI all-target Clippy. Seven layout regressions cover private state separation, immutable install/channel binding, interrupted claim/lock initialization, safe abandonment, refusal of foreign/changed/aliased ownership, explicit existing-control transition, and missing-layout recovery that cannot create another ledger. Non-root Debian 12 x64 passed forty-two adapter tests, ten native process regressions, CLI all-target Clippy and the storage/publication/resource/watcher/progress suites (local image 4ded1b0a2aa3b78e28e7b4d5ffd1a57cf4b49e40d0411117c601fa13845832a6). Native macOS and installed-manager qualification remain open.
-
-Bootstrap hardening evidence on October 23, 2026: Windows passed forty-eight adapter tests and CLI all-target Clippy. New contracts reject a mismatched native version, missing state/foreground capabilities, incomplete completion and oversized self-test results. An actual child-process exit during ownership writing resumes from a matching bounded prefix; pre-existing/changed partials and existing publication destinations are preserved. Non-root Debian 12 x64 passed forty-six adapter tests, ten native process tests and the storage/publication/resource/watcher/progress suites; final focused adapter/Clippy checks include the owned-child cleanup guard (local image c8421b18cd5ecd9aa4c4fce25e67e376d588eaa889b1a054c5710d097dd179d9). The fresh stage16 debug pair returned protocol 1, its exact 1.3.2 native version, state-layout capability 1 and foreground-dispatch capability 1 without loading inference or opening a collection. No VSIX was built.
-
-Mac startup proof research, October 23, 2026: Apple documents [SMJobCopyDictionary](https://developer.apple.com/documentation/servicemanagement/smjobcopydictionary(_:_:)) as a deprecated job-dictionary query. Its [archived launchd export implementation](https://github.com/apple-oss-distributions/launchd/blob/main/src/core.c#L984) exports a subset of execution/runtime state, omitting settings such as environment and throttle policy. This historical implementation does not establish a complete current registered-definition proof. Keep the shared registration guard until an appropriate native startup ownership contract is implemented and qualified; neither a matching command nor parsing human-readable launchctl output substitutes for that proof.
-
-
-Shutdown hardening, October 23, 2026: login Stop/Uninstall no longer requires a launchable payload. Graceful shutdown authenticates the selected inventory digest, approval/version and saved executable hash without executing or requalifying payload files. If those receipts or live health are unavailable, the existing OS-held registration comparison must authorize the exact login job before stopping it. Process/project/embedding ownership must release before registration removal or payload retirement. Unknown or changed payload files remain preserved; full uninstall may stop/remove owned startup and then report the remaining payload failure for repair. On-demand process ownership is never inferred from a PID. Starts and upgrades retain complete payload qualification.
-
-Windows installer/manager checks and Linux adapter checks cover this identity path, tampered receipts, missing executable/legal files, refusal to stop an unowned registration, preserved unknown bytes and resumable retirement. Actual installed-manager damage recovery and macOS runtime acceptance remain in the final qualification matrix.
-
-
-Control initialization development validation on October 24, 2026: the CLI library passed 88 tests on Windows and non-root Linux, including receipt interruption, conflicting ownership, missing-directory refusal and original-state restoration; Linux additionally verifies that a redirected control path cannot escape into raw mode. Native process suites passed 17 on Windows and 16 on Linux. After the cached-log refinement, the two installed-control/logging regressions passed on both platforms, and four Windows logging tests passed. All-feature/all-target workspace Clippy and Python contracts (129 tests, four skips) passed on Windows; Linux lightweight all-target Clippy passed. Primary Linux image: `51daf8f14b0f9e8e38e6bb4a6650ee254a8c5904e95a84870668be23de7afadd`; final cached-log review: `3cf28564b36c29618739b53181a3fab00deb2c459bac6ebc8b66eed9cdd8422c`. These are local fixture receipts; installed macOS and editor qualification remain open. No runtime pair or VSIX was built for this stage.
-
-## Independent registry namespace binding, October 24 development implementation
-
-`airk-registry-1.4.owner.json` lives in the verified writable-state directory, outside `control`. It binds the complete install/state/log/channel layout and completed registry namespace with a checksum. First initialization records an initializing phase before the control receipt and database are created; the native service completes the namespace binding before its metadata actor can acknowledge requests. Ordinary validation reads completed ownership and file metadata without opening an index or creating a database.
-
-A ready binding refuses missing database/primary-owner files, changed namespace, redirection, aliases and damaged phase/checksum metadata. Losing both registry files cannot create an empty replacement at the same control path. Restoring the original owned files retains the namespace and accepted keys. Earlier development control receipts require complete matching metadata before upgrade; an ambiguous empty/missing ledger is preserved and refused. Raw developer namespaces retain their separate explicit contract and cannot adopt scoped data from another namespace.
-
-The receipt and fixed `airk-registry-1.4.owner.part` each have a 32 KiB ceiling. Only an exact owned preceding/next prefix can resume the partial; unknown bytes remain untouched. Publication syncs the file and atomically replaces the preceding receipt under the service lease. No project source/index is opened by namespace validation. Content-free cached process logs remain separately bound.
-
-The console adapter additionally rejects a credential-bearing connection response at its output boundary, independently of its request-method allowlist. Evidence grants therefore cannot enter its metadata pipe even if a peer returns an unexpected response variant.
-
-Namespace-binding validation: Windows and non-root Debian 12 x64 each passed 61 registry tests and 99 CLI unit tests. Native service suites passed 21 on Windows and 20 on Linux, including actual refusal after deleting both owned registry files, restoration of the original namespace, independently available logs and preserved metadata bytes. Layout fixtures verify accepted-key replay after restoration, complete earlier-receipt upgrade, phase/checksum damage, owned-prefix promotion and preservation of unknown partials. A console-output regression rejects a synthetic unexpected bearer response before framing.
-
-All-feature/all-target workspace Clippy, sequential workspace doc tests, formatting, Python (129 tests, four skips), repository (956 public files) and whitespace checks pass on Windows; Linux lightweight all-target Clippy passes. Linux review image: `e31b7464cd83c51505e358524d2c071cc4626698d55799aec5df7471b549df22`. No new pair or VSIX was built for this namespace-binding checkpoint. Native macOS, damaged-payload/down-console refinements and default adapters remain separate gates.
+The explicit legacy-retirement review/resume commands remain administrative
+recovery for a candidate-owned unavailable predecessor index. They preserve the
+original request and complete receipt, and do not grant evidence access or
+recreate missing source/storage. Use the candidate that owns the saved installer
+identity. See [the historical recovery contract](reviews/service-installation-before-http-2026-11-07.md#unavailable-legacy-index-during-upgrade)
+and current native help for the exact bounded candidate/receipt operations.
 
 ## Explicit payload repair
 
-`airk runtime repair-payload --install-dir <owned-install> --source <approved-offline-payload> --approved-sha256 <selected-inventory>` produces a bounded read-only preview. Add `--preview <reviewed-digest>` to execute that exact review. The trusted Service Console exposes the same preview/approval action using its verified bundled source, only when that source matches the selected approved digest. A pinned different distribution needs its matching source through the CLI. Organization-managed read-only payloads remain the organization's responsibility.
+Inspect/diagnose preserve damage and ownership failures. Repair requires the
+trusted complete distribution and exact native review, retains unknown files,
+and cannot select another ledger or reset sources to manufacture readiness.
+The [predecessor repair record](reviews/service-installation-before-http-2026-11-07.md#explicit-payload-repair)
+retains its original qualification, not a modern installed-platform claim.
 
-Stop the service explicitly first. Apply holds the installer lock and the actual service, project, embedding and watcher ownership leases; an unresponsive or surviving owner prevents changes. The source inventory must match the saved selected approval exactly. Source/hash changes, a changed selection, stale preview, aliases, redirection, excessive topology or unknown ownership cause refusal. The preserved inventory admits at most 2,050 files, 4,100 total entries, depth 16, 2 GiB per file and 4 GiB total. A repair requires one free slot within the existing four-directory runtime allowance and ordinary copy disk admission.
+## Development evidence
 
-Before moving anything, native code records the selected identity, saved approval and preview digest. It then renames the entire damaged slot to `runtimes/damaged-<inventory-digest>` and uses the existing bounded staging/copy/self-test transaction to restore the selected slot from approved offline bytes. Modified and unknown files stay byte-for-byte in the preserved directory. Launcher repair uses its existing ownership checks; an unknown or modified launcher is preserved and needs explicit review. The saved state/channel, registry, registrations, request namespace and source files remain unchanged. Start remains an explicit action after repair.
-
-Interrupted repair resumes only with its original source/approval, selection and exact preserved-byte digest. Ordinary launch, selection changes and unrelated staging are blocked while the repair intent is pending. Saved metadata/log observations remain available through the preserved inventory during the gap. A bounded completion receipt is durable before the pending intent is retired; replaying the completed preview returns the receipt without copying or starting again. Native status and the console distinguish pending/completed repair. Only one preserved repair set is admitted; review and relocate its preserved files/receipt explicitly before requesting another repair rather than accumulating hidden backups.
-
-Uninstall recognizes only the exact receipt-bound preserved directory and retains it. It removes verified runnable payloads/launcher and reports `preserved_damaged_payload`; it never deletes the damaged originals as part of uninstall. Changed preserved bytes or unrelated directories remain a refusal requiring review.
-
-Payload-repair development evidence, October 24, 2026: Windows passed all 102 CLI unit tests, the focused interruption/preservation/replay/uninstall regressions, all-feature/all-target workspace Clippy and sequential workspace doc tests. The extension suite passed 178 tests with six skips (184 total); Python passed 129 tests with four skips. Non-root Debian 12 x64 passed 102 lightweight CLI unit tests, 20 native service regressions and lightweight all-target Clippy (image `a25dec5257292d90487e2d1a55f5f2aee2b91914b9a0f3b0952a34b2946c7946`). Linux initially caught a nonprivate fictional fixture directory; the fixture was corrected without weakening native permission checks.
-
-The real controller workload passed on debug pair `target/airksvc-runtime-stage37`: source `2319772f9471f48f2254c31378176234beda5b6b38b3ff66ed58df6405a758a2` (627 inputs), main `3f9a2fc764dbe097c00888d09506ff98840c55a95a8e966e603af821cd06b32a`, helper `83030ebb2129c986adff6dbe6cb4b1ffc2de1dfb5c78b04921a8a5de1143a968`. Its native source predates only the fixture-permission correction. An initial controller run exposed stale displayed Stop preference after native acknowledgement; the controller now applies acknowledged stop/start preference immediately, with a regression assertion. The complete installed payload-repair workload passed and removed only its owned fixture. Guarded project configuration is now implemented separately. Default adapters and native Mac/editor qualification remain open. No VSIX was built.
-
-The trusted console now [reviews runtime upgrades and rollback](service-runtime-transitions.md), fences the captured selection natively and resumes exact saved activations. Different-version pins remain installed with read-only diagnostics; reconnect does not silently replace them. Installer/lifecycle inspection no longer migrates the registry. Default adapters and final platform/editor qualification remain open.
-
-Windows staging creates each owned payload directory with an explicit current-user owner and protected owner-only ACL. Exclusive creation rejects an existing stage, and resumed directories must still satisfy the same ownership checks; inherited Administrators ownership is not accepted.
-
-On macOS, installed-runtime topology validation and retirement read inventory at the outer payload root, above `AIRK.app`, rather than beside the nested executable. The post-execution self-test reads its bounded pair receipt from that same outer root and checks the returned native version against it. Retirement still authenticates the captured manifest and preserves unknown or modified files.
-
-The 1.5.2 Windows Explorer Assistance forwarder supplies Node/Electron with the already-canonical, hash-checked entry script and preserves that main path during module startup. This avoids older Node realpath handling of namespaced drive paths without removing Windows path prefixes or changing descriptor validation. It retains stdio, working directory, exit status and removal of inherited Node options. Unix launches retain their existing argument shape.
+The [1.8.14 record](releases/release-1.8.14.md) owns current validation and gaps.
+The [archived pre-HTTP installation guide](reviews/service-installation-before-http-2026-11-07.md)
+retains earlier helper/launcher formats, commands and dated local/hosted results.
+Those results do not qualify the new runtime, trust setup or installer.

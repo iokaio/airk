@@ -165,6 +165,7 @@ impl NativeAdministrativeConnection {
         // into the cache. Worker admission remains owned until actual finish.
         self.healthy = false;
         let query = protocol::Query {
+            read_attempt: None,
             frontend: None,
             tool: String::new(),
             arguments: Default::default(),
@@ -794,6 +795,13 @@ impl ChildWorker {
     }
     pub(super) fn catalog_poll_ready(&mut self) -> Result<bool> {
         ensure!(!self.exiting, "native worker resources are draining");
+        if self
+            .read_settlement
+            .as_ref()
+            .is_some_and(ReadSettlement::control_pending)
+        {
+            return Ok(false);
+        }
         ensure!(
             !self.catalog_quarantined,
             "native catalog control quarantined"
@@ -827,6 +835,10 @@ impl ChildWorker {
         gate: &NativeCatalogAdmission,
         expected: Expected,
     ) -> Result<Exchange> {
+        ensure!(
+            self.read_settlement.is_none(),
+            "native read worker is retiring"
+        );
         self.require_catalog_ready()?;
         self.catalog_gate = Some(gate.clone());
         self.catalog_pending = Some(Pending {
@@ -921,7 +933,16 @@ pub(super) fn execute(
         .flat_map(|worker| worker.provider_helpers.iter().copied())
         .collect();
     live_helpers.extend(admission.drains.referenced_helpers());
-    gate.prune_provider_reaps(&live_helpers)?;
+    let mut live_ledgers: Vec<_> = workers
+        .values()
+        .filter_map(|worker| {
+            worker
+                .completed_authorizations()
+                .map(|anchor| anchor.head_sha256)
+        })
+        .collect();
+    live_ledgers.extend(admission.drains.referenced_ledgers());
+    gate.prune_provider_reaps(&live_helpers, &live_ledgers)?;
     for proof in admission.recovery.reap_witnesses() {
         gate.observe_provider_reaped(*proof)?;
     }
@@ -1092,10 +1113,14 @@ pub(super) fn execute(
                     .context("native census worker identity unavailable")?;
                 worker.catalog_gate = Some(gate.clone());
                 census.push(identity);
-                providers.push(crate::catalog_admission::native_provider_obligation(
-                    identity,
-                    worker.provider_helpers.clone(),
-                ));
+                providers.push(
+                    crate::catalog_admission::native_provider_obligation_completed(
+                        identity,
+                        worker.provider_helpers.clone(),
+                        worker.provider_in_process,
+                        worker.completed_authorizations(),
+                    ),
+                );
             } else {
                 // A missing actor entry is not an empty native census while
                 // another project owner can still hold the writer lease.
@@ -1111,10 +1136,14 @@ pub(super) fn execute(
                     census.push(identity);
                 }
                 if !providers.iter().any(|provider| provider.worker == identity) {
-                    providers.push(crate::catalog_admission::native_provider_obligation(
-                        identity,
-                        admission.drains.helpers(identity)?,
-                    ));
+                    providers.push(
+                        crate::catalog_admission::native_provider_obligation_completed(
+                            identity,
+                            admission.drains.helpers(identity)?,
+                            admission.drains.in_process(identity)?,
+                            admission.drains.completed_authorizations(identity)?,
+                        ),
+                    );
                 }
             }
             Ok(Response::Captured(Box::new(
@@ -1147,23 +1176,41 @@ pub(super) fn execute(
                 .worker_provider_history(worker)?
                 .context("native predecessor provider history unknown")?;
             if !admission.drains.contains(worker) {
-                admission.drains.reserve_history(worker, helpers)?;
+                admission.drains.reserve_history_completed(
+                    worker,
+                    helpers,
+                    gate.worker_provider_in_process(worker)?,
+                    gate.worker_completed_authorizations(worker)?,
+                )?;
                 admission.drains.child_reaped(worker)?;
             }
+            let ledger_ready = match admission.drains.completed_authorizations(worker)? {
+                Some(anchor) => recover_completed_ledger(
+                    root,
+                    instance,
+                    &anchor,
+                    Some(&gate),
+                    admission.recovery,
+                )?,
+                None => true,
+            };
             ensure!(
-                admission
-                    .drains
-                    .poll(worker, admission.pool.as_mut(), |service, helper| {
+                admission.drains.poll_completed(
+                    worker,
+                    admission.pool.as_mut(),
+                    |service, helper, in_process| {
                         recover_retired_helper(
                             root,
                             instance,
                             service,
                             helper,
+                            in_process,
                             Some(&gate),
                             admission.recovery,
                         )
-                    })?
-                    == DrainProgress::Ready,
+                    },
+                    |_| Ok(ledger_ready),
+                )? == DrainProgress::Ready,
                 "native provider drain pending"
             );
             gate.observe_worker_resources_drained(worker)?;

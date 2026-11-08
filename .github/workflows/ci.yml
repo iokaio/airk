@@ -175,7 +175,7 @@ jobs:
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         timeout-minutes: 8
         with:
-          shared-key: native-${{ matrix.target }}-debug0
+          shared-key: native-${{ matrix.target }}-debug0-${{ hashFiles('scripts/provision-static-onnx-runtime.py', 'scripts/static-onnx-runtime-lock.json', 'scripts/provision-static-onnx-tools.py', 'scripts/static-onnx-tools-lock.json', 'scripts/static-onnx-link-closure.py') }}
           cache-workspace-crates: false
           cache-on-failure: false
           save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
@@ -194,17 +194,20 @@ jobs:
       - name: Prepare pinned bundled model build inputs
         if: steps.resume.outputs.restored != 'true'
         run: python scripts/provision-local-model.py --destination target/local-vector-model --download
-      - name: Prepare pinned offline inference libraries
+      - name: Prepare pinned static CPU inference inputs
         if: steps.resume.outputs.restored != 'true'
-        run: python scripts/provision-onnx-runtime.py --download
+        run: python scripts/provision-static-onnx-runtime.py --destination target/static-onnx-runtime/${{ matrix.target }} --target ${{ matrix.target }} --download --download-tools --build --parallel 2 --github-env
       - name: Verify native child ownership before workspace qualification
         if: steps.resume.outputs.restored != 'true'
         run: cargo nextest run --profile ci -p airk-process --locked --target ${{ matrix.target }}
+      - name: Compile the separate lightweight CLI component configuration
+        if: steps.resume.outputs.restored != 'true'
+        run: python scripts/ci-metrics.py run --name lightweight-component-compile -- cargo check -p airk-cli --no-default-features --all-targets --locked --target ${{ matrix.target }}
       - name: Native platform ownership and retrieval regressions
         if: ${{ steps.resume.outputs.restored != 'true' && matrix.os != 'ubuntu-24.04' && !inputs.qualification }}
         env:
           AIRK_PROCESS_DIAGNOSTICS: '1'
-        run: python scripts/ci-metrics.py run --name platform-regressions -- cargo nextest run --profile ci --test-threads 2 -p airk-cli --lib --test native_read_retry --test legacy_native --test pdf_worker --test unix_guardian --test native_worker_storage --test combined_reads --test explorer_assistance --locked --target ${{ matrix.target }}
+        run: python scripts/ci-metrics.py run --name platform-regressions -- cargo nextest run --profile ci --test-threads 2 -p airk-cli --no-default-features --features local-inference --lib --test native_read_retry --test legacy_native --test pdf_worker --test unix_guardian --test native_worker_storage --test combined_reads --test explorer_assistance --locked --target ${{ matrix.target }}
       - name: Clippy for this native platform
         if: ${{ steps.resume.outputs.restored != 'true' && (matrix.os == 'ubuntu-24.04' || inputs.qualification) }}
         run: python scripts/ci-metrics.py run --name clippy -- cargo clippy --workspace --all-targets --all-features --locked --target ${{ matrix.target }} -- -D warnings
@@ -224,7 +227,7 @@ jobs:
         run: cargo test -p airk-kernel --features local-inference --test vector_performance --locked --target ${{ matrix.target }} -- --ignored --test-threads=1
       - name: Build pinned native candidate
         if: steps.resume.outputs.restored != 'true'
-        run: python scripts/ci-metrics.py run --name release-pair -- python scripts/build-service-runtime.py --profile release --destination artifacts/runtime/${{ matrix.target }}
+        run: python scripts/ci-metrics.py run --name release-runtime -- python scripts/build-service-runtime.py --profile release --destination artifacts/runtime/${{ matrix.target }}
       - name: Seal the exact runtime handoff
         if: steps.resume.outputs.restored != 'true'
         run: python scripts/ci-runtime.py seal --target ${{ matrix.target }} --runtime-dir artifacts/runtime/${{ matrix.target }} --transfer artifacts/runtime-transfer/${{ matrix.target }}
@@ -337,7 +340,7 @@ jobs:
             if [ "$AIRK_QUALIFICATION" = "true" ]; then
               python scripts/ci-metrics.py run --name "mcp-smoke-$pass" -- node --test packages/vscode/out/test/nativeSmoke.test.js
             else
-              python scripts/ci-metrics.py run --name "cold-clients-$pass" -- node --test --test-name-pattern '^four cold (pinned|source) clients observe first status without diagnostic warmup$' packages/vscode/out/test/nativeSmoke.test.js
+              python scripts/ci-metrics.py run --name "cold-clients-$pass" -- node --test --test-name-pattern '^four cold HTTPS (sequential|concurrent) clients observe first status without diagnostic warmup$' packages/vscode/out/test/nativeSmoke.test.js
             fi
           done
       - name: Package and verify allowlisted native payload
@@ -441,7 +444,7 @@ jobs:
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
-          target: runtime
+          target: smoke
           build-args: AIRK_QUALIFICATION=${{ inputs.qualification && 'true' || 'false' }}
           load: true
           tags: airk:dev

@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Synthetic Core-shaped consumer regressions; actual native/editor proof is separate.
+import * as path from 'node:path';
+import {InstalledHttpFailure} from './installedEditorHttp';
 import {test} from 'node:test';import {strict as assert} from 'node:assert';
-import {installedSelector,installedToolBody,installedMember,installedRevocation,finishInstalledClient,InstalledNativeReplyError,installedLegacyLifecycle} from './installedEditorContracts';
+import {installedDeliveryFence,installedSelector,installedToolBody,installedMember,installedRevocation,finishInstalledClient,InstalledNativeReplyError,installedLegacyLifecycle} from './installedEditorContracts';
 const id=(prefix:string,byte:string)=>prefix+byte.repeat(32),hash=(byte:string)=>byte.repeat(64);
 function fixture(denied=false):any{
     const index=id('idx_','1'),project=id('prj_','2'),grant=id('grt_','3'),source=id('src_','4');
@@ -17,7 +19,10 @@ function fixture(denied=false):any{
         members:[{index_id:index,is_error:denied,allocation:{index_id:index,limit:20,max_bytes:65536,deadline_ms:30000,verification_max_sources:1,verification_max_bytes:65536,verification_deadline_ms:1},outcome:denied?'failed':'complete',result}],
         ranking:denied?[]:[{index_id:index,result_pointer:'/members/0/result/structuredContent/items/0',local_rank:1,rank_contribution:1/61,origin:{index_id:index,project_ids:[project],source_root_id:source,source_relative_path:'fixture.ts',publication}}],
         rank_policy:'fixture',partial:denied,truncated:false,delivery_observation:{receipt:{schema:1,namespace:session.namespace,catalog_revision:3,scope_identity:hash('b'),result_digest:hash('c')}}};
-    return {selection,raw,body,definition:{args:['--combined-session',JSON.stringify(session),'mcp']},ui:{outcome:{status:'search_scope_selected',selected:{index_ids:[],project_ids:[project]},activation:{selected_subset:true,selection:{session}}}}};
+    const directory=path.resolve('fictional-native-private'),connection_id='f'.repeat(32);
+    const nativeConnection={schema:1,connection_id,endpoint:{schema:1,installation:hash('1'),user:'fixture',namespace:session.namespace,generation:1,service_instance:'2'.repeat(32),executable_sha256:hash('3'),url:'https://127.0.0.1:57421/mcp',ca_sha256:hash('4'),certificate_sha256:hash('5'),state:'ready',predecessor_digest:null},selection:{kind:'combined',selection:session},ca_certificate_file:path.join(directory,'ca.pem'),credential_file:path.join(directory,'credential-'+connection_id+'.token')};
+    const definition={uri:{toString:()=>nativeConnection.endpoint.url},headers:{Authorization:'Bearer airk1.'+connection_id+'.'+hash('a'),'X-AIRK-Response-Mode':'full'},nativeConnection};
+    return {selection,raw,body,definition,ui:{outcome:{status:'search_scope_selected',selected:{index_ids:[],project_ids:[project]},activation:{selected_subset:true,selection:{session}}}}};
 }
 test('complete current combined definition binds native reviewed singleton and rejects obsolete flag',()=>{
     const f=fixture();assert.deepEqual(installedSelector(f.definition,f.ui,f.selection),f.selection.session);
@@ -26,7 +31,7 @@ test('complete current combined definition binds native reviewed singleton and r
 test('crossed index, Project and native session refuse',()=>{
     for(const field of ['index_ids','project_ids','context_key']){
         const f=fixture(),bad=structuredClone(f.selection.session);bad[field]=field==='context_key'?hash('d'):[id(field==='index_ids'?'idx_':'prj_','e')];
-        assert.throws(()=>installedSelector({args:['--combined-session',JSON.stringify(bad),'mcp']},f.ui,f.selection));
+        assert.throws(()=>installedSelector({...f.definition,nativeConnection:{...f.definition.nativeConnection,selection:{kind:'combined',selection:bad}}},f.ui,f.selection));
     }
 });
 test('current checkbox activation retains exact visible choice and reviewed native grant',()=>{
@@ -100,4 +105,17 @@ test('legacy failure identity survives failure to retain the Stop failure',async
     await assert.rejects(installedLegacyLifecycle(async()=>{},async()=>{throw primary;},async()=>{throw stopFailure;},evidence,failMark),error=>error===primary);
     assert.equal(evidence.legacy_stop_failure.primary_preserved,true);assert.ok(evidence.legacy_stop_retention_failure.length<=4096);
     await assert.rejects(installedLegacyLifecycle(async()=>{},async()=>{},async()=>{throw stopFailure;},{},failMark),error=>error===stopFailure);
+});
+
+function completedDeletion(){const f=fixture(),review={request:{operation:{operation:'delete_project',id:f.selection.project},caller:'vscode',key:{nonce:'f'.repeat(32)},expected_catalog_revision:2},requestDigest:hash('6')};
+    const applied={verifiedReceipt:{authority_fence_required:true,caller:review.request.caller,key:review.request.key,request_digest:review.requestDigest,catalog_revision:3},verifiedFencedReceipt:{proof:{native:'actual receipt kept by driver'}}};return {f,review,applied};}
+test('completed exact native deletion plus empty TLS reset proves delivery fence without inventing admission',()=>{
+    const {f,review,applied}=completedDeletion();installedDeliveryFence(new InstalledHttpFailure('network',{code:'ECONNRESET',response_bytes:0}),review,applied,f.selection.session);
+    for(const error of [new Error('socket failure'),new InstalledHttpFailure('timeout',{response_bytes:0}),new InstalledHttpFailure('network',{code:'ECONNREFUSED',response_bytes:0}),new InstalledHttpFailure('network',{code:'ECONNRESET',response_bytes:12})])assert.throws(()=>installedDeliveryFence(error,review,applied,f.selection.session));
+    for(const mutate of [(a:any)=>a.verifiedReceipt.authority_fence_required=false,(a:any)=>a.verifiedReceipt.request_digest=hash('0'),(a:any)=>a.verifiedReceipt.catalog_revision=2,(a:any)=>a.verifiedFencedReceipt.proof=null]){const bad=structuredClone(applied);mutate(bad);assert.throws(()=>installedDeliveryFence(new InstalledHttpFailure('network',{code:'ECONNRESET',response_bytes:0}),review,bad,f.selection.session));}
+    assert.throws(()=>installedDeliveryFence(new InstalledHttpFailure('network',{code:'EPIPE',response_bytes:0}),{...review,request:{...review.request,operation:{operation:'delete_project',id:id('prj_','0')}}},applied,f.selection.session));
+});
+test('versioned native HTTP refusal keeps its complete body and requires matching deletion proof',()=>{
+    const {f,review,applied}=completedDeletion();for(const [status,code]of [[403,'native_grant_refused'],[503,'native_delivery_fenced']] as const){const body={schema:'airk.local-api-error/1',error:{code},future:{retained:true}},failure=new InstalledHttpFailure('http',{status,response_bytes:100,body});installedDeliveryFence(failure,review,applied,f.selection.session);assert.equal(failure.detail.body,body);}
+    assert.throws(()=>installedDeliveryFence(new InstalledHttpFailure('http',{status:500,response_bytes:10,body:{schema:'airk.local-api-error/1',error:{code:'native_delivery_fenced'}}}),review,applied,f.selection.session));
 });

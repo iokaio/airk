@@ -29,4 +29,6 @@ The primary call-discovery Linux image is `7874db2be0909bbe585d97379594c5c5d88c8
 
 Physical compression repacks now retain the authenticated capture’s prior posting format. The writer rejects a format change during physical-only maintenance, so a repack cannot create phantom terminal-name memberships that would break later replacement or deletion. A regression compresses a legacy capture, checks exact source bytes and completes deletion afterward; ordinary read APIs continue projecting the same artifact.
 
+The 1.8.14 adoption path separately preserves archived artifacts marked `LegacySavedOrigin`. Kernel repacking leaves those retained bytes unchanged and reports them in `RepackReport.skipped_legacy`, distinct from `skipped_large`. It does not reinterpret historical extraction as a current semantic payload. This report belongs to the native Kernel API; it does not add a CLI, MCP or Workbench repack command.
+
 Repack review evidence, October 23, 2026: the new legacy-format compression/deletion regression and all eight Agent Lean/repack integrations passed on Windows and non-root Linux. Linux also passed 24 MCP tests. Windows all-feature workspace Clippy, Linux CLI all-target Clippy, formatting, UTF-8 and whitespace checks passed. The isolated Linux image is `9898d86a662ab4e32115c64fc8a3c551ca8edbee1f7206a5a25f64cc609d783f`.

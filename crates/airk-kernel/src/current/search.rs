@@ -211,7 +211,20 @@ pub(crate) fn search_current_read_with_filters(
     if let Some(expected) = expected {
         read.require_token(expected)?;
     }
-    let semantic_readiness = super::enrichment::readiness(&read, store)?;
+    if matches!(mode, CurrentSearchMode::Vector | CurrentSearchMode::Hybrid)
+        && read.resource_reference("legacy-adoption")?.is_some()
+        && read
+            .collection_state()?
+            .is_some_and(|state| state.configuration.model.is_none())
+    {
+        anyhow::bail!(
+            "legacy saved semantic assets are archived; current vector conversion is unavailable"
+        );
+    }
+    let mut semantic_readiness = super::enrichment::readiness(&read, store)?;
+    if let Some(legacy) = crate::legacy_adoption::current_observation(store, &read)? {
+        legacy.qualify(&mut semantic_readiness);
+    }
     let upgrade_pending = crate::shared_models::semantic_upgrade_pending(
         store,
         read.collection_state()?
@@ -229,7 +242,12 @@ pub(crate) fn search_current_read_with_filters(
                 discovery_readiness.state
             );
         }
-        if semantic_readiness.state == SemanticState::Disabled {
+        if semantic_readiness.state == SemanticState::Unavailable {
+            // Saved predecessor vectors are not a usable current graph. Serve
+            // retained text with the explicit incomplete execution/readiness
+            // qualification below; do not reinterpret this as user opt-out.
+            CurrentSearchMode::Lexical
+        } else if semantic_readiness.state == SemanticState::Disabled {
             anyhow::bail!("semantic search is unavailable for this current index")
         } else if semantic_readiness.state != SemanticState::Ready {
             match semantic_readiness.default_search_policy {
@@ -523,7 +541,9 @@ pub(crate) fn definition_hints(
             let native = read.observe_private_integrity((|| -> Result<_> {
                 let native =
                     store.load_retained_bounded(&artifact, retained.object_bytes as u64)?;
-                store.verify_retained_source(&artifact)?;
+                if retained.legacy_origin.is_none() || retained.raw_source {
+                    store.verify_retained_source(&artifact)?;
+                }
                 Ok(native)
             })())?;
             for fact in native.facts {
@@ -755,8 +775,7 @@ fn materialize(
                 )?
             } else {
                 let result = (|| -> Result<_> {
-                    let full = store.load_retrieval_artifact(&compact)?.artifact;
-                    store.verify_retained_source(&compact)?;
+                    let full = super::load_lexical_artifact(store, &compact)?;
                     Ok(full
                         .chunks
                         .get(usize::try_from(candidate.local)?)

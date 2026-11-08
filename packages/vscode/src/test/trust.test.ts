@@ -15,10 +15,12 @@ import { McpStdioSession } from '../mcpStdioSession';
 import { MANAGE_WORKSPACE_TRUST_COMMAND, NATIVE_COMMANDS, NATIVE_COMMAND_ENABLEMENT } from '../explorerCommands';
 import { catalogExport } from '../indexingCatalog';
 
+function definitionValue(value:any){return {label:value.label,url:value.uri.toString(),headers:value.headers,version:value.version};}
 test('verified reopen migrates both old definitions quietly before publishing the connection',async context=>{
     const f=await serviceTestHost(context,{automatic:true});
     try{
         const project=[...f.registrations.values()][0];
+        assert.ok(f.binding.launcher,'historical setup fixture has its explicit predecessor launcher');
         const spec:LaunchSpec={command:f.binding.launcher,root:project.root,dataDir:project.data_root,collection:project.collection,name:'fixture',service:{installDir:f.binding.installDir,project:project.binding}};
         const storage=path.join(f.root,'editor-storage');
         const before=serializeServers('claude',[retrievalEntry(spec),assistanceEntry(spec,launchDescriptorPath(storage))!]);
@@ -54,9 +56,9 @@ test('automatic legacy MCP definitions require full positive native eligibility 
     const f=await serviceTestHost(context),controller=f.context.subscriptions.find((item:any)=>typeof item.prepareWindowContext==='function');
     try{
         const registration=[...f.registrations.values()][0],writes=f.writes.length;
-        const positive=await controller.provideDefinitions();assert.equal(positive.length,1);assert.deepEqual(f.state.legacyBindingProjects,[registration.binding]);assert.equal(f.writes.length,writes);
+        const positive=await controller.provideDefinitions();assert.equal(positive.length,1);assert.deepEqual(f.state.legacyBindingProjects,[registration.binding,registration.binding]);assert.equal(f.writes.length,writes);
         if(process.platform==='win32'){
-            const root=registration.root;registration.root=path.toNamespacedPath(root);const canonical=await controller.provideDefinitions();assert.equal(canonical[0].args[canonical[0].args.indexOf('--root')+1],registration.root,'the connection retains actual native canonical spelling after alias validation');registration.root=root;
+            const root=registration.root;registration.root=path.toNamespacedPath(root);const canonical=await controller.provideDefinitions();assert.equal(canonical[0].uri.toString(),positive[0].uri.toString());const native=f.state.httpConnections.at(-1)!.selection;assert.equal(native.kind,'imported_legacy');if(native.kind==='imported_legacy')assert.equal(native.selection.registration.root,registration.root,'native canonical spelling remains in enrolled authority');registration.root=root;
         }
         f.state.legacyBindingReply=project=>({status:'catalog_legacy_binding',observation:{schema:1,namespace:'34'.repeat(16),catalog_revision:1,project,eligibility:{kind:'unavailable'}}});
         assert.deepEqual(await controller.provideDefinitions(),[]);
@@ -88,7 +90,7 @@ test('Install or Repair CLI migrates all three existing local agent connections 
         context.mock.method(cliInstall,'installLauncherCli',async()=>['Old CLI is locked; disconnect clients and retry cleanup.']);
         const project=[...f.registrations.values()][0],name=`airk-${project.collection}`;
         const command=path.join(f.root,'editor-storage','cli','bin',process.platform==='win32'?'airk.exe':'airk');
-        const args=['--root',project.root,'--data-dir',path.join(f.root,'old-data'),'--collection',project.collection,'mcp'];
+        const args=['--root',project.root,'--data-dir',project.data_root,'--collection',project.collection,'mcp'];
         const files=[path.join(project.root,'.codex','config.toml'),path.join(project.root,'.mcp.json'),path.join(project.root,'.vscode','mcp.json')];
         for(const file of files)await fs.mkdir(path.dirname(file),{recursive:true});
         await fs.writeFile(files[0],`[mcp_servers.${name}]\ncommand = ${JSON.stringify(command)}\nargs = ${JSON.stringify(args)}\n`);
@@ -102,12 +104,13 @@ test('Install or Repair CLI migrates all three existing local agent connections 
         };
         f.stub.workspace.applyEdit=async(edit:any)=>{const document=documents.get(edit.uri.fsPath);document.text=edit.after;document.version++;return true;};
         await f.commands.get('airk.installCli')!();
-        for(const file of files){const text=await fs.readFile(file,'utf8');assert.ok(!text.includes('--service-project'),f.calls.join('\n'));assert.ok(text.includes('runtime'));assert.ok(!text.includes('airk_explorer')&&text.includes('--explorer-descriptor'),'installation replaces legacy definitions with one endpoint');}
+        for(const file of files){const text=await fs.readFile(file,'utf8');assert.ok(!text.includes('--service-project'),f.calls.join('\n'));assert.ok(text.includes(f.httpUrl));assert.ok(!text.includes('airk_explorer')&&!text.includes('--explorer-descriptor')&&!text.includes('runtime\"'),'installation replaces legacy launches with one HTTP endpoint');}
         assert.equal(JSON.parse(await fs.readFile(files[1],'utf8')).mcpServers.airk.disabled,true);
         assert.equal(f.calls.filter(value=>value.startsWith('Updated ')).length,3);
         assert.ok(f.calls.some(value=>value.includes('Old CLI is locked')),'the underlying cleanup cause remains in the output');
-        const warning=f.notices.find(value=>value.message.includes('connection or cleanup issues'));
-        assert.ok(warning);assert.deepEqual(warning.actions,['Review details']);
+        assert.ok(f.calls.some(value=>value.includes('AIRK upgrade did not complete')),'Locked cleanup is an incomplete upgrade, not installed-with-warning success');
+        assert.equal([...f.values.keys()].some(key=>key.startsWith('airk.installComplete.2.')),false);
+        assert.equal(f.notices.some(value=>value.message.includes('ready.')),false);
         // Unsaved content must block an installer rewrite.
         const before=`[mcp_servers.${name}]\ncommand = ${JSON.stringify(command)}\nargs = ${JSON.stringify(args)}\n`;
         await fs.writeFile(files[0],before);
@@ -123,7 +126,7 @@ test('startup connection migration respects Windows document line endings for co
     try{
         const registration=[...f.registrations.values()][0],key=`airk-${registration.collection}`;
         const command=path.join(f.root,'editor-storage','cli','bin',process.platform==='win32'?'airk.exe':'airk');
-        const args=['--root',registration.root,'--data-dir',path.join(f.root,'old-data'),'--collection',registration.collection,'mcp'];
+        const args=['--root',registration.root,'--data-dir',registration.data_root,'--collection',registration.collection,'mcp'];
         const destination=path.join(registration.root,'.mcp.json');
         await fs.writeFile(destination,JSON.stringify({mcpServers:{[key]:{command,args,disabled:true},other:{command:'keep-other'}}}));
         let doc:any;
@@ -151,7 +154,7 @@ test('opening storage setup preserves the active native binding and preference u
     try{const before=await f.api.getServerDefinitions(),storage=f.settings.get('storage.path');await f.commands.get('airk.chooseStorage')!();assert.equal(f.writes.length,0);
         const selected=path.join(f.root,'new-data');await fs.mkdir(selected);f.state.selectedFolders=[{scheme:'file',fsPath:selected}];f.state.confirm=false;
         await f.commands.get('airk.chooseStorage')!();assert.equal(f.settings.get('storage.path'),storage);
-        const after=await f.api.getServerDefinitions();assert.deepEqual(after.map((value:any)=>value.args),before.map((value:any)=>value.args));assert.equal(f.writes.length,0);
+        const after=await f.api.getServerDefinitions();assert.deepEqual(after.map(definitionValue),before.map(definitionValue));assert.equal(f.writes.length,0);
     }finally{await f.close();}
 });
 
@@ -216,7 +219,7 @@ test('combined Use Grant freezes selected Projects, deduplicates shared indexes 
         assert.deepEqual(selected!.combinedSession!.project_ids,[a,b]);assert.equal(selected!.combinedSession!.index_ids,undefined);
         assert.deepEqual(result.selection.indexes.map((row:any)=>row.id),[shared,other]);assert.deepEqual(rows.map(row=>row.entity.kind),['grant','index','index']);
         assert.deepEqual(result.index_details.map((row:any)=>row.detail.item.value.id),[shared,other]);
-        const definitions=await controller.provideDefinitions();assert.equal(definitions.length,1);const args=definitions[0].args,at=args.indexOf('--combined-session');assert.ok(at>=0);assert.deepEqual(JSON.parse(args[at+1]),selected!.combinedSession);assert.ok(!args.includes('--root'));
+        const definitions=await controller.provideDefinitions();assert.equal(definitions.length,1);const enrolled=f.state.httpConnections.at(-1)!.selection;assert.equal(enrolled.kind,'combined');assert.deepEqual(enrolled.selection,selected!.combinedSession);assert.equal(definitions[0].args,undefined);assert.equal(definitions[0].uri.toString(),f.httpUrl);
         f.state.pick=items=>items.find((item:any)=>item.index?.id===other)??items[0];
         await controller.index();assert.equal(f.writes.length,before+1);assert.equal(f.writes.at(-1)!.enqueue?.project,indexes[1].backing.binding,'management follows the explicit member picker rather than the display origin');
         assert.equal(selected!.service!.project,indexes[0].backing.binding,'display metadata does not become management authority');
@@ -278,10 +281,10 @@ for(const peerInstalled of [false,true])test(`explicit Use Grant validates nativ
         const before=f.writes.length,result=await controller.useGrant({grant_id:grantId,expected_grant_revision:1,index_id:indexId,project_ids:[projectId]},namespace,1,()=>true);
         assert.equal(f.writes.length,before);assert.equal(result.grant_detail.detail.future_native_detail,'retained');assert.equal(result.index_detail.detail.future_native_detail,'retained');assert.ok(workbenchSpec);
         assert.deepEqual(workbenchSpec!.catalogSession,{schema:1,context_key:key,namespace,expected_catalog_revision:1,grant_id:grantId,expected_grant_revision:1,index_id:indexId,project_ids:[projectId]});
-        const definitions=await controller.provideDefinitions();assert.equal(definitions.length,1);assert.equal(definitions[0].command,workbenchSpec!.command);assert.deepEqual(definitions[0].args,launchArgs(workbenchSpec!));assert.equal(definitions[0].args.includes('--root'),false);assert.equal(workbenchSpec!.root,backing.root);
+        const definitions=await controller.provideDefinitions();assert.equal(definitions.length,1);assert.equal(definitions[0].command,undefined);assert.equal(definitions[0].args,undefined);assert.deepEqual(f.state.httpConnections.at(-1)!.selection,{kind:'scoped',selection:workbenchSpec!.catalogSession});assert.equal(workbenchSpec!.root,backing.root);
         const discovered=f.state.discovered;
         await controller.refresh();assert.equal(f.state.discovered,discovered,'valid explicit scope does not re-enumerate legacy registrations');
-        assert.equal(await controller.resolveDefinition(definitions[0]),definitions[0],'actual MCP resolution preserves the deliberate selector');
+        assert.deepEqual(definitionValue(await controller.resolveDefinition(definitions[0])),definitionValue(definitions[0]),'actual MCP resolution preserves the deliberate HTTP connection');assert.deepEqual(f.state.httpConnections.at(-1)!.selection,{kind:'scoped',selection:workbenchSpec!.catalogSession});
         assert.deepEqual(rows.map(value=>value.expected_catalog_revision),[1,1]);assert.deepEqual(rows.map(value=>value.entity.kind),['grant','index']);
         const priorWrites=f.writes.length;
         const managementActions:string[]=[],run=controller.console.run.bind(controller.console);
@@ -290,7 +293,7 @@ for(const peerInstalled of [false,true])test(`explicit Use Grant validates nativ
         assert.deepEqual(managementActions,['refresh','refresh'],'opening Activity observes the existing client rather than replacing its authority');
         assert.equal(f.writes.length,priorWrites+2,'each explicit index action dispatches a native job');
         assert.ok(f.writes.slice(priorWrites).every(value=>value.enqueue?.project===backing.binding),'both jobs retain the selected Index backing');
-        assert.deepEqual(await controller.provideDefinitions(),definitions,'index actions retain the deliberate native selection');
+        assert.deepEqual((await controller.provideDefinitions()).map(definitionValue),definitions.map(definitionValue),'index actions retain the deliberate native selection');assert.deepEqual(f.state.httpConnections.at(-1)!.selection,{kind:'scoped',selection:workbenchSpec!.catalogSession});
         // Subsequent read-only administration assertions start after those explicit jobs.
         const afterIndexWrites=f.writes.length;
         const reports:string[][]=[];context.mock.method(native,'runText',async(_command:string,args:string[])=>{reports.push(args);return JSON.stringify({future_native_usage:'retained'});});
@@ -429,16 +432,15 @@ test('disabled native execution starts no AIRK process until the user enables it
 test('MCP definitions use reviewed native storage and user response settings while ignoring workspace overrides',async context=>{
     const f=await serviceTestHost(context);
     try{f.settings.set('mcp.responseMode','full');const definitions=await f.api.getServerDefinitions();assert.equal(definitions.length,1);
-        assert.equal(definitions[0].command,f.binding.launcher);assert.equal(definitions[0].env.AIRK_MCP_RESPONSE_MODE,'full');
-        assert.ok(definitions[0].args.includes(f.binding.installDir));assert.ok(definitions[0].args.includes([...f.registrations.values()][0].root));
-        assert.ok(!definitions[0].args.some((value:string)=>value.includes('untrusted-storage')));assert.equal(f.state.ensured,0);assert.equal(f.writes.length,0);
+        assert.equal(definitions[0].command,undefined);assert.equal(definitions[0].headers['X-AIRK-Response-Mode'],'full');
+        const enrolled=f.state.httpConnections.at(-1)!.selection;assert.equal(enrolled.kind,'imported_legacy');if(enrolled.kind==='imported_legacy'){assert.equal(enrolled.selection.registration.root,[...f.registrations.values()][0].root);assert.equal(enrolled.selection.registration.data_root,f.settings.get('storage.path'));assert.ok(!enrolled.selection.registration.data_root.includes('untrusted-storage'));}assert.equal(f.state.ensured,0);assert.equal(f.writes.length,0);
         f.settings.set('mcp.registrationEnabled',false);assert.deepEqual(await f.api.getServerDefinitions(),[]);
     }finally{await f.close();}
 });
 
 test('multi-root Index Now selects the active native binding and metadata refresh does not restart MCP definitions',async context=>{
     const f=await serviceTestHost(context,{roots:2});
-    try{const before=await f.api.getServerDefinitions();assert.equal(before.length,1);assert.ok(before[0].args.includes('--no-default-project'));let changed=0;f.providers[0].onDidChangeMcpServerDefinitions(()=>changed++);
+    try{const before=await f.api.getServerDefinitions();assert.equal(before.length,1);assert.equal(before[0].uri.toString(),f.httpUrl);const union=f.state.httpConnections.at(-1)!.selection;assert.equal(union.kind,'imported_legacy_union');if(union.kind==='imported_legacy_union'){assert.equal(union.selection.no_default_project,true);assert.deepEqual(union.selection.selections.map(member=>member.registration.binding).sort(),[...f.registrations.keys()].sort());}let changed=0;f.providers[0].onDidChangeMcpServerDefinitions(()=>changed++);
         await f.api.getServerDefinitions();assert.equal(changed,0);
         f.stub.window.activeTextEditor={document:{uri:f.folders[1].uri}};const picks=f.state.picks;
         await f.commands.get('airk.index')!();assert.equal(f.state.picks,picks);
@@ -452,7 +454,7 @@ test('native tree commands keep the clicked project when another workspace edito
     const f=await serviceTestHost(context,{roots:2});
     try{
         const project=[...f.registrations.values()][1];
-        const spec={command:f.binding.launcher!,root:project.root,dataDir:project.data_root,collection:project.collection,name:'Clicked tree project',service:{installDir:f.binding.installDir,project:project.binding}};
+        const spec={command:f.binding.executable,root:project.root,dataDir:project.data_root,collection:project.collection,name:'Clicked tree project',service:{installDir:f.binding.installDir,project:project.binding}};
         f.stub.window.activeTextEditor={document:{uri:f.folders[0].uri}};
         await f.commands.get('airk.treeIndex')!(spec);
         assert.equal(f.writes.find(value=>value.enqueue).enqueue.project,project.binding);
@@ -467,11 +469,11 @@ test('native tree commands keep the clicked project when another workspace edito
     }finally{await f.close();}
 });
 
-test('agent setup uses the stable launcher, writes only on request and refuses stale or untrusted guides',async context=>{
+test('agent setup uses credential-referenced HTTP, writes only on request and refuses stale or untrusted guides',async context=>{
     const f=await serviceTestHost(context);
     try{f.state.pick=items=>items.find(item=>item.client==='codex')??items[0];await f.commands.get('airk.setupAgent')!();assert.equal(f.panels.length,1);
         const destination=path.join(f.folders[0].uri.fsPath,'.codex','config.toml');await assert.rejects(fs.stat(destination),{code:'ENOENT'});
-        await f.panels[0].send({action:'copy'});assert.match(f.clipboard[0],/runtime/);assert.ok(!f.clipboard[0].includes('--service-project'));
+        await f.panels[0].send({action:'copy'});assert.ok(f.clipboard[0].includes(f.httpUrl));assert.match(f.clipboard[0],/bearer_token_env_var/);assert.ok(!f.clipboard[0].includes('command ='));assert.ok(!f.clipboard[0].includes('--service-project'));
         await f.panels[0].send({action:'createCodex'});const before=await fs.readFile(destination,'utf8');assert.doesNotMatch(before,/service-project/);
         f.stub.workspace.workspaceFolders=[];await f.api.getServerDefinitions();await f.panels[0].send({action:'createCodex'});
         assert.match(f.panels[0].webview.html,/Workspace or storage changed/);assert.equal(await fs.readFile(destination,'utf8'),before);
@@ -499,7 +501,7 @@ test('Codex setup consolidates an existing legacy connection through guarded edi
         f.stub.workspace.openTextDocument=async()=>document;
         f.stub.workspace.applyEdit=async(edit:any)=>{document.text=edit.after;document.version++;return true;};
         await panel.send({action:'updateCodex'});
-        const updated=await fs.readFile(destination,'utf8');assert.ok(updated.includes('[mcp_servers.airk]')&&updated.includes('--explorer-descriptor')&&!updated.includes('airk_explorer'),panel.webview.html);assert.equal(saved,1);
+        const updated=await fs.readFile(destination,'utf8');assert.ok(updated.includes('[mcp_servers.airk]')&&updated.includes('bearer_token_env_var')&&updated.includes('https://127.0.0.1:')&&!updated.includes('--explorer-descriptor')&&!updated.includes('airk_explorer'),panel.webview.html);assert.equal(saved,1);
         await panel.send({action:'updateCodex'});assert.equal(saved,1,'current connections require no repeat edit');
         f.stub.workspace.textDocuments=[{uri:{fsPath:destination},isDirty:true}];await panel.send({action:'updateCodex'});
         assert.match(panel.webview.html,/unsaved/i);assert.equal(saved,1);

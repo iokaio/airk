@@ -160,8 +160,11 @@ pub fn is_universal(executable: &Path) -> bool {
 
 /// Hand the call to the named installation's own verified stable launcher.
 pub fn run(executable: &Path, args: Vec<OsString>) -> Result<()> {
-    crate::client_owner::watch()?;
     let install = resolve(executable)?;
+    if let Ok((_, main, _)) = crate::runtime_install::selected(&install) {
+        crate::runtime_pair::require_legacy_stdio(&main)?;
+    }
+    crate::client_owner::watch()?;
     let target = crate::runtime_install::verified_launcher(&install)?;
     if digest(&target)? == digest(executable)?
         && !args.iter().any(|arg| {
@@ -193,6 +196,8 @@ pub fn run(executable: &Path, args: Vec<OsString>) -> Result<()> {
 /// at the destination are never replaced.
 pub fn publish_at(directory: &Path, install: &Path) -> Result<PathBuf> {
     let install = install.canonicalize()?;
+    let (_, main, _) = crate::runtime_install::selected(&install)?;
+    crate::runtime_pair::require_legacy_stdio(&main)?;
     let source = crate::runtime_install::verified_launcher(&install)?;
     publish_from(directory, &install, &source)
 }
@@ -309,6 +314,10 @@ pub fn publish_for_default(
     install: &Path,
     channel: crate::user_paths::Channel,
 ) -> Result<Option<PathBuf>> {
+    let (_, main, _) = crate::runtime_install::selected(install)?;
+    if crate::runtime_pair::single_executable(&main)? {
+        return Ok(None);
+    }
     let paths = crate::user_paths::UserPaths::discover(channel)?;
     if crate::user_paths::canonical_location(&paths.install)? != install.canonicalize()? {
         return Ok(None);
@@ -331,6 +340,90 @@ pub fn current_for(install: &Path, channel: crate::user_paths::Channel) -> Resul
                 .is_ok_and(|install| install == *target)
         })
         .map(|_| executable))
+}
+
+/// Exact owned image for post-migration retirement, including interrupted
+/// deletion. Unlike discovery, malformed/partial publications cannot mean absent.
+pub(crate) fn retirement_image_for(
+    install: &Path,
+    channel: crate::user_paths::Channel,
+) -> Result<Option<PathBuf>> {
+    let paths = crate::user_paths::UserPaths::discover(channel)?;
+    retirement_image_at(&paths.launcher, install)
+}
+
+pub(crate) fn retirement_digest_for(
+    install: &Path,
+    channel: crate::user_paths::Channel,
+    image: &Path,
+) -> Result<String> {
+    ensure!(
+        retirement_image_for(install, channel)?.as_deref() == Some(image),
+        "universal retirement image ownership changed"
+    );
+    let hash = if image.is_file() {
+        digest(image)?
+    } else {
+        let saved: Pointer =
+            serde_json::from_slice(&read_bounded(&install.join("universal-uninstall.json"))?)?;
+        saved.launcher_sha256
+    };
+    ensure!(
+        hash.len() == 64
+            && hash
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+        "invalid universal retirement image hash"
+    );
+    Ok(hash)
+}
+
+fn retirement_image_at(directory: &Path, install: &Path) -> Result<Option<PathBuf>> {
+    let executable = directory.join(launcher_name());
+    let config = directory.join(CONFIG);
+    let receipt = install.join("universal-uninstall.json");
+    let exists = |path: &Path| -> Result<bool> {
+        match fs::symlink_metadata(path) {
+            Ok(_) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error.into()),
+        }
+    };
+    if exists(&receipt)? {
+        crate::runtime_install::safe_file(&receipt)?;
+        let saved: Pointer = serde_json::from_slice(&read_bounded(&receipt)?)?;
+        ensure!(
+            saved.schema == 1 && saved.install == install.canonicalize()?,
+            "universal retirement receipt changed"
+        );
+        if exists(&executable)? {
+            crate::runtime_install::safe_file(&executable)?;
+            ensure!(
+                digest(&executable)? == saved.launcher_sha256,
+                "changed universal launcher preserved"
+            );
+        }
+        if exists(&config)? {
+            crate::runtime_install::safe_file(&config)?;
+            ensure!(
+                serde_json::from_slice::<Pointer>(&read_bounded(&config)?)? == saved,
+                "changed universal pointer preserved"
+            );
+        }
+        return Ok(Some(executable));
+    }
+    let image = exists(&executable)?;
+    let pointer = exists(&config)?;
+    if !image && !pointer {
+        return Ok(None);
+    }
+    ensure!(
+        image && pointer,
+        "partial universal launcher publication preserved; repair ownership before retirement"
+    );
+    crate::runtime_install::safe_file(&executable)?;
+    crate::runtime_install::safe_file(&config)?;
+    Ok((resolve(&executable)? == install.canonicalize()?).then_some(executable))
 }
 
 /// Remove only the verified universal entry point for this installation. A saved
@@ -409,6 +502,48 @@ fn retire_at(directory: &Path, install: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retirement_discovery_refuses_partial_or_changed_publication_and_preserves_foreign_owner()
+    -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let install = owner.path().canonicalize()?.join("install");
+        let other = owner.path().canonicalize()?.join("other");
+        let directory = owner.path().canonicalize()?.join("launcher");
+        crate::local_ipc::prepare_root(&install)?;
+        crate::local_ipc::prepare_root(&other)?;
+        assert!(retirement_image_at(&directory, &install)?.is_none());
+        crate::local_ipc::prepare_root(&directory)?;
+        let image = directory.join(launcher_name());
+        fs::write(&image, b"real owned fixture bytes")?;
+        assert!(retirement_image_at(&directory, &install).is_err());
+        let mut pointer = Pointer {
+            schema: 1,
+            install: other,
+            launcher_sha256: digest(&image)?,
+        };
+        write_pointer(&directory, &pointer)?;
+        assert!(retirement_image_at(&directory, &install)?.is_none());
+        pointer.install = install.clone();
+        write_pointer(&directory, &pointer)?;
+        assert_eq!(
+            retirement_image_at(&directory, &install)?,
+            Some(image.clone())
+        );
+        fs::write(
+            install.join("universal-uninstall.json"),
+            serde_json::to_vec(&pointer)?,
+        )?;
+        fs::remove_file(&image)?;
+        assert_eq!(
+            retirement_image_at(&directory, &install)?,
+            Some(image.clone())
+        );
+        fs::write(&image, b"foreign replacement")?;
+        assert!(retirement_image_at(&directory, &install).is_err());
+        assert_eq!(fs::read(image)?, b"foreign replacement");
+        Ok(())
+    }
 
     #[test]
     fn unrelated_uninstall_never_creates_or_claims_a_universal_publication_lock() -> Result<()> {

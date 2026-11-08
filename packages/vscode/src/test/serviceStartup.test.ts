@@ -100,10 +100,10 @@ test('connection check publishes preparation, progress and failure, coalesces cl
     const f=await serviceTestHost(context);
     let release!:()=>void;
     const pending=new Promise<void>(resolve=>{release=resolve;});
-    let probes=0,fail=true;
+    let probes=0,fail=true,entered!:()=>void;const began=new Promise<void>(resolve=>{entered=resolve;});
     context.mock.method(native,'probeMcp',async(...args:Parameters<typeof native.probeMcp>)=>{
         const report=args[4];
-        probes++;report?.('MCP handshake completed. Reading the tool list…');
+        probes++;entered();report?.('MCP handshake completed. Reading the tool list…');
         await pending;if(fail)throw new Error('fixture: tools/list rejected');
         return {tools:[...UNIFIED_TOOLS],status:{state:'index_unknown'}};
     });
@@ -115,7 +115,7 @@ test('connection check publishes preparation, progress and failure, coalesces cl
         const first=f.commands.get('airk.verifyMcp')!(project),second=f.commands.get('airk.verifyMcp')!(project);
         const settled=Promise.allSettled([first,second]);
         assert.ok(f.calls.some(value=>value.includes('MCP check: Checking the selected project')));
-        for(let i=0;i<20&&probes===0;i++)await new Promise(resolve=>setImmediate(resolve));
+        let timeout:NodeJS.Timeout|undefined;try{await Promise.race([began,new Promise((_,reject)=>{timeout=setTimeout(()=>reject(new Error('connection probe did not start')),5000);})]);}finally{clearTimeout(timeout);}
         assert.equal(probes,1);
         assert.ok(panel.posted.some((entry:any)=>entry.state?.connectionCheck?.phase==='checking'));
         release();assert.ok((await settled).every(value=>value.status==='rejected'));

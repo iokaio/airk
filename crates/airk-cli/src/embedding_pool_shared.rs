@@ -3,9 +3,9 @@
 //! combined with actual OS completion; metadata/EOF alone never mint a witness.
 use super::*;
 #[cfg(windows)]
-use airk_store::service::registry::{
-    ProviderBoot, SharedHelperContainment, shared_helper_job_name,
-};
+use airk_store::service::registry::SharedHelperContainment;
+#[cfg(all(windows, any(not(feature = "local-inference"), test)))]
+use airk_store::service::registry::shared_helper_job_name;
 use airk_store::service::registry::{
     ServiceRegistry, SharedHelperDrain, SharedHelperIdentity, SharedHelperPhase,
 };
@@ -56,6 +56,7 @@ pub(crate) fn known_transition(
     }
 }
 
+#[cfg(any(unix, not(feature = "local-inference"), test))]
 pub(crate) fn complete(root: &Path, owner: SharedHelperIdentity) -> Result<SharedHelperDrain> {
     let mut registry = registry(root)?;
     let record = registry
@@ -250,7 +251,7 @@ fn recover_windows(record: &SharedHelperDrain) -> Result<bool> {
     }
 }
 
-#[cfg(windows)]
+#[cfg(all(windows, any(not(feature = "local-inference"), test)))]
 pub(super) struct ManagedWindows {
     pub child: Option<airk_process::AtomicJobChild>,
     job: airk_process::ChildJob,
@@ -258,7 +259,7 @@ pub(super) struct ManagedWindows {
     owner: SharedHelperIdentity,
     finished: bool,
 }
-#[cfg(windows)]
+#[cfg(all(windows, any(not(feature = "local-inference"), test)))]
 impl ManagedWindows {
     pub(super) fn member_pids(&self) -> Result<Vec<u32>> {
         self.job.member_pids()
@@ -362,7 +363,7 @@ impl ManagedWindows {
         Ok(())
     }
 }
-#[cfg(windows)]
+#[cfg(all(windows, any(not(feature = "local-inference"), test)))]
 impl Drop for ManagedWindows {
     fn drop(&mut self) {
         while self.drain(Duration::from_secs(2)).is_err() {
@@ -371,7 +372,7 @@ impl Drop for ManagedWindows {
     }
 }
 
-#[cfg(windows)]
+#[cfg(all(windows, any(not(feature = "local-inference"), test)))]
 fn session() -> Result<u32> {
     let mut session = 0;
     // SAFETY: current process identity and correctly sized native output.
@@ -386,12 +387,12 @@ fn session() -> Result<u32> {
     );
     Ok(session)
 }
-#[cfg(windows)]
-fn boot(user: &str) -> Result<ProviderBoot> {
+#[cfg(all(windows, any(not(feature = "local-inference"), test)))]
+fn boot(user: &str) -> Result<airk_store::service::registry::ProviderBoot> {
     use sha2::{Digest, Sha256};
     // SAFETY: scalar monotonic native uptime query with no pointer arguments.
     let elapsed = unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount64() };
-    Ok(ProviderBoot {
+    Ok(airk_store::service::registry::ProviderBoot {
         boot_id: None,
         process_scope: format!("windows-global-user-{:x}", Sha256::digest(user.as_bytes())),
         elapsed_ns: elapsed

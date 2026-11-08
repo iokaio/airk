@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // Explicit qualification only. Real installed extensions; separate private UI driver.
-// Usage: node scripts/check-vsix-upgrade-editor.cjs <Code> <cli.js> <1.8.7.vsix> <1.8.12.vsix> <current-sha256>
+// Usage: node scripts/check-vsix-upgrade-editor.cjs <Code> <cli.js> <1.8.7.vsix> <current.vsix> <current-sha256>
 const fs=require('node:fs/promises'),path=require('node:path'),crypto=require('node:crypto');
 const {spawn,execFile}=require('node:child_process'),{promisify,isDeepStrictEqual}=require('node:util'),net=require('node:net');
 const execute=promisify(execFile),root=path.resolve(__dirname,'..');
-const {editorUi,privateEditorEnvironment}=require('./editor-ui.cjs');
+const {editorUi,privateEditorEnvironment,privateClientEnvironment}=require('./editor-ui.cjs');
 const {prepareOwnedReceipts,cleanupOwnedReceipts}=require('./native-editor-receipts.cjs');
+const CURRENT_VERSION=require('../packages/vscode/package.json').version;
 const OLD_SHA='71518c9d89fd0fb4f54e0d046b2f85948a361c7303ad7c49a60df568dfb4219d';
 const LEAF_SHA='4260bd90b8623e45da6d67144a2bff4fd8fa0a8186c7281c0125e39877c3f5c1';
 const OLD_MAIN_SHA='d28828af6eb8275c55748bc5202e9a7e642e8568ff915eaa7284e343bb56a066';
@@ -80,6 +81,24 @@ function citations(value,result=[]){
     return result;
 }
 function assertEvidence(body,hash){assert(citations(body).some(row=>row.path==='fixture.ts'&&row.content_hash===hash),'MCP did not cite exact original source bytes');}
+/** A public snapshot never persists the native bearer. Material came from its
+ * exact owner-private native references and is checked against the actual API. */
+function httpDefinitionSnapshot(definition,info,material){
+    const {installedHttpIdentity}=require(path.join(root,'packages/vscode/out/test/installedEditorHttp.js'));
+    const {validateHttpConnection}=require(path.join(root,'packages/vscode/out/serviceHttp.js'));
+    const identity=installedHttpIdentity(definition),connection=validateHttpConnection(info);
+    assert(identity.credentialId===connection.connection_id&&identity.url===connection.endpoint.url&&material.url===identity.url,'HTTP definition crossed native connection');
+    const authorization=Object.entries(identity.headers).find(([name])=>name.toLowerCase()==='authorization')?.[1];
+    assert(authorization==='Bearer '+material.credential,'Actual provider bearer differs from protected native credential');
+    return {transport:'https',uri:identity.url,version:definition.version,headers:Object.fromEntries(Object.entries(identity.headers).map(([name,value])=>[name,name.toLowerCase()==='authorization'?'Bearer [redacted]':value])),authorization_sha256:sha(Buffer.from(authorization)),nativeConnection:connection};
+}
+async function restoreHttpDefinition(snapshot,material){
+    assert(snapshot?.transport==='https'&&typeof snapshot.uri==='string'&&snapshot.uri===material.url,'Current evidence requires exact HTTPS transport');
+    assert(sha(Buffer.from('Bearer '+material.credential))===snapshot.authorization_sha256,'Native credential changed since actual provider observation');
+    assert(Object.entries(snapshot.headers).filter(([name])=>name.toLowerCase()==='authorization').length===1&&Object.entries(snapshot.headers).find(([name])=>name.toLowerCase()==='authorization')?.[1]==='Bearer [redacted]','Exactly one redacted native authorization');
+    const headers=Object.fromEntries(Object.entries(snapshot.headers).map(([name,value])=>[name,name.toLowerCase()==='authorization'?'Bearer '+material.credential:value]));
+    return {uri:{toString:()=>snapshot.uri},headers,nativeConnection:snapshot.nativeConnection,version:snapshot.version};
+}
 // This function is serialized into the sole development extension. AIRK itself
 // is installed by the real Code CLI and is never loaded as a development stage.
 async function privateDriver(){
@@ -109,7 +128,17 @@ async function privateDriver(){
         try{request=JSON.parse(await fs.readFile(filename,'utf8'));}catch(error){if(error.code!=='ENOENT')throw error;await new Promise(resolve=>setTimeout(resolve,80));continue;}
         sequence++;let value,error;
         try{
-            if(request.action==='definitions')value=(await api.getServerDefinitions()).map(row=>({command:row.command,args:row.args,env:row.env,cwd:row.cwd?.fsPath??row.cwd}));
+            if(request.action==='definitions'){
+                value=[];for(const row of await api.getServerDefinitions()){
+                    if(row.uri){
+                        const helpers=path.dirname(config.helper),{httpMaterial}=require(path.join(helpers,'serviceHttp.js'));
+                        const {installedHttpIdentity}=require(config.httpHelper),identity=installedHttpIdentity(row),host=new (require(config.helper).RuntimeHost)(ext.extensionPath,config.version,require(path.join(ext.extensionPath,'out/serviceConsole.js')).serviceRuntimeOptions());
+                        const observed=await host.discover();if(observed.installDir!==config.install||!observed.inspection)throw Error('HTTP discovery escaped actual installed fixture');
+                        const info=await host.httpConnectionInfo(host.binding(observed.inspection,observed.installDir),identity.credentialId);
+                        value.push(require(config.contracts).httpDefinitionSnapshot(row,info,await httpMaterial(info)));
+                    }else value.push({command:row.command,args:row.args,env:row.env,cwd:row.cwd?.fsPath??row.cwd});
+                }
+            }
             else if(request.action==='open')value=await vscode.commands.executeCommand('airk.explorer.open',request.route);
             else if(request.action==='search')value=await vscode.commands.executeCommand('airk.explorer.search','UpgradeOriginalEvidence');
             else if(request.action==='index'){await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(vscode.Uri.file(path.join(config.source,'fixture.ts'))));value=await vscode.commands.executeCommand('airk.index');}
@@ -129,7 +158,8 @@ async function main(argv=process.argv.slice(2)){
     const environment=privateEditorEnvironment(process.env),deadline=Date.now()+1200000;
     const artifacts=path.join(root,'artifacts/editor-qualification');await fs.mkdir(artifacts,{recursive:true});
     const run=await fs.realpath(await fs.mkdtemp(path.join(artifacts,'actual-vsix-upgrade-')));await fs.chmod(run,0o700);
-    const result={schema:1,scope:'existing OS UID; new private Code profile; actual installed VSIXes',run,deadline,oldVersion:'1.8.7',currentVersion:'1.8.12',uiLimit:256,mcpLimit:128,legacyRestart:'Only the owned private 1.8.7 Code process is closed/reopened. 1.8.7 cannot acquire a future bootstrap before activation.',checks:[],phases:[]};
+    const clientHome=path.join(run,'client-home');await fs.mkdir(clientHome,{mode:0o700});Object.assign(environment,privateClientEnvironment(environment,clientHome));
+    const result={schema:1,scope:'existing OS UID; private client home and Code profile; actual installed VSIXes',run,deadline,oldVersion:'1.8.7',currentVersion:CURRENT_VERSION,uiLimit:256,mcpLimit:128,legacyRestart:'Only the owned private 1.8.7 Code process is closed/reopened. 1.8.7 cannot acquire a future bootstrap before activation.',checks:[],phases:[]};
     const save=async(name,value)=>{const bytes=JSON.stringify(value,null,2);assert(Buffer.byteLength(bytes)<=8388608,'Qualification evidence exceeds 8 MiB');await fs.writeFile(path.join(run,name+'.json'),bytes);};
     const active=new Set(),ownedExits=new Map();let ui,stopProof,receiptPlan,profile,uiCount=0,mcpCount=0,editorCloseObserved=true,sourceBaseline,uncertainMcp=false,verificationBundle;
     function remaining(max=30000){assert(Date.now()<deadline,'Shared 20 minute deadline exceeded');return Math.max(1,Math.min(max,deadline-Date.now()));}
@@ -196,7 +226,7 @@ with zipfile.ZipFile(sys.argv[1]) as z:
     async function waitRead(read,label,end=deadline){while(Date.now()<Math.min(end,deadline)){const value=await read();if(value!==undefined)return value;await delay(100);}throw Error(label+' exceeded observation deadline');}
     let phaseSequence=0;
     async function startPhase(version,extensions,shared,source,driver,install){
-        const folder=path.join(run,'phase-'+version);await fs.mkdir(folder);await fs.writeFile(path.join(folder,'config.json'),JSON.stringify({version,extensions,install,source,deadline,helper:path.join(root,'packages/vscode/out/serviceBootstrap.js')}));
+        const folder=path.join(run,'phase-'+version);await fs.mkdir(folder);await fs.writeFile(path.join(folder,'config.json'),JSON.stringify({version,extensions,install,source,deadline,helper:path.join(root,'packages/vscode/out/serviceBootstrap.js'),contracts:__filename,httpHelper:path.join(root,'packages/vscode/out/test/installedEditorHttp.js')}));
         const server=net.createServer();await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const port=server.address().port;await new Promise(resolve=>server.close(resolve));
         const task=await processCode([source,'--new-window','--user-data-dir',profile,'--extensions-dir',extensions,'--shared-data-dir',shared,'--remote-debugging-port',String(port),'--remote-debugging-address','127.0.0.1','--skip-welcome','--skip-release-notes','--disable-updates','--disable-telemetry','--disable-gpu','--disable-workspace-trust','--extensionDevelopmentPath='+driver],'editor-'+version,{AIRK_UPGRADE_PHASE:folder});
         ui=await editorUi(port,deadline);phaseSequence=0;
@@ -210,6 +240,38 @@ with zipfile.ZipFile(sys.argv[1]) as z:
     }
     async function closePhase(phase){await save('ui-'+path.basename(phase.folder),{diagnostics:ui.diagnostics(),dispatches:ui.dispatchReceipts()});await phase.rpc('quit');assert((await phase.task.closed).code===0,'Private editor did not quit normally');editorCloseObserved=active.size===0;await ui.close();ui=undefined;}
     async function mcp(definition,check){
+        if(definition?.transport==='https'){
+            assert(!uncertainMcp,'Previous owned transport close remains uncertain');
+            const install=path.join(run,'native-service'),info=definition.nativeConnection;
+            const {validateHttpConnection,httpMaterial,sameHttpAuthority}=require(path.join(root,'packages/vscode/out/serviceHttp.js'));
+            validateHttpConnection(info);
+            const metadata=await native(verificationBundle,['runtime','inspect','--install-dir',install]);
+            const pair=JSON.parse(await fs.readFile(path.join(verificationBundle.source,'airk-runtime.json'),'utf8'));
+            assert(pair.schema===2&&metadata.launcher===null&&metadata.payload_verified===true&&metadata.approval?.manifest_sha256===verificationBundle.digest,'Modern HTTP requires the exact verified main-only native payload');
+            const currentInfo=validateHttpConnection(await native(verificationBundle,['runtime','http-connection-info','--install-dir',install,'--connection-id',info.connection_id]));
+            assert(sameHttpAuthority(currentInfo.selection,info.selection)&&isDeepStrictEqual(currentInfo.endpoint,info.endpoint)&&currentInfo.endpoint.executable_sha256===pair.airk_sha256&&currentInfo.endpoint.namespace===metadata.registry_namespace,'Native HTTP authority/endpoint changed since observation');
+            const {InstalledHttpTransport}=require(path.join(root,'packages/vscode/out/test/installedEditorHttp.js'));
+            const material=await httpMaterial(currentInfo),actual=await restoreHttpDefinition(definition,material),transport=new InstalledHttpTransport(actual,material.ca);
+            let primary;
+            try{
+                const initialized=await transport.request('initialize',{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'airk-installed-upgrade-test',version:CURRENT_VERSION}},remaining(90000));
+                assert(!initialized.error,'Actual HTTPS initialize refused');await transport.notify('notifications/initialized',remaining());
+                const catalog=await transport.request('tools/list',{},remaining()),{UNIFIED_TOOLS}=require(path.join(root,'packages/vscode/out/model.js'));
+                assert(!catalog.error&&isDeepStrictEqual(catalog.result.tools.map(tool=>tool.name).sort(),[...UNIFIED_TOOLS].sort()),'Actual HTTPS tool catalog differs');
+                await save('https-catalog-'+info.connection_id,{definition,initialized,catalog});
+                return await check(async(name,args)=>{
+                    assert(['status','symbols','search'].includes(name),'Only bounded native reads may retry');const {readRetryDelay}=require(path.join(root,'packages/vscode/out/readRetry.js'));
+                    return toolBody(await boundedSafeRead({deadline,retryDelay:wire=>readRetryDelay(wire,info.selection.kind==='scoped'?info.selection.selection:undefined),request:async timeout=>{
+                        assert(++mcpCount<=128,'128 MCP read budget exhausted');const id=mcpCount,wire=await transport.request('tools/call',{name,arguments:{...args,response_mode:'full'}},timeout);
+                        await save('mcp-read-'+id,{definition,name,args,wire});assert(!wire.error,'Actual HTTPS RPC refusal');return wire.result;
+                    }}));
+                });
+            }catch(error){primary=error;await save('https-failure-'+info.connection_id,{error:String(error),detail:error.detail,nativeResponse:error.nativeResponse});throw error;}finally{
+                try{await save('https-close-'+info.connection_id,{receipt:await transport.close(),observations:transport.observations});}
+                catch(error){uncertainMcp=true;await save('https-close-uncertain-'+info.connection_id,{error:String(error),primary:primary?String(primary):null});if(!primary)throw error;}
+            }
+        }
+        assert(verificationBundle.version==='1.8.7','A modern candidate cannot claim retrieval success from retired stdio');
         assert(typeof definition?.command==='string'&&inside(run,definition.command)&&Array.isArray(definition.args)&&definition.args.includes('mcp'),'MCP definition is outside owned native fixture');
         assert(!uncertainMcp,'Previous owned MCP exit remains uncertain');
         const install=path.join(run,'native-service'),stat=await fs.lstat(definition.command),actual=await fs.realpath(definition.command);
@@ -220,7 +282,7 @@ with zipfile.ZipFile(sys.argv[1]) as z:
         const {McpStdioSession}=require(path.join(root,'packages/vscode/out/mcpStdioSession.js'));
         let child,closed,opened,primary;
         try{
-            opened=await McpStdioSession.open({command:definition.command,args:definition.args,env:definition.env,cwd:definition.cwd??run,clientName:'AIRK actual installed VSIX upgrade qualification',clientVersion:'1.8.12',launch:(command,args,options)=>{
+            opened=await McpStdioSession.open({command:definition.command,args:definition.args,env:definition.env,cwd:definition.cwd??run,clientName:'AIRK actual installed VSIX upgrade qualification',clientVersion:CURRENT_VERSION,launch:(command,args,options)=>{
                 child=spawn(command,args,{...options,stdio:'pipe'});closed=new Promise(resolve=>child.once('close',(code,signal)=>resolve({code,signal})));return child;
             }},remaining(90000));
             return await check(async(name,args)=>{
@@ -237,7 +299,7 @@ with zipfile.ZipFile(sys.argv[1]) as z:
         // API metadata is public provenance, not executable material or a secret.
         const release=JSON.parse((await command('gh',['api','repos/iokaio/airk/releases/tags/v1.8.7'])).stdout);
         const asset=release.assets?.find(row=>row.name==='airk-1.8.7-darwin-arm64.vsix');assert(asset?.digest==='sha256:'+OLD_SHA,'Public old VSIX release digest no longer matches reviewed checksum');await save('old-release-provenance',{release_id:release.id,tag:release.tag_name,published_at:release.published_at,asset});
-        const old=await authenticatedBundle(oldVsix,'1.8.7',OLD_SHA,'old'),current=await authenticatedBundle(newVsix,'1.8.12',currentSha,'current');
+        const old=await authenticatedBundle(oldVsix,'1.8.7',OLD_SHA,'old'),current=await authenticatedBundle(newVsix,CURRENT_VERSION,currentSha,'current');
         verificationBundle=old;
         const source=path.join(run,'source'),storage=path.join(run,'storage'),installDir=path.join(run,'native-service'),extensions=path.join(run,'extensions'),shared=path.join(run,'shared');
         for(const folder of [source,storage,extensions,shared])await fs.mkdir(folder);
@@ -260,7 +322,11 @@ with zipfile.ZipFile(sys.argv[1]) as z:
             return diagnosis.activation_result?.outcome==='aborted_or_failed'?[]:undefined;
         },'Actual old Setup completion or explicit failure',Math.min(deadline,Date.now()+240000));
         const oldObservation={definitions:oldDefinitions};try{oldObservation.inspect=await native(old,['runtime','inspect','--install-dir',installDir]);}catch(error){oldObservation.inspectError=String(error);}await save('old-observation',oldObservation);
-        let baseline,oldFailure;
+        let baseline,oldFailure,originalConfiguration;
+        if(oldObservation.definitions.length===1){
+            const bytes=Buffer.from(JSON.stringify({servers:{airk:oldObservation.definitions[0]}})),filename=path.join(run,'original-provider-configuration.json');
+            await fs.writeFile(filename,bytes,{flag:'wx',mode:0o600});originalConfiguration={path:filename,sha256:sha(bytes)};
+        }
         if(oldObservation.definitions.length===1){
             try{baseline=await mcp(oldObservation.definitions[0],async call=>{
                 const until=Math.min(deadline,Date.now()+180000);let symbols;
@@ -287,24 +353,33 @@ with zipfile.ZipFile(sys.argv[1]) as z:
         await save('old-outcome',result);assert((await previous.rpc('tabs')).length===1,'Exactly one old Explorer must be left open');
         // Real VSIX replacement while the old Explorer is still open.
         await previous.rpc('disableNative');await install(newVsix,'install-current',extensions,shared);await closePhase(previous);await gatePrivateProfile(profile,installDir);
-        const next=await startPhase('1.8.12',extensions,shared,source,driver,installDir),nextLocation=await next.location();assert(nextLocation.installDir===installDir&&nextLocation.options.installDir===installDir&&!nextLocation.options.managed,'Current observed runtime escaped canonical fixture');await save('current-location-before-start',nextLocation);
+        const next=await startPhase(CURRENT_VERSION,extensions,shared,source,driver,installDir),nextLocation=await next.location();assert(nextLocation.installDir===installDir&&nextLocation.options.installDir===installDir&&!nextLocation.options.managed,'Current observed runtime escaped canonical fixture');await save('current-location-before-start',nextLocation);
         const ready=await next.ready();assert(!ready.bootError,ready.bootError);await save('current-activation',ready);
         verificationBundle=current;
         await next.rpc('open',{route:'#manage/service'});await boundedUi(()=>ui.indexing({action:'connect'}));
         const observation=await native(current,['runtime','inspect','--install-dir',installDir]),diagnose=await native(current,['runtime','diagnose','--install-dir',installDir]);assert(observation.payload_verified===true&&observation.approval?.manifest_sha256===current.digest&&diagnose.pending_activation===null&&diagnose.activation_error===null&&observation.control_dir===path.join(installDir,'control'),'Current native installation/activation is not verified');
         const health=await native(current,['service','rpc','--runtime-dir',observation.control_dir,'--stdin'],'health'),pair=JSON.parse(await fs.readFile(path.join(current.source,'airk-runtime.json'),'utf8'));
-        assert(health.status==='health'&&health.observation?.version==='1.8.12'&&health.observation.protocol===1&&health.observation.runtime_sha256===current.digest&&health.observation.executable_sha256===pair.airk_sha256&&/^[a-f0-9]{64}$/.test(health.observation.build?.source_sha256)&&Number.isSafeInteger(health.observation.build?.source_files),'Missing authenticated current native version/pair/build health');await save('current-native',{observation,diagnose,health});
+        assert(health.status==='health'&&health.observation?.version===CURRENT_VERSION&&health.observation.protocol===1&&health.observation.runtime_sha256===current.digest&&health.observation.executable_sha256===pair.airk_sha256&&/^[a-f0-9]{64}$/.test(health.observation.build?.source_sha256)&&Number.isSafeInteger(health.observation.build?.source_files),'Missing authenticated current native version/pair/build health');await save('current-native',{observation,diagnose,health});
         if(baseline){
             const rosterFile=path.join(observation.control_dir,'index-catalog-upgrade.json'),rosterStat=await fs.lstat(rosterFile);assert(rosterStat.isFile()&&!rosterStat.isSymbolicLink()&&rosterStat.size<=33554432,'Native upgrade roster is not one bounded regular file');
             const roster=JSON.parse(await fs.readFile(rosterFile,'utf8')),definition=oldObservation.definitions[0],at=definition.args.indexOf('--service-project');assert(at>=0,'Original definition lacks native registration binding');
             const imported=roster.plan?.indexes?.find(row=>row.registration.binding===definition.args[at+1]);
             assert(imported&&roster.plan.control===observation.control_dir&&roster.plan.namespace===oldObservation.inspect.registry_namespace&&imported.registration.root===source&&imported.registration.data_root===storage&&imported.registration.collection===baseline.status.collection,'Native upgrade roster crossed original registration/source/storage/collection');
-            const retained=await mcp(definition,async call=>({status:await call('status',{}),symbols:await call('symbols',{name:'UpgradeOriginalEvidence',compact:false}),search:await call('search',{query:'UpgradeOriginalEvidence',mode:'lexical',limit:5})}));
+            assert(originalConfiguration&&sha(await fs.readFile(originalConfiguration.path))===originalConfiguration.sha256,'Original provider configuration preimage changed');
+            const registrationFile=path.join(run,'original-registration.json');await fs.writeFile(registrationFile,JSON.stringify(imported.registration),{flag:'wx',mode:0o600});
+            const connection=await native(current,['runtime','http-legacy-connection','--install-dir',installDir,'--registration-file',registrationFile,'--configuration-receipt',originalConfiguration.sha256,'--connection-id',crypto.randomBytes(16).toString('hex'),'--client','vscode']);
+            const {validateHttpConnection,httpMaterial}=require(path.join(root,'packages/vscode/out/serviceHttp.js'));validateHttpConnection(connection);
+            const selected=connection.selection.selection,provenance=selected.grant?.provenance;
+            assert(connection.selection.kind==='imported_legacy'&&isDeepStrictEqual(selected.registration,imported.registration)&&selected.configuration_receipt===originalConfiguration.sha256&&selected.namespace===roster.plan.namespace&&provenance?.kind==='imported_legacy_snapshot'&&provenance.legacy_binding===imported.registration.binding&&provenance.upgrade_id===roster.plan.id&&provenance.plan_digest===roster.plan_digest,'Native HTTPS migration lacks the exact original sealed imported authority');
+            const material=await httpMaterial(connection),httpDefinition=httpDefinitionSnapshot({uri:{toString:()=>material.url},headers:{Authorization:'Bearer '+material.credential,'X-AIRK-Response-Mode':'full'}},connection,material);
+            const retained=await mcp(httpDefinition,async call=>({status:await call('status',{}),symbols:await call('symbols',{name:'UpgradeOriginalEvidence',compact:false}),search:await call('search',{query:'UpgradeOriginalEvidence',mode:'lexical',limit:5})}));
             for(const body of [retained.symbols,retained.search]){
                 assertEvidence(body,sourceHash);const scope=body.scope_observation;
+                assert(isDeepStrictEqual(scope.grant,{id:selected.grant.grant.id,revision:selected.grant.grant.revision}),'Imported HTTPS read crossed persisted native grant');
                 assert(scope?.provenance==='imported_legacy_snapshot'&&scope.members?.length===1&&scope.members[0].index_id===imported.index_id&&isDeepStrictEqual(scope.members[0].memberships.map(row=>row.project_id),[imported.project_id]),'Legacy scope differs from exact native upgrade roster');
             }
-            assert(isDeepStrictEqual(baseline.symbols.publication,retained.symbols.publication)&&baseline.symbols.publication!==undefined,'Original artifact publication was not retained');await save('retained-original-definition',{retained,imported,roster});
+            assert(isDeepStrictEqual(baseline.symbols.publication,retained.symbols.publication)&&baseline.symbols.publication!==undefined,'Original artifact publication was not retained');await save('retained-original-definition',{transport:'https_imported_migration',originalConfiguration,connection,httpDefinition,retained,imported,roster});
+            assert(sha(await fs.readFile(originalConfiguration.path))===originalConfiguration.sha256,'Migration rewrote original configuration');
         }
         await next.rpc('open',{route:'#indexing/library'});let library=await boundedUi(()=>ui.indexing({action:'page',kind:'indexes'})),index,name;
         if(baseline){const rows=library.page?.page?.items??[];const matches=rows.filter(row=>row.kind==='index'&&row.value?.backing?.root===source);assert(matches.length===1,'Original imported source index must be unique');index=matches[0].value.id;name=matches[0].value.name;}
@@ -319,7 +394,8 @@ with zipfile.ZipFile(sys.argv[1]) as z:
         await next.rpc('open',{route:'#indexing/window'});const selection=await boundedUi(()=>ui.indexing({action:'scopeSelect',setName,project}));assert(selection.outcome?.status==='search_scope_selected','Reviewed scope did not apply');await save('current-selection',selection);
         const definitions=await next.rpc('definitions');assert(definitions.length===1,'Current selected native definition must be unique');
         const {installedSelector,installedMember}=require(path.join(root,'packages/vscode/out/test/installedEditorContracts.js'));
-        const selected={index,project,grant:selection.outcome.activation.selection.session.grant_id,source_ids:sourceIds};selected.session=installedSelector(definitions[0],selection,selected);
+        const selected={index,project,grant:selection.outcome.activation.selection.session.grant_id,source_ids:sourceIds};assert(definitions[0].transport==='https','Current actual provider must advertise authenticated HTTPS');
+        const {httpMaterial}=require(path.join(root,'packages/vscode/out/serviceHttp.js')),actualDefinition=await restoreHttpDefinition(definitions[0],await httpMaterial(definitions[0].nativeConnection));selected.session=installedSelector(actualDefinition,selection,selected);
         await next.rpc('index');const reads=await mcp(definitions[0],async call=>{
             const end=Math.min(deadline,Date.now()+180000);let symbols;
             do{symbols=await call('symbols',{name:'UpgradeOriginalEvidence',compact:false});if(citations(installedMember(symbols,selected)).length)break;await delay(1000);}while(Date.now()<end);
@@ -328,7 +404,7 @@ with zipfile.ZipFile(sys.argv[1]) as z:
         await next.rpc('search');const rendered=await ui.until(async()=>(await ui.document("!!document.querySelector('.airk-explorer')","(()=>{const paths=[...document.querySelectorAll('.hit code.path')].map(n=>n.textContent);return paths.some(p=>p.startsWith('fixture.ts'))?{paths,text:document.body.innerText.slice(0,32768)}:undefined;})()"))?.value,'Current Explorer cited original fixture');await save('current-explorer',rendered);
         await next.rpc('open',{route:'#indexing/window'});assert((await next.rpc('tabs')).length===1,'Repeated navigation created duplicate Explorer');
         await next.rpc('open',{route:'#manage/service'});const beforeStop=await native(current,['runtime','inspect','--install-dir',installDir]);
-        assert(!uncertainMcp,'Native Stop cannot run before all owned MCP transports have observed OS exit');
+        assert(!uncertainMcp,'Native Stop cannot run before all owned stdio processes or HTTPS sockets have observed closure');
         const stop=await boundedUi(()=>ui.indexing({action:'serviceStop',installDir,runtimeSha256:current.digest,namespace:beforeStop.registry_namespace}));await save('native-stop',stop);
         stopProof=completeStop(stop,await native(current,['runtime','inspect','--install-dir',installDir]),current,installDir);await closePhase(next);
         assert(sha(await fs.readFile(path.join(source,'fixture.ts')))===sourceHash&&isDeepStrictEqual(await fs.readdir(source),['fixture.ts']),'Original source changed');
@@ -349,5 +425,5 @@ with zipfile.ZipFile(sys.argv[1]) as z:
     }
     return result;
 }
-module.exports={OLD_SHA,LEAF_SHA,OLD_MAIN_SHA,inside,toolBody,citations,assertEvidence,completeStop,failedActivation,qualifyOldLauncherCopy,gatePrivateProfile,waitOwnedExit,boundedJsonProcess,boundedSafeRead,privateDriver,main};
+module.exports={CURRENT_VERSION,httpDefinitionSnapshot,restoreHttpDefinition,OLD_SHA,LEAF_SHA,OLD_MAIN_SHA,inside,toolBody,citations,assertEvidence,completeStop,failedActivation,qualifyOldLauncherCopy,gatePrivateProfile,waitOwnedExit,boundedJsonProcess,boundedSafeRead,privateDriver,main};
 if(require.main===module)main().catch(error=>{process.stderr.write(String(error)+'\n');process.exitCode=1;});

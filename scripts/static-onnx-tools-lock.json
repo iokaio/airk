@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "cmake_version": "3.31.6",
+  "ninja_version": "1.12.1",
+  "ninja_commit": "2daa09ba270b0a43e1929d29b073348aa985dfaa",
+  "cmake": {
+    "Windows": {
+      "name": "cmake-3.31.6-windows-x86_64.zip",
+      "url": "https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-windows-x86_64.zip",
+      "bytes": 46473549,
+      "sha256": "d163cd3ab4959b0a53fa8988f2ddbd2e6c501658201e6a154386bad9dbe4f836",
+      "archive_root": "cmake-3.31.6-windows-x86_64",
+      "program": "bin/cmake.exe"
+    },
+    "Linux": {
+      "name": "cmake-3.31.6-linux-x86_64.tar.gz",
+      "url": "https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-linux-x86_64.tar.gz",
+      "bytes": 55010959,
+      "sha256": "5a1133ff103c71eb5120e2cc3de922733e7d8a26a98ae716397e8676adb367bf",
+      "archive_root": "cmake-3.31.6-linux-x86_64",
+      "program": "bin/cmake"
+    },
+    "Darwin": {
+      "name": "cmake-3.31.6-macos-universal.tar.gz",
+      "url": "https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-macos-universal.tar.gz",
+      "bytes": 78374480,
+      "sha256": "330b9514f5112e5ed4fb08b8b05803b776fd9b539a6ae12927d14dcc0ee2ba8d",
+      "archive_root": "cmake-3.31.6-macos-universal",
+      "program": "CMake.app/Contents/bin/cmake"
+    }
+  },
+  "ninja": {
+    "url": "https://codeload.github.com/ninja-build/ninja/tar.gz/2daa09ba270b0a43e1929d29b073348aa985dfaa",
+    "bytes": 240689,
+    "sha256": "373bb33a8db2769b825a771e5d25b11d79ef5e41a934b870487257c27b187180",
+    "archive_root": "ninja-2daa09ba270b0a43e1929d29b073348aa985dfaa"
+  },
+  "cmake_checksum_source": "https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-SHA-256.txt"
+}

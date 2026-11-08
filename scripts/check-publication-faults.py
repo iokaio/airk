@@ -6,12 +6,14 @@ The full-disk case requires an explicitly isolated Linux tmpfs mount and never
 fills a normal host filesystem.
 """
 import argparse
+from contextlib import contextmanager
 import hashlib
 import importlib.util
 import json
 import os
 from pathlib import Path
 import platform
+import select
 import subprocess
 import tempfile
 import time
@@ -19,6 +21,9 @@ import time
 spec = importlib.util.spec_from_file_location("airk_fault_fixture", Path(__file__).with_name("check-service-clients.py"))
 clients = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(clients)
+process_spec = importlib.util.spec_from_file_location("fault_process_identity", Path(__file__).with_name("owned-runtime-processes.py"))
+processes = importlib.util.module_from_spec(process_spec)
+process_spec.loader.exec_module(processes)
 
 
 def digest(path):
@@ -26,14 +31,128 @@ def digest(path):
         return hashlib.file_digest(source, "sha256").hexdigest()
 
 
+@contextmanager
+def owned_fault_fixture(parent=None):
+    if parent is None:
+        with clients.owned_client_fixture() as owner:
+            yield owner
+        return
+    # An explicitly selected isolated tmpfs remains the only full-volume target.
+    temporary = tempfile.TemporaryDirectory(prefix="airk-faults-", dir=parent)
+    try:
+        yield temporary.name
+    except BaseException:
+        temporary._finalizer.detach()
+        raise
+    else:
+        temporary.cleanup()
+
+
+def drain_initial_owner(fixture):
+    """Observe exit of the authenticated initial owner without sending any signal."""
+    health = fixture.managed_health
+    pid = health["process_id"]
+    assert type(pid) is int and pid > 0
+    held = queue = None
+    try:
+        if platform.system() == "Darwin":
+            queue = select.kqueue()
+            queue.control([select.kevent(pid, filter=select.KQ_FILTER_PROC,
+                flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT, fflags=select.KQ_NOTE_EXIT)], 0, 0)
+        else:
+            backend = processes._backend()
+            held = backend.open(pid)
+            observed = held.observation()
+            assert not held.gone() and observed["user"] == backend.user and not observed.get("image_deleted")
+            assert Path(observed["path"]).samefile(fixture.binary)
+        fixture.assert_alive()  # Revalidate native instance after binding the exit observer.
+        response = json.loads(fixture.run("service", "shutdown", "--runtime-dir", fixture.control).stdout)
+        assert response["status"] == "stopping", response
+        deadline = time.monotonic() + 45
+        while True:
+            if held is not None:
+                exited = held.gone()
+            else:
+                events = queue.control([], 1, 0)
+                assert all(event.ident == pid and event.filter == select.KQ_FILTER_PROC
+                           and event.fflags & select.KQ_NOTE_EXIT and not event.flags & select.KQ_EV_ERROR for event in events)
+                exited = bool(events)
+            if exited:
+                break
+            assert time.monotonic() < deadline, "Initial owned service did not exit after transient drain"
+            time.sleep(0.025)
+        assert fixture.run("service", "health", "--runtime-dir", fixture.control, check=False).returncode != 0
+        return {"instance": health["instance"], "process_id": pid, "observed_exit": True, "signals_sent": 0}
+    finally:
+        if held is not None:
+            held.close()
+        if queue is not None:
+            queue.close()
+
+
+class FaultFixture(clients.Fixture):
+    """Canonical installed foreground entry, supervised by this retained Popen."""
+    def start(self):
+        if not self.single_image:
+            return super().start()
+        if not self.managed_started:
+            super().start()
+            drained = drain_initial_owner(self)
+            (self.owner / "initial-owner-drain.json").write_text(json.dumps(drained, indent=2) + "\n")
+        previous = self.managed_health
+        assert self.child is None or self.child.poll() is not None, "Previous foreground child is still alive"
+        self.child = subprocess.Popen([str(self.binary), "runtime", "foreground", "--install-dir", str(self.install)],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=self.log, cwd=self.runtime, env=self.environment,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+        deadline = time.monotonic() + 90
+        while time.monotonic() < deadline:
+            assert self.child.poll() is None, "Owned foreground service exited during startup"
+            result = self.run("service", "health", "--runtime-dir", self.control, check=False)
+            if result.returncode == 0:
+                health = json.loads(result.stdout)["observation"]
+                assert health["process_id"] == self.child.pid and health["instance"] != previous["instance"]
+                assert health["runtime_sha256"] == previous["runtime_sha256"] and health["executable_sha256"] == digest(self.binary)
+                self.managed_health = health
+                self.assert_alive()
+                return
+            time.sleep(0.05)
+        raise AssertionError("Owned foreground service did not become healthy")
+
+    def close(self):
+        if not self.single_image:
+            return super().close()
+        super().close()  # Exact native lifecycle Stop; uncertain outcomes remain failures.
+        if self.child is not None:
+            self.child.wait(timeout=45)
+            assert self.child.returncode == 0, "Owned foreground service did not exit cleanly"
+
+    def inject_death(self):
+        owned = self.child
+        assert owned is not None and owned.poll() is None, "Owned service exited before fault injection"
+        self.assert_alive()
+        if self.single_image:
+            assert self.managed_health["process_id"] == owned.pid
+            assert self.binary.resolve(strict=True).is_relative_to(self.install.resolve(strict=True))
+        before = self.managed_health if self.single_image else {"process_id": owned.pid}
+        # Popen retains the Windows process handle or unreaped POSIX child identity.
+        owned.kill()
+        owned.wait(timeout=30)
+        proof = {"owner": before, "retained_child_pid": owned.pid, "exit_code": owned.returncode,
+                 "scope": "owned_foreground_supervisor" if self.single_image else "owned_legacy_service", "observed_exit": True}
+        with (self.owner / "fault-process-receipts.jsonl").open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(proof) + "\n")
+        return proof
+
+
 def run_campaign(binary, base, attempts, full_disk):
-    source, data = base / "source", base / "state"
+    source, data = base / "source", base / "index-data"
     source.mkdir()
     data.mkdir()
     source_file = source / "requirement.md"
     source_file.write_text("REQOLDMARKER: Original requirement shall remain readable.\n", encoding="utf-8")
-    with clients.Fixture(binary.parent, base) as fixture:
-        assert fixture.binary == binary
+    with FaultFixture(binary.parent, base) as fixture:
+        assert digest(fixture.binary) == digest(binary)
+        fixture.assert_alive()
         fixture.register("faults", source, data)
         fixture.rpc({"configure_watch": {"project": fixture.projects["faults"]["binding"], "enabled": False}})
         fixture.configure("faults", {"operation": "vectors", "enabled": False})
@@ -58,15 +177,12 @@ def run_campaign(binary, base, attempts, full_disk):
             before = {path.relative_to(data).as_posix() for path in data.rglob("*") if path.is_file()}
             # Enqueue the real durable job before terminating its actual service
             # owner. Killing a CLI that merely waits for acceptance tests no writer.
-            accepted = json.loads(fixture.run(*fixture.arguments("faults"), "index").stdout)
+            accepted = fixture.enqueue("faults", "index")
             delay = [0.005, 0.025, 0.1, 0.3, 0.8, 1.5][ordinal % 6]
             started = time.monotonic()
             time.sleep(delay)
             seen = {path.relative_to(data).as_posix() for path in data.rglob("*") if path.is_file()}
-            owned = fixture.child
-            assert owned is not None and owned.poll() is None, "Owned service exited before fault injection"
-            owned.kill()
-            owned.wait(timeout=30)
+            fault_receipt = fixture.inject_death()
             fixture.start()
             # Native restart drains predecessors and recovers captured work.
             # No numerical worker PID discovered from status authorizes a kill.
@@ -95,6 +211,7 @@ def run_campaign(binary, base, attempts, full_disk):
                           "delay_ms": delay * 1000, "elapsed_ms": round((time.monotonic() - started) * 1000),
                           "new_managed_files_observed": len(seen - before),
                           "retained_old_generation": read["publication"] == old,
+                          "process_fault": fault_receipt,
                           "atomic_revision_and_recovery": True})
 
         if full_disk:
@@ -121,7 +238,9 @@ def run_campaign(binary, base, attempts, full_disk):
                             if error.errno != 28:
                                 raise
                             break
-                refusal = fixture.run(*fixture.arguments("faults"), "index", check=False)
+                registration = fixture.projects["faults"]
+                refusal = fixture.run("--service-runtime-dir", fixture.control, "--service-project", registration["binding"],
+                    "--root", registration["root"], "--data-dir", registration["data_root"], "--collection", registration["collection"], "index", check=False)
                 assert refusal.returncode != 0, "Full-volume durable admission unexpectedly succeeded"
                 assert not refusal.stdout.strip() or "job" not in json.loads(refusal.stdout), "Accepted work must be inspected after pressure clears"
             finally:
@@ -137,6 +256,7 @@ def run_campaign(binary, base, attempts, full_disk):
             "binary_sha256": digest(binary), "cases": cases,
             "limitations": ["Process kills do not emulate physical power loss or device-cache loss",
                             "Timing does not prove every internal crash point was exercised",
+                            "Modern service death exercises the canonical foreground entry under this fixture's supervisor, not on-demand restart policy",
                             "Service death exercises native predecessor draining and durable captured-work recovery",
                             "The full-volume case exhausts tmpfs before admission, not during a publication write",
                             "tmpfs ENOSPC is an OS allocation failure, not a media/controller fault"]}
@@ -156,7 +276,7 @@ def main():
     # The explicit isolated mount must start empty; reject host/shared tmpfs paths.
     if parent and (parent == Path("/dev/shm") or parent == Path("/tmp") or any(parent.iterdir())):
         parser.error("isolated tmpfs must be a dedicated, initially empty mount")
-    with tempfile.TemporaryDirectory(prefix="airk-faults-", dir=parent) as temporary:
+    with owned_fault_fixture(parent) as temporary:
         report = run_campaign(binary, Path(temporary), args.attempts, parent)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

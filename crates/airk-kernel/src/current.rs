@@ -236,8 +236,7 @@ pub fn materialize_lexical(
                 work <= MAX_LEXICAL_VALIDATION_BYTES,
                 "current lexical validation read budget exceeded"
             );
-            let full = store.load_retrieval_artifact(&compact)?.artifact;
-            store.read_retained_source(&compact)?;
+            let full = load_lexical_artifact(store, &compact)?;
             cached = Some((path.clone(), full));
         }
         let artifact = &cached.as_ref().expect("artifact loaded above").1;
@@ -276,4 +275,27 @@ pub fn materialize_lexical(
         hits,
         truncated,
     })
+}
+
+/// Saved legacy chunks are authenticated by their explicit archived origin;
+/// lack of original raw bytes must not trigger a live-source fallback.
+pub(super) fn load_lexical_artifact(
+    store: &FileStore,
+    compact: &airk_core::Artifact,
+) -> Result<airk_core::Artifact> {
+    let retained = compact
+        .retained
+        .as_ref()
+        .context("current retained extraction missing")?;
+    if retained.legacy_origin.is_some() {
+        let artifact = store.load_legacy_saved_artifact(compact)?;
+        if retained.raw_source {
+            store.verify_retained_source(compact)?;
+        }
+        Ok(artifact)
+    } else {
+        let artifact = store.load_retrieval_artifact(compact)?.artifact;
+        store.read_retained_source(compact)?;
+        Ok(artifact)
+    }
 }

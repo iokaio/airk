@@ -101,6 +101,7 @@ pub struct PreparedStorage {
     configuration: Sha256Digest,
     split: Option<crate::service::registry::catalog::split::NativeSplitState>,
     split_seal: Option<crate::service::registry::catalog::split::NativeSplitState>,
+    saved_adoption: Option<super::SavedAdoptionSources>,
     _project: ProjectLease,
     _claim: File,
     _writer: File,
@@ -110,6 +111,29 @@ pub struct PreparedStorage {
 }
 impl PreparedStorage {
     pub fn record(self, registry: &mut ServiceRegistry) -> Result<IndexSetupReceipt> {
+        self.record_inner(registry, None)
+    }
+    pub fn record_legacy_adoption(
+        self,
+        registry: &mut ServiceRegistry,
+        plan: &airk_core::catalog_legacy_adoption::LegacyAdoptionPlan,
+    ) -> Result<IndexSetupReceipt> {
+        plan.validate()?;
+        ensure!(
+            self.receipt.request == plan.setup,
+            "legacy adoption storage differs from reviewed setup"
+        );
+        self.record_inner(registry, Some(plan.identity()?))
+    }
+    fn record_inner(
+        self,
+        registry: &mut ServiceRegistry,
+        legacy_adoption: Option<Sha256Digest>,
+    ) -> Result<IndexSetupReceipt> {
+        ensure!(
+            self.receipt.legacy_adoption == legacy_adoption,
+            "native storage preparation changed reserved adoption intent"
+        );
         ensure!(
             self.split.is_none(),
             "split preparation cannot complete ordinary index setup"
@@ -148,13 +172,14 @@ impl PreparedStorage {
                 self.receipt.operation_id.as_bytes(),
             ],
         );
-        let native = NativeIndexPreparation::from_validated_native_review(
+        let mut native = NativeIndexPreparation::from_validated_native_review(
             request.registration.clone(),
             request.sources.clone(),
             storage_identity,
             self.configuration,
             review,
         )?;
+        native.legacy_adoption = legacy_adoption;
         registry.record_index_preparation(
             request.caller,
             &request.key,
@@ -195,9 +220,13 @@ impl PreparedStorage {
                 == self.slot.identity()?,
             "native setup selected incarnation changed"
         );
-        let format = match &self.split_seal {
-            Some(state) => Metadata::new_split(&self.control, &self.receipt, state)?,
-            None => Metadata::new(&self.control, &self.receipt)?,
+        let format = if let Some(saved) = &self.saved_adoption {
+            Metadata::saved_adoption(&self.control, &self.receipt, saved.plan())?
+        } else {
+            match &self.split_seal {
+                Some(state) => Metadata::new_split(&self.control, &self.receipt, state)?,
+                None => Metadata::new(&self.control, &self.receipt)?,
+            }
         };
         validate_collection(&self.collection, &format, true)
     }
@@ -213,6 +242,24 @@ pub fn prepare_index_storage(
 ) -> Result<PreparedStorage> {
     prepare_with_hook(registry, control, receipt, pins, || {})
 }
+pub fn prepare_saved_adoption_storage(
+    registry: &ServiceRegistry,
+    control: &Path,
+    receipt: &IndexSetupReceipt,
+    pins: NativeSetupPins,
+    saved: super::SavedAdoptionSources,
+) -> Result<PreparedStorage> {
+    ensure!(
+        saved.plan().setup == receipt.request
+            && receipt.legacy_adoption == Some(saved.plan().identity()?),
+        "saved adoption storage differs from native archive intent"
+    );
+    ensure!(
+        pins.sources.is_empty(),
+        "saved adoption cannot claim live source ownership"
+    );
+    prepare_authorized(registry, control, receipt, pins, None, Some(saved), || {})
+}
 fn prepare_with_hook(
     registry: &ServiceRegistry,
     control: &Path,
@@ -220,7 +267,7 @@ fn prepare_with_hook(
     pins: NativeSetupPins,
     before_effects: impl FnOnce(),
 ) -> Result<PreparedStorage> {
-    prepare_authorized(registry, control, receipt, pins, None, before_effects)
+    prepare_authorized(registry, control, receipt, pins, None, None, before_effects)
 }
 fn prepare_authorized(
     registry: &ServiceRegistry,
@@ -228,9 +275,14 @@ fn prepare_authorized(
     receipt: &IndexSetupReceipt,
     pins: NativeSetupPins,
     split: Option<&crate::service::registry::catalog::split::NativeSplitState>,
+    saved_adoption: Option<super::SavedAdoptionSources>,
     before_effects: impl FnOnce(),
 ) -> Result<PreparedStorage> {
     receipt.validate()?;
+    ensure!(
+        split.is_none() || saved_adoption.is_none(),
+        "saved adoption cannot reuse split authority"
+    );
     let control = control.canonicalize()?;
     ensure!(
         registry.root.canonicalize()? == control,
@@ -268,7 +320,11 @@ fn prepare_authorized(
     let data_path = Path::new(&request.registration.data_root);
     check_named_pin(&parent, data_path.parent().context("setup parent missing")?)?;
     ensure!(
-        pins.sources.len() == request.sources.len(),
+        if saved_adoption.is_some() {
+            pins.sources.is_empty()
+        } else {
+            pins.sources.len() == request.sources.len()
+        },
         "native setup source pin capacity mismatch"
     );
     let sources = pins
@@ -282,9 +338,13 @@ fn prepare_authorized(
     let split_seal = split
         .map(|state| split::initial_seal_state(registry, state))
         .transpose()?;
-    let metadata = match &split_seal {
-        Some(state) => Metadata::new_split(&control, receipt, state)?,
-        None => Metadata::new(&control, receipt)?,
+    let metadata = if let Some(saved) = &saved_adoption {
+        Metadata::saved_adoption(&control, receipt, saved.plan())?
+    } else {
+        match &split_seal {
+            Some(state) => Metadata::new_split(&control, receipt, state)?,
+            None => Metadata::new(&control, receipt)?,
+        }
     };
     parent.require_growth(metadata.encoded_bytes()?)?;
     let stage_name = OsString::from(format!(".airk-setup-{}.part", receipt.operation_id));
@@ -411,6 +471,7 @@ fn prepare_authorized(
         configuration: metadata.configuration,
         split: split.cloned(),
         split_seal,
+        saved_adoption,
         _project: project,
         _claim: claim,
         _writer: writer,
@@ -569,7 +630,7 @@ fn write_collection(directory: &SetupDirectory, metadata: &Metadata) -> Result<(
     slot.sync()?;
     directory.sync()
 }
-fn validate_collection(
+pub(super) fn validate_collection(
     directory: &SetupDirectory,
     metadata: &Metadata,
     complete: bool,
@@ -810,6 +871,26 @@ impl SetupDirectory {
         let name = component(name)?;
         // SAFETY: caller owns the native entry and supplies one retained parent.
         if unsafe { libc::unlinkat(self.as_raw_fd(), name.as_ptr(), 0) } != 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        self.sync()
+    }
+    /// Remove only the exact empty child under the caller's native exclusion.
+    /// Unix checks then unlinks a name; it has no atomic unlink-by-inode API.
+    pub(crate) fn unlink_empty_dir_if_identity(&self, name: &OsStr, owned: &Self) -> Result<()> {
+        let current = self.open_dir(name)?;
+        ensure!(
+            current.identity()? == owned.identity()?,
+            "setup empty-directory identity changed"
+        );
+        ensure!(
+            current.entries()?.next().transpose()?.is_none(),
+            "setup deletion directory is not empty"
+        );
+        let name = component(name)?;
+        // SAFETY: retained parent, one child component and empty-directory-only
+        // unlink. The caller retains native exclusion across identity and unlink.
+        if unsafe { libc::unlinkat(self.as_raw_fd(), name.as_ptr(), libc::AT_REMOVEDIR) } != 0 {
             return Err(std::io::Error::last_os_error().into());
         }
         self.sync()

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { createHash } from 'node:crypto';
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import * as fs from 'node:fs/promises';
@@ -202,4 +203,18 @@ test('Windows exact native source accepts normal/verbatim equivalents and refuse
     await assert.rejects(host.sourceScope(binding,root,null),/crossed_source_scope/);
     registeredRoot=root;nativeRoot=path.join(path.dirname(root),'foreign');
     await assert.rejects(host.sourceScope(binding,root,null),/crossed_source_scope/);
+});
+
+test('provider HTTP migration retains only exact preexisting saved configuration lineage',()=>{
+    const install=path.resolve('fixture-install'),source=path.resolve('fixture-source');
+    const binding:RuntimeBinding={installDir:install,controlDir:path.join(install,'control'),executable:path.join(install,'main'),launcher:null,runtimeSha256:'a'.repeat(64),version:'1.8.14',lifecycle:'on-demand',verificationBasis:'trusted_distribution'};
+    const registration={installDir:install,controlDir:binding.controlDir,runtimeSha256:binding.runtimeSha256,binding:'b'.repeat(64),root:source,data_root:path.resolve('fixture-data'),collection:'fixture'};
+    const key='airk.service.workspace.1.'+'c'.repeat(64),saved={schema:1,opened:source,registration},values=new Map<string,unknown>([[key,saved]]);
+    const storage={keys:()=>[...values.keys()],get:<T>(key:string)=>values.get(key) as T|undefined,update:async(key:string,value:unknown)=>{values.set(key,value);}};
+    const runtime={reviewProject:async()=>{throw Error('unused');},registerProject:async()=>{throw Error('unused');}};
+    const workspace=new ServiceWorkspace(storage,runtime,()=>true),spec={command:binding.executable,root:source,dataDir:registration.data_root,collection:'fixture',name:'fixture',service:{installDir:install,project:registration.binding}};
+    assert.equal(workspace.providerConfigurationReceipt(binding,spec),createHash('sha256').update(JSON.stringify(saved)).digest('hex'));
+    values.set(key,{...saved,registration:{...registration,runtimeSha256:'d'.repeat(64)}});assert.equal(workspace.providerConfigurationReceipt({...binding,runtimeSha256:'d'.repeat(64)},spec),createHash('sha256').update(JSON.stringify(saved)).digest('hex'),'approved payload refresh retains the exact original provider preimage');
+    values.set(key,{...saved,registration:{...registration,data_root:path.resolve('changed')}});assert.equal(workspace.providerConfigurationReceipt(binding,spec),undefined,'changed receipt cannot supply predecessor lineage');
+    values.delete(key);const fresh=new ServiceWorkspace(storage,runtime,()=>true);values.set(key,saved);assert.equal(fresh.providerConfigurationReceipt(binding,spec),undefined,'newly adopted equivalent preferences never become old provider configuration');
 });

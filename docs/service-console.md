@@ -1,5 +1,12 @@
 # Trusted service console
 
+For current 1.8.14 qualification use the native HTTPS/service checks and actual
+installed-editor journey listed in [the implementation plan's acceptance
+owners](one-airk.md#91-file-and-test-sweep-required-before-removing-stdio-defaults).
+The historical `check-service-console-client.cjs` fixture refuses current
+single-image payloads. Its dated results below do not qualify a modern
+Management repair/configuration or controller upgrade/rollback sequence.
+
 From 1.5.0 the console's controls are presented in **AIRK Explorer › Management** (Projects, Activity, Repair, Indexing, Storage, Service, Agents, Usage and Logs). The Explorer drives the same controller described here, so journaled requests, confirmations, paging and validation are unchanged. The separate **Service Console** webview view was removed in 1.5.0 together with its HTML rendering and the `airk.explorer.showServiceConsole` setting; the controller, request journal and diagnostic report described here remain and serve Management. Descriptions below of console buttons and panels are the historical 1.4 presentation; the same actions now appear on the matching Management tab. See the [Explorer design](explorer/AIRK_Explorer_Final_Design.md).
 
 Installation and upgrades now display a VS Code progress notification with the current stage: version and payload checks, staging, native activation, agent connection updates, workspace setup and cleanup. Progress uses actual stages without an invented percentage. On Windows and Linux, an admitted upgrade hard-stops verified preceding AIRK processes and disconnects their clients; success and failure remain explicit. VS Code owns the earlier VSIX installation UI, before AIRK can activate.

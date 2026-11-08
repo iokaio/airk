@@ -129,7 +129,8 @@ def validate_runtime(runtime, version, target, source):
     operating_system = "windows" if "windows" in target else "macos" if "apple" in target else "linux"
     architecture = "aarch64" if target.startswith("aarch64-") else "x86_64"
     for metadata in (install, pair):
-        if metadata.get("schema") != 1 or metadata.get("version") != version or metadata.get("os") != operating_system or metadata.get("arch") != architecture:
+        expected_schema = 2 if metadata is pair and runtime_builder().single_image_version(version) else 1
+        if metadata.get("schema") != expected_schema or metadata.get("version") != version or metadata.get("os") != operating_system or metadata.get("arch") != architecture:
             raise ValueError("Runtime pair platform/version differs")
     expected = {name: value for name, value in files.items() if name != "airk-install.json"}
     if install.get("files") != expected:
@@ -137,16 +138,20 @@ def validate_runtime(runtime, version, target, source):
     if build.get("schema") != 1 or build.get("source") != source or build.get("runtime") != pair:
         raise ValueError("Runtime build receipt differs from current source/pair")
     builder = runtime_builder()
-    main, helper = builder.runtime_names(operating_system)
+    executables = builder.runtime_executables(operating_system, version)
+    main = executables[0]
     launcher = builder.launcher_name(operating_system, version)
     if launcher != main and launcher not in files:
         raise ValueError("Runtime standalone launcher image is missing")
-    allowed = {main, helper, launcher, "airk-install.json", "airk-runtime.json", "airk-build.json", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"}
+    allowed = {*executables, launcher, "airk-install.json", "airk-runtime.json", "airk-build.json", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"}
     required = allowed | {"notices/inventory.json", "notices/bom.cdx.json", "notices/all-MiniLM-L6-v2/LICENSE", "notices/all-MiniLM-L6-v2/provenance.json"}
     if not required.issubset(files):
         raise ValueError("Runtime pair legal/notice inventory is incomplete")
     allowed = set(required)
-    inference_assets = builder.inference_assets(operating_system, architecture) if builder.int8_version(version) else {}
+    if builder.single_image_version(version):
+        static_notices = bounded_json(runtime / "notices/static-onnx-runtime/inventory.json")
+        allowed.update(builder.static_notice_inventory(static_notices, target, files))
+    inference_assets = builder.inference_assets(operating_system, architecture, version) if builder.int8_version(version) else {}
     for name, row in inference_assets.items():
         if operating_system == "macos" and "macho_payload_sha256" in row:
             metadata = (runtime / name).stat()
@@ -178,9 +183,9 @@ def validate_runtime(runtime, version, target, source):
             allowed.add(directory + name)
     if set(files) != allowed:
         raise ValueError("Unexpected runtime payload outside native/legal allowlist")
-    if pair.get("airk_sha256") != files.get(main) or pair.get("embed_sha256") != files.get(helper) or not files.get(main) or not files.get(helper):
+    if not builder.runtime_metadata_matches(pair, version, operating_system, architecture, files):
         raise ValueError("Runtime pair executable digests differ")
-    return files, tuple(dict.fromkeys((main, helper, launcher)))
+    return files, tuple(dict.fromkeys((*executables, launcher)))
 
 
 def source_packaging_metadata(path, target, signed):
@@ -231,7 +236,7 @@ def main():
         runtime, signing = signer.read_verified_pair(args.signed_dir.resolve(strict=True), runtime, args.target,
                                                      capture("git", "rev-parse", "HEAD"), sha256(ROOT / "Cargo.lock"), args.signtool)
         files, executables = validate_runtime(runtime, version, args.target, builder.source_identity())
-    executable, helper = executables[:2]
+    executable = executables[0]
     output = (args.output or ROOT / "artifacts" / "native" / args.target).resolve()
     if not output.is_relative_to((ROOT / "artifacts").resolve()) or output == (ROOT / "artifacts").resolve():
         raise SystemExit("Candidate output must be a fresh subdirectory of artifacts/")
@@ -274,7 +279,10 @@ def main():
     profile = next((p for p in catalog["profiles"] if p["id"] == selected), None)
     if profile is None or model_report.get("bundled_model", {}).get("manifest") != profile["manifest"]:
         raise SystemExit("Archived model metadata differs from source catalog")
-    embedded = builder.verify_embedded_models(smoke, "windows" if "windows" in args.target else "macos" if "apple" in args.target else "linux")
+    embedded = builder.verify_embedded_models(smoke, "windows" if "windows" in args.target else "macos" if "apple" in args.target else "linux", version)
+    model_smoke = builder.verify_model_smoke(smoke, "windows" if "windows" in args.target else "macos" if "apple" in args.target else "linux", version) if builder.single_image_version(version) else None
+    if model_smoke is not None and model_smoke["profile"] != selected:
+        raise SystemExit("Archived inference probe selected a different CPU model profile")
     receipt = {
         "schema": "airk-native-candidate/2", "version": version,
         "bundled_model": model_report["bundled_model"],
@@ -291,6 +299,8 @@ def main():
         "payload": files, "signed_distribution": signing is not None, "signing": signing,
         "qualification": "native CLI candidate; installed editor and oldest OS not qualified",
     }
+    if model_smoke is not None:
+        receipt["embedded_model_smoke"] = model_smoke
     (publish / "manifest.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
     (publish / "SHA256SUMS").write_text(
         sha256(archive) + "  " + archive.name + "\n" +

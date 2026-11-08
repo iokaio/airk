@@ -4,10 +4,12 @@ pub mod bounded;
 pub mod embedding_batch;
 pub mod embedding_worker;
 pub mod intent;
-#[cfg(any(test, all(feature = "local-inference", target_os = "macos")))]
+#[cfg(test)]
 mod macho_identity;
 pub mod model;
 pub mod model_catalog;
+#[cfg(feature = "local-inference")]
+pub mod native_inference;
 #[cfg(feature = "local-inference")]
 mod onnx;
 #[cfg(not(feature = "local-inference"))]

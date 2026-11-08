@@ -103,7 +103,9 @@ def read_verified_pair(directory, source, target, commit, lock_digest, signtool=
     runtime = directory / "runtime"
     original = package.bounded_json(source / "airk-install.json")
     signed = package.bounded_json(runtime / "airk-install.json")
-    main, helper = package.runtime_builder().runtime_names("windows" if "windows" in target else "macos")
+    if not isinstance(original.get("version"), str) or original.get("version") != signed.get("version"):
+        raise ValueError("Signed runtime installer versions differ or are missing")
+    main = package.runtime_builder().runtime_executables("windows" if "windows" in target else "macos", original["version"])[0]
     signing_names = package.runtime_builder().signing_names("windows" if "windows" in target else "macos", original.get("version", "1.6.0"))
     components = receipt.get("components", {})
     ticket = {"AIRK.app/Contents/CodeResources"} if "apple" in target else set()
@@ -183,7 +185,8 @@ def verify_copied_launcher(runtime, version, component, signtool="signtool"):
 
 def stapled_app_ticket(components):
     receipts = [component.get("notarization") for component in components.values()]
-    return (len(receipts) in (2, 3, 4) and all(isinstance(value, dict) and value.get("status") == "Accepted"
+    supported = len(receipts) in (2, 3, 4) or set(components) == {"AIRK.app/Contents/MacOS/airk"}
+    return (supported and all(isinstance(value, dict) and value.get("status") == "Accepted"
             and value.get("stapled") is True and value.get("scope") == "AIRK.app" and isinstance(value.get("id"), str) and value["id"] for value in receipts)
             and len({value["id"] for value in receipts}) == 1)
 
@@ -243,7 +246,9 @@ def finish_pair(source, output, target, components, commit, lock_digest, signtoo
         if stapled_app_ticket(components):
             run(["/usr/bin/xcrun", "stapler", "validate", runtime / "AIRK.app"])
     pair = json.loads((runtime / "airk-runtime.json").read_text(encoding="utf-8"))
-    pair.update(airk_sha256=digest(runtime / executables[0]), embed_sha256=digest(runtime / executables[1]))
+    pair["airk_sha256"] = digest(runtime / executables[0])
+    if pair["schema"] == 1:
+        pair["embed_sha256"] = digest(runtime / executables[1])
     (runtime / "airk-runtime.json").write_text(json.dumps(pair, indent=2) + "\n", encoding="utf-8")
     original_build["runtime"] = pair
     (runtime / "airk-build.json").write_text(json.dumps(original_build, indent=2) + "\n", encoding="utf-8")

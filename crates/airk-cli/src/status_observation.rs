@@ -7,6 +7,15 @@ use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
 };
 type Shared = std::result::Result<Arc<Snapshot>, Arc<anyhow::Error>>;
+pub(crate) struct StatusRequest {
+    pub root: PathBuf,
+    pub project: ProjectBinding,
+    pub args: serde_json::Map<String, serde_json::Value>,
+    pub source: Option<SourceFence>,
+    pub expires: Option<Instant>,
+    pub client: airk_core::usage::ClientFamily,
+    pub context: airk_mcp::read_attempt::ReadAttemptContext,
+}
 #[derive(Debug)]
 struct ObservationFailure(Arc<anyhow::Error>);
 impl std::fmt::Display for ObservationFailure {
@@ -593,6 +602,7 @@ impl StatusOwner {
         self.observed_receipt(snapshot.receipt);
         Ok(result)
     }
+    #[cfg(test)]
     pub(crate) async fn status(
         self: &Arc<Self>,
         root: PathBuf,
@@ -602,6 +612,33 @@ impl StatusOwner {
         expires: Option<Instant>,
         client: airk_core::usage::ClientFamily,
     ) -> Result<serde_json::Value> {
+        self.status_with_read_context(StatusRequest {
+            root,
+            project,
+            args,
+            source,
+            expires,
+            client,
+            context: airk_mcp::read_attempt::ReadAttemptContext::new(
+                expires.unwrap_or_else(|| Instant::now() + Duration::from_secs(125)),
+                Default::default(),
+            ),
+        })
+        .await
+    }
+    pub(crate) async fn status_with_read_context(
+        self: &Arc<Self>,
+        request: StatusRequest,
+    ) -> Result<serde_json::Value> {
+        let StatusRequest {
+            root,
+            project,
+            args,
+            source,
+            expires,
+            client,
+            context,
+        } = request;
         ensure!(!self.closed.load(Ordering::Acquire), "status owner closed");
         if let Some(fence) = source
             && *self.scope.lock().unwrap_or_else(|e| e.into_inner())
@@ -632,7 +669,7 @@ impl StatusOwner {
         }
         self.observe(key, expires, move |owner| async move {
             owner
-                .materialize(root, args, source, client, original_ticket)
+                .materialize(root, args, source, client, original_ticket, context)
                 .await
         })
         .await
@@ -733,6 +770,7 @@ impl StatusOwner {
         source: Option<SourceFence>,
         client: airk_core::usage::ClientFamily,
         original_ticket: RequestTicket,
+        context: airk_mcp::read_attempt::ReadAttemptContext,
     ) -> Result<Snapshot> {
         let project = original_ticket.project;
         let expires = original_ticket.expires;
@@ -925,7 +963,9 @@ impl StatusOwner {
         }
         connection.restore_status_receipt(ticket.receipt);
         let _request = self.admit_ticket(&ticket)?;
-        let result = connection.call("airk_status".into(), args).await?;
+        let result = connection
+            .call_with_read_context("airk_status".into(), args, context)
+            .await?;
         let receipt = connection.status_receipt();
         if self.transport_reusable(&ticket, Some(scope), &connection) {
             *channel = Some((scope, connection));
@@ -1171,7 +1211,7 @@ mod ownership_tests {
             finish.await?;
             local_ipc::write_message(&mut stream,&protocol::QueryResult{
                 result:airk_mcp::unified::success(serde_json::json!({"index_state":"available","publication":{"token":"same"}})),
-                status_receipt:receipt,rebind:false},Duration::from_secs(5)).await?;
+                status_receipt:receipt,rebind:false,read_admission:None},Duration::from_secs(5)).await?;
             Ok::<_, anyhow::Error>(())
         });
         let project = "ab".repeat(32).parse()?;
@@ -1179,7 +1219,9 @@ mod ownership_tests {
         let now = Instant::now();
         let mut connection = Connection {
             scoped: false,
-            stream,
+            read_scope: None,
+            read_attempt_supported: false,
+            stream: Some(stream),
             identity: airk_core::service::WorkerIdentity {
                 service: airk_core::identity::Incarnation::from_bytes([1; 16]),
                 worker: airk_core::identity::Incarnation::from_bytes([2; 16]),

@@ -16,12 +16,16 @@ pub const MAX_REVIEWED_GRANTS: usize = 1024;
 pub enum GrantProvenanceKind {
     UserReviewedProjectGrant,
     ImportedLegacySnapshot,
+    ImportedStandaloneAdoption,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum GrantProvenance {
     UserReviewedProjectGrant,
+    ImportedStandaloneAdoption {
+        adoption: Box<crate::catalog_legacy_authority::StandaloneAdoptionProvenance>,
+    },
     ImportedLegacySnapshot {
         upgrade_id: Incarnation,
         plan_digest: Sha256Digest,
@@ -30,10 +34,22 @@ pub enum GrantProvenance {
     },
 }
 impl GrantProvenance {
+    pub fn imported_binding(&self) -> Option<ProjectBinding> {
+        match self {
+            Self::ImportedLegacySnapshot { legacy_binding, .. } => Some(*legacy_binding),
+            Self::ImportedStandaloneAdoption { adoption } => {
+                Some(adoption.plan.setup.registration.binding)
+            }
+            Self::UserReviewedProjectGrant => None,
+        }
+    }
     pub const fn kind(&self) -> GrantProvenanceKind {
         match self {
             Self::UserReviewedProjectGrant => GrantProvenanceKind::UserReviewedProjectGrant,
             Self::ImportedLegacySnapshot { .. } => GrantProvenanceKind::ImportedLegacySnapshot,
+            Self::ImportedStandaloneAdoption { .. } => {
+                GrantProvenanceKind::ImportedStandaloneAdoption
+            }
         }
     }
 }
@@ -49,7 +65,10 @@ pub struct PersistedGrant {
 impl PersistedGrant {
     pub fn validate(&self) -> Result<()> {
         self.grant.validate()?;
-        let imported = self.provenance.kind() == GrantProvenanceKind::ImportedLegacySnapshot;
+        if let GrantProvenance::ImportedStandaloneAdoption { adoption } = &self.provenance {
+            adoption.validate()?;
+        }
+        let imported = self.provenance.imported_binding().is_some();
         ensure!(
             is_imported_grant_id(self.grant.id) == imported,
             "grant provenance and ID partition disagree"
@@ -84,7 +103,7 @@ pub fn native_imported_grant_id(
     provenance: &GrantProvenance,
 ) -> Result<GrantId> {
     ensure!(
-        matches!(provenance, GrantProvenance::ImportedLegacySnapshot { .. }),
+        provenance.imported_binding().is_some(),
         "imported ID requires native import lineage"
     );
     Ok(partitioned_id(

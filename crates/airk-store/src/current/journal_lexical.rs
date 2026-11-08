@@ -22,8 +22,21 @@ fn apply(connection: &Connection, store: &FileStore, updates: &Updates) -> Resul
                 input.bytes()? == *bytes && input.artifact.path == *path,
                 "FTS5 captured input binding mismatch"
             );
-            input.verify(store)?;
-            Some(store.load_retrieval_artifact(&input.artifact)?.artifact)
+            Some(
+                if input
+                    .artifact
+                    .retained
+                    .as_ref()
+                    .is_some_and(|retained| retained.legacy_origin.is_some())
+                {
+                    // Saved evidence has lexical chunks but no current semantic
+                    // projection. Keep the exact owned/source verification path.
+                    input.verify_owned(store)?.0
+                } else {
+                    input.verify(store)?;
+                    store.load_retrieval_artifact(&input.artifact)?.artifact
+                },
+            )
         } else {
             None
         };

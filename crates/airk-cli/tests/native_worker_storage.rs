@@ -145,6 +145,7 @@ impl Worker {
             ensure!(accepted.identity == identity, "accepted query changed worker");
             // native read: exactly one first evidence request proves activation did not require a hidden warm-up or replay.
             airk_cli::local_ipc::write_message(&mut stream, &protocol::Query {
+                read_attempt: None,
                 frontend: None,
                 tool: "airk_read_file".into(),
                 arguments: serde_json::json!({"path":"original.html","start_line":1,"end_line":1,"max_bytes":4096,"response_mode":"full"}).as_object().context("fixture arguments")?.clone(),

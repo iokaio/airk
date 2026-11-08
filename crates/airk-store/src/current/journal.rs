@@ -226,18 +226,29 @@ impl CapturedInput {
             .as_ref()
             .context("captured extraction reference missing")?;
         retained.object.parse::<Sha256Digest>()?;
-        let profile = retained
-            .profile
-            .as_ref()
-            .context("captured extraction profile missing")?;
-        profile.identity()?;
-        ensure!(
-            profile.chunk_version == 3
-                && retained.raw_source
-                && retained.object_bytes <= airk_core::extraction::MAX_PAYLOAD_BYTES
-                && artifact.bytes <= airk_core::extraction::MAX_SOURCE_BYTES,
-            "captured input exceeds supported extraction bounds"
-        );
+        if let Some(origin) = &retained.legacy_origin {
+            origin.validate()?;
+            ensure!(
+                origin.original_path == artifact.path
+                    && origin.source_available == retained.raw_source
+                    && origin.profile_available == retained.profile.is_some()
+                    && retained.object_bytes <= airk_core::extraction::MAX_PAYLOAD_BYTES,
+                "captured saved legacy evidence binding differs"
+            );
+        } else {
+            let profile = retained
+                .profile
+                .as_ref()
+                .context("captured extraction profile missing")?;
+            profile.identity()?;
+            ensure!(
+                profile.chunk_version == 3
+                    && retained.raw_source
+                    && retained.object_bytes <= airk_core::extraction::MAX_PAYLOAD_BYTES
+                    && artifact.bytes <= airk_core::extraction::MAX_SOURCE_BYTES,
+                "captured input exceeds supported extraction bounds"
+            );
+        }
         let bytes = serde_json::to_vec(self)?;
         ensure!(
             bytes.len() <= MAX_INPUT_METADATA_BYTES,
@@ -250,6 +261,30 @@ impl CapturedInput {
     }
     fn verify_owned(&self, store: &FileStore) -> Result<(Artifact, usize)> {
         self.bytes()?;
+        if self
+            .artifact
+            .retained
+            .as_ref()
+            .is_some_and(|retained| retained.legacy_origin.is_some())
+        {
+            let mut artifact = store.load_legacy_saved_artifact(&self.artifact)?;
+            if self
+                .artifact
+                .retained
+                .as_ref()
+                .is_some_and(|retained| retained.raw_source)
+            {
+                store.verify_retained_source_deep(&self.artifact)?;
+            }
+            let lines = artifact
+                .chunks
+                .iter()
+                .map(|chunk| chunk.end_line)
+                .max()
+                .unwrap_or(0);
+            artifact.retained = self.artifact.retained.clone();
+            return Ok((artifact, lines));
+        }
         let artifact = store.load_projection_artifact(&self.artifact)?;
         let profile = artifact
             .retained

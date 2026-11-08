@@ -44,7 +44,12 @@ fn binding(path: &Path) -> Result<StateBinding> {
 /// Match both install/state receipts before adopting their fixed directory names.
 /// Keep proven paths in the private ledger if a receipt later disappears. A raw
 /// development namespace has no installer receipt and protects only its own root.
-fn private_paths(connection: &Connection, runtime: &Path) -> Result<Vec<std::path::PathBuf>> {
+fn private_paths_mode(
+    connection: &Connection,
+    runtime: &Path,
+    remember: bool,
+) -> Result<Vec<std::path::PathBuf>> {
+    let mut observed = Vec::new();
     let state = runtime
         .parent()
         .ok_or_else(|| anyhow::anyhow!("runtime parent missing"))?;
@@ -104,10 +109,13 @@ fn private_paths(connection: &Connection, runtime: &Path) -> Result<Vec<std::pat
                     .to_str()
                     .ok_or_else(|| anyhow::anyhow!("non-UTF-8 private runtime path"))?;
                 ensure!(path.len() <= 4096, "private runtime path exceeds bound");
-                connection.execute(
-                    "INSERT OR IGNORE INTO service_private_paths VALUES(?1)",
-                    [path],
-                )?;
+                observed.push(std::path::PathBuf::from(path));
+                if remember {
+                    connection.execute(
+                        "INSERT OR IGNORE INTO service_private_paths VALUES(?1)",
+                        [path],
+                    )?;
+                }
             }
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
@@ -126,8 +134,20 @@ fn private_paths(connection: &Connection, runtime: &Path) -> Result<Vec<std::pat
         .into_iter()
         .map(std::path::PathBuf::from)
         .collect::<Vec<_>>();
+    paths.extend(observed);
+    paths.sort();
+    paths.dedup();
+    ensure!(
+        paths.len() <= 16,
+        "private runtime path inventory exceeds bound"
+    );
     paths.push(runtime.into());
     Ok(paths)
+}
+
+#[cfg(test)]
+fn private_paths(connection: &Connection, runtime: &Path) -> Result<Vec<std::path::PathBuf>> {
+    private_paths_mode(connection, runtime, true)
 }
 
 #[derive(Debug)]
@@ -173,11 +193,54 @@ pub(super) fn contains(parent: &Path, child: &Path) -> Result<bool> {
         let Some(next) = child.next() else {
             return Ok(false);
         };
-        if !component_equal(component.as_os_str(), next.as_os_str())? {
+        if !path_component_equal(component, next)? {
             return Ok(false);
         }
     }
     Ok(true)
+}
+fn path_component_equal(
+    left: std::path::Component<'_>,
+    right: std::path::Component<'_>,
+) -> Result<bool> {
+    #[cfg(windows)]
+    if let (std::path::Component::Prefix(left), std::path::Component::Prefix(right)) = (left, right)
+    {
+        use std::path::Prefix;
+        match (left.kind(), right.kind()) {
+            (
+                Prefix::Disk(a) | Prefix::VerbatimDisk(a),
+                Prefix::Disk(b) | Prefix::VerbatimDisk(b),
+            ) => return Ok(a.eq_ignore_ascii_case(&b)),
+            (
+                Prefix::UNC(a, b) | Prefix::VerbatimUNC(a, b),
+                Prefix::UNC(c, d) | Prefix::VerbatimUNC(c, d),
+            ) => return Ok(component_equal(a, c)? && component_equal(b, d)?),
+            _ => {}
+        }
+    }
+    component_equal(left.as_os_str(), right.as_os_str())
+}
+#[cfg(all(test, windows))]
+#[test]
+fn native_windows_prefix_aliases_cannot_evade_source_private_boundaries() -> Result<()> {
+    assert!(contains(
+        Path::new(r"C:\owned"),
+        Path::new(r"\\?\c:\owned\private")
+    )?);
+    assert!(contains(
+        Path::new(r"\\?\C:\owned"),
+        Path::new(r"c:\owned\private")
+    )?);
+    assert!(contains(
+        Path::new(r"\\server\share\owned"),
+        Path::new(r"\\?\UNC\SERVER\SHARE\owned\private")
+    )?);
+    assert!(!contains(
+        Path::new(r"C:\owned"),
+        Path::new(r"\\?\D:\owned\private")
+    )?);
+    Ok(())
 }
 fn disjoint(left: &Path, right: &Path) -> Result<()> {
     ensure!(
@@ -196,12 +259,30 @@ pub(super) fn validate(
     proposed: &ProjectRegistration,
     additional: &[String],
 ) -> Result<()> {
+    validate_mode(connection, runtime, proposed, additional, true)
+}
+
+pub(super) fn preflight(
+    connection: &Connection,
+    runtime: &Path,
+    proposed: &ProjectRegistration,
+    additional: &[String],
+) -> Result<()> {
+    validate_mode(connection, runtime, proposed, additional, false)
+}
+fn validate_mode(
+    connection: &Connection,
+    runtime: &Path,
+    proposed: &ProjectRegistration,
+    additional: &[String],
+    remember: bool,
+) -> Result<()> {
     proposed.validate()?;
     let sources =
         std::iter::once(proposed.root.as_str()).chain(additional.iter().map(String::as_str));
     let sources = sources.map(Path::new).collect::<Vec<_>>();
     let data = Path::new(&proposed.data_root);
-    for protected in private_paths(connection, runtime)? {
+    for protected in private_paths_mode(connection, runtime, remember)? {
         disjoint(data, &protected)?;
         for source in &sources {
             disjoint(source, &protected)?;

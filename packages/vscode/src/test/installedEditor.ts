@@ -2,14 +2,17 @@
 // A separate private driver exercises an allowlisted stage or an installed VSIX.
 import { strict as assert } from 'node:assert';
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { parse as parseJsonc, type ParseError } from 'jsonc-parser';
 import { UNIFIED_TOOLS } from '../model';
 import { readRetryDelay } from '../readRetry';
-import { installedSelector, installedToolBody, installedMember, installedRevocation, finishInstalledClient, InstalledNativeReplyError as NativeReplyError, installedLegacyLifecycle } from './installedEditorContracts';
+import {InstalledHttpTransport,InstalledHttpFailure,installedHttpIdentity} from './installedEditorHttp';
+import {RuntimeHost,nativeRunner,type RuntimeBinding} from '../serviceBootstrap';
+import {httpMaterial,sameHttpAuthority,publishNativeInput,removeNativeInput} from '../serviceHttp';
+import { installedDeliveryFence, installedSelector, installedToolBody, installedMember, installedRevocation, finishInstalledClient, InstalledNativeReplyError as NativeReplyError, installedLegacyLifecycle } from './installedEditorContracts';
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 async function waitFor(file: string): Promise<void> {
@@ -20,7 +23,7 @@ async function waitFor(file: string): Promise<void> {
     throw new Error(`Timed out waiting for ${path.basename(file)}`);
 }
 
-class Mcp {
+class LegacyMcp {
     private readonly child;
     private stderr = '';
     private sequence = 0;
@@ -33,7 +36,7 @@ class Mcp {
     private pending = new Map<number, { resolve(value: any): void; reject(error: Error): void; timer: NodeJS.Timeout }>();
     constructor(definition: vscode.McpStdioServerDefinition) {
         const key=process.env.AIRK_EDITOR_RUN+'/'+process.env.AIRK_EDITOR_SCENARIO;
-        this.cohort=Mcp.cohort.get(key)??{count:0,deadline:Number(process.env.AIRK_EDITOR_DEADLINE)};Mcp.cohort.set(key,this.cohort);
+        this.cohort=LegacyMcp.cohort.get(key)??{count:0,deadline:Number(process.env.AIRK_EDITOR_DEADLINE)};LegacyMcp.cohort.set(key,this.cohort);
         assert.ok(Number.isSafeInteger(this.cohort.deadline)&&this.cohort.deadline>Date.now(),'Shared native scenario deadline');
         const environment={...process.env};
         for(const [key,value]of Object.entries(definition.env??{})){if(value===null)delete environment[key];else environment[key]=String(value);}
@@ -74,7 +77,6 @@ class Mcp {
         const counter=path.join(process.env.AIRK_EDITOR_RUN!,process.env.AIRK_EDITOR_SCENARIO!,'native-request-budget');
         await fs.appendFile(counter,'x');assert.ok((await fs.stat(counter)).size<=512,'Cross-window native scenario request budget exhausted');
         if(this.terminal)throw this.terminal;
-        assert.ok(this.pending.size<8,'Native pending request bound exhausted');
         assert.ok(this.pending.size<8,'Native pending request bound exhausted');
         timeout=Math.min(timeout,this.cohort.deadline-Date.now());assert.ok(timeout>0,'Shared native scenario deadline exhausted');
         const id = ++this.sequence;
@@ -120,6 +122,35 @@ class Mcp {
     }
 }
 
+class Mcp extends InstalledHttpTransport {
+    attempts=0;
+    private readonly deadline=Number(process.env.AIRK_EDITOR_DEADLINE);
+    override async request(method:string,params:object,timeout=method==='initialize'?90000:30000):Promise<any>{
+        const counter=path.join(process.env.AIRK_EDITOR_RUN!,process.env.AIRK_EDITOR_SCENARIO!,'native-request-budget');
+        await fs.appendFile(counter,'x');assert.ok((await fs.stat(counter)).size<=512,'Cross-window native request budget');
+        timeout=Math.min(timeout,this.deadline-Date.now());assert.ok(timeout>0,'Original shared scenario deadline');
+        this.attempts++;return super.request(method,params,timeout);
+    }
+    async start():Promise<void>{
+        const initialized=await this.request('initialize',{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'airk-installed-editor-test',version:'1'}});
+        if(initialized.error)throw new NativeReplyError(initialized,initialized.error.data);
+        await this.notify('notifications/initialized',Math.min(30000,this.deadline-Date.now()));
+        const tools=await this.request('tools/list',{});assert.equal(tools.error,undefined);assert.ok(Array.isArray(tools.result?.tools));
+        assert.deepEqual(tools.result.tools.map((tool:any)=>tool.name).sort(),[...UNIFIED_TOOLS].sort());
+    }
+    async call(name:string,args:object,rejected=false):Promise<any>{
+        const deadline=Math.min(Date.now()+30000,this.deadline);
+        while(true){
+            const reply=await this.request('tools/call',{name,arguments:{response_mode:'full',...args}},Math.max(1,deadline-Date.now()));
+            if(reply.error)throw new NativeReplyError(reply,reply.error.data);
+            const body=installedToolBody(reply),delay=readRetryDelay(reply.result);
+            if(delay!==undefined&&Date.now()+delay<deadline){await sleep(delay);continue;}
+            const error=reply.result?.isError===true;if(error&&!rejected)throw new NativeReplyError(reply,body);
+            assert.equal(error,rejected,JSON.stringify(reply));return body;
+        }
+    }
+}
+
 export async function run(): Promise<void> {
     const runRoot=process.env.AIRK_EDITOR_RUN!,role=process.env.AIRK_EDITOR_ROLE!,scenario=process.env.AIRK_EDITOR_SCENARIO!;
     assert.ok(runRoot&&['a','b'].includes(role)&&['same','different','multi','usage','untrusted','legacy'].includes(scenario));
@@ -148,21 +179,53 @@ export async function run(): Promise<void> {
         assert.ok(Buffer.byteLength(JSON.stringify(value))<=1048576,'Complete UI evidence exceeds the disclosed fixture bound');
         evidence.native.push({action,value});return value;
     };
-    const definitions=async()=>await api.getServerDefinitions() as vscode.McpStdioServerDefinition[];
+    const hostFor=(installDir?:string)=>new RuntimeHost(extension.extensionPath,packageVersion,{channel:'stable',installDir:installDir??vscode.workspace.getConfiguration('airk').get<string>('service.installDir')},
+        (command,args,timeout,input)=>{const remaining=sharedDeadline-Date.now();assert.ok(remaining>0);return nativeRunner(command,args,Math.min(timeout??60000,remaining),input);},()=>vscode.workspace.isTrusted&&Date.now()<sharedDeadline);
+    const provePrivateCacheScope=async(host:RuntimeHost,binding:RuntimeBinding)=>{
+        if(evidence.cacheCleanupScope?.active===binding.runtimeSha256)return;
+        const ownershipFile=path.join(folder,'profile-'+role+'-owned.json'),before=await fs.readFile(ownershipFile),ownership=JSON.parse(before.toString('utf8'));
+        assert.equal(ownership.label,role);assert.equal(ownership.private_user_data_dir,true);
+        const profile=await fs.realpath(ownership.path);assert.equal(profile,ownership.path);
+        const contextStorage=await fs.realpath(path.join(profile,'User','globalStorage'));
+        const configured=vscode.workspace.getConfiguration('airk').get<string>('service.installDir');assert.ok(configured);
+        assert.equal(await fs.realpath(binding.installDir),await fs.realpath(configured),'Scope evidence belongs to the actual explicitly configured private installation');
+        const inspection=await host.inspectLegacyCaches(binding,contextStorage);
+        assert.equal(inspection.scope,'context-only','A private custom installation must never enumerate unrelated native-default caches');
+        assert.equal(inspection.context_global_storage,contextStorage);assert.deepEqual(inspection.global_storage_roots,[contextStorage]);
+        assert.deepEqual(await fs.readFile(ownershipFile),before,'Original runner-owned profile identity remained immutable');
+        evidence.cacheCleanupScope={...inspection,profile_ownership_sha256:createHash('sha256').update(before).digest('hex'),profile_ownership:ownership,scope_basis:'native_custom_install_identity'};
+        checks.push('native custom installation keeps old-cache scope within the immutable owned editor profile');
+        await mark('retained-evidence',evidence);
+    };
+    const definitions=async()=>{
+        const current=await api.getServerDefinitions() as vscode.McpHttpServerDefinition[];
+        if(!current.length)return [];
+        const host=hostFor(),observed=await host.discover();assert.ok(observed.inspection);const binding=host.binding(observed.inspection,observed.installDir);
+        await provePrivateCacheScope(host,binding);
+        return Promise.all(current.map(async definition=>{
+            const identity=installedHttpIdentity(definition),nativeConnection=await host.httpConnectionInfo(binding,identity.credentialId),material=await httpMaterial(nativeConnection);
+            assert.equal(identity.url,material.url);assert.equal(Object.entries(identity.headers).find(([name])=>name.toLowerCase()==='authorization')?.[1],'Bearer '+material.credential);
+            return {uri:definition.uri,headers:definition.headers,version:definition.version,nativeConnection,ca:material.ca};
+        }));
+    };
+    const safeDefinition=(value:any)=>{const identity=installedHttpIdentity(value);return {transport:'https',uri:identity.url,headers:Object.fromEntries(Object.entries(identity.headers).map(([name,header])=>[name,name.toLowerCase()==='authorization'?'Bearer [redacted]':header])),credential_id:identity.credentialId,nativeConnection:value.nativeConnection,version:value.version};};
     const noSelection=async(label:string)=>assert.deepEqual(await definitions(),[],label);
     const route={library:'#indexing/library',projects:'#indexing/projects',window:'#indexing/window'};
     const applied=(view:any)=>{
-        assert.equal(view.outcome?.status,'catalog_applied',JSON.stringify(view));
-        assert.match(view.outcome.receipt.operation_id,/^[0-9a-f]{32}$/);
-        if(view.outcome.receipt.authority_fence_required)assert.ok(view.outcome.fenced_receipt?.proof,'Complete native delivery-fence proof');
-        return view;
+        const observed=view.applyObservation,terminal=observed?.terminal??view.outcome;
+        assert.equal(terminal?.status,observed?'catalog_receipt':'catalog_applied',JSON.stringify(view));
+        if(observed){assert.equal(observed.mutation_dispatches,1);assert.equal(observed.initial.outcome.status,'catalog_outcome_unknown');assert.deepEqual(observed.review,observed.initial.submittedReview);assert.equal(terminal.fence?.state,'applied');}
+        const receipt=terminal.receipt,full=terminal.fenced_receipt??terminal.fence?.value;
+        assert.match(receipt.operation_id,/^[0-9a-f]{32}$/);
+        if(receipt.authority_fence_required)assert.ok(full?.proof,'Complete native delivery-fence proof');
+        return {...view,verifiedReceipt:receipt,verifiedFencedReceipt:full};
     };
     const use=async(selection:any)=>{
         const result=await ui('scopeSelect',{index:selection.index,project:selection.project,setName:selection.setName},route.window);
         assert.equal(result.outcome.status,'search_scope_selected');
         selection.grant=result.outcome.activation.selection.session.grant_id;
         const current=await definitions();
-        evidence.definitions=(evidence.definitions??[]).concat(current.map(value=>({command:value.command,args:[...value.args],env:value.env,cwd:value.cwd?.fsPath,cwd_explicit:value.cwd!==undefined})));
+        evidence.definitions=(evidence.definitions??[]).concat(current.map(safeDefinition));
         await mark('retained-evidence',evidence); // Complete definitions/UI result retained even on an early contract refusal.
         assert.equal(result.outcome.activation.selected_subset,true);assert.equal(current.length,1,'One deliberately selected Index, independent of open folder count');
         const selector=installedSelector(current[0],result,selection);selection.session=selector;
@@ -187,7 +250,24 @@ export async function run(): Promise<void> {
         await installedLegacyLifecycle(
         async()=>{await ui('startService',{installDir:fixture.install_dir,runtimeSha256:fixture.candidate.install_manifest_sha256},'#manage/service');checks.push('explicit trusted Start service on the verified legacy installation');},
         async()=>{
-        const client=new Mcp(definition);
+        let client:LegacyMcp|Mcp;
+        const at=fixture.legacy_config.args.indexOf('--service-project');assert.ok(at>=0);
+        const imported=fixture.native.upgrade_receipt.plan.indexes.find((index:any)=>index.registration.binding===fixture.legacy_config.args[at+1]);assert.ok(imported);
+        if(fixture.legacy_config.binding_kind==='pinned_predecessor'){
+            client=new LegacyMcp(definition);evidence.legacyTransport='retained_pinned_stdio_refusal';
+        }else{
+            const registration=imported.registration,host=hostFor(fixture.install_dir),observed=await host.discover();assert.ok(observed.inspection);
+            const binding=host.binding(observed.inspection,observed.installDir),file=await publishNativeInput(binding.controlDir,JSON.stringify(registration),()=>{assert.ok(Date.now()<sharedDeadline&&vscode.workspace.isTrusted);});
+            const connection=await (async()=>{try{return await host.httpLegacyConnection(binding,registration,file,fixture.legacy_config.sha256,randomBytes(16).toString('hex'),'vscode');}finally{await removeNativeInput(file);}})();
+            assert.equal(connection.selection.kind,'imported_legacy');
+            if(connection.selection.kind!=='imported_legacy')throw Error('Imported authority required');
+            const provenance=connection.selection.selection.grant.provenance;
+            assert.equal(provenance.kind,'imported_legacy_snapshot');assert.equal(provenance.legacy_binding,registration.binding);
+            assert.equal(provenance.upgrade_id,fixture.native.upgrade_receipt.plan.id);assert.equal(provenance.plan_digest,fixture.native.upgrade_receipt.plan_digest);
+            const material=await httpMaterial(connection),http=new vscode.McpHttpServerDefinition('Imported original legacy connection',vscode.Uri.parse(material.url),{Authorization:'Bearer '+material.credential,'X-AIRK-Response-Mode':'full'});
+            client=new Mcp(http,material.ca);evidence.legacyTransport='https_imported_migration';
+            evidence.legacyMigration={original_config_sha256:fixture.legacy_config.sha256,original_config_unchanged:true,registration,connection,authority_basis:'sealed_imported_snapshot'};
+        }
         try{
             if(fixture.legacy_config.binding_kind==='pinned_predecessor'){
                 let refusal:unknown;try{await client.start();await client.call('symbols',{name:fixture.probe.symbol,compact:false});}catch(error){refusal=error;}
@@ -196,6 +276,8 @@ export async function run(): Promise<void> {
             }else{
                 await client.start();const result=await client.call('symbols',{name:fixture.probe.symbol,compact:false});
                 assert.equal(result.scope_observation?.provenance,'imported_legacy_snapshot');
+                const original=evidence.legacyMigration.connection.selection.selection;
+                assert.equal(result.scope_observation.grant.id,original.grant.grant.id);assert.equal(result.scope_observation.grant.revision,original.grant.grant.revision);
                 const at=fixture.legacy_config.args.indexOf('--service-project');
                 const imported=fixture.native.upgrade_receipt.plan.indexes.find((index:any)=>index.registration.binding===fixture.legacy_config.args[at+1]);
                 assert.ok(imported,'Original connection must belong to the native upgrade roster');
@@ -206,7 +288,7 @@ export async function run(): Promise<void> {
                 assert.equal(result.items[0].citation.content_hash,fixture.probe.content_sha256);
                 evidence.native.push({legacyProbe:result});evidence.legacyRetrievalParity=true;
             }
-        }catch(error){evidence.failure={error:String(error),stack:error instanceof Error?error.stack:undefined,native:error instanceof NativeReplyError?error.reply:undefined};throw error;}finally{await finishInstalledClient(client,evidence,mark);}
+        }catch(error){evidence.failure={error:String(error),stack:error instanceof Error?error.stack:undefined,native:error instanceof NativeReplyError?error.reply:error instanceof InstalledHttpFailure?{kind:error.kind,...error.detail}:undefined};throw error;}finally{await finishInstalledClient(client,evidence,mark);}
         },async()=>{
             const stop=await ui('serviceStop',{installDir:fixture.install_dir,runtimeSha256:fixture.candidate.install_manifest_sha256},'#manage/service');
             await fs.writeFile(path.join(folder,'native-stop.json'),JSON.stringify(stop,null,2));
@@ -214,7 +296,7 @@ export async function run(): Promise<void> {
         },evidence,mark);
         assert.equal(createHash('sha256').update(await fs.readFile(fixture.legacy_config.path)).digest('hex'),fixture.legacy_config.sha256);
         await noSelection('Existing manual agent configuration owns its connection; no duplicate automatic definition');
-        evidence.legacyUpgradeCoverage=true;checks.push(fixture.legacy_config.binding_kind==='pinned_predecessor'?'unchanged incapable pinned predecessor refuses upgraded format':'unchanged stable launcher retrieves through sealed imported scope');
+        evidence.legacyUpgradeCoverage=evidence.legacyRetrievalParity===true;checks.push(fixture.legacy_config.binding_kind==='pinned_predecessor'?'unchanged incapable pinned predecessor refuses upgraded format':'unchanged original configuration explicitly migrates to HTTPS through its sealed imported scope');
         await finish();return;
     }
     if(scenario==='untrusted'){
@@ -272,8 +354,7 @@ export async function run(): Promise<void> {
     if(phase?.stage==='reloaded'){
         await vscode.commands.executeCommand('airk.collections');await ui('connect',{},'#manage/service');
         const restored=await definitions();assert.equal(restored.length,1,'Previously applied choice revalidates on reload');
-        const restoredSelector=JSON.parse(restored[0].args[restored[0].args.indexOf('--combined-session')+1]);
-        assert.deepEqual(restoredSelector,selection.session,'Reload preserves the exact reviewed scope after native revalidation');
+        assert.ok(sameHttpAuthority(restored[0].nativeConnection.selection,{kind:'combined',selection:selection.session}),'Reload preserves exact authority with forward catalog clock');
         checks.push('real reload revalidated the saved applied choice without widening its native selector');
     }else{
         await noSelection('Fresh trusted folders are not indexes or permission');
@@ -319,7 +400,7 @@ export async function run(): Promise<void> {
     if(['same','different'].includes(scenario)){
         await mark('ready');await waitFor(marker('ready',role==='a'?'b':'a'));
     }
-    const transportSelection=structuredClone(selection),client=new Mcp(definition);
+    const transportSelection=structuredClone(selection),client=new Mcp(definition,definition.ca);
     try{
         await client.start();
         const fixtureDocument=await vscode.workspace.openTextDocument(vscode.Uri.file(path.join(source,'fixture.ts')));
@@ -338,11 +419,11 @@ export async function run(): Promise<void> {
         const denied=await client.call('read_file',{path:'hidden.ts',start_line:1,end_line:2});scoped(denied,transportSelection,true);
         const escaped=await client.call('read_file',{path:'../workspace-b/fixture.ts',start_line:1,end_line:2});scoped(escaped,transportSelection,true);
         evidence.native.push({symbols,additional:extra,denied});
-        checks.push('actual raw definition command/args/env','advertised native tool catalog retained with inputs; supported names match','complete combined scope/member projection; original raw transport retained','citation bytes, reviewed permanent exclusion and index isolation');
-        const before=definition.args.slice(),otherData=path.join(folder,'selected-storage');
+        checks.push('actual authenticated HTTPS provider definition and native selected authority','advertised native tool catalog retained with inputs; supported names match','complete combined scope/member projection; original raw transport retained','citation bytes, reviewed permanent exclusion and index isolation');
+        const before=safeDefinition(definition),otherData=path.join(folder,'selected-storage');
         await fs.mkdir(otherData,{recursive:true});
         await vscode.workspace.getConfiguration('airk').update('storage.path',otherData,vscode.ConfigurationTarget.Global);
-        const after=await definitions();assert.equal(after.length,1);assert.deepEqual(after[0].args,before);
+        const after=await definitions();assert.equal(after.length,1);assert.deepEqual(safeDefinition(after[0]),before);
         assert.deepEqual(await fs.readdir(otherData),[],'Storage preference does not move immutable backing');
         checks.push('storage preference preserves selected Index identity and backing');
         if(['same','different'].includes(scenario)){
@@ -390,7 +471,7 @@ export async function run(): Promise<void> {
                     assert.deepEqual(retained.intent,pending.intent);evidence.native.push({staleReconciliation:reconciled});
                     await ui('page',{kind:'indexes'});const current=await ui('inspect',{kind:'index',id:selection.index});
                     const peer=JSON.parse(await fs.readFile(marker('peer-mutation-done','b'),'utf8'));
-                    const appliedRevision=peer.applied.outcome.receipt.catalog_revision;
+                    const appliedRevision=peer.applied.verifiedReceipt.catalog_revision;
                     assert.ok(appliedRevision>old.review.request.expected_catalog_revision);
                     assert.equal(current.revision,appliedRevision);assert.equal(current.detail.detail.revision,appliedRevision);
                     assert.deepEqual(current.detail.detail.item.value,peer.current.detail.detail.item.value);
@@ -423,11 +504,11 @@ export async function run(): Promise<void> {
                 await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
                 return value;
             };
-            const secondaryDefinition=await use(secondary),otherClient=new Mcp(secondaryDefinition);
+            const secondaryDefinition=await use(secondary),otherClient=new Mcp(secondaryDefinition,secondaryDefinition.ca);
             try{await otherClient.start();await vscode.commands.executeCommand('airk.index');
                 const deadline=Math.min(Date.now()+180000,sharedDeadline);
                 while(!scoped(await otherClient.call('symbols',{name:'WindowBetaEvidence',compact:false}),secondary).items.length){assert.ok(Date.now()<deadline);await sleep(500);}
-            }catch(error){evidence.failure={error:String(error),stack:error instanceof Error?error.stack:undefined,native:error instanceof NativeReplyError?error.reply:undefined};throw error;}finally{await finishInstalledClient(otherClient,evidence,mark);}
+            }catch(error){evidence.failure={error:String(error),stack:error instanceof Error?error.stack:undefined,native:error instanceof NativeReplyError?error.reply:error instanceof InstalledHttpFailure?{kind:error.kind,...error.detail}:undefined};throw error;}finally{await finishInstalledClient(otherClient,evidence,mark);}
             const before=await report(secondary);assert.ok(BigInt(before.report.calls)>0n,'The other Index must have real recorded calls before testing preservation');
             const primaryBefore=await report(selection);assert.ok(BigInt(primaryBefore.report.calls)>0n,'Primary Index must have actual usage to clear');
             await ui('usageClear',{index:selection.index,name:selection.name,collection:selection.backing.collection});
@@ -450,18 +531,23 @@ export async function run(): Promise<void> {
             checks.push('installed Explorer cited search, current Index sets and live help');
             await ui('page',{kind:'projects'},route.projects);await ui('inspect',{kind:'project',id:selection.project});
             const revoke=await ui('deleteSetDraft');assert.equal(revoke.review.request.operation.operation,'delete_project');
-            const receipt=applied(await ui('apply'));assert.ok(receipt.outcome.fenced_receipt?.proof);
-            const observedBefore=client.observations.length;let refusal:unknown;
+            const receipt=applied(await ui('apply'));assert.ok(receipt.verifiedFencedReceipt?.proof);
+            assert.equal(revoke.review.request.operation.id,transportSelection.project);
+            const observedBefore=client.attempts;let refusal:unknown;
             try{await client.call('symbols',{name:own,compact:false});}catch(error){refusal=error;}
-            evidence.native.push({revocationRefusal:refusal instanceof NativeReplyError?refusal.reply:{error:String(refusal)}});await mark('retained-evidence',evidence);
-            assert.ok(refusal instanceof NativeReplyError,'Timeout/EOF is not native revocation proof');
-            const envelope=refusal.reply as any;assert.equal(envelope.result?.isError,true);
-            const body=JSON.parse(envelope.result.content[0].text),error=body.error;
-            installedRevocation(body,transportSelection.session);
-            assert.equal(client.observations.length,observedBefore+1,'Revocation must not replay or rebroker the query');
+            evidence.native.push({revocationRefusal:refusal instanceof NativeReplyError?refusal.reply:{error:String(refusal),detail:refusal instanceof InstalledHttpFailure?refusal.detail:undefined}});await mark('retained-evidence',evidence);
+            if(refusal instanceof NativeReplyError){
+                const envelope=refusal.reply as any;assert.equal(envelope.result?.isError,true);
+                installedRevocation(installedToolBody({...envelope,error:undefined}),transportSelection.session);
+                evidence.revocationDelivery={kind:'typed_native_refusal',query_replayed:false};
+            }else{
+                installedDeliveryFence(refusal,revoke.review,receipt,transportSelection.session);
+                evidence.revocationDelivery={kind:'native_completed_deletion_transport_fence',detail:(refusal as InstalledHttpFailure).detail,query_submission:'unknown',query_replayed:false,evidence_delivered:false};
+            }
+            assert.equal(client.attempts,observedBefore+1,'Revocation must not replay or rebroker the query');
             checks.push('deleting the selected index set fences the retained MCP session');
         }
-    }catch(error){evidence.failure={error:String(error),stack:error instanceof Error?error.stack:undefined,native:error instanceof NativeReplyError?error.reply:undefined};throw error;}finally{await finishInstalledClient(client,evidence,mark);}
+    }catch(error){evidence.failure={error:String(error),stack:error instanceof Error?error.stack:undefined,native:error instanceof NativeReplyError?error.reply:error instanceof InstalledHttpFailure?{kind:error.kind,...error.detail}:undefined};throw error;}finally{await finishInstalledClient(client,evidence,mark);}
     await mark('transport-closed');
     if(['same','different'].includes(scenario))await waitFor(marker('transport-closed',role==='a'?'b':'a'));
     if(role==='a'){

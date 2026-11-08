@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Pure, atomic configuration transform. No filesystem or process access.
 import { applyEdits, createScanner, findNodeAtLocation, getNodeValue, modify, parseTree, SyntaxKind, type Node, type ParseError } from 'jsonc-parser';
+import {scanTomlStatements,TomlValue,parseTomlDeclarations,encodeTomlValue} from './agentToml';
 import { EXPLORER_TOOL_RENAMES, RETRIEVAL_TOOLS, UNIFIED_TOOLS, type ServerEntry } from './model';
 
 type Fields = Record<string, unknown>;
@@ -8,7 +9,12 @@ type Family = 'retrieval' | 'explorer' | 'unified';
 interface Existing { key: string; family: Family; fields: Fields }
 export interface Consolidation {
     readonly retrievalKey: string;
+    /** Native-authenticated independent declarations retain their original key. */
+    readonly onlyKey?:boolean;
+    readonly targetKey?:string;
+    readonly selectedFamily?:Family;
     readonly entry: ServerEntry;
+    readonly fields?:Fields;
     recognizes(family: Family, fields: Fields): boolean;
     warn(message: string): void;
     /** Explicit uninstall removes only entries that pass the same ownership checks. */
@@ -18,6 +24,7 @@ const approvals = new Set(['autoApprove','alwaysAllow']);
 const allows = new Set(['enabled_tools','includeTools','tools']);
 const denies = new Set(['disabled_tools','disabledTools','excludeTools']);
 const launch = new Set(['command','args','type']);
+const httpLaunch=new Set(['url','serverUrl','headers','http_headers','env_http_headers','bearer_token_env_var']);
 const rename = (name: string) => EXPLORER_TOOL_RENAMES[name] ?? (RETRIEVAL_TOOLS.some(tool => `airk_${tool}` === name) ? name.slice(5) : name);
 function originalTools(family: Family): readonly string[] {
     return family === 'retrieval' ? RETRIEVAL_TOOLS.map(name=>`airk_${name}`) : family === 'explorer' ? Object.keys(EXPLORER_TOOL_RENAMES) : UNIFIED_TOOLS;
@@ -33,11 +40,16 @@ function toolPolicy(value: unknown, family: Family, approval: boolean, warn: Con
     return [...names];
 }
 function merge(entries: Existing[], options: Consolidation): Fields {
-    const result: Fields = Object.assign(Object.create(null), { command: options.entry.command, args: [...options.entry.args] });
+    const result: Fields = Object.assign(Object.create(null),options.fields??{command:options.entry.command,args:[...options.entry.args]});
+    if(options.entry.http){
+        const modes=entries.flatMap(entry=>{const headers=entry.fields.http_headers??entry.fields.headers;return headers&&typeof headers==='object'&&!Array.isArray(headers)&&'X-AIRK-Response-Mode'in headers?[(headers as Fields)['X-AIRK-Response-Mode']]:[];});
+        if(modes.some(mode=>mode!=='full'&&mode!=='terse')||new Set(modes).size>1)throw new Error('Conflicting HTTP response modes; existing configuration preserved.');
+        if(modes.length){const field=result.bearer_token_env_var?'http_headers':'headers';result[field]={...(result[field] as Fields??{}),'X-AIRK-Response-Mode':modes[0]};}
+    }
     const keys = new Set(entries.flatMap(entry=>Object.keys(entry.fields)));
     for (const key of keys) {
         const values = entries.filter(entry=>key in entry.fields);
-        if (launch.has(key)) { continue; }
+        if (launch.has(key)||options.entry.http&&httpLaunch.has(key)) { continue; }
         if (key==='disabled' || key==='enabled') {
             if (values.some(entry=>typeof entry.fields[key]!=='boolean')) { throw new Error('Invalid AIRK enabled/disabled setting; existing configuration preserved.'); }
             result[key]=key==='disabled'?values.some(entry=>entry.fields[key]===true):!values.some(entry=>entry.fields[key]===false);continue;
@@ -57,7 +69,11 @@ function merge(entries: Existing[], options: Consolidation): Fields {
                     env[name]=value;
                 }
             }
-            result.env=env; continue;
+            if(options.entry.http){
+                if(Object.keys(env).some(key=>!['AIRK_CLIENT','AIRK_MCP_RESPONSE_MODE'].includes(key)))throw new Error('HTTP migration requires review of the former server environment. Existing file preserved.');
+                const mode=env.AIRK_MCP_RESPONSE_MODE;if(mode!==undefined){if(mode!=='full'&&mode!=='terse')throw new Error('Invalid prior response mode; existing file preserved.');const field=result.bearer_token_env_var?'http_headers':'headers';result[field]={...(result[field] as Fields??{}),'X-AIRK-Response-Mode':mode};}
+            }else result.env=env;
+            continue;
         }
         if (values.some(entry=>JSON.stringify(entry.fields[key])!==JSON.stringify(values[0].fields[key]))) {
             throw new Error(`AIRK server setting ${key} conflicts; existing configuration preserved.`);
@@ -66,10 +82,10 @@ function merge(entries: Existing[], options: Consolidation): Fields {
     }
     return result;
 }
-function family(key:string, options:Consolidation):Family { return key==='airk'?'unified':key===options.retrievalKey?'retrieval':'explorer'; }
+function family(key:string, options:Consolidation):Family { return options.onlyKey&&key===options.retrievalKey&&options.selectedFamily?options.selectedFamily:key==='airk'?'unified':key===options.retrievalKey?'retrieval':'explorer'; }
 function check(entries:Existing[], options:Consolidation):void {
     for (const entry of entries) {
-        if ('url' in entry.fields || 'serverUrl' in entry.fields || ('type' in entry.fields && entry.fields.type!=='stdio') || !options.recognizes(entry.family,entry.fields)) {
+        if ((!options.entry.http&&('url' in entry.fields || 'serverUrl' in entry.fields || ('type' in entry.fields && entry.fields.type!=='stdio')))||!options.recognizes(entry.family,entry.fields)) {
             throw new Error(`Unrecognized ${entry.key} connection; existing configuration preserved for review.`);
         }
     }
@@ -99,7 +115,7 @@ export function consolidateJson(source:string, group:string, options:Consolidati
     if (!tree || tree.type!=='object' || errors.length) { throw new Error('Invalid MCP JSON; existing file preserved.'); }
     unique(tree);
     const entries:Existing[]=[];
-    for (const key of [options.retrievalKey,'airk_explorer','airk']) {
+    for (const key of new Set(options.onlyKey?[options.retrievalKey]:[options.retrievalKey,'airk_explorer','airk'])) {
         const node=findNodeAtLocation(tree,[group,key]);
         if (!node) { continue; }
         if (node.type!=='object') { throw new Error('Invalid AIRK server entry; existing file preserved.'); }
@@ -113,58 +129,58 @@ export function consolidateJson(source:string, group:string, options:Consolidati
         return retainComments(source,result);
     }
     const value=merge(entries,options);
-    if (group==='servers' || entries.some(entry=>entry.fields.type==='stdio')) { value.type='stdio'; }
+    if (!options.entry.http&&(group==='servers' || entries.some(entry=>entry.fields.type==='stdio'))) { value.type='stdio'; }
     let result=source;
     const formattingOptions={insertSpaces:true,tabSize:2};
     // Return one complete edit. The host saves it only after source/version guards.
-    for (const entry of entries.filter(entry=>entry.key!=='airk')) { result=applyEdits(result,modify(result,[group,entry.key],undefined,{formattingOptions})); }
-    const current=findNodeAtLocation(tree,[group,'airk']);
+    const target=options.targetKey??'airk';
+    for (const entry of entries.filter(entry=>entry.key!==target)) { result=applyEdits(result,modify(result,[group,entry.key],undefined,{formattingOptions})); }
+    const current=findNodeAtLocation(tree,[group,target]);
     if (entries.length===1 && current && JSON.stringify(getNodeValue(current))===JSON.stringify(value)) { return source; }
-    return retainComments(source,applyEdits(result,modify(result,[group,'airk'],value,{formattingOptions})));
+    return retainComments(source,applyEdits(result,modify(result,[group,target],value,{formattingOptions})));
 }
-interface Table { start:number; end:number; key:string; nested:boolean; fields:Fields; comments:string[] }
+interface Table { start:number; end:number; key:string; nested:string; fields:Fields; comments:string[] }
 export function consolidateToml(source:string,options:Consolidation):string {
-    if (source.includes('"""') || source.includes("'''")) { throw new Error('Multiline TOML requires manual review; existing file preserved.'); }
-    const headers=[...source.matchAll(/^[ \t]*\[([^\]\r\n]+)\][ \t]*(?:#[^\r\n]*)?\r?$/gm)];
-    const tables:Table[]=[];
-    const keys=[options.retrievalKey,'airk_explorer','airk'];
-    for (const [index,header] of headers.entries()) {
-        const normalized=header[1].replace(/"([^"\\]+)"/g,'$1');
-        const key=keys.find(key=>normalized===`mcp_servers.${key}` || normalized.startsWith(`mcp_servers.${key}.`));
-        if (!key) { continue; }
-        const nested=normalized===`mcp_servers.${key}.env`;
-        if (normalized!==`mcp_servers.${key}` && !nested) { throw new Error('Custom AIRK TOML subtables require review; existing file preserved.'); }
-        if (tables.some(table=>table.key===key&&table.nested===nested)) { throw new Error('Duplicate AIRK TOML table; existing file preserved.'); }
-        const headerComment=header[0].slice(header[0].indexOf(']')+1).trim();
-        const end=headers[index+1]?.index ?? source.length, fields:Fields=Object.create(null), comments:string[]=headerComment?[headerComment]:[];
-        for (const line of source.slice(header.index!+header[0].length,end).split(/\r?\n/)) {
-            if (!line.trim()) { continue; } if (line.trimStart().startsWith('#')) { comments.push(line); continue; }
-            const match=/^\s*([A-Za-z0-9_-]+|"(?:[^"\\]|\\.)+")\s*=\s*(.*?)\s*$/.exec(line);
-            if (!match) { throw new Error('Unsupported TOML keys; existing file preserved.'); }
-            const key=match[1].startsWith('"')?JSON.parse(match[1]):match[1];
-            if (key in fields) { throw new Error('Duplicate TOML keys; existing file preserved.'); }
-            try { fields[key]=JSON.parse(match[2]); } catch { throw new Error('Unsupported TOML syntax; existing file preserved.'); }
-        }
-        tables.push({start:header.index!,end,key,nested,fields,comments});
+    let statements:ReturnType<typeof scanTomlStatements>,declarations:ReturnType<typeof parseTomlDeclarations>;
+    try{statements=scanTomlStatements(source);declarations=parseTomlDeclarations(source);}
+    catch(error){throw new Error(`${error instanceof Error&&error.message.startsWith('duplicate_')?'Duplicate':'Unsupported'} TOML configuration; existing file preserved.`);}
+    const headers=statements.filter(statement=>statement.text.startsWith('[')).map(statement=>{
+        const array=statement.text.startsWith('[['),parser=new TomlValue(statement.text.slice(array?2:1,array?-2:-1));
+        const parts=parser.keys();parser.complete();return {...statement,parts};
+    });
+    const tables:Table[]=[],keys=options.onlyKey?[options.retrievalKey]:[options.retrievalKey,'airk_explorer','airk'];
+    for(const [index,header] of headers.entries()){
+        if(header.parts[0]!=='mcp_servers'||!keys.includes(header.parts[1]))continue;
+        const key=header.parts[1],nested=header.parts.length===3&&['env','http_headers','env_http_headers'].includes(header.parts[2])?header.parts[2]:'';
+        if(header.parts.length!==2&&!nested)throw new Error('Custom AIRK TOML subtables require review; existing file preserved.');
+        const entry=declarations.find(row=>row.serverKey===key&&row.containerPath.length===1&&row.containerPath[0]==='mcp_servers');
+        if(!entry)throw new Error('Invalid AIRK TOML table; existing file preserved.');
+        const nestedTables=headers.filter(row=>row.parts[0]==='mcp_servers'&&row.parts[1]===key&&row.parts.length===3).map(row=>row.parts[2]);
+        const fields=nested?entry.fields[nested] as Fields:Object.fromEntries(Object.entries(entry.fields).filter(([field])=>!nestedTables.includes(field)));
+        if(!fields||typeof fields!=='object'||Array.isArray(fields))throw new Error('Invalid AIRK TOML fields; existing file preserved.');
+        const end=headers[index+1]?.start??source.length;
+        const comments=statements.filter(statement=>statement.start>=header.start&&statement.start<end).flatMap(statement=>statement.comments);
+        tables.push({start:header.start,end,key,nested,fields,comments});
     }
     const entries:Existing[]=tables.filter(table=>!table.nested).map(table=>({key:table.key,family:family(table.key,options),fields:{...table.fields}}));
+    if(declarations.some(row=>row.containerPath.length===1&&keys.includes(row.serverKey)&&!tables.some(table=>table.key===row.serverKey&&!table.nested)))throw new Error('Inline or dotted AIRK TOML requires manual review; existing file preserved.');
     if (!entries.length || !options.remove && !entries.some(entry=>entry.family!=='explorer')) { return source; }
     for (const table of tables.filter(table=>table.nested)) {
         const entry=entries.find(entry=>entry.key===table.key);
-        if (!entry || entry.fields.env!==undefined) { throw new Error('Conflicting AIRK environment tables; existing file preserved.'); }
-        entry.fields.env=table.fields;
+        if (!entry || entry.fields[table.nested]!==undefined) { throw new Error('Conflicting AIRK connection tables; existing file preserved.'); }
+        entry.fields[table.nested]=table.fields;
     }
     check(entries,options);
     // Inline/reserved spellings cannot be silently replaced by a duplicate table.
-    if (/^\s*mcp_servers\s*=/m.test(source)) { throw new Error('Inline MCP TOML needs manual review.'); }
+    // Ownership and policy checks above still govern every rewritten entry.
     if(options.remove){
         let result=source;
         for(const table of [...tables].sort((a,b)=>b.start-a.start))result=result.slice(0,table.start)+table.comments.join('\n')+'\n'+result.slice(table.end);
         return result;
     }
-    const fields=merge(entries,options), env=fields.env;
-    const lines=[...tables.flatMap(table=>table.comments),'[mcp_servers.airk]',...Object.entries(fields).filter(([key])=>key!=='env').map(([key,value])=>`${key} = ${JSON.stringify(value)}`)];
-    if (env) { lines.push('','[mcp_servers.airk.env]',...Object.entries(env as Fields).map(([key,value])=>`${JSON.stringify(key)} = ${JSON.stringify(value)}`)); }
+    const fields=merge(entries,options), nested=['env','http_headers','env_http_headers'],target=options.targetKey??'airk',header=target==='airk'?'airk':JSON.stringify(target);
+    const lines=[...tables.flatMap(table=>table.comments),`[mcp_servers.${header}]`,...Object.entries(fields).filter(([key])=>!nested.includes(key)).map(([key,value])=>`${key} = ${encodeTomlValue(value)}`)];
+    for(const key of nested)if(fields[key])lines.push('',`[mcp_servers.${header}.${key}]`,...Object.entries(fields[key] as Fields).map(([key,value])=>`${JSON.stringify(key)} = ${encodeTomlValue(value)}`));
     const eol=source.includes('\r\n')?'\r\n':'\n';
     const replacement=lines.join(eol)+eol+eol;
     let result=source;

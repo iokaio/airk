@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 const test=require('node:test'),assert=require('node:assert/strict');
-const {toolBody,assertEvidence,completeStop,inside,OLD_SHA,OLD_MAIN_SHA,failedActivation,qualifyOldLauncherCopy,gatePrivateProfile,waitOwnedExit,boundedJsonProcess,boundedSafeRead}=require('../check-vsix-upgrade-editor.cjs');
+const {CURRENT_VERSION,httpDefinitionSnapshot,restoreHttpDefinition,toolBody,assertEvidence,completeStop,inside,OLD_SHA,OLD_MAIN_SHA,failedActivation,qualifyOldLauncherCopy,gatePrivateProfile,waitOwnedExit,boundedJsonProcess,boundedSafeRead}=require('../check-vsix-upgrade-editor.cjs');
 test('old recovery must reproduce authenticated copied-main invalid Info.plist defect',()=>{
     const path=require('node:path'),install=path.resolve('fixture/native'),launcher=path.join(install,'airk-launcher');
     const proof={install,launcher,canonical:launcher,regular:true,nlink:1,actualHash:OLD_MAIN_SHA,authenticatedMainHash:OLD_MAIN_SHA,inventoryMainHash:OLD_MAIN_SHA,strict:{command:'/usr/bin/codesign',args:['--verify','--strict','--verbose=4',launcher],status:1,stdout:'',stderr:'airk-launcher: invalid Info.plist (plist or signature have been modified)'}};
@@ -79,4 +79,29 @@ test('only complete public Stop with current authenticated runtime/namespace qua
     for(const mutate of [v=>v.stop.capture.force=true,v=>v.stop.capture.response.record.request.expected_instance='foreign',v=>v.stop.capture.runtime.runtimeSha256='old',v=>v.inspection.registry_namespace='foreign',v=>v.inspection.lifecycle.pending={id:'pending'},v=>v.stop.confirmation.dispatch=1,v=>v.stop.previous_capture={response:{record:{id:'new'}}}]){
         const changed=structuredClone(value);mutate(changed);assert.throws(()=>completeStop(changed.stop,changed.inspection,changed.bundle,changed.install));
     }
+});
+
+function httpFixture(){
+    const path=require('node:path'),directory=path.resolve('fictional-native-http'),id='a'.repeat(32),url='https://127.0.0.1:57421/mcp',credential='airk1.'+id+'.'+'b'.repeat(64);
+    const connection={schema:1,connection_id:id,endpoint:{schema:1,installation:'c'.repeat(64),user:'fictional',namespace:'d'.repeat(32),generation:1,service_instance:'e'.repeat(32),executable_sha256:'f'.repeat(64),url,ca_sha256:'1'.repeat(64),certificate_sha256:'2'.repeat(64),state:'ready',predecessor_digest:null},selection:{kind:'scoped',selection:{schema:1,context_key:'3'.repeat(64),namespace:'d'.repeat(32),expected_catalog_revision:2,grant_id:'grt_'+'4'.repeat(32),expected_grant_revision:1,index_id:'idx_'+'5'.repeat(32),project_ids:['prj_'+'6'.repeat(32)]}},ca_certificate_file:path.join(directory,'ca.pem'),credential_file:path.join(directory,'credential-'+id+'.token')};
+    const material={url,credential},definition={uri:{toString:()=>url},version:'actual-native-generation',headers:{Authorization:'Bearer '+credential,'X-AIRK-Response-Mode':'full'}};
+    return {connection,material,definition};
+}
+test('modern upgrade provider snapshot preserves full native authority and freezes actual header without persisting bearer',async()=>{
+    const {connection,material,definition}=httpFixture(),snapshot=httpDefinitionSnapshot(definition,connection,material);
+    assert.equal(CURRENT_VERSION,require('../../packages/vscode/package.json').version);
+    assert.equal(snapshot.transport,'https');assert.deepEqual(snapshot.nativeConnection,connection);
+    assert.equal(snapshot.headers.Authorization,'Bearer [redacted]');assert.equal(JSON.stringify(snapshot).includes(material.credential),false);
+    const restored=await restoreHttpDefinition(snapshot,material);assert.deepEqual(restored.headers,definition.headers);assert.equal(restored.uri.toString(),definition.uri.toString());assert.deepEqual(restored.nativeConnection,connection);
+    for(const mutate of [x=>x.transport='stdio',x=>x.uri='https://127.0.0.1:57422/mcp',x=>x.authorization_sha256='0'.repeat(64),x=>x.headers.Authorization='some other redaction']){const bad=structuredClone(snapshot);mutate(bad);await assert.rejects(restoreHttpDefinition(bad,material));}
+    await assert.rejects(restoreHttpDefinition(snapshot,{...material,credential:'airk1.'+'0'.repeat(32)+'.'+'b'.repeat(64)}));
+});
+test('actual provider capture refuses crossed native authority, credential, URL, and retired stdio shape',()=>{
+    const {connection,material,definition}=httpFixture();
+    assert.throws(()=>httpDefinitionSnapshot({...definition,command:'retired-airk'},connection,material));
+    assert.throws(()=>httpDefinitionSnapshot({...definition,args:[]},connection,material));
+    const crossed=structuredClone(connection);crossed.connection_id='0'.repeat(32);crossed.credential_file=require('node:path').join(require('node:path').dirname(crossed.credential_file),'credential-'+crossed.connection_id+'.token');
+    assert.throws(()=>httpDefinitionSnapshot(definition,crossed,material));
+    assert.throws(()=>httpDefinitionSnapshot(definition,connection,{...material,credential:'changed'}));
+    assert.throws(()=>httpDefinitionSnapshot(definition,connection,{...material,url:'https://127.0.0.1:57422/mcp'}));
 });

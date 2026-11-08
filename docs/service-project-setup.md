@@ -1,11 +1,11 @@
 # Index setup and search selection
 
-The unpublished **1.8.11 working build** uses **Search scope**, **Index library**
+The **1.8.14 working implementation** retains **Search scope**, **Index library**
 and **Index sets**. The local developer owns these indexes; selecting them does
 not require creating or inspecting access grants. The extension handles native
 scope and access records internally when **Apply selection** is chosen. Native
 CLI/API `Project` terminology remains for compatibility and corresponds to the
-UI's index sets. See the [working-build record](releases/release-1.8.11.md).
+UI's index sets. See [current agent integration](agent-integration.md); the [1.8.11 record](releases/release-1.8.11.md) documents the earlier UI cutover.
 
 ## Create an index
 
@@ -62,6 +62,27 @@ connection boundary. Complete read results and exports preserve scope, revision,
 coverage and failures. See the [CLI catalog](cli-reference.md),
 [storage boundary](storage-formats.md#development-catalog-boundary) and the
 [historical P6f ledger](research/implementation-v190.md#p6f--catalog-management-and-scoped-native-activation).
+
+## Connect MCP over the shared service
+
+After applying the native search selection, **Connect Coding Agent** prepares an
+HTTP connection with the exact grant/namespace and protected credential
+references. Use the actual native `https://127.0.0.1:<bound-port>/mcp` URL; an
+occupied preferred port can cause a different persisted endpoint. VS Code uses
+`McpHttpServerDefinition`. Connections do not launch an MCP command or helper.
+
+Imported scopes retain their genuine prior configuration/provider receipt and
+native grant. Multi-root predecessors retain all original members, without an
+implicit default project. Missing lineage, revoked authority or unsupported
+client trust/auth formats remain review-required. Saving one client's setup
+does not rewrite another running agent's authority.
+
+Provision the exact public issuer through a qualified additive CA bundle or
+**AIRK: Trust Local HTTPS Issuer**. Certificate verification remains enabled;
+credentials are protected host references, not copied tokens. New-terminal
+provisioning does not update running apps or remote/container hosts. Verify the
+actual client's initialization, tool list, status and cited read. See
+[agent integration](agent-integration.md) and [templates](../examples/mcp/README.md).
 
 ## Historical registration checkpoints
 

@@ -78,6 +78,28 @@ pub(crate) fn verified_source_asset(
     );
     Ok(bytes)
 }
+#[cfg(feature = "local-inference")]
+pub(crate) fn verified_source_bytes<'a>(
+    source: &'a dyn ModelAssetSource,
+    name: ModelAssetName,
+    maximum: u64,
+    digest: &str,
+) -> Result<std::borrow::Cow<'a, [u8]>> {
+    ensure!(valid_digest(digest), "invalid asset SHA-256");
+    let maximum = maximum.min(name.maximum_bytes());
+    let bytes = match source.borrowed_asset(name, maximum)? {
+        Some(bytes) => std::borrow::Cow::Borrowed(bytes),
+        None => std::borrow::Cow::Owned(source.read_asset(name, maximum)?),
+    };
+    ensure!(
+        bytes.len() as u64 <= maximum && format!("{:x}", Sha256::digest(&bytes)) == digest,
+        "local model asset digest mismatch: {}",
+        name.filename()
+    );
+    Ok(bytes)
+}
+#[cfg(all(test, feature = "local-inference"))]
+mod borrowed_asset_tests;
 
 pub const ONNX_RUNTIME: &str = "onnxruntime-cpu/1.22.1/airk-int8-b1-1";
 pub const MAX_MODEL_BYTES: u64 = 268_435_456;
@@ -287,22 +309,6 @@ fn valid_digest(value: &str) -> bool {
         && value
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-}
-
-#[cfg(any(test, feature = "local-inference"))]
-pub(crate) fn verified_asset(
-    directory: &Path,
-    name: &str,
-    maximum: u64,
-    digest: &str,
-) -> Result<Vec<u8>> {
-    ensure!(valid_digest(digest), "invalid asset SHA-256");
-    let bytes = read_asset(directory, name, maximum)?;
-    ensure!(
-        format!("{:x}", Sha256::digest(&bytes)) == digest,
-        "local model asset digest mismatch: {name}"
-    );
-    Ok(bytes)
 }
 
 pub(crate) fn onnx_manifest(bytes: &[u8]) -> Result<(OnnxManifest, String)> {
@@ -697,6 +703,24 @@ pub fn descriptor_from_asset_metadata(
 mod object_metadata_tests;
 
 impl EmbeddingModel {
+    #[cfg(feature = "local-inference")]
+    pub fn open_native_assets(source: &dyn ModelAssetSource, set: &ModelObjectSet) -> Result<Self> {
+        crate::native_inference::require_service_compute()?;
+        set.validate()?;
+        let bytes = source.read_asset(ModelAssetName::ModelJson, 16_384)?;
+        let value: serde_json::Value = serde_json::from_slice(&bytes)?;
+        let model = match value["schema"].as_u64() {
+            Some(1) => Self::WordVectors(LocalModel::open_assets(source)?),
+            Some(2) => Self::Onnx(Box::new(OnnxModel::open_assets(source, &bytes)?)),
+            _ => anyhow::bail!("unsupported local embedding model schema"),
+        };
+        ensure!(
+            model.identity() == set.legacy_identity
+                && model.cache_descriptor()?.identity()? == set.pipeline_digest,
+            "embedded model disagrees with authenticated pipeline"
+        );
+        Ok(model)
+    }
     pub fn open_shared(source: &dyn ModelAssetSource, set: &ModelObjectSet) -> Result<Self> {
         Ok(Self::Remote(Box::new(
             crate::remote_model::RemoteModel::open(source, set)?,
@@ -1345,13 +1369,34 @@ mod tests {
         let directory = tempfile::tempdir()?;
         fs::write(directory.path().join("model.onnx"), b"original fixture")?;
         let hash = format!("{:x}", Sha256::digest(b"original fixture"));
-        assert!(verified_asset(directory.path(), "model.onnx", 15, &hash).is_err());
+        assert!(
+            verified_source_asset(
+                &DirectoryAssets(directory.path()),
+                ModelAssetName::ModelOnnx,
+                15,
+                &hash
+            )
+            .is_err()
+        );
         assert_eq!(
-            verified_asset(directory.path(), "model.onnx", 16, &hash)?,
+            verified_source_asset(
+                &DirectoryAssets(directory.path()),
+                ModelAssetName::ModelOnnx,
+                16,
+                &hash
+            )?,
             b"original fixture"
         );
         fs::write(directory.path().join("model.onnx"), b"altered fixture!")?;
-        assert!(verified_asset(directory.path(), "model.onnx", 16, &hash).is_err());
+        assert!(
+            verified_source_asset(
+                &DirectoryAssets(directory.path()),
+                ModelAssetName::ModelOnnx,
+                16,
+                &hash
+            )
+            .is_err()
+        );
         Ok(())
     }
 }

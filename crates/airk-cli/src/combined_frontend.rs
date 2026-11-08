@@ -31,6 +31,11 @@ mod cursor;
 // adds at most 2N bytes. Native child IPC and stdio input bounds stay unchanged.
 const MAX_COMBINED_TRANSPORT_BYTES: usize = 3 * airk_core::MAX_RESPONSE_BYTES + 4096;
 const DELIVERY_OBSERVATION_RESERVE: usize = 1024;
+struct ReadAdmission {
+    remaining_deadline_ms: Option<u64>,
+    capacity: usize,
+    context: airk_mcp::read_attempt::ReadAttemptContext,
+}
 
 fn check_public_reply(result: &Value, reserve: usize) -> Result<()> {
     airk_core::index_catalog::encoded_size(
@@ -258,6 +263,16 @@ pub(crate) fn validate_delivery(
 
 /// Resolve metadata only. Frozen selectors confer no authority; every read
 /// validates the current reviewed snapshot before any selected worker is used.
+pub(crate) fn validate_http_selection(
+    control: &Path,
+    selection: &CombinedConnectRequest,
+) -> Result<CombinedConnectRequest> {
+    let snapshot = read_snapshot(control, selection, &selection.selection())?;
+    let mut refreshed = selection.clone();
+    refreshed.expected_catalog_revision = snapshot.revision;
+    Ok(refreshed)
+}
+
 pub async fn resolve(
     install: Option<&Path>,
     control: Option<&Path>,
@@ -636,6 +651,7 @@ impl Backend {
         before: Snapshot,
         deadline: Instant,
         capacity: usize,
+        context: airk_mcp::read_attempt::ReadAttemptContext,
     ) -> Result<Value> {
         args.remove("response_mode");
         args.remove("include_status");
@@ -654,7 +670,12 @@ impl Backend {
             before.identity,
             |tool, mut args| {
                 if tool == "__airk_verify_projection" {
-                    return self.verify_final_callback(args, selected.clone(), before.clone());
+                    return self.verify_final_callback(
+                        args,
+                        selected.clone(),
+                        before.clone(),
+                        context.narrowed(deadline),
+                    );
                 }
                 // Discovery's public input remains the closed singular schema. Its
                 // plan callback receives the already validated captured selection
@@ -669,7 +690,7 @@ impl Backend {
                         json!(selected.member_availability),
                     );
                 }
-                self.dispatch(tool, args, true, capacity)
+                self.dispatch(tool, args, true, capacity, context.narrowed(deadline))
             },
         )
         .await?;
@@ -693,6 +714,7 @@ impl Backend {
         mut args: Map<String, Value>,
         mut selected: QuerySelection,
         before: Snapshot,
+        context: airk_mcp::read_attempt::ReadAttemptContext,
     ) -> RemoteFuture<'_> {
         Box::pin(async move {
             let mut requested = self.request_selection(&mut args)?;
@@ -708,7 +730,8 @@ impl Backend {
                 requested == selected,
                 "final verification cannot change the captured Project/index selection"
             );
-            self.verify_projection(args, &selected, before).await
+            self.verify_projection(args, &selected, before, context)
+                .await
         })
     }
 
@@ -717,6 +740,7 @@ impl Backend {
         mut args: Map<String, Value>,
         _selected: &QuerySelection,
         before: Snapshot,
+        context: airk_mcp::read_attempt::ReadAttemptContext,
     ) -> Result<Value> {
         use airk_core::verification::{VerificationAllocation, VerificationControls};
         let started = Instant::now();
@@ -839,12 +863,15 @@ impl Backend {
             let own = json!({"steps":subset.steps});
             let result = match tokio::time::timeout(
                 window,
-                child.call_native(airk_core::native_reads::NativeRead::VerifyProjection {
-                    value: own,
-                    controls,
-                    allocation: Some(allocation),
-                    receipt_bytes_budget: Some(receipt_share),
-                }),
+                child.call_native_with_context(
+                    airk_core::native_reads::NativeRead::VerifyProjection {
+                        value: own,
+                        controls,
+                        allocation: Some(allocation),
+                        receipt_bytes_budget: Some(receipt_share),
+                    },
+                    context.narrowed(Instant::now() + window),
+                ),
             )
             .await
             {
@@ -873,9 +900,13 @@ impl Backend {
         mut args: Map<String, Value>,
         selected: &QuerySelection,
         before: Snapshot,
-        remaining_deadline_ms: Option<u64>,
-        capacity: usize,
+        admission: ReadAdmission,
     ) -> Result<Value> {
+        let ReadAdmission {
+            remaining_deadline_ms,
+            capacity,
+            context,
+        } = admission;
         use airk_core::verification::{
             VerificationAllocation, VerificationControls, VerificationMode,
         };
@@ -1033,9 +1064,12 @@ impl Backend {
                     .token;
                 let status = match tokio::time::timeout(
                     remaining,
-                    child.call_native(airk_core::native_reads::NativeRead::SourceProjection {
-                        publication: expected,
-                    }),
+                    child.call_native_with_context(
+                        airk_core::native_reads::NativeRead::SourceProjection {
+                            publication: expected,
+                        },
+                        context.narrowed(Instant::now() + remaining),
+                    ),
                 )
                 .await
                 {
@@ -1120,12 +1154,21 @@ impl Backend {
             let remaining = Duration::from_millis(budgets.deadline_ms)
                 .saturating_sub(started.elapsed())
                 .min(Duration::from_millis(allocation.deadline_ms));
-            let mut result =
-                match tokio::time::timeout(remaining, child.call(tool.into(), child_args)).await {
-                    Ok(Ok(result)) => result,
-                    Ok(Err(_)) => failure("member_observation_unavailable", None, &self.selection),
-                    Err(_) => failure("member_deadline_exhausted", None, &self.selection),
-                };
+            let mut result = match tokio::time::timeout(
+                remaining,
+                child.call_with_read_context(
+                    tool.into(),
+                    child_args,
+                    capacity,
+                    context.narrowed(Instant::now() + remaining),
+                ),
+            )
+            .await
+            {
+                Ok(Ok(result)) => result,
+                Ok(Err(_)) => failure("member_observation_unavailable", None, &self.selection),
+                Err(_) => failure("member_deadline_exhausted", None, &self.selection),
+            };
             if let Some(expected) = &origin {
                 let body = canonical_body(&result);
                 let actual = publication_token(&body).map(str::to_owned);
@@ -1167,9 +1210,12 @@ impl Backend {
                 } else {
                     tokio::time::timeout(
                         remaining,
-                        child.call_native(airk_core::native_reads::NativeRead::SourceProjection {
-                            publication: expected,
-                        }),
+                        child.call_native_with_context(
+                            airk_core::native_reads::NativeRead::SourceProjection {
+                                publication: expected,
+                            },
+                            context.narrowed(Instant::now() + remaining),
+                        ),
                     )
                     .await
                 };
@@ -1227,12 +1273,15 @@ impl Backend {
                 {
                     match tokio::time::timeout(
                         window,
-                        child.call_native(airk_core::native_reads::NativeRead::VerifyProjection {
-                            value: projection,
-                            controls,
-                            allocation: Some(allocation),
-                            receipt_bytes_budget: Some(32768 / before.members.len()),
-                        }),
+                        child.call_native_with_context(
+                            airk_core::native_reads::NativeRead::VerifyProjection {
+                                value: projection,
+                                controls,
+                                allocation: Some(allocation),
+                                receipt_bytes_budget: Some(32768 / before.members.len()),
+                            },
+                            context.narrowed(Instant::now() + window),
+                        ),
                     )
                     .await
                     {
@@ -1577,7 +1626,16 @@ impl RemoteTools for Backend {
         })
     }
     fn call(&self, tool: String, args: Map<String, Value>) -> RemoteFuture<'_> {
-        self.dispatch(tool, args, false, self.query_concurrency())
+        self.dispatch(
+            tool,
+            args,
+            false,
+            self.query_concurrency(),
+            airk_mcp::read_attempt::ReadAttemptContext::new(
+                Instant::now() + Duration::from_secs(125),
+                Default::default(),
+            ),
+        )
     }
     fn call_with_capacity(
         &self,
@@ -1585,7 +1643,25 @@ impl RemoteTools for Backend {
         args: Map<String, Value>,
         capacity: usize,
     ) -> RemoteFuture<'_> {
-        self.dispatch(tool, args, false, capacity)
+        self.dispatch(
+            tool,
+            args,
+            false,
+            capacity,
+            airk_mcp::read_attempt::ReadAttemptContext::new(
+                Instant::now() + Duration::from_secs(125),
+                Default::default(),
+            ),
+        )
+    }
+    fn call_with_read_context(
+        &self,
+        tool: String,
+        args: Map<String, Value>,
+        capacity: usize,
+        context: airk_mcp::read_attempt::ReadAttemptContext,
+    ) -> RemoteFuture<'_> {
+        self.dispatch(tool, args, false, capacity, context)
     }
 }
 
@@ -1596,6 +1672,7 @@ impl Backend {
         mut args: Map<String, Value>,
         internal_allowed: bool,
         capacity: usize,
+        context: airk_mcp::read_attempt::ReadAttemptContext,
     ) -> RemoteFuture<'_> {
         Box::pin(async move {
             let dispatch_started = Instant::now();
@@ -1690,12 +1767,14 @@ impl Backend {
                 );
             }
             let observation_budget = if native == "airk_status" { 2000 } else { 30000 };
-            let deadline = dispatch_started
-                + Duration::from_millis(
-                    remaining_deadline_ms
-                        .unwrap_or(observation_budget)
-                        .min(observation_budget),
-                );
+            let deadline = context.deadline().min(
+                dispatch_started
+                    + Duration::from_millis(
+                        remaining_deadline_ms
+                            .unwrap_or(observation_budget)
+                            .min(observation_budget),
+                    ),
+            );
             let remaining_deadline_ms = Some(
                 deadline
                     .saturating_duration_since(Instant::now())
@@ -1718,18 +1797,31 @@ impl Backend {
             let result = match native.as_str() {
                 "airk_query_scope" => self.discover(args, &selected, before, deadline).await,
                 "airk_parse" => {
-                    self.parse(args, &selected, before, deadline, capacity)
+                    self.parse(
+                        args,
+                        &selected,
+                        before,
+                        deadline,
+                        capacity,
+                        context.narrowed(deadline),
+                    )
+                    .await
+                }
+                "__airk_verify_projection" => {
+                    self.verify_projection(args, &selected, before, context.narrowed(deadline))
                         .await
                 }
-                "__airk_verify_projection" => self.verify_projection(args, &selected, before).await,
                 _ => {
                     self.execute_read(
                         &native,
                         args,
                         &selected,
                         before,
-                        remaining_deadline_ms,
-                        capacity,
+                        ReadAdmission {
+                            remaining_deadline_ms,
+                            capacity,
+                            context: context.narrowed(deadline),
+                        },
                     )
                     .await
                 }

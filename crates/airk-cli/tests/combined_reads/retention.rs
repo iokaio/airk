@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Real helper/process retention migration. Tiny word vectors are not ONNX qualification.
+//! Service-owned in-process retention migration. Tiny word vectors are not ONNX qualification.
 use super::*;
 use airk_core::{
     graph_storage::GraphRecordReader,
@@ -227,7 +227,7 @@ fn graph(f: &Fixture) -> Result<Value> {
 async fn actual_helper_retention_migration_rebinds_evidence_without_new_embedding_inputs()
 -> Result<()> {
     let mut observations = Vec::new();
-    let mut f = Fixture::with_helper()?;
+    let mut f = Fixture::with_inference()?;
     f.session.project_ids = vec![f.projects[2]];
     f.session.index_ids = Some(vec![f.indexes[2]]);
     let registration = &f.registrations[2];
@@ -274,13 +274,17 @@ async fn actual_helper_retention_migration_rebinds_evidence_without_new_embeddin
             helper,
             ControlResponse::EmbeddingStatus {
                 available: true,
-                process_id: Some(_),
+                process_id: None,
+                provider: Some(airk_core::inference_provider::ProviderStatus {
+                    kind: airk_core::inference_provider::ProviderKind::InProcess,
+                    ..
+                }),
                 worker: Some(_),
                 loads: 1..,
                 ..
             }
         ),
-        "actual helper was not observed: {}",
+        "actual in-process provider was not observed: {}",
         serde_json::to_string(&helper)?
     );
     let original = graph(&f)?;
@@ -348,7 +352,7 @@ async fn actual_helper_retention_migration_rebinds_evidence_without_new_embeddin
         let mut mcp = McpSession::start(&f)?;
         let actual = mcp.call(10, "airk_search", args)?;
         assert_parity(
-            "retention actual helper MCP",
+            "retention actual in-process provider MCP",
             &retained_body(&native, f.indexes[2], "retention native vector")?,
             &retained_mcp_body(&actual, f.indexes[2], "retention MCP vector")?,
         )?;
@@ -456,7 +460,7 @@ async fn actual_helper_retention_migration_rebinds_evidence_without_new_embeddin
     write_retention_observations(
         "helper-retention.json",
         &observations,
-        "Native operation counters are cumulative; subtract only observed adjacent phases. Existing native resource counter semantics exclude overlapped intervals and may omit CPU counters; absent is unknown, not zero. Wall time covers existing Configure/Index/Vectors/idle work, excluding quota observation. Logical quota includes retained history, not physical disk or service peak RSS. This actual tiny wordvector helper is not ONNX/default-model qualification; no extra model runs were added.",
+        "Native operation counters are cumulative; subtract only observed adjacent phases. Existing native resource counter semantics exclude overlapped intervals and may omit CPU counters; absent is unknown, not zero. Wall time covers existing Configure/Index/Vectors/idle work, excluding quota observation. Logical quota includes retained history, not physical disk or service peak RSS. This actual tiny wordvector provider is not ONNX/default-model qualification; no extra model runs were added.",
     )?;
     Ok(())
 }

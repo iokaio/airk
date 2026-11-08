@@ -25,6 +25,56 @@ impl Drop for VerificationCancellation {
     }
 }
 
+/// Selection is the last pre-handler boundary. A refusal here has performed no
+/// handler, source verification, response rendering or logical usage accounting.
+pub(crate) async fn select_read_snapshot(
+    kernel: &airk_kernel::Kernel,
+    permit: Arc<OwnedSemaphorePermit>,
+    context: Option<&crate::read_attempt::ReadAttemptContext>,
+) -> anyhow::Result<airk_kernel::Kernel> {
+    loop {
+        if let Some(context) = context {
+            context.require_live()?;
+        }
+        let selected = kernel.clone();
+        let hold = permit.clone();
+        let lifetime_guard = context.and_then(|context| context.lifetime_guard());
+        let result = tokio::task::spawn_blocking(move || {
+            let _hold = hold;
+            let _lifetime_guard = lifetime_guard;
+            selected.scoped_read_fingerprint()?;
+            selected.refresh_service_snapshot()
+        })
+        .await?;
+        match result {
+            Err(error)
+                if error.is::<airk_kernel::retrieval_retry::SelectionReadAdmissionContention>() =>
+            {
+                let Some(context) = context else {
+                    return Err(error);
+                };
+                if context.uses_remote_admission() {
+                    context.mark_selection_refused();
+                    return Err(error);
+                }
+                if !context.wait_for_selection_admission().await {
+                    return Err(error);
+                }
+                // Revalidate the original authority, rather than obtaining a new
+                // grant or replacing the request's revision after waiting.
+                kernel.scoped_read_fingerprint()?;
+            }
+            Ok(selected) => {
+                if let Some(context) = context {
+                    context.require_live()?;
+                }
+                return Ok(selected);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct Admission(Arc<State>);
 
@@ -55,6 +105,21 @@ impl Default for Admission {
 }
 
 impl Admission {
+    pub(crate) async fn admit_read(
+        &self,
+        control: bool,
+        context: Option<&crate::read_attempt::ReadAttemptContext>,
+    ) -> Result<OwnedSemaphorePermit, CallToolResult> {
+        let Some(context) = context else {
+            return self.admit(control).await;
+        };
+        tokio::select! {
+            biased;
+            _ = context.cancellation().cancelled() => Err(error("native read canceled before handler admission")),
+            _ = tokio::time::sleep_until(tokio::time::Instant::from_std(context.deadline())) => Err(error("native read allowance expired before handler admission")),
+            result = self.admit(control) => result,
+        }
+    }
     pub(crate) fn for_kernel(kernel: &airk_kernel::Kernel) -> Self {
         if !kernel.is_service_collection() {
             return Self::default();
@@ -287,6 +352,9 @@ impl AirkServer {
         if self.plan_read {
             // This runs on the outer parse's blocking worker, under its permit.
             // Reuse the exact handlers without recursive transport/admission or usage entries.
+            if let Some(context) = &self.read_attempt {
+                context.mark_handler_started();
+            }
             let span = self.kernel.usage_span(operation, self.client);
             return crate::render(
                 &self.kernel,
@@ -297,6 +365,7 @@ impl AirkServer {
                     crate::response::ResponseMode::Full,
                     options.reply_detail,
                     verification,
+                    self.read_attempt.as_ref().map(|context| context.deadline()),
                 ),
                 true,
                 operation,
@@ -305,17 +374,32 @@ impl AirkServer {
         let cancelled = (verification.is_some() || track_verification)
             .then(|| Arc::new(AtomicBool::new(false)));
         let _cancellation = VerificationCancellation(cancelled.clone());
+        let verification_cancel = self.read_attempt.as_ref().and_then(|context| {
+            cancelled
+                .as_ref()
+                .map(|flag| (context.cancellation().clone(), flag.clone()))
+        });
         let responses = self.responses.clone();
+        let read_deadline = self.read_attempt.as_ref().map(|context| context.deadline());
+        let lifetime_guard = self
+            .read_attempt
+            .as_ref()
+            .and_then(|context| context.lifetime_guard());
         let mode = options.response_mode.unwrap_or(self.response_mode);
         let control = matches!(
             operation,
             UsageOperation::Status | UsageOperation::Capabilities
         );
-        let permit = match self.admission.admit(control).await {
+        let permit = match self
+            .admission
+            .admit_read(control, self.read_attempt.as_ref())
+            .await
+        {
             Ok(permit) => permit,
             Err(result) => return crate::response::with_scope(&self.kernel, result),
         };
         let kernel = self.kernel.clone();
+        let permit = Arc::new(permit);
         let client = self.client;
         let diagnostics = if allow_diagnostics && matches!(operation, UsageOperation::Status) {
             Some((
@@ -325,35 +409,74 @@ impl AirkServer {
         } else {
             None
         };
-        tokio::task::spawn_blocking(move || {
-            let _permit = permit;
-            let mut kernel = match kernel.refresh_service_snapshot() {
-                Ok(kernel) => kernel,
-                Err(failure) => {
+        let mut kernel = match select_read_snapshot(
+            &kernel,
+            permit.clone(),
+            self.read_attempt.as_ref(),
+        )
+        .await
+        {
+            Ok(kernel) => kernel,
+            Err(failure) => {
+                return tokio::task::spawn_blocking(move || {
+                    let _permit = permit;
+                    let _lifetime_guard = lifetime_guard;
                     // Contention is a safe-to-repeat read refusal, including for
                     // diagnostics with runtime context; it is not readiness evidence.
-                    if airk_kernel::retrieval_retry::read_retry_hint(&failure).is_some() {
+                    if airk_kernel::retrieval_retry::read_retry_hint(&failure).is_some()
+                        || failure.is::<crate::read_attempt::ReadAttemptClosed>() {
                         return crate::response::scoped_error_result(&kernel,&failure);
                     }
                     if let Some((runtime, work)) = diagnostics && (runtime.is_some() || work.is_some()) {
                         let status = crate::unavailable_status(&kernel, runtime, work, "AIRK collection selection is busy or unavailable; retry against the current revision");
                         let span = kernel.usage_span(operation, client);
-                        return crate::render(&kernel, (span, true), Ok(status), &responses, (mode,options.reply_detail,verification), true, operation);
+                        return crate::render(&kernel, (span, true), Ok(status), &responses, (mode,options.reply_detail,verification,read_deadline), true, operation);
                     }
                     // Other selection failures retain the path-free generic reply.
-                    return crate::response::with_scope(&kernel,error("AIRK collection selection is busy or unavailable; retry against the current revision"));
-                },
-            };
-            if let Some(cancelled)=cancelled {kernel=kernel.with_verification_cancellation(cancelled);}
+                    crate::response::with_scope(&kernel,error("AIRK collection selection is busy or unavailable; retry against the current revision"))
+                    }).await.unwrap_or_else(|_| crate::response::with_scope(&self.kernel,error("retrieval worker failed")));
+            }
+        };
+        if let Some(context) = &self.read_attempt {
+            context.mark_handler_started();
+        }
+        let mut execution = tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            let _lifetime_guard = lifetime_guard;
+            if let Some(cancelled) = cancelled {
+                kernel = kernel.with_verification_cancellation(cancelled);
+            }
             let span = kernel.usage_span(operation, client);
             let result =
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| work(kernel.clone())))
                     .unwrap_or_else(|_| Err(anyhow::anyhow!("retrieval worker failed")));
             // Serialization and all optional usage I/O stay off the protocol executor.
-            crate::render(&kernel, (span, true), result, &responses, (mode,options.reply_detail,verification), options.include_status || control, operation)
+            crate::render(
+                &kernel,
+                (span, true),
+                result,
+                &responses,
+                (mode, options.reply_detail, verification, read_deadline),
+                options.include_status || control,
+                operation,
+            )
+        });
+        let completed = match verification_cancel {
+            Some((cancel, flag)) => tokio::select! {
+                biased;
+                _ = cancel.cancelled() => {
+                    flag.store(true, Ordering::Release);
+                    // Cancellation does not release accepted blocking work's
+                    // permit; retain it until the worker actually completes.
+                    execution.await
+                }
+                completed = &mut execution => completed,
+            },
+            None => execution.await,
+        };
+        completed.unwrap_or_else(|_| {
+            crate::response::with_scope(&self.kernel, error("retrieval worker failed"))
         })
-        .await
-        .unwrap_or_else(|_| crate::response::with_scope(&self.kernel,error("retrieval worker failed")))
     }
 }
 

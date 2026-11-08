@@ -5,7 +5,7 @@ use super::permanent_trim::{
     policy_key as key, policy_revision as revision, policy_rpc_cli as rpc_cli,
 };
 use super::*;
-#[cfg(feature = "embedding-worker")]
+#[cfg(feature = "local-inference")]
 use airk_core::{catalog_host::GrantDraftSelection, catalog_management::CatalogOperation};
 use airk_core::{
     catalog_split::{
@@ -22,7 +22,7 @@ use airk_core::{
 #[path = "split_metrics.rs"]
 mod metrics;
 
-#[cfg(feature = "embedding-worker")]
+#[cfg(feature = "local-inference")]
 fn scope_refusal(reply: &Value, session: &CombinedConnectRequest) -> Result<()> {
     ensure!(
         reply["isError"] == true,
@@ -64,7 +64,7 @@ async fn state(f: &Fixture, operation: Incarnation) -> Result<SplitSnapshot> {
     Ok(*snapshot)
 }
 
-#[cfg(feature = "embedding-worker")]
+#[cfg(feature = "local-inference")]
 fn semantic_positive_body(reply: &Value, index: IndexId, label: &str) -> Result<Value> {
     airk_core::index_catalog::encoded_size(reply, 3 * airk_core::MAX_RESPONSE_BYTES + 4096)?;
     ensure!(
@@ -87,7 +87,7 @@ fn semantic_positive_body(reply: &Value, index: IndexId, label: &str) -> Result<
     );
     Ok(value)
 }
-#[cfg(feature = "embedding-worker")]
+#[cfg(feature = "local-inference")]
 fn semantic_positive_mcp_body(wire: &Value, index: IndexId, label: &str) -> Result<Value> {
     airk_core::index_catalog::encoded_size(wire, 3 * airk_core::MAX_RESPONSE_BYTES + 8192)?;
     ensure!(
@@ -536,6 +536,43 @@ async fn terminal(
                 },
                 "native terminal disposition differs"
             );
+            // This fixture has actual native publications. Unlike Store-only
+            // receipt fixtures it can exercise the complete checkpoint reader.
+            let checkpoint = loop {
+                let control = f.control.clone();
+                match tokio::task::spawn_blocking(move || {
+                    airk_store::service::registry::checkpoint::snapshot(&control)
+                })
+                .await
+                .context("completed split checkpoint reader failed")?
+                {
+                    Ok(checkpoint) => break checkpoint,
+                    Err(error)
+                        if airk_store::service::registry::checkpoint::is_read_contention(
+                            &error,
+                        ) && Instant::now() < deadline =>
+                    {
+                        tokio::time::sleep(Duration::from_millis(50)).await;
+                    }
+                    Err(error) => return Err(error.context("completed native split checkpoint")),
+                }
+            };
+            let evidence = save_replies(
+                "completed native split checkpoint",
+                &json!({"operation":operation,"split":snapshot,
+                    "checkpoint_digest":checkpoint.digest()?,"checkpoint":checkpoint}),
+            )?;
+            ensure!(
+                checkpoint.complete
+                    && checkpoint.control == f.control.canonicalize()?
+                    && !checkpoint.publications.is_empty()
+                    && !checkpoint
+                        .unfinished
+                        .iter()
+                        .any(|work| work.kind.starts_with("catalog_split_final_")),
+                "completed split retained active finalization work; complete evidence: {}",
+                evidence.display()
+            );
             return Ok(snapshot);
         }
         if Instant::now() >= deadline {
@@ -569,7 +606,7 @@ async fn terminal(
     }
 }
 
-#[cfg(feature = "embedding-worker")]
+#[cfg(feature = "local-inference")]
 async fn fresh_grant(f: &mut Fixture, snapshot: &SplitSnapshot, nonce: u8) -> Result<()> {
     let response = airk_cli::service_runtime::request(
         &f.control,
@@ -612,7 +649,7 @@ async fn fresh_grant(f: &mut Fixture, snapshot: &SplitSnapshot, nonce: u8) -> Re
     Ok(())
 }
 
-#[cfg(feature = "embedding-worker")]
+#[cfg(feature = "local-inference")]
 pub(super) async fn pause_quiescent_original(f: &Fixture, index: usize) -> Result<()> {
     let project = f.registrations[index].binding;
     let sql = Connection::open_with_flags(
@@ -700,44 +737,44 @@ pub(super) async fn pause_quiescent_original(f: &Fixture, index: usize) -> Resul
     )
 }
 
-#[cfg(feature = "embedding-worker")]
+#[cfg(feature = "local-inference")]
 #[tokio::test]
 async fn split_actual_service_provider_cutover_retains_complete_rpc_cli_mcp_evidence() -> Result<()>
 {
     provider_cutover(false).await
 }
-#[cfg(feature = "embedding-worker")]
+#[cfg(feature = "local-inference")]
 #[tokio::test]
 async fn split_semantic_ready_destination_has_real_paid_vectors_and_complete_transports()
 -> Result<()> {
     provider_cutover(true).await
 }
-#[cfg(feature = "embedding-worker")]
+#[cfg(feature = "local-inference")]
 #[tokio::test]
 async fn post_p14_completed_shared_root_current_owned_destination_can_retire_without_changing_original()
 -> Result<()> {
     provider_cutover_with_retirement(true, false, false).await
 }
-#[cfg(all(windows, feature = "embedding-worker"))]
+#[cfg(all(windows, feature = "local-inference"))]
 #[tokio::test]
 async fn post_p14_interrupted_final_funding_retirement_preserves_ordinary_current_progress()
 -> Result<()> {
     provider_cutover_with_retirement(true, true, false).await
 }
-#[cfg(feature = "embedding-worker")]
+#[cfg(feature = "local-inference")]
 async fn provider_cutover(require_semantic_ready: bool) -> Result<()> {
     provider_cutover_with_retirement(false, false, require_semantic_ready).await
 }
-#[cfg(feature = "embedding-worker")]
+#[cfg(feature = "local-inference")]
 async fn provider_cutover_with_retirement(
     shared: bool,
     interrupt_retirement: bool,
     require_semantic_ready: bool,
 ) -> Result<()> {
-    let mut f = Fixture::with_helper()?;
+    let mut f = Fixture::with_inference()?;
     f.session.project_ids = vec![f.projects[2]];
     f.session.index_ids = Some(vec![f.indexes[2]]);
-    let registration = &f.registrations[2];
+    let registration = f.registrations[2].clone();
     airk_kernel::Kernel::open_service_collection(
         &registration.root,
         Some(registration.data_root.clone().into()),
@@ -789,6 +826,48 @@ async fn provider_cutover_with_retirement(
         &body(&warm)?,
         &body(&warm_mcp["result"])?,
     )?;
+    let ControlResponse::Worker {
+        identity: Some(warmed_worker),
+        restarting: false,
+        ..
+    } = airk_cli::service_runtime::request(
+        &f.control,
+        ControlMethod::Worker {
+            project: registration.binding,
+        },
+    )
+    .await?
+    else {
+        anyhow::bail!("warmed original worker identity missing");
+    };
+    let ControlResponse::EmbeddingStatus {
+        available: true,
+        process_id: None,
+        loads: 1..,
+        provider: Some(warmed_provider),
+        ..
+    } = airk_cli::service_runtime::request(&f.control, ControlMethod::EmbeddingStatus).await?
+    else {
+        anyhow::bail!("warmed in-process provider identity missing");
+    };
+    warmed_provider.validate()?;
+    let ControlResponse::Health {
+        observation: warmed_health,
+    } = airk_cli::service_runtime::request(&f.control, ControlMethod::Health).await?
+    else {
+        anyhow::bail!("warmed service image identity missing");
+    };
+    ensure!(
+        warmed_worker.project == registration.binding
+            && warmed_worker.service == warmed_health.instance
+            && warmed_provider.kind == airk_core::inference_provider::ProviderKind::InProcess
+            && warmed_provider.admission_open
+            && warmed_provider.failure.is_none()
+            && warmed_provider.provider.service_instance == warmed_health.instance
+            && warmed_provider.provider.approved_execution_sha256
+                == warmed_health.executable_sha256.parse()?,
+        "warmed provider crossed original worker/service/image identity"
+    );
     // The original tiny custom model prewarms a real provider. Semantic-ready
     // destination work deliberately uses the production paired default model,
     // not an unreviewed test model injection or inherited custom-model claim.
@@ -904,13 +983,17 @@ async fn provider_cutover_with_retirement(
                 &helper_after,
                 ControlResponse::EmbeddingStatus {
                     available: true,
-                    process_id: Some(_),
+                    process_id: None,
+                    provider: Some(airk_core::inference_provider::ProviderStatus {
+                        kind: airk_core::inference_provider::ProviderKind::InProcess,
+                        ..
+                    }),
                     worker: Some(_),
                     loads: 1..,
                     ..
                 }
             ),
-            "real helper not observed; before={};after={}",
+            "in-process provider not observed; before={};after={}",
             serde_json::to_string(&helper_before)?,
             serde_json::to_string(&helper_after)?
         );
@@ -947,12 +1030,15 @@ async fn provider_cutover_with_retirement(
         .as_ref()
         .context("real original worker census absent")?;
     ensure!(
-        obligation
-            .workers
-            .iter()
-            .any(|worker| worker.project == f.registrations[2].binding)
-        && obligation.providers.iter().any(|provider| matches!(&provider.history,
-            airk_core::catalog_fences::WorkerProviderHistory::Helpers { generations } if !generations.is_empty())),
+        obligation.backing == registration.binding
+            && obligation.workers.contains(&warmed_worker)
+            && obligation
+                .providers
+                .iter()
+                .any(|provider| provider.worker == warmed_worker
+                    && matches!(&provider.history,
+            airk_core::catalog_fences::WorkerProviderHistory::InProcess { generations,.. }
+                if generations.contains(&warmed_provider.provider.provider_generation))),
         "real provider-bearing original worker was not captured by native cutover: {obligation:?}"
     );
     ensure!(
@@ -972,10 +1058,44 @@ async fn provider_cutover_with_retirement(
         .await
         .context("old native transport failed unexpectedly instead of returning scoped refusal")?;
     scope_refusal(&old_reply, &f.session)?;
-    let old_reply = old_mcp
-        .call(11, "airk_search", vector)
-        .context("old MCP transport failed unexpectedly instead of returning scoped refusal")?;
-    scope_refusal(&old_reply["result"], &f.session)?;
+    // HTTP owns an immutable catalog delivery ticket for its whole TLS socket.
+    // A restrictive commit forbids every old-ticket write, including sanitized
+    // scope errors. Observe that closure once; never replay the evidence read.
+    super::permanent_trim::deleted_source_recovery::require_catalog_fenced_socket(
+        old_mcp.request(
+            11,
+            "tools/call",
+            json!({"name":"airk_search","arguments":vector}),
+        ),
+    )?;
+    // Reconnect using the SAME saved credential and frozen selection. Native
+    // authentication must now refuse the retired authority, without enrollment,
+    // a narrowed selection, or a fresh grant being substituted.
+    let original_connection = old_mcp.transport.connection.clone();
+    let credential = Path::new(&original_connection.credential_file);
+    let credential_digest = airk_cli::runtime_pair::digest_file(credential)?;
+    let mut reconnected = old_mcp.transport.reconnect(&f.control)?;
+    ensure!(
+        reconnected.connection == original_connection,
+        "post-split reconnect changed original credential or authority"
+    );
+    let refused = reconnected.request(1,"initialize",json!({"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"airk-combined-fixture","version":"1"}}))
+        .err().context("fresh old-authority HTTPS connection initialized after restrictive split")?;
+    let Some(refusal) = refused.downcast_ref::<http::HttpRefused>() else {
+        return Err(refused
+            .context("fresh old-authority HTTPS connection failed without a typed scope refusal"));
+    };
+    ensure!(
+        refusal.status == 403
+            && refusal.body
+                == json!({"schema":"airk.local-api-error/1","error":{"code":"native_grant_refused"}}),
+        "fresh old-authority HTTPS connection refused for a different reason: {refusal}"
+    );
+    ensure!(
+        airk_cli::runtime_pair::digest_file(credential)? == credential_digest,
+        "post-split old-authority check rotated its credential"
+    );
+    drop(reconnected);
     old.close();
     old.shutdown().await?;
     drop(old_mcp);

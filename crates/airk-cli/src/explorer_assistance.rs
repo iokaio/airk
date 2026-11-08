@@ -50,6 +50,77 @@ pub struct Launch {
     pub assistance_dir: PathBuf,
 }
 
+/// Validate one explicitly attached window. Launch metadata is global, but this
+/// session identity must never be replaced by discovery of another window.
+pub(crate) fn window_plan(descriptor: &Path) -> Result<(Launch, String)> {
+    ensure!(
+        descriptor.is_absolute()
+            && descriptor.parent().and_then(Path::file_name) == Some("windows".as_ref()),
+        "invalid explicit Explorer window descriptor"
+    );
+    let bytes = read_bounded(descriptor, DESCRIPTOR_LIMIT, "window")?;
+    #[cfg(unix)]
+    owner_only(descriptor)?;
+    #[cfg(windows)]
+    owner_only_windows(descriptor)?;
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Window {
+        schema: String,
+        session_id: String,
+        endpoint: String,
+        credential: String,
+        roots: Vec<String>,
+        binding_fingerprint: String,
+        extension_version: String,
+        expires_unix_ms: u64,
+    }
+    let window: Window = serde_json::from_slice(&bytes)?;
+    let hex = |s: &str, n| {
+        s.len() == n
+            && s.bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    };
+    ensure!(
+        window.schema == "airk-explorer-window/1"
+            && hex(&window.session_id, 32)
+            && hex(&window.credential, 64)
+            && hex(&window.binding_fingerprint, 16)
+            && descriptor.file_name().and_then(|s| s.to_str())
+                == Some(format!("{}.json", window.session_id).as_str())
+            && !window.roots.is_empty()
+            && window.roots.len() <= 32
+            && window
+                .roots
+                .iter()
+                .all(|r| !r.is_empty() && r.len() <= 4096 && Path::new(r).is_absolute())
+            && window.endpoint.len() <= 1024
+            && !window.endpoint.chars().any(char::is_control)
+            && !window.extension_version.is_empty()
+            && window.extension_version.len() <= 64,
+        "invalid explicit Explorer window binding"
+    );
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_millis();
+    ensure!(
+        u128::from(window.expires_unix_ms) > now,
+        "Explorer window attachment expired"
+    );
+    let mut identity = vec![window.session_id.clone()];
+    identity.extend(window.roots);
+    let fingerprint = format!("{:x}", Sha256::digest(identity.join("\0").as_bytes()));
+    ensure!(
+        fingerprint[..16] == window.binding_fingerprint,
+        "Explorer window binding changed"
+    );
+    let assistance = descriptor
+        .parent()
+        .and_then(Path::parent)
+        .context("invalid Explorer attachment directory")?;
+    Ok((plan(&assistance.join("launch-1.json"))?, window.session_id))
+}
+
 fn regular_file(path: &Path, limit: u64, what: &str) -> Result<()> {
     let metadata = fs::symlink_metadata(path)
         .with_context(|| format!("explorer_assistance_{what}_unavailable"))?;
@@ -343,6 +414,38 @@ mod tests {
                 ])
                 .collect::<Vec<_>>()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_window_attachment_never_falls_back_to_another_session() -> Result<()> {
+        let fixture = fixture()?;
+        write(&fixture, |_| {})?;
+        let windows = fixture.descriptor.parent().unwrap().join("windows");
+        fs::create_dir(&windows)?;
+        let session = "a".repeat(32);
+        let descriptor = windows.join(format!("{session}.json"));
+        let root = fixture.root.to_string_lossy().to_string();
+        let fingerprint = format!(
+            "{:x}",
+            Sha256::digest(format!("{session}\0{root}").as_bytes())
+        );
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_millis() as u64;
+        let mut value = json!({"schema":"airk-explorer-window/1","session_id":session,
+            "endpoint":"/tmp/airk-explorer.sock","credential":"b".repeat(64),"roots":[root],
+            "binding_fingerprint":&fingerprint[..16],"extension_version":"1.5.0","expires_unix_ms":now+60_000});
+        fs::write(&descriptor, serde_json::to_vec(&value)?)?;
+        assert_eq!(window_plan(&descriptor)?.1, session);
+        value["session_id"] = "c".repeat(32).into();
+        fs::write(&descriptor, serde_json::to_vec(&value)?)?;
+        assert!(window_plan(&descriptor).is_err());
+        value["session_id"] = session.into();
+        value["expires_unix_ms"] = 1.into();
+        fs::write(&descriptor, serde_json::to_vec(&value)?)?;
+        assert!(window_plan(&descriptor).is_err());
+        assert!(window_plan(&fixture.descriptor).is_err());
         Ok(())
     }
 

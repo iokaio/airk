@@ -189,7 +189,7 @@ impl<'a> Manager<'a> {
             executable: main,
             arguments: vec![
                 "runtime".into(),
-                "login-foreground".into(),
+                macos_login::entry(self.root(), &owner.target)?.into(),
                 "--channel".into(),
                 macos_login::channel_name(owner.channel).into(),
             ],
@@ -207,8 +207,11 @@ impl<'a> Manager<'a> {
         let (loaded, running, matched, diagnostic, output) = match observation {
             Ok(State::NotRegistered) => (Some(false), Some(false), None, None, "not_registered".into()),
             Ok(State::Enabled) => {
-                let running = match macos_login::quiet(self.root()) { Ok(quiet) => Some(!quiet), Err(_) => None };
-                (Some(true), running, owned.then_some(true), None, "enabled".into())
+                match macos_login::observed_job(self.root(), &owner.target, owner.channel) {
+                    Ok(Some(job)) => (Some(true), Some(job.process_id.is_some()), owned.then_some(true), None, "enabled".into()),
+                    Ok(None) => (None, None, None, Some("Service Management is enabled but the captured launchd job is not observable".into()), "enabled_job_unobserved".into()),
+                    Err(error) => { let message: String = error.to_string().chars().take(512).collect(); (None, None, None, Some(message.clone()), message) }
+                }
             }
             Ok(State::Approval) => (Some(true), Some(false), owned.then_some(true), Some("Approve AIRK in System Settings > General > Login Items; user consent is preserved".into()), "requires_approval".into()),
             Ok(State::NotFound) => (None, None, None, Some("Service Management could not locate the captured app service".into()), "not_found".into()),
@@ -269,7 +272,21 @@ impl<'a> Manager<'a> {
                 bail!("Mac service registration is unverifiable; existing state is preserved")
             }
         }
-        let status = self.status()?;
+        // Registration and launchd's read-only observation need not become
+        // visible together. Wait only for that observation; never register twice.
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let status = loop {
+            ensure!(
+                self.read()?.as_ref() == Some(&owner),
+                "Mac login ownership changed during Start"
+            );
+            macos_login::require_start_allowed(self.root())?;
+            let status = self.status()?;
+            if status.manager_output != "enabled_job_unobserved" || Instant::now() >= deadline {
+                break status;
+            }
+            thread::sleep(Duration::from_millis(100));
+        };
         ensure!(
             status.manager_output != "requires_approval",
             "Mac login was registered; approve AIRK in System Settings > General > Login Items, then retry Start"

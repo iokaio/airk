@@ -11,12 +11,22 @@ use rmcp::{
 };
 use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 
+#[path = "remote_http.rs"]
+pub mod http;
+
 #[cfg(test)]
 #[path = "remote_combined_tests.rs"]
 mod combined_tests;
 #[cfg(test)]
+#[path = "remote_envelope_tests.rs"]
+mod envelope_tests;
+#[cfg(test)]
 #[path = "remote_scoped_tests.rs"]
 mod scoped_tests;
+
+/// Complete public tool envelopes include both text and structured forms.
+/// The native 64 KiB logical reply bound is not this encoded transport bound.
+pub(crate) const PUBLIC_TOOL_ENVELOPE_BYTES: usize = 1024 * 1024;
 
 pub type RemoteFuture<'a> =
     Pin<Box<dyn Future<Output = anyhow::Result<serde_json::Value>> + Send + 'a>>;
@@ -76,6 +86,17 @@ pub trait RemoteTools: Send + Sync + 'static {
         _limit: usize,
     ) -> RemoteFuture<'_> {
         self.call(tool, arguments)
+    }
+    /// The native read owner narrows this original budget and owns the sole
+    /// selection-admission retry credit. Adapters never repeat a complete call.
+    fn call_with_read_context(
+        &self,
+        tool: String,
+        arguments: serde_json::Map<String, serde_json::Value>,
+        limit: usize,
+        _context: crate::read_attempt::ReadAttemptContext,
+    ) -> RemoteFuture<'_> {
+        self.call_with_capacity(tool, arguments, limit)
     }
 }
 
@@ -138,12 +159,111 @@ pub fn combined_observation_failure(
     }))
 }
 
+/// Preferences belong to one authenticated connection, never the service environment.
+#[derive(Clone, Copy)]
+pub struct ReadSessionPreferences {
+    pub response_mode: crate::response::ResponseMode,
+    pub client: airk_core::usage::ClientFamily,
+}
+
+/// One service-wide admission owner shared by every authenticated transport session.
 #[derive(Clone)]
-struct Bridge {
+pub struct ReadSessionFactory {
+    admission: Arc<Admission>,
+}
+impl Default for ReadSessionFactory {
+    fn default() -> Self {
+        Self {
+            admission: Arc::new(Admission::default()),
+        }
+    }
+}
+impl ReadSessionFactory {
+    pub fn client(&self) -> ReadClientFactory {
+        ReadClientFactory {
+            shared: self.clone(),
+            admission: Arc::new(Admission::default()),
+        }
+    }
+    /// The caller supplies a fresh, already-authorized backend for this exact session.
+    pub fn session(
+        &self,
+        backend: Arc<dyn RemoteTools>,
+        preferences: ReadSessionPreferences,
+    ) -> ReadSession {
+        ReadSession {
+            backend: backend.clone(),
+            admission: self.admission.clone(),
+            response_mode: preferences.response_mode,
+            client: (preferences.client != airk_core::usage::ClientFamily::Unknown)
+                .then_some(preferences.client),
+            local_admission: Some(Arc::new(Admission::default())),
+            _owner: Some(Arc::new(SessionOwner(backend))),
+        }
+    }
+    /// Service shutdown only. Closing an individual session never invokes this.
+    pub fn close(&self) {
+        self.admission.close();
+    }
+    pub async fn shutdown(&self) {
+        self.close();
+        loop {
+            let drained = self.admission.drained.notified();
+            tokio::pin!(drained);
+            drained.as_mut().enable();
+            if self
+                .admission
+                .lifetime
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .1
+                == 0
+            {
+                return;
+            }
+            drained.await;
+        }
+    }
+}
+
+/// All sessions and request-local JSON contexts for one credential share this lane.
+#[derive(Clone)]
+pub struct ReadClientFactory {
+    shared: ReadSessionFactory,
+    admission: Arc<Admission>,
+}
+impl ReadClientFactory {
+    pub fn session(
+        &self,
+        backend: Arc<dyn RemoteTools>,
+        preferences: ReadSessionPreferences,
+    ) -> ReadSession {
+        let mut session = self.shared.session(backend, preferences);
+        session.local_admission = Some(self.admission.clone());
+        session
+    }
+    pub fn close(&self) {
+        self.admission.close();
+    }
+}
+
+struct SessionOwner(Arc<dyn RemoteTools>);
+impl Drop for SessionOwner {
+    fn drop(&mut self) {
+        self.0.close();
+    }
+}
+
+#[derive(Clone)]
+pub struct ReadSession {
     backend: Arc<dyn RemoteTools>,
     admission: Arc<Admission>,
     response_mode: crate::response::ResponseMode,
+    client: Option<airk_core::usage::ClientFamily>,
+    local_admission: Option<Arc<Admission>>,
+    _owner: Option<Arc<SessionOwner>>,
 }
+type Bridge = ReadSession;
 
 // Evidence dispatch can wait on a native owner for much longer than a scalar
 // status observation. Reserve the fourth executing slot for the exact status
@@ -153,6 +273,8 @@ struct Admission {
     calls: Arc<crate::query_capacity::QueryCapacity>,
     status: Arc<tokio::sync::Semaphore>,
     waiting: Arc<tokio::sync::Semaphore>,
+    lifetime: std::sync::Mutex<(bool, usize)>,
+    drained: tokio::sync::Notify,
 }
 impl Default for Admission {
     fn default() -> Self {
@@ -162,6 +284,8 @@ impl Default for Admission {
             ),
             status: Arc::new(tokio::sync::Semaphore::new(1)),
             waiting: Arc::new(tokio::sync::Semaphore::new(128)),
+            lifetime: std::sync::Mutex::new((false, 0)),
+            drained: tokio::sync::Notify::new(),
         }
     }
 }
@@ -180,9 +304,18 @@ enum AdmissionFailure {
 }
 impl Admission {
     fn close(&self) {
+        self.lifetime.lock().unwrap_or_else(|e| e.into_inner()).0 = true;
         self.calls.close();
         self.status.close();
         self.waiting.close();
+    }
+    fn retain(self: &Arc<Self>) -> Result<AcceptedRead, AdmissionFailure> {
+        let mut lifetime = self.lifetime.lock().unwrap_or_else(|e| e.into_inner());
+        if lifetime.0 {
+            return Err(AdmissionFailure::Closed);
+        }
+        lifetime.1 += 1;
+        Ok(AcceptedRead(self.clone()))
     }
 
     async fn acquire(
@@ -247,6 +380,20 @@ impl Admission {
     }
 }
 
+#[allow(dead_code)] // Owned permits release only when all native/delivery owners settle.
+struct AcceptedReadLifetime {
+    global: BridgePermit,
+    local: Option<BridgePermit>,
+    accepted: AcceptedRead,
+}
+struct AcceptedRead(Arc<Admission>);
+impl Drop for AcceptedRead {
+    fn drop(&mut self) {
+        self.0.lifetime.lock().unwrap_or_else(|e| e.into_inner()).1 -= 1;
+        self.0.drained.notify_waiters();
+    }
+}
+
 fn admission_failure(error: AdmissionFailure) -> CallToolResult {
     let busy = error == AdmissionFailure::Busy;
     let detail = serde_json::json!({"error":{
@@ -257,6 +404,177 @@ fn admission_failure(error: AdmissionFailure) -> CallToolResult {
         "fresh_brokerage_required":error == AdmissionFailure::Closed
     }});
     CallToolResult::error(vec![ContentBlock::text(detail.to_string())])
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ReadCallError {
+    UnknownTool,
+    Busy,
+    Closed,
+    Canceled,
+}
+
+fn canonical_read_name(name: &str) -> bool {
+    crate::local::tools()
+        .iter()
+        .any(|tool| tool.name == name || tool.name.strip_prefix("airk_") == Some(name))
+        || matches!(
+            name,
+            "projects"
+                | "list_templates"
+                | "get_template"
+                | "validate_draft"
+                | "proposal_status"
+                | "get_handoff"
+        )
+}
+
+impl ReadSession {
+    /// Preserve each canonical Tool, including all input/output schemas and annotations.
+    /// An annotation supplied by an arbitrary backend never grants API authority.
+    pub fn read_catalog(&self) -> Vec<Tool> {
+        self.backend
+            .catalog()
+            .into_iter()
+            .filter(|tool| canonical_read_name(&tool.name))
+            .collect()
+    }
+    pub async fn call_read(
+        &self,
+        name: String,
+        arguments: serde_json::Map<String, serde_json::Value>,
+        canceled: tokio_util::sync::CancellationToken,
+    ) -> Result<CallToolResult, ReadCallError> {
+        self.call_read_with_context(
+            name,
+            arguments,
+            crate::read_attempt::ReadAttemptContext::new(
+                std::time::Instant::now() + Duration::from_secs(125),
+                canceled,
+            ),
+        )
+        .await
+    }
+    pub async fn call_read_with_context(
+        &self,
+        name: String,
+        arguments: serde_json::Map<String, serde_json::Value>,
+        context: crate::read_attempt::ReadAttemptContext,
+    ) -> Result<CallToolResult, ReadCallError> {
+        let name = self
+            .read_catalog()
+            .into_iter()
+            .find(|tool| {
+                tool.name == name
+                    || tool.name.strip_prefix("airk_") == Some(name.as_str())
+                    || name.strip_prefix("airk_") == Some(tool.name.as_ref())
+            })
+            .map(|tool| tool.name.into_owned())
+            .ok_or(ReadCallError::UnknownTool)?;
+        self.dispatch(
+            name,
+            arguments,
+            self.client
+                .unwrap_or(airk_core::usage::ClientFamily::Unknown),
+            context,
+        )
+        .await
+        .map_err(|error| match error {
+            AdmissionFailure::Busy => ReadCallError::Busy,
+            AdmissionFailure::Closed => ReadCallError::Closed,
+            AdmissionFailure::Canceled => ReadCallError::Canceled,
+        })
+    }
+    async fn dispatch(
+        &self,
+        name: String,
+        mut arguments: serde_json::Map<String, serde_json::Value>,
+        client: airk_core::usage::ClientFamily,
+        context: crate::read_attempt::ReadAttemptContext,
+    ) -> Result<CallToolResult, AdmissionFailure> {
+        let canceled = context.cancellation().clone();
+        let query_concurrency = self.backend.query_concurrency();
+        self.admission.calls.configure(query_concurrency);
+        let expires = (tokio::time::Instant::now() + Duration::from_secs(2))
+            .min(tokio::time::Instant::from_std(context.deadline()));
+        // Client lanes are shared across that credential's sessions. Waiting for
+        // its own lane cannot occupy every executing slot in the global lane.
+        let local = if let Some(admission) = &self.local_admission {
+            admission.calls.configure(query_concurrency.min(4));
+            Some(
+                admission
+                    .acquire(&name, canceled.cancelled(), expires)
+                    .await?,
+            )
+        } else {
+            None
+        };
+        let global = self
+            .admission
+            .acquire(&name, canceled.cancelled(), expires)
+            .await?;
+        if canceled.is_cancelled() {
+            return Err(AdmissionFailure::Canceled);
+        }
+        let lifetime = self.admission.retain()?;
+        self.backend.client(client);
+        let local_help = name == "airk_help"
+            && self.backend.local_help()
+            && self.backend.scoped_selection().is_none()
+            && self.backend.combined_selection().is_none();
+        if !local_help && self.backend.uses_response_mode(&name) {
+            arguments.entry("response_mode").or_insert_with(|| {
+                serde_json::to_value(self.response_mode).expect("scalar display mode")
+            });
+        }
+
+        let accepted = Arc::new(AcceptedReadLifetime {
+            global,
+            local,
+            accepted: lifetime,
+        });
+        // The original HTTP delivery context and any owned native exchange
+        // observe this same guard container. The group itself owns permits
+        // only; retaining a context/container here would form a reference cycle.
+        context
+            .retain_lifetime_guard(accepted.clone())
+            .map_err(|_| AdmissionFailure::Busy)?;
+        let session = self.clone();
+        // Once dispatched, the task owns admission and the backend through native
+        // completion. Dropping an HTTP response does not release accepted work.
+        let task = tokio::spawn(async move {
+            let _accepted = accepted;
+            // A legacy backend may drop its passed context before its returned
+            // future settles. The accepted owner independently retains the
+            // native checkpoint obligation through complete backend settlement.
+            let _request_lifetime = context.lifetime_guard();
+            if local_help {
+                return crate::help::call(serde_json::Value::Object(arguments));
+            }
+            call_at_capacity(
+                session.backend.as_ref(),
+                name,
+                arguments,
+                query_concurrency,
+                context,
+            )
+            .await
+            .unwrap_or_else(|error| {
+                if std::env::var_os("AIRK_PROCESS_DIAGNOSTICS").as_deref()
+                    == Some(std::ffi::OsStr::new("1"))
+                {
+                    let detail: String = format!("{error:#}").chars().take(4096).collect();
+                    eprintln!("AIRK direct project connection failed: {detail}");
+                }
+                serde_json::from_value(direct_observation_failure("direct_observation_unavailable"))
+                    .expect("bounded direct failure envelope")
+            })
+        });
+        Ok(task.await.unwrap_or_else(|_| {
+            serde_json::from_value(direct_observation_failure("direct_observation_unavailable"))
+                .expect("bounded direct failure envelope")
+        }))
+    }
 }
 
 impl ServerHandler for Bridge {
@@ -289,60 +607,83 @@ impl ServerHandler for Bridge {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
-        let query_concurrency = self.backend.query_concurrency();
-        self.admission.calls.configure(query_concurrency);
-        let _permit = match self
-            .admission
-            .acquire(
-                &request.name,
-                context.ct.cancelled(),
-                tokio::time::Instant::now() + Duration::from_secs(2),
+        let client = self.client.unwrap_or_else(|| {
+            context
+                .client_info()
+                .map_or(airk_core::usage::ClientFamily::Unknown, |info| {
+                    airk_core::usage::ClientFamily::from_label(&info.name)
+                })
+        });
+        let attempt = context
+            .extensions
+            .get::<::http::request::Parts>()
+            .and_then(|parts| {
+                parts
+                    .extensions
+                    .get::<crate::read_attempt::ReadAttemptContext>()
+            })
+            .cloned()
+            .unwrap_or_else(|| {
+                crate::read_attempt::ReadAttemptContext::new(
+                    std::time::Instant::now() + Duration::from_secs(125),
+                    context.ct.clone(),
+                )
+            });
+        let mut cancellation = LinkedCancellation::new(attempt.cancellation().clone(), context.ct);
+        let mut session = self.clone();
+        if let Some(preference) = context
+            .extensions
+            .get::<::http::request::Parts>()
+            .and_then(|parts| parts.extensions.get::<http::ReadResponsePreference>())
+        {
+            session.response_mode = preference.0;
+        }
+        let result = session
+            .dispatch(
+                request.name.to_string(),
+                request.arguments.unwrap_or_default(),
+                client,
+                attempt,
             )
             .await
-        {
-            Ok(permit) => permit,
-            Err(error) => return Ok(admission_failure(error).into()),
-        };
-        let mut arguments = request.arguments.unwrap_or_default();
-        if request.name == "airk_help"
-            && self.backend.local_help()
-            && self.backend.scoped_selection().is_none()
-            && self.backend.combined_selection().is_none()
-        {
-            return Ok(crate::help::call(serde_json::Value::Object(arguments)).into());
+            .unwrap_or_else(admission_failure);
+        cancellation.complete();
+        Ok(result.into())
+    }
+}
+
+struct LinkedCancellation {
+    token: tokio_util::sync::CancellationToken,
+    watcher: tokio::task::JoinHandle<()>,
+    completed: bool,
+}
+impl LinkedCancellation {
+    fn new(
+        token: tokio_util::sync::CancellationToken,
+        incoming: tokio_util::sync::CancellationToken,
+    ) -> Self {
+        let canceled = token.clone();
+        let watcher = tokio::spawn(async move {
+            incoming.cancelled().await;
+            canceled.cancel();
+        });
+        Self {
+            token,
+            watcher,
+            completed: false,
         }
-        let client = context
-            .client_info()
-            .map_or(airk_core::usage::ClientFamily::Unknown, |info| {
-                airk_core::usage::ClientFamily::from_label(&info.name)
-            });
-        self.backend.client(client);
-        if self.backend.uses_response_mode(&request.name) {
-            arguments.entry("response_mode").or_insert_with(|| {
-                serde_json::to_value(self.response_mode).expect("scalar display mode")
-            });
+    }
+    fn complete(&mut self) {
+        self.completed = true;
+        self.watcher.abort();
+    }
+}
+impl Drop for LinkedCancellation {
+    fn drop(&mut self) {
+        if !self.completed {
+            self.token.cancel();
         }
-        let result = call_at_capacity(
-            self.backend.as_ref(),
-            request.name.to_string(),
-            arguments,
-            query_concurrency,
-        )
-        .await;
-        Ok(result
-            .unwrap_or_else(|error| {
-                if std::env::var_os("AIRK_PROCESS_DIAGNOSTICS").as_deref()
-                    == Some(std::ffi::OsStr::new("1"))
-                {
-                    // Explicit local/CI diagnostics only: keep the bounded cause on
-                    // stderr without changing the public reply or retry authority.
-                    let detail: String = format!("{error:#}").chars().take(4096).collect();
-                    eprintln!("AIRK direct project connection failed: {detail}");
-                }
-                serde_json::from_value(direct_observation_failure("direct_observation_unavailable"))
-                    .expect("bounded direct failure envelope")
-            })
-            .into())
+        self.watcher.abort();
     }
 }
 
@@ -355,7 +696,17 @@ pub async fn call_observed(
 ) -> anyhow::Result<serde_json::Value> {
     let limit = backend.query_concurrency();
     Ok(serde_json::to_value(
-        call_at_capacity(backend, tool, arguments, limit).await?,
+        call_at_capacity(
+            backend,
+            tool,
+            arguments,
+            limit,
+            crate::read_attempt::ReadAttemptContext::new(
+                std::time::Instant::now() + Duration::from_secs(125),
+                tokio_util::sync::CancellationToken::new(),
+            ),
+        )
+        .await?,
     )?)
 }
 
@@ -364,15 +715,18 @@ async fn call_at_capacity(
     tool: String,
     arguments: serde_json::Map<String, serde_json::Value>,
     limit: usize,
+    context: crate::read_attempt::ReadAttemptContext,
 ) -> anyhow::Result<CallToolResult> {
     let value = match backend
-        .call_with_capacity(tool.clone(), arguments, limit)
+        .call_with_read_context(tool.clone(), arguments, limit, context)
         .await
     {
         Ok(value) => value,
         Err(error) if crate::response::typed_error_result(&error).is_some() => {
-            return Ok(crate::response::typed_error_result(&error)
-                .expect("recognized native read failure"));
+            return Ok(complete_public_envelope(
+                crate::response::typed_error_result(&error)
+                    .expect("recognized native read failure"),
+            ));
         }
         Err(_) if backend.scoped_selection().is_some() => scoped_observation_failure(
             backend.scoped_selection().expect("checked scoped selector"),
@@ -392,7 +746,45 @@ async fn call_at_capacity(
             .expect("bounded direct failure envelope")
     });
     report_query_concurrency(&mut result, &tool, limit);
-    Ok(result)
+    Ok(complete_public_envelope(result))
+}
+
+/// Native direct workers may return one complete JSON text body. Public MCP and
+/// one-shot CLI adapters expose that same body structurally, including failures.
+/// Duplicating it must fit the complete wire budget; never truncate evidence.
+fn complete_public_envelope(mut result: CallToolResult) -> CallToolResult {
+    // Already-finalized envelopes retain their owning contract and budget.
+    // In particular, combined delivery has a larger bound than a single native
+    // frame; applying the latter here would invalidate a complete signed body.
+    if result.structured_content.is_some() || result.content.len() != 1 {
+        return result;
+    }
+    let Some(body) = result.content[0]
+        .as_text()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text.text).ok())
+        .filter(serde_json::Value::is_object)
+    else {
+        return result;
+    };
+    result.structured_content = Some(body);
+    let required_bytes =
+        serde_json::to_vec(&result).map_or(usize::MAX, |bytes| bytes.len().saturating_add(2048));
+    if required_bytes > PUBLIC_TOOL_ENVELOPE_BYTES {
+        let mut refusal = airk_core::scoped_reads::ScopeReplyBudget {
+            required_bytes,
+            maximum_bytes: PUBLIC_TOOL_ENVELOPE_BYTES,
+        }
+        .receipt();
+        if let Some(scope) = result
+            .structured_content
+            .as_ref()
+            .and_then(|body| body.get("scope_observation"))
+        {
+            refusal["scope_observation"] = scope.clone();
+        }
+        return CallToolResult::structured_error(refusal);
+    }
+    result
 }
 
 /// Reuse the admission observation even when the backend returns cached status.
@@ -573,6 +965,9 @@ where
         backend,
         admission,
         response_mode: crate::response::ResponseMode::from_environment(),
+        client: None,
+        local_admission: None,
+        _owner: None,
     };
     serve_bounded_io(
         bridge,
@@ -857,6 +1252,9 @@ mod tests {
                 backend,
                 admission: Arc::new(Admission::default()),
                 response_mode: crate::response::ResponseMode::Full,
+                client: None,
+                local_admission: None,
+                _owner: None,
             };
             let (mut client, mut server) = tokio::try_join!(
                 async { Ok::<_, anyhow::Error>(().serve(client_io).await?) },
@@ -1007,6 +1405,7 @@ mod tests {
             calls: crate::query_capacity::QueryCapacity::new(3),
             status: Arc::new(tokio::sync::Semaphore::new(1)),
             waiting: Arc::new(tokio::sync::Semaphore::new(8)),
+            ..Admission::default()
         };
         let mut executing = Vec::new();
         for name in ["airk_search", "draft_search", "diagnostics"] {
@@ -1067,6 +1466,7 @@ mod tests {
             calls: crate::query_capacity::QueryCapacity::new(3),
             status: Arc::new(tokio::sync::Semaphore::new(1)),
             waiting: Arc::new(tokio::sync::Semaphore::new(8)),
+            ..Admission::default()
         };
         let mut held = Vec::new();
         for name in ["status", "airk_status", "status", "airk_status"] {
@@ -1097,6 +1497,7 @@ mod tests {
             calls: crate::query_capacity::QueryCapacity::new(3),
             status: Arc::new(tokio::sync::Semaphore::new(1)),
             waiting: Arc::new(tokio::sync::Semaphore::new(8)),
+            ..Admission::default()
         };
         assert_eq!(
             admission
@@ -1447,6 +1848,9 @@ mod tests {
             backend: backend.clone(),
             admission: Arc::new(Admission::default()),
             response_mode: crate::response::ResponseMode::Terse,
+            client: None,
+            local_admission: None,
+            _owner: None,
         };
         let (mut client, mut server) = tokio::try_join!(
             async { Ok::<_, anyhow::Error>(().serve(client_io).await?) },
@@ -1554,6 +1958,9 @@ mod tests {
                 backend: Arc::new(Echo),
                 admission: Arc::new(Admission::default()),
                 response_mode: default,
+                client: None,
+                local_admission: None,
+                _owner: None,
             };
             let (client, server) = tokio::try_join!(
                 async { Ok::<_, anyhow::Error>(().serve(client_io).await?) },

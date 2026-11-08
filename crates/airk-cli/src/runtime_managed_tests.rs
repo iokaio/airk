@@ -2,13 +2,23 @@
 use super::*;
 
 fn fixture(lifecycle: ManagedLifecycle) -> Result<(tempfile::TempDir, PathBuf, Managed)> {
+    fixture_with_layout(lifecycle, false)
+}
+fn fixture_with_layout(
+    lifecycle: ManagedLifecycle,
+    historical: bool,
+) -> Result<(tempfile::TempDir, PathBuf, Managed)> {
     let owner = tempfile::tempdir()?;
     let root = owner.path().join("metadata");
     local_ipc::prepare_root(&root)?;
     layout::initialize(&root, Some(&root), RuntimeChannel::Stable)?;
     let source = owner.path().join("provider");
     fs::create_dir(&source)?;
-    let identity = super::super::tests::fixture(&source)?;
+    let identity = if historical {
+        super::super::tests::historical_pair_fixture(&source)?
+    } else {
+        super::super::tests::fixture(&source)?
+    };
     let source = source.canonicalize()?;
     let policy = Managed {
         schema: 1,
@@ -17,7 +27,12 @@ fn fixture(lifecycle: ManagedLifecycle) -> Result<(tempfile::TempDir, PathBuf, M
         approval: Approval {
             schema: 1,
             manifest_sha256: identity,
-            version: env!("CARGO_PKG_VERSION").into(),
+            version: if historical {
+                super::super::tests::HISTORICAL_PAIR_VERSION
+            } else {
+                env!("CARGO_PKG_VERSION")
+            }
+            .into(),
             verification_basis: VerificationBasis::OrganizationDigest,
         },
         executable_sha256: runtime_pair::digest_file(&source.join(main_name()))?,
@@ -61,33 +76,48 @@ fn unlisted_or_changed_provider_files_are_preserved_and_block_execution() -> Res
 }
 
 #[test]
-fn managed_client_launcher_is_an_owned_main_copy_and_does_not_copy_helper_or_change_policy()
--> Result<()> {
-    let (_owner, root, policy) = fixture(ManagedLifecycle::External)?;
-    let before = fs::read(root.join(POLICY))?;
-    let (main, _) = policy.verify()?;
-    let (_, _, inventory) = policy.verify_inventory_checked(&|| Ok(()))?;
-    prepare_launcher(&root, &main, &inventory)?;
-    assert_eq!(
-        runtime_pair::digest_file(&verified_launcher(&root)?)?,
-        inventory.files
-            [standalone_launcher_name(&inventory.os, &inventory.version)?.unwrap_or(main_name())]
-    );
-    prepare_launcher(&root, &main, &inventory)?;
-    assert_eq!(fs::read(root.join(POLICY))?, before);
-    assert!(!root.join("airk-embed.exe").exists());
-    assert!(!root.join("airk-embed").exists());
-    assert!(!root.join("runtimes").exists());
-    assert!(!root.join("selected.json").exists());
-    assert!(!layout::control(&root)?.exists());
-    assert!(require_unmanaged(&root).is_err());
-    fs::write(launcher_path(&root), b"Changed owned client copy")?;
-    assert!(prepare_launcher(&root, &main, &inventory).is_err());
-    assert_eq!(
-        fs::read(launcher_path(&root))?,
-        b"Changed owned client copy"
-    );
-    assert_eq!(runtime_pair::digest_file(&main)?, policy.executable_sha256);
+fn client_preparation_preserves_single_main_and_historical_owned_copy_contracts() -> Result<()> {
+    for historical in [false, true] {
+        let (_owner, root, policy) = fixture_with_layout(ManagedLifecycle::External, historical)?;
+        let before = fs::read(root.join(POLICY))?;
+        let (main, _) = policy.verify()?;
+        let (_, _, inventory) = policy.verify_inventory_checked(&|| Ok(()))?;
+        prepare_launcher(&root, &main, &inventory)?;
+        if historical {
+            assert_eq!(
+                runtime_pair::digest_file(&verified_launcher(&root)?)?,
+                inventory.files[standalone_launcher_name(&inventory.os, &inventory.version)?
+                    .unwrap_or(main_name())]
+            );
+        } else {
+            assert!(!launcher_path(&root).exists());
+            assert!(!root.join("launcher.json").exists());
+            prepare_client_launcher(&root, &main, &policy.approval, &inventory)?;
+            assert!(!launcher_path(&root).exists());
+            assert!(!root.join("launcher.json").exists());
+        }
+        prepare_launcher(&root, &main, &inventory)?;
+        assert_eq!(fs::read(root.join(POLICY))?, before);
+        assert!(!root.join("airk-embed.exe").exists());
+        assert!(!root.join("airk-embed").exists());
+        assert!(!root.join("runtimes").exists());
+        assert!(!root.join("selected.json").exists());
+        assert!(!layout::control(&root)?.exists());
+        assert!(require_unmanaged(&root).is_err());
+        fs::write(launcher_path(&root), b"Changed owned client copy")?;
+        if historical {
+            assert!(prepare_launcher(&root, &main, &inventory).is_err());
+        } else {
+            prepare_launcher(&root, &main, &inventory)?;
+            prepare_client_launcher(&root, &main, &policy.approval, &inventory)?;
+            assert!(!root.join("launcher.json").exists());
+        }
+        assert_eq!(
+            fs::read(launcher_path(&root))?,
+            b"Changed owned client copy"
+        );
+        assert_eq!(runtime_pair::digest_file(&main)?, policy.executable_sha256);
+    }
     Ok(())
 }
 

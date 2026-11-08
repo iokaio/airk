@@ -115,6 +115,32 @@ pub struct CombinedDeliveryReceipt {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum ControlMethod {
+    PrepareUpgradeCheckpoint {
+        operation_id: Incarnation,
+        candidate_execution_sha256: Sha256Digest,
+    },
+    ObserveUpgradeCheckpoint {
+        operation_id: Incarnation,
+    },
+    UpgradeRecoveryProbe {
+        operation_id: Incarnation,
+    },
+    ReleaseUpgradeAdmission {
+        operation_id: Incarnation,
+    },
+    /// Owner-authenticated local discovery; never an anonymous HTTP endpoint.
+    HttpEndpoint,
+    /// Enroll an existing reviewed selection. No token appears in the response.
+    HttpEnroll {
+        connection_id: Incarnation,
+        selection: Box<crate::service_http::HttpSelection>,
+        client: crate::usage::ClientFamily,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        explorer_descriptor: Option<String>,
+    },
+    HttpRevoke {
+        connection_id: Incarnation,
+    },
     /// Validate a prepared combined reply against the live native admission
     /// gate. No source, worker election, grant issuance or query replay occurs.
     ValidateCombinedDelivery {
@@ -466,6 +492,27 @@ pub enum PolicyStatusBasis {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ControlResponse {
+    UpgradeCheckpoint {
+        observation: Box<crate::service_checkpoint::UpgradeCheckpointObservation>,
+    },
+    UpgradeRecoveryReady {
+        operation_id: Incarnation,
+        service_instance: Incarnation,
+        execution_sha256: Sha256Digest,
+        namespace: Option<Incarnation>,
+    },
+    UpgradeAdmissionReleased {
+        operation_id: Incarnation,
+    },
+    HttpEndpoint {
+        endpoint: Option<Box<crate::service_http::EndpointDescriptor>>,
+    },
+    HttpConnection {
+        connection: Box<crate::service_http::HttpConnectionInfo>,
+    },
+    HttpRevoked {
+        connection_id: Incarnation,
+    },
     ReferenceRefreshReviewRequired {
         project: ProjectBinding,
         caller: Incarnation,
@@ -743,6 +790,8 @@ pub enum ControlResponse {
         reuses: u64,
         sessions: usize,
         observation_age_ms: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provider: Option<crate::inference_provider::ProviderStatus>,
     },
     EmbeddingStarting,
     EmbeddingStopped {

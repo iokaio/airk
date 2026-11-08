@@ -143,6 +143,33 @@ struct Cli {
     #[command(subcommand)]
     command: Command,
 }
+impl Cli {
+    /// Clap validates subcommands before propagating parent-level global values.
+    /// Check this cross-level relationship only after the complete CLI is merged.
+    fn validate_setup(&self) -> Result<()> {
+        if let Command::Setup {
+            existing_connection_id: Some(_),
+            connection_id,
+            explorer_descriptor,
+            ..
+        } = &self.command
+        {
+            ensure!(
+                self.service_install_dir.is_some(),
+                "existing connection requires --service-install-dir"
+            );
+            ensure!(
+                connection_id.is_none()
+                    && explorer_descriptor.is_none()
+                    && self.catalog_session.is_none()
+                    && self.combined_session.is_none()
+                    && self.service_runtime_dir.is_none(),
+                "existing connection cannot be combined with enrollment inputs"
+            );
+        }
+        Ok(())
+    }
+}
 fn parse_catalog_session(
     value: &str,
 ) -> std::result::Result<airk_core::service::ScopedConnectRequest, String> {
@@ -265,7 +292,7 @@ enum Command {
         #[arg(long)]
         descriptor: PathBuf,
     },
-    /// List, describe or call the read-only MCP tools from the terminal.
+    /// List, describe or call unified evidence and Explorer proposal tools.
     ///
     /// `tools list --json`, `tools help <tool>` and `tools call <tool> --args '<json>'`.
     /// Start here to learn every query an agent can make.
@@ -353,14 +380,24 @@ enum Command {
         #[arg(long, default_value_t = 8192)]
         max_bytes: usize,
     },
-    /// Print the MCP client configuration (command and arguments) for an already registered project.
+    /// Enroll an explicit existing catalog selection for HTTPS and print configuration references.
     Setup {
         #[arg(long,value_enum,default_value_t=SetupClient::Claude)]
         client: SetupClient,
+        /// Reuse the exact connection ID when retrying enrollment.
+        #[arg(long)]
+        connection_id: Option<airk_core::identity::Incarnation>,
+        /// Render an existing credential without enrollment or changing its authority.
+        #[arg(long, conflicts_with_all = ["connection_id", "explorer_descriptor", "catalog_session", "combined_session", "service_runtime_dir"])]
+        existing_connection_id: Option<airk_core::identity::Incarnation>,
+        /// Exact private explorer-assistance/windows/<session>.json attachment.
+        #[arg(long)]
+        explorer_descriptor: Option<PathBuf>,
     },
-    /// Register --root as a project of the installed runtime and prepare its index storage.
+    /// Acknowledge an existing reviewed index mapping and prepare its reserved storage.
     ///
-    /// For a service you started with `airk serve`, use `airk service register --runtime-dir <control>` instead.
+    /// In an authority-1 catalog, --root/--data-dir/--collection must exactly match an existing ready index. New indexes require the reviewed catalog IndexSetup draft/apply/receipt flow through `airk service rpc`; init creates no index or grant.
+    /// Authority-zero services retain their legacy registration behavior. For a service started with `airk serve`, use `airk service register --runtime-dir <control>` instead.
     Init,
     /// Print the project's publication, freshness, coverage and job status.
     Status {
@@ -428,7 +465,7 @@ enum Command {
         #[arg(long, default_value_t = 8192)]
         max_bytes: usize,
     },
-    /// Serve the read-only MCP protocol on stdin/stdout for one agent connection (this is what agents launch).
+    /// Historical stdio MCP entry; modern installations require localhost HTTPS setup.
     Mcp {
         /// Optional verified Explorer adapter; native retrieval works without it.
         #[arg(long)]
@@ -1013,6 +1050,26 @@ enum SearchMode {
 }
 
 fn cli_help_catalog() -> std::collections::BTreeMap<String, String> {
+    static CATALOG: std::sync::OnceLock<std::collections::BTreeMap<String, String>> =
+        std::sync::OnceLock::new();
+    CATALOG
+        .get_or_init(|| {
+            // Native MCP handlers can first request help on a Tokio worker.
+            // The complete Clap derive requires the CLI's existing parser stack,
+            // not that worker's smaller stack. This temporary owner is joined
+            // before publication; later requests only clone the saved catalog.
+            std::thread::Builder::new()
+                .name("airk-cli-help".into())
+                .stack_size(CLI_STACK_BYTES)
+                .spawn(build_cli_help_catalog)
+                .expect("start bounded native CLI help catalog owner")
+                .join()
+                .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+        })
+        .clone()
+}
+
+fn build_cli_help_catalog() -> std::collections::BTreeMap<String, String> {
     use clap::CommandFactory;
     fn visit(
         mut command: clap::Command,
@@ -1060,6 +1117,25 @@ fn bounded(input: impl Read, limit: u64) -> Result<Vec<u8>> {
     );
     Ok(bytes)
 }
+const CLI_STACK_BYTES: usize = 8 << 20;
+
+#[cfg(test)]
+#[path = "cli_help_stack_tests.rs"]
+mod cli_help_stack_tests;
+
+#[cfg(test)]
+fn on_cli_stack<T: Send + 'static>(test: impl FnOnce() -> T + Send + 'static) -> T {
+    // Exercise the parser/help under the same stack contract as the actual CLI.
+    // Libtest's default thread stack is smaller than the complete debug derive.
+    std::thread::Builder::new()
+        .name("airk-cli-test".into())
+        .stack_size(CLI_STACK_BYTES)
+        .spawn(test)
+        .expect("start CLI test thread")
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
 fn main() -> std::process::ExitCode {
     match run_cli() {
         Ok(()) => std::process::ExitCode::SUCCESS,
@@ -1078,6 +1154,30 @@ fn main() -> std::process::ExitCode {
 }
 fn run_cli() -> Result<()> {
     if std::env::args_os()
+        .skip(1)
+        .eq([std::ffi::OsStr::new("--verify-model-smoke")])
+    {
+        #[cfg(all(feature = "local-inference", feature = "bundled-model"))]
+        {
+            println!("{}", airk_cli::bundled_assets::verify_model_smoke()?);
+            return Ok(());
+        }
+        #[cfg(not(all(feature = "local-inference", feature = "bundled-model")))]
+        anyhow::bail!("this build does not include bundled inference model verification");
+    }
+    if std::env::args_os()
+        .skip(1)
+        .eq([std::ffi::OsStr::new("--verify-bundled-models")])
+    {
+        #[cfg(feature = "local-inference")]
+        {
+            println!("{}", airk_cli::bundled_assets::verify_inventory()?);
+            return Ok(());
+        }
+        #[cfg(not(feature = "local-inference"))]
+        anyhow::bail!("this build does not include bundled inference models");
+    }
+    if std::env::args_os()
         .nth(1)
         .is_some_and(|arg| arg == "shared-process-guardian")
     {
@@ -1085,6 +1185,7 @@ fn run_cli() -> Result<()> {
             std::env::args_os().count() == 2,
             "invalid shared guardian invocation"
         );
+        airk_cli::runtime_pair::require_legacy_inference_process(&std::env::current_exe()?)?;
         #[cfg(unix)]
         return airk_cli::unix_guardian::serve_shared();
         #[cfg(not(unix))]
@@ -1108,7 +1209,7 @@ fn run_cli() -> Result<()> {
     }
     let result = std::thread::Builder::new()
         .name("airk-cli".into())
-        .stack_size(8 << 20)
+        .stack_size(CLI_STACK_BYTES)
         .spawn(run)?
         .join()
         .map_err(|_| anyhow::anyhow!("AIRK CLI thread panicked"))?;
@@ -1132,6 +1233,10 @@ async fn run() -> Result<()> {
         );
     }
     let mut cli = Cli::parse();
+    cli.validate_setup()?;
+    if matches!(cli.command, Command::Mcp { .. } | Command::Bridge { .. }) {
+        airk_cli::runtime_pair::require_legacy_stdio(&executable)?;
+    }
     ensure!(
         cli.service_runtime_dir.is_none()
             || cli.service_project.is_some()
@@ -1164,6 +1269,7 @@ async fn run() -> Result<()> {
                     | Command::Facts { .. }
                     | Command::Refs { .. }
                     | Command::Context { .. }
+                    | Command::Setup { .. }
             ),
             "catalog sessions are read-only; administrative commands require an explicit administrative invocation"
         );
@@ -1189,6 +1295,7 @@ async fn run() -> Result<()> {
                     | Command::Facts { .. }
                     | Command::Refs { .. }
                     | Command::Context { .. }
+                    | Command::Setup { .. }
             ),
             "combined sessions are read-only; settings and administrative commands require an explicit index or administrative invocation"
         );
@@ -1234,6 +1341,68 @@ async fn run() -> Result<()> {
             );
         }
         Command::Runtime { action } => return airk_cli::runtime_install::run(action).await,
+        Command::Setup {
+            client,
+            connection_id,
+            existing_connection_id,
+            explorer_descriptor,
+        } => {
+            ensure!(
+                matches!(
+                    client,
+                    SetupClient::Claude | SetupClient::Codex | SetupClient::Vscode
+                ),
+                "http_client_compatibility_unverified: this client has no qualified HTTPS trust/credential adapter"
+            );
+            let value = if let Some(id) = existing_connection_id {
+                airk_cli::runtime_install::existing_http_connection(
+                    cli.service_install_dir
+                        .as_deref()
+                        .context("existing connection requires --service-install-dir")?,
+                    *id,
+                )
+                .await?
+            } else {
+                let selection = if let Some(selection) = &cli.catalog_session {
+                    airk_core::service_http::HttpSelection::Scoped {
+                        selection: selection.clone(),
+                    }
+                } else if let Some(selection) = &cli.combined_session {
+                    airk_core::service_http::HttpSelection::Combined {
+                        selection: selection.clone(),
+                    }
+                } else {
+                    anyhow::bail!(
+                        "review_required: setup needs --catalog-session or --combined-session with an existing grant; migrate an owned old configuration with runtime http-legacy-connection and its original configuration receipt"
+                    );
+                };
+                let id = connection_id
+                    .map(Ok)
+                    .unwrap_or_else(airk_kernel::service_broker::new_instance_id)?;
+                let label = match client {
+                    SetupClient::Claude => "claude",
+                    SetupClient::Codex => "codex",
+                    _ => "vscode",
+                };
+                airk_cli::runtime_install::setup_http_connection(
+                    cli.service_install_dir.as_deref(),
+                    cli.service_runtime_dir.as_deref(),
+                    selection,
+                    id,
+                    label,
+                    explorer_descriptor.as_deref(),
+                )
+                .await?
+            };
+            let connection: airk_core::service_http::HttpConnectionInfo =
+                serde_json::from_value(value)?;
+            let (configuration, environment) = http_configuration(&connection, *client)?;
+            return print_json(
+                &json!({"connection":connection,"configuration":configuration,"environment":environment,
+                "trust":"Use normal CA validation. Add this installation CA to this client's trust without replacing existing roots; never disable TLS validation.",
+                "credential":"Load the protected credential_file into the named environment variable in the client process. Token bytes are not printed."}),
+            );
+        }
         // Hands stdio to the extension's server; prints nothing and never contacts the service.
         Command::ExplorerAssistance { descriptor } => {
             return airk_cli::explorer_assistance::run(descriptor);
@@ -1622,18 +1791,7 @@ async fn run() -> Result<()> {
             )
             .await
         }
-        Command::Setup { client } => {
-            let install = project
-                .install
-                .as_deref()
-                .context("agent setup requires an installed stable launcher")?;
-            let command = airk_cli::runtime_install::verified_launcher(install)?;
-            println!(
-                "{}",
-                configuration(&command, install, registration, client)?
-            );
-            Ok(())
-        }
+        Command::Setup { .. } => unreachable!("setup handled before project resolution"),
         Command::Index { .. } => job(&project.control, registration.binding, JobKind::Index).await,
         Command::SetupModel => {
             job(&project.control, registration.binding, JobKind::ModelSetup).await
@@ -2339,507 +2497,475 @@ fn query(command: Command) -> Result<(&'static str, Value)> {
     controls.resolve()?;
     Ok((tool, value))
 }
-fn configuration(
-    command: &Path,
-    install: &Path,
-    project: &airk_core::service::ProjectRegistration,
+fn http_configuration(
+    connection: &airk_core::service_http::HttpConnectionInfo,
     client: SetupClient,
-) -> Result<String> {
-    let command = command.to_str().context("launcher path is not UTF-8")?;
-    let args = vec![
-        "runtime",
-        "launch",
-        "--install-dir",
-        install.to_str().context("installation path is not UTF-8")?,
-        "--",
-        "--root",
-        &project.root,
-        "mcp",
-    ]
-    .into_iter()
-    .map(str::to_owned)
-    .collect::<Vec<_>>();
-    let name = "airk";
-    let mut server = json!({"command":command,"args":args});
-    let result = match client {
-        SetupClient::Codex => {
-            return Ok(format!(
-                "[mcp_servers.{name}]\ncommand = {}\nargs = {}",
-                serde_json::to_string(command)?,
-                serde_json::to_string(&args)?
-            ));
-        }
-        SetupClient::Vscode => {
-            server["type"] = json!("stdio");
-            json!({"servers":{name:server}})
-        }
-        SetupClient::Cursor => {
-            server["type"] = json!("stdio");
-            json!({"mcpServers":{name:server}})
-        }
-        SetupClient::CopilotCli => {
-            server["type"] = json!("local");
-            server["tools"] = json!(["*"]);
-            json!({"mcpServers":{name:server}})
-        }
-        SetupClient::Opencode | SetupClient::OpencodeV2 | SetupClient::Kilo => {
-            let mut full = vec![command.to_owned()];
-            full.extend(args);
-            let entry = json!({"type":"local","command":full});
-            if matches!(client, SetupClient::OpencodeV2) {
-                json!({"mcp":{"servers":{name:entry}}})
+) -> Result<(String, Value)> {
+    connection.validate()?;
+    let name = format!(
+        "AIRK_MCP_TOKEN_{}",
+        connection.connection_id.to_string().to_uppercase()
+    );
+    let url = connection.endpoint.url.to_string();
+    let configuration = match client {
+        SetupClient::Codex => format!(
+            "[mcp_servers.airk]\nurl = {}\nbearer_token_env_var = {}\n[mcp_servers.airk.http_headers]\nX-AIRK-Response-Mode = \"terse\"\n",
+            serde_json::to_string(&url)?,
+            serde_json::to_string(&name)?,
+        ),
+        SetupClient::Claude | SetupClient::Vscode => {
+            let input_id = format!("airkToken_{}", connection.connection_id);
+            let token = if matches!(client, SetupClient::Vscode) {
+                format!("Bearer ${{input:{input_id}}}")
             } else {
-                json!({"mcp":{name:entry}})
-            }
+                format!("Bearer ${{{name}}}")
+            };
+            let server = json!({"type":"http","url":url,"headers":{"Authorization":token,"X-AIRK-Response-Mode":"terse"}});
+            serde_json::to_string_pretty(&if matches!(client, SetupClient::Vscode) {
+                json!({"servers":{"airk":server},"inputs":[{
+                    "id":input_id,"type":"command","command":"airk.httpCredential",
+                    "args":{"connection_id":connection.connection_id}
+                }]})
+            } else {
+                json!({"mcpServers":{"airk":server}})
+            })?
         }
-        _ => json!({"mcpServers":{name:server}}),
+        _ => anyhow::bail!("http_client_compatibility_unverified"),
     };
-    Ok(serde_json::to_string_pretty(&result)?)
+    let trust_variable = match client {
+        SetupClient::Codex => Some("CODEX_CA_CERTIFICATE"),
+        SetupClient::Claude => Some("NODE_EXTRA_CA_CERTS"),
+        _ => None,
+    };
+    Ok((
+        configuration,
+        json!({"token_variable":if matches!(client,SetupClient::Vscode){None}else{Some(name)},"token_source_file":connection.credential_file,
+        "credential_input_command":if matches!(client,SetupClient::Vscode){Some("airk.httpCredential")}else{None},
+        "requires_airk_extension":matches!(client,SetupClient::Vscode),
+        "additional_ca_file":connection.ca_certificate_file,"ca_variable":trust_variable,
+        "preserve_existing_trust":true,"vscode_uses_os_user_trust":matches!(client,SetupClient::Vscode)}),
+    ))
 }
+#[cfg(test)]
+#[path = "main_http_setup_tests.rs"]
+mod http_setup_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
-    fn setup_formats_preserve_stable_launcher_and_opaque_scope() -> Result<()> {
-        let root = tempfile::tempdir()?;
-        let data = tempfile::tempdir()?;
-        let project =
-            airk_kernel::service_projects::registration(root.path(), data.path(), "setup-fixture")?;
-        let launcher = Path::new("/approved install/airk-launcher");
-        let install = Path::new("/approved install");
-        for client in [
-            SetupClient::Claude,
-            SetupClient::Codex,
-            SetupClient::Vscode,
-            SetupClient::Cursor,
-            SetupClient::Opencode,
-            SetupClient::OpencodeV2,
-            SetupClient::CopilotCli,
-            SetupClient::Kilo,
-        ] {
-            let text = configuration(launcher, install, &project, client)?;
-            assert!(
-                text.contains("airk")
-                    && text.contains("--root")
-                    && !text.contains("--service-project")
-                    && !text.contains("--data-dir")
-            );
-            if matches!(client, SetupClient::Codex) {
-                assert!(text.starts_with("[mcp_servers.airk]"));
-            } else {
-                let value: Value = serde_json::from_str(&text)?;
-                let entry = match client {
-                    SetupClient::Vscode => &value["servers"]["airk"],
-                    SetupClient::Opencode | SetupClient::Kilo => &value["mcp"]["airk"],
-                    SetupClient::OpencodeV2 => &value["mcp"]["servers"]["airk"],
-                    _ => &value["mcpServers"]["airk"],
-                };
-                let args = entry
-                    .get("args")
-                    .unwrap_or(&entry["command"])
-                    .as_array()
-                    .context("separate launcher arguments")?;
-                assert_eq!(args.last(), Some(&json!("mcp")));
-                assert!(args.contains(&json!(project.root)));
-                assert!(!args.contains(&json!("--data-dir")));
-            }
-        }
-        Ok(())
-    }
-    #[test]
     fn read_aliases_use_the_actual_mcp_argument_contracts() -> Result<()> {
-        macro_rules! check {
-            ($kind:ty,$args:expr) => {{
-                for detail in [None, Some("lean"), Some("rich")] {
-                    let mut argv: Vec<&str> = $args.into_iter().collect();
-                    if let Some(detail) = detail {
-                        argv.extend(["--reply-detail", detail]);
-                    }
-                    for verification in [None, Some("off"), Some("report"), Some("require")] {
-                        if stringify!($kind).ends_with("StatusArgs") && verification.is_some() {
-                            continue;
+        on_cli_stack(|| {
+            macro_rules! check {
+                ($kind:ty,$args:expr) => {{
+                    for detail in [None, Some("lean"), Some("rich")] {
+                        let mut argv: Vec<&str> = $args.into_iter().collect();
+                        if let Some(detail) = detail {
+                            argv.extend(["--reply-detail", detail]);
                         }
-                        let mut argv = argv.clone();
-                        if let Some(mode) = verification {
-                            argv.extend(["--verification", mode]);
-                            if mode != "off" {
-                                argv.extend([
-                                    "--verification-max-sources",
-                                    "25",
-                                    "--verification-max-bytes",
-                                    "16777216",
-                                    "--verification-deadline-ms",
-                                    "2000",
-                                ]);
+                        for verification in [None, Some("off"), Some("report"), Some("require")] {
+                            if stringify!($kind).ends_with("StatusArgs") && verification.is_some() {
+                                continue;
                             }
+                            let mut argv = argv.clone();
+                            if let Some(mode) = verification {
+                                argv.extend(["--verification", mode]);
+                                if mode != "off" {
+                                    argv.extend([
+                                        "--verification-max-sources",
+                                        "25",
+                                        "--verification-max-bytes",
+                                        "16777216",
+                                        "--verification-deadline-ms",
+                                        "2000",
+                                    ]);
+                                }
+                            }
+                            let cli = Cli::try_parse_from(argv)?;
+                            let (_, arguments) = query(cli.command)?;
+                            assert_eq!(
+                                arguments.get("reply_detail").and_then(Value::as_str),
+                                detail
+                            );
+                            assert_eq!(
+                                arguments.get("verification").and_then(Value::as_str),
+                                verification
+                            );
+                            serde_json::from_value::<$kind>(arguments)?;
                         }
-                        let cli = Cli::try_parse_from(argv)?;
-                        let (_, arguments) = query(cli.command)?;
-                        assert_eq!(
-                            arguments.get("reply_detail").and_then(Value::as_str),
-                            detail
-                        );
-                        assert_eq!(
-                            arguments.get("verification").and_then(Value::as_str),
-                            verification
-                        );
-                        serde_json::from_value::<$kind>(arguments)?;
                     }
-                }
-            }};
-        }
-        check!(airk_mcp::SearchArgs, ["airk", "search", "fixture"]);
-        check!(airk_mcp::StatusArgs, ["airk", "status"]);
-        check!(airk_mcp::ParseArgs, ["airk", "parse", "/status"]);
-        check!(
-            airk_mcp::ReadArgs,
-            [
-                "airk",
-                "read",
-                "memo.txt",
-                "--start-line",
-                "1",
-                "--end-line",
-                "2"
-            ]
-        );
-        check!(airk_mcp::PathArgs, ["airk", "info", "memo.txt"]);
-        check!(airk_mcp::OutlineArgs, ["airk", "outline", "memo.txt"]);
-        check!(airk_mcp::FactArgs, ["airk", "symbol", "fixture"]);
-        check!(airk_mcp::FactArgs, ["airk", "imports"]);
-        check!(airk_mcp::DocumentFactArgs, ["airk", "facts"]);
-        check!(airk_mcp::CodeFactArgs, ["airk", "code-facts"]);
-        check!(
-            airk_mcp::RelationshipArgs,
-            ["airk", "relationships", "fixture"]
-        );
-        check!(airk_mcp::ReferenceArgs, ["airk", "refs", "fixture"]);
-        check!(airk_mcp::ContextArgs, ["airk", "context", "memo.txt", "1"]);
-        check!(airk_mcp::ListArgs, ["airk", "files"]);
-        check!(
-            airk_mcp::ChangesArgs,
-            ["airk", "changes", "--path", "memo.txt"]
-        );
-        for command in ["index", "init", "inspect"] {
-            assert!(Cli::try_parse_from(["airk", command, "--reply-detail", "rich"]).is_err());
-        }
-        Ok(())
+                }};
+            }
+            check!(airk_mcp::SearchArgs, ["airk", "search", "fixture"]);
+            check!(airk_mcp::StatusArgs, ["airk", "status"]);
+            check!(airk_mcp::ParseArgs, ["airk", "parse", "/status"]);
+            check!(
+                airk_mcp::ReadArgs,
+                [
+                    "airk",
+                    "read",
+                    "memo.txt",
+                    "--start-line",
+                    "1",
+                    "--end-line",
+                    "2"
+                ]
+            );
+            check!(airk_mcp::PathArgs, ["airk", "info", "memo.txt"]);
+            check!(airk_mcp::OutlineArgs, ["airk", "outline", "memo.txt"]);
+            check!(airk_mcp::FactArgs, ["airk", "symbol", "fixture"]);
+            check!(airk_mcp::FactArgs, ["airk", "imports"]);
+            check!(airk_mcp::DocumentFactArgs, ["airk", "facts"]);
+            check!(airk_mcp::CodeFactArgs, ["airk", "code-facts"]);
+            check!(
+                airk_mcp::RelationshipArgs,
+                ["airk", "relationships", "fixture"]
+            );
+            check!(airk_mcp::ReferenceArgs, ["airk", "refs", "fixture"]);
+            check!(airk_mcp::ContextArgs, ["airk", "context", "memo.txt", "1"]);
+            check!(airk_mcp::ListArgs, ["airk", "files"]);
+            check!(
+                airk_mcp::ChangesArgs,
+                ["airk", "changes", "--path", "memo.txt"]
+            );
+            for command in ["index", "init", "inspect"] {
+                assert!(Cli::try_parse_from(["airk", command, "--reply-detail", "rich"]).is_err());
+            }
+            Ok(())
+        })
     }
     #[test]
     fn scoped_discovery_flags_reach_native_schemas_without_changing_defaults() -> Result<()> {
-        let (_, plain) = query(Cli::try_parse_from(["airk", "search", "Owner"])?.command)?;
-        for name in ["language", "evidence_kind", "exclude_path_prefix"] {
-            assert!(plain.get(name).is_none(), "default query added {name}");
-        }
-        let (name, search) = query(
-            Cli::try_parse_from([
-                "airk",
-                "search",
-                "Owner",
-                "--mode",
-                "lexical",
-                "--language",
-                "rust",
-                "--evidence-kind",
-                "code",
-                "--exclude-path-prefix",
-                "fixtures/",
-            ])?
-            .command,
-        )?;
-        assert_eq!(name, "airk_search");
-        assert_eq!(search["language"], "rust");
-        assert_eq!(search["evidence_kind"], "code");
-        assert_eq!(search["exclude_path_prefix"], "fixtures/");
-        serde_json::from_value::<airk_mcp::SearchArgs>(search)?;
-
-        for (args, tool) in [
-            (
-                vec![
-                    "airk",
-                    "symbol",
-                    "Session",
-                    "--name-match",
-                    "suffix",
-                    "--include-count",
-                    "--limit",
-                    "30",
-                    "--max-bytes",
-                    "16384",
-                ],
-                "airk_symbols",
-            ),
-            (
-                vec![
-                    "airk",
-                    "code-facts",
-                    "--name",
-                    "Session",
-                    "--name-match",
-                    "contains",
-                    "--include-count",
-                ],
-                "airk_code_facts",
-            ),
-        ] {
-            let (name, arguments) = query(Cli::try_parse_from(args)?.command)?;
-            assert_eq!(name, tool);
-            assert_eq!(arguments["include_count"], true);
-            if name == "airk_symbols" {
-                assert_eq!(arguments["name_match"], "suffix");
-                assert_eq!(arguments["limit"], 30);
-                serde_json::from_value::<airk_mcp::FactArgs>(arguments)?;
-            } else {
-                assert_eq!(arguments["name_match"], "contains");
-                serde_json::from_value::<airk_mcp::CodeFactArgs>(arguments)?;
+        on_cli_stack(|| {
+            let (_, plain) = query(Cli::try_parse_from(["airk", "search", "Owner"])?.command)?;
+            for name in ["language", "evidence_kind", "exclude_path_prefix"] {
+                assert!(plain.get(name).is_none(), "default query added {name}");
             }
-        }
-        let (_, references) = query(
-            Cli::try_parse_from([
-                "airk",
-                "refs",
-                "Owner",
-                "--path-prefix",
-                "crates/",
-                "--language",
-                "rust",
-                "--evidence-kind",
-                "code",
-                "--order",
-                "path",
-                "--include-files",
-                "--include-count",
-                "--cursor",
-                "opaque-returned-cursor",
-                "--limit",
-                "5",
-                "--max-bytes",
-                "4096",
-            ])?
-            .command,
-        )?;
-        assert_eq!(references["order"], "path");
-        assert_eq!(references["include_files"], true);
-        assert_eq!(references["include_count"], true);
-        assert_eq!(references["cursor"], "opaque-returned-cursor");
-        assert_eq!(references["max_bytes"], 4096);
-        serde_json::from_value::<airk_mcp::ReferenceArgs>(references)?;
-        Ok(())
+            let (name, search) = query(
+                Cli::try_parse_from([
+                    "airk",
+                    "search",
+                    "Owner",
+                    "--mode",
+                    "lexical",
+                    "--language",
+                    "rust",
+                    "--evidence-kind",
+                    "code",
+                    "--exclude-path-prefix",
+                    "fixtures/",
+                ])?
+                .command,
+            )?;
+            assert_eq!(name, "airk_search");
+            assert_eq!(search["language"], "rust");
+            assert_eq!(search["evidence_kind"], "code");
+            assert_eq!(search["exclude_path_prefix"], "fixtures/");
+            serde_json::from_value::<airk_mcp::SearchArgs>(search)?;
+
+            for (args, tool) in [
+                (
+                    vec![
+                        "airk",
+                        "symbol",
+                        "Session",
+                        "--name-match",
+                        "suffix",
+                        "--include-count",
+                        "--limit",
+                        "30",
+                        "--max-bytes",
+                        "16384",
+                    ],
+                    "airk_symbols",
+                ),
+                (
+                    vec![
+                        "airk",
+                        "code-facts",
+                        "--name",
+                        "Session",
+                        "--name-match",
+                        "contains",
+                        "--include-count",
+                    ],
+                    "airk_code_facts",
+                ),
+            ] {
+                let (name, arguments) = query(Cli::try_parse_from(args)?.command)?;
+                assert_eq!(name, tool);
+                assert_eq!(arguments["include_count"], true);
+                if name == "airk_symbols" {
+                    assert_eq!(arguments["name_match"], "suffix");
+                    assert_eq!(arguments["limit"], 30);
+                    serde_json::from_value::<airk_mcp::FactArgs>(arguments)?;
+                } else {
+                    assert_eq!(arguments["name_match"], "contains");
+                    serde_json::from_value::<airk_mcp::CodeFactArgs>(arguments)?;
+                }
+            }
+            let (_, references) = query(
+                Cli::try_parse_from([
+                    "airk",
+                    "refs",
+                    "Owner",
+                    "--path-prefix",
+                    "crates/",
+                    "--language",
+                    "rust",
+                    "--evidence-kind",
+                    "code",
+                    "--order",
+                    "path",
+                    "--include-files",
+                    "--include-count",
+                    "--cursor",
+                    "opaque-returned-cursor",
+                    "--limit",
+                    "5",
+                    "--max-bytes",
+                    "4096",
+                ])?
+                .command,
+            )?;
+            assert_eq!(references["order"], "path");
+            assert_eq!(references["include_files"], true);
+            assert_eq!(references["include_count"], true);
+            assert_eq!(references["cursor"], "opaque-returned-cursor");
+            assert_eq!(references["max_bytes"], 4096);
+            serde_json::from_value::<airk_mcp::ReferenceArgs>(references)?;
+            Ok(())
+        })
     }
 
     #[test]
     fn request_file_reply_choice_cannot_be_silently_replaced_by_a_flag() -> Result<()> {
-        let directory = tempfile::tempdir()?;
-        let file = directory.path().join("read.json");
-        for (stored, flag, valid) in [
-            (Some("lean"), "lean", true),
-            (Some("lean"), "rich", false),
-            (None, "rich", true),
-        ] {
-            std::fs::write(
-                &file,
-                serde_json::to_vec(
-                    &json!({"schema":"airk.parse.request/1","text":"/status","reply_detail":stored}),
-                )?,
-            )?;
-            let cli = Cli::try_parse_from([
-                "airk",
-                "parse",
-                "--request",
-                file.to_str().unwrap(),
-                "--reply-detail",
-                flag,
-            ])?;
-            let value = query(cli.command);
-            assert_eq!(value.is_ok(), valid);
-            if let Ok((_, value)) = value {
-                assert_eq!(value["reply_detail"], flag);
+        on_cli_stack(|| {
+            let directory = tempfile::tempdir()?;
+            let file = directory.path().join("read.json");
+            for (stored, flag, valid) in [
+                (Some("lean"), "lean", true),
+                (Some("lean"), "rich", false),
+                (None, "rich", true),
+            ] {
+                std::fs::write(
+                    &file,
+                    serde_json::to_vec(
+                        &json!({"schema":"airk.parse.request/1","text":"/status","reply_detail":stored}),
+                    )?,
+                )?;
+                let cli = Cli::try_parse_from([
+                    "airk",
+                    "parse",
+                    "--request",
+                    file.to_str().unwrap(),
+                    "--reply-detail",
+                    flag,
+                ])?;
+                let value = query(cli.command);
+                assert_eq!(value.is_ok(), valid);
+                if let Ok((_, value)) = value {
+                    assert_eq!(value["reply_detail"], flag);
+                }
             }
-        }
-        Ok(())
+            Ok(())
+        })
     }
     #[test]
     fn discovery_flags_reject_unknown_modes_and_continuity_mixtures() {
-        for args in [
-            vec!["airk", "symbol", "Session", "--name-match", "fuzzy"],
-            vec!["airk", "code-facts", "--name-match", "suffix"],
-            vec!["airk", "search", "Owner", "--evidence-kind", "source"],
-            vec!["airk", "refs", "Owner", "--order", "score"],
-        ] {
-            assert!(Cli::try_parse_from(args).is_err());
-        }
-        let key = "01".repeat(16);
-        for flag in ["--include-count", "--name-match"] {
-            let mut args = vec!["airk", "code-facts", "--symbol-key", &key, flag];
-            if flag == "--name-match" {
-                args.push("suffix");
+        on_cli_stack(|| {
+            for args in [
+                vec!["airk", "symbol", "Session", "--name-match", "fuzzy"],
+                vec!["airk", "code-facts", "--name-match", "suffix"],
+                vec!["airk", "search", "Owner", "--evidence-kind", "source"],
+                vec!["airk", "refs", "Owner", "--order", "score"],
+            ] {
+                assert!(Cli::try_parse_from(args).is_err());
             }
-            assert!(Cli::try_parse_from(args).is_err());
-        }
+            let key = "01".repeat(16);
+            for flag in ["--include-count", "--name-match"] {
+                let mut args = vec!["airk", "code-facts", "--symbol-key", &key, flag];
+                if flag == "--name-match" {
+                    args.push("suffix");
+                }
+                assert!(Cli::try_parse_from(args).is_err());
+            }
+        })
     }
     #[test]
     fn continuity_keys_keep_exact_identity_and_exclude_text_filters() {
-        let key = "01".repeat(16);
-        for (command, selector) in [("code-facts", "--symbol-key"), ("facts", "--document-key")] {
-            assert!(Cli::try_parse_from(["airk", command, selector, &key]).is_ok());
-            assert!(Cli::try_parse_from(["airk", command, selector, "short"]).is_err());
-            assert!(
-                Cli::try_parse_from(["airk", command, selector, &key, "--name", "original"])
-                    .is_err()
-            );
-        }
+        on_cli_stack(|| {
+            let key = "01".repeat(16);
+            for (command, selector) in [("code-facts", "--symbol-key"), ("facts", "--document-key")]
+            {
+                assert!(Cli::try_parse_from(["airk", command, selector, &key]).is_ok());
+                assert!(Cli::try_parse_from(["airk", command, selector, "short"]).is_err());
+                assert!(
+                    Cli::try_parse_from(["airk", command, selector, &key, "--name", "original"])
+                        .is_err()
+                );
+            }
+        })
     }
     #[test]
     fn retired_direct_writers_are_not_public_entry_points() {
-        for args in [
-            vec!["airk", "schedule", "run"],
-            vec![
-                "airk",
-                "collections",
-                "vectors",
-                "set",
-                "--enabled",
-                "false",
-            ],
-            vec!["airk", "storage", "relocate", "elsewhere"],
-        ] {
-            assert!(Cli::try_parse_from(args).is_err());
-        }
+        on_cli_stack(|| {
+            for args in [
+                vec!["airk", "schedule", "run"],
+                vec![
+                    "airk",
+                    "collections",
+                    "vectors",
+                    "set",
+                    "--enabled",
+                    "false",
+                ],
+                vec!["airk", "storage", "relocate", "elsewhere"],
+            ] {
+                assert!(Cli::try_parse_from(args).is_err());
+            }
+        })
     }
     #[test]
     fn opaque_service_bindings_and_native_metadata_are_independent_of_live_paths() {
-        let key = "ab".repeat(32);
-        assert!(Cli::try_parse_from(["airk", "--service-project", &key, "mcp"]).is_ok());
-        assert!(
-            Cli::try_parse_from(["airk", "--root", "/missing/source", "tools", "list"]).is_ok()
-        );
-        assert!(Cli::try_parse_from(["airk", "--service-project", "bad", "mcp"]).is_err());
+        on_cli_stack(|| {
+            let key = "ab".repeat(32);
+            assert!(Cli::try_parse_from(["airk", "--service-project", &key, "mcp"]).is_ok());
+            assert!(
+                Cli::try_parse_from(["airk", "--root", "/missing/source", "tools", "list"]).is_ok()
+            );
+            assert!(Cli::try_parse_from(["airk", "--service-project", "bad", "mcp"]).is_err());
+        })
     }
 
     #[test]
     fn combined_sessions_require_explicit_reviewed_scope_and_reject_legacy_mixing() -> Result<()> {
-        let project = format!("prj_{}", "01".repeat(16));
-        let index = format!("idx_{}", "02".repeat(16));
-        let session = json!({"schema":1,"context_key":"03".repeat(32),"namespace":"04".repeat(16),
+        on_cli_stack(|| {
+            let project = format!("prj_{}", "01".repeat(16));
+            let index = format!("idx_{}", "02".repeat(16));
+            let session = json!({"schema":1,"context_key":"03".repeat(32),"namespace":"04".repeat(16),
             "expected_catalog_revision":1,"grant_id":format!("grt_{}","05".repeat(16)),
             "expected_grant_revision":1,"project_ids":[project],"index_ids":[index]});
-        let encoded = session.to_string();
-        for command in [
-            vec!["status"],
-            vec!["search", "original"],
-            vec!["tools", "list", "--json"],
-            vec!["mcp"],
-        ] {
-            let mut args = vec!["airk", "--combined-session", &encoded];
-            args.extend(command);
-            assert!(Cli::try_parse_from(args)?.combined_session.is_some());
-        }
-        let narrowed = Cli::try_parse_from([
-            "airk",
-            "--combined-session",
-            &encoded,
-            "--project-ids",
-            &project,
-            "--index-ids",
-            &index,
-            "--member-availability",
-            "require",
-            "search",
-            "original",
-        ])?;
-        assert_eq!(narrowed.project_ids.as_ref().map(Vec::len), Some(1));
-        assert_eq!(narrowed.member_availability.as_deref(), Some("require"));
-        for selector in ["--root", "--data-dir", "--collection", "--service-project"] {
+            let encoded = session.to_string();
+            for command in [
+                vec!["status"],
+                vec!["search", "original"],
+                vec!["tools", "list", "--json"],
+                vec!["mcp"],
+            ] {
+                let mut args = vec!["airk", "--combined-session", &encoded];
+                args.extend(command);
+                assert!(Cli::try_parse_from(args)?.combined_session.is_some());
+            }
+            let narrowed = Cli::try_parse_from([
+                "airk",
+                "--combined-session",
+                &encoded,
+                "--project-ids",
+                &project,
+                "--index-ids",
+                &index,
+                "--member-availability",
+                "require",
+                "search",
+                "original",
+            ])?;
+            assert_eq!(narrowed.project_ids.as_ref().map(Vec::len), Some(1));
+            assert_eq!(narrowed.member_availability.as_deref(), Some("require"));
+            for selector in ["--root", "--data-dir", "--collection", "--service-project"] {
+                assert!(
+                    Cli::try_parse_from([
+                        "airk",
+                        "--combined-session",
+                        &encoded,
+                        selector,
+                        "original",
+                        "status"
+                    ])
+                    .is_err()
+                );
+            }
+            assert!(Cli::try_parse_from(["airk", "--project-ids", &project, "status"]).is_err());
             assert!(
                 Cli::try_parse_from([
                     "airk",
                     "--combined-session",
                     &encoded,
-                    selector,
-                    "original",
+                    "--index-ids",
+                    &index,
                     "status"
                 ])
                 .is_err()
             );
-        }
-        assert!(Cli::try_parse_from(["airk", "--project-ids", &project, "status"]).is_err());
-        assert!(
-            Cli::try_parse_from([
-                "airk",
-                "--combined-session",
-                &encoded,
-                "--index-ids",
-                &index,
-                "status"
-            ])
-            .is_err()
-        );
-        assert!(
-            Cli::try_parse_from([
-                "airk",
-                "--combined-session",
-                &encoded,
-                "--member-availability",
-                "require",
-                "status"
-            ])
-            .is_err()
-        );
-        for invalid in [json!([]), Value::Null, json!([index.clone(), index])] {
-            let mut malformed = session.clone();
-            malformed["index_ids"] = invalid;
-            assert!(parse_combined_session(&malformed.to_string()).is_err());
-        }
-        Ok(())
+            assert!(
+                Cli::try_parse_from([
+                    "airk",
+                    "--combined-session",
+                    &encoded,
+                    "--member-availability",
+                    "require",
+                    "status"
+                ])
+                .is_err()
+            );
+            for invalid in [json!([]), Value::Null, json!([index.clone(), index])] {
+                let mut malformed = session.clone();
+                malformed["index_ids"] = invalid;
+                assert!(parse_combined_session(&malformed.to_string()).is_err());
+            }
+            Ok(())
+        })
     }
 
     #[test]
     fn exact_source_scope_options_do_not_collide_with_global_legacy_selectors() {
-        let digest = "ab".repeat(32);
-        let cli = Cli::try_parse_from([
-            "airk",
-            "--root",
-            "/legacy-root",
-            "--collection",
-            "legacy",
-            "runtime",
-            "source-scope",
-            "--install-dir",
-            "/install",
-            "--expected-control",
-            "/state/control",
-            "--expected-runtime",
-            &digest,
-            "--source-root",
-            "/actual-root",
-            "--index-collection",
-            "actual",
-        ])
-        .unwrap();
-        match cli.command {
-            Command::Runtime {
-                action:
-                    airk_cli::runtime_install::RuntimeCommand::SourceScope {
-                        source_root,
-                        index_collection,
-                        ..
-                    },
-            } => {
-                assert_eq!(source_root, PathBuf::from("/actual-root"));
-                assert_eq!(index_collection.as_deref(), Some("actual"));
-            }
-            _ => panic!("source-scope must remain a dedicated runtime command"),
-        }
-        assert!(
-            Cli::try_parse_from([
+        on_cli_stack(|| {
+            let digest = "ab".repeat(32);
+            let cli = Cli::try_parse_from([
                 "airk",
+                "--root",
+                "/legacy-root",
+                "--collection",
+                "legacy",
                 "runtime",
                 "source-scope",
                 "--install-dir",
-                "/install"
+                "/install",
+                "--expected-control",
+                "/state/control",
+                "--expected-runtime",
+                &digest,
+                "--source-root",
+                "/actual-root",
+                "--index-collection",
+                "actual",
             ])
-            .is_err()
-        );
+            .unwrap();
+            match cli.command {
+                Command::Runtime {
+                    action:
+                        airk_cli::runtime_install::RuntimeCommand::SourceScope {
+                            source_root,
+                            index_collection,
+                            ..
+                        },
+                } => {
+                    assert_eq!(source_root, PathBuf::from("/actual-root"));
+                    assert_eq!(index_collection.as_deref(), Some("actual"));
+                }
+                _ => panic!("source-scope must remain a dedicated runtime command"),
+            }
+            assert!(
+                Cli::try_parse_from([
+                    "airk",
+                    "runtime",
+                    "source-scope",
+                    "--install-dir",
+                    "/install"
+                ])
+                .is_err()
+            );
+        })
     }
 }
 
@@ -2889,65 +3015,71 @@ mod cli_reference_tests {
 
     #[test]
     fn cli_reference_documents_every_public_command() {
-        let path =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/cli-reference.md");
-        let expected = reference();
-        if std::env::var_os("AIRK_WRITE_CLI_REFERENCE").is_some() {
-            std::fs::write(&path, &expected).unwrap();
-        }
-        let actual = std::fs::read_to_string(&path)
-            .unwrap_or_default()
-            .replace("\r\n", "\n");
-        assert!(
-            actual == expected,
-            "docs/cli-reference.md is stale: run AIRK_WRITE_CLI_REFERENCE=1 cargo test -p airk-cli --bin airk cli_reference"
-        );
+        on_cli_stack(|| {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../docs/cli-reference.md");
+            let expected = reference();
+            if std::env::var_os("AIRK_WRITE_CLI_REFERENCE").is_some() {
+                std::fs::write(&path, &expected).unwrap();
+            }
+            let actual = std::fs::read_to_string(&path)
+                .unwrap_or_default()
+                .replace("\r\n", "\n");
+            assert!(
+                actual == expected,
+                "docs/cli-reference.md is stale: run AIRK_WRITE_CLI_REFERENCE=1 cargo test -p airk-cli --bin airk cli_reference"
+            );
+        })
     }
 
     #[test]
     fn every_public_command_has_help_text() {
-        use clap::CommandFactory;
-        let mut root = Cli::command();
-        root.build();
-        fn visit(command: &clap::Command, path: &str, missing: &mut Vec<String>) {
-            for child in command
-                .get_subcommands()
-                .filter(|child| !child.is_hide_set() && child.get_name() != "help")
-            {
-                let name = format!("{path} {}", child.get_name()).trim().to_owned();
-                if child.get_about().is_none()
-                    && child.get_long_about().is_none()
-                    && child.get_name() != "help"
+        on_cli_stack(|| {
+            use clap::CommandFactory;
+            let mut root = Cli::command();
+            root.build();
+            fn visit(command: &clap::Command, path: &str, missing: &mut Vec<String>) {
+                for child in command
+                    .get_subcommands()
+                    .filter(|child| !child.is_hide_set() && child.get_name() != "help")
                 {
-                    missing.push(name.clone());
+                    let name = format!("{path} {}", child.get_name()).trim().to_owned();
+                    if child.get_about().is_none()
+                        && child.get_long_about().is_none()
+                        && child.get_name() != "help"
+                    {
+                        missing.push(name.clone());
+                    }
+                    visit(child, &name, missing);
                 }
-                visit(child, &name, missing);
             }
-        }
-        let mut missing = Vec::new();
-        visit(&root, "", &mut missing);
-        assert!(
-            missing.is_empty(),
-            "commands without help text: {missing:?}"
-        );
+            let mut missing = Vec::new();
+            visit(&root, "", &mut missing);
+            assert!(
+                missing.is_empty(),
+                "commands without help text: {missing:?}"
+            );
+        })
     }
 
     #[test]
     fn info_family_flag_forwards_only_explicit_opt_in() -> Result<()> {
-        for enabled in [false, true] {
-            let mut arguments = vec!["airk", "info", "api/policy.md"];
-            if enabled {
-                arguments.push("--include-profile-families");
+        on_cli_stack(|| {
+            for enabled in [false, true] {
+                let mut arguments = vec!["airk", "info", "api/policy.md"];
+                if enabled {
+                    arguments.push("--include-profile-families");
+                }
+                let cli = Cli::try_parse_from(arguments)?;
+                let (tool, args) = query(cli.command)?;
+                assert_eq!(tool, "airk_file_info");
+                if enabled {
+                    assert_eq!(args["include_profile_families"], true);
+                } else {
+                    assert!(args.get("include_profile_families").is_none());
+                }
             }
-            let cli = Cli::try_parse_from(arguments)?;
-            let (tool, args) = query(cli.command)?;
-            assert_eq!(tool, "airk_file_info");
-            if enabled {
-                assert_eq!(args["include_profile_families"], true);
-            } else {
-                assert!(args.get("include_profile_families").is_none());
-            }
-        }
-        Ok(())
+            Ok(())
+        })
     }
 }

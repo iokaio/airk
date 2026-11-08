@@ -59,8 +59,8 @@ class SigningContracts(unittest.TestCase):
             source.mkdir(); runtime.mkdir(parents=True)
             target = "aarch64-apple-darwin"
             names = signing.pair_package().runtime_builder().signing_names("macos")
-            original = {"files": {}}
-            signed = {"files": {}}
+            original = {"version": "1.6.0", "files": {}}
+            signed = {"version": "1.6.0", "files": {}}
             components = {}
             for name in names:
                 for parent, body in [(source, b"original component"), (runtime, b"signed component")]:
@@ -131,8 +131,8 @@ class SigningContracts(unittest.TestCase):
             source.mkdir()
             runtime.mkdir(parents=True)
             components = {}
-            original = {"files": {"LICENSE": "a" * 64}}
-            signed = {"files": {"LICENSE": "a" * 64}}
+            original = {"version": "1.6.0", "files": {"LICENSE": "a" * 64}}
+            signed = {"version": "1.6.0", "files": {"LICENSE": "a" * 64}}
             for name in ("airk.exe", "airk-embed.exe"):
                 (source / name).write_bytes(("original " + name).encode())
                 (runtime / name).write_bytes(("signed " + name).encode())

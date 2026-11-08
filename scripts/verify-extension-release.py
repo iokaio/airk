@@ -72,14 +72,15 @@ def verify(directory, commit, version, channel, *, receipts=None, tree=None):
                 if package.digest(zipped.read(prefix + entry)) != expected:
                     raise ValueError("Embedded native payload digest mismatch")
             if paired:
-                helper = "airk-embed.exe" if platform == "win32-x64" else "airk-embed"
-                if platform.startswith("darwin-"):
-                    executable = "AIRK.app/Contents/MacOS/airk"
-                    helper = "AIRK.app/Contents/MacOS/airk-embed"
+                builder_spec = importlib.util.spec_from_file_location("release_runtime_builder", ROOT / "scripts/build-service-runtime.py")
+                builder = importlib.util.module_from_spec(builder_spec)
+                builder_spec.loader.exec_module(builder)
+                os_name = "windows" if platform == "win32-x64" else "macos" if platform.startswith("darwin-") else "linux"
+                executables = builder.runtime_executables(os_name, version)
                 wrapper = json.loads(zipped.read("extension/native/manifest.json"))
                 expected = {"schema": 2, "version": version, "vsix_target": platform, "runtime_dir": "runtime",
                             "install_manifest_sha256": native["payload"]["airk-install.json"],
-                            "payload": {name: native["payload"][name] for name in (executable, helper)}}
+                            "payload": {name: native["payload"][name] for name in executables}}
                 if wrapper != expected or native.get("install_manifest_sha256") != expected["install_manifest_sha256"]:
                     raise ValueError("Embedded service wrapper differs from native candidate")
                 install = json.loads(zipped.read(prefix + "airk-install.json"))

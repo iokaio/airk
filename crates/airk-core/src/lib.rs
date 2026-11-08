@@ -6,6 +6,8 @@ use std::collections::BTreeMap;
 pub mod binding;
 pub mod catalog_fences;
 pub mod catalog_host;
+pub mod catalog_legacy_adoption;
+pub mod catalog_legacy_authority;
 pub mod catalog_management;
 pub mod catalog_policy;
 pub mod catalog_refresh;
@@ -29,6 +31,7 @@ pub mod graph_storage;
 pub mod guidance;
 pub mod identity;
 pub mod index_catalog;
+pub mod legacy_adoption;
 pub mod lexical;
 pub mod location;
 pub mod mapped_binding;
@@ -37,6 +40,7 @@ pub mod native_reads;
 pub mod profile_families;
 pub mod publication;
 pub mod read_arguments;
+pub mod read_attempt;
 pub mod readiness;
 pub mod references;
 pub mod reply;
@@ -45,9 +49,11 @@ pub mod scoped_reads;
 pub mod search_execution;
 pub mod search_filters;
 pub mod service;
+pub mod service_checkpoint;
 pub mod service_cleanup;
 pub mod service_configuration;
 pub mod service_events;
+pub mod service_http;
 pub mod service_inspection;
 pub mod service_logs;
 pub mod service_maintenance;
@@ -95,6 +101,8 @@ pub struct Artifact {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ArtifactRef {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub legacy_origin: Option<legacy_adoption::LegacySavedOrigin>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_encoding: Option<compression::EncodedObject>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -440,3 +448,4 @@ pub mod service_lifecycle;
 pub mod storage_format;
 
 pub mod catalog_upgrade_recovery;
+pub mod inference_provider;

@@ -393,6 +393,16 @@ impl ServiceRegistry {
         );
         terminal.validate()?;
         super::super::source_change::reserve_completion_slot(&tx, request)?;
+        if plan.worker_obligation.as_ref().is_some_and(|obligation| {
+            obligation.providers.iter().any(|provider| {
+                matches!(&provider.history, WorkerProviderHistory::InProcess { .. })
+            })
+        }) {
+            // The existing version marker is checked by predecessors before
+            // they can admit actual source/index work. Never commit new history
+            // without that rejection marker in this same transaction.
+            super::super::super::runtime_contract::arm_in_transaction(&tx)?;
+        }
         tx.execute(
             "INSERT INTO index_operation_receipts VALUES(?1,?2,'prepared',?3,?4)",
             params![

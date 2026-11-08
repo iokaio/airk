@@ -1,16 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
-// Real reviewed registration/stable-launcher test; only a private installation is changed.
+// Historical schema-1 reviewed registration/stable-launcher fixture.
 const assert=require('node:assert/strict');
 const fs=require('node:fs/promises');
 const path=require('node:path');
 const crypto=require('node:crypto');
-const {RuntimeHost,nativeRunner}=require('../packages/vscode/out/serviceBootstrap.js');
-const {probeMcp,runText}=require('../packages/vscode/out/native.js');
+const {requireHistoricalRuntime}=require('./historical-runtime-fixture.cjs');
 
 (async()=>{
     assert.equal(process.argv[2],'--runtime');
     const cli=process.argv[4]==='--cli';assert.ok(process.argv[4]===undefined||cli);
-    const payload=await fs.realpath(process.argv[3]),parent=await fs.realpath(path.join(__dirname,'../target'));
+    const payload=await fs.realpath(process.argv[3]);
+    await requireHistoricalRuntime(payload,'check-service-frontend.cjs');
+    const {RuntimeHost,nativeRunner}=require('../packages/vscode/out/serviceBootstrap.js');
+    const {probeMcp,runText}=require('../packages/vscode/out/native.js');
+    const parent=await fs.realpath(path.join(__dirname,'../target'));
     const fixture=await fs.mkdtemp(path.join(parent,'airk-frontend-fixture-'));
     const install=path.join(fixture,'installation'),native=path.join(fixture,'native'),sourceParent=path.join(fixture,'source-parent'),source=path.join(sourceParent,'source');
     const data=path.join(fixture,'new','data'),main=process.platform==='win32'?'airk.exe':process.platform==='darwin'?'AIRK.app/Contents/MacOS/airk':'airk',helper=process.platform==='win32'?'airk-embed.exe':process.platform==='darwin'?'AIRK.app/Contents/MacOS/airk-embed':'airk-embed';

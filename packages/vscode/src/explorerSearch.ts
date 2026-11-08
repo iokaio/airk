@@ -148,6 +148,8 @@ export function searchArgs(message: WebviewMessageOf<'search.run'>): Value {
 export function appliedMode(requested: string, payload: Value, fallback: { semantic?: SemanticState; vectorsEnabled?: boolean }): { mode: string; ordering: SearchResultView['ordering']; semantic?: SemanticState } {
     const readiness = obj(payload.semantic_readiness);
     const semantic = (typeof readiness.state === 'string' ? readiness.state : fallback.semantic) as SemanticState | undefined;
+    if (semantic === 'unavailable') { return { mode: requested === 'policy' ? 'collection policy (semantic unavailable)' : requested,
+        ordering: requested === 'lexical' ? 'index_identity' : 'unknown', semantic }; }
     if (requested !== 'policy') { return { mode: requested, ordering: requested === 'lexical' ? 'index_identity' : 'fused_rank', ...(semantic ? { semantic } : {}) }; }
     const policy = typeof readiness.default_search_policy === 'string' ? readiness.default_search_policy.replaceAll('_', ' ') : 'collection policy';
     if (fallback.vectorsEnabled === false || semantic === 'disabled') { return { mode: `${policy} → lexical (vectors disabled)`, ordering: 'index_identity', semantic: 'disabled' }; }
@@ -192,7 +194,7 @@ export function searchView(project: string, message: WebviewMessageOf<'search.ru
     }
     return { query: message.query, appliedMode: applied.mode, ordering: applied.ordering, returned: hits.length, limit: message.limit,
         truncated: payload.truncated === true || payload.partial === true, ...(publication ? { publication } : {}), ...(applied.semantic ? { semantic: applied.semantic } : {}), hits, warnings,
-        ...(combined ? { nativeResult: rawPayload } : {}) };
+        ...(combined || applied.semantic === 'unavailable' || payload.legacy_adoption !== undefined ? { nativeResult: rawPayload } : {}) };
 }
 
 export function passageView(project: string, payload: Value, publication: string | undefined, refs: RefRegistry): PassageView {

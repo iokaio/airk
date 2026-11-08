@@ -114,3 +114,12 @@ test('original document locations become readable labels; plain lines stay as li
     assert.equal(locationLabel({ Mapped: { region: {} } }), 'mapped region');
     assert.equal(locationLabel('nonsense'), undefined);
 });
+
+
+test('unavailable semantic policy never invents disabled vectors or a served ranking',()=>{
+    const body={...payload,semantic_readiness:{state:'unavailable',failure:'legacy_saved_semantic_conversion_unavailable'},legacy_adoption:{future:{retained:true}}};
+    assert.deepEqual(appliedMode('policy',body,{vectorsEnabled:false}),{mode:'collection policy (semantic unavailable)',ordering:'unknown',semantic:'unavailable'});
+    assert.deepEqual(appliedMode('vector',body,{vectorsEnabled:false}),{mode:'vector',ordering:'unknown',semantic:'unavailable'});
+    assert.equal(appliedMode('lexical',body,{}).ordering,'index_identity');
+    const view=searchView(project,message(),body,'airk-r1:x:3:y',new RefRegistry(),{vectorsEnabled:false});assert.deepEqual(view.nativeResult,body);
+});

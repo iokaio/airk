@@ -53,11 +53,13 @@ async fn actual_remote_bridge_selected_help_preserves_full_native_refusal_and_tr
         calls: AtomicUsize::new(0),
         failed: AtomicBool::new(false),
     });
-    let bridge = Bridge {
-        backend: selected.clone(),
-        admission: Arc::new(Admission::default()),
-        response_mode: crate::response::ResponseMode::Full,
-    };
+    let bridge = ReadSessionFactory::default().session(
+        selected.clone(),
+        ReadSessionPreferences {
+            response_mode: crate::response::ResponseMode::Full,
+            client: airk_core::usage::ClientFamily::Unknown,
+        },
+    );
     let (client_transport, server_transport) = tokio::io::duplex(64 * 1024);
     let (mut client, mut server) = tokio::try_join!(
         async { Ok::<_, anyhow::Error>(().serve(client_transport).await?) },
@@ -117,11 +119,13 @@ async fn actual_remote_and_cli_boundaries_preserve_typed_retry_and_unknown_dispa
         mode: AtomicUsize::new(0),
         calls: AtomicUsize::new(0),
     });
-    let bridge = Bridge {
-        backend: backend.clone(),
-        admission: Arc::new(Admission::default()),
-        response_mode: crate::response::ResponseMode::Full,
-    };
+    let bridge = ReadSessionFactory::default().session(
+        backend.clone(),
+        ReadSessionPreferences {
+            response_mode: crate::response::ResponseMode::Full,
+            client: airk_core::usage::ClientFamily::Unknown,
+        },
+    );
     let (client_transport, server_transport) = tokio::io::duplex(64 * 1024);
     let (mut client, mut server) = tokio::try_join!(
         async { Ok::<_, anyhow::Error>(().serve(client_transport).await?) },

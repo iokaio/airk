@@ -117,10 +117,10 @@ def promote(vsix_directory, original_directory, native_directory, output, target
                 if native["payload"].get(info.filename) != value:
                     raise ValueError("Signed native bytes changed during promotion")
             operating_system = "windows" if "windows" in target else "macos"
-            main, helper = release.native.runtime_builder().runtime_names(operating_system)
+            executables = release.native.runtime_builder().runtime_executables(operating_system, version)
             wrapper = {"schema": 2, "version": version, "vsix_target": native["vsix_target"],
                        "runtime_dir": "runtime", "install_manifest_sha256": native["install_manifest_sha256"],
-                       "payload": {name: native["payload"][name] for name in (main, helper)}}
+                       "payload": {name: native["payload"][name] for name in executables}}
             for name, data in (("extension/native/manifest.json", json.dumps(wrapper).encode()),
                                ("extension/native/candidate.json", (native_directory / "manifest.json").read_bytes())):
                 info = zipfile.ZipInfo(name)

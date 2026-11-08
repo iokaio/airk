@@ -51,7 +51,7 @@ impl NativeLegacyBindingObservation {
                     "invalid native imported observation"
                 );
                 ensure!(
-                    matches!(&grant.provenance,crate::grant_provenance::GrantProvenance::ImportedLegacySnapshot {legacy_binding,..} if *legacy_binding==self.project),
+                    grant.provenance.imported_binding() == Some(self.project),
                     "native imported observation binding changed"
                 );
                 Some(registration)

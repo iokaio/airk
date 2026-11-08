@@ -455,6 +455,52 @@ impl GraphRecordReader for CurrentRead {
 }
 
 impl FileStore {
+    /// Installer metadata observation under an existing native object gate.
+    /// Never creates gate/owner/bootstrap files, opens a writer, reads source
+    /// bytes or turns an interrupted transaction into a committed publication.
+    pub(crate) fn checkpoint_current_head(
+        &self,
+        root: &str,
+        collection: &str,
+    ) -> Result<Option<CurrentHead>> {
+        crate::validate_collection(collection)?;
+        ensure!(
+            self.collection_id()? == collection,
+            "foreign checkpoint collection"
+        );
+        let _gate = Gate::shared_existing(self)?;
+        self.ensure_index_ready()?;
+        database::reject_legacy_collection(self.directory())?;
+        if !self.directory().join(database::OWNER_FILE).try_exists()? {
+            ensure!(
+                !self.directory().join("current.sqlite3").try_exists()?
+                    && !self
+                        .directory()
+                        .join("current-bootstrap.json")
+                        .try_exists()?,
+                "checkpoint current ownership header missing"
+            );
+            return Ok(None);
+        }
+        let scope = database::discover_scope(self.directory(), root, collection)?;
+        database::check_owner(self.directory(), &scope)?;
+        let connection = database::open_reader(&self.directory().join("current.sqlite3"))?;
+        let (phase, bytes): (String, Vec<u8>) = connection.query_row(
+            "SELECT phase,substr(head,1,65537) FROM current_state WHERE id=1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        ensure!(
+            phase == "ready",
+            "checkpoint current writer recovery is required"
+        );
+        ensure!(
+            bytes.len() <= super::MAX_HEAD_BYTES,
+            "checkpoint current head exceeds bound"
+        );
+        Ok(Some(decode_head(&bytes, &scope)?))
+    }
+
     pub fn current_read(&self, scope: &CurrentScope) -> Result<Arc<CurrentRead>> {
         super::admission::admit_open(|| self.current_read_once(scope, None).map_err(read_error))
     }

@@ -15,6 +15,24 @@ SPEC.loader.exec_module(BENCHMARK)
 
 
 class ScaleMeasurementTests(unittest.TestCase):
+    def test_scale_measurement_uses_owner_only_for_index_and_accounting_and_never_replays(self):
+        fixture = mock.Mock()
+        fixture.management_arguments.return_value = ['exact-owner']
+        fixture.arguments.return_value = ['--catalog-session', 'original-grant']
+        for command in (("index",), ("usage","report"), ("usage","report","--days","1")):
+            self.assertEqual(BENCHMARK.measurement_arguments(fixture,"p",command), ['exact-owner'])
+        self.assertEqual(fixture.management_arguments.call_count, 3)
+        fixture.arguments.assert_not_called()
+        for command in (("status",), ("files",), ("search","fictional"), ("read","original"), ("symbol","Path")):
+            self.assertEqual(BENCHMARK.measurement_arguments(fixture,"p",command), ['--catalog-session', 'original-grant'])
+        self.assertEqual(fixture.arguments.call_count, 5)
+        self.assertEqual(fixture.management_arguments.call_count, 3)
+        for command in (("index","--unknown"), ("usage","clear")):
+            with self.assertRaisesRegex(AssertionError, 'Unsupported'):
+                BENCHMARK.measurement_arguments(fixture,"p",command)
+        self.assertEqual(fixture.arguments.call_count, 5)
+        self.assertEqual(fixture.management_arguments.call_count, 3)
+
     def test_child_resources_are_observed_without_a_usage_ledger(self):
         with tempfile.TemporaryDirectory() as directory:
             # Generate measurable CPU work as well as an RSS sampling window;
@@ -166,7 +184,8 @@ class ScaleMeasurementTests(unittest.TestCase):
             owner = Path(directory)
             fixture = mock.Mock()
             fixture.binary = Path("native.exe")
-            fixture.arguments.return_value = ["--collection", "probe"]
+            fixture.arguments.return_value = ["--catalog-session", "exact-grant"]
+            fixture.management_arguments.return_value = ["--service-project", "exact-owned-binding"]
             fixture.projects = {"probe": {"binding": "owned"}}
             runner = BENCHMARK.native_runner(fixture, owner, owner / "state", owner, "probe", [], 1)
             with mock.patch.object(BENCHMARK, "measured", side_effect=RuntimeError("single mutation")) as measured, \
@@ -174,6 +193,9 @@ class ScaleMeasurementTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "single mutation"):
                     runner("index", "index")
                 self.assertEqual(measured.call_count, 1)
+                self.assertEqual(measured.call_args.args[0], ["native.exe", "--service-project", "exact-owned-binding", "index"])
+                fixture.management_arguments.assert_called_once_with("probe")
+                fixture.arguments.assert_not_called()
                 retried.assert_not_called()
             configuration = owner / "configuration.json"
             configuration.write_text('{"operation":"vectors","enabled":false}')

@@ -399,7 +399,7 @@ async fn assert_paused_pending(
 #[tokio::test]
 async fn actual_native_refresh_keeps_profile_scope_shared_model_and_exact_receipts_across_restart()
 -> Result<()> {
-    let mut f = Fixture::with_helper()?;
+    let mut f = Fixture::with_inference()?;
     f.session.project_ids = vec![f.projects[2]];
     f.session.index_ids = Some(vec![f.indexes[2]]);
     let root = PathBuf::from(&f.registrations[2].root);
@@ -642,7 +642,7 @@ async fn actual_native_refresh_keeps_profile_scope_shared_model_and_exact_receip
             vectors["ranking"]
                 .as_array()
                 .is_some_and(|rows| !rows.is_empty()),
-            "actual shared helper produced no evidence: {vectors}"
+            "actual in-process provider produced no evidence: {vectors}"
         );
         let helper =
             airk_cli::service_runtime::request(&f.control, ControlMethod::EmbeddingStatus).await?;
@@ -651,13 +651,17 @@ async fn actual_native_refresh_keeps_profile_scope_shared_model_and_exact_receip
                 helper,
                 ControlResponse::EmbeddingStatus {
                     available: true,
-                    process_id: Some(_),
+                    process_id: None,
+                    provider: Some(airk_core::inference_provider::ProviderStatus {
+                        kind: airk_core::inference_provider::ProviderKind::InProcess,
+                        ..
+                    }),
                     worker: Some(_),
                     loads: 1..,
                     ..
                 }
             ),
-            "real helper was not observed: {}",
+            "in-process provider was not observed: {}",
             serde_json::to_string(&helper)?
         );
         let watch = airk_cli::service_runtime::request(

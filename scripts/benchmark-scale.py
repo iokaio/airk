@@ -38,6 +38,14 @@ def native_corpus(operation):
     return invoke
 
 
+def measurement_arguments(fixture, name, arguments):
+    if arguments[0] in ("index", "usage"):
+        assert arguments == ("index",) or arguments[:2] == ("usage", "report"), \
+            "Unsupported scale fixture administrative command"
+        return fixture.management_arguments(name)
+    return fixture.arguments(name)
+
+
 def native_runner(fixture, root, state, directory, prefix, measurements, timeout):
     state.mkdir()
     fixture.register(prefix, root, state)
@@ -59,7 +67,7 @@ def native_runner(fixture, root, state, directory, prefix, measurements, timeout
         # Only these source/evidence reads may repeat a complete typed rejection.
         # Never put index/configuration or other mutations through this path.
         measure = measured_read if args[0] in ("status", "search", "files", "read") else measured
-        value, metrics = measure([str(fixture.binary), *fixture.arguments(prefix), *args], directory,
+        value, metrics = measure([str(fixture.binary), *measurement_arguments(fixture, prefix, args), *args], directory,
                                  prefix + "-" + label, timeout=timeout, environment=fixture.environment)
         if "content" in value:
             assert not value.get("isError"), value
@@ -71,7 +79,7 @@ def native_runner(fixture, root, state, directory, prefix, measurements, timeout
             metrics["completion_wall_ms"] = round((time.monotonic() - started) * 1000, 3)
             if args[0] == "index":
                 value = {"job": receipt, "status": fixture.published_status(prefix),
-                         "usage": json.loads(fixture.run(*fixture.arguments(prefix), "usage", "report").stdout)}
+                         "usage": json.loads(fixture.run(*fixture.management_arguments(prefix), "usage", "report").stdout)}
             else:
                 value = fixture.rpc({"configuration_result": {"id": receipt["id"]}})["result"]
         measurements.append(metrics)

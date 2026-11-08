@@ -23,7 +23,10 @@ pub struct ManagedGenesisOrigin {
     pub source: PathBuf,
     pub runtime_sha256: Sha256Digest,
     pub main_sha256: Sha256Digest,
-    pub helper_sha256: Sha256Digest,
+    /// Schema 1 binds the historical separate helper. Schema 2 binds the
+    /// service-owned provider through the main executable and runtime seal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub helper_sha256: Option<Sha256Digest>,
     pub installer_identity: Sha256Digest,
 }
 
@@ -96,7 +99,10 @@ pub fn preflight_managed_origin(origin: &ManagedGenesisOrigin) -> Result<()> {
 
 impl ManagedGenesisOrigin {
     pub fn validate(&self) -> Result<()> {
-        ensure!(self.schema == 1, "unsupported managed genesis origin");
+        ensure!(
+            matches!((self.schema, self.helper_sha256), (1, Some(_)) | (2, None)),
+            "unsupported managed genesis executable contract"
+        );
         ensure!(
             !self.policy_version.is_empty()
                 && self.policy_version.len() <= 64

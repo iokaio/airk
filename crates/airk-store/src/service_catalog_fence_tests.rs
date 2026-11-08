@@ -449,6 +449,55 @@ fn retirement_provider_history_cannot_change_on_replay_or_saved_payload() -> Res
     assert_eq!(receipt_count(&registry)?, 1);
     Ok(())
 }
+#[test]
+fn inprocess_provider_history_is_canonical_and_cannot_replay_as_helper() -> Result<()> {
+    let (root, _source_owner, mut registry, request, mut plan) = retirement_fixture(1)?;
+    assert_eq!(
+        registry
+            .connection
+            .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))?,
+        12
+    );
+    let generations = vec![Incarnation::from_bytes([80; 16])];
+    plan.worker_obligation.as_mut().unwrap().providers[0].history =
+        WorkerProviderHistory::InProcess {
+            generations: generations.clone(),
+            completed_authorizations: None,
+        };
+    let (intent, preview) = prepare(&mut registry, &request, &plan)?;
+    assert_eq!(
+        registry
+            .connection
+            .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))?,
+        13
+    );
+    let required = crate::service::registry::runtime_contract::required_capabilities(root.path())?;
+    let mut predecessor = crate::service::registry::catalog::capabilities();
+    predecessor.maximum_registry_schema = 12;
+    assert!(required.require_supported(&predecessor).is_err());
+    required.require_supported(&crate::service::registry::catalog::capabilities())?;
+    let saved = ServiceRegistry::open_saved(root.path())?;
+    assert_eq!(saved.catalog_pending_fence()?, Some(intent.clone()));
+    let mut changed = plan.clone();
+    changed.worker_obligation.as_mut().unwrap().providers[0].history =
+        WorkerProviderHistory::Helpers { generations };
+    assert!(
+        registry
+            .catalog_prepare_fence(&request, preview, &changed)
+            .is_err()
+    );
+    assert_eq!(registry.catalog_pending_fence()?, Some(intent));
+    for generations in [Vec::new(), vec![Incarnation::from_bytes([81; 16]); 2]] {
+        let mut invalid = plan.clone();
+        invalid.worker_obligation.as_mut().unwrap().providers[0].history =
+            WorkerProviderHistory::InProcess {
+                generations,
+                completed_authorizations: None,
+            };
+        assert!(invalid.validate().is_err());
+    }
+    Ok(())
+}
 
 #[test]
 fn retirement_helper_generations_reserve_full_terminal_budget_before_effects() -> Result<()> {

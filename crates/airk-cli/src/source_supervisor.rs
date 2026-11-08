@@ -26,9 +26,13 @@ use std::{
     },
     time::{Duration, Instant},
 };
+#[path = "source_supervisor_checkpoint.rs"]
+mod checkpoint;
+pub(crate) use checkpoint::SourceCheckpointObservation;
 
 #[derive(Default)]
 struct Replies {
+    checkpoint: Option<checkpoint::Barrier>,
     alive: bool,
     pulse: Option<Instant>,
     directories: Option<u16>,
@@ -192,6 +196,37 @@ impl WatchChild {
                 .spawn(move || {
                     while let Ok(Some(reply)) = service_ipc::read_frame::<_, Reply>(&mut output) {
                         match reply {
+                            Reply::Checkpoint {
+                                service: reply_service,
+                                worker: reply_worker,
+                                operation_id,
+                                targets,
+                            } => {
+                                if reply_service != service
+                                    || reply_worker != worker
+                                    || targets.len() > 1024
+                                {
+                                    break;
+                                }
+                                let mut projects = BTreeSet::new();
+                                if targets.iter().any(|target| {
+                                    target.sequence == 0
+                                        || target.sequence > i64::MAX as u64
+                                        || !projects.insert(target.project)
+                                }) {
+                                    break;
+                                }
+                                let Ok(mut observed) = observed.lock() else {
+                                    break;
+                                };
+                                if observed.checkpoint.is_some() {
+                                    break;
+                                }
+                                observed.checkpoint = Some(checkpoint::Barrier {
+                                    operation_id,
+                                    targets,
+                                });
+                            }
                             Reply::PolicyFenced {
                                 service: reply_service,
                                 worker: reply_worker,
@@ -709,6 +744,13 @@ impl SourceWake {
     }
 }
 pub struct SourceSupervisor {
+    checkpoint_admission_observed: Arc<AtomicBool>,
+    checkpoint_seal: Arc<AtomicBool>,
+    checkpoint_operation: Arc<Mutex<Option<Incarnation>>>,
+    checkpoint_result: Arc<Mutex<Option<SourceCheckpointObservation>>>,
+    checkpoint_error: Arc<Mutex<Option<String>>>,
+    checkpoint_closed: Arc<AtomicBool>,
+    checkpoint_observed: Arc<AtomicBool>,
     sender: Option<Arc<SyncSender<()>>>,
     thread: Option<std::thread::JoinHandle<()>>,
     pub process_id: Arc<AtomicU32>,
@@ -736,6 +778,21 @@ impl SourceSupervisor {
         log: crate::service_logs::Log,
     ) -> Result<Self> {
         let (sender, receiver) = mpsc::sync_channel(1);
+        let checkpoint_closed = Arc::new(AtomicBool::new(false));
+        let checkpoint_observed = Arc::new(AtomicBool::new(false));
+        let checkpoint_pause = checkpoint_closed.clone();
+        let checkpoint_ack = checkpoint_observed.clone();
+        let checkpoint_admission_observed = Arc::new(AtomicBool::new(false));
+        let checkpoint_admission_ack = checkpoint_admission_observed.clone();
+        let checkpoint_seal = Arc::new(AtomicBool::new(false));
+        let seal_source = checkpoint_seal.clone();
+        let checkpoint_operation = Arc::new(Mutex::new(None::<Incarnation>));
+        let source_operation = checkpoint_operation.clone();
+        let checkpoint_result = Arc::new(Mutex::new(None));
+        let source_result = checkpoint_result.clone();
+        let checkpoint_error = Arc::new(Mutex::new(None));
+        let source_error = checkpoint_error.clone();
+        let recovery_fenced = crate::service_runtime::checkpoint::admission_closed(&root)?;
         let process_id = Arc::new(AtomicU32::new(0));
         let pid = process_id.clone();
         let telemetry_complete = Arc::new(AtomicBool::new(false));
@@ -772,6 +829,7 @@ impl SourceSupervisor {
                 let mut next_page = Instant::now();
                 let mut attempts = 0u32;
                 let mut retry = Instant::now();
+                let mut source_checkpoint=checkpoint::Progress::default();
                 loop {
                     match receiver.recv_timeout(Duration::from_millis(100)) {
                         Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -782,6 +840,27 @@ impl SourceSupervisor {
                             next_page = Instant::now();
                         }
                         Err(mpsc::RecvTimeoutError::Timeout) => {}
+                    }
+                    if seal_source.load(Ordering::Acquire) {
+                        let operation=source_operation.lock().ok().and_then(|value|*value);
+                        let result=operation.context("source checkpoint operation missing").and_then(|operation|checkpoint::step(&root,service,operation,&mut child,&mut registry,&mut source_checkpoint));
+                        match result {
+                            Ok(checkpoint::Step::Complete(observation))=>{
+                                if let Ok(mut result)=source_result.lock(){*result=Some(observation);}
+                                checkpoint_ack.store(true,Ordering::Release);
+                                continue;
+                            },
+                            Ok(checkpoint::Step::Pending)=>continue,
+                            Ok(checkpoint::Step::ContinueAcceptedCleanup)=>{},
+                            Err(error)=>{
+                                checkpoint_ack.store(false,Ordering::Release);
+                                if let Ok(mut saved)=source_error.lock()
+                                    && saved.is_none() {
+                                    *saved=Some(format!("{error:#}").chars().take(2048).collect());
+                                }
+                                continue;
+                            },
+                        }
                     }
                     let configuration_snapshot = configuration.load(Ordering::Acquire);
                     if child.is_none() {
@@ -832,6 +911,15 @@ impl SourceSupervisor {
                             enabled.remove(project);
                         }
                     }
+                    // Keep exact already accepted policy-fence coordination
+                    // above alive, but create no new source observations/work.
+                    if recovery_fenced && crate::service_runtime::checkpoint::admission_closed(&root).unwrap_or(true) {
+                        checkpoint_admission_ack.store(true,Ordering::Release);
+                        checkpoint_ack.store(true, Ordering::Release);
+                        continue;
+                    }
+                    if checkpoint_pause.load(Ordering::Acquire) {checkpoint_admission_ack.store(true,Ordering::Release);}
+                    checkpoint_ack.store(false, Ordering::Release);
                     if registry.is_none() {
                         registry = ServiceRegistry::open(&root, service).ok();
                     }
@@ -890,6 +978,7 @@ impl SourceSupervisor {
                                 (vec![], vec![], vec![])
                             };
                             for (project, (registration_epoch, configuration_epoch)) in missing {
+                                if checkpoint_pause.load(Ordering::Acquire){continue;}
                                 if fences.blocked(project) { continue; }
                                 match registry.catalog_state() {
                                     Ok(Some(catalog)) if catalog.authority_contract == 1 => {
@@ -1177,6 +1266,13 @@ impl SourceSupervisor {
                 pid.store(0, Ordering::Release);
             })?;
         Ok(Self {
+            checkpoint_admission_observed,
+            checkpoint_seal,
+            checkpoint_operation,
+            checkpoint_result,
+            checkpoint_error,
+            checkpoint_closed,
+            checkpoint_observed,
             sender: Some(Arc::new(sender)),
             thread: Some(thread),
             process_id,
@@ -1202,6 +1298,58 @@ impl SourceSupervisor {
         );
         *current = Some(reporter);
         Ok(())
+    }
+    pub(crate) fn begin_checkpoint(&self, operation: Incarnation) -> Result<()> {
+        let mut saved = self
+            .checkpoint_operation
+            .lock()
+            .map_err(|_| anyhow::anyhow!("source checkpoint identity unavailable"))?;
+        ensure!(
+            saved.is_none_or(|saved| saved == operation),
+            "another source checkpoint owns admission"
+        );
+        *saved = Some(operation);
+        if !self.checkpoint_closed.swap(true, Ordering::AcqRel) {
+            self.checkpoint_observed.store(false, Ordering::Release);
+        }
+        Ok(())
+    }
+    pub(crate) fn checkpoint_admission_observed(&self) -> bool {
+        self.checkpoint_admission_observed.load(Ordering::Acquire)
+    }
+    pub(crate) fn seal_checkpoint(&self, operation: Incarnation) -> Result<()> {
+        ensure!(
+            *self
+                .checkpoint_operation
+                .lock()
+                .map_err(|_| anyhow::anyhow!("source checkpoint identity unavailable"))?
+                == Some(operation),
+            "source checkpoint seal identity changed"
+        );
+        self.checkpoint_seal.store(true, Ordering::Release);
+        Ok(())
+    }
+    pub(crate) fn checkpoint_result(&self) -> Result<Option<SourceCheckpointObservation>> {
+        if let Some(error) = self
+            .checkpoint_error
+            .lock()
+            .map_err(|_| anyhow::anyhow!("source checkpoint failure unavailable"))?
+            .as_ref()
+        {
+            anyhow::bail!("{error}");
+        }
+        let result = self
+            .checkpoint_result
+            .lock()
+            .map_err(|_| anyhow::anyhow!("source checkpoint receipt unavailable"))?
+            .clone();
+        if let Some(result) = &result {
+            result.validate()?;
+        }
+        Ok(result)
+    }
+    pub(crate) fn checkpoint_observed(&self) -> bool {
+        self.checkpoint_observed.load(Ordering::Acquire)
     }
     pub fn can_idle_exit(&self) -> bool {
         self.idle_safe.load(Ordering::Acquire)

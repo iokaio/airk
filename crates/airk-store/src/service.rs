@@ -12,6 +12,11 @@ pub mod data_scope;
 
 #[path = "service_collection.rs"]
 pub mod collection;
+#[path = "service_embedded_model.rs"]
+pub mod embedded_model;
+#[cfg(test)]
+#[path = "service_inference_admission_tests.rs"]
+mod inference_admission_tests;
 #[path = "service_model_files.rs"]
 pub mod model_files;
 #[path = "service_registry.rs"]
@@ -47,6 +52,14 @@ fn acquire_file_for(
 
 pub(crate) fn acquire_existing_file(root: &Path, name: &str) -> Result<OwnershipFile> {
     acquire_file_mode(root, name, std::time::Duration::ZERO, false)
+}
+
+pub(crate) fn acquire_existing_file_for(
+    root: &Path,
+    name: &str,
+    timeout: std::time::Duration,
+) -> Result<OwnershipFile> {
+    acquire_file_mode(root, name, timeout, false)
 }
 
 pub(crate) fn acquire_shared_file(root: &Path, name: &str) -> Result<OwnershipFile> {
@@ -180,6 +193,14 @@ impl ProjectLease {
 pub struct ServiceLease {
     _file: OwnershipFile,
     root: PathBuf,
+    inference: std::sync::Mutex<InferenceAdmission>,
+}
+#[derive(Default)]
+struct InferenceAdmission {
+    factory_claimed: bool,
+    ever_admitted: bool,
+    admitted_owners: u64,
+    sealed: bool,
 }
 
 /// Pooled inference can outlive its service/last project briefly while draining.
@@ -207,6 +228,59 @@ impl EmbeddingLease {
 }
 
 impl ServiceLease {
+    /// Exactly one native factory belongs to this actual lease object. Arc
+    /// clones share the claim; a second factory can never mint another proof.
+    pub fn claim_inference_factory(&self) -> Result<()> {
+        let mut state = self
+            .inference
+            .lock()
+            .map_err(|_| anyhow::anyhow!("native inference admission unavailable"))?;
+        ensure!(
+            !state.factory_claimed && !state.sealed,
+            "native inference factory already claimed or sealed"
+        );
+        state.factory_claimed = true;
+        Ok(())
+    }
+    /// The safe Kernel adapter records every compute scope before entering FFI.
+    /// This monotonic fact is never reset by idle, failure, or model release.
+    pub fn admit_inference_owner(&self) -> Result<()> {
+        let mut state = self
+            .inference
+            .lock()
+            .map_err(|_| anyhow::anyhow!("native inference admission unavailable"))?;
+        ensure!(!state.sealed, "native inference admission sealed");
+        state.admitted_owners = state
+            .admitted_owners
+            .checked_add(1)
+            .context("native inference admission count overflow")?;
+        state.ever_admitted = true;
+        Ok(())
+    }
+    /// Close future compute scopes and report the monotonic admission count.
+    /// This is not a completion witness: callers must separately prove every
+    /// admitted owner actually joined its native computation and deliveries.
+    pub fn seal_inference_admission(&self) -> Result<u64> {
+        let mut state = self
+            .inference
+            .lock()
+            .map_err(|_| anyhow::anyhow!("native inference admission unavailable"))?;
+        ensure!(state.factory_claimed, "native inference factory is missing");
+        state.sealed = true;
+        Ok(state.admitted_owners)
+    }
+    pub fn seal_unused_inference(&self) -> Result<()> {
+        let mut state = self
+            .inference
+            .lock()
+            .map_err(|_| anyhow::anyhow!("native inference admission unavailable"))?;
+        ensure!(
+            state.factory_claimed && !state.ever_admitted,
+            "native inference owner has been admitted or factory is missing"
+        );
+        state.sealed = true;
+        Ok(())
+    }
     pub fn root(&self) -> &Path {
         &self.root
     }
@@ -218,7 +292,11 @@ impl ServiceLease {
             "invalid service runtime directory"
         );
         let file = acquire_file(&root, "instance-1.4.lock")?;
-        Ok(Self { _file: file, root })
+        Ok(Self {
+            _file: file,
+            root,
+            inference: std::sync::Mutex::new(InferenceAdmission::default()),
+        })
     }
 
     /// This lease proves exclusion of compliant service owners, including after process exit.

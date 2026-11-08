@@ -6,9 +6,11 @@ use airk_core::{
     service::RequestKey,
     service_lifecycle::{LifecycleAction, LifecycleRequest},
 };
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub(super) struct NativeFixture {
     _owner: tempfile::TempDir,
+    cleanup_confirmed: AtomicBool,
     pub(super) root: PathBuf,
     pub(super) control: PathBuf,
     pub(super) identity: String,
@@ -27,12 +29,14 @@ impl NativeFixture {
             runtime_pair::digest_file(&source.join("airk-install.json"))? == approved,
             "fresh approved pair identity mismatch"
         );
-        let owner = match std::env::var_os("AIRK_PRIVATE_CENSUS_BASE") {
+        let mut owner = match std::env::var_os("AIRK_PRIVATE_CENSUS_BASE") {
             Some(base) => tempfile::Builder::new()
                 .prefix("airk-native-install-")
                 .tempdir_in(base)?,
             None => tempfile::tempdir()?,
         };
+        // Failed or interrupted native ownership must retain the full fixture.
+        owner.disable_cleanup(true);
         let root = owner.path().canonicalize()?.join("install");
         local_ipc::prepare_root(&root)?;
         layout::initialize(
@@ -49,6 +53,7 @@ impl NativeFixture {
         let control = layout::control(&root)?;
         let fixture = Self {
             _owner: owner,
+            cleanup_confirmed: AtomicBool::new(false),
             root,
             control,
             identity: approved,
@@ -97,6 +102,7 @@ impl NativeFixture {
         Ok(())
     }
     pub(super) async fn cleanup(&self) -> Result<()> {
+        self.cleanup_confirmed.store(false, Ordering::Relaxed);
         // Version/namespace are the freshly owned fixture's, never installed defaults.
         let _ = service_runtime::request_for_version(
             &self.control,
@@ -104,7 +110,94 @@ impl NativeFixture {
             env!("CARGO_PKG_VERSION"),
         )
         .await;
-        wait_quiescent(&self.root).await
+        wait_quiescent(&self.root).await.with_context(|| {
+            format!(
+                "owned native fixture preserved: {}",
+                self._owner.path().display()
+            )
+        })?;
+        self.cleanup_confirmed.store(true, Ordering::Relaxed);
+        Ok(())
+    }
+}
+
+impl Drop for NativeFixture {
+    fn drop(&mut self) {
+        // Some cases deliberately stop and restart this same fixture. Recheck
+        // all owner leases at final drop rather than trusting an earlier stop.
+        if self.cleanup_confirmed.load(Ordering::Relaxed)
+            && let Ok(exclusion) = quiescent(&self.root)
+        {
+            self._owner.disable_cleanup(false);
+            drop(exclusion);
+        }
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires a freshly built sealed pair and explicit approved digest; run serially"]
+async fn native_checkpointed_owner_drains_without_reopening_admission() -> Result<()> {
+    let fixture = NativeFixture::new().await?;
+    let result = async {
+        let (_, main, approval) = selected(&fixture.root)?;
+        let executable = runtime_pair::digest_file(&main)?;
+        let original = health(&fixture.root, &approval, &executable).await?;
+        let operation = airk_kernel::service_broker::new_instance_id()?;
+        let checkpoint = activation::prepare_native_checkpoint(
+            &fixture.control,
+            operation,
+            &approval.version,
+            &original,
+            executable.parse()?,
+        )
+        .await?;
+        ensure!(
+            checkpoint.state == airk_core::service_checkpoint::CheckpointState::Ready
+                && checkpoint.service_instance == original.instance,
+            "exact original owner did not complete its native checkpoint"
+        );
+        let paused = health_identity(&fixture.root, &approval, &executable).await?;
+        ensure!(
+            paused.instance == original.instance && !paused.policy.accepting,
+            "checkpoint did not retain the same nonaccepting owner"
+        );
+        ensure!(
+            health(&fixture.root, &approval, &executable).await.is_err(),
+            "checkpointed owner was incorrectly reported ready for client work"
+        );
+        let foreign_executable = "0".repeat(64);
+        ensure!(
+            health_identity(&fixture.root, &approval, &foreign_executable)
+                .await
+                .is_err(),
+            "lifecycle identity observation accepted another executable"
+        );
+        let mut foreign_payload = approval.clone();
+        foreign_payload.manifest_sha256 = "0".repeat(64);
+        ensure!(
+            health_identity(&fixture.root, &foreign_payload, &executable)
+                .await
+                .is_err(),
+            "lifecycle identity observation accepted another approved payload"
+        );
+        drain(&fixture.root, &main, &approval).await?;
+        let exclusion = quiescent(&fixture.root)?;
+        ensure!(
+            fixture.health().await.is_err(),
+            "checkpointed native owner remained reachable after drain"
+        );
+        drop(exclusion);
+        Ok(())
+    }
+    .await;
+    let cleanup = fixture.cleanup().await;
+    match (result, cleanup) {
+        (Err(primary), Err(cleanup)) => Err(primary.context(format!(
+            "native fixture cleanup also failed; {} preserved: {cleanup:#}",
+            fixture._owner.path().display()
+        ))),
+        (Err(primary), Ok(())) => Err(primary),
+        (Ok(()), cleanup) => cleanup,
     }
 }
 

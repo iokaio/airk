@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Typed hints for retrying the same read without substituting a revision.
+/// Exact pre-handler collection-selection contention; quota/publication errors
+/// sharing a public hint are not authority for internal request replay.
+pub use airk_store::service::collection::SelectionContention as SelectionReadAdmissionContention;
 use airk_store::{
     current::{CurrentGateContention, CurrentReadContention},
     quota::QuotaContention,

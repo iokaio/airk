@@ -289,7 +289,7 @@ impl CatalogUpgrade {
             self.save(&receipt)?;
             return Ok(receipt);
         }
-        if version == 12 {
+        if matches!(version, 12 | 13) {
             super::super::validate_existing(&read)?;
             let state = super::super::state(&read)?;
             ensure!(
@@ -320,7 +320,7 @@ impl CatalogUpgrade {
         receipt.stage = UpgradeStage::Restoring;
         self.save(&receipt)?;
         checkpoint("restore_intent")?;
-        if version == 12 {
+        if matches!(version, 12 | 13) {
             let attempt = self.qualified_backup(&receipt)?;
             super::super::backup::restore(
                 &self.root,

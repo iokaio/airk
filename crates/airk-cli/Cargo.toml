@@ -11,7 +11,7 @@ publish.workspace = true
 
 [features]
 default = []
-local-inference = ["airk-kernel/local-inference", "airk-retrieval/local-inference"]
+local-inference = ["airk-kernel/local-inference", "airk-retrieval/local-inference", "bundled-model"]
 bundled-model = []
 embedding-worker = ["local-inference", "bundled-model"]
 parser-training = []
@@ -46,11 +46,27 @@ anyhow.workspace = true
 clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+toml.workspace = true
 tokio = { workspace = true, features = ["net", "io-util", "sync"] }
 tempfile.workspace = true
 sha2.workspace = true
+rustls.workspace = true
+tokio-rustls.workspace = true
+ring.workspace = true
+rcgen.workspace = true
+x509-parser.workspace = true
+subtle.workspace = true
+time.workspace = true
+bytes.workspace = true
+http.workspace = true
+http-body.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+tokio-util.workspace = true
 
 [dev-dependencies]
+hyper = { workspace = true, features = ["client"] }
 airk-ingest.workspace = true
 rusqlite.workspace = true
 tokio = { workspace = true, features = ["process"] }

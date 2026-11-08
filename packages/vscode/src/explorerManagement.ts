@@ -20,6 +20,12 @@ export function panelDetails(view: ManagementView, section: string, version: str
             'Independent member publications; no global atomic publication or unique-source count is claimed.',
             JSON.stringify(status.combined.nativeResult, null, 2));
     }
+    if (['semantic', 'index', 'health'].includes(section) && (status?.semanticReadiness || status?.legacyAdoption || entry?.summary.semanticReadiness || entry?.summary.legacyAdoption)) {
+        lines.push('', 'Complete native semantic readiness and saved-evidence compatibility', JSON.stringify({
+            semantic_readiness:status?.semanticReadiness ?? entry?.summary.semanticReadiness,
+            ...((status?.legacyAdoption ?? entry?.summary.legacyAdoption) ? {legacy_adoption:status?.legacyAdoption ?? entry?.summary.legacyAdoption} : {}),
+        }, null, 2));
+    }
     if(entry&&['index','health','progress','activity'].includes(section)){
         const saved=indexContents(entry.summary,status);
         facts('Published index',[
@@ -92,7 +98,7 @@ function failureDetail(code: unknown): string {
         configuration_failed_reinspect: 'The settings could not be applied. Check current settings and diagnostics before retrying.',
         quota_ledger_busy: 'Storage accounting is busy in another project. AIRK waits within its recovery budget; saved evidence is preserved.',
         work_stalled: 'The worker stopped making progress. Review the wait reason and diagnostics before retrying.',
-        model_setup_failed: 'Offline model preparation failed. Text indexing is still scheduled; review the model and helper diagnostics before retrying semantic setup.',
+        model_setup_failed: 'Offline model preparation failed. Text indexing is still scheduled; review the model and inference diagnostics before retrying semantic setup.',
         index_scan_sources_source_byte_limit_exceeded: 'The project reached its configured total source-byte limit. Review ingestion limits in Advanced settings before retrying. Any existing searchable index is preserved.',
         index_scan_sources_extracted_byte_limit_exceeded: 'The project reached its configured extracted-text byte limit. Review ingestion limits in Advanced settings before retrying. Any existing searchable index is preserved.',
         index_scan_sources_source_file_limit_exceeded: 'The project reached its configured file-count limit. Review ingestion limits in Advanced settings before retrying. Any existing searchable index is preserved.',
@@ -147,7 +153,7 @@ function project(row: RecordValue, state: ServiceConsoleState): { rows: FactRow[
         : typeof gate.code==='string'
         ? {severity:'warn',title:'Repair request cannot run',detail:`The queued request is not eligible for its repair plan. Native reason: ${gate.code}. Plan: ${scalar(gate.plan)} (${scalar(gate.plan_phase)}). Obsolete requests are settled by the service without replaying an old approval. Review Recovery and copy these details if the request persists.`,reviewTab:'repair'}
         : blockedRecovery
-        ? {severity:'warn',title:blockedRecovery.state==='stopped'?'Semantic helper stopped':'Semantic indexing needs attention',detail:'Automatic helper recovery has stopped. Published text remains separately available. Retry resumes the shared helper and follows the saved request.',action:'retryRecovery',actionLabel:'Retry semantic indexing'}
+        ? {severity:'warn',title:blockedRecovery.state==='stopped'?'Semantic engine stopped':'Semantic indexing needs attention',detail:'Automatic inference recovery has stopped. Published text remains separately available. Retry resumes the native model owner and follows the saved request.',action:'retryRecovery',actionLabel:'Retry semantic indexing'}
         : recovery
         ? {severity:'info',title:recoveryTitle,detail:`AIRK has retained the accepted request. Attempt ${scalar(recovery.attempts)} of ${scalar(recovery.limit)}. It will continue when its prerequisite is available. Published search availability is shown separately.`}
         : configuration.state === 'pending' || configuration.state === 'running'
@@ -162,6 +168,8 @@ function project(row: RecordValue, state: ServiceConsoleState): { rows: FactRow[
         ? { severity: 'warn', title: 'Source watching needs attention', detail: `Reported reason: ${watch.failure}. Review source access and unreadable directories. A retained index may still be available.` }
         : snapshot.source_state === 'unavailable'
         ? { severity: 'warn', title: 'Source folder unavailable', detail: 'Restore access to the registered source folder, or remove this project under Storage and removal. Retained search evidence may still be available.', action: 'inspect', actionLabel: 'Recheck source access' }
+        : semantic.state === 'unavailable'
+        ? { severity:'warn', title:'Semantic pipeline unavailable', detail:'Saved predecessor evidence cannot use its historical semantic pipeline. This is not a vector opt-out or current semantic readiness. Source and lexical evidence have separate availability; inspect the complete compatibility and readiness details.' }
         : semantic.state === 'failed'
         ? { severity: 'warn', title: 'Semantic indexing needs attention', detail: 'Review semantic setup and the vector job failure. Source indexing and published lexical evidence have separate status.' }
         : job.state !== 'running' && typeof pending.id === 'string'
@@ -287,7 +295,7 @@ function plan(state: ServiceConsoleState): PlanView | undefined {
 /** Everything the nine Management tabs show, derived from the one shared console state. */
 export function managementView(state: ServiceConsoleState): ManagementView {
     const health = obj(state.health.value?.observation), resources = obj(state.resources.value?.observation), configuration = obj(resources.configuration);
-    const model = state.model.value, bootstrap = obj(state.bootstrap.value), lifecycle = obj(bootstrap.lifecycle), pendingLifecycle = obj(lifecycle.pending);
+    const model = state.model.value, provider=obj(model?.provider),identity=obj(provider.provider),inProcess=provider.kind==='in_process', bootstrap = obj(state.bootstrap.value), lifecycle = obj(bootstrap.lifecycle), pendingLifecycle = obj(lifecycle.pending);
     const manager = obj(bootstrap.startupManager), repair = obj(bootstrap.payloadRepair), diagnosis = obj(bootstrap.diagnosis);
     const activation = obj(diagnosis.pending_activation), activationResult = obj(diagnosis.activation_result);
     const unavailable = state.busy || !state.trusted;
@@ -336,7 +344,7 @@ export function managementView(state: ServiceConsoleState): ManagementView {
             ['Last activation outcome', activationResult.outcome]])],
         runtimeVersions: rows([
             ['Native CLI (airk)', typeof bootstrap.selectedVersion === 'string' ? `${bootstrap.selectedVersion} · selected payload${bootstrap.payloadVerified === true ? ', verified' : ', verification not observed'}` : undefined],
-            ['Inference helper (airk-embed)', bootstrap.payloadVerified === true && typeof bootstrap.selectedVersion === 'string' ? `${bootstrap.selectedVersion} · verified selected payload; running helper version not observed` : undefined],
+            [inProcess?'Inference engine (in service)':typeof bootstrap.selectedVersion === 'string'&&/^1\.(?:[4-7]\.[0-9]+|8\.(?:[0-9]|1[0-3]))$/.test(bootstrap.selectedVersion)?'Inference helper (airk-embed)':'Inference engine (owner not observed)', inProcess?`${typeof health.version==='string'?health.version:'Version not observed'} · native service owner · generation ${String(identity.provider_generation??'not observed')}`:bootstrap.payloadVerified === true && typeof bootstrap.selectedVersion === 'string' && /^1\.(?:[4-7]\.[0-9]+|8\.(?:[0-9]|1[0-3]))$/.test(bootstrap.selectedVersion) ? `${bootstrap.selectedVersion} · verified selected payload; running helper version not observed` : undefined],
             ['Service (airk)', typeof health.version === 'string' ? `${health.version} · ${state.health.state} health observation${typeof health.process_id === 'number' ? ` · PID ${health.process_id}` : ''}` : undefined],
         ]),
         resources: [observed('Resources', state.resources), observed('Source work', state.sources), ...rows([['Preset', configuration.preset],
@@ -348,8 +356,11 @@ export function managementView(state: ServiceConsoleState): ManagementView {
                 : `${scalar(resources.memory_reserved_bytes)} / ${scalar(resources.memory_limit_bytes)}`], ['Observed RSS (bytes)', resources.observed_rss_bytes],
             ['Available host memory (bytes)', resources.available_memory_bytes], ['Memory pressure', resources.pressure], ['Protected query headroom (bytes)', resources.query_headroom_bytes],
             ['Source pacing ceiling (bytes/s)', resources.background_io_limit_bytes_per_second], ['Telemetry complete', resources.telemetry_complete]])],
-        inference: [observed('Inference', state.model), ...rows([['Inference process available', model?.available], ['Inference worker', model?.worker],
-            ['Loaded-model events', model?.loads], ['Compatible reuse events', model?.reuses], ['Inference sessions', model?.sessions]])],
+        inference: [observed('Inference', state.model), ...rows([[inProcess?'In-service inference available':'Inference process available', model?.available], ['Inference worker', inProcess?undefined:model?.worker],
+            ['Inference owner',inProcess?'Native service':undefined],['Service instance',identity.service_instance],['Approved execution SHA256',identity.approved_execution_sha256],['Provider generation',identity.provider_generation],
+            ['Model admission open',provider.admission_open],['Admitted high-water',provider.admitted_high_water],['Queued model work',provider.queued_outstanding],['Running model work',provider.running_outstanding],
+            ['Outstanding callbacks',provider.callback_outstanding],['Pending deliveries',provider.delivery_outstanding],['Model references',provider.model_references_outstanding],['Provider failure',provider.failure],
+            ['Loaded-model events', model?.loads], ['Compatible reuse events', model?.reuses], ['Inference sessions', model?.sessions],['Complete native provider status',model?.provider===undefined?undefined:JSON.stringify(model.provider)]])],
         enabled, projects, inactive: state.inactiveProjects === true, morePages: !!state.page?.after,
         pageNote: state.page ? `Showing ${state.page.projects.length} projects at registry revision ${state.page.revision}${state.page.after ? '; more projects remain' : ''}.` : 'No project page has been observed.',
         selectedCount: state.selected.size,

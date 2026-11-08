@@ -62,11 +62,11 @@ export type WindowChannel = (body: Body) => Promise<WindowReply>;
  * a request that gets no reply is retried once with a fresh descriptor, because the window
  * rotates its credential. No directory (for example a server started by hand) means no window.
  */
-export function windowChannel(directory: string | undefined, cwd: string, project?: string): WindowChannel {
+export function windowChannel(directory: string | undefined, cwd: string, project?: string, session?: string): WindowChannel {
     return async body => {
-        if (!directory) { return { ok: false, code: 'UI_NOT_ATTACHED' }; }
+        if (!directory || session !== undefined && !/^[a-f0-9]{32}$/.test(session)) { return { ok: false, code: 'UI_NOT_ATTACHED' }; }
         for (let attempt = 0; attempt < 2; attempt++) {
-            let matches = (await descriptors(directory, Date.now())).filter(descriptor => descriptor.roots.some(root => contains(root, cwd)));
+            let matches = (await descriptors(directory, Date.now())).filter(descriptor => session !== undefined ? descriptor.session_id === session : descriptor.roots.some(root => contains(root, cwd)));
             if (!matches.length) { return { ok: false, code: 'UI_NOT_ATTACHED' }; }
             // A window that crashed leaves its descriptor until it expires; only windows that answer count.
             if (matches.length > 1) {

@@ -406,14 +406,14 @@ pub(super) fn verify(service: &ServiceManager) -> Result<bool> {
     let executable = command.string(b's')?;
     let arguments = command.strings()?;
     let flags = command.strings()?;
+    let (expected_executable, expected_arguments) = service.execution()?;
     let expected = std::iter::once(
-        service
-            .executable
+        expected_executable
             .to_str()
             .context("non-UTF-8 service executable")?
             .to_owned(),
     )
-    .chain(service.args.iter().cloned())
+    .chain(expected_arguments)
     .collect::<Vec<_>>();
     if executable != expected[0] || arguments != expected || flags != ["no-env-expand"] {
         return Ok(false);

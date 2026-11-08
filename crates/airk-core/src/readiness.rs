@@ -19,6 +19,8 @@ pub struct IndexProgress {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SemanticState {
+    /// Saved evidence exists, but its historical semantic pipeline cannot be served.
+    Unavailable,
     Disabled,
     Pending,
     Partial,

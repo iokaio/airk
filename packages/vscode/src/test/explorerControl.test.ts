@@ -27,7 +27,7 @@ test('cached console rows become project summaries without inventing values', ()
     const [first, second, ...rest] = projectSummaries(state());
     assert.equal(rest.length, 0, 'rows without a valid native binding are dropped');
     assert.deepEqual(first, { project, collection: 'atlas', name: 'atlas-service', root: '/work/atlas-service', current: true, paused: false,
-        watching: true, publication: 'airk-r1:tok', indexedFiles: 0, semantic: 'partial', indexState: 'ready', jobState: 'running',
+        watching: true, publication: 'airk-r1:tok', indexedFiles: 0, semantic: 'partial', semanticReadiness: { state: 'partial' }, indexState: 'ready', jobState: 'running',
         jobKind: 'index', phase: 'extract', observedAt: 42 });
     assert.deepEqual(second, { project: other, collection: 'shared', name: 'shared', root: '', current: false });
     assert.equal(second.indexedFiles, undefined, 'unknown counts stay unknown, never zero');
@@ -79,4 +79,11 @@ test('removed-project browsing preserves active Explorer choices and excludes re
     // A later empty active observation must clear the former choices.
     removed.activePage = { ...active, projects: [] };
     assert.deepEqual(projectSummaries(removed), []);
+});
+
+
+test('project summaries retain unavailable native semantic metadata',()=>{
+    const current=state(),semantic={state:'unavailable',failure:'legacy_saved_semantic_conversion_unavailable',future:{original:true}};
+    (current.page!.projects[0] as any).inspection.snapshot.semantic=semantic;
+    const summary=projectSummaries(current)[0];assert.equal(summary.semantic,'unavailable');assert.deepEqual(summary.semanticReadiness,semantic);assert.notEqual(summary.semanticReadiness,semantic);
 });

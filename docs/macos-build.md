@@ -1,158 +1,198 @@
 # Building and checking AIRK for macOS
 
-The current unpublished working version is **1.8.12**. Build the native pair and
-platform VSIX on the intended Mac architecture. A Windows package, an Apple
-Silicon result, or an unsigned archive alone does not qualify installation on
-both Mac architectures. The [working-build record](releases/release-1.8.12.md)
-records the current source, artifacts, completed checks and remaining limits.
+**1.8.14 source implementation; unpublished and not yet Mac-qualified.** Build
+and exercise the single-executable runtime on the intended architecture. Apple
+Silicon preparation, portable tests or signing alone do not qualify Intel,
+installed Code, model execution, upgrades or publication. Actual evidence and
+remaining gates belong in the [working record](releases/release-1.8.14.md).
+The [dated predecessor guide](reviews/macos-build-before-static-main-2026-11-07.md)
+preserves the former pair/dynamic-library/copied-launcher instructions and results.
 
 ## Prerequisites and native layout
 
-Use the repository-pinned Rust **1.98.0**, Xcode Command Line Tools, Python
-**3.11+**, and Node.js **24.15.0** with the locked extension dependencies.
-PowerShell 7 runs the repository hygiene check. Inspect the existing Xcode
-selection with `xcrun --find clang` and `xcrun --sdk macosx --show-sdk-path`.
-Do not change the machine-wide tool selection merely to make a fixture pass.
+Use the repository-pinned Rust 1.98.0, Xcode Command Line Tools, Python 3.11+,
+Node.js 24.15.0 and locked extension dependencies. PowerShell 7 runs repository
+hygiene checks. Inspect the existing SDK/compiler with `xcrun --find clang` and
+`xcrun --sdk macosx --show-sdk-path`; do not change global Xcode selection to make
+a fixture pass. The builder requires `MACOSX_DEPLOYMENT_TARGET=13.3`. The actual
+build SDK is separately recorded; using a newer SDK is not oldest-OS acceptance.
 
-The native builder enforces `MACOSX_DEPLOYMENT_TARGET=13.3`, matching the bundled
-ONNX Runtime library and `AIRK.app` minimum. That declaration is a build baseline;
-oldest-supported-OS acceptance remains a separate observation.
-
-| Host | Rust target | VSIX platform |
+| Native host | Rust target | VSIX platform |
 | --- | --- | --- |
 | Apple Silicon | `aarch64-apple-darwin` | `darwin-arm64` |
 | Intel | `x86_64-apple-darwin` | `darwin-x64` |
 
-Both packages contain the lightweight main and inference helper under
-`AIRK.app/Contents/MacOS/`. Since 1.8.8, the app also carries a separate
-`airk-launcher-image`. The installer copies that independently inventoried image
-to the stable launcher location. Copying the app's main image after sealing the
-outer app is not the supported standalone-launcher path. The helper and its
-library remain in the approved app layout; non-code ONNX notices live under
-`Contents/Resources/onnxruntime`. See [Mac login and ownership](service-macos-login.md).
+The modern payload contains `AIRK.app/Contents/MacOS/airk`, with embedded pinned
+MiniLM/tokenizer assets and statically linked CPU ORT 1.22.1. There is no separate
+`airk-embed`, copied `airk-launcher-image`, dynamic ORT library or external default
+model payload. The main remains inside its signed app. Static channel plists,
+legal notices and signed resources remain inventoried. Runtime schema 2 binds
+one executable; the complete installer inventory independently binds all files.
+Native project workers may use the same image: one distributed executable does
+not promise a single OS process for every workload.
 
-## Build and exercise a local candidate
+## Verified model and static ORT inputs
 
-Provision or supply the verified offline inputs first. Cargo does not download
-model assets or inference libraries during compilation:
+Provision verified inputs before Cargo; compilation cannot substitute an ambient
+ORT installation or download model assets. For Apple Silicon (substitute the
+Intel target on that native host):
 
 ```sh
 python3 scripts/provision-local-model.py --destination target/local-vector-model --download
-python3 scripts/provision-onnx-runtime.py --download
+python3 scripts/provision-static-onnx-runtime.py --target aarch64-apple-darwin --destination target/static-onnx-runtime/aarch64-apple-darwin --download --download-tools --build --parallel 2 --environment-file artifacts/local/static-ort-environment.json
+```
+
+The environment JSON contains a receipt and an `environment` object. A reviewed
+runner must supply only its five verified child-environment values:
+`LIBONNXRUNTIME_NO_PKG_CONFIG`, `ORT_SKIP_DOWNLOAD`, `ORT_PREFER_DYNAMIC_LINK`,
+`ORT_LIB_LOCATION` and `ORT_LIB_PROFILE`. Do not source/evaluate the JSON as shell
+code or export the entire wrapper. Hosted runners use `--github-env`; local
+scripts must not forge a GitHub command-file context. The runtime builder
+revalidates the receipt/archive identities and all five values. The historical
+`provision-onnx-runtime.py` dynamic NuGet libraries cannot satisfy this build.
+See [static provisioning](../scripts/provision-static-onnx-runtime.py) and
+[contributor prerequisites](../CONTRIBUTING.md).
+
+After setting that verified child environment, one coordinated Cargo owner runs:
+
+```sh
 npm ci --ignore-scripts --no-audit --no-fund --prefix packages/vscode
 cargo fmt --all --check
-python3 scripts/dev-check.py -p airk-cli --all-features --target-dir target
-python3 scripts/build-service-runtime.py --profile release --destination artifacts/local/macos-1.8.12/runtime
-python3 scripts/check-service-clients.py --runtime-dir artifacts/local/macos-1.8.12/runtime --files 16 --model
-python3 scripts/check-service-install.py --runtime artifacts/local/macos-1.8.12/runtime
+python3 scripts/dev-check.py -p airk-cli --features local-inference --target-dir target
+python3 scripts/build-service-runtime.py --profile release --destination artifacts/local/macos-1.8.14/runtime
+python3 scripts/check-service-clients.py --runtime-dir artifacts/local/macos-1.8.14/runtime --files 16 --model
+python3 scripts/check-service-install.py --runtime artifacts/local/macos-1.8.14/runtime
 npm test --prefix packages/vscode
 ```
 
-The runtime builder selects the native host architecture; cross-compilation is
-not an execution or installation result for the other architecture. Keep one
-persistent Cargo target per checkout and one Cargo owner. Retain the actual
-commands, source seal, result logs and Cargo timing reports. Development Clippy
-uses incremental compilation off on macOS by default; release builds retain
-Cargo release-profile defaults. See [required qualification](../CONTRIBUTING.md#required-qualification)
-for the broader gates and [CI selection](ci-and-builds.md#checks-selected-by-the-change)
-for routine versus opt-in campaigns.
+Keep one warm Cargo target per checkout; retain the exact command, source seal,
+feature/target identity, logs and Cargo timings. Development Clippy defaults to
+incremental off on Mac; release profiles are unchanged. These scoped commands
+do not replace [required qualification](../CONTRIBUTING.md#required-qualification).
+The builder verifies embedded inventory, executes the real model smoke and
+checks actual native imports. Link/build success alone is not model correctness
+or installed-client readiness.
 
-For the space-limited **Mac Neo**, batch its necessary checks over the existing
-SSH setup, retain every result and timing report outside the target, then run
-`cargo clean` there after the batch, including a failed batch. This Neo-specific
-rule does not call for routine cleanup on other development Macs.
+For space-limited Mac Neo, batch necessary checks through the existing SSH setup,
+retain all evidence outside the target, then run `cargo clean` there after the
+batch, including failures. This exception does not authorize routine cleanup on
+other Macs. Preparation recorded for 1.8.14 recovered and reverified 51 consumer
+archives, including real re2, while retaining the original 79-archive producer.
+The earlier supplemental runner lost its exit observation and remains a failed
+or unknown attempt; the explicit no-build recovery does not turn it into a fresh
+build. SDK 26.5 and minimum deployment target 13.3 are distinct. None of those
+static-library observations qualifies an AIRK link, model, installer or GUI run.
+See the [implementation ledger](research/one-airk-implementation.md).
 
-Package on the matching host, substituting the target from the table:
+## Package and sign the exact tested runtime
+
+Package the matching native architecture:
 
 ```sh
-python3 scripts/package-native.py --target aarch64-apple-darwin --runtime-dir artifacts/local/macos-1.8.12/runtime --output artifacts/local/macos-1.8.12/native
-python3 scripts/package-extension.py --target aarch64-apple-darwin --native-dir artifacts/local/macos-1.8.12/native/publish --output artifacts/local/macos-1.8.12/vscode
+python3 scripts/package-native.py --target aarch64-apple-darwin --runtime-dir artifacts/local/macos-1.8.14/runtime --output artifacts/local/macos-1.8.14/native
+python3 scripts/package-extension.py --target aarch64-apple-darwin --native-dir artifacts/local/macos-1.8.14/native/publish --output artifacts/local/macos-1.8.14/vscode
 ```
 
-These scripts verify the complete native payload, executable permissions,
-platform/version identity, source and lock receipts, extension files and loader
-inventory. Development signing is ad hoc and permits the development helper to
-load its ad-hoc signed library. It establishes neither Developer ID trust nor
-notarization. A clean installed-editor run with the resulting platform VSIX is
-separate from native client or archive verification.
+These commands verify complete payloads, executable modes, source/lock/build
+receipts, actual embedded inference and the extension loader inventory. Ad-hoc
+development signatures do not establish Developer ID trust, notarization or
+Gatekeeper acceptance. Never copy the app-bound main out as an executable client.
+MCP clients use the saved HTTPS endpoint; optional terminal integration forwards
+to the approved main, and manager definitions target it directly in the bundle.
 
-## Signed distribution and CI installation gates
+Release signing works on a fresh copy of this tested runtime with
+`sign-native.py --runtime-dir <runtime>` and the exact approved identity. It
+signs the main and enclosing app, verifies Developer ID/team/hardened runtime/
+timestamp and the pinned public leaf, obtains Apple's explicit Accepted result,
+then staples and validates the app ticket. No modern helper/dylib/launcher copy
+is manufactured. Full legal/resource/runtime/VSIX inventories remain intact.
+See [native signing](native-signing.md) for explicit local keychain selection and
+CI's ephemeral keychain. Certificate/keychain preparation and publication require
+their own authorization; no credentials belong in logs or repository files.
 
-Current CI builds Linux, Windows and Apple Silicon on pull requests. Main builds
-Intel and may promote the other three identical-tree PR candidates; changed
-build inputs or failed producer authentication restore all four main builds.
-Manual and qualification runs cover all four hosts. Each Mac has native
-ownership/retrieval regressions, a fresh release pair, verified same-run payload
-transfer, model/direct-client and installed-process checks, cold-client MCP
-observations, native packaging and platform VSIX verification. Full Mac workspace
-and extended campaigns remain opt-in. See the [CI policy](ci-and-builds.md).
+Signed VSIX promotion replaces the native subtree/wrapper without recompiling
+host/UI/parser files. Loader inventory changes only the native-wrapper digest;
+reviewed product manifest fields and other module digests remain unchanged.
+Installed Code's top-level `__metadata` and JSON formatting are the only allowed
+manifest rewrite. Apple trust, payload integrity and actual Code acceptance are
+separate checks.
 
-GitHub release signing restores the authenticated tested native and compiled
-VSIX artifacts. On both Mac architectures it signs and notarizes a fresh copy
-using the protected `macos-signing` environment, verifies the exact Developer ID
-team, hardened runtime and timestamps, seals the outer app after its components,
-and verifies the exact standalone launcher bytes after copying them outside the
-app. [Native signing](native-signing.md) describes credential handling, strict
-verification and cleanup. No compiler or Docker is required on an end user's Mac.
+## CI, upgrades and installed-client acceptance
 
-Signed VSIX promotion replaces the native payload and wrapper without rebuilding
-the host or UI. The loader inventory must then change only the native-wrapper
-digest: every host/UI/parser digest and the reviewed package manifest remain
-unchanged. `verify_vsix` checks that complete inventory for unsigned candidates
-and promoted signed packages, so stale wrapper hashes fail the existing routine
-package/release gates. Marketplace publication reauthenticates and reuses those
-exact signed release packages rather than assembling a separate unsigned set.
+Routine CI builds Linux, Windows and Apple Silicon on PRs; main builds Intel and
+may promote authenticated identical-tree candidates. Each Mac's selected CLI
+regressions use shipping `local-inference` features, with a separate no-feature
+component compile. Static input provisioning, release-main build, managed HTTPS
+client/model/Stop checks and native/VSIX verification remain required. Full
+workspace and extended campaigns retain their documented opt-in scope. See
+[CI selection](ci-and-builds.md#checks-selected-by-the-change).
 
-VS Code adds its own top-level `__metadata` and may reformat installed
-`package.json`. The 1.8.12 loader compares all reviewed product fields while
-allowing only that platform metadata rewrite. Archive verification still checks
-the exact reviewed source bytes. This is separate from Apple trust, quarantine,
-notarization and actual installed-editor acceptance.
+Hosted signing imports the protected `macos-signing` identity into a temporary
+keychain, validates its exact public leaf and matching identity, preserves the
+original search list and removes temporary credentials after success or failure.
+Signed release/promotion verifies the complete tested native and compiled VSIX
+graph. A local keychain path is not proof of which certificate CI imported.
 
-The native-enabled `check-native-editor.cjs` journeys now implement the current
-**Search scope / Index library / Index sets** flow; the earlier removed-controls
-failure remains a dated historical checkpoint. They use a permanent exact
-`hidden.ts` source exclusion, real index-rename stale review, index-set deletion
-with retained-session fencing and exact saved applied-selector revalidation on
-reload. The first migrated actual `same` run failed when a one-queued-job native
-`SourceChangeBusy` refusal was classified as `unexpected_service_response`.
-The host correction preserves that typed pre-insert refusal and complete body,
-shows queued/running work and never replays the mutation. Its source regressions
-passed; the actual Mac GUI rerun with the corrected host is pending.
+Actual installed-client acceptance must cover normal CA validation, protected
+credentials, saved-port conflicts, exact native scope and complete canonical
+read results. Internal AIRK HTTPS success does not qualify Code's trust cache or
+an external client. Current Code credential command inputs require no environment
+reload; actual cold/running-host transport observations remain separate gates.
+Do not remove quarantine, disable TLS/signature checks or spoof HOME to pass them.
+An isolated Code profile is not a new OS user.
 
-The first exclusion review is preceded by a read-only observation of the exact
-index/backing, service and worker generation with a **90-second idle deadline**;
-this does not grant native mutation admission. Unix profile paths are short and
-canonical, Code runs privately and shell integration is off. Cleanup closes the
-fixture editors and requires a qualified exact-owned Stop before removing only
-new account uninstall receipts whose exact ownership was captured; unknown
-ownership or state is retained. The reviewed old-VSIX upgrade helper remains
-unexecuted and is separate from a prequalified native legacy fixture.
+Checkpointed upgrades preserve canonical state, original requests and source
+bytes. Old multi-process adapters disclose committed-store/verified-exit
+boundaries rather than pretending old runtimes implemented the new protocol.
+The explicit `check-runtime-upgrade.py --semantic-old` branch additionally
+requests real predecessor model/vector work and identity preservation; default
+coverage remains lexical. Mac native graceful exit does not provide Windows
+HANDLE/Linux pidfd census or global all-process proof. For automatic removal of
+authenticated obsolete process images, the installer retains a read-only Mach
+task-name right, obtains its native audit token and uses the kernel's atomic
+PID/idversion signal API. It never requests debugger/task-control rights or
+signals a numeric PID after a path check. This later-added API is discovered at
+runtime: macOS 13.3 remains the deployment minimum, but older systems without
+the API must release predecessors through authenticated graceful shutdown or
+Service Management. A stalled owner produces
+`macos_atomic_process_stop_unavailable`; it is not silently declared stopped.
+The first failed graceful attempt remains bounded diagnostic evidence in the
+upgrade journal even if a later exact-image hard stop succeeds. No unexecuted
+branch is recorded as a successful semantic or Mac upgrade.
 
-Current local notarization reached **Accepted**, with separately recorded native
-lifecycle/model checks. Those observations do not establish a passing current
-native-enabled GUI journey. Bootstrap/tab handoff and Restricted Mode retain
-their narrower scope. No CI workflow invokes the desktop GUI harness; this
-follow-up changes local fixture behavior, not hosted workflow selection.
+Use reviewed index setup and the current Search scope / Index library / Index
+sets flows. One Explorer per window, automatic compatible AIRK host handoff,
+dismissed notices, typed source-change busy refusals without mutation replay,
+Stop/uninstall ownership and exact-owned fixture cleanup remain installed tests.
+Mac login consent/registration, signed upgrade/rollback, offline extracted-ticket
+behavior, source preservation, semantic inference and Intel execution require
+their own receipts. See [installation](service-installation.md),
+[extension behavior](vscode-extension.md) and [current release gates](releases/release-1.8.14.md).
+
+## Native direct-manager acceptance
+
+On the selected standard user's Mac GUI session, current schema-2 acceptance is:
+
+```sh
+python scripts/check-macos-direct-runtime.py --runtime <signed-runtime> --approved-sha256 <independently-selected-inventory-digest> --evidence-parent <existing-private-directory> --allow-preview-registration
+```
+
+This explicitly authorizes the otherwise unused preview registration for the
+owned fixture. The script verifies the actual payload and native manager
+identity, exercises direct main execution and HTTPS sessions, and retains
+uncertain ownership evidence. Existing foreign registrations remain refused.
+The old `check-macos-login.py` fixture only accepts schema-1 1.4 payloads and
+copied-launcher behavior; it cannot qualify the current runtime. Record actual
+consent, signing/notarization, upgrade/rollback and installed-editor results
+separately when those paths are exercised.
 
 ## Prior failures and remaining evidence
 
-The earlier Intel cold-client failures remain identifiable as CI 41380069062,
-attempts 1 and 2. The later `c899eca6...` correction preserved setup-deadline
-expiry for late waiters instead of turning it into a generic connection failure.
-Subsequent main CI 41398425043 and 41551033290 passed both Mac runtime jobs,
-including their cold-client repetitions and native/VSIX packaging. Those runs
-qualify their own source and artifacts, not the current unpublished working tree.
-See the [dated 1.8.7 follow-up](releases/release-1.8.7.md#cold-setup-deadline-follow-up-november-2-utc).
-
-Earlier Neo Developer ID, copied-launcher and isolated native installation
-observations retain their source identities in the [implementation ledger](research/implementation-v190.md).
-A new local Neo pass does not establish Intel execution, fresh hosted CI,
-notarization, an oldest-OS result or publication unless those checks are actually
-run and recorded. Current evidence belongs in the 1.8.12 working-build record.
-
-The single-executable `target/release/airk --root ... --data-dir ... setup`
-examples formerly on this page described pre-1.4 operation. They are historical
-and do not describe the current service-owned runtime pair or explicit index
-setup. For current user actions, use [reviewed index setup](service-project-setup.md)
-and the [VS Code extension guide](vscode-extension.md).
+The dated predecessor guide retains CI 41380069062 attempts 1/2, later cold-client
+fixes and authenticated historical Mac successes. Their exact source/artifacts
+do not qualify the current 1.8.14 tree. Earlier Neo Developer ID/copied-launcher
+observations are historical schema-1 evidence. Current Windows installer, Mac
+Neo build/model/sign/notarize/installed-editor and independent Intel qualification
+must be recorded as actually run, failed, skipped or unavailable. No compiler
+or Docker is needed on an end user's Mac, but that packaging goal does not replace
+those release gates.

@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { strict as assert } from 'node:assert';
-import { test } from 'node:test';
+import { test, type TestContext } from 'node:test';
+import { createHash, X509Certificate } from 'node:crypto';
+import * as https from 'node:https';
+import { ca, cert, key } from './fixtures/httpTlsFixture';
+import { HttpConnectionInfo, HttpSelection, validateHttpConnection } from '../serviceHttp';
 import Module from 'node:module';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
@@ -10,6 +14,52 @@ import { LegacyRetirementSession } from '../runtimeLegacyRetirement';
 import { ServiceWorkspace } from '../serviceWorkspace';
 import { ServiceClient, ServiceError, record } from '../serviceClient';
 
+function framedDigest(domain:string,fields:Buffer[]):Buffer {
+    const hash=createHash('sha256').update(Buffer.from('AIRK-DIGEST-1\0'));
+    for(const field of [Buffer.from(domain),...fields]){const length=Buffer.alloc(8);length.writeBigUInt64BE(BigInt(field.length));hash.update(length).update(field);}
+    return hash.digest();
+}
+function savedRegistration(row:Record<string,unknown>){return {binding:String(row.binding),root:String(row.root),data_root:String(row.data_root),collection:String(row.collection)};}
+function importedSnapshot(row:Record<string,unknown>,revision=1){
+    const registration=savedRegistration(row),namespace='12'.repeat(16),host='56'.repeat(32);
+    const provenance={kind:'imported_legacy_snapshot',upgrade_id:'44'.repeat(16),plan_digest:'55'.repeat(32),legacy_binding:registration.binding,configuration_digest:'66'.repeat(32)};
+    const grantIdentity=framedDigest('airk/imported-legacy-grant/1',[Buffer.from(JSON.stringify([namespace,host,provenance]))]).subarray(0,16);grantIdentity[0]|=0x80;
+    const identity=createHash('sha256').update(registration.binding).digest('hex').slice(0,32);
+    return {status:'catalog_legacy_binding',observation:{schema:1,namespace,catalog_revision:revision,project:registration.binding,eligibility:{kind:'imported_snapshot',registration,
+        grant:{grant:{id:'grt_'+grantIdentity.toString('hex'),host,revision:1,revoked:false,memberships:[{membership:{project_id:'prj_'+identity,index_id:'idx_'+identity,revision:1,scope:[{source_root_id:'src_'+identity,kind:'subtree',path:''}]},source_revision:1,policy_epoch:0,policy_digest:null}]},provenance}}}};
+}
+/** Real ephemeral TLS/material; only native enrollment is represented by owned metadata. */
+async function standaloneHttp(context:TestContext,binding:{controlDir:string},registrations:readonly Record<string,unknown>[]){
+    await fs.mkdir(path.join(binding.controlDir,'http-1'),{recursive:true,mode:0o700});
+    // These standalone host adapters have no native user/profile config roots.
+    // Keep their provider checks independent of ambient real agent settings.
+    context.mock.method(require('../globalAgentInventory'),'inventoryGlobalAgentConfigs',async()=>({files:[],checked:[],blockers:[]}));
+    const server=https.createServer({cert,key},(_request,response)=>{response.writeHead(401);response.end();});
+    await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
+    context.after(async()=>{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));});
+    const url=`https://127.0.0.1:${(server.address() as {port:number}).port}/mcp`,connections:HttpConnectionInfo[]=[];
+    const info=async(selection:HttpSelection,id:string)=>{
+        const directory=path.join(binding.controlDir,'http-1');await fs.mkdir(directory,{recursive:true,mode:0o700});
+        const caFile=path.join(directory,'ca.pem'),credentialFile=path.join(directory,`credential-${id}.token`);
+        await fs.writeFile(caFile,ca,{mode:0o600});await fs.writeFile(credentialFile,`airk1.${id}.`+'a'.repeat(64),{mode:0o600});
+        const result=validateHttpConnection({schema:1,connection_id:id,endpoint:{schema:1,installation:'aa'.repeat(32),user:'fixture',namespace:selection.selection.namespace,generation:1,service_instance:'56'.repeat(16),executable_sha256:'bb'.repeat(32),url,ca_sha256:createHash('sha256').update(new X509Certificate(ca).raw).digest('hex'),certificate_sha256:'cc'.repeat(32),state:'ready',predecessor_digest:null},selection,ca_certificate_file:caFile,credential_file:credentialFile},selection,directory);
+        connections.push(result);return result;
+    };
+    const imported=(registration:ReturnType<typeof savedRegistration>,receipt:string)=>{
+        const saved=registrations.find(row=>row.binding===registration.binding);assert.ok(saved,'enrollment must use an existing native registration');assert.deepEqual(registration,savedRegistration(saved));assert.match(receipt,/^[a-f0-9]{64}$/);
+        const observation=importedSnapshot(saved).observation;return {namespace:observation.namespace,expected_catalog_revision:observation.catalog_revision,registration,grant:observation.eligibility.grant,configuration_receipt:receipt};
+    };
+    context.mock.method(RuntimeHost.prototype,'httpConnectionInfo',async(_binding:unknown,id:string)=>{const value=connections.find(row=>row.connection_id===id);assert.ok(value);return structuredClone(value);});
+    context.mock.method(RuntimeHost.prototype,'httpConnection',async(_binding:unknown,selection:HttpSelection,file:string,id:string)=>{assert.deepEqual(JSON.parse(await fs.readFile(file,'utf8')),selection);return info(selection,id);});
+    context.mock.method(RuntimeHost.prototype,'httpLegacyConnection',async(_binding:unknown,registration:ReturnType<typeof savedRegistration>,file:string,receipt:string,id:string)=>{assert.deepEqual(JSON.parse(await fs.readFile(file,'utf8')),registration);return info({kind:'imported_legacy',selection:imported(registration,receipt)},id);});
+    context.mock.method(RuntimeHost.prototype,'httpLegacyUnionConnection',async(_binding:unknown,rows:{registration:ReturnType<typeof savedRegistration>;configuration_receipt:string}[],file:string,id:string)=>{
+        assert.deepEqual(JSON.parse(await fs.readFile(file,'utf8')),{schema:1,registrations:rows,no_default_project:true});
+        assert.equal(new Set(rows.map(row=>row.registration.binding)).size,rows.length);
+        return info({kind:'imported_legacy_union',selection:{namespace:'12'.repeat(16),selections:rows.map(row=>imported(row.registration,row.configuration_receipt)),no_default_project:true}},id);
+    });
+    return {url,connections};
+}
+function httpContext(root:string){return {globalStorageUri:{fsPath:root},secrets:{store:async()=>{}},environmentVariableCollection:{get:()=>undefined,replace(){}}};}
 /** Canonical metadata transport through the real persistent ServiceClient adapter. */
 function metadataClient(registrations:()=>readonly Record<string,unknown>[],revision=1,beforePage?:()=>Promise<void>):ServiceClient{
     const namespace='12'.repeat(16);
@@ -18,7 +68,7 @@ function metadataClient(registrations:()=>readonly Record<string,unknown>[],revi
         if(name==='health')return {status:'health',observation:{instance:'56'.repeat(16),policy:{accepting:true}}};
         if(name==='events')return {status:'events',page:{namespace,events:[],retained_prefix_lost:false,next:null,tail:{namespace,project:null,after:0,through:null}}};
         if(name==='console'||name==='inactive_console'){await beforePage?.();return {status:'console',page:{revision,cached:true,observed_unix_ms:1,after:null,projects:name==='inactive_console'?[]:registrations().map(registration=>({project:{registration,paused:false,fencing_generation:1}}))}};}
-        if(name==='catalog_legacy_binding'){const project=String(record(record(method).catalog_legacy_binding).project),row=registrations().find(row=>row.binding===project);return {status:'catalog_legacy_binding',observation:{schema:1,namespace,catalog_revision:null,project,eligibility:row?{kind:'authority_zero',registration:{binding:row.binding,root:row.root,data_root:row.data_root,collection:row.collection}}:{kind:'unavailable'}}};}
+        if(name==='catalog_legacy_binding'){const project=String(record(record(method).catalog_legacy_binding).project),row=registrations().find(row=>row.binding===project);return row?importedSnapshot(row,revision):{status:'catalog_legacy_binding',observation:{schema:1,namespace,catalog_revision:null,project,eligibility:{kind:'unavailable'}}};}
         if(name==='workers'){const projects=record(record(method).workers).projects as string[];return {status:'workers',age_ms:0,observations:projects.map(project=>({project,identity:null,restarting:false,automatic_start_blocked:false}))};}
         if(name==='logs')return {status:'logs',page:{schema:1,records:[]}};
         if(name==='resources')return {status:'resources',observation:{}};
@@ -41,6 +91,7 @@ test('service activation advertises reviewed bindings without indexing and prese
         root:await fs.realpath(source),data_root:path.join(root,'data'),collection:'fixture'};
     await new ServiceWorkspace(storage,{reviewProject:async()=>registration,registerProject:async()=>registration},()=>true)
         .register(binding,source,registration.data_root,registration.collection,async()=>true);
+    const http=await standaloneHttp(context,binding,[registration]);
     let discoveries=0,ensures=0,stopped=false,provider:any;const outputShows:Array<[string,boolean]>=[];
     context.mock.method(RuntimeHost.prototype,'discoverForConnection',function(this:RuntimeHost){return this.discover();});
     context.mock.method(RuntimeHost.prototype,'discover',async()=>{discoveries++;return {bundle:{},installDir:root,installed:true,location:{},inspection:{
@@ -67,17 +118,17 @@ test('service activation advertises reviewed bindings without indexing and prese
         createTerminal:(options:any)=>{terminals.push(options);return {show(){},dispose(){}};}},
     commands:{registerCommand:(name:string,action:()=>Promise<unknown>)=>{commands.set(name,action);return disposable;},executeCommand:async()=>{}},
     lm:{registerMcpServerDefinitionProvider:(name:string,value:any)=>{if(name==='airk.collections')provider=value;return disposable;}},env:{},StatusBarAlignment:{Left:1},
-    EventEmitter:class {event=event;fire(){}dispose(){}},TreeItem:class {},Uri:{file:(fsPath:string)=>({fsPath})},
+    EventEmitter:class {event=event;fire(){}dispose(){}},TreeItem:class {},Uri:{parse:(value:string)=>({toString:()=>value,scheme:'https'}),file:(fsPath:string)=>({fsPath})},McpHttpServerDefinition:class {constructor(public label:string,public uri:any,public headers:any,public version:string){}},
     McpStdioServerDefinition:class {cwd:unknown;constructor(public label:string,public command:string,public args:string[],public env:unknown,public version:string){}}};
     const loader=Module as unknown as {_load:(...args:any[])=>any},original=loader._load;
     loader._load=function(request:string,...args:any[]){return request==='vscode'?stub:original.call(this,request,...args);};
-    let extension:any;const extensionContext:any={extensionPath:root,extensionUri:stub.Uri.file(root),extension:{packageJSON:{version:'1.4.0'}},globalState:storage,workspaceState:storage,subscriptions:[]};
+    let extension:any;const extensionContext:any={extensionPath:root,extensionUri:stub.Uri.file(root),extension:{packageJSON:{version:'1.4.0'}},...httpContext(root),globalState:storage,workspaceState:storage,subscriptions:[]};
     try{
         delete require.cache[require.resolve('../serviceExtension')];extension=require('../serviceExtension');
         const api=await extension.activate(extensionContext);await api.whenReady();assert.equal(ensures,0);assert.ok(discoveries>0);
         // Actual activation and hidden Explorer; metadata uses the real client adapter
         // with an in-memory native read transport, never an evidence process or indexer.
-        const controller=extensionContext.subscriptions[0],explorer=await controller.explorerController();
+        const controller=extensionContext.subscriptions.find((value:any)=>typeof value.explorerController==='function');assert.ok(controller);const explorer=await controller.explorerController();
         const consoleController=controller.console.controller;
         let refreshes=0;
         const modes:boolean[]=[];
@@ -113,11 +164,14 @@ test('service activation advertises reviewed bindings without indexing and prese
             }finally{actionMock.mock.restore();}
         }finally{refreshMock.mock.restore();}
         const definitions=await api.getServerDefinitions();assert.equal(definitions.length,1);assert.equal(ensures,0);
-        assert.equal(definitions[0].command,binding.launcher);assert.equal(definitions[0].env.AIRK_MCP_RESPONSE_MODE,'full');
-        assert.ok(definitions[0].args.includes(registration.root));assert.equal(definitions[0].cwd.fsPath,path.dirname(binding.launcher));
+        assert.equal(definitions[0].uri.toString(),http.url);assert.equal(definitions[0].headers['X-AIRK-Response-Mode'],'full');
+        assert.match(definitions[0].headers.Authorization,/^Bearer airk1\.[a-f0-9]{32}\.[a-f0-9]{64}$/);
+        const enrolled=http.connections.at(-1)!;assert.equal(enrolled.selection.kind,'imported_legacy');
+        if(enrolled.selection.kind==='imported_legacy')assert.deepEqual(enrolled.selection.selection.registration,savedRegistration(registration));
+        assert.equal(definitions[0].command,undefined,'HTTP MCP definitions do not start a per-client native process');
         stopped=true;await assert.rejects(provider.resolveMcpServerDefinition(definitions[0]),/service_explicitly_stopped/);assert.equal(ensures,1);
         stopped=false;await commands.get('airk.openTools')!();assert.equal(terminals.length,1);
-        assert.deepEqual(terminals[0].shellArgs.slice(-2),['tools','shell']);assert.equal(terminals[0].shellPath,binding.launcher);
+        assert.deepEqual(terminals[0].shellArgs.slice(-2),['tools','shell']);assert.equal(terminals[0].shellPath,binding.executable);
         await commands.get('airk.showExtensionOutput')!();assert.deepEqual(outputShows.at(-1),['AIRK',false]);
         const usageDrafts:unknown[]=[];
         context.mock.method(require('../serviceConsole').ServiceConsole.prototype,'configureProject',async(project:string,draft:unknown,valid:()=>boolean)=>{
@@ -181,6 +235,9 @@ test('service activation advertises reviewed bindings without indexing and prese
                 discover:async()=>observed(),binding:()=>active,
                 supersedePending:async()=>false,
                 retirePrevious:async()=>{calls.push('retire');},
+                retireLegacyCaches:async()=>{calls.push('remove-old-caches');return {scope:'context-only'};},
+                inspectLegacyLaunchers:async()=>({schema:1,active:next.runtimeSha256,launcher:null,universal_launcher:null}),
+                retireLegacyLaunchers:async()=>{calls.push('remove-old-launchers');return {schema:1,active:next.runtimeSha256,legacy_launchers_retired:true,launcher:null,universal_launcher:null,processes:{scope:'verified_launcher_images',remaining:0,observations:[]}};},
                 reviewTransition:async(current:any,action:string)=>{assert.equal(current,previous);assert.equal(action,'upgrade');calls.push('review');return {action};},
                 transition:async(current:any,_review:unknown,report:(message:string,stage:string)=>void)=>{
                     assert.equal(current,previous);calls.push('transition');
@@ -194,8 +251,9 @@ test('service activation advertises reviewed bindings without indexing and prese
             };
             const originalReport=scoped.reportUpgrade.bind(scoped);
             context.mock.method(scoped,'reportUpgrade',(...args:any[])=>{originalReport(...args);progress.push(scoped.explorerHost().runtimeUpgrade());});
+            context.mock.method(scoped,'migrateAgentConnections',async(current:any)=>{assert.equal(current,next);assert.ok(calls.includes('remove-old-launchers'));calls.push('verify-http-connections');});
             context.mock.method(scoped,'installCommandLine',async()=>{calls.push('install-cli');});
-            context.mock.method(scoped,'prepareWorkspaceProjects',async(current:any)=>{assert.equal(current,next);calls.push('prepare-existing');});
+            context.mock.method(scoped,'prepareWorkspaceProjects',async(current:any)=>{assert.equal(current,next);scoped.legacyCachePreparation={active:next.runtimeSha256,scope:'context-only'};calls.push('prepare-existing');});
             context.mock.method(scoped,'refresh',async()=>{calls.push('refresh');scoped.binding=connectionConfirmed?next:undefined;});
             context.mock.method(scoped,'openWorkbenchAfterSetup',async()=>{});
             context.mock.method(scoped,'reportLastUninstall',async()=>{});
@@ -210,12 +268,12 @@ test('service activation advertises reviewed bindings without indexing and prese
                 await scoped.automaticSetup(false,false);
                 assert.equal(JSON.stringify(registration),indexBefore,'upgrade preserves the active index registration');
                 assert.deepEqual(progress.map(value=>value.stage),failActivation
-                    ?['checking','draining','staging','activating','failed']
-                    :['checking','draining','staging','activating','reconnecting',outcome==='ready'?'ready':'failed']);
+                    ?['checking','staging','activating','failed']
+                    :['checking','staging','activating','reconnecting',outcome==='ready'?'ready':'failed']);
                 assert.ok(progress.every(value=>value.fromVersion==='1.8.8'&&value.toVersion==='1.8.9'));
                 assert.ok(progress.every(value=>value.startedAt===progress[0].startedAt&&value.updatedAt>=value.startedAt));
-                assert.deepEqual(calls,failActivation?['retire','review','transition']
-                    :['retire','review','transition','install-cli','ensure','prepare-existing','refresh']);
+                assert.deepEqual(calls,failActivation?['review','transition']
+                    :['review','transition','install-cli','ensure','prepare-existing','remove-old-caches','remove-old-launchers','retire','refresh']);
                 assert.equal(scoped.explorerHost().runtimeUpgrade().stage,outcome==='ready'?'ready':'failed');
                 if(failActivation)assert.match(scoped.explorerHost().runtimeUpgrade().message,/fixture_activation_failed/);
                 if(outcome==='connection_unconfirmed')assert.match(scoped.explorerHost().runtimeUpgrade().message,/connection could not be confirmed/);
@@ -225,12 +283,12 @@ test('service activation advertises reviewed bindings without indexing and prese
                     // The exact completed-install identity takes the existing
                     // automatic reconnect path and clears retained failed state.
                     active=next;connectionConfirmed=true;
-                    const key=`airk.installComplete.1.${next.installDir}`,prior=values.get(key);
+                    const key=`airk.installComplete.2.${next.installDir}`,prior=values.get(key);
                     values.set(key,`1.8.9:${next.runtimeSha256}`);
                     const beforeCalls=calls.length,beforeProgress=progress.length;
                     try{
                         await scoped.automaticSetup(false,false);
-                        assert.deepEqual(calls.slice(beforeCalls),['reconnect','prepare-existing','refresh']);
+                        assert.deepEqual(calls.slice(beforeCalls),['reconnect','prepare-existing','remove-old-caches','remove-old-launchers','refresh']);
                         assert.deepEqual(progress.slice(beforeProgress).map(value=>value.stage),['ready']);
                         assert.equal(scoped.explorerHost().runtimeUpgrade().stage,'ready');
                         assert.equal(JSON.stringify(registration),indexBefore);
@@ -253,6 +311,7 @@ test('selected Explorer project is available while other root waits without narr
     const binding={installDir:root,controlDir:path.join(root,'control'),executable:path.join(root,'selected'),launcher:path.join(root,'launcher'),runtimeSha256:'ab'.repeat(32),version:'1.8.0',lifecycle:'on-demand' as const,verificationBasis:'trusted_distribution'};
     const registrations=[{...binding,binding:'cd'.repeat(32),root:canonical,data_root:path.join(root,'data'),collection:'first'},
         {...binding,binding:'ef'.repeat(32),root:otherCanonical,data_root:path.join(root,'data'),collection:'second'}];
+    const http=await standaloneHttp(context,binding,registrations);
     const workspace=new ServiceWorkspace(storage,{reviewProject:async(_binding,opened)=>registrations[opened===source?0:1],registerProject:async(_binding,review)=>review},()=>true);
     for(const [index,opened] of [source,other].entries())await workspace.register(binding,opened,registrations[index].data_root,registrations[index].collection,async()=>true);
     context.mock.method(RuntimeHost.prototype,'discoverForConnection',function(this:RuntimeHost){return this.discover();});
@@ -280,20 +339,25 @@ test('selected Explorer project is available while other root waits without narr
         getConfiguration:()=>({get:(key:string,fallback?:unknown)=>key==='explorer.assistance.enabled'?false:fallback,inspect:(key:string)=>({globalValue:key==='cli.autoInstall'?false:undefined})}),onDidChangeWorkspaceFolders:event,onDidGrantWorkspaceTrust:event,onDidChangeConfiguration:event},
         window:{createOutputChannel:()=>({appendLine(){},dispose(){}}),createStatusBarItem:()=>({show(){},dispose(){}}),registerWebviewViewProvider:()=>disposable,createTreeView:(_name:string,options:any)=>{controller=options.treeDataProvider;return disposable;},onDidChangeActiveTextEditor:event,showWarningMessage:async()=>undefined},
         commands:{registerCommand:()=>disposable,executeCommand:async()=>{}},lm:{registerMcpServerDefinitionProvider:(name:string,provider:any)=>{if(name==='airk.collections')provider.onDidChangeMcpServerDefinitions(()=>{definitionsChanged++;});return disposable;}},
-        env:{},StatusBarAlignment:{Left:1},EventEmitter:Emitter,TreeItem:class{},Uri:{file:(fsPath:string)=>({fsPath})},McpStdioServerDefinition:class{cwd:unknown;constructor(public label:string,public command:string,public args:string[],public env:unknown,public version:string){}}};
+        env:{},StatusBarAlignment:{Left:1},EventEmitter:Emitter,TreeItem:class{},Uri:{parse:(value:string)=>({toString:()=>value,scheme:'https'}),file:(fsPath:string)=>({fsPath})},McpHttpServerDefinition:class{constructor(public label:string,public uri:any,public headers:any,public version:string){}},McpStdioServerDefinition:class{cwd:unknown;constructor(public label:string,public command:string,public args:string[],public env:unknown,public version:string){}}};
     const loader=Module as unknown as {_load:(...args:any[])=>any},original=loader._load;let extension:any;
     loader._load=function(request:string,...args:any[]){return request==='vscode'?stub:request==='./workbenchView'?{WorkbenchView:Workbench}:original.call(this,request,...args);};
     try{
         delete require.cache[require.resolve('../serviceExtension')];extension=require('../serviceExtension');
-        const api=await extension.activate({extensionPath:root,extension:{packageJSON:{version:binding.version}},globalState:storage,workspaceState:storage,subscriptions:[]} as any);
+        const api=await extension.activate({extensionPath:root,extension:{packageJSON:{version:binding.version}},...httpContext(root),globalState:storage,workspaceState:storage,subscriptions:[]} as any);
         await selected;assert.equal(host.specs()[0].service.project,registrations[0].binding);
         assert.equal(pageReads,0,'selected UI must publish without requesting unrelated console pages');
         assert.equal(definitionsChanged,0,'early UI publication cannot emit a partial MCP definition');
         let completed=false;const definitions=api.getServerDefinitions().then((value:any)=>{completed=true;return value;});
         await Promise.resolve();assert.equal(completed,false,'complete workspace scopes still await the other root');
         release();const result=await definitions;assert.equal(result.length,1);
-        assert.ok(result[0].args.includes('--no-default-project'));
-        assert.ok(result[0].args.includes('--additional-root'));assert.ok(result[0].args.includes(otherCanonical));
+        assert.equal(result[0].uri.toString(),http.url);assert.match(result[0].headers.Authorization,/^Bearer airk1\./);
+        const enrolled=http.connections.at(-1)!;assert.equal(enrolled.selection.kind,'imported_legacy_union');
+        if(enrolled.selection.kind==='imported_legacy_union'){
+            assert.equal(enrolled.selection.selection.no_default_project,true);
+            assert.deepEqual(enrolled.selection.selection.selections.map(member=>member.registration.root).sort(),[canonical,otherCanonical].sort());
+            assert.deepEqual(enrolled.selection.selection.selections.map(member=>member.registration.binding).sort(),registrations.map(row=>row.binding).sort());
+        }
         const configured=JSON.stringify(controller.specs),events=definitionsChanged;
         exactFailure=true;await controller.refresh();
         assert.deepEqual(host.specs().map((spec:any)=>spec.service.project).sort(),registrations.map(row=>row.binding).sort(),

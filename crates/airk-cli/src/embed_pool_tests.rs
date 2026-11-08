@@ -452,6 +452,10 @@ fn interleaved_incompatible_models_return_only_their_scoped_vectors() -> Result<
 #[test]
 fn bundled_provision_is_global_persistent_and_does_not_unload_compatible_inference() -> Result<()> {
     let root = tempfile::tempdir()?;
+    let _ownership = airk_store::service::ServiceLease::acquire(root.path())?;
+    // SAFETY: this exact private model fixture retains its actual service lease
+    // until the engine/session drops. No worker or external role is authorized.
+    let _scope = unsafe { airk_retrieval::native_inference::ServiceComputeScope::enter()? };
     let (first, _, _) = fixture(root.path(), "bundled-first", "unused fixture")?;
     let (second, _, _) = fixture(root.path(), "bundled-second", "unused fixture")?;
     // Test projects have no per-project model input directories.

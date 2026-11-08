@@ -15,21 +15,33 @@ RUN case "$(uname -m)" in \
     && echo "${nextest_sha}  /tmp/nextest.tar.gz" | sha256sum -c - \
     && tar -xzf /tmp/nextest.tar.gz -C /usr/local/cargo/bin cargo-nextest \
     && rm /tmp/nextest.tar.gz
+FROM toolchain AS static-inference
+COPY scripts/provision-static-onnx-runtime.py scripts/static-onnx-runtime-lock.json ./scripts/
+COPY scripts/provision-static-onnx-tools.py scripts/static-onnx-tools-lock.json ./scripts/
+COPY scripts/static-onnx-link-closure.py ./scripts/
+RUN python3 scripts/provision-static-onnx-runtime.py --destination /build/static-onnx-runtime --download --download-tools --build --parallel 2
+
 FROM toolchain AS source
+COPY --from=static-inference /build/static-onnx-runtime /build/static-onnx-runtime
+COPY Dockerfile .dockerignore ./
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY .cargo/config.toml ./.cargo/config.toml
 COPY crates ./crates
 COPY .config/nextest.toml ./.config/nextest.toml
 COPY scripts/ci-metrics.py scripts/ci-prune-target.py ./scripts/
 COPY scripts/license-notices.py scripts/provision-local-model.py ./scripts/
 COPY scripts/provision-onnx-runtime.py scripts/int8-policy.py scripts/macho-identity.py ./scripts/
+COPY scripts/provision-static-onnx-runtime.py scripts/static-onnx-runtime-lock.json ./scripts/
+COPY scripts/provision-static-onnx-tools.py scripts/static-onnx-tools-lock.json ./scripts/
+COPY scripts/static-onnx-link-closure.py ./scripts/
 COPY scripts/build-service-runtime.py scripts/build-service-container.py ./scripts/
 COPY scripts/container-build-user.sh ./scripts/
 COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md ./
 COPY third_party/models ./third_party/models
 RUN python3 scripts/provision-local-model.py --destination /build/model-assets --download
 ENV AIRK_BUNDLED_MODEL_DIR=/build/model-assets
-ENV AIRK_BUNDLED_RUNTIME_DIR=/build/runtime-assets
-RUN python3 scripts/provision-onnx-runtime.py --download
+ENV LIBONNXRUNTIME_NO_PKG_CONFIG=1 ORT_SKIP_DOWNLOAD=1 ORT_PREFER_DYNAMIC_LINK=0 \
+    ORT_LIB_LOCATION=/build/static-onnx-runtime/b ORT_LIB_PROFILE=Release
 COPY third_party/licenses ./third_party/licenses
 
 FROM source AS test
@@ -60,7 +72,7 @@ RUN --mount=type=cache,id=airk-cargo-registry,target=/usr/local/cargo/registry,u
     --mount=type=cache,id=airk-cargo-git,target=/usr/local/cargo/git,uid=10001,gid=10001,sharing=locked \
     --mount=type=cache,id=airk-linux-target,target=/build/target,uid=10001,gid=10001,sharing=locked \
     sh scripts/container-build-user.sh sh -ec '\
-    python3 scripts/ci-metrics.py run --name release-pair -- python3 scripts/build-service-container.py --destination /build/out \
+    python3 scripts/ci-metrics.py run --name release-runtime -- python3 scripts/build-service-container.py --destination /build/out \
     && cp artifacts/ci/timings.jsonl /build/ci-report/ \
     && python3 scripts/ci-prune-target.py'
 USER 10001:10001
@@ -81,3 +93,13 @@ ENV XDG_DATA_HOME=/data/share XDG_STATE_HOME=/data/state XDG_CONFIG_HOME=/data/c
 WORKDIR /workspaces
 ENTRYPOINT ["airk-container"]
 CMD []
+
+# An actual HTTP test client runs inside the loopback namespace. Python belongs
+# only to this explicitly selected test image, never the distributed runtime.
+FROM runtime AS smoke
+USER 0:0
+RUN apt-get update && apt-get install -y --no-install-recommends python3 \
+    && rm -rf /var/lib/apt/lists/*
+USER 10001:10001
+
+FROM runtime AS final

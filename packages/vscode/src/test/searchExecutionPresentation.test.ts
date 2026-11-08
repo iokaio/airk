@@ -114,3 +114,17 @@ test('unknown execution metadata remains visible without inventing modes or help
     assert.equal(searchExecutionLabel(undefined),undefined);
     assert.equal(searchExecutionLabel({version:1,requested_mode:'default',served_mode:'unrecognized',incomplete:true}),undefined);
 });
+
+
+test('unavailable legacy semantic readiness and compatibility survive full and selected exports',()=>{
+    const {turn,session,result}=sample({version:1,requested_mode:'lexical',served_mode:'lexical',incomplete:false});
+    result.semantic_readiness={state:'unavailable',failure:'legacy_saved_semantic_conversion_unavailable',future:{retained:true}};
+    result.legacy_adoption={semantic_available:false,future:{archive:'original-archive-observation'}};
+    const before=structuredClone(turn),details=discoveryDetails(turn.envelope!)[0];
+    assert.deepEqual(details.semanticReadiness,result.semantic_readiness);assert.deepEqual(details.legacyAdoption,result.legacy_adoption);
+    assert.deepEqual(JSON.parse(renderExport(session,'json')).turns[0].envelope,turn.envelope);
+    const subset=JSON.parse(renderExport(session,'json',turn.id,['record-0'])).turns[0].envelope;
+    assert.deepEqual(subset.source_coverage[0].semantic_readiness,result.semantic_readiness);assert.deepEqual(subset.source_coverage[0].legacy_adoption,result.legacy_adoption);
+    for(const selection of [undefined,new Set(['record-0'])]){const text=markdown(turn,selection);assert.match(text,/legacy_saved_semantic_conversion_unavailable/);assert.match(text,/original-archive-observation/);}
+    assert.deepEqual(turn,before);
+});

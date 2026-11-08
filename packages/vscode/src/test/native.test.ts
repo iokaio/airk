@@ -10,7 +10,7 @@ import { LaunchSpec, launchArgs, UNIFIED_TOOLS } from '../model';
 import { McpStdioSession } from '../mcpStdioSession';
 import { NativeServiceFixture,NativeTestFailure,nativeFailureDetail } from './nativeServiceFixture';
 import {capturedNativeText} from './nativeReadRetry';
-import { record } from '../serviceClient';
+import { record, ServiceError, RecordValue } from '../serviceClient';
 
 test('MCP connection probes preserve unknown readiness separately from confirmed unavailability',async context=>{
     let state='unknown',closed=0;
@@ -155,7 +155,45 @@ test('native writer queue isolates data directories and collections', async () =
     assert.equal(calls.at(-1), 'same', 'The same native writer must wait even through a path spelling alias');
 });
 
-test('native semantic work stays independent of helper stop and resumes through durable pause-aware jobs', {skip:!process.env.AIRK_TEST_BINARY,timeout:360000}, async()=>{
+// A successful mutation dispatch can precede the actual native compute join.
+// Never repeat Stop; only observe the same generation under one bounded wait.
+async function stopObservedProvider(rpc:(method:unknown,expected?:string)=>Promise<RecordValue>,worker:unknown):Promise<void>{
+    const deadline=Date.now()+30000;
+    const observed=async(method:unknown,expected?:string)=>{
+        const remaining=deadline-Date.now();assert.ok(remaining>0,'Native provider drain observation deadline exhausted');
+        let timer:ReturnType<typeof setTimeout>|undefined;
+        try{return await Promise.race([rpc(method,expected),new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(new Error('Native provider drain observation deadline exhausted')),remaining);})]);}
+        finally{if(timer!==undefined)clearTimeout(timer);}
+    };
+    try{const reply=await observed({stop_embedding:{worker,force:false}},'embedding_stopped');assert.equal(reply.worker,worker);}
+    catch(error){
+        if(!(error instanceof ServiceError)||error.code!=='embedding_stop_outcome_unknown'||error.nativeResponse?.status!=='failure'||error.nativeResponse.code!==error.code)throw error;
+    }
+    while(true){
+        let status:RecordValue;
+        try{status=await observed('embedding_status','embedding_status');}
+        catch(error){if(!(error instanceof ServiceError)||error.code!=='embedding_observation_busy')throw error;await new Promise(resolve=>setTimeout(resolve,25));continue;}
+        assert.equal(status.process_id,null,'Modern provider must not acquire a helper process');
+        if(status.worker===null){assert.equal(status.available,false);assert.ok(status.provider==null,'Stopped provider must have no native provider observation');return;}
+        assert.equal(status.worker,worker,'Provider generation changed during accepted stop');
+        await new Promise(resolve=>setTimeout(resolve,25));
+    }
+}
+
+test('accepted provider stop is sent once and uncertainty permits only exact native observations',async()=>{
+    const worker='ab'.repeat(16),calls:unknown[]=[];
+    await stopObservedProvider(async method=>{
+        calls.push(method);
+        if(typeof method!=='string')throw new ServiceError('embedding_stop_outcome_unknown',true,{status:'failure',code:'embedding_stop_outcome_unknown'});
+        return calls.length===2?{status:'embedding_status',worker,process_id:null,available:false,provider:{}}:{status:'embedding_status',worker:null,process_id:null,available:false,provider:null};
+    },worker);
+    assert.equal(calls.filter(method=>typeof method!=='string').length,1);
+    assert.deepEqual(calls.slice(1),['embedding_status','embedding_status']);
+    await assert.rejects(stopObservedProvider(async()=>{throw new ServiceError('embedding_stop_outcome_unknown');},worker));
+    await assert.rejects(stopObservedProvider(async method=>typeof method==='string'?{worker:'cd'.repeat(16),process_id:null}:{worker},worker),/generation changed/);
+});
+
+test('native semantic work stays independent of in-process provider stop and resumes through durable pause-aware jobs', {skip:!process.env.AIRK_TEST_BINARY,timeout:360000}, async()=>{
     const fixture=await NativeServiceFixture.create(process.env.AIRK_TEST_BINARY!);
     try{
         const spec=await fixture.register('semantic'),model=path.join(fixture.owner,'model');await fs.mkdir(model);
@@ -166,13 +204,18 @@ test('native semantic work stays independent of helper stop and resumes through 
         await fixture.configure(spec,{operation:'install_model',directory:model});
         const embedding=await fixture.ensureEmbedding();
         assert.equal(embedding.available,true);
-        await fixture.client!.rpc({stop_embedding:{worker:embedding.worker,force:false}},'embedding_stopped');
+        const beforeOwner=record((await fixture.client!.rpc('health','health')).observation),owner=beforeOwner.instance;
+        assert.match(String(owner),/^[a-f0-9]{32}$/,'native service owner identity is required');
+        await stopObservedProvider((method,expected)=>fixture.client!.rpc(method,expected),embedding.worker);
+        const afterStop=record((await fixture.client!.rpc('health','health')).observation);
+        for(const field of ['instance','executable_sha256','runtime_sha256'])assert.equal(afterStop[field],beforeOwner[field],'Provider stop must preserve service '+field);
         for(let file=0;file<65;file++)await fs.writeFile(path.join(spec.root,`file_${String(file).padStart(2,'0')}.txt`),'authenticate\n');
         await fixture.job(spec);
         const lexical=await fixture.tool(spec,'airk_search',{query:'authenticate',mode:'lexical'});
         assert.ok(Array.isArray(lexical.hits)&&lexical.hits.length>0);
         const paused=await fixture.client!.rpc({pause:{project:spec.service!.project,paused:true}});assert.ok(paused);
         await fixture.ensureEmbedding();
+        assert.equal(record((await fixture.client!.rpc('health','health')).observation).instance,owner,'provider stop/restart retains the same service owner');
         const accepted=await fixture.client!.submitJob(await fixture.client!.prepareJob(spec.service!.project,'vectors'));
         const queued=record(accepted.job);assert.equal(queued.state,'pending');
         await fixture.client!.rpc({pause:{project:spec.service!.project,paused:false}});
@@ -180,18 +223,20 @@ test('native semantic work stays independent of helper stop and resumes through 
         const ready=await fixture.ready(spec,65);assert.equal(ready.indexed_vectors,1);
         for(let file=0;file<65;file++)assert.equal(await fs.readFile(path.join(spec.root,`file_${String(file).padStart(2,'0')}.txt`),'utf8'),'authenticate\n');
         await assert.rejects(runJson(spec,'schedule',['run','--watch']));
-    }finally{await fixture.dispose();}
+    }catch(error){await fixture.retainFailure(error);throw error;}finally{await fixture.dispose();}
 });
 
 // Keep ordinary adapter tests on AIRK_TEST_BINARY; only this test needs an old helper.
-// AIRK_TEST_UPGRADE_BINARY remains supported for earlier qualification commands.
-const previousHelperBinary = process.env.AIRK_TEST_PREVIOUS_BINARY || process.env.AIRK_TEST_BINARY;
-const upgradedHelperBinary = process.env.AIRK_TEST_PREVIOUS_BINARY ? process.env.AIRK_TEST_BINARY : process.env.AIRK_TEST_UPGRADE_BINARY;
+// Historical standalone behavior requires an explicitly supplied predecessor.
+// AIRK_TEST_UPGRADE_BINARY can name the current approved runtime when AIRK_TEST_BINARY is absent.
+const previousHelperBinary = process.env.AIRK_TEST_PREVIOUS_BINARY;
+const upgradedHelperBinary = process.env.AIRK_TEST_BINARY || process.env.AIRK_TEST_UPGRADE_BINARY;
 const previousToolCount = process.env.AIRK_TEST_PREVIOUS_TOOL_COUNT === '14' ? 14
     : process.env.AIRK_TEST_PREVIOUS_TOOL_COUNT === '15' ? 15 : 16;
 test('cached old helper survives extension replacement and a changed trusted helper uses a new path',
     { skip: !previousHelperBinary || !upgradedHelperBinary }, async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'airk-helper-upgrade-'));
+    let modern:NativeServiceFixture|undefined;
     try {
         const oldBinary = path.resolve(previousHelperBinary!);
         const newBinary = path.resolve(upgradedHelperBinary!);
@@ -226,30 +271,33 @@ test('cached old helper survives extension replacement and a changed trusted hel
         assert.equal(createHash('sha256').update(await fs.readFile(oldCached)).digest('hex'), oldDigest);
         assert.equal((await runText(newCached, ['--version'])).trim(), `airk ${newVersion}`);
         assert.equal((await probeMcp(oldAgent, previousToolCount)).tools.length, previousToolCount, 'Existing agent command still works after replacement');
-        const newAgent = { ...oldAgent, command: newCached };
+        modern=await NativeServiceFixture.create(newBinary);
+        assert.equal(createHash('sha256').update(await fs.readFile(modern.binary)).digest('hex'),newDigest,'owned approved runtime uses the exact replacement main');
+        const newAgent=await modern.register('upgrade-fixture-modern',root);
         const readArguments = ['fixture.rs', '--start-line', '1', '--end-line', '1'];
         const oldRead = await runJson<{ hits: { text: string }[] }>(oldAgent, 'read', readArguments);
         assert.ok(oldRead.hits.some(hit => hit.text.includes('helper_upgrade_fixture')));
 
-        // 1.2 builds an independent current-index namespace and leaves the old
-        // helper's derived collection untouched.
-        await runJson(newAgent, 'index', ['--full']);
+        // The current service owns a separate reviewed index. Cached predecessor
+        // reads remain historical stdio; current MCP uses the enrolled HTTPS URL.
+        await modern.configure(newAgent,{operation:'vectors',enabled:false});
+        await modern.job(newAgent);await modern.publishedStatus(newAgent);
         assert.equal((await probeMcp(newAgent)).tools.length, UNIFIED_TOOLS.length);
-        await assert.rejects(runJson(newAgent, 'collections', ['history', 'set', '--json', JSON.stringify({
+        await assert.rejects(runJson({...newAgent,http:undefined,catalogSession:undefined}, 'collections', ['history', 'set', '--json', JSON.stringify({
             version: 1, enabled: true, recent: 3, hourly_hours: 24,
             max_packages: 12, max_bytes: 268435456, quota_basis_points: 1000
         })]), /unsupported/i);
-        const beforeOldAttempt = await runJson<{ read: { publication: { token: unknown } }; hits: { text: string }[] }>(newAgent, 'read', readArguments);
-        assert.ok(beforeOldAttempt.hits.some(hit => hit.text.includes('helper_upgrade_fixture')));
+        const beforeOldAttempt=await modern.tool(newAgent,'airk_read_file',{path:'fixture.rs',start_line:1,end_line:1});
+        assert.ok((beforeOldAttempt.hits as {text:string}[]).some(hit=>hit.text.includes('helper_upgrade_fixture')));
         const retainedOldRead = await runJson<{ hits: { text: string }[] }>(oldAgent, 'read', readArguments);
         assert.deepEqual(retainedOldRead.hits, oldRead.hits, 'The old namespace stays independently readable');
-        const afterOldAttempt = await runJson<{ read: { publication: { token: unknown } } }>(newAgent, 'read', readArguments);
-        assert.deepEqual(afterOldAttempt.read.publication.token, beforeOldAttempt.read.publication.token);
+        const afterOldAttempt=await modern.tool(newAgent,'airk_read_file',{path:'fixture.rs',start_line:1,end_line:1});
+        assert.deepEqual(record(record(afterOldAttempt.read).publication).token,record(record(beforeOldAttempt.read).publication).token);
         assert.equal(await fs.readFile(path.join(root, 'fixture.rs'), 'utf8'), 'fn helper_upgrade_fixture() {}\n');
         assert.equal(createHash('sha256').update(await fs.readFile(oldCached)).digest('hex'), oldDigest);
         assert.equal((await runText(oldCached, ['--version'])).trim(), `airk ${oldVersion}`,
             'The new namespace does not replace or disable the cached old executable');
-    } finally { await removeFixture(directory, 'airk-helper-upgrade-'); }
+    } finally { await modern?.dispose();await removeFixture(directory, 'airk-helper-upgrade-'); }
 });
 
 test('bundled helper rejects mismatched platforms and tampered bytes before execution', async () => {

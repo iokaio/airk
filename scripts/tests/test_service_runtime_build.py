@@ -13,12 +13,136 @@ from unittest import mock
 
 
 class ServiceRuntimeBuildTests(unittest.TestCase):
-    def test_current_mac_bundle_has_a_separate_launcher_and_legacy_layout_stays_exact(self):
+    def test_static_identity_binds_verified_link_closure_and_optional_supplement(self):
+        script = Path(__file__).resolve().parents[1] / "build-service-runtime.py"
+        specification = importlib.util.spec_from_file_location("closure_identity_builder", script)
+        builder = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(builder)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "b").mkdir()
+            (root / "build-receipt.json").write_text("original immutable producer fixture")
+            environment = {"ORT_LIB_LOCATION":str(root / "b"),"ORT_LIB_PROFILE":"Release"}
+            verified = {"receipt":{"original":True},"environment":environment,
+                        "static_link_closure":{"schema":1,"archives":[{"path":"b/Release/_deps/re2-build/re2.lib","sha256":"a"*64}]}}
+            provisioner = mock.Mock()
+            provisioner.verify_build.return_value = verified
+            with mock.patch.dict(builder.os.environ,environment), mock.patch.object(builder,"load_script",return_value=provisioner), mock.patch.object(builder.subprocess,"check_output",return_value="host: x86_64-pc-windows-msvc\n"):
+                original = builder.verify_static_inputs()
+                self.assertIsNone(original["static_link_supplement_sha256"])
+                verified["static_link_closure"]["archives"][0]["sha256"] = "b"*64
+                changed = builder.verify_static_inputs()
+                self.assertEqual(original["build_receipt_sha256"],changed["build_receipt_sha256"])
+                self.assertNotEqual(original["static_link_closure_sha256"],changed["static_link_closure_sha256"])
+                self.assertNotEqual(original["verified_inputs_sha256"],changed["verified_inputs_sha256"])
+                supplement = root / "link-supplement-receipt.json"
+                supplement.write_text("real additional archive fixture receipt")
+                verified["static_link_supplement"] = {"path":supplement.name,"sha256":builder.digest(supplement),"receipt":{"fresh_full_build":False}}
+                supplemented = builder.verify_static_inputs()
+                self.assertEqual(supplemented["static_link_supplement_sha256"],builder.digest(supplement))
+                self.assertLess(len(builder.json.dumps(supplemented)),1024)
+                supplement.write_text("changed receipt")
+                with self.assertRaisesRegex(RuntimeError,"supplemental.*identity differs"):
+                    builder.verify_static_inputs()
+                verified.pop("static_link_supplement")
+                recovery = root / "link-supplement-recovery.json"
+                recovery.write_text("exact observed archive; command exit remains unknown")
+                verified["static_link_recovery"] = {"path":recovery.name,"sha256":builder.digest(recovery),"receipt":{"command_exit_unknown":True,"command_pass":False}}
+                recovered = builder.verify_static_inputs()
+                self.assertEqual(recovered["static_link_recovery_sha256"],builder.digest(recovery))
+                self.assertNotEqual(recovered["verified_inputs_sha256"],changed["verified_inputs_sha256"])
+                self.assertFalse(verified["static_link_recovery"]["receipt"]["command_pass"])
+                recovery.write_text("changed recovery input")
+                with self.assertRaisesRegex(RuntimeError,"recovery receipt identity differs"):
+                    builder.verify_static_inputs()
+                verified.pop("static_link_recovery")
+                verified["static_link_closure"]["archives"][0]["path"] = "x"*65536
+                with self.assertRaisesRegex(RuntimeError,"identity exceeds"):
+                    builder.verify_static_inputs()
+
+    def test_model_smoke_requires_the_embedded_pinned_engine_and_complete_identity(self):
+        script = Path(__file__).resolve().parents[1] / "build-service-runtime.py"
+        specification = importlib.util.spec_from_file_location("model_probe_builder", script)
+        builder = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(builder)
+        report = {"schema": 1, "source": "embedded", "engine": "onnxruntime-cpu/1.22.1", "dimensions": 384,
+                  "repeat_equal": True, "profile": "minilm-l6-v2-u8-v1", "legacy_identity": "a" * 64, "pipeline_digest": "b" * 64}
+        for field, value in ((None, None), ("schema", True), ("source", "directory"), ("engine", "onnxruntime-cpu/1.22.0"),
+                             ("dimensions", 383), ("repeat_equal", 1), ("profile", "fp32"), ("pipeline_digest", "incomplete")):
+            candidate = {**report, **({field: value} if field else {})}
+            with self.subTest(field=field), mock.patch.object(builder.subprocess, "check_output", return_value=builder.json.dumps(candidate)) as probe:
+                if field:
+                    with self.assertRaisesRegex(RuntimeError, "smoke contract differs"):
+                        builder.verify_model_smoke(Path("owned"), "linux", "1.8.14")
+                else:
+                    self.assertEqual(builder.verify_model_smoke(Path("owned"), "linux", "1.8.14"), report)
+                self.assertEqual(probe.call_args.args[0], [str(Path("owned/airk")), "--verify-model-smoke"])
+
+    def test_static_import_inspection_fails_for_external_ort_and_requires_native_tool_success(self):
+        script = Path(__file__).resolve().parents[1] / "build-service-runtime.py"
+        specification = importlib.util.spec_from_file_location("static_import_builder", script)
+        builder = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(builder)
+        for os_name, imports in (("windows", "onnxruntime.dll"), ("macos", "@rpath/libonnxruntime.1.22.1.dylib"), ("linux", "NEEDED libonnxruntime.so.1")):
+            with self.subTest(os_name=os_name), mock.patch.object(builder, "windows_import_tool", return_value="dumpbin"), mock.patch.object(builder.subprocess, "run", return_value=mock.Mock(stdout=imports)):
+                with self.assertRaisesRegex(RuntimeError, "external ONNX Runtime"):
+                    builder.verify_static_imports(Path("owned image"), os_name)
+        with mock.patch.object(builder.subprocess, "run", side_effect=FileNotFoundError("inspection tool unavailable")):
+            with self.assertRaises(FileNotFoundError):
+                builder.verify_static_imports(Path("owned image"), "linux")
+        with mock.patch.object(builder.subprocess, "run", return_value=mock.Mock(stdout="NEEDED libc.so.6")) as inspect:
+            report = builder.verify_static_imports(Path("owned image"), "linux")
+            self.assertFalse(report["external_onnxruntime_imports"])
+            self.assertEqual(inspect.call_args.args[0], ["readelf", "-d", "owned image"])
+            self.assertTrue(inspect.call_args.kwargs["check"])
+
+    def test_modern_mac_bundle_contains_only_the_main_and_never_copies_it(self):
+        script = Path(__file__).resolve().parents[1] / "build-service-runtime.py"
+        specification = importlib.util.spec_from_file_location("single_image_builder", script)
+        builder = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(builder)
+        for version in ("1.8.14", "1.9.0"):
+            with self.subTest(version=version), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                (root / "airk").write_bytes(b"single compiled main")
+                builder.arrange_macos_bundle(root, version)
+                main = "AIRK.app/Contents/MacOS/airk"
+                self.assertEqual(builder.runtime_executables("macos", version), (main,))
+                self.assertEqual(builder.signing_names("macos", version), (main,))
+                self.assertEqual(builder.launcher_name("macos", version), main)
+                self.assertEqual(builder.inference_assets("macos", "aarch64", version), {})
+                self.assertEqual(list((root / "AIRK.app/Contents/MacOS").iterdir()), [root / main])
+                with mock.patch.object(builder.subprocess, "run") as signing:
+                    builder.sign_development_macos_bundle(root)
+                    self.assertEqual(signing.call_count, 2)
+                    self.assertEqual(signing.call_args_list[0].args[0][-1], str(root / "AIRK.app"))
+                    self.assertIn("--strict", signing.call_args_list[1].args[0])
+
+    def test_modern_runtime_metadata_is_strict_and_model_probe_uses_main(self):
+        script = Path(__file__).resolve().parents[1] / "build-service-runtime.py"
+        specification = importlib.util.spec_from_file_location("single_metadata_builder", script)
+        builder = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(builder)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "airk").write_bytes(b"single image")
+            with mock.patch.object(builder.subprocess, "check_output", return_value="airk 1.8.14\n"):
+                metadata = builder.write_pair_metadata(root, "1.8.14", "linux", "x86_64")
+            self.assertEqual(metadata["schema"], 2)
+            self.assertNotIn("embed_sha256", metadata)
+            files = {"airk": builder.digest(root / "airk")}
+            self.assertTrue(builder.runtime_metadata_matches(metadata, "1.8.14", "linux", "x86_64", files))
+            self.assertFalse(builder.runtime_metadata_matches({**metadata, "embed_sha256": "0" * 64}, "1.8.14", "linux", "x86_64", files))
+            with mock.patch.object(builder.subprocess, "check_output", return_value="{}") as probe, mock.patch.object(builder, "load_script"):
+                builder.verify_embedded_models(root, "linux", "1.8.14")
+                self.assertEqual(probe.call_args.args[0], [str(root / "airk"), "--verify-bundled-models"])
+
+    def test_historical_mac_bundle_has_a_separate_launcher_and_legacy_layout_stays_exact(self):
         script = Path(__file__).resolve().parents[1] / "build-service-runtime.py"
         specification = importlib.util.spec_from_file_location("standalone_image_builder", script)
         builder = importlib.util.module_from_spec(specification)
         specification.loader.exec_module(builder)
-        for version, expected in [("1.8.7", 3), ("1.8.8", 4), ("1.9.0", 4)]:
+        for version, expected in [("1.8.7", 3), ("1.8.8", 4), ("1.8.13", 4)]:
             with self.subTest(version=version), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 (root / "airk").write_bytes(b"compiled main before the app seal")
@@ -164,6 +288,24 @@ int main(int argc, char **argv) {
                     command = call.args[0]
                     self.assertEqual(command[command.index("--sign") + 1], "-")
                     self.assertEqual(command[command.index("--options") + 1], "0")
+    def test_mac_sealed_login_entry_changes_only_for_direct_service_versions(self):
+        script = Path(__file__).resolve().parents[1] / "build-service-runtime.py"
+        specification = importlib.util.spec_from_file_location("service_runtime_builder", script)
+        builder = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(builder)
+        for version, entry in (("1.8.13", "login-foreground"), ("1.8.14", "login-serve"), ("1.9.0", "login-serve")):
+            resources = builder.macos_bundle_files(version)
+            for channel in ("stable", "preview"):
+                name = f"AIRK.app/Contents/Library/LaunchAgents/io.iokaio.airk.service.{channel}.plist"
+                definition = plistlib.loads(resources[name])
+                self.assertEqual(definition, {
+                    "Label": f"io.iokaio.airk.service.{channel}",
+                    "BundleProgram": "Contents/MacOS/airk",
+                    "ProgramArguments": ["airk", "runtime", entry, "--channel", channel],
+                    "RunAtLoad": True, "KeepAlive": {"SuccessfulExit": False},
+                    "ThrottleInterval": 30, "ProcessType": "Background",
+                })
+
     def test_changed_source_discards_owned_staging_and_preserves_inputs(self):
         script = Path(__file__).resolve().parents[1] / "build-service-runtime.py"
         specification = importlib.util.spec_from_file_location("service_runtime_builder", script)
@@ -191,6 +333,7 @@ int main(int argc, char **argv) {
                   mock.patch.object(builder, "stage_inference_runtime"),
                   mock.patch.object(builder, "verify_embedded_models"),
                   mock.patch.object(builder, "check_lightweight_dependencies"),
+                  mock.patch.object(builder, "verify_static_inputs"),
                   mock.patch.object(builder, "cargo_binary", side_effect=artifact),
                   mock.patch.object(builder.platform, "system", return_value="Windows" if suffix else "Linux"),
                   mock.patch.object(builder.platform, "machine", return_value="x86_64"),

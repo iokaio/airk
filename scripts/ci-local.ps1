@@ -19,7 +19,9 @@ param(
     [ValidateSet('smoke', 'clients', 'install')][string[]]$Suites = @('smoke', 'clients', 'install'),
     [ValidateRange(0, 64)][int]$Load = 0,
     [switch]$SkipBuild,
-    [string]$RuntimeDir
+    [string]$RuntimeDir,
+    [switch]$DownloadInputs,
+    [string]$StaticOrtDirectory
 )
 $ErrorActionPreference = 'Stop'
 if (-not $IsWindows -or [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne 'X64') {
@@ -30,7 +32,7 @@ $airkRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $airkTarget = 'x86_64-pc-windows-msvc'
 $airkRuntime = Join-Path $airkRoot "artifacts/runtime/$airkTarget"
 if ($RuntimeDir) {
-    if (-not $SkipBuild) { throw '-RuntimeDir requires -SkipBuild; stage a fresh approved pair before selecting it.' }
+    if (-not $SkipBuild) { throw '-RuntimeDir requires -SkipBuild; stage a fresh approved runtime before selecting it.' }
     $airkRuntime = [IO.Path]::GetFullPath($RuntimeDir, $airkRoot)
 }
 $airkRun = (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
@@ -46,12 +48,24 @@ function Invoke-AirkTool {
 
 if (-not $SkipBuild) {
     # The build runs on all processors; only the measured checks are restricted.
-    if (Test-Path $airkRuntime) { Remove-Item -Recurse -Force $airkRuntime }
-    if ((Invoke-AirkTool python @('scripts/build-service-runtime.py', '--profile', 'release', '--destination', $airkRuntime) (Join-Path $airkOutput 'build.log')) -ne 0) {
-        throw "Release pair build failed; see $airkOutput/build.log"
+    $airkModelDirectory = if ($env:AIRK_BUNDLED_MODEL_DIR) { $env:AIRK_BUNDLED_MODEL_DIR } else { Join-Path $airkRoot 'target/local-vector-model' }
+    $airkModelArgs = @('scripts/provision-local-model.py', '--destination', $airkModelDirectory)
+    if ($DownloadInputs) { $airkModelArgs += '--download' }
+    if ((Invoke-AirkTool python $airkModelArgs (Join-Path $airkOutput 'model-inputs.log')) -ne 0) { throw 'Model input verification failed.' }
+    $airkStaticRoot = if ($StaticOrtDirectory) { [IO.Path]::GetFullPath($StaticOrtDirectory, $airkRoot) } else { Join-Path $airkRoot "target/static-onnx-runtime/$airkTarget" }
+    $airkStaticReport = Join-Path $airkOutput 'static-onnx-environment.json'
+    $airkStaticArgs = @('scripts/provision-static-onnx-runtime.py', '--target', $airkTarget, '--destination', $airkStaticRoot, '--environment-file', $airkStaticReport)
+    if ($DownloadInputs) { $airkStaticArgs += @('--download', '--download-tools', '--build', '--parallel', '2') }
+    else { $airkStaticArgs += '--verify' }
+    if ((Invoke-AirkTool python $airkStaticArgs (Join-Path $airkOutput 'static-onnx.log')) -ne 0) { throw 'Static ONNX Runtime input verification failed.' }
+    # Use a fresh owned output; never delete an existing runtime to start a build.
+    $airkRuntime = Join-Path $airkOutput 'runtime'
+
+    if ((Invoke-AirkTool python @('scripts/static-runtime-environment.py', '--environment-file', $airkStaticReport, '--', 'python', 'scripts/build-service-runtime.py', '--profile', 'release', '--destination', $airkRuntime) (Join-Path $airkOutput 'build.log')) -ne 0) {
+        throw "Release runtime build failed; see $airkOutput/build.log"
     }
 }
-if (-not (Test-Path (Join-Path $airkRuntime 'airk.exe'))) { throw "No release pair at $airkRuntime; omit -SkipBuild." }
+if (-not (Test-Path (Join-Path $airkRuntime 'airk.exe'))) { throw "No release runtime at $airkRuntime; omit -SkipBuild." }
 if ((Invoke-AirkTool npm @('run', 'compile', '--prefix', 'packages/vscode') (Join-Path $airkOutput 'compile.log')) -ne 0) {
     throw "Extension compile failed; see $airkOutput/compile.log"
 }

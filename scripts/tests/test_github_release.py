@@ -104,7 +104,7 @@ def pair_files(target, signed=False, version=PAIR_VERSION):
     """Fictional bytes in the real service layout; no native trust is asserted."""
     operating_system = "windows" if "windows" in target else "macos" if "apple" in target else "linux"
     builder = release.native.runtime_builder()
-    executables = builder.runtime_names(operating_system)
+    executables = builder.runtime_executables(operating_system, version)
     files = {name: ("signed " if signed else "tested ").encode() + name.encode() for name in executables}
     for name in builder.signing_names(operating_system, version):
         files.setdefault(name, ("signed " if signed else "tested ").encode() + name.encode())
@@ -112,15 +112,28 @@ def pair_files(target, signed=False, version=PAIR_VERSION):
                  "notices/all-MiniLM-L6-v2/LICENSE", "notices/all-MiniLM-L6-v2/provenance.json"):
         files[name] = b"fictional legal metadata"
     files["notices/inventory.json"] = b"[]"
+    if builder.single_image_version(version):
+        lock = json.loads((builder.ROOT / "scripts/static-onnx-runtime-lock.json").read_text())
+        prefix = "notices/static-onnx-runtime/"
+        originals = {"notices/" + name + "/LICENSE": b"fictional static dependency license" for name in ["onnxruntime", *[row["name"] for row in lock["dependencies"]]]}
+        originals["notices/onnxruntime/ThirdPartyNotices.txt"] = b"fictional static notices"
+        notices = {builder.packaged_static_notice_path(name): data for name, data in originals.items()}
+        files.update(notices)
+        files[prefix + "inventory.json"] = json.dumps({"schema": 2, "ort_version": "1.22.1", "target": target,
+            "build_receipt_sha256": "e" * 64,
+            "sources": {builder.packaged_static_notice_path(name): {"path": name, "bytes": len(data), "sha256": release.hashlib.sha256(data).hexdigest()} for name, data in originals.items()},
+            "lock_sha256": builder.digest(builder.ROOT / "scripts/static-onnx-runtime-lock.json"),
+            "files": {name: release.hashlib.sha256(data).hexdigest() for name, data in notices.items()}}).encode()
     if operating_system == "macos":
         files.update(builder.macos_bundle_files(version))
         files["AIRK.app/Contents/_CodeSignature/CodeResources"] = b"signed seal" if signed else b"ad-hoc seal"
         if signed:
             files["AIRK.app/Contents/CodeResources"] = b"fictional stapled ticket"
-    pair = {"schema": 1, "version": version, "os": operating_system,
+    pair = {"schema": 2 if builder.single_image_version(version) else 1, "version": version, "os": operating_system,
             "arch": "aarch64" if target.startswith("aarch64-") else "x86_64",
-            "airk_sha256": release.hashlib.sha256(files[executables[0]]).hexdigest(),
-            "embed_sha256": release.hashlib.sha256(files[executables[1]]).hexdigest()}
+            "airk_sha256": release.hashlib.sha256(files[executables[0]]).hexdigest()}
+    if not builder.single_image_version(version):
+        pair["embed_sha256"] = release.hashlib.sha256(files[executables[1]]).hexdigest()
     files["airk-runtime.json"] = json.dumps(pair).encode()
     files["airk-build.json"] = json.dumps({"schema": 1, "runtime": pair,
         "source": {"sha256": "d" * 64, "files": 4}}).encode()
@@ -131,6 +144,7 @@ def pair_files(target, signed=False, version=PAIR_VERSION):
 def seal_pair_files(files):
     pair = json.loads(files["airk-runtime.json"])
     install = {key: pair[key] for key in ("schema", "version", "os", "arch")}
+    install["schema"] = 1
     install["files"] = {name: release.hashlib.sha256(data).hexdigest()
                         for name, data in files.items() if name != "airk-install.json"}
     files["airk-install.json"] = json.dumps(install).encode()
@@ -224,6 +238,23 @@ def pair_vsix(directory, native_dir, files, native_receipt, executables):
 
 
 class ServicePairReleaseContracts(unittest.TestCase):
+    def test_modern_single_image_release_keeps_full_signed_bundle_without_launcher_copy(self):
+        for target in release.native.TARGETS:
+            signed = target in release.SIGNED_TARGETS
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                files, receipt, executables = pair_fixture(root / "candidate", target, signed, "1.8.14")
+                self.assertEqual(len(executables), 1)
+                self.assertNotIn("copied_launcher", receipt.get("signing") or {})
+                self.assertFalse(any("airk-embed" in name or "airk-launcher" in name or "libonnxruntime" in name for name in files))
+                observed, _ = release.verify_native(root / "candidate", target, COMMIT, "1.8.14", signed)
+                self.assertEqual(observed, receipt)
+                files["airk-embed"] = b"forbidden resurrected helper"
+                seal_pair_files(files)
+                save_pair_candidate(root / "candidate", files, receipt, executables)
+                with self.assertRaisesRegex(ValueError, "Unexpected native payload"):
+                    release.verify_native(root / "candidate", target, COMMIT, "1.8.14", signed)
+
     def test_all_platforms_verify_and_restore_the_real_service_layout(self):
         for target in release.native.TARGETS:
             with self.subTest(target=target), tempfile.TemporaryDirectory() as temporary:

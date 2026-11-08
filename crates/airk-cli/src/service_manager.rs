@@ -16,6 +16,9 @@ use std::{
 };
 
 const MAX_CONFIG: u64 = 128 * 1024;
+#[cfg(test)]
+#[path = "service_manager_direct_tests.rs"]
+mod direct_tests;
 #[cfg(target_os = "linux")]
 #[path = "service_manager_linux.rs"]
 mod linux;
@@ -63,6 +66,18 @@ struct Receipt {
     id: String,
     data_root: String,
     definition_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    runtime: Option<RuntimeExecution>,
+}
+
+/// Captured immutable image, retained across selection changes for safe removal.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct RuntimeExecution {
+    executable: PathBuf,
+    arguments: Vec<String>,
+    runtime_sha256: String,
+    executable_sha256: String,
 }
 
 pub struct ServiceManager {
@@ -294,11 +309,16 @@ impl ServiceManager {
         if self.platform == Platform::Macos && self.id.starts_with("airksvc-") {
             return macos::Manager::new(self).plan();
         }
-        let executable = self.executable.to_str().context("non-UTF-8 executable")?;
+        let (executable, arguments) = self.execution()?;
+        self.plan_for_execution(&executable, &arguments)
+    }
+
+    fn plan_for_execution(&self, executable: &Path, arguments: &[String]) -> Result<ServicePlan> {
+        let executable_text = executable.to_str().context("non-UTF-8 executable")?;
         let definition = match self.platform {
             Platform::Linux => {
-                let command = std::iter::once(executable)
-                    .chain(self.args.iter().map(String::as_str))
+                let command = std::iter::once(executable_text)
+                    .chain(arguments.iter().map(String::as_str))
                     .map(systemd_argument)
                     .collect::<Vec<_>>()
                     .join(" ");
@@ -308,8 +328,8 @@ impl ServiceManager {
                 )
             }
             Platform::Macos => {
-                let args = std::iter::once(executable)
-                    .chain(self.args.iter().map(String::as_str))
+                let args = std::iter::once(executable_text)
+                    .chain(arguments.iter().map(String::as_str))
                     .map(|arg| format!("<string>{}</string>", xml(arg)))
                     .collect::<String>();
                 format!(
@@ -318,8 +338,7 @@ impl ServiceManager {
                 )
             }
             Platform::Windows => {
-                let arguments = self
-                    .args
+                let arguments = arguments
                     .iter()
                     .map(|arg| windows_argument(arg))
                     .collect::<Vec<_>>()
@@ -329,7 +348,7 @@ impl ServiceManager {
                     xml(&self.id),
                     xml(&self.principal),
                     xml(&self.principal),
-                    xml(&windows_path(executable)),
+                    xml(&windows_path(executable_text)),
                     xml(&arguments)
                 )
             }
@@ -343,14 +362,122 @@ impl ServiceManager {
             platform: self.platform_name(),
             definition_path: self.definition.clone(),
             definition,
-            executable: self.executable.clone(),
-            arguments: self.args.clone(),
+            executable: executable.to_path_buf(),
+            arguments: arguments.to_vec(),
             scope: if self.id.starts_with("airksvc-") {
                 "current-user shared AIRK service; optional login registration"
             } else {
                 "current-user login session; one worker per canonical data root"
             },
         })
+    }
+
+    fn is_direct_runtime(&self) -> bool {
+        self.id.starts_with("airksvc-") && self.platform != Platform::Macos
+    }
+
+    fn runtime_arguments(&self) -> Vec<String> {
+        vec![
+            "runtime".into(),
+            "managed-serve".into(),
+            "--install-dir".into(),
+            self.data.clone(),
+        ]
+    }
+
+    fn validate_runtime_execution(&self, captured: &RuntimeExecution) -> Result<()> {
+        ensure!(
+            self.is_direct_runtime(),
+            "runtime receipt requires a shared native manager"
+        );
+        for digest in [&captured.runtime_sha256, &captured.executable_sha256] {
+            let _: airk_core::identity::Sha256Digest = digest.parse()?;
+        }
+        let expected = Path::new(&self.data)
+            .join("runtimes")
+            .join(&captured.runtime_sha256)
+            .join(crate::runtime_install::main_name());
+        ensure!(
+            captured.executable == expected && captured.arguments == self.runtime_arguments(),
+            "captured runtime manager command differs from its installation"
+        );
+        Ok(())
+    }
+
+    fn read_receipt(&self) -> Result<Option<Receipt>> {
+        let Some(bytes) = read_config(&self.receipt)? else {
+            return Ok(None);
+        };
+        let receipt: Receipt = serde_json::from_slice(&bytes).context("invalid service receipt")?;
+        ensure!(
+            receipt.id == self.id && receipt.data_root == self.data,
+            "service receipt belongs to another data root"
+        );
+        match (receipt.schema, &receipt.runtime) {
+            (1, None) => (),
+            (2, Some(captured)) => self.validate_runtime_execution(captured)?,
+            _ => bail!("unsupported service ownership receipt"),
+        }
+        Ok(Some(receipt))
+    }
+
+    fn selected_execution(&self) -> Result<RuntimeExecution> {
+        let (_, executable, approval) = crate::runtime_install::selected(Path::new(&self.data))?;
+        let captured = RuntimeExecution {
+            executable_sha256: crate::runtime_pair::digest_file(&executable)?,
+            executable,
+            arguments: self.runtime_arguments(),
+            runtime_sha256: approval.manifest_sha256,
+        };
+        self.validate_runtime_execution(&captured)?;
+        Ok(captured)
+    }
+
+    fn execution(&self) -> Result<(PathBuf, Vec<String>)> {
+        if !self.is_direct_runtime() {
+            return Ok((self.executable.clone(), self.args.clone()));
+        }
+        if let Some(receipt) = self.read_receipt()? {
+            return match receipt.runtime {
+                Some(captured) => Ok((captured.executable, captured.arguments)),
+                // A predecessor remains inspectable/removable with its exact
+                // old command. It is never regenerated as a new installation.
+                None => Ok((self.executable.clone(), self.args.clone())),
+            };
+        }
+        let selected = self.selected_execution()?;
+        Ok((selected.executable, selected.arguments))
+    }
+
+    /// The new same-image entry validates the retained manager, never a launcher.
+    pub(crate) fn require_direct_entry(
+        &self,
+        executable: &Path,
+        runtime_sha256: &str,
+    ) -> Result<()> {
+        ensure!(
+            self.is_direct_runtime() && self.check_owned()?,
+            "owned direct manager required"
+        );
+        let receipt = self
+            .read_receipt()?
+            .context("direct manager receipt missing")?;
+        let captured = receipt
+            .runtime
+            .context("legacy startup requires reviewed migration")?;
+        ensure!(
+            captured.runtime_sha256 == runtime_sha256
+                && captured.executable.canonicalize()? == executable.canonicalize()?
+                && crate::runtime_pair::digest_file(executable)? == captured.executable_sha256,
+            "direct service differs from captured approved image"
+        );
+        let status = self.status()?;
+        self.require_registered(&status)?;
+        ensure!(
+            status.running == Some(true),
+            "direct service manager is not running"
+        );
+        Ok(())
     }
 
     pub fn status(&self) -> Result<ServiceStatus> {
@@ -429,13 +556,24 @@ impl ServiceManager {
             status.manager_output
         );
         let plan = self.plan()?;
+        let runtime = if self.is_direct_runtime() {
+            let captured = self.selected_execution()?;
+            ensure!(
+                captured.executable == plan.executable && captured.arguments == plan.arguments,
+                "approved service image changed while preparing registration"
+            );
+            Some(captured)
+        } else {
+            None
+        };
         let definition = self.definition_bytes(&plan.definition);
         write_new(&self.definition, &definition)?;
         let receipt = Receipt {
-            schema: 1,
+            schema: if self.is_direct_runtime() { 2 } else { 1 },
             id: self.id.clone(),
             data_root: self.data.clone(),
             definition_sha256: format!("{:x}", Sha256::digest(&definition)),
+            runtime,
         };
         if let Err(error) = write_new(&self.receipt, &serde_json::to_vec(&receipt)?) {
             let _ = fs::remove_file(&self.definition);
@@ -680,13 +818,24 @@ impl ServiceManager {
         );
         if self.id.starts_with("airksvc-") {
             let root = Path::new(&self.data);
-            let launcher = crate::runtime_install::verified_launcher(root)?;
-            let (selected, _) = crate::runtime_install::startup_selected(root)?;
+            let (selected, approval) = crate::runtime_install::startup_selected(root)?;
+            let (planned, arguments) = self.execution()?;
             ensure!(
-                crate::runtime_pair::digest_file(&launcher)?
-                    == crate::runtime_pair::digest_file(&selected)?,
-                "login startup requires the selected runtime's launcher; stop owners and run repair-launcher before starting it"
+                arguments == self.runtime_arguments()
+                    && planned.canonicalize()? == selected.canonicalize()?,
+                "startup registration needs reviewed direct-image migration before starting"
             );
+            if let Some(receipt) = self.read_receipt()? {
+                let captured = receipt
+                    .runtime
+                    .context("legacy startup requires reviewed migration")?;
+                ensure!(
+                    captured.runtime_sha256 == approval.manifest_sha256
+                        && crate::runtime_pair::digest_file(&selected)?
+                            == captured.executable_sha256,
+                    "startup registration belongs to another approved runtime"
+                );
+            }
         }
         Ok(())
     }
@@ -741,21 +890,16 @@ impl ServiceManager {
     }
 
     fn check_owned(&self) -> Result<bool> {
-        let Some(bytes) = read_config(&self.receipt)? else {
+        let Some(receipt) = self.read_receipt()? else {
             return Ok(false);
         };
-        let receipt: Receipt = serde_json::from_slice(&bytes).context("invalid service receipt")?;
-        ensure!(
-            receipt.schema == 1 && receipt.id == self.id && receipt.data_root == self.data,
-            "service receipt belongs to another data root"
-        );
         let definition =
             read_config(&self.definition)?.context("installed service definition is missing")?;
         ensure!(
             format!("{:x}", Sha256::digest(&definition)) == receipt.definition_sha256,
             "service definition was modified; refusing to alter it"
         );
-        if self.legacy_review {
+        if self.legacy_review || self.is_direct_runtime() {
             ensure!(
                 definition == self.definition_bytes(&self.plan()?.definition),
                 "legacy definition differs from the reviewed executable, source, data or collection"
@@ -906,7 +1050,7 @@ fn parse_status(platform: Platform, output: &Output) -> (Option<bool>, Option<bo
 }
 
 #[cfg(windows)]
-fn windows_tool(name: &str) -> Result<PathBuf> {
+pub(crate) fn windows_tool(name: &str) -> Result<PathBuf> {
     use std::os::windows::ffi::OsStringExt;
     let mut buffer = vec![0u16; 32768];
     // SAFETY: the native API receives a writable, correctly bounded UTF-16 buffer.
@@ -928,7 +1072,7 @@ fn windows_tool(name: &str) -> Result<PathBuf> {
     Ok(path)
 }
 #[cfg(not(windows))]
-fn windows_tool(_name: &str) -> Result<PathBuf> {
+pub(crate) fn windows_tool(_name: &str) -> Result<PathBuf> {
     bail!("Windows lifecycle tools are unavailable on this host")
 }
 fn absolute_existing_ancestor(path: &Path) -> Result<PathBuf> {
@@ -1124,7 +1268,7 @@ fn execute(invocation: &Invocation) -> Result<Output> {
 pub(crate) fn execute_native_program(program: &Path, args: &[&str]) -> Result<bool> {
     Ok(execute(&Invocation::new(program, args))?.success)
 }
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(windows, target_os = "macos", test))]
 pub(crate) fn execute_native_observation(program: &Path, args: &[&str]) -> Result<(bool, String)> {
     let output = execute(&Invocation::new(program, args))?;
     Ok((output.success, output.text))
@@ -1287,6 +1431,7 @@ mod tests {
             id: manager.id.clone(),
             data_root: manager.data.clone(),
             definition_sha256: format!("{:x}", Sha256::digest(&definition)),
+            runtime: None,
         };
         write_new(&manager.receipt, &serde_json::to_vec(&receipt)?)?;
         struct Cleanup(ServiceManager);
@@ -1637,6 +1782,7 @@ mod tests {
             id: service.id.clone(),
             data_root: service.data.clone(),
             definition_sha256: format!("{:x}", Sha256::digest(&definition)),
+            runtime: None,
         };
         write_new(&service.receipt, &serde_json::to_vec(&receipt)?)?;
         assert!(service.legacy_definition_digest()?.is_some());
@@ -1719,6 +1865,7 @@ mod tests {
             id: service.id.clone(),
             data_root: service.data.clone(),
             definition_sha256: format!("{:x}", Sha256::digest(definition.as_bytes())),
+            runtime: None,
         };
         write_new(&service.receipt, &serde_json::to_vec(&receipt)?)?;
         assert!(service.check_owned()?);
@@ -1813,6 +1960,12 @@ mod tests {
         let root = tempfile::tempdir()?;
         let mut service = fixture(Platform::Windows, root.path());
         service.principal = crate::local_ipc::current_user()?;
+        service.executable = root
+            .path()
+            .join("runtimes")
+            .join("ab".repeat(32))
+            .join("airk.exe");
+        service.args = service.runtime_arguments();
         let expected = service.plan()?.definition;
         // Native schema normalization, with an in-memory task and fake folder.
         // No connection, registration, login trigger or process is created.
@@ -1871,6 +2024,12 @@ $airkFixtureScheduler | Add-Member ScriptMethod NewTask { param($flags) return $
             ),
             (
                 expected.replace("<Command>", "<Command>changed-"),
+                false,
+                3,
+                Some(false),
+            ),
+            (
+                expected.replace("managed-serve", "foreground"),
                 false,
                 3,
                 Some(false),

@@ -34,6 +34,14 @@ Actual tool results, imported coverage and outstanding baseline review are in th
 complement the npm advisory gate, license bundles and separately pinned native
 libraries/models; they do not certify those other supply chains.
 
+The unpublished 1.8.14 original-configuration migration adds the pinned TOML
+parser and five supporting locked packages. Their
+[7 November source review](../supply-chain/reviews/toml-config-2026-11-07.md)
+records limited exact-version exceptions, archive identities, configured
+features and parser bounds. These are explicit review decisions, not complete
+dependency audits. The fresh combined dependency gate passed after this review;
+existing dated advisory exceptions remain in effect.
+
 `cargo-vet` requires its generated `config.toml` and `audits.toml` headers and
 canonical formatting. The repository header check recognizes only those two
 exact generated-data paths; original source and other configuration files retain

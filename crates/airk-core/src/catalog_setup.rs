@@ -254,6 +254,10 @@ pub struct PreparationEvidence {
     pub storage_identity: Sha256Digest,
     pub source_configuration_digest: Sha256Digest,
     pub review: SetupPreparationReview,
+    /// Native saved-evidence intent. Ordinary setup cannot complete this
+    /// reservation or enqueue its background work.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub legacy_adoption: Option<Sha256Digest>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -277,6 +281,8 @@ pub struct SetupCompletion {
     pub prepared_digest: Sha256Digest,
     pub expected_catalog_revision: CatalogRevision,
     pub expected_source_revision: CatalogRevision,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub legacy_adoption: Option<crate::catalog_legacy_adoption::LegacyAdoptionPublication>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -293,6 +299,8 @@ pub struct IndexSetupReceipt {
     pub source_revision: CatalogRevision,
     pub preparation: Option<PreparationEvidence>,
     pub completion: Option<SetupCompletion>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub legacy_adoption: Option<Sha256Digest>,
 }
 impl IndexSetupReceipt {
     pub fn validate(&self) -> Result<()> {
@@ -337,12 +345,27 @@ impl IndexSetupReceipt {
         );
         if let Some(prepared) = &self.preparation {
             ensure!(
+                prepared.legacy_adoption == self.legacy_adoption,
+                "native preparation changed reserved adoption intent"
+            );
+            ensure!(
                 prepared.review.expected_source_revision == CatalogRevision::INITIAL
                     && prepared.review.expected_catalog_revision
                         >= self.request.expected_catalog_revision.next()?,
                 "invalid native preparation review revision"
             );
             if let Some(completion) = &self.completion {
+                ensure!(
+                    prepared.legacy_adoption
+                        == completion
+                            .legacy_adoption
+                            .as_ref()
+                            .map(|publication| publication.plan_digest),
+                    "setup completion changed adoption intent"
+                );
+                if let Some(publication) = &completion.legacy_adoption {
+                    publication.validate()?;
+                }
                 ensure!(
                     completion.expected_catalog_revision
                         >= prepared.review.expected_catalog_revision,
@@ -387,6 +410,7 @@ mod tests {
     fn complete_wire_receipt_round_trip_preserves_request_identity_and_source_ids() -> Result<()> {
         let request = request()?;
         let receipt = IndexSetupReceipt {
+            legacy_adoption: None,
             schema: 1,
             operation_id: catalog_operation_id(request.caller, &request.key)?,
             request_digest: request.identity()?,

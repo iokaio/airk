@@ -20,7 +20,9 @@ function workingDirectory(): string {
 const index = new HelpIndex(catalog);
 const project = option('--project-binding');
 if (project && !/^[a-f0-9]{64}$/.test(project)) { throw new Error('Invalid project binding'); }
-const tools = new AssistanceTools(index, windowChannel(option('--assistance-dir'), option('--project-root') ?? workingDirectory(), project));
+const session = option('--window-session');
+if (session && !/^[a-f0-9]{32}$/.test(session)) { throw new Error('Invalid window session'); }
+const tools = new AssistanceTools(index, windowChannel(option('--assistance-dir'), option('--project-root') ?? workingDirectory(), project, session));
 const server = new AssistanceServer(index, tools, catalog.extensionVersion);
 async function oneShot(): Promise<void> {
     let input = '';

@@ -42,8 +42,11 @@ pub(super) fn control_for_resume(root: &Path, intent: &Intent) -> Result<PathBuf
                 || (intent.prior.is_none() && selection(root)?.is_none())),
         "pending catalog requires its exact installer activation"
     );
-    let (main, _) = verify_runtime(root, &intent.candidate)?;
-    layout::catalog_control(root, runtime_pair::engine_identity_at(&main)?)
+    let (main, approval) = verify_runtime(root, &intent.candidate)?;
+    layout::catalog_control(
+        root,
+        runtime_pair::engine_identity_at_version(&main, &approval.version)?,
+    )
 }
 
 /// The production switch admits only the owned installer transition. Normal
@@ -83,7 +86,7 @@ pub(super) async fn resume_if_enabled(root: &Path, intent: &Intent) -> Result<bo
 async fn resume_restore(root: &Path, intent: &Intent) -> Result<bool> {
     intent.validate(root)?;
     let (main, approval) = verify_runtime(root, &intent.candidate)?;
-    let installer = runtime_pair::engine_identity_at(&main)?;
+    let installer = runtime_pair::engine_identity_at_version(&main, &approval.version)?;
     ensure!(
         intent.phase == Phase::Probe
             && selection(root)? == Some(intent.selected())
@@ -133,7 +136,10 @@ async fn activate(root: &Path, intent: &Intent) -> Result<bool> {
         )
     }) {
         ensure!(
-            resolved_control(root, runtime_pair::engine_identity_at(&main)?)? == intent.control,
+            resolved_control(
+                root,
+                runtime_pair::engine_identity_at_version(&main, &approval.version)?
+            )? == intent.control,
             "catalog activation state binding changed"
         );
     }
@@ -184,8 +190,8 @@ fn prepare_readiness(
         "catalog admission requires the committed exact candidate selection"
     );
     manager(root, intent)?.require_stopped_for_maintenance()?;
-    let (main, _) = verify_runtime(root, &intent.candidate)?;
-    let installer = runtime_pair::engine_identity_at(&main)?;
+    let (main, approval) = verify_runtime(root, &intent.candidate)?;
+    let installer = runtime_pair::engine_identity_at_version(&main, &approval.version)?;
     ensure!(
         resolved_control(root, installer)? == intent.control,
         "catalog control binding changed"
@@ -362,9 +368,10 @@ fn engine_identity(main: &Path) -> Result<Sha256Digest> {
     let pair: runtime_pair::RuntimePair =
         serde_json::from_slice(&read_bounded(&directory.join("airk-runtime.json"), 4096)?)?;
     ensure!(
-        pair.schema == 1
+        matches!(pair.schema, 1 | 2)
             && pair.airk_sha256 == runtime_pair::digest_file(main)?
-            && pair.embed_sha256 == runtime_pair::digest_file(&directory.join(helper_name()))?,
+            && (pair.is_single_executable()
+                || pair.embed_sha256 == runtime_pair::digest_file(&directory.join(helper_name()))?),
         "predecessor pair identity changed"
     );
     Ok(framed_digest(
@@ -548,6 +555,7 @@ mod tests {
             }),
             manager: false,
             phase: Phase::Probe,
+            checkpoint: None,
         };
         let begin = begin_if_enabled(&missing, &intent).await;
         if upgrade::PRODUCTION_ACTIVATION_ENABLED {
@@ -637,6 +645,7 @@ mod tests {
                 }),
                 manager: false,
                 phase: Phase::Probe,
+                checkpoint: None,
             };
             replace_json(&fixture.root, "selected.json", &intent.selected())?;
             intent.save(&fixture.root)?;
@@ -719,7 +728,7 @@ mod tests {
             assert!(registry.get(registration.binding)?.paused);
             assert!(registry.catalog_state()?.is_none());
             drop(registry);
-            complete_selected(&fixture.root, &intent)?;
+            complete_selected(&fixture.root, &intent).await?;
             Ok::<_, anyhow::Error>(())
         }
         .await;
@@ -768,8 +777,8 @@ mod copied_genesis_recovery_tests {
             let result = async {
                 let lock = install_lock(&root)?;
                 drop(quiescent(&root)?);
-                let (main, _) = verify_runtime(&root, &approved)?;
-                let installer = runtime_pair::engine_identity_at(&main)?;
+                let (main, approval) = verify_runtime(&root, &approved)?;
+                let installer = runtime_pair::engine_identity_at_version(&main, &approval.version)?;
                 launcher_repair::repair(&root, &approved)?;
                 crate::process_roles::install(&main)?;
                 let intent = Intent {
@@ -780,6 +789,7 @@ mod copied_genesis_recovery_tests {
                     prior: None,
                     manager: false,
                     phase: Phase::Probe,
+                    checkpoint: None,
                 };
                 intent.save(&root)?;
                 let service = ServiceLease::acquire(&control)?;

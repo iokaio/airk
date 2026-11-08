@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Run the documented contributor checks with explicit downloads and isolated logs.
 
-This wrapper installs no tools, modifies no global configuration and never starts
+This wrapper installs no system tools, modifies no global configuration and never starts
 the installed AIRK service. Offline is the default; --download permits the owning
 provisioners, Cargo and npm to fetch their pinned development inputs.
 """
@@ -122,6 +122,27 @@ def prerequisites(selected, locate=shutil.which, probe=None):
     return commands
 
 
+def static_environment_owner():
+    specification = importlib.util.spec_from_file_location("airk_bootstrap_static_environment", ROOT / "scripts/static-runtime-environment.py")
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
+
+
+def static_inputs(directory, download):
+    static = static_environment_owner()
+    owner = static.provisioner_owner()
+    target = owner.host_target()
+    location = os.environ.get("ORT_LIB_LOCATION")
+    if location:
+        destination = static.destination_from_location(location, owner)
+    else:
+        destination = ROOT / "target/static-onnx-runtime" / target
+    mode = ["--download", "--download-tools", "--build", "--parallel", "2"] if download else ["--verify"]
+    return [sys.executable, "scripts/provision-static-onnx-runtime.py", "--destination", str(destination),
+            "--target", target, "--environment-file", str(directory / "static-runtime-environment.json"), *mode]
+
+
 def steps(args, commands, directory):
     python = [sys.executable]
     cargo, npm = commands["cargo"], commands["npm"]
@@ -130,7 +151,7 @@ def steps(args, commands, directory):
     result = [("dependency-policy", python + ["scripts/dependency-audit.py", "--require-fresh" if args.download else "--offline",
                                                "--output", str(directory / "dependency-policy.json")]),
               ("model-inputs", python + ["scripts/provision-local-model.py", "--destination", str(model), *downloads]),
-              ("runtime-inputs", python + ["scripts/provision-onnx-runtime.py", *downloads]),
+              ("runtime-inputs", static_inputs(directory, args.download)),
               ("npm-inputs", npm + ["ci", "--ignore-scripts", "--no-audit", "--no-fund",
                                       "--prefix", "packages/vscode", *([] if args.download else ["--offline"])]),
               ("runtime-build", python + ["scripts/build-service-runtime.py", "--destination", str(directory / "runtime"), "--profile", "debug"])]
@@ -236,7 +257,7 @@ def main(argv=None):
                "limitations": ["Step durations are local observations, not controlled performance qualification.",
                                "Native build receipts retain exact source/payload identity; this commit alone does not describe dirty inputs.",
                                "No CPU model, RAM, storage type, affinity or physical I/O instrumentation is collected by this wrapper."],
-               "pins": selected, "download_permitted": args.download, "dependency_policy": None,
+               "pins": selected, "download_permitted": args.download, "dependency_policy": None, "static_runtime": None,
                "steps": [], "complete": False}
     try:
         for name, command in steps(args, commands, directory):
@@ -250,6 +271,15 @@ def main(argv=None):
                     return 2
             if result["exit_code"]:
                 return result["exit_code"]
+            if name == "runtime-inputs":
+                handoff = directory / "static-runtime-environment.json"
+                try:
+                    verified = static_environment_owner().load_environment_file(handoff)
+                except (OSError, ValueError) as error:
+                    receipt["static_runtime"] = {"status": "refused", "environment_file": str(handoff), "error": str(error)}
+                    return 2
+                environment.update(verified)
+                receipt["static_runtime"] = {"status": "verified", "environment_file": str(handoff), "environment": verified}
         receipt["complete"] = True
         return 0
     finally:

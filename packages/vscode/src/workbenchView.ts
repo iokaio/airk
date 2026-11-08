@@ -212,7 +212,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
         if(!spec){throw new Error('Choose a registered project.');}
         const identity=JSON.stringify(spec);
         if(this.client&&this.clientIdentity!==identity){this.stop();this.releaseClient();this.status=undefined;this.operations=undefined;}
-        if(!this.client){this.client=new EvidenceClient(spec,this.host.version,{workbench:true,clientName:'airk-workbench',timeout:35000});this.clientIdentity=identity;}
+        if(!this.client){this.client=new EvidenceClient(spec,this.host.version,{workbench:true,clientName:'airk-workbench',timeout:35000,resolveConnection:this.host.prepareEvidenceConnection?.bind(this.host)});this.clientIdentity=identity;}
         return this.client;
     }
     stop():void{this.refreshQueryClient?.cancel('workbench-refresh');this.refreshQueryClient?.dispose();this.refreshQueryClient=undefined;this.refreshFlows.clear();this.refreshRequeries.clear();this.generation++;if(this.busy){const turn=this.session?.turns.at(-1);if(turn&&!turn.envelope){turn.error='Request stopped. Already admitted native reads may still finish; late replies are discarded.';}}this.busy=false;this.client?.cancel('workbench');this.send();}
@@ -358,7 +358,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
             query:async(query,selection)=>{
                 if(!valid())throw new Error('refresh_selection_changed');
                 const tool=refreshQueryTool(query.tool);
-                const selected=validateCombinedCatalogSession(selection),client=new EvidenceClient({...spec,combinedSession:selected},this.host.version,{workbench:true,clientName:'airk-workbench',timeout:35000});
+                const selected=validateCombinedCatalogSession(selection),client=new EvidenceClient({...spec,combinedSession:selected},this.host.version,{workbench:true,clientName:'airk-workbench',timeout:35000,resolveConnection:this.host.prepareEvidenceConnection?.bind(this.host)});
                 this.refreshQueryClient=client;
                 try{const response=await client.call(tool,structuredClone(object(query.arguments)),{timeout:35000,supersede:'workbench-refresh'}),raw=response.rawPayload??response.payload;
                     if(!valid()){const error=new Error('refresh_late_reply_retained_as_historical_diagnostic') as Error&{nativeResponse?:Value};error.nativeResponse=raw;throw error;}

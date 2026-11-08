@@ -79,11 +79,44 @@ pub fn run() -> Result<()> {
     }));
     let closing = Arc::new(AtomicBool::new(false));
     let mut task: Option<std::thread::JoinHandle<Result<()>>> = None;
+    let mut checkpoint_sealed = false;
     loop {
         let Some(command) = service_ipc::read_frame(&mut std::io::stdin().lock())? else {
             break;
         };
         let reply = match command {
+            Command::Checkpoint {
+                identity: expected,
+                operation_id,
+                seal,
+            } if expected == identity => {
+                if task.as_ref().is_some_and(|task| task.is_finished()) {
+                    task.take()
+                        .expect("observed cleanup task")
+                        .join()
+                        .map_err(|_| anyhow::anyhow!("cleanup thread panicked"))??;
+                }
+                let status = status
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("cleanup status unavailable"))?;
+                let durable_boundary = task.is_none() && status.active.is_none();
+                if seal && durable_boundary {
+                    checkpoint_sealed = true;
+                }
+                Reply::Checkpoint {
+                    observation: protocol::WorkerCheckpointObservation {
+                        schema: 1,
+                        identity,
+                        operation_id,
+                        engine_sha256: init.engine,
+                        admission_closed: true,
+                        sealed: checkpoint_sealed,
+                        active_work_grant: status.active,
+                        active_queries: 0,
+                        durable_boundary,
+                    },
+                }
+            }
             Command::Renew { identity: expected } if expected == identity => {
                 airk_kernel::service_execution::renew(identity)?;
                 Reply::Renewed
@@ -91,7 +124,8 @@ pub fn run() -> Result<()> {
             Command::RunJob {
                 identity: expected,
                 allowance,
-            } if expected == identity
+            } if !checkpoint_sealed
+                && expected == identity
                 && allowance.identity == identity
                 && allowance.validate().is_ok() =>
             {

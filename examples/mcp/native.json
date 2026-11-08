@@ -1,8 +1,12 @@
 {
   "mcpServers": {
     "airk": {
-      "command": "airk",
-      "args": ["--root", "/absolute/path/to/project-a", "--data-dir", "/absolute/path/to/user/airk-state", "--collection", "project-a", "mcp"]
+      "type": "http",
+      "url": "REPLACE_WITH_NATIVE_CONNECTION_ENDPOINT_URL",
+      "headers": {
+        "Authorization": "Bearer ${AIRK_MCP_TOKEN_REPLACE_WITH_NATIVE_CONNECTION_ID}",
+        "X-AIRK-Response-Mode": "terse"
+      }
     }
   }
 }

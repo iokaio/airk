@@ -1524,3 +1524,200 @@ fn maximum_source_and_payload_fit_separate_existing_recovery_component_allowance
     assert!(payload <= maximum);
     assert!(source + payload > maximum);
 }
+
+#[test]
+fn legacy_adoption_saved_chunks_commit_replay_and_search_without_semantic_projection() -> Result<()>
+{
+    for source_available in [true, false] {
+        let mut fixture = Fixture::empty()?;
+        let lexical = lexical::LexicalManifest::empty()?;
+        fixture.head.lexical_commit = lexical.digest()?;
+        let writer = fixture.store.lock()?;
+        let mut current =
+            fixture
+                .store
+                .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+        current.initialize(fixture.head.clone())?;
+        current.install_initial_lexical_manifest(
+            &fixture.head.token()?,
+            &lexical.canonical_bytes()?,
+        )?;
+        drop(current);
+        drop(writer);
+        let source = b"historical cobalt evidence";
+        let artifact = airk_core::Artifact {
+            path: "old.txt".into(),
+            content_hash: format!("{:x}", Sha256::digest(source)),
+            bytes: source.len(),
+            chunks: vec![airk_core::Chunk {
+                start_line: 1,
+                end_line: 1,
+                text: std::str::from_utf8(source)?.into(),
+                location: airk_core::DocumentLocation::Lines { start: 1, end: 1 },
+            }],
+            language: "text".into(),
+            extraction_method: "utf8".into(),
+            parse_status: "original".into(),
+            facts: vec![],
+            retained: None,
+        };
+        let profile = airk_core::extraction::ExtractionProfile {
+            contract_version: 1,
+            adapter_id: "text".into(),
+            adapter_version: "native-facts/7".into(),
+            language: "text".into(),
+            dialect: None,
+            grammar_identity: None,
+            mapping_version: 1,
+            chunk_version: 1,
+            options: Default::default(),
+            configuration_inputs: Default::default(),
+        };
+        let origin = airk_core::legacy_adoption::LegacySavedOrigin {
+            schema: 1,
+            archive_inventory_sha256: Sha256Digest::from_bytes([82; 32]),
+            original_root_sha256: Sha256Digest::from_bytes([83; 32]),
+            original_path: artifact.path.clone(),
+            source_available,
+            profile_available: true,
+        };
+        let reservation = fixture.quota.reserve(&fixture.scope.collection, 1 << 20)?;
+        let writer = fixture.store.lock()?;
+        let compact = fixture.store.retain_legacy_artifact_owned(
+            &writer,
+            &artifact,
+            source_available.then_some(source.as_slice()),
+            Some(&profile),
+            origin.clone(),
+            &reservation,
+        )?;
+        drop(writer);
+        assert!(
+            fixture.store.load_retrieval_artifact(&compact).is_err(),
+            "ordinary semantic reader must still refuse historical payloads"
+        );
+        let input = CapturedInput::new(compact.clone());
+        let mut file = inventory(&fixture, &input, 1)?;
+        file.state.profile_id = origin.identity()?;
+        file.raw_source = source_available;
+        let token = publish_legacy_with_fts(&fixture, &input, &file).with_context(|| {
+            format!("publish/replay saved legacy evidence (source_available={source_available})")
+        })?;
+        let read = fixture.store.current_read(&fixture.scope)?;
+        assert_eq!(read.head().token()?, token);
+        read.verify_lexical()?;
+        let query = airk_core::SearchQuery {
+            text: "cobalt".into(),
+            path_prefix: None,
+            limit: 10,
+            max_bytes: 4096,
+        };
+        let hits = read.lexical_search(&query)?;
+        assert_eq!(hits.values.len(), 1);
+        assert_eq!(hits.values[0].citation.path, "old.txt");
+        assert_eq!(hits.values[0].citation.content_hash, artifact.content_hash);
+        let counts = read
+            .collection_state()?
+            .context("collection missing")?
+            .counts;
+        assert_eq!(counts.vector_unavailable, 1);
+        assert_eq!(counts.vector_eligible, 0);
+        assert_eq!(
+            serde_json::to_value(fixture.store.load_legacy_saved_artifact(&compact)?)?,
+            serde_json::to_value(&artifact)?
+        );
+        drop(read);
+        let read = fixture.store.current_read(&fixture.scope)?;
+        assert_eq!(read.lexical_search(&query)?.values.len(), 1);
+    }
+    Ok(())
+}
+
+/// Exercise the production FTS preparation and replay entry, not the map-only
+/// component fixture used by the native projection tests above.
+fn publish_legacy_with_fts(
+    fixture: &Fixture,
+    input: &CapturedInput,
+    file: &InventoryFile,
+) -> Result<CurrentToken> {
+    let read = fixture.store.current_read(&fixture.scope)?;
+    let base = read.head().clone();
+    let reservation = fixture.quota.reserve(&fixture.scope.collection, 64 << 20)?;
+    let mut reference = fixture
+        .store
+        .retain_current_metadata_encoded(
+            &input.artifact.path,
+            file,
+            &reservation,
+            airk_core::compression::CompressionMode::Off,
+        )
+        .context("retain legacy scalar metadata")?;
+    reference.native_facts_omission = Some(metadata::ProjectionOmission::LegacySavedEvidence);
+    let sealed = graph::GraphOverlay::new(
+        &reservation,
+        read,
+        graph::GraphOverlayLimits {
+            maximum_bytes: 1 << 20,
+            ..Default::default()
+        },
+    )?
+    .seal()?;
+    let configuration = collection::CollectionConfiguration {
+        retained_profile: None,
+        source_policy_digest: None,
+        roots: BTreeMap::from([("workspace".into(), fixture.scope.root.clone())]),
+        extractor_version: "historical-fts-fixture".into(),
+        extraction_policy_digest: Sha256Digest::from_bytes([55; 32]),
+        index_detail: Default::default(),
+        vector_selection: Default::default(),
+        model: None,
+    };
+    let mut target = base.clone();
+    target.sequence += 1;
+    target.graph_head = sealed.descriptor().target.clone();
+    let lock = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&lock, &fixture.quota, &fixture.scope, CAPACITY)?;
+    let changes = [ArtifactChange::Upsert(Box::new(input.clone()))];
+    let (pending, work) = current
+        .prepare_artifacts_with_fts(
+            &base.token()?,
+            target,
+            &sealed,
+            super::super::journal::ArtifactVectorChanges {
+                artifacts: &changes,
+                vector_inputs: None,
+                occurrences: &[],
+                configuration: Some(&configuration),
+            },
+            None,
+            &[reference],
+            &[],
+        )
+        .context("prepare actual FTS journal")?;
+    assert_eq!(work.changed_artifacts, 1);
+    assert_eq!(work.added_documents, 1);
+    assert_ne!(pending.target.lexical_commit, base.lexical_commit);
+    // Persist Prepared, release all writer handles, and replay the actual
+    // captured lexical updates through the normal atomic commit path.
+    drop(current);
+    drop(lock);
+    let lock = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&lock, &fixture.quota, &fixture.scope, CAPACITY)?;
+    let replay = current
+        .pending()?
+        .context("saved FTS journal disappeared")?;
+    assert_eq!(replay.id, pending.id);
+    current
+        .mark_applying(&replay)
+        .context("mark saved FTS replay applying")?;
+    Ok(current
+        .commit(&replay, replay.target.lexical_commit)
+        .context("commit saved FTS replay")?
+        .token)
+}

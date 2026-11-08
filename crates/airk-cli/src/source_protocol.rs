@@ -21,6 +21,11 @@ pub struct Init {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    Checkpoint {
+        service: Incarnation,
+        worker: Incarnation,
+        operation_id: Incarnation,
+    },
     Activate {
         service: Incarnation,
         worker: Incarnation,
@@ -78,6 +83,12 @@ pub enum Command {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "reply", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Reply {
+    Checkpoint {
+        service: Incarnation,
+        worker: Incarnation,
+        operation_id: Incarnation,
+        targets: Vec<CheckpointTarget>,
+    },
     Ready {
         service: Incarnation,
         worker: Incarnation,
@@ -126,6 +137,14 @@ pub enum Reply {
         projects: u16,
         pending_events: u16,
     },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CheckpointTarget {
+    pub project: ProjectBinding,
+    pub configuration_epoch: u64,
+    pub sequence: u64,
 }
 
 pub fn valid_pulse(directories: u16, projects: u16, pending_events: u16) -> bool {

@@ -28,6 +28,7 @@ fn grant() -> ConnectionGrant {
 }
 fn query(native: Option<NativeRead>, tool: &str) -> protocol::Query {
     protocol::Query {
+        read_attempt: None,
         frontend: None,
         tool: tool.into(),
         arguments: Default::default(),
@@ -187,6 +188,7 @@ async fn administrative_native_reads_retain_actual_complete_handler_pages() -> R
             // The actual worker's normal QueryResult path is unchanged; this frame
             // retains the complete canonical NativeRead value, not a report subset.
             let reply = protocol::QueryResult {
+                read_admission: None,
                 result: expected.clone(),
                 status_receipt: tools.status_receipt(),
                 rebind: false,

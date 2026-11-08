@@ -20,6 +20,7 @@ use std::{
 
 #[path = "runtime_activation.rs"]
 mod activation;
+pub(crate) use activation::verify_admission_release;
 #[path = "runtime_setup.rs"]
 mod setup;
 pub(crate) use setup::{SetupAdmission, SetupCancellation, installed_control_cooperative};
@@ -36,6 +37,18 @@ mod managed;
 #[path = "runtime_upgrade_stop.rs"]
 mod upgrade_stop;
 pub use managed::ManagedLifecycle;
+#[path = "runtime_http_rotation.rs"]
+mod http_rotation;
+#[path = "runtime_issuer_lifecycle.rs"]
+mod issuer_lifecycle;
+#[path = "runtime_legacy_cache_retirement.rs"]
+mod legacy_caches;
+#[path = "runtime_legacy_index_adoption.rs"]
+mod legacy_index_adoption;
+#[path = "runtime_legacy_launchers.rs"]
+mod legacy_launchers;
+#[path = "runtime_legacy_maintenance.rs"]
+mod legacy_maintenance;
 #[path = "runtime_legacy_retirement.rs"]
 mod legacy_retirement;
 #[path = "runtime_lifecycle.rs"]
@@ -67,6 +80,105 @@ pub enum VerificationBasis {
 
 #[derive(Subcommand)]
 pub enum RuntimeCommand {
+    /// Explicitly stage, commit or finalize an authenticated local issuer rotation.
+    HttpIssuerRotation {
+        #[arg(long)]
+        install_dir: PathBuf,
+        #[arg(long, value_enum)]
+        action: HttpIssuerRotationAction,
+        #[arg(long)]
+        operation_id: Option<airk_core::identity::Incarnation>,
+        #[arg(long)]
+        expected_ca_sha256: Option<airk_core::identity::Sha256Digest>,
+        #[arg(long)]
+        expected_descriptor_sha256: Option<airk_core::identity::Sha256Digest>,
+        #[arg(long)]
+        expected_receipt_sha256: Option<airk_core::identity::Sha256Digest>,
+        #[arg(long, default_value_t = 86400, value_parser = clap::value_parser!(u32).range(60..=86400))]
+        overlap_seconds: u32,
+    },
+    /// Read the owner-authenticated local HTTPS endpoint without enrolling a client.
+    HttpEndpoint {
+        #[arg(long)]
+        install_dir: PathBuf,
+    },
+    /// Read an existing connection's verified references without issuing credentials.
+    HttpConnectionInfo {
+        #[arg(long)]
+        install_dir: PathBuf,
+        #[arg(long)]
+        connection_id: airk_core::identity::Incarnation,
+    },
+    /// Read-only typed connection ownership lookup; revoked or unavailable IDs never become foreign.
+    LookupHttpConnection {
+        #[arg(long)]
+        install_dir: PathBuf,
+        #[arg(long)]
+        expected_active: String,
+        #[arg(long)]
+        connection_id: airk_core::identity::Incarnation,
+    },
+    /// Inspect or explicitly manage this native issuer in the current user's trust store.
+    HttpTrust {
+        #[arg(long)]
+        install_dir: PathBuf,
+        #[arg(long, value_enum)]
+        action: HttpTrustAction,
+        #[arg(long,required_if_eq_any=[("action","install"),("action","remove")])]
+        expected_ca_sha256: Option<airk_core::identity::Sha256Digest>,
+    },
+    /// Enroll a saved native selection and return protected credential references.
+    HttpConnection {
+        #[arg(long)]
+        install_dir: PathBuf,
+        #[arg(long)]
+        selection_file: PathBuf,
+        #[arg(long)]
+        connection_id: airk_core::identity::Incarnation,
+        #[arg(long)]
+        client: String,
+        #[arg(long)]
+        explorer_descriptor: Option<PathBuf>,
+    },
+    /// Revoke one local HTTPS connection while preserving its original receipt.
+    HttpRevoke {
+        #[arg(long)]
+        install_dir: PathBuf,
+        #[arg(long)]
+        connection_id: airk_core::identity::Incarnation,
+    },
+
+    /// Migrate exact owned predecessor configuration using existing imported authority.
+    HttpLegacyConnection {
+        #[arg(long)]
+        install_dir: PathBuf,
+        #[arg(long)]
+        registration_file: PathBuf,
+        #[arg(long)]
+        configuration_receipt: airk_core::identity::Sha256Digest,
+        /// Exact native original declaration identity when several saved indexes share a configuration file and logical registration.
+        #[arg(long)]
+        origin_sha256: Option<airk_core::identity::Sha256Digest>,
+        #[arg(long)]
+        connection_id: airk_core::identity::Incarnation,
+        #[arg(long)]
+        client: String,
+        #[arg(long)]
+        explorer_descriptor: Option<PathBuf>,
+    },
+    /// Migrate an original no-default multi-project declaration without widening authority.
+    HttpLegacyUnionConnection {
+        #[arg(long)]
+        install_dir: PathBuf,
+        #[arg(long)]
+        registrations_file: PathBuf,
+        #[arg(long)]
+        connection_id: airk_core::identity::Incarnation,
+        #[arg(long)]
+        client: String,
+        #[arg(long)]
+        explorer_descriptor: Option<PathBuf>,
+    },
     /// Read one exact saved source scope, without electing a service or opening an index.
     SourceScope {
         #[arg(long)]
@@ -108,7 +220,17 @@ pub enum RuntimeCommand {
         install_dir: PathBuf,
     },
     #[command(hide = true)]
+    ManagedServe {
+        #[arg(long)]
+        install_dir: PathBuf,
+    },
+    #[command(hide = true)]
     LoginForeground {
+        #[arg(long, value_enum)]
+        channel: RuntimeChannel,
+    },
+    #[command(hide = true)]
+    LoginServe {
         #[arg(long, value_enum)]
         channel: RuntimeChannel,
     },
@@ -264,12 +386,96 @@ pub enum RuntimeCommand {
         #[arg(long)]
         runtime_sha256: String,
     },
-    /// Retire the previous rollback payload after a successful replacement; preserve the active runtime and project data.
+    /// After configuration migration, remove all approved superseded payloads for HTTPS runtimes; legacy runtimes retire only the previous rollback payload. Preserve active runtime, User Stop and project data.
     RetirePrevious {
         #[arg(long)]
         install_dir: PathBuf,
         #[arg(long)]
         expected_active: String,
+    },
+    /// After HTTPS configuration migration, stop and remove only owned legacy launcher images and receipts.
+    RetireLegacyLaunchers {
+        #[arg(long)]
+        install_dir: PathBuf,
+        #[arg(long)]
+        expected_active: String,
+    },
+    /// Read-only verification of retained legacy launcher configuration lineage.
+    InspectLegacyLaunchers {
+        #[arg(long)]
+        install_dir: PathBuf,
+        #[arg(long)]
+        expected_active: String,
+    },
+    /// Read-only ownership inventory of obsolete extension helper caches.
+    InspectLegacyCaches {
+        #[arg(long)]
+        install_dir: PathBuf,
+        #[arg(long)]
+        expected_active: String,
+        #[arg(long)]
+        global_storage: PathBuf,
+        #[arg(long)]
+        origin_locators_file: Option<PathBuf>,
+    },
+    /// Freeze the exact owned helper-cache inventory before changing MCP configurations.
+    PrepareLegacyCaches {
+        #[arg(long)]
+        install_dir: PathBuf,
+        #[arg(long)]
+        expected_active: String,
+        #[arg(long)]
+        global_storage: PathBuf,
+        #[arg(long)]
+        origin_locators_file: Option<PathBuf>,
+    },
+    /// Explicitly re-review a pending cache inventory after newly appeared owned caches; preserve original proofs and require configuration migration against the new inspection.
+    ReprepareLegacyCaches {
+        #[arg(long)]
+        install_dir: PathBuf,
+        #[arg(long)]
+        expected_active: String,
+        #[arg(long)]
+        global_storage: PathBuf,
+        #[arg(long)]
+        origin_locators_file: Option<PathBuf>,
+        #[arg(long)]
+        expected_inspection_sha256: String,
+    },
+    /// After HTTPS migration, stop and remove only caches in the accepted native ownership inventory.
+    RetireLegacyCaches {
+        #[arg(long)]
+        install_dir: PathBuf,
+        #[arg(long)]
+        expected_active: String,
+        #[arg(long)]
+        expected_inspection_sha256: String,
+    },
+    /// Adopt an original pre-managed saved index under native exclusion; preserve original sources and index bytes without reindexing or creating a reviewed grant.
+    AdoptLegacyIndex {
+        #[arg(long)]
+        install_dir: PathBuf,
+        #[arg(long)]
+        expected_active: String,
+        #[arg(long)]
+        operation_id: String,
+        #[arg(long)]
+        locator_file: PathBuf,
+        #[arg(long)]
+        expected_cache_inspection_sha256: String,
+    },
+    /// Adopt original saved indexes once per verified physical backing, retaining every original client configuration claim.
+    AdoptLegacyIndexes {
+        #[arg(long)]
+        install_dir: PathBuf,
+        #[arg(long)]
+        expected_active: String,
+        #[arg(long)]
+        operation_id: String,
+        #[arg(long)]
+        locators_file: PathBuf,
+        #[arg(long)]
+        expected_cache_inspection_sha256: String,
     },
     /// Abort an ownership-proven interrupted copy; preserve promoted runtimes and unknown files.
     AbortStage {
@@ -420,6 +626,26 @@ pub fn caller_install_root() -> Result<PathBuf> {
         );
         return Ok(root.to_path_buf());
     }
+    let payload = runtime_pair::payload_root(&executable)?;
+    if let Some(runtimes) = payload
+        .parent()
+        .filter(|path| path.file_name() == Some("runtimes".as_ref()))
+    {
+        let root = runtimes
+            .parent()
+            .context("runtime installation parent missing")?;
+        let identity = payload
+            .file_name()
+            .and_then(|name| name.to_str())
+            .context("invalid immutable runtime identity")?;
+        digest(identity)?;
+        let (_, selected_main, approval) = selected(root)?;
+        ensure!(
+            approval.manifest_sha256 == identity && selected_main.canonicalize()? == executable,
+            "running main is not the exact approved selected runtime"
+        );
+        return Ok(root.to_path_buf());
+    }
     default_install_root()
 }
 
@@ -509,6 +735,23 @@ pub fn installed_metadata_control(root: &Path) -> Result<PathBuf> {
 
 pub(crate) fn saved_control_root(root: &Path) -> Result<PathBuf> {
     layout::saved_control(root)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum HttpIssuerRotationAction {
+    Status,
+    Prepare,
+    TrustNew,
+    Commit,
+    Finalize,
+    Abort,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum HttpTrustAction {
+    Inspect,
+    Install,
+    Remove,
 }
 
 #[derive(Subcommand)]
@@ -825,7 +1068,10 @@ fn standalone_launcher_name(os: &str, version: &str) -> Result<Option<&'static s
         .map(str::parse::<u64>)
         .collect::<std::result::Result<Vec<_>, _>>()?;
     ensure!(numbers.len() == 3, "invalid Mac runtime version");
-    Ok((numbers.as_slice() >= [1, 8, 8].as_slice()).then_some(MAC_LAUNCHER_IMAGE))
+    Ok(
+        (numbers.as_slice() >= [1, 8, 8].as_slice() && numbers.as_slice() < [1, 8, 14].as_slice())
+            .then_some(MAC_LAUNCHER_IMAGE),
+    )
 }
 
 /// Call only with the inventory from the same completed approved payload check.
@@ -1019,10 +1265,41 @@ fn manifest_metadata(root: &Path, approved: &str) -> Result<(Vec<u8>, InstallMan
         (4..=MAX_FILES).contains(&manifest.files.len()),
         "invalid payload file count"
     );
-    for name in [main_name(), helper_name(), "airk-runtime.json", "LICENSE"] {
+    for name in [main_name(), "airk-runtime.json", "LICENSE"] {
         ensure!(
             manifest.files.contains_key(name),
             "offline payload is missing {name}"
+        );
+    }
+    let pair: runtime_pair::RuntimePair =
+        serde_json::from_slice(&read_bounded(&root.join("airk-runtime.json"), 4096)?)?;
+    pair.validate_target(&manifest.version)?;
+    if pair.is_single_executable() {
+        ensure!(
+            !manifest.files.contains_key(helper_name())
+                && !manifest.files.contains_key(MAC_LAUNCHER_IMAGE)
+                && !manifest.files.keys().any(|name| matches!(
+                    Path::new(name).file_name().and_then(|n| n.to_str()),
+                    Some(
+                        "airk-launcher"
+                            | "airk-launcher.exe"
+                            | "airk-service"
+                            | "airk-service.exe"
+                            | "airk-index"
+                            | "airk-index.exe"
+                            | "airk-source"
+                            | "airk-source.exe"
+                            | "onnxruntime.dll"
+                            | "libonnxruntime.so"
+                            | "libonnxruntime.dylib"
+                    )
+                )),
+            "single executable payload contains a legacy runtime process or dynamic inference library"
+        );
+    } else {
+        ensure!(
+            manifest.files.contains_key(helper_name()),
+            "offline payload is missing inference helper"
         );
     }
     if let Some(name) = standalone_launcher_name(&manifest.os, &manifest.version)? {
@@ -1149,18 +1426,20 @@ fn manifest_with_hasher_checked(
         main_hash == pair.airk_sha256,
         "runtime executable pair digest mismatch"
     );
-    let helper = payload_path(root, helper_name())?;
-    safe_file(&helper)?;
-    let helper_hash = hash(&helper)?;
-    ensure!(
-        helper_hash == manifest.files[helper_name()],
-        "runtime payload digest mismatch: {}",
-        helper_name()
-    );
-    ensure!(
-        helper_hash == pair.embed_sha256,
-        "runtime executable pair digest mismatch"
-    );
+    if !pair.is_single_executable() {
+        let helper = payload_path(root, helper_name())?;
+        safe_file(&helper)?;
+        let helper_hash = hash(&helper)?;
+        ensure!(
+            helper_hash == manifest.files[helper_name()],
+            "runtime payload digest mismatch: {}",
+            helper_name()
+        );
+        ensure!(
+            helper_hash == pair.embed_sha256,
+            "runtime executable pair digest mismatch"
+        );
+    }
     Ok((bytes, manifest))
 }
 
@@ -1174,6 +1453,9 @@ pub fn stage(
 }
 
 fn prepare_launcher(root: &Path, main: &Path, inventory: &InstallManifest) -> Result<()> {
+    if runtime_pair::single_executable(main)? {
+        return Ok(());
+    }
     let image = launcher_image(runtime_pair::payload_root(main)?, inventory)?;
     let main = image.as_path();
     let destination = launcher_path(root);
@@ -1238,6 +1520,11 @@ fn prepare_client_launcher(
     approval: &Approval,
     inventory: &InstallManifest,
 ) -> Result<()> {
+    if runtime_pair::single_executable(main)? {
+        // A predecessor launcher remains owned migration state until its old
+        // client configurations are retired; never create or replace one here.
+        return Ok(());
+    }
     if standalone_launcher_name(&inventory.os, &inventory.version)?.is_some() {
         let image = launcher_image(runtime_pair::payload_root(main)?, inventory)?;
         launcher_repair::repair_client_verified(root, &approval.manifest_sha256, &image)
@@ -1388,13 +1675,15 @@ fn self_test_observation(main: &Path) -> Result<serde_json::Value> {
         }
     }
     runtime_pair::validate_native_image(main)?;
-    runtime_pair::validate_native_image(
-        &main.parent().context("runtime directory missing")?.join(
-            Path::new(helper_name())
-                .file_name()
-                .context("helper name missing")?,
-        ),
-    )?;
+    if !runtime_pair::single_executable(main)? {
+        runtime_pair::validate_native_image(
+            &main.parent().context("runtime directory missing")?.join(
+                Path::new(helper_name())
+                    .file_name()
+                    .context("helper name missing")?,
+            ),
+        )?;
+    }
     // A fixed native command, no shell, no source or collection parameters.
     let mut command = Command::new(main);
     command
@@ -1474,6 +1763,18 @@ fn hidden(command: &mut Command) {
 }
 
 async fn health(root: &Path, approval: &Approval, expected_sha256: &str) -> Result<ServiceHealth> {
+    let observation = health_identity(root, approval, expected_sha256).await?;
+    ensure!(observation.policy.accepting, "service is draining");
+    Ok(observation)
+}
+
+/// Authenticate a lifecycle owner even when its checkpoint deliberately closes
+/// admission. This is not proof that a service can accept client work.
+async fn health_identity(
+    root: &Path,
+    approval: &Approval,
+    expected_sha256: &str,
+) -> Result<ServiceHealth> {
     let response = service_runtime::request_for_version(
         &layout::control(root)?,
         ControlMethod::Health,
@@ -1491,7 +1792,6 @@ async fn health(root: &Path, approval: &Approval, expected_sha256: &str) -> Resu
         observation.runtime_sha256.as_deref() == Some(approval.manifest_sha256.as_str()),
         "running service belongs to another approved payload; explicit activation/drain required"
     );
-    ensure!(observation.policy.accepting, "service is draining");
     Ok(*observation)
 }
 
@@ -1708,16 +2008,10 @@ fn approved_inventory_metadata(directory: &Path, approval: &Approval) -> Result<
         "runtime pair receipt differs from approved inventory"
     );
     let pair: runtime_pair::RuntimePair = serde_json::from_slice(&bytes)?;
-    ensure!(
-        pair.schema == 1
-            && pair.version == inventory.version
-            && pair.os == std::env::consts::OS
-            && pair.arch == std::env::consts::ARCH,
-        "incompatible runtime pair"
-    );
+    pair.validate_target(&inventory.version)?;
     ensure!(
         pair.airk_sha256 == inventory.files[main_name()]
-            && pair.embed_sha256 == inventory.files[helper_name()],
+            && (pair.is_single_executable() || pair.embed_sha256 == inventory.files[helper_name()]),
         "runtime executable pair digest mismatch"
     );
     Ok(inventory)
@@ -1991,8 +2285,9 @@ async fn drain_identity(root: &Path, approval: &Approval, expected_sha256: &str)
     }
     local_ipc::prepare_root(&control)?;
     if airk_store::service::ServiceLease::acquire(&control).is_err() {
-        // Authenticate exact executable identity before requesting shutdown.
-        let observed = health(root, approval, expected_sha256).await?;
+        // Checkpointed owners deliberately close admission before shutdown.
+        // Authenticate their identity without reopening or requiring admission.
+        let observed = health_identity(root, approval, expected_sha256).await?;
         ensure!(
             matches!(
                 service_runtime::request_for_version_and_instance(
@@ -2103,6 +2398,32 @@ fn quiescent(root: &Path) -> Result<Quiescence> {
     })
 }
 
+/// Call under the installer lock before accepting any competing installer
+/// transaction. Ordinary Start and the issuer operation itself do not use it.
+fn require_issuer_rotation_settled(root: &Path) -> Result<()> {
+    if let Some(control) = layout::issuer_rotation_control(root)?
+        && let Some(record) = crate::http_endpoint::rotation::read(&control)?
+    {
+        ensure!(
+            matches!(
+                record.phase,
+                crate::http_endpoint::rotation::Phase::Finalized
+                    | crate::http_endpoint::rotation::Phase::Aborted
+            ),
+            "issuer_rotation_pending_before_runtime_mutation: finish or abort the exact issuer operation first"
+        );
+    }
+    Ok(())
+}
+
+/// Public manager registration/policy mutations must not invalidate a native
+/// operation's captured supervisor. Stop and exact internal recovery retain
+/// their separate ownership checks and do not call this admission gate.
+fn require_manager_change_settled(root: &Path) -> Result<()> {
+    require_issuer_rotation_settled(root)?;
+    legacy_maintenance::require_manager_change_settled(root)
+}
+
 pub async fn activate(root: &Path, identity: &str) -> Result<Selection> {
     activate_with_expected(root, identity, None).await
 }
@@ -2117,7 +2438,9 @@ async fn activate_with_expected(
     expected: Option<&str>,
 ) -> Result<Selection> {
     let _lock = install_lock(root)?;
+    require_issuer_rotation_settled(root)?;
     retirement::require_previous_settled(root)?;
+    legacy_launchers::require_settled(root)?;
     if let Some(expected) = expected
         && activation::reviewed_request(root, identity, expected)?
     {
@@ -2134,6 +2457,14 @@ async fn activate_with_expected(
 
 #[path = "runtime_install_commands.rs"]
 mod commands;
+#[path = "runtime_http_commands.rs"]
+mod http_commands;
+pub use http_commands::existing_connection as existing_http_connection;
+pub use http_commands::setup as setup_http_connection;
+#[path = "runtime_http_legacy.rs"]
+pub(crate) mod http_legacy;
+#[path = "runtime_managed_service.rs"]
+mod managed_service;
 pub use commands::run;
 
 #[cfg(test)]

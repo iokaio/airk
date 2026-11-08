@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Production shared-helper entry and its normal unit harness. The explicit
 //! qualification image includes the same core without importing unit tests.
+include!("embed_pool_legacy_context.rs");
 include!("embed_pool_core.rs");
+include!("embed_pool_legacy_entry.rs");
 
 mod retirement {
     include!("embed_pool_retirement.rs");

@@ -1276,7 +1276,9 @@ export class ServiceConsoleController {
             case 'startEmbedding':await this.rpc('start_embedding','embedding_starting');break;
             case 'stopEmbedding':case 'forceEmbedding':{
                 const worker=identifier(this.state.model.value?.worker,16),force=action.action==='forceEmbedding';
-                if(!await this.host.confirm(`${force?'Force-stop':'Stop'} inference helper ${worker} for this host? Active semantic requests may fail and require explicit retry. Lexical evidence and independent source work remain available.`))return;
+                const inProcess=record(this.state.model.value?.provider??{}).kind==='in_process';
+                const review=inProcess?`Stop in-service model generation ${worker}${force?' and close admission immediately':''}? Active model work must finish at its safe boundary; an immediate outcome can remain unknown while it drains. Lexical evidence and independent source work remain available.`:`${force?'Force-stop':'Stop'} inference helper ${worker} for this host? Active semantic requests may fail and require explicit retry. Lexical evidence and independent source work remain available.`;
+                if(!await this.host.confirm(review))return;
                 await this.rpc({stop_embedding:{worker,force}},'embedding_stopped');break;
             }
             case 'pause':case 'resume':await this.rpc({pause:{project,paused:action.action==='pause'}});break;

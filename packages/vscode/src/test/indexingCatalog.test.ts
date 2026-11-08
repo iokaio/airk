@@ -12,6 +12,7 @@ import { parseRoute } from '../explorerRoutes';
 import { validateIndexSetupSelection, validateIndexSetupApply, validateNativeIndexSetupDraft, validateIndexSetupReceipt, validateNativeLegacyBinding } from '../indexingCatalog';
 import { validateNativeSourceDraft, validateSourceMutationSelection } from '../indexingCatalog';
 import { catalogObject } from '../indexingCatalog';
+import {validateHttpSelection} from '../serviceHttp';
 
 const namespace='ab'.repeat(16), caller='cd'.repeat(16), nonce='ef'.repeat(16), digest='12'.repeat(32), project='prj_'+'34'.repeat(16), index='idx_'+'56'.repeat(16), source='src_'+'78'.repeat(16);
 const requestDigest='13'.repeat(32);
@@ -71,6 +72,36 @@ test('native legacy eligibility preserves complete positive snapshots and refuse
     assert.throws(()=>validateNativeLegacyBinding({...imported,observation:{...imported.observation,eligibility:{...imported.observation.eligibility,grant:{...wrapped,grant:{...grant,revoked:true}}}}},binding,2),/crossed/);
     const client=new ServiceClient({dispose(){},async request(method){assert.deepEqual(method,{catalog_legacy_binding:{project:binding,expected_catalog_revision:2}});return imported;}});
     assert.equal(await client.catalogLegacyBinding(binding,2),imported);
+});
+
+test('standalone adopted native authority retains original provenance and rejects crossed registration, config or publication',()=>{
+    const setup:any=structuredClone(setupFixture().draft.request),adopted=setup.registration;
+    setup.sources.push({canonical_path:'/native/additional',aliases:['saved_alias'],owner:false});
+    const original={...adopted,binding:'77'.repeat(32),data_root:'/original/standalone-index'};
+    const plan={schema:1,setup,original_registration:original,origin_sha256:digest,config_sha256:requestDigest,executable_sha256:digest,quiescence_sha256:digest,archive_inventory_sha256:digest,original_publication_sha256:digest,source_inventory_sha256:digest};
+    const adoption={schema:1,operation_id:nonce,plan,publication:{schema:1,plan_digest:digest,archive_inventory_sha256:digest,original_publication_sha256:digest,current:`airk-r1:${namespace}:5:${digest}`,resource_sha256:digest,compatibility_sha256:digest},original_server:'airk-original-alias',no_default_project:true,configuration_claims:[{schema:1,origin_sha256:plan.origin_sha256,config_sha256:plan.config_sha256,executable_sha256:plan.executable_sha256,selected_entry_sha256:digest,container_path:['mcpServers'],original_server:'airk-original-alias',no_default_project:true}]};
+    const wrapped={grant:{...nativeGrantOperation().grant,id:'grt_'+'91'.repeat(16)},provenance:{kind:'imported_standalone_adoption',adoption},future_native_field:{retained:true}};
+    const response={status:'catalog_legacy_binding',observation:{schema:1,namespace,catalog_revision:2,project:adopted.binding,eligibility:{kind:'imported_snapshot',registration:adopted,grant:wrapped}}};
+    assert.equal(validateNativeLegacyBinding(response,adopted.binding,2),response);
+    const selection={kind:'imported_legacy',selection:{namespace,expected_catalog_revision:2,registration:adopted,grant:wrapped,configuration_receipt:requestDigest}};
+    assert.deepEqual(validateHttpSelection(selection),selection);
+    const json=catalogExport({generation:1,busy:false,grants:response}),markdown=catalogExport({generation:1,busy:false,grants:response},true);
+    for(const text of [json,markdown])for(const expected of ['imported_standalone_adoption','/original/standalone-index','saved_alias','future_native_field','original_publication_sha256'])assert.ok(text.includes(expected));
+    const mutations=[
+        (v:any)=>v.observation.eligibility.registration={...v.observation.eligibility.registration,data_root:'/crossed'},
+        (v:any)=>v.observation.eligibility.grant.grant.revoked=true,
+        (v:any)=>v.observation.eligibility.grant.provenance.adoption.plan.setup.key.namespace='11'.repeat(16),
+        (v:any)=>v.observation.eligibility.grant.provenance.adoption.plan.original_registration.root='/crossed',
+        (v:any)=>v.observation.eligibility.grant.provenance.adoption.plan.original_registration.data_root=adopted.data_root,
+        (v:any)=>v.observation.eligibility.grant.provenance.adoption.plan.setup.setup_watch=true,
+        (v:any)=>v.observation.eligibility.grant.provenance.adoption.publication.archive_inventory_sha256=requestDigest,
+        (v:any)=>v.observation.eligibility.grant.provenance.adoption.publication.original_publication_sha256=requestDigest,
+        (v:any)=>v.observation.eligibility.grant.provenance.adoption.publication.current=`airk-r1:${namespace}:0:${digest}`,
+        (v:any)=>v.observation.eligibility.grant.provenance.adoption.publication.current=`airk-r1:${namespace}:18446744073709551616:${digest}`,
+        (v:any)=>v.observation.eligibility.grant.provenance.adoption.original_server='invalid\nserver',
+    ];
+    for(const mutate of mutations){const invalid=structuredClone(response);mutate(invalid);assert.throws(()=>validateNativeLegacyBinding(invalid,adopted.binding,2));}
+    assert.throws(()=>validateHttpSelection({...selection,selection:{...selection.selection,configuration_receipt:digest}}),/crossed_http_standalone_configuration/);
 });
 
 test('setup full receipt validation fences identity, stage transitions and immutable native preparation',()=>{
@@ -279,6 +310,31 @@ test('retirement requires exact native worker/provider obligation and complete r
     assert.equal(client.validateCatalogObservation(pending,f.nativeRequest,requestDigest,digest),false);
     client.validateCatalogFenceContinuity(pending,{status:'catalog_receipt',receipt:f.metadata,fence:{state:'applied',value:full}});
     const crossed={...full,proof:{...full.proof,worker_obligation:{...obligation,providers:[{worker,history:{kind:'native_never_authorized'}}]}}};assert.throws(()=>client.validateCatalogFenceContinuity(pending,{status:'catalog_receipt',receipt:f.metadata,fence:{state:'applied',value:crossed}}),/crossed/);
+});
+
+test('in-process provider histories preserve bounded completion ledgers and require the same native worker reap',async()=>{
+    const f=nativeSourceFixture(true),value:CatalogApplyIntent={catalog_apply:{request:f.nativeRequest,preview_digest:digest},request_digest:requestDigest};
+    const worker={service:'24'.repeat(16),worker:'26'.repeat(16),project:digest,fencing_generation:3};
+    const anchor={schema:1,namespace,service_instance:worker.service,approved_execution_sha256:'31'.repeat(32),factory_generation:'32'.repeat(16),completed_owners:500,admitted_high_water:0,head_sha256:'33'.repeat(32)};
+    let history:CatalogObject={kind:'in_process',generations:[],completed_authorizations:anchor};
+    const response=()=>{const full=structuredClone(f.begin);full.proof.worker_obligation={index_id:index,backing:digest,workers:[worker],providers:[{worker,history}]};full.proof.worker_confirmations=[{worker,method:'native_worker_reap'}];return {status:'catalog_applied',receipt:f.metadata,fenced_receipt:full};};
+    let omitReap=false;
+    const client=new ServiceClient({dispose(){},async request(){const result=response();if(omitReap)result.fenced_receipt.proof.worker_confirmations=[];return result;}});
+    const applied=await client.submitCatalog(value);assert.deepEqual(catalogObject(catalogObject(catalogObject(applied.fenced_receipt).proof).worker_obligation).providers,[{worker,history}]);
+    for(const next of [
+        {kind:'in_process',generations:['27'.repeat(16)]},
+        {kind:'in_process',generations:['27'.repeat(16)],completed_authorizations:anchor},
+        {kind:'helpers',generations:['27'.repeat(16)]},
+    ]){history=next;await client.submitCatalog(value);}
+    for(const next of [
+        {kind:'in_process',generations:[]},
+        {kind:'in_process',generations:['27'.repeat(16),'27'.repeat(16)]},
+        ...[...Object.keys(anchor),'oversized'].map(field=>({kind:'in_process',generations:[],completed_authorizations:{...anchor,[field]:field==='completed_owners'?0:field==='admitted_high_water'?Number.MAX_SAFE_INTEGER+1:field==='schema'?2:field==='oversized'?'x'.repeat(2048):'ff'}})),
+        {kind:'in_process',generations:[],completed_authorizations:{...anchor,service_instance:'34'.repeat(16)}},
+        {kind:'in_process',generations:[],completed_authorizations:{...anchor,namespace:'35'.repeat(16)}},
+        {kind:'helpers',generations:[],completed_authorizations:anchor},
+    ]){history=next;await assert.rejects(client.submitCatalog(value));}
+    history={kind:'in_process',generations:[],completed_authorizations:anchor};omitReap=true;await assert.rejects(client.submitCatalog(value),/incomplete_catalog_worker_fence/);
 });
 
 test('source observation preserves failed job history while native completion resolves metadata using its distinct key',()=>{

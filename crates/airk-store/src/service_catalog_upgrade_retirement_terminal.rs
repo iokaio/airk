@@ -581,7 +581,7 @@ pub(in crate::service::registry::catalog::upgrade) fn recover_owned(
             &header[..16] == b"SQLite format 3\0"
                 && u32::from_be_bytes(header[68..72].try_into()?)
                     == crate::service::registry::APPLICATION as u32
-                && u32::from_be_bytes(header[60..64].try_into()?) == 12,
+                && matches!(u32::from_be_bytes(header[60..64].try_into()?), 12 | 13),
             "foreign owned retirement recovery registry"
         );
         let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
@@ -596,7 +596,7 @@ pub(in crate::service::registry::catalog::upgrade) fn recover_owned(
         let pages: i64 = connection.pragma_query_value(None, "page_count", |row| row.get(0))?;
         ensure!(
             application == crate::service::registry::APPLICATION
-                && version == 12
+                && matches!(version, 12 | 13)
                 && page_size == 4096
                 && pages > 0
                 && pages <= i64::try_from(crate::service::registry::MAX_DATABASE_BYTES / 4096)?,

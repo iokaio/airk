@@ -1,10 +1,10 @@
 # AIRK MCP developer guide
 
-The 1.8.8 working build supplies optional [evidence guidance](evidence-guidance.md)
+AIRK supplies optional [evidence guidance](evidence-guidance.md)
 from returned metadata. Advice is bounded and inert; CLI/MCP/Workbench and
 complete/selected exports retain applicable reasons without additional reads.
 
-This guide explains **the public tools in the AIRK 1.8.8 manual-test working build**: why each exists, when to choose it, how it works, its inputs/results, a request example, and the owning implementation/tests. It complements the [catalog and connection contract](unified-mcp.md), [native protocol/evidence contract](mcp.md), [response modes](mcp-response-modes.md) and [CLI developer guide](cli-developer-guide.md). Current qualification is in the [1.8.8 working build record](releases/release-1.8.8.md); the inherited 1.8.7 contracts and evidence remain in their [dated record](releases/release-1.8.7.md).
+This guide explains **the public tools in the unpublished AIRK 1.8.14 implementation**: why each exists, when to choose it, how it works, its inputs/results, a request example, and the owning implementation/tests. It complements the [catalog and connection contract](unified-mcp.md), [native protocol/evidence contract](mcp.md), [response modes](mcp-response-modes.md) and [CLI developer guide](cli-developer-guide.md). Current implementation and qualification limits are in the [1.8.14 working record](releases/release-1.8.14.md); inherited [1.8.8](releases/release-1.8.8.md) and [1.8.7 contracts and evidence](releases/release-1.8.7.md) remain dated history.
 
 ## Start with the right layer
 
@@ -27,9 +27,12 @@ The CLI composes the unified MCP frontend. Native schemas and rendering belong t
 | Learn AIRK or construct an editor proposal | help, list_templates, get_template, draft_search, draft_strategy, draft_plan, suggest_view, validate_draft, proposal_status, get_handoff |
 
 Use `tools/list` on the actual MCP connection as the authoritative public catalog.
-Client namespaces such as `mcp__airk__` are client presentation. Native CLI sessions expose 19 prefixed operations, including `airk_query_scope`;
-reviewed combined sessions additionally expose their selector controls. Unified MCP adds `projects`,
-`query_scope` and nine Assistance operations. Legacy `query_scope` reports
+Client namespaces such as `mcp__airk__` are client presentation. In the unpublished
+1.8.14 implementation, CLI `tools list/help/call/shell` and public HTTPS expose
+the same 29-tool unified catalog, alias mapping and argument validation. The 19
+native evidence/help/plan/scope tools are a backend subset, joined by `projects`
+and nine Assistance operations. Historical `airk_<operation>` aliases remain
+accepted; reviewed combined sessions retain their selector controls. Legacy `query_scope` reports
 `configuration_required`; it never enumerates the machine library. `projects`
 keeps the existing connection-binding meaning. CLI `projects` remains a separate
 administrative service-registry read. [Combined-read contracts](combined-reads.md)

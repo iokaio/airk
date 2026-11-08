@@ -3,6 +3,8 @@ import * as path from 'node:path';
 import { readRetryDelay } from './readRetry';
 import { explorerError, ExplorerError } from './explorerErrors';
 import { McpSessionError, McpStdioOptions, McpStdioSession } from './mcpStdioSession';
+import { McpHttpSession } from './mcpHttpSession';
+import { httpMaterial, sameHttpAuthority } from './serviceHttp';
 import { LaunchSpec, launchArgs } from './model';
 import { hasNativeMetadataReferences, materializeNativeMetadata } from './nativeMetadata';
 
@@ -88,14 +90,13 @@ interface Task { tool: EvidenceTool; args: Record<string, unknown>; options: Cal
 type Opener = (options: McpStdioOptions, handshakeTimeout: number) => Promise<{ session: McpStdioSession }>;
 
 /**
- * The Explorer's evidence session: one persistent stdio MCP connection to the bound
- * project through the same verified launcher agents use. The native bridge accepts
- * at most 4 in-flight calls and serializes them per connection, so this client keeps
- * its own queue with at most 3 calls outstanding.
+ * Explorer evidence uses the verified HTTPS MCP connection for its bound scope.
+ * This client keeps a bounded queue, with three calls outstanding by default;
+ * native admission independently enforces the configured service capacity.
  */
 export class EvidenceClient {
-    private session?: McpStdioSession;
-    private opening?: Promise<McpStdioSession>;
+    private session?: McpStdioSession|McpHttpSession;
+    private opening?: Promise<McpStdioSession|McpHttpSession>;
     private readonly queue: Task[] = [];
     private readonly generations = new Map<string, number>();
     private active = 0;
@@ -104,6 +105,7 @@ export class EvidenceClient {
     constructor(readonly spec: LaunchSpec, private readonly clientVersion: string, private readonly options: {
         open?: Opener; maxInFlight?: number; timeout?: number; retryBudget?: number; handshakeTimeout?: number;
         clientName?: 'airk-explorer' | 'airk-workbench'; workbench?: boolean;
+        resolveConnection?:(spec:LaunchSpec,client:'airk-explorer'|'airk-workbench')=>Promise<LaunchSpec>;
     } = {}) {
         if (!spec.service) { throw new EvidenceFailure(explorerError('NO_PROJECT')); }
     }
@@ -187,12 +189,21 @@ export class EvidenceClient {
         }
     }
 
-    private async connect(): Promise<McpStdioSession> {
+    private async connect(): Promise<McpStdioSession|McpHttpSession> {
         if (this.session && !this.session.closed) { return this.session; }
         if (!this.opening) {
             const open = this.options.open ?? ((options, timeout) => McpStdioSession.open(options, timeout));
-            this.opening = open({ command: this.spec.command, args: launchArgs(this.spec,'mcp',true), cwd: path.dirname(this.spec.command),
-                clientName: this.options.clientName ?? EXPLORER_CLIENT_NAME, clientVersion: this.clientVersion }, this.options.handshakeTimeout ?? 90000)
+            const httpOpen=async(spec:LaunchSpec)=>{
+                if(!spec.http)throw new Error('http_connection_requires_reviewed_scope');
+                const selection=spec.combinedSession?{kind:'combined' as const,selection:spec.combinedSession}:spec.catalogSession?{kind:'scoped' as const,selection:spec.catalogSession}:spec.http.selection.kind==='imported_legacy'?spec.http.selection:undefined;
+                if(!selection||!sameHttpAuthority(spec.http.selection,selection))throw new Error('http_connection_selection_changed');
+                if(selection.kind==='imported_legacy'&&(selection.selection.registration.binding!==spec.service?.project||selection.selection.registration.root!==spec.root||selection.selection.registration.data_root!==spec.dataDir||selection.selection.registration.collection!==spec.collection))throw new Error('crossed_imported_http_backing');
+                return McpHttpSession.open({...await httpMaterial(spec.http),clientName:this.options.clientName??EXPLORER_CLIENT_NAME,clientVersion:this.clientVersion},this.options.handshakeTimeout??90000);
+            };
+            const connected=this.options.resolveConnection?this.options.resolveConnection(this.spec,this.options.clientName??EXPLORER_CLIENT_NAME).then(httpOpen):this.spec.http?httpOpen(this.spec):
+                open({ command: this.spec.command, args: launchArgs(this.spec,'mcp',true), cwd: path.dirname(this.spec.command),
+                clientName: this.options.clientName ?? EXPLORER_CLIENT_NAME, clientVersion: this.clientVersion }, this.options.handshakeTimeout ?? 90000);
+            this.opening = connected
                 .then(({ session }) => {
                     if (this.disposed) { session.close(); throw new EvidenceFailure(explorerError('SERVICE_UNAVAILABLE', 'The Explorer evidence session was closed.')); }
                     this.session = session; return session;

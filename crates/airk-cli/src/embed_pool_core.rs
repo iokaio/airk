@@ -3,8 +3,7 @@
 // wrapper and explicit instrumented fixture. Unit harness modules live in the wrapper.
 use airk_cli::{
     embedding_pool_protocol as protocol,
-    local_ipc::{self, Listener, Stream},
-    service_ipc,
+    local_ipc::{self, Stream},
 };
 use airk_core::{
     identity::{Incarnation, Sha256Digest},
@@ -19,16 +18,16 @@ use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex, OnceLock, Weak,
+        Arc, Mutex, Weak,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::{Duration, Instant},
 };
-static PROCESS_LEASE: OnceLock<airk_store::service::EmbeddingLease> = OnceLock::new();
-use tokio::{
-    sync::{Semaphore, mpsc, oneshot},
-    task::JoinSet,
-};
+mod accounting {
+    include!("embed_pool_accounting.rs");
+    provider_context!(define_provider_accounting, shared_tests);
+}
+use tokio::sync::{mpsc, oneshot};
 
 #[derive(Clone)]
 enum Binding {
@@ -36,7 +35,7 @@ enum Binding {
         location: Box<ModelLocation>,
         identity: String,
         key: Sha256Digest,
-        files: Arc<airk_store::service::model_files::ModelFileLease>,
+        files: Option<Arc<airk_store::service::model_files::ModelFileLease>>,
     },
     Tokenizer {
         path: PathBuf,
@@ -63,6 +62,7 @@ pub(crate) struct Engine {
     model: Option<EmbeddingModel>,
     model_lease: Option<Arc<airk_store::service::model_files::ModelFileLease>>,
     model_files: airk_store::service::model_files::ServiceModelFiles,
+    embedded: Option<airk_store::service::embedded_model::EmbeddedModelBinding>,
     model_key: Option<Sha256Digest>,
     tokenizer: Option<airk_kernel::usage::OfflineTokenizer>,
     tokenizer_path: Option<PathBuf>,
@@ -83,6 +83,7 @@ struct RequestOwner<'a> {
     connection: &'a AtomicBool,
     worker: &'a AtomicBool,
     closing: &'a AtomicBool,
+    authorization: Option<(&'a State, &'a protocol::Grant)>,
 }
 fn require_live(owner: Option<RequestOwner<'_>>) -> Result<()> {
     ensure!(
@@ -91,6 +92,12 @@ fn require_live(owner: Option<RequestOwner<'_>>) -> Result<()> {
             && !owner.closing.load(Ordering::Acquire)),
         "pool request canceled"
     );
+    if let Some((state, grant)) = owner.and_then(|owner| owner.authorization) {
+        ensure!(
+            state.grant_live(grant)?,
+            "pool authorization expired or revoked"
+        );
+    }
     Ok(())
 }
 
@@ -99,6 +106,7 @@ fn location_key(
     location: &ModelLocation,
     identity: &str,
     runtime: &Path,
+    embedded: Option<&airk_store::service::embedded_model::EmbeddedModelBinding>,
 ) -> Result<Sha256Digest> {
     let data = Path::new(&project.data_root);
     match location {
@@ -107,6 +115,11 @@ fn location_key(
                 objects.legacy_identity == identity,
                 "shared model identity mismatch"
             );
+            if let Some(source) = embedded
+                && source.matches(runtime, objects)?
+            {
+                return model::descriptor_from_asset_metadata(source, objects)?.identity();
+            }
             let source = airk_store::service::model_files::InstalledModel::open(runtime, objects)?;
             model::descriptor_from_asset_metadata(&source, objects)?.identity()
         }
@@ -180,6 +193,7 @@ impl Engine {
             model: None,
             model_lease: None,
             model_files: airk_store::service::model_files::ServiceModelFiles::open(runtime)?,
+            embedded: None,
             model_key: None,
             tokenizer: None,
             tokenizer_path: None,
@@ -237,18 +251,31 @@ impl Engine {
         self.model_lease = None;
         self.model_key = None;
         require_live(owner)?;
-        super::handle(
-            Request::Open {
-                protocol: PROTOCOL,
-                version: env!("CARGO_PKG_VERSION").into(),
-                location: *location.clone(),
-                identity: identity.clone(),
-            },
-            &mut self.model,
-            &mut None,
-        )?;
+        if let ModelLocation::Shared { objects } = location.as_ref() {
+            let source = self
+                .embedded
+                .as_ref()
+                .context("embedded model source unavailable")?;
+            ensure!(
+                source.matches(&self.runtime, objects)?,
+                "embedded model namespace or content changed"
+            );
+            self.model = Some(EmbeddingModel::open_native_assets(source, objects)?);
+        } else {
+            super::handle(
+                Request::Open {
+                    protocol: PROTOCOL,
+                    version: env!("CARGO_PKG_VERSION").into(),
+                    location: *location.clone(),
+                    identity: identity.clone(),
+                },
+                &mut self.model,
+                &mut None,
+            )?;
+        }
+        require_live(owner)?;
         self.model_key = Some(*key);
-        self.model_lease = Some(files.clone());
+        self.model_lease = files.clone();
         self.loads = self.loads.saturating_add(1);
         Ok(())
     }
@@ -305,6 +332,11 @@ impl Engine {
                 })
             }
             Request::ProvisionBundled => {
+                if let Some(embedded) = &self.embedded {
+                    return Ok(Response::Provisioned {
+                        objects: embedded.reference(&self.runtime)?,
+                    });
+                }
                 let set = airk_cli::bundled_assets::EmbeddedAssets::plan()?;
                 if self.model_files.installed_reference(&set).is_ok() {
                     // Reusing installed files must not unload a compatible resident model.
@@ -338,7 +370,13 @@ impl Engine {
                     !self.sessions.contains_key(&key) && self.sessions.len() < 64,
                     "pool session capacity or duplicate open"
                 );
-                let pipeline = location_key(&grant.project, &location, &identity, &self.runtime)?;
+                let pipeline = location_key(
+                    &grant.project,
+                    &location,
+                    &identity,
+                    &self.runtime,
+                    self.embedded.as_ref(),
+                )?;
                 let _source_pin = match &location {
                     ModelLocation::Retained { collection, .. } => {
                         Some(airk_store::FileStore::new(collection).pin_service_objects()?)
@@ -355,21 +393,31 @@ impl Engine {
                     set.pipeline_digest == pipeline,
                     "model changed during shared-file planning"
                 );
-                let files = if matches!(&location, ModelLocation::Shared { .. }) {
-                    self.model_files.installed(&set)?
+                let is_embedded = matches!(&location,ModelLocation::Shared{objects} if self.embedded.as_ref().is_some_and(|embedded|embedded.matches(&self.runtime,objects).unwrap_or(false)));
+                let files = if is_embedded {
+                    None
+                } else if matches!(&location, ModelLocation::Shared { .. }) {
+                    Some(self.model_files.installed(&set)?)
                 } else {
-                    self.model_files.retain(&set, |name| match &location {
-                        ModelLocation::Directory { path } => path.join(name.filename()),
-                        ModelLocation::Retained { collection, .. } => collection
-                            .join("objects/models")
-                            .join(set.assets[&name].sha256.to_string()),
-                        ModelLocation::Shared { .. } => unreachable!("handled by installed store"),
-                    })?
+                    Some(self.model_files.retain(&set, |name| {
+                        match &location {
+                            ModelLocation::Directory { path } => path.join(name.filename()),
+                            ModelLocation::Retained { collection, .. } => collection
+                                .join("objects/models")
+                                .join(set.assets[&name].sha256.to_string()),
+                            ModelLocation::Shared { .. } => {
+                                unreachable!("handled by installed store")
+                            }
+                        }
+                    })?)
                 };
                 drop(_source_pin);
                 let binding = Binding::Model {
-                    location: Box::new(ModelLocation::Directory {
-                        path: files.directory().into(),
+                    location: Box::new(match &files {
+                        Some(files) => ModelLocation::Directory {
+                            path: files.directory().into(),
+                        },
+                        None => location,
                     }),
                     identity: identity.clone(),
                     key: pipeline,
@@ -401,13 +449,15 @@ impl Engine {
                 );
                 // An explicitly selected calibration input is captured once in
                 // the service-owned finite cache; sessions never bind project files.
-                let path = self.model_files.retain_calibration_readers(&path, |source, maximum| {
-                    airk_kernel::service_configuration::read_protected_input(
-                        source,
-                        usize::try_from(maximum)?,
-                        true,
-                    )
-                })?;
+                let path =
+                    self.model_files
+                        .retain_calibration_readers(&path, |source, maximum| {
+                            airk_kernel::service_configuration::read_protected_input(
+                                source,
+                                usize::try_from(maximum)?,
+                                true,
+                            )
+                        })?;
                 // Captured bytes verify on every opening. Reuse compatible
                 // native state and drop incompatible state before loading more.
                 self.select_tokenizer(&path, owner)?;
@@ -496,26 +546,159 @@ impl Engine {
     }
 }
 
-enum Work {
-    Sweep,
-    Request {
-        grant: Box<protocol::Grant>,
-        envelope: Box<protocol::Envelope>,
-        alive: Arc<AtomicBool>,
-        worker_alive: Arc<AtomicBool>,
-        reply: oneshot::Sender<protocol::ResultEnvelope>,
-        #[cfg(test)]
-        native_worker: Option<airk_core::service::WorkerIdentity>,
-    },
-    Release {
-        worker: Incarnation,
-        owner: Option<Weak<AtomicBool>>,
-    },
-    DrainRelease {
-        worker: Incarnation,
-        completed: Arc<AtomicBool>,
-    },
+macro_rules! define_provider_work {
+    ($owner_cfg:meta) => {
+        enum Work {
+            Sweep,
+            Request {
+                grant: Box<protocol::Grant>,
+                envelope: Box<protocol::Envelope>,
+                alive: Arc<AtomicBool>,
+                worker_alive: Arc<AtomicBool>,
+                reply: oneshot::Sender<protocol::ResultEnvelope>,
+                charge: Option<accounting::ComputeCharge>,
+                authorization: Option<Arc<State>>,
+                #[cfg(test)]
+                native_worker: Option<airk_core::service::WorkerIdentity>,
+            },
+            Release {
+                worker: Incarnation,
+                owner: Option<Weak<AtomicBool>>,
+            },
+            DrainRelease {
+                worker: Incarnation,
+                completed: Arc<AtomicBool>,
+            },
+            #[$owner_cfg]
+            CloseEngine {
+                accounting: Arc<accounting::Accounting>,
+            },
+            #[$owner_cfg]
+            StopEngine {
+                reply: oneshot::Sender<()>,
+            },
+        }
+        fn process_work(engine: &mut Engine, work: Work, closing: &AtomicBool) {
+            match work {
+                Work::Sweep => {
+                    engine.retire_disconnected();
+                    if engine.sessions.is_empty() && engine.used.elapsed() > Duration::from_secs(60)
+                    {
+                        engine.model = None;
+                        engine.model_lease = None;
+                        engine.model_key = None;
+                        engine.tokenizer = None;
+                        engine.tokenizer_path = None;
+                    }
+                }
+                Work::Request {
+                    grant,
+                    envelope,
+                    alive,
+                    worker_alive,
+                    reply,
+                    mut charge,
+                    authorization,
+                    #[cfg(test)]
+                    native_worker,
+                } => {
+                    if let Some(charge) = charge.as_mut() {
+                        charge.running();
+                    }
+                    let envelope = *envelope;
+                    #[cfg(test)]
+                    {
+                        engine.compute_context = Some(ComputeContext {
+                            worker: native_worker,
+                            helper: grant.pool,
+                            request_id: envelope.request_id,
+                            session: envelope.session,
+                        });
+                    }
+                    let response = (|| {
+                        let request_owner = RequestOwner {
+                            connection: &alive,
+                            worker: &worker_alive,
+                            closing,
+                            authorization: authorization
+                                .as_ref()
+                                .map(|state| (state.as_ref(), grant.as_ref())),
+                        };
+                        require_live(Some(request_owner))?;
+                        ensure!(
+                            alive.load(Ordering::Acquire)
+                                && worker_alive.load(Ordering::Acquire)
+                                && !closing.load(Ordering::Acquire),
+                            "pool request canceled"
+                        );
+                        engine.admit_owner(grant.worker, &alive)?;
+                        // Queue-waiting work retains both exact connection and native
+                        // worker fences. No inference starts after its Release barrier.
+                        ensure!(
+                            alive.load(Ordering::Acquire)
+                                && worker_alive.load(Ordering::Acquire)
+                                && !closing.load(Ordering::Acquire),
+                            "pool request canceled"
+                        );
+                        match envelope.operation {
+                            protocol::Operation::Call { request } => engine.request_guarded(
+                                &grant,
+                                envelope.session,
+                                *request,
+                                Some(request_owner),
+                            ),
+                            protocol::Operation::Close => {
+                                engine.sessions.remove(&(grant.worker, envelope.session));
+                                Ok(Response::Peak { bytes: 0 })
+                            }
+                        }
+                    })()
+                    .unwrap_or(Response::Failed {
+                        reason: "pool request rejected or verified model unavailable".into(),
+                    });
+                    // Result errors must not leak this call's observation into later
+                    // work. This is instrumentation only, never an admission decision.
+                    #[cfg(test)]
+                    {
+                        engine.compute_context = None;
+                    }
+                    let _ = reply.send(protocol::ResultEnvelope {
+                        project: envelope.project,
+                        worker: envelope.worker,
+                        session: envelope.session,
+                        request_id: envelope.request_id,
+                        input_digest: envelope.input_digest,
+                        response,
+                    });
+                }
+                Work::Release { worker, owner } => engine.release_owner(worker, owner.as_ref()),
+                Work::DrainRelease { worker, completed } => {
+                    engine.release_owner(worker, None);
+                    // Only the actual engine queue, after earlier compute completes,
+                    // can publish this exact generation's provider completion witness.
+                    completed.store(true, Ordering::Release);
+                }
+                #[$owner_cfg]
+                Work::CloseEngine { accounting } => {
+                    engine.sessions.clear();
+                    engine.owners.clear();
+                    engine.model = None;
+                    engine.model_lease = None;
+                    engine.model_key = None;
+                    engine.tokenizer = None;
+                    engine.tokenizer_path = None;
+                    accounting.mark_engine_barrier();
+                }
+                #[$owner_cfg]
+                Work::StopEngine { reply } => {
+                    let _ = reply.send(());
+                }
+            }
+        }
+    };
 }
+provider_context!(define_provider_work);
+
 struct Authorization {
     grant: protocol::Grant,
     used: bool,
@@ -582,6 +765,42 @@ struct State {
     retirement: Mutex<retirement::Retirements>,
     sender: mpsc::Sender<Work>,
     closing: Arc<AtomicBool>,
+    accounting: Option<Arc<accounting::Accounting>>,
+}
+impl State {
+    fn grant_live(&self, grant: &protocol::Grant) -> Result<bool> {
+        let grants = self
+            .grants
+            .lock()
+            .map_err(|_| anyhow::anyhow!("pool authorization unavailable"))?;
+        Ok(!self.closing.load(Ordering::Acquire)
+            && grants.get(&grant.token).is_some_and(|auth| {
+                auth.used
+                    && auth.alive.load(Ordering::Acquire)
+                    && auth.worker_alive.load(Ordering::Acquire)
+                    && Instant::now() < auth.expires
+                    && grant.service == self.service
+                    && grant.pool == self.pool
+                    && auth.grant.service == grant.service
+                    && auth.grant.pool == grant.pool
+                    && auth.grant.worker == grant.worker
+                    && auth.grant.project == grant.project
+            }))
+    }
+    fn expire_grants(&self, now: Instant) -> Result<()> {
+        self.grants
+            .lock()
+            .map_err(|_| anyhow::anyhow!("pool authorization unavailable"))?
+            .retain(|_, auth| {
+                if now >= auth.expires {
+                    auth.alive.store(false, Ordering::Release);
+                    false
+                } else {
+                    true
+                }
+            });
+        Ok(())
+    }
 }
 
 fn drain_control(
@@ -604,98 +823,6 @@ fn drain_control(
         &state.sender,
         ticket,
     ))
-}
-
-fn process_work(engine: &mut Engine, work: Work, closing: &AtomicBool) {
-    match work {
-        Work::Sweep => {
-            engine.retire_disconnected();
-            if engine.sessions.is_empty() && engine.used.elapsed() > Duration::from_secs(60) {
-                engine.model = None;
-                engine.model_lease = None;
-                engine.model_key = None;
-                engine.tokenizer = None;
-                engine.tokenizer_path = None;
-            }
-        }
-        Work::Request {
-            grant,
-            envelope,
-            alive,
-            worker_alive,
-            reply,
-            #[cfg(test)]
-            native_worker,
-        } => {
-            let envelope = *envelope;
-            #[cfg(test)]
-            {
-                engine.compute_context = Some(ComputeContext {
-                    worker: native_worker,
-                    helper: grant.pool,
-                    request_id: envelope.request_id,
-                    session: envelope.session,
-                });
-            }
-            let response = (|| {
-                ensure!(
-                    alive.load(Ordering::Acquire)
-                        && worker_alive.load(Ordering::Acquire)
-                        && !closing.load(Ordering::Acquire),
-                    "pool request canceled"
-                );
-                engine.admit_owner(grant.worker, &alive)?;
-                // Queue-waiting work retains both exact connection and native
-                // worker fences. No inference starts after its Release barrier.
-                ensure!(
-                    alive.load(Ordering::Acquire)
-                        && worker_alive.load(Ordering::Acquire)
-                        && !closing.load(Ordering::Acquire),
-                    "pool request canceled"
-                );
-                match envelope.operation {
-                    protocol::Operation::Call { request } => engine.request_guarded(
-                        &grant,
-                        envelope.session,
-                        *request,
-                        Some(RequestOwner {
-                            connection: &alive,
-                            worker: &worker_alive,
-                            closing,
-                        }),
-                    ),
-                    protocol::Operation::Close => {
-                        engine.sessions.remove(&(grant.worker, envelope.session));
-                        Ok(Response::Peak { bytes: 0 })
-                    }
-                }
-            })()
-            .unwrap_or(Response::Failed {
-                reason: "pool request rejected or verified model unavailable".into(),
-            });
-            // Result errors must not leak this call's observation into later
-            // work. This is instrumentation only, never an admission decision.
-            #[cfg(test)]
-            {
-                engine.compute_context = None;
-            }
-            let _ = reply.send(protocol::ResultEnvelope {
-                project: envelope.project,
-                worker: envelope.worker,
-                session: envelope.session,
-                request_id: envelope.request_id,
-                input_digest: envelope.input_digest,
-                response,
-            });
-        }
-        Work::Release { worker, owner } => engine.release_owner(worker, owner.as_ref()),
-        Work::DrainRelease { worker, completed } => {
-            engine.release_owner(worker, None);
-            // Only the actual engine queue, after earlier compute completes,
-            // can publish this exact generation's provider completion witness.
-            completed.store(true, Ordering::Release);
-        }
-    }
 }
 
 async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
@@ -764,7 +891,18 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                     && !state.closing.load(Ordering::Acquire),
                 "pool admission revoked"
             );
+            ensure!(
+                state.grant_live(&grant)?,
+                "pool authorization expired or revoked"
+            );
             let (reply, receiver) = oneshot::channel();
+            let (charge, _delivery) = match &state.accounting {
+                Some(accounting) => {
+                    let (compute, delivery) = accounting.admit(grant.worker)?;
+                    (Some(compute), Some(delivery))
+                }
+                None => (None, None),
+            };
             #[cfg(test)]
             let native_worker = {
                 let retirement = state
@@ -781,6 +919,8 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                     alive: alive.clone(),
                     worker_alive: worker_alive.clone(),
                     reply,
+                    charge,
+                    authorization: Some(state.clone()),
                     #[cfg(test)]
                     native_worker,
                 })
@@ -804,150 +944,4 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
         owner: Some(Arc::downgrade(&alive)),
     });
     result
-}
-
-pub(crate) async fn run_guarded_with_engine(
-    bootstrap: Option<airk_cli::embedding_pool_bootstrap::GuardedBootstrap>,
-    make_engine: impl FnOnce(&protocol::Init, Arc<AtomicBool>) -> Result<Engine>,
-) -> Result<()> {
-    let init: protocol::Init = service_ipc::read_frame(&mut std::io::stdin().lock())?
-        .context("pool initialization missing")?;
-    if let Some(bootstrap) = bootstrap.as_ref() {
-        bootstrap.validate_init(&init)?;
-    } else {
-        ensure!(
-            !airk_cli::embedding_pool_bootstrap::shared_mode(&init.runtime)?,
-            "activated authority-1 helper requires guarded native startup"
-        );
-    }
-    ensure!(
-        (1..=4).contains(&init.inference_threads),
-        "invalid pool inference allowance"
-    );
-    local_ipc::prepare_root(&init.runtime)?;
-    ensure!(
-        PROCESS_LEASE
-            .set(airk_store::service::EmbeddingLease::acquire(&init.runtime)?)
-            .is_ok(),
-        "embedding process already owns a pool lease"
-    );
-    let role = protocol::role(init.pool);
-    let mut listener = Listener::bind(&local_ipc::endpoint(&init.runtime, &role)?)?;
-    let (sender, mut receiver) = mpsc::channel::<Work>(8);
-    let closing = Arc::new(AtomicBool::new(false));
-    let engine_closing = closing.clone();
-    let inference_threads = Arc::new(AtomicUsize::new(usize::from(init.inference_threads)));
-    let engine_threads = inference_threads.clone();
-    let observation = Arc::new(Mutex::new((0u64, 0u64, 0usize, Instant::now())));
-    let engine_observation = observation.clone();
-    let model_engine = make_engine(&init, closing.clone())?;
-    let engine = std::thread::Builder::new()
-        .name("airk-pooled-inference".into())
-        .stack_size(8 << 20)
-        .spawn(move || {
-            let mut engine = model_engine;
-            engine.inference_threads = engine_threads;
-            while let Some(work) = receiver.blocking_recv() {
-                process_work(&mut engine, work, &engine_closing);
-                if let Ok(mut observation) = engine_observation.lock() {
-                    *observation = (
-                        engine.loads,
-                        engine.reuses,
-                        engine.sessions.len(),
-                        Instant::now(),
-                    );
-                }
-            }
-        })?;
-    let state = Arc::new(State {
-        service: init.service,
-        pool: init.pool,
-        role: role.clone(),
-        grants: Mutex::new(BTreeMap::new()),
-        retirement: Mutex::new(retirement::Retirements::default()),
-        sender,
-        closing: closing.clone(),
-    });
-    service_ipc::write_frame(
-        &mut std::io::stdout().lock(),
-        &protocol::Observation::Ready {
-            pool: init.pool,
-            role,
-        },
-    )?;
-    let (control, mut commands) = mpsc::channel::<protocol::Control>(8);
-    let input_closing = closing.clone();
-    std::thread::Builder::new()
-        .name("airk-pool-control".into())
-        .spawn(move || {
-            while let Ok(Some(command)) = service_ipc::read_frame(&mut std::io::stdin().lock()) {
-                if control.blocking_send(command).is_err() {
-                    break;
-                }
-            }
-            input_closing.store(true, Ordering::Release);
-        })?;
-    let slots = Arc::new(Semaphore::new(64));
-    let mut connections = JoinSet::new();
-    let mut tick = tokio::time::interval(Duration::from_secs(1));
-    while !closing.load(Ordering::Acquire) {
-        tokio::select! {
-            command=commands.recv()=>{
-                let observation=match command {
-                    Some(protocol::Control::ConfigureThreads{threads})=>{
-                        if (1..=4).contains(&threads){inference_threads.store(usize::from(threads),Ordering::Release);protocol::Observation::Renewed}else{protocol::Observation::Failed}
-                    },
-                    Some(protocol::Control::Renew{worker})=>{
-                        let mut grants=state.grants.lock().map_err(|_|anyhow::anyhow!("pool authorization unavailable"))?;
-                        let authorization=grants.values_mut().find(|auth|auth.grant.worker==worker&&auth.alive.load(Ordering::Acquire)&&Instant::now()<auth.expires);
-                        if let Some(authorization)=authorization {authorization.expires=Instant::now()+Duration::from_secs(300);protocol::Observation::Renewed}else{protocol::Observation::GrantMissing{worker}}
-                    },
-                    Some(protocol::Control::Register{grant,worker_identity})=>{
-                        let mut retirement=state.retirement.lock().map_err(|_|anyhow::anyhow!("pool membership unavailable"))?;
-                        let mut grants=state.grants.lock().map_err(|_|anyhow::anyhow!("pool authorization unavailable"))?;
-                        retirement.register(&mut grants,(state.service,state.pool),grant,worker_identity,Instant::now())
-                    },
-                    Some(protocol::Control::Revoke{worker})=>{
-                        let mut retirement=state.retirement.lock().map_err(|_|anyhow::anyhow!("pool membership unavailable"))?;
-                        let mut grants=state.grants.lock().map_err(|_|anyhow::anyhow!("pool authorization unavailable"))?;
-                        retirement.revoke(&mut grants,worker);
-                        let _=state.sender.try_send(Work::Release{worker,owner:None});
-                        protocol::Observation::Revoked
-                    },
-                    Some(protocol::Control::BeginDrain{ticket})=>drain_control(&state,retirement::Control::Begin,ticket)?,
-                    Some(protocol::Control::PollDrain{ticket})=>drain_control(&state,retirement::Control::Poll,ticket)?,
-                    Some(protocol::Control::ForgetDrain{ticket})=>drain_control(&state,retirement::Control::Forget,ticket)?,
-                    Some(protocol::Control::Status)=>{
-                        match observation.lock(){Ok(observation)=>protocol::Observation::Status{loads:observation.0,reuses:observation.1,sessions:observation.2,age_ms:observation.3.elapsed().as_millis().min(u64::MAX as u128) as u64},Err(_)=>protocol::Observation::Failed}
-                    },
-                    Some(protocol::Control::Stop)|None=>break,
-                };
-                service_ipc::write_frame(&mut std::io::stdout().lock(),&observation)?;
-            },
-            stream=listener.accept()=>{
-                let stream=match stream{Ok(stream)=>stream,Err(error) if error.downcast_ref::<local_ipc::PeerRejected>().is_some()=>continue,Err(error)=>return Err(error)};
-                if let Ok(permit)=slots.clone().try_acquire_owned(){let state=state.clone();connections.spawn(async move{let _permit=permit;connection(stream,state).await});}
-            },
-            _=connections.join_next(),if !connections.is_empty()=>{},
-            _=tick.tick()=>{
-                if let Some(bootstrap) = bootstrap.as_ref() { bootstrap.enforce_native_owner()?; }
-                state.retirement.lock().map_err(|_|anyhow::anyhow!("pool membership unavailable"))?.retry(&state.sender);
-                if state.sender.capacity()==8{let _=state.sender.try_send(Work::Sweep);}
-                let mut grants=state.grants.lock().map_err(|_|anyhow::anyhow!("pool authorization unavailable"))?;
-                grants.retain(|_,auth|{if Instant::now()>=auth.expires{auth.alive.store(false,Ordering::Release);false}else{true}});
-            }
-        }
-    }
-    closing.store(true, Ordering::Release);
-    // Idle peers may be waiting on a five-minute read deadline. Closing
-    // admission must also wake those transports before joining the engine.
-    // Aborting a connection never releases the process lease or its charged
-    // inference work: the engine drains and joins below before this owner exits.
-    connections.abort_all();
-    while connections.join_next().await.is_some() {}
-    drop(state);
-    engine
-        .join()
-        .map_err(|_| anyhow::anyhow!("pool execution thread failed"))?;
-    Ok(())
 }

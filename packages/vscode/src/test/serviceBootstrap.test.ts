@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { automaticUpgrade, NativeRunner, RuntimeHost, RuntimeOptions, validateRuntimeInstallDirectory, verifyBundledRuntime } from '../serviceBootstrap';
+import { automaticUpgrade, NativeRunner, RuntimeHost, RuntimeOptions, validateRuntimeInstallDirectory, verifyBundledRuntime, nativeRunner } from '../serviceBootstrap';
 import { RecordValue, ServiceClient, ServiceError, record } from '../serviceClient';
 import { nativePayloadDirectory } from './nativeServiceFixture';
 import { LegacyRetirementSession } from '../runtimeLegacyRetirement';
@@ -23,6 +23,99 @@ test('installation retires previous native runtime with the exact current select
     try{
         await host.retirePrevious(binding);crossed=true;
         await assert.rejects(host.retirePrevious(binding),/crossed_runtime_retirement_receipt/);
+    }finally{await f.cleanup();}
+});
+
+test('legacy launcher finalization retains exact native process audit and rejects incomplete or crossed absence',async()=>{
+    const f=await fixture(),install=path.join(f.root,'install');let receipt:any;
+    const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable'},async(_command,args)=>{
+        if(args[1]==='self-test')return {protocol:1,version:'1.4.0',self_test:'passed',metadata_console:1};
+        assert.deepEqual(args,['runtime','retire-legacy-launchers','--install-dir',install,'--expected-active',f.digest]);return receipt;
+    });
+    const binding={installDir:install,controlDir:path.join(install,'control'),executable:f.source,launcher:null,runtimeSha256:f.digest,version:'1.4.0',lifecycle:'on-demand' as const,verificationBasis:'trusted_distribution'};
+    const valid={schema:1,active:f.digest,legacy_launchers_retired:true,launcher:null,universal_launcher:null,processes:{scope:'verified_launcher_images',remaining:0,observations:[{complete:false,unknown_system_processes:3,owned_images_stopped:[7]}]},future:{retained:true}};
+    try{receipt=valid;assert.deepEqual(await host.retireLegacyLaunchers(binding),valid);
+        for(const mutate of [(v:any)=>v.active='a'.repeat(64),(v:any)=>v.legacy_launchers_retired=false,(v:any)=>v.launcher=f.source,(v:any)=>v.universal_launcher=f.source,(v:any)=>v.processes.remaining=1,(v:any)=>v.processes.scope='all_processes',(v:any)=>v.processes.observations=null,(v:any)=>{delete v.processes;}]){
+            receipt=structuredClone(valid);mutate(receipt);await assert.rejects(host.retireLegacyLaunchers(binding),(error:unknown)=>error instanceof ServiceError&&error.outcomeUnknown&&error.nativeResponse===receipt);
+        }
+    }finally{await f.cleanup();}
+});
+
+test('native cache preparation freezes real cleanup scope and retirement requires the same complete accepted proof',async()=>{
+    const f=await fixture(),install=path.join(f.root,'custom-install'),context=path.join(f.root,'Code','User','globalStorage'),locator=path.join(f.root,'protected-locators.json');
+    const binding={installDir:install,controlDir:path.join(install,'control'),executable:f.source,launcher:null,runtimeSha256:f.digest,version:'1.4.0',lifecycle:'on-demand' as const,verificationBasis:'trusted_distribution',payloadVerified:true};
+    const cacheDirectory=path.join(context,'iokaio.airk','helpers','0.2.1-windows-x64-'+f.digest.slice(0,16));
+    const cache={schema:1,provenance:'owned_legacy_helper_cache',user:'fixture',global_storage:context,global_storage_identity:'global-native-id',helpers_identity:'helpers-native-id',cache_directory:cacheDirectory,cache_directory_identity:'cache-native-id',executable:path.join(cacheDirectory,'airk.exe'),executable_sha256:f.digest,executable_identity:'file-native-id',cache_version:'0.2.1',platform:'windows-x64',digest_prefix:f.digest.slice(0,16),artifact_approved:false,future:{retained:true}};
+    const original={schema:1,active:f.digest,scope:'context-only',context_global_storage:context,global_storage_roots:[context],caches:[cache],inspection_sha256:'ef'.repeat(32),origin_proofs:[],origin_locators:[],adoption_locators:[],managed_locators:[],origin_classifications:[],future_origin_evidence:{full_original_config_sha256:'12'.repeat(32)},future:{retained:true}};
+    let prepared:any=original,retired:any;
+    const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable',installDir:install},async(_command,args)=>{
+        if(args[1]==='self-test')return {protocol:1,version:'1.4.0',self_test:'passed',metadata_console:1};
+        if(args[1]==='prepare-legacy-caches'){
+            assert.deepEqual(args,['runtime','prepare-legacy-caches','--install-dir',install,'--expected-active',f.digest,'--global-storage',context,'--origin-locators-file',locator]);
+            assert.equal(args.includes('--scope'),false,'Only native OS installation identity decides default versus custom scope');return prepared;
+        }
+        assert.deepEqual(args,['runtime','retire-legacy-caches','--install-dir',install,'--expected-active',f.digest,'--expected-inspection-sha256',original.inspection_sha256]);return retired;
+    });
+    const complete={schema:1,active:f.digest,scope:original.scope,global_storage_roots:original.global_storage_roots,caches_retired:true,remaining:0,inspection_sha256:original.inspection_sha256,retired_caches:original.caches,processes:{scope:'verified_legacy_cache_images',remaining:0,observations:[{complete:false,unknown_system_pids:3,owned_image_removed:true}],image_roster:[{original:'full native roster'}],image_exclusions:[{original:'held image proof'}]},future:{retained:true}};
+    try{
+        assert.equal(await host.prepareLegacyCaches(binding,context,locator),original);
+        retired=complete;assert.equal(await host.retireLegacyCaches(binding,original),complete);
+        for(const change of [(v:any)=>v.active='00'.repeat(32),(v:any)=>v.scope='guessed-global',(v:any)=>v.context_global_storage=install,(v:any)=>v.global_storage_roots=[],(v:any)=>v.caches[0].executable_sha256='00'.repeat(32),(v:any)=>delete v.caches[0].executable_identity]){
+            prepared=structuredClone(original);change(prepared);await assert.rejects(host.prepareLegacyCaches(binding,context,locator),(error:unknown)=>error instanceof ServiceError&&error.outcomeUnknown&&error.nativeResponse===prepared);
+        }
+        for(const change of [(v:any)=>v.active='00'.repeat(32),(v:any)=>v.scope='native-defaults',(v:any)=>v.global_storage_roots.push(install),(v:any)=>v.inspection_sha256='00'.repeat(32),(v:any)=>v.caches_retired=false,(v:any)=>v.remaining=1,(v:any)=>v.processes.scope='all_processes',(v:any)=>v.processes.remaining=1,(v:any)=>delete v.processes.image_exclusions,(v:any)=>v.retired_caches=[]]){
+            retired=structuredClone(complete);change(retired);await assert.rejects(host.retireLegacyCaches(binding,original),(error:unknown)=>error instanceof ServiceError&&error.outcomeUnknown&&error.nativeResponse===retired);
+        }
+        prepared={...original,scope:'native-defaults'};assert.equal((await host.prepareLegacyCaches(binding,context,locator)).scope,'native-defaults','Frontend never infers scope from HOME or a mock custom path');
+    }finally{await f.cleanup();}
+});
+
+test('legacy HTTP enrollment accepts only native standalone original-to-adopted retargets and preserves full replies',async()=>{
+    const f=await fixture(),install=path.join(f.root,'install'),namespace='ab'.repeat(16),id='cd'.repeat(16),receipt='ef'.repeat(32);
+    const binding={installDir:install,controlDir:path.join(install,'control'),executable:f.source,launcher:null,runtimeSha256:f.digest,version:'1.4.0',lifecycle:'on-demand' as const,verificationBasis:'trusted_distribution'};
+    const member=(number:number)=>{
+        const suffix=String(number),original={binding:(number+10).toString(16).padStart(64,'0'),root:path.join(f.root,'source-'+suffix),data_root:path.join(f.root,'old-data-'+suffix),collection:'original-'+suffix},adopted={...original,binding:(number+20).toString(16).padStart(64,'0'),data_root:path.join(f.root,'adopted-data-'+suffix)};
+        const setup={caller:id,key:{namespace,epoch:1,nonce:id},expected_catalog_revision:1,name:'Original '+suffix,registration:adopted,sources:[{canonical_path:original.root,aliases:[],owner:true}],setup_watch:false};
+        const plan={schema:1,setup,original_registration:original,origin_sha256:receipt,config_sha256:receipt,executable_sha256:f.digest,quiescence_sha256:receipt,archive_inventory_sha256:receipt,original_publication_sha256:receipt,source_inventory_sha256:receipt};
+        const adoption={schema:1,operation_id:id,plan,publication:{schema:1,plan_digest:receipt,archive_inventory_sha256:receipt,original_publication_sha256:receipt,current:`airk-r1:${namespace}:2:${receipt}`,resource_sha256:receipt,compatibility_sha256:receipt},original_server:'old-'+suffix,no_default_project:true,configuration_claims:[{schema:1,origin_sha256:plan.origin_sha256,config_sha256:plan.config_sha256,executable_sha256:plan.executable_sha256,selected_entry_sha256:receipt,container_path:['mcpServers'],original_server:'old-'+suffix,no_default_project:true}]};
+        const selected={namespace,expected_catalog_revision:2,registration:adopted,configuration_receipt:receipt,grant:{grant:{id:'grt_'+'91'.repeat(16),host:receipt,revision:1,revoked:false,memberships:[{membership:{project_id:'prj_'+'11'.repeat(16),index_id:'idx_'+'22'.repeat(16),revision:1,scope:[{source_root_id:'src_'+'33'.repeat(16),kind:'subtree',path:''}]},source_revision:1,policy_epoch:0,policy_digest:null}]},provenance:{kind:'imported_standalone_adoption',adoption},future_native_field:{retained:true}}};
+        return {original,adopted,selected};
+    };
+    const first=member(1),second=member(2),directory=path.join(binding.controlDir,'http-1');
+    const base={schema:1,connection_id:id,endpoint:{schema:1,installation:f.digest,user:'fixture',namespace,generation:1,service_instance:id,executable_sha256:f.digest,url:'https://127.0.0.1:57421/mcp',ca_sha256:receipt,certificate_sha256:receipt,state:'ready',predecessor_digest:null},ca_certificate_file:path.join(directory,'ca.pem'),credential_file:path.join(directory,'credential-'+id+'.token')};
+    const singleton={...base,selection:{kind:'imported_legacy',selection:first.selected}},union={...base,selection:{kind:'imported_legacy_union',selection:{namespace,selections:[first.selected,second.selected],no_default_project:true}}};
+    let response:any=singleton;
+    const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable'},async(_command,args)=>{
+        if(args[1]==='self-test')return {protocol:1,version:'1.4.0',self_test:'passed',metadata_console:1};
+        assert.ok(['http-legacy-connection','http-legacy-union-connection','adopt-legacy-indexes'].includes(args[1]));return response;
+    });
+    const file=path.join(f.root,'protected-original-registration.json');
+    try{
+        assert.deepEqual(await host.httpLegacyConnection(binding,first.original,file,receipt,id,'claude'),singleton);
+        await assert.rejects(host.httpLegacyConnection(binding,{...first.original,data_root:install},file,receipt,id,'claude'),(error:unknown)=>error instanceof ServiceError&&error.code==='crossed_http_legacy_connection'&&error.nativeResponse===response);
+        response=union;assert.deepEqual(await host.httpLegacyUnionConnection(binding,[{registration:first.original,configuration_receipt:receipt},{registration:second.original,configuration_receipt:receipt}],file,id,'vscode'),union);
+        await assert.rejects(host.httpLegacyUnionConnection(binding,[{registration:second.original,configuration_receipt:receipt},{registration:first.original,configuration_receipt:receipt}],file,id,'vscode'),/crossed_http_legacy_union/);
+        response=structuredClone(singleton);response.selection.selection.grant.provenance={kind:'imported_legacy_snapshot',upgrade_id:id,plan_digest:receipt,legacy_binding:first.adopted.binding,configuration_digest:receipt};
+        await assert.rejects(host.httpLegacyConnection(binding,first.original,file,receipt,id,'claude'),/crossed_http_legacy_connection/);
+        response=structuredClone(singleton);response.selection.selection.grant.provenance.adoption.publication.archive_inventory_sha256=f.digest;
+        await assert.rejects(host.httpLegacyConnection(binding,first.original,file,receipt,id,'claude'),(error:unknown)=>error instanceof ServiceError&&error.outcomeUnknown&&error.nativeResponse===response);
+        const batchOperation='98'.repeat(16),catalogOperation='12'.repeat(16),locator={path:path.join(f.root,'.mcp.json'),format:'mcp_servers_json' as const,server:'old-1'},explicit={...locator,container_path:['mcpServers']};
+        const adoption=first.selected.grant.provenance.adoption;adoption.operation_id=catalogOperation;
+        const cacheDirectory=path.join(f.root,'User','globalStorage','iokaio.airk','helpers','1.3.1-windows-x64-'+f.digest.slice(0,16)),contextStorage=path.join(f.root,'User','globalStorage');
+        const cache={schema:1,provenance:'owned_legacy_helper_cache',user:'fixture',global_storage:contextStorage,global_storage_identity:'global-id',helpers_identity:'helpers-id',cache_directory:cacheDirectory,cache_directory_identity:'cache-id',executable:path.join(cacheDirectory,'airk.exe'),executable_sha256:f.digest,executable_identity:'image-id',cache_version:'1.3.1',platform:'windows-x64',digest_prefix:f.digest.slice(0,16),artifact_approved:false};
+        const originalProof={config_path:locator.path,server:locator.server,container_path:['mcpServers'],config_sha256:receipt,executable:cache.executable,executable_sha256:f.digest,selected_entry_sha256:receipt,future_native_proof:{retained:true}};
+        const prepared:any={schema:1,active:f.digest,scope:'context-only',context_global_storage:contextStorage,global_storage_roots:[contextStorage],caches:[cache],inspection_sha256:'ab'.repeat(32),origin_locators:[locator,explicit],origin_proofs:[originalProof],adoption_locators:[locator],managed_locators:[],origin_classifications:[locator,explicit].map(locator=>({locator,origin_sha256:receipt,kind:'standalone',authority:'not_observed'}))};
+        const setupReceipt={schema:1,operation_id:catalogOperation,request:adoption.plan.setup,request_digest:receipt,index_id:first.selected.grant.grant.memberships[0].membership.index_id,source_ids:['src_'+'33'.repeat(16)],stage:'ready',catalog_revision:2,source_revision:1,legacy_adoption:adoption.publication.plan_digest,preparation:{legacy_adoption:adoption.publication.plan_digest},completion:{legacy_adoption:adoption.publication}};
+        const mapping={locator,origin_sha256:receipt,config_sha256:receipt,group_operation_id:id,original_registration:first.original,registration:first.adopted,claim:adoption.configuration_claims[0]},group={schema:1,active:f.digest,status:'ready',operation_id:id,batch_operation_id:batchOperation,original_registration:first.original,registration:first.adopted,original_config_sha256:receipt,source_availability:'not_observed_saved_only',adoption_receipt:{schema:1,plan_digest:adoption.publication.plan_digest,setup:setupReceipt},conversion:{saved_only:true},grant:first.selected.grant,claims:[mapping],future_group_metadata:{retained:true}};
+        const ready={schema:1,status:'ready',active:f.digest,operation_id:batchOperation,batch_operation_id:batchOperation,cache_inspection_sha256:prepared.inspection_sha256,retained_completed_operation:false,groups:[group],claims:[mapping],maintenance:{operation:batchOperation,originally_running:false,originally_explicitly_stopped:true,restarted:false,service_instance:null,execution_sha256:f.digest,observed_unix_ms:1},withdrawal:{held:{schema:1,operation_id:batchOperation,inspection_sha256:prepared.inspection_sha256,scope:'verified_legacy_cache_images',remaining:0,image_roster:[cache],image_exclusions:[cache],observations:[{full_raw_proof:'retained'}]},restored:{schema:1,operation_id:batchOperation,inspection_sha256:prepared.inspection_sha256,original_image_paths_restored:true,retirement_pending:true}},future_batch_field:{retained:true}};
+        response=ready;assert.equal(await host.adoptLegacyIndexes(binding,prepared,batchOperation,file),ready,'Full batch metadata is retained, with equivalent literal locators sharing one complete native origin proof');
+        const crossed=structuredClone(prepared);crossed.origin_locators[1].server='different-server';crossed.origin_classifications[1].locator=crossed.origin_locators[1];crossed.origin_proofs.push({...originalProof,server:'different-server'});
+        await assert.rejects(host.adoptLegacyIndexes(binding,crossed,batchOperation,file),/legacy_origin_classification_unconfirmed/,'A native-origin SHA cannot collapse different complete observations');
+        const wrongContainer=structuredClone(prepared);wrongContainer.origin_locators[1].container_path=['projects','different','mcpServers'];wrongContainer.origin_classifications[1].locator=wrongContainer.origin_locators[1];
+        await assert.rejects(host.adoptLegacyIndexes(binding,wrongContainer,batchOperation,file),/legacy_cache_inspection_unconfirmed/,'Explicit nested containers never become a wildcard');
+        for(const mutate of [(value:any)=>value.groups[0].operation_id=batchOperation,(value:any)=>value.claims[0].config_sha256=f.digest,(value:any)=>value.claims[0].locator={...locator,container_path:['projects','other','mcpServers']},(value:any)=>value.groups[0].adoption_receipt.setup.completion.legacy_adoption=null,(value:any)=>value.maintenance.restarted=true,(value:any)=>value.withdrawal.restored.retirement_pending=false]){
+            response=structuredClone(ready);mutate(response);await assert.rejects(host.adoptLegacyIndexes(binding,prepared,batchOperation,file),(error:unknown)=>error instanceof ServiceError&&error.outcomeUnknown&&error.nativeResponse===response);
+        }
     }finally{await f.cleanup();}
 });
 
@@ -494,9 +587,9 @@ test('native lifecycle sends a bounded saved intent over stdin and refuses a cro
     }finally{await f.cleanup();}
 });
 
-test('activation admits supported forward upgrades and rejects downgrades, unknown lines and malformed versions', () => {
-    for (const [from, to] of [['1.4.0', '1.4.4'], ['1.4.4', '1.4.4'], ['1.4.4', '1.5.0'], ['1.4.1', '1.5.3'], ['1.5.0', '1.5.2'], ['1.4.4','1.6.0'], ['1.5.12','1.6.0'], ['1.6.0','1.6.0'], ['1.6.0','1.6.1'], ['1.6.4','1.7.0'], ['1.7.0','1.7.0'], ['1.7.0','1.7.1'], ['1.4.4','1.8.0'], ['1.7.6','1.8.0'], ['1.8.0','1.8.0'], ['1.8.0','1.8.1'], ['1.8.7','1.8.8'], ['1.8.8','1.8.8'], ['1.4.4','1.9.0'], ['1.8.7','1.9.0'], ['1.9.0','1.9.0'], ['1.9.0','1.9.1']]) { assert.ok(automaticUpgrade(from, to), `${from} → ${to}`); }
-    for (const [from, to] of [['1.5.0', '1.4.4'], ['1.4.4', '1.4.3'], ['1.3.2', '1.5.0'], ['1.3.2', '1.4.0'], ['1.5.1', '1.5.0'], ['1.6.0','1.5.12'], ['1.6.1','1.6.0'], ['1.7.0','1.6.4'], ['1.7.1','1.7.0'], ['1.8.0','1.7.6'], ['1.8.1','1.8.0'], ['1.9.0','1.8.7'], ['1.9.0','1.8.8'], ['1.8.8','1.8.7'], ['1.9.1','1.9.0'], ['1.9.0','1.10.0'], ['1.10.0','1.10.1'], ['1.3.2','1.9.0'], ['2.0.0', '2.0.1'], ['1.4', '1.5.0'], ['1.4.x', '1.5.0'], ['1..0','1.6.0'], ['1.5.0','1.6.'], ['1.5.0','1.6.0-beta'], ['1.5.0','1.6.9007199254740992']]) {
+test('upgrade direction allows skipped historical and future releases while native format checks remain authoritative', () => {
+    for (const [from, to] of [['1.4.0', '1.4.4'], ['1.4.4', '1.4.4'], ['1.4.4', '1.5.0'], ['1.4.1', '1.5.3'], ['1.5.0', '1.5.2'], ['1.4.4','1.6.0'], ['1.5.12','1.6.0'], ['1.6.0','1.6.0'], ['1.6.0','1.6.1'], ['1.6.4','1.7.0'], ['1.7.0','1.7.0'], ['1.7.0','1.7.1'], ['1.4.4','1.8.0'], ['1.7.6','1.8.0'], ['1.8.0','1.8.0'], ['1.8.0','1.8.1'], ['1.8.7','1.8.8'], ['1.8.8','1.8.8'], ['1.4.4','1.9.0'], ['1.8.7','1.9.0'], ['1.9.0','1.9.0'], ['1.9.0','1.9.1'],['0.2.1','1.8.14'],['1.0.0','1.8.14'],['1.3.2','1.5.0'],['1.3.2','1.4.0'],['1.3.2','1.9.0'],['1.9.0','1.10.0'],['1.10.0','1.10.1'],['2.0.0','2.0.1']]) { assert.ok(automaticUpgrade(from, to), `${from} → ${to}`); }
+    for (const [from, to] of [['1.5.0', '1.4.4'], ['1.4.4', '1.4.3'], ['1.5.1', '1.5.0'], ['1.6.0','1.5.12'], ['1.6.1','1.6.0'], ['1.7.0','1.6.4'], ['1.7.1','1.7.0'], ['1.8.0','1.7.6'], ['1.8.1','1.8.0'], ['1.9.0','1.8.7'], ['1.9.0','1.8.8'], ['1.8.8','1.8.7'], ['1.9.1','1.9.0'], ['1.4', '1.5.0'], ['1.4.x', '1.5.0'], ['1..0','1.6.0'], ['1.5.0','1.6.'], ['1.5.0','1.6.0-beta'], ['1.5.0','1.6.9007199254740992']]) {
         assert.equal(automaticUpgrade(from, to), false, `${from} → ${to}`);
     }
 });
@@ -721,4 +814,92 @@ test('POSIX discovery refuses an existing public install before native inspectio
         assert.equal((await fs.lstat(install)).mode&0o777,0o755);
         assert.deepEqual(calls.map(args=>args[1]),['self-test','location']);
     }finally{await f.cleanup();}
+});
+
+test('1.8.14 platform bundles require one sealed native image and schema2 role metadata',async()=>{
+    for(const host of [{platform:'win32',arch:'x64'},{platform:'linux',arch:'x64'},{platform:'darwin',arch:'arm64'},{platform:'darwin',arch:'x64'}]){
+        const f=await fixture(host,'1.8.14');
+        try{
+            await assert.rejects(verifyBundledRuntime(f.root,'1.8.14',host),/single_image_runtime_required/);
+            await fs.unlink(path.join(f.source,f.helper));
+            const inventoryPath=path.join(f.source,'airk-install.json'),inventory=JSON.parse(await fs.readFile(inventoryPath,'utf8'));delete inventory.files[f.helper];
+            const metadata={schema:2,version:'1.8.14',os:inventory.os,arch:inventory.arch,airk_sha256:inventory.files[f.main]},metadataBytes=JSON.stringify(metadata);
+            await fs.writeFile(path.join(f.source,'airk-runtime.json'),metadataBytes);inventory.files['airk-runtime.json']=sha(metadataBytes);
+            const bytes=JSON.stringify(inventory);await fs.writeFile(inventoryPath,bytes);
+            const wrapper={...f.wrapper,install_manifest_sha256:sha(bytes),payload:{[f.main]:inventory.files[f.main]}};await fs.writeFile(path.join(f.root,'native','manifest.json'),JSON.stringify(wrapper));
+            const bundle=await verifyBundledRuntime(f.root,'1.8.14',host);assert.equal(bundle.main,path.join(f.source,f.main));assert.equal(bundle.helper,undefined);
+            metadata.airk_sha256='0'.repeat(64);const crossed=JSON.stringify(metadata);await fs.writeFile(path.join(f.source,'airk-runtime.json'),crossed);inventory.files['airk-runtime.json']=sha(crossed);
+            const changed=JSON.stringify(inventory);await fs.writeFile(inventoryPath,changed);wrapper.install_manifest_sha256=sha(changed);await fs.writeFile(path.join(f.root,'native','manifest.json'),JSON.stringify(wrapper));
+            await assert.rejects(verifyBundledRuntime(f.root,'1.8.14',host),/single_image_runtime_metadata_mismatch/);
+        }finally{await f.cleanup();}
+    }
+});
+
+async function modernBindingFixture(version:string){
+    const f=await fixture(undefined,version);await fs.unlink(path.join(f.source,f.helper));
+    const inventoryPath=path.join(f.source,'airk-install.json'),inventory=JSON.parse(await fs.readFile(inventoryPath,'utf8'));delete inventory.files[f.helper];
+    const pair={schema:2,version,os:inventory.os,arch:inventory.arch,airk_sha256:inventory.files[f.main]},pairBytes=JSON.stringify(pair);
+    await fs.writeFile(path.join(f.source,'airk-runtime.json'),pairBytes);inventory.files['airk-runtime.json']=sha(pairBytes);
+    const bytes=JSON.stringify(inventory),digest=sha(bytes);await fs.writeFile(inventoryPath,bytes);
+    await fs.writeFile(path.join(f.root,'native','manifest.json'),JSON.stringify({...f.wrapper,install_manifest_sha256:digest,payload:{[f.main]:inventory.files[f.main]}}));
+    return {...f,digest,pair};
+}
+test('future host cleanup verifies exact selected modern format/capabilities without relaxing ordinary client version gate',async()=>{
+    const current=await modernBindingFixture('1.8.15'),previous=await modernBindingFixture('1.8.14'),install=path.join(previous.root,'install');let fault='';const calls:string[][]=[];
+    const binding={installDir:install,controlDir:path.join(install,'control'),executable:path.join(previous.source,previous.main),launcher:null,runtimeSha256:previous.digest,version:'1.8.14',lifecycle:'on-demand' as const,verificationBasis:'trusted_distribution',payloadVerified:true};
+    const endpoint={schema:1,installation:'a'.repeat(64),user:'fixture',namespace:'b'.repeat(32),generation:1,service_instance:'c'.repeat(32),executable_sha256:previous.pair.airk_sha256,url:'https://127.0.0.1:57421/mcp',ca_sha256:'d'.repeat(64),certificate_sha256:'e'.repeat(64),state:'ready',predecessor_digest:null};
+    const host=new RuntimeHost(current.root,'1.8.15',{channel:'stable'},async(command,args,_timeout,input)=>{
+        calls.push([...args]);
+        // Native metadata RPC/endpoint discovery require the predecessor's
+        // compiled version/image. Accepting the new installer would hide the
+        // actual service_rebind_required refusal.
+        assert.equal(command,args[1]==='inspect'?path.join(current.source,current.main):binding.executable);
+        if(args[1]==='inspect')return {payload_verified:fault!=='unverified',selection:{active:fault==='selection'?'0'.repeat(64):binding.runtimeSha256},approval:{version:binding.version,manifest_sha256:fault==='selection'?'0'.repeat(64):binding.runtimeSha256,verification_basis:'trusted_distribution'},executable:binding.executable,launcher:null,control_dir:fault==='control'?path.join(install,'foreign'):binding.controlDir};
+        if(args[1]==='self-test'){assert.equal(command,binding.executable);return {version:fault==='version'?'1.8.13':binding.version,protocol:fault==='protocol'?2:1,metadata_console:fault==='capabilities'?0:1,self_test:'passed'};}
+        if(args[1]==='rpc'&&input!==JSON.stringify('health'))return {status:'console',page:{revision:1,cached:true,observed_unix_ms:1,after:null,projects:[]}};
+        if(args[1]==='rpc')return {status:'health',observation:{version:binding.version,protocol:1,runtime_sha256:binding.runtimeSha256,executable_sha256:fault==='hash'?'0'.repeat(64):previous.pair.airk_sha256,instance:fault==='live_instance'?'f'.repeat(32):endpoint.service_instance,catalog_clock:{namespace:endpoint.namespace,revision:1},policy:{accepting:true}}};
+        if(args[1]==='http-endpoint')return {...endpoint,service_instance:fault==='endpoint'?'f'.repeat(32):endpoint.service_instance,namespace:fault==='endpoint_namespace'?'f'.repeat(32):endpoint.namespace,executable_sha256:fault==='endpoint_hash'?'f'.repeat(64):endpoint.executable_sha256,state:fault==='endpoint_state'?'recovering':endpoint.state};
+        throw Error('Unexpected cleanup mutation');
+    });
+    try{
+        assert.throws(()=>host.client(binding),/service_runtime_version_mismatch/);
+        const reader=await host.migrationClient(binding);assert.deepEqual(Object.keys(reader).sort(),['dispose','projects']);
+        assert.deepEqual(await reader.projects(),{revision:1,cached:true,observed_unix_ms:1,after:null,projects:[]});
+        assert.deepEqual(calls.map(args=>args[1]),['inspect','self-test','rpc','http-endpoint','rpc','rpc']);
+        fault='live_instance';await assert.rejects(reader.projects(),/legacy_cleanup_health_unconfirmed/);reader.dispose();await assert.rejects(reader.projects(),/legacy_cleanup_reader_disposed/);
+        for(fault of ['unverified','selection','control','version','protocol','capabilities','hash','endpoint','endpoint_namespace','endpoint_hash','endpoint_state'])await assert.rejects(host.migrationClient(binding));
+        await assert.rejects(host.migrationClient({...binding,version:'2.0.0'}),/legacy_cleanup_protocol_unverified/);
+        assert.throws(()=>host.client(binding),/service_runtime_version_mismatch/);
+    }finally{await current.cleanup();await previous.cleanup();}
+});
+
+test('native HTTP lookup distinguishes authenticated foreign absence from owned unavailable without enrolling',async()=>{
+    const f=await modernBindingFixture('1.8.14'),install=path.join(f.root,'install'),id='a'.repeat(32);let reply:RecordValue;
+    const binding={installDir:install,controlDir:path.join(install,'control'),executable:path.join(f.source,f.main),launcher:null,runtimeSha256:f.digest,version:'1.8.14',lifecycle:'on-demand' as const,verificationBasis:'trusted_distribution'};
+    const host=new RuntimeHost(f.root,'1.8.14',{channel:'stable'},async(_command,args)=>{assert.deepEqual(args,['runtime','lookup-http-connection','--install-dir',install,'--expected-active',f.digest,'--connection-id',id]);return reply;});
+    const base={schema:1,active:f.digest,connection_id:id};
+    try{
+        reply={...base,status:'not_owned',future:{retained:true}};assert.deepEqual(await host.lookupHttpConnection(binding,id),reply);
+        for(const code of ['owned_connection_revoked','owned_connection_expired','owned_connection_unavailable']){reply={...base,status:'unavailable',code,native_error:{exact:'kept'},guidance:'Review native owner'};await assert.rejects(host.lookupHttpConnection(binding,id),error=>error instanceof ServiceError&&!error.outcomeUnknown&&error.nativeResponse===reply&&error.code===code);}
+        for(const value of [{...base,status:'not_owned',active:'0'.repeat(64)},{...base,status:'not_owned',connection_id:'0'.repeat(32)},{...base,status:'unavailable',code:'unknown'},{...base,status:'not_owned',connection:{}},{...base,status:'invented'}]){reply=value;await assert.rejects(host.lookupHttpConnection(binding,id));}
+    }finally{await f.cleanup();}
+});
+test('modern previous-runtime retirement proves all superseded images gone without restarting selected service',async()=>{
+    const f=await modernBindingFixture('1.8.14'),install=path.join(f.root,'install');let reply:RecordValue;
+    const binding={installDir:install,controlDir:path.join(install,'control'),executable:path.join(f.source,f.main),launcher:null,runtimeSha256:f.digest,version:'1.8.14',lifecycle:'on-demand' as const,verificationBasis:'trusted_distribution'};
+    const host=new RuntimeHost(f.root,'1.8.14',{channel:'stable'},async()=>reply);
+    const valid={active:f.digest,complete:true,selected_service_restarted:false,retired_previous:'a'.repeat(64),retired_runtimes:['a'.repeat(64),'b'.repeat(64)],processes:{scope:'verified_superseded_runtime_images',remaining:0,observations:[{unknown_system_images:2,owned_images_absent:true}]},future:{kept:true}};
+    try{reply=valid;assert.deepEqual(await host.retirePrevious(binding),valid);
+        for(const mutate of [(v:any)=>v.complete=false,(v:any)=>v.selected_service_restarted=true,(v:any)=>v.retired_runtimes.push(f.digest),(v:any)=>v.processes.remaining=1,(v:any)=>{delete v.processes;}]){reply=structuredClone(valid);mutate(reply);await assert.rejects(host.retirePrevious(binding),error=>error instanceof ServiceError&&error.outcomeUnknown&&error.nativeResponse===reply);}
+    }finally{await f.cleanup();}
+});
+
+test('only the complete plural native adoption result receives the explicit 16 MiB wire budget',async context=>{
+    let text=JSON.stringify({padding:'x'.repeat(2*1024*1024)});
+    context.mock.method(require('../native'),'runText',async()=>text);
+    await assert.rejects(nativeRunner('fixture-native',['runtime','inspect']),(error:unknown)=>error instanceof ServiceError&&error.code==='bootstrap_response_oversize'&&!error.outcomeUnknown);
+    assert.equal((await nativeRunner('fixture-native',['runtime','adopt-legacy-indexes'])).padding,(JSON.parse(text) as any).padding);
+    await assert.rejects(nativeRunner('fixture-native',['tool','call','adopt-legacy-indexes']),/bootstrap_response_oversize/);
+    text=JSON.stringify({padding:'x'.repeat(16*1024*1024)});
+    await assert.rejects(nativeRunner('fixture-native',['runtime','adopt-legacy-indexes']),(error:unknown)=>error instanceof ServiceError&&error.code==='bootstrap_response_oversize'&&error.outcomeUnknown);
 });

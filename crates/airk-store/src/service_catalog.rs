@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Exact versioned schema identity and bounded schema-12 catalog metadata.
+//! Exact versioned schema identity and bounded schema-12/13 catalog metadata.
 //! Ordinary registry opens never install this schema or migrate user data.
 use super::ServiceRegistry;
 use airk_core::{
@@ -36,7 +36,7 @@ impl std::error::Error for AdmissionPending {}
 
 pub fn capabilities() -> airk_core::index_catalog::CatalogCapabilities {
     airk_core::index_catalog::CatalogCapabilities {
-        maximum_registry_schema: 12,
+        maximum_registry_schema: airk_core::index_catalog::REGISTRY_SCHEMA,
         authority_contract: SUPPORTED_AUTHORITY_CONTRACT,
         policy_contract: SUPPORTED_POLICY_CONTRACT,
         reference_refresh_contract: Some(1),
@@ -61,6 +61,12 @@ pub mod policy;
 
 #[path = "service_catalog_split.rs"]
 pub mod split;
+
+#[path = "service_catalog_adopted_authority.rs"]
+pub mod adopted_authority;
+#[path = "service_catalog_adopted_layout.rs"]
+mod adopted_layout;
+use adopted_layout::apply_adopted_authority_layout;
 
 #[path = "service_catalog_operations.rs"]
 pub mod operations;
@@ -198,13 +204,13 @@ pub(super) fn install_schema(connection: &Connection) -> Result<()> {
 fn expected(version: u32) -> Result<&'static Vec<SchemaObject>> {
     static LEGACY: OnceLock<Result<Vec<SchemaObject>, String>> = OnceLock::new();
     static CATALOG: OnceLock<Result<Vec<SchemaObject>, String>> = OnceLock::new();
-    ensure!(matches!(version, 11 | 12), "unsupported catalog schema");
+    ensure!(matches!(version, 11..=13), "unsupported catalog schema");
     let slot = if version == 11 { &LEGACY } else { &CATALOG };
     slot.get_or_init(|| {
         (|| -> Result<_> {
             let connection = Connection::open_in_memory()?;
             connection.execute_batch(LEGACY_SCHEMA)?;
-            if version == 12 {
+            if matches!(version, 12 | 13) {
                 connection.execute_batch(SCHEMA)?;
                 capacity_triggers(&connection)?;
                 write_barriers(&connection)?;
@@ -296,6 +302,8 @@ fn physical_catalog_layout(objects: &[SchemaObject]) -> Result<CatalogLayout> {
         Ok(CatalogLayout::Schema12Authority1Policy2)
     } else if objects == expected_layout(CatalogLayout::Schema12Authority1Policy3)?.as_slice() {
         Ok(CatalogLayout::Schema12Authority1Policy3)
+    } else if let Some(layout) = adopted_layout::recognize(objects)? {
+        Ok(layout)
     } else {
         anyhow::bail!("unsupported registry table, index, foreign-key or trigger shape")
     }
@@ -304,7 +312,18 @@ fn physical_catalog_layout(objects: &[SchemaObject]) -> Result<CatalogLayout> {
 /// Match an entire compiled physical layout before trusting its authority
 /// marker. A metadata edit cannot turn a foreign/partial schema into a format.
 pub(super) fn validate_catalog_layout(connection: &Connection) -> Result<CatalogLayout> {
-    let layout = physical_catalog_layout(&schema_objects(connection)?)?;
+    let objects = schema_objects(connection)?;
+    let layout = physical_catalog_layout(&objects)?;
+    if objects
+        .iter()
+        .any(|o| o.kind == "table" && o.name == "index_adopted_authorities")
+    {
+        let version: u32 = connection.pragma_query_value(None, "user_version", |r| r.get(0))?;
+        ensure!(
+            version == 13,
+            "adopted authority requires registry schema 13"
+        );
+    }
     let (authority, policy): (i64, i64) = connection.query_row(
         "SELECT authority_contract,policy_contract FROM index_catalog_meta WHERE id=1",
         [],
@@ -472,7 +491,7 @@ pub(super) fn state(connection: &Connection) -> Result<CatalogState> {
         "upgrade required for index authority or source-policy contract"
     );
     Ok(CatalogState {
-        schema: 12,
+        schema: connection.pragma_query_value(None, "user_version", |row| row.get(0))?,
         namespace: namespace.parse()?,
         revision: u64::try_from(raw.0)?.try_into()?,
         activated: raw.1 == 1,
@@ -490,7 +509,7 @@ pub(super) fn validate_existing(connection: &Connection) -> Result<()> {
         connection.pragma_query_value(None, "application_id", |row| row.get(0))?;
     let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
     ensure!(
-        application == super::APPLICATION && version == 12,
+        application == super::APPLICATION && matches!(version, 12 | 13),
         "unsupported index catalog format"
     );
     let pages: i64 = connection.pragma_query_value(None, "page_count", |row| row.get(0))?;

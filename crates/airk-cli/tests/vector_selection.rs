@@ -14,7 +14,9 @@ fn native_selection_preserves_opt_out_and_publishes_through_source_jobs() -> Res
     let source = root.path().join("original.rs");
     let original = b"pub fn original_selection_fixture() -> u32 { 7 }\n";
     fs::write(&source, original)?;
-    #[cfg(feature = "embedding-worker")]
+    #[cfg(feature = "local-inference")]
+    let service = common::Service::reviewed(root.path(), state.path(), "default");
+    #[cfg(all(feature = "embedding-worker", not(feature = "local-inference")))]
     let service = common::Service::with_helper(root.path(), state.path(), "default");
     #[cfg(not(feature = "embedding-worker"))]
     let service = common::Service::start(root.path(), state.path(), "default");
@@ -141,7 +143,7 @@ fn native_selection_rejects_invalid_bounded_inputs_and_supports_explicit_reset()
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
     let input = tempfile::tempdir()?;
-    let service = common::Service::start(root.path(), state.path(), "default");
+    let service = common::Service::reviewed(root.path(), state.path(), "default");
     service.configure(airk_cli::service_configuration::Draft::Vectors { enabled: false });
     let saved = common::configure_cli(
         &service,

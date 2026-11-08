@@ -6,6 +6,34 @@ use airk_core::{
     index_catalog::{PathScope, ScopeAtom, SourceRootId},
     source_policy::SplitDestination,
 };
+// These Store component fixtures do not publish every physical collection.
+// Exercise the production receipt classifier without claiming a full checkpoint.
+fn checkpoint_receipts(registry: &ServiceRegistry) -> Result<Vec<(String, String, bool)>> {
+    let mut classifier = CheckpointReceiptClassifier::default();
+    let mut statement = registry.connection.prepare(
+        "SELECT id,kind,stage,revision,payload FROM index_operation_receipts ORDER BY id",
+    )?;
+    let mut rows = statement.query([])?;
+    let mut results = Vec::new();
+    while let Some(row) = rows.next()? {
+        let id: String = row.get(0)?;
+        let kind: String = row.get(1)?;
+        let stage: String = row.get(2)?;
+        let revision: i64 = row.get(3)?;
+        let payload: Vec<u8> = row.get(4)?;
+        let terminal = crate::service::registry::checkpoint::terminal_operation_receipt(
+            &mut classifier,
+            &registry.connection,
+            &id,
+            &kind,
+            &stage,
+            revision,
+            &payload,
+        )?;
+        results.push((kind, stage, terminal));
+    }
+    Ok(results)
+}
 pub(in crate::service::registry::catalog) fn fixture() -> Result<(
     tempfile::TempDir,
     ServiceRegistry,
@@ -846,6 +874,13 @@ fn frozen_finalization_attention_has_separate_cas_and_old_ack_cannot_clear_later
         frozen.finalization.as_ref().unwrap().progress,
         SplitFinalizationProgress::Prepared
     );
+    assert!(
+        checkpoint_receipts(&registry)?
+            .iter()
+            .any(|(kind, stage, terminal)| kind == "catalog_split_final_plan"
+                && stage == "prepared"
+                && !terminal)
+    );
     let stopped = registry.catalog_note_split_failure(
         request.operation_id()?,
         frozen.receipt_digest,
@@ -910,6 +945,11 @@ fn frozen_finalization_attention_has_separate_cas_and_old_ack_cannot_clear_later
     assert_eq!(
         complete.finalization.as_ref().unwrap().progress,
         SplitFinalizationProgress::Complete
+    );
+    assert!(
+        !checkpoint_receipts(&registry)?
+            .iter()
+            .any(|(kind, _, terminal)| kind.starts_with("catalog_split_final_") && !terminal)
     );
     assert!(registry.catalog_pending_splits(8)?.is_empty());
     assert_eq!(
@@ -1271,6 +1311,12 @@ fn real_claimed_cancellation_disposes_paid_shell_then_publishes_and_acknowledges
             .is_some_and(|state| state.progress == SplitFinalizationProgress::Acknowledging)
         {
             saw_ack = true;
+            assert!(
+                checkpoint_receipts(&registry)?
+                    .iter()
+                    .any(|(kind, _, terminal)| kind == "catalog_split_final_slot" && !terminal),
+                "retained slots remain pending until exact parent completion"
+            );
             assert!(registry.catalog_split_write_fenced(request.destination_registration.binding)?);
             assert!(
                 registry
@@ -1291,6 +1337,40 @@ fn real_claimed_cancellation_disposes_paid_shell_then_publishes_and_acknowledges
         current.finalization.as_ref().unwrap().progress,
         SplitFinalizationProgress::Complete
     );
+    let checkpoint = checkpoint_receipts(&registry)?;
+    assert!(
+        !checkpoint
+            .iter()
+            .any(|(kind, _, terminal)| kind.starts_with("catalog_split_final_") && !terminal),
+        "complete native finalization retains immutable slot/ack evidence without inventing active work"
+    );
+    let changes = registry.connection.total_changes();
+    assert_eq!(checkpoint, checkpoint_receipts(&registry)?);
+    assert_eq!(changes, registry.connection.total_changes());
+    let slots = registry
+        .connection
+        .prepare(
+            "SELECT id,payload FROM index_operation_receipts WHERE kind='catalog_split_final_slot'",
+        )?
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    assert!(!slots.is_empty());
+    registry.connection.execute(
+        "UPDATE index_operation_receipts SET payload=X'7b7d' WHERE kind='catalog_split_final_slot'",
+        [],
+    )?;
+    assert!(
+        checkpoint_receipts(&registry).is_err(),
+        "a complete parent never authenticates malformed slot evidence"
+    );
+    for (id, payload) in slots {
+        registry.connection.execute(
+            "UPDATE index_operation_receipts SET payload=?1 WHERE id=?2",
+            params![payload, id],
+        )?;
+    }
     assert!(!registry.catalog_split_write_fenced(request.destination_registration.binding)?);
     assert!(
         registry

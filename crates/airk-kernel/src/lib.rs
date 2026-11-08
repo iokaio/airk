@@ -21,9 +21,11 @@ mod discovery;
 mod execution;
 pub mod extraction;
 mod historical;
+pub mod inference_owner;
 mod profile_families;
 pub use historical::{HistoryAvailability, HistoryAvailabilityRequest};
 pub mod history_controls;
+pub mod legacy_adoption;
 pub mod limits;
 pub mod maintenance;
 /// Read-only native capability/catalog inspection; does not open collection state.
@@ -144,6 +146,8 @@ fn managed_data_path(path: PathBuf) -> Result<PathBuf> {
 #[derive(Serialize)]
 pub struct Status {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub legacy_adoption: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub source_policy: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_availability: Option<service_projects::SourceObservation>,
@@ -170,9 +174,15 @@ pub struct Status {
     pub vector_selection_digest: Option<airk_core::identity::Sha256Digest>,
     pub vector_eligible_artifacts: usize,
     pub vector_excluded_artifacts: usize,
+    #[serde(skip_serializing_if = "zero_unavailable_vectors")]
+    pub vector_unavailable_artifacts: usize,
     pub semantic_producer: Option<String>,
     pub imported_facts: usize,
     pub imported_relationships: usize,
+}
+
+fn zero_unavailable_vectors(value: &usize) -> bool {
+    *value == 0
 }
 
 #[derive(Serialize)]
@@ -188,6 +198,8 @@ pub struct FileList {
 
 #[derive(Serialize)]
 pub struct FileInfo {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub legacy_saved_evidence: Option<legacy_adoption::LegacySavedFileCompatibility>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub profile_families: Option<airk_core::profile_families::ProfileFamilyReport>,
     pub publication: Option<airk_core::evidence::RevisionEnvelope>,

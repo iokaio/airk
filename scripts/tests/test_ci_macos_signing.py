@@ -8,8 +8,9 @@ from pathlib import Path
 import shlex
 import subprocess
 import tempfile
+from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 spec = importlib.util.spec_from_file_location("ci_macos_signing", Path(__file__).parents[1] / "ci-macos-sign.py")
 signing = importlib.util.module_from_spec(spec)
@@ -75,7 +76,7 @@ class HostedSigningContracts(unittest.TestCase):
                   "MACOS_CERTIFICATE_PASSWORD": "fixture", "APPLE_ID": "fixture@example.invalid",
                   "APPLE_APP_SPECIFIC_PASSWORD": "fixture-notary"}
         original = ["/Users/runner/Library/Keychains/login.keychain-db", "/tmp/existing keychain"]
-        for failure in (None, "notary", "signer", "search-list", "certificate"):
+        for failure in (None, "notary", "signer", "search-list", "certificate", "execution"):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary:
                 directory = Path(temporary) / "credentials"
                 keychain = str(directory / "signing.keychain-db")
@@ -110,22 +111,95 @@ class HostedSigningContracts(unittest.TestCase):
                     if failure == "signer":
                         raise RuntimeError("signer failed")
 
+                def execution_probe(*args):
+                    self.assertFalse(directory.exists())
+                    self.assertEqual(search_list, original)
+                    self.assertFalse(any(name in os.environ for name in signing.SECRET_NAMES))
+                    self.assertEqual(args[1:], (True, "aarch64-apple-darwin"))
+                    if failure == "execution":
+                        raise RuntimeError("execution failed")
+
                 with patch.dict(os.environ, values), \
                         patch.object(signing, "CERTIFICATE_SHA256", PUBLIC_SHA256), \
                         patch.object(signing, "runner_directory", return_value=directory), \
                         patch.object(signing, "security", side_effect=security), \
                         patch.object(signing, "private_run", side_effect=notary), \
                         patch.object(signing.subprocess, "run", side_effect=signer) as run, \
-                        patch.object(signing, "verify_signed_output", side_effect=RuntimeError("certificate failed") if failure == "certificate" else None) as audit:
+                        patch.object(signing, "verify_signed_output", side_effect=RuntimeError("certificate failed") if failure == "certificate" else None) as audit, \
+                        patch.object(signing, "qualify_signed_runtime", side_effect=execution_probe) as probe:
                     if failure:
                         with self.assertRaisesRegex(RuntimeError, failure + " failed"):
-                            signing.sign("aarch64-apple-darwin")
+                            signing.sign("aarch64-apple-darwin", paired=True)
                     else:
-                        signing.sign("aarch64-apple-darwin")
-                    self.assertEqual(run.call_count, int(failure in (None, "signer", "certificate")))
-                    self.assertEqual(audit.call_count, int(failure in (None, "certificate")))
+                        signing.sign("aarch64-apple-darwin", paired=True)
+                    self.assertEqual(run.call_count, int(failure in (None, "signer", "certificate", "execution")))
+                    self.assertEqual(audit.call_count, int(failure in (None, "certificate", "execution")))
+                    self.assertEqual(probe.call_count, int(failure in (None, "execution")))
                     self.assertEqual(search_list, original)
                     self.assertFalse(directory.exists())
+
+    def test_signed_runtime_probes_exact_bundle_and_fail_closed_without_payload_mutation(self):
+        for failure in (None, "model", "install", "payload"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary:
+                output = Path(temporary)
+                runtime = output / "runtime"
+                main = runtime / "AIRK.app/Contents/MacOS/airk"
+                main.parent.mkdir(parents=True)
+                main.write_bytes(b"inert signed-bundle fixture, never executed")
+                files = {"AIRK.app/Contents/MacOS/airk":hashlib.sha256(main.read_bytes()).hexdigest()}
+                builder = SimpleNamespace(single_image_version=Mock(return_value=True), source_identity=Mock(return_value="input seal"),
+                    verify_model_smoke=Mock(side_effect=RuntimeError("model refused") if failure == "model" else None,
+                                            return_value={"source":"embedded","pipeline_digest":"a" * 64}))
+                package = SimpleNamespace(bounded_json=Mock(return_value={"schema":2,"version":"1.8.14"}),
+                    runtime_builder=Mock(return_value=builder), validate_runtime=Mock(return_value=(files,tuple(files))),
+                    sha256=Mock(return_value="b" * 64), inventory=Mock(return_value={} if failure == "payload" else files))
+                spec = SimpleNamespace(loader=SimpleNamespace(exec_module=lambda value:None))
+                token = "airk1." + "c" * 32 + "." + "d" * 64
+                stderr = '  File "/private/owned/check-service-install.py", line 123, in main\nRuntimeError: native_install_failed ' + token
+                completed = subprocess.CompletedProcess([], 1 if failure == "install" else 0, token, stderr)
+                with patch.object(signing.importlib.util, "spec_from_file_location", return_value=spec), \
+                        patch.object(signing.importlib.util, "module_from_spec", return_value=package), \
+                        patch.object(signing.subprocess, "run", return_value=completed) as execute, patch("builtins.print"):
+                    if failure:
+                        with self.assertRaises(RuntimeError):
+                            signing.qualify_signed_runtime(output, True, "aarch64-apple-darwin")
+                    else:
+                        signing.qualify_signed_runtime(output, True, "aarch64-apple-darwin")
+                package.validate_runtime.assert_called_once_with(runtime,"1.8.14","aarch64-apple-darwin","input seal")
+                builder.verify_model_smoke.assert_called_once_with(runtime,"macos","1.8.14")
+                if failure == "model":
+                    execute.assert_not_called()
+                else:
+                    self.assertEqual(execute.call_args.args[0][-2:], ["--runtime",str(runtime)])
+                    self.assertFalse(set(signing.SECRET_NAMES) & execute.call_args.kwargs["env"].keys())
+                    self.assertNotIn("timeout", execute.call_args.kwargs)
+                receipt = (output / "post-sign-validation.json").read_text()
+                self.assertEqual(json.loads(receipt)["status"], "failed" if failure else "passed")
+                self.assertNotIn(token, receipt)
+                if failure != "model":
+                    self.assertEqual(json.loads(receipt)["service_install"]["diagnostics"], {
+                        "exception_types":["RuntimeError"], "native_error_codes":["native_install_failed"],
+                        "frames":[{"file":"check-service-install.py","line":123,"function":"main"}]})
+                self.assertEqual(main.read_bytes(), b"inert signed-bundle fixture, never executed")
+
+    def test_post_sign_execution_refuses_remaining_signing_secrets(self):
+        with patch.dict(os.environ, {"MACOS_CERTIFICATE_PASSWORD":"fictional secret"}), \
+                patch.object(signing.subprocess, "run") as execute:
+            with self.assertRaisesRegex(ValueError, "secrets"):
+                signing.qualify_signed_runtime(Path("unused"), True, "aarch64-apple-darwin")
+        execute.assert_not_called()
+
+    def test_modern_signed_schema_cannot_downgrade_to_skip_execution_probes(self):
+        builder = SimpleNamespace(single_image_version=Mock(return_value=True))
+        package = SimpleNamespace(bounded_json=Mock(return_value={"schema":1,"version":"1.8.14"}),
+                                  runtime_builder=Mock(return_value=builder))
+        spec = SimpleNamespace(loader=SimpleNamespace(exec_module=lambda value:None))
+        with patch.object(signing.importlib.util, "spec_from_file_location", return_value=spec), \
+                patch.object(signing.importlib.util, "module_from_spec", return_value=package), \
+                patch.object(signing.subprocess, "run") as execute:
+            with self.assertRaisesRegex(ValueError, "schema"):
+                signing.qualify_signed_runtime(Path("unused"), True, "aarch64-apple-darwin")
+        execute.assert_not_called()
 
     def test_ref_event_and_host_guards_reject_untrusted_context(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -25,7 +25,7 @@ complete/selected exports retain applicable reasons without additional reads.
 
 **AIRK 1.8.7** carries forward optional extraction filters, explicit name matching, qualified counts, bounded reference paging and source-bound navigation hints across MCP, CLI and Workbench. Omitted new options retain earlier native contracts. The [unified admission/routing contract](unified-mcp.md#identifier-routing-and-bounded-admission) distinguishes finite frontend waiting, native channel pools and worker admission and lightweight status ownership; neither configured concurrency nor a successful status means every evidence call is immediately admitted. Read the [1.8.7 record](releases/release-1.8.7.md) for implementation and qualification scope.
 
-For the purpose, inputs, examples and implementation/tests of every tool, read the [MCP developer guide](mcp-developer-guide.md). Its companion [CLI developer guide](cli-developer-guide.md) maps terminal commands, including the distinction between native prefixed tools and the unified MCP catalog. This page retains the native transport and evidence contracts.
+For the purpose, inputs, examples and implementation/tests of every tool, read the [MCP developer guide](mcp-developer-guide.md). Its companion [CLI developer guide](cli-developer-guide.md) maps terminal commands: CLI tools and MCP share the unified public catalog, while native prefixed handlers remain an internal subset and compatibility aliases. This page retains the native transport and evidence contracts.
 
 AIRK 1.8.7 includes the response preparation work that reduces repeated response preparation without changing tool schemas, returned evidence or byte-budget semantics: status shares scalar metadata within one authorized read, inventory counts exact encoded path sizes, help avoids temporary content copies during complete-reply sizing, and immutable built-in catalogs are reused. Dynamic project authority remains per request. See the [implementation and validation ledger](optimizations.md).
 
@@ -53,7 +53,7 @@ Each launch fixes an explicit allowlist of configured source scopes (or legacy p
 
 Multiple agents can launch independent stdio connections against the same root/data-directory/collection and query one shared disk index concurrently. No agent owns the collection. Reads continue during indexing and later requests reopen the published generation; compare exact publication tokens when combining results from multiple calls. A numerical generation alone does not establish identity. See [shared-collection behavior](collections.md#multiple-agents-sharing-one-collection).
 
-The 1.8.8 P7 working build serves one `airk` connection with 29 unprefixed tools (the historical 1.6.4 catalog has 27). The nineteen native read-only tools including `parse` and `query_scope` are joined by projects, reviewed Explorer drafts, template discovery, validation, proposal status and shared handoffs. See [the complete catalog, rationale and migration contract](unified-mcp.md). Old prefixed calls remain hidden compatibility aliases. Evidence scope never follows UI selection; multiple configured bindings require project explicitly. The editor adapter is optional and native evidence does not depend on an open window.
+The unpublished 1.8.14 implementation serves one `airk` connection with 29 unprefixed tools (the historical 1.6.4 catalog has 27). The nineteen native read-only tools including `parse` and `query_scope` are joined by projects, reviewed Explorer drafts, template discovery, validation, proposal status and shared handoffs. See [the complete catalog, rationale and migration contract](unified-mcp.md) and [current qualification record](releases/release-1.8.14.md). Old prefixed calls remain hidden compatibility aliases. Evidence scope never follows UI selection; multiple configured bindings require project explicitly. The editor adapter is optional and native evidence does not depend on an open window.
 
 `status {}` is intended for routine agent preflight. Its response modes all stay lightweight, with no imported fact payload loads, process hashing, detailed service work probes or editor process. The 1.8.0 F06a candidate allows up to ten seconds for shared cold runtime setup, followed by a two-second status-observation budget. Setup uses the retained attempt's original start time; another caller cannot restart its allowance. `status_timeout` reports `index_error.stage` as `setup` or `observation`, with unknown readiness and null publication/counts. Public `status` and hidden `airk_status` share this contract. Genuine preparation/verification failures retain their original error chain internally and for direct native callers. The MCP bridge returns its existing generic `isError` response; it does not misreport those failures as deadline expiry or expose the underlying error chain.
 
@@ -184,7 +184,11 @@ Original hashes, document locations and page/byte limits remain authoritative.
 Native symbol IDs omitted from compact rows require an explicit rich lookup;
 see [binding and parity details](read-interface-parity.md#regression-evidence).
 
-The native CLI exposes nineteen native read-only aliases including `airk_parse` and grant-bound `airk_query_scope`, schemas and handlers for terminal compatibility; the public unified stdio catalog is described above:
+In the unpublished 1.8.14 implementation, CLI `tools list/help/call/shell` and
+public HTTPS share the 29-tool unified catalog, schemas, alias mapping and
+argument validation. Its nineteen native read-only evidence/help/plan/scope
+operations remain a backend subset. Historical `airk_<operation>` aliases,
+including `airk_parse` and grant-bound `airk_query_scope`, remain accepted:
 
 ```console
 airk tools list

@@ -12,7 +12,7 @@ complete/selected exports retain applicable reasons without additional reads.
 
 The `airk` executable is the whole engine, not only a VS Code helper. This guide explains how the commands fit together. The [CLI reference](cli-reference.md) documents every public command and option exactly as `airk <command> --help` prints them; it is generated from the parser, and a test keeps it current. [Running AIRK headless](headless-cli.md) maps each VS Code feature to its command.
 
-For each command's purpose, implementation, tests and guarded behavior, see the [CLI developer guide](cli-developer-guide.md). The [MCP developer guide](mcp-developer-guide.md) covers the corresponding agent interface. `airk tools list` exposes 19 native prefixed operations, including `query_scope`; unified MCP adds projects and nine Assistance operations. The terminal exposes those separately through `airk projects` and `airk explorer`, so the native catalog size is not a count of all CLI capabilities.
+For each command's purpose, implementation, tests and guarded behavior, see the [CLI developer guide](cli-developer-guide.md). The [MCP developer guide](mcp-developer-guide.md) covers the corresponding agent interface. In the unpublished 1.8.14 implementation, `airk tools list`, `tools help`, `tools call` and `tools shell` use the public HTTPS tool catalog and its shared alias and argument validation. Historical `airk_<operation>` aliases remain accepted. The selected native backend retains the same reviewed scope; public routing neither grants access nor attaches an unrelated Explorer window. Scoped diagnostics explicitly report unavailable process/work context where exposing project-wide information would exceed that scope. Native management commands provide their separately authorized lifecycle observations.
 
 ## Complete read results in 1.8.7
 
@@ -156,6 +156,13 @@ The legacy `configure`/`unregister` path does not replace this catalog review.
 
 ## Legacy authority-zero registration examples
 
+For current authority-1 indexes, source additions/removals and index retirement
+require a reviewed `CatalogSourceMutationDraft` through `service rpc`, followed
+by its exact apply and fenced receipt. Legacy `configure` operations such as
+`unregister` refuse with `source_change_review_required`; retrying that request
+does not replace review. Ordinary watch preferences remain separate from this
+source-authority boundary.
+
 The following retained commands apply to authority-zero services. They are not
 setup instructions for new indexes in the current authority-1 catalog. Indexes
 and settings live in the data directory; the source folder is only read.
@@ -177,14 +184,26 @@ On macOS and Linux, keep the data directory private to your account (for example
 
 ## Command families
 
+Current MCP clients use the service's authenticated HTTPS endpoint. Native
+`setup` prints HTTPS configuration and protected credential/trust references for
+Codex, Claude Code and VS Code/Copilot Chat; it does not save client files or
+prove that a client connected. Supply the exact reviewed `--catalog-session` or
+`--combined-session`, as shown in [native agent setup](agent-integration.md#native-setup-output).
+The retained `mcp`/`bridge` stdio commands are predecessor compatibility paths and
+refuse modern single-image execution. They are not current MCP setup commands.
+After complete known-client migration, current installation must finish native
+legacy-launcher cleanup and retire all approved superseded executable versions,
+including later modern-to-modern updates. Preserve the selected runtime and all
+source/index state; blocked cleanup leaves a resumable incomplete transaction.
+
 | Family | Commands | Purpose |
 |---|---|---|
 | Service | `serve`, `service health`, `service shutdown`, `service register`, `service prepare-registration`, `service logs`, `service console`, `service rpc`, `service requests …`, `service legacy …` | Run and manage a service and its registry |
 | Projects | `projects`, `init`, `index`, `inspect`, `pause`, `resume`, `watch`, `setup-model`, `settings`, `configure`, `status` | Register, index and configure projects |
 | Evidence | `search`, `files`, `read`, `info`, `outline`, `symbol`, `imports`, `facts`, `refs`, `context`, `changes`, `code-facts`, `relationships`, `parse` | Read-only, cited queries; `parse` plans or runs multi-step requests |
-| MCP tools | `tools list`, `tools help`, `tools call`, `tools shell`, `mcp` | The same tools agents use; `mcp` serves them over stdio |
+| MCP tools | `tools list`, `tools help`, `tools call`, `tools shell` | Canonical tool discovery and reads from the terminal; current agent transport is native HTTPS |
 | Explorer Assistance | `explorer draft-search`, `draft-strategy`, `draft-plan`, `suggest-view`, `validate-draft`, `list-templates`, `get-template`, `proposal-status`, `get-handoff` | Editor proposals produced offline into files (see below) |
-| Agents | `setup --client <name>` | Print an MCP client configuration for an installed runtime |
+| Agents | `setup --client codex`, `claude`, `vscode` | Print HTTPS configuration for an exact reviewed native selection; other client adapters remain unverified |
 | Usage | `usage report`, `policy`, `configure`, `clear`, `feedback`, `import`, `calibrate` | Local usage reporting |
 | Runtime | `runtime location`, `inspect`, `ensure`, `start`, `login …`, `inventory`, `purge`, `uninstall`, and staging/repair commands | Installed-runtime lifecycle and data review |
 

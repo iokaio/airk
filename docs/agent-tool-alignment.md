@@ -2,6 +2,16 @@
 
 Reviewed against the official online documentation on **13 October 2026**. AIRK should keep one collection-scoped MCP tool contract across coding agents. Client-specific adapters handle registration, tool discovery, permissions, configuration versions and optional project guidance. They should not rename tools or change retrieval semantics. This is our engineering conclusion from the documented MCP integrations below, not evidence that every agent has been tested live.
 
+**1.8.14 transport update:** current implemented setup adapters are Codex, Claude
+Code and VS Code/Copilot Chat, using the authenticated native HTTPS endpoint.
+Their owned configuration migration preserves original authority and policies,
+then requires verified legacy-launcher and superseded-runtime cleanup on both
+legacy-to-modern and modern-to-modern updates. The selected runtime, sources,
+indexes and settings remain intact. Other client formats in the
+dated matrix below remain unverified for this transport; they must not fall back
+to generating modern stdio/launcher declarations. Preserve their configuration
+and report incomplete setup. See [current setup](agent-integration.md).
+
 ## Common tasks and the current tools
 
 | Agent task | AIRK tools | Practical boundary |
@@ -26,8 +36,8 @@ Tool and parameter descriptions name the task, selection criteria and limits nea
 | Client | Documented behavior | AIRK adapter or guidance |
 |---|---|---|
 | Codex CLI / IDE / desktop | Local clients share config.toml; server instructions guide cross-tool workflows; enabled_tools/disabled_tools filter availability. [OpenAI Docs](https://learn.chatgpt.com/docs/extend/mcp?surface=cli) | Keep important server guidance within the first 512 characters. Render scoped TOML; preserve tool policies. VS Code registration does not configure Codex. |
-| Claude Code | Server instructions and task-oriented descriptions support deferred tool discovery; project MCP approval is client-owned. [Claude documentation](https://code.claude.com/docs/en/mcp#tool-search-for-mcp-server-authors) | Make code/document discovery explicit in shared metadata. Guide project stdio setup and /mcp verification; do not force all tools to load upfront. |
-| VS Code / Copilot Chat | Extensions contribute an MCP definition provider and register it with vscode.lm.registerMcpServerDefinitionProvider. [Developer guide](https://code.visualstudio.com/api/extension-guides/ai/mcp#register-an-mcp-server-in-your-extension) | Existing provider registers one scoped native launch per workspace folder. Verify tool visibility in the actual host separately from the helper probe. |
+| Claude Code | Server instructions and task-oriented descriptions support deferred tool discovery; project MCP approval is client-owned. [Claude documentation](https://code.claude.com/docs/en/mcp#tool-search-for-mcp-server-authors) | Use the native HTTPS configuration, protected token reference and additive CA provisioning. Verify `/mcp` in the actual client; do not force all tools to load upfront. |
+| VS Code / Copilot Chat | Extensions contribute an MCP definition provider and register it with vscode.lm.registerMcpServerDefinitionProvider. [Developer guide](https://code.visualstudio.com/api/extension-guides/ai/mcp#register-an-mcp-server-in-your-extension) | The current provider returns an HTTP definition for the exact native selection. Verify trust, tool visibility and cited reads in the actual host separately from the extension's internal HTTPS probe. |
 | Cursor | Local stdio config uses .cursor/mcp.json; a separate Cursor extension registration API exists. [Cursor MCP guide](https://cursor.com/docs/mcp) | Existing config preview is appropriate. Direct registration is optional future work with API detection, not a presumed VS Code compatibility behavior. |
 | Gemini CLI | Tools get client-side namespaces; includeTools/excludeTools filter tools; server names containing underscores can interfere with policy parsing. [Gemini MCP guide](https://geminicli.com/docs/tools/mcp-server/) | Keep AIRK's original tool names and hyphenated collection server names. Preserve filters and let Gemini handle namespaces; never implement those aliases in AIRK. |
 | GitHub Copilot CLI | Uses its own mcp-config.json/project MCP files, tools filters and folder trust; .vscode/mcp.json is not read. [GitHub guide](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers) | Separate CLI preview/registration is necessary even when Copilot Chat is connected. Tool enablement and call approval are separate. |

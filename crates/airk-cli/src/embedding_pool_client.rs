@@ -557,6 +557,7 @@ mod tests {
     fn fixture_access(runtime: &Path) -> Result<protocol::Access> {
         let instance = airk_kernel::service_broker::new_instance_id()?;
         Ok(protocol::Access {
+            in_process: false,
             runtime: runtime.into(),
             role: protocol::role(instance),
             grant: protocol::Grant {
@@ -969,6 +970,7 @@ mod tests {
         local_ipc::prepare_root(&root)?;
         let instance = airk_kernel::service_broker::new_instance_id()?;
         let access = protocol::Access {
+            in_process: false,
             runtime: root.clone(),
             role: protocol::role(instance),
             grant: protocol::Grant {

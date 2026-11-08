@@ -14,6 +14,63 @@ spec.loader.exec_module(package)
 
 
 class ArchiveContracts(unittest.TestCase):
+    def test_single_image_inventory_rejects_helpers_libraries_and_legacy_metadata(self):
+        builder = package.runtime_builder()
+        for os_name, target, main in (("linux", "x86_64-unknown-linux-gnu", "airk"),
+                                      ("windows", "x86_64-pc-windows-msvc", "airk.exe"),
+                                      ("macos", "aarch64-apple-darwin", "AIRK.app/Contents/MacOS/airk")):
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                source = {"sha256": "1" * 64, "files": 1}
+                legal = ("LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "notices/bom.cdx.json",
+                         "notices/all-MiniLM-L6-v2/LICENSE", "notices/all-MiniLM-L6-v2/provenance.json")
+                for name in (main, *legal):
+                    path = root / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(b"fictional single-image fixture")
+                (root / "notices/inventory.json").write_text("[]", encoding="utf-8")
+                lock = json.loads((builder.ROOT / "scripts/static-onnx-runtime-lock.json").read_text())
+                prefix = "notices/static-onnx-runtime/"
+                source_names = ["notices/" + name + "/LICENSE" for name in ["onnxruntime", *[row["name"] for row in lock["dependencies"]]]]
+                source_names.append("notices/onnxruntime/ThirdPartyNotices.txt")
+                static_names = [builder.packaged_static_notice_path(name) for name in source_names]
+                for name in static_names:
+                    path = root / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(b"fictional static legal bytes")
+                (root / prefix / "inventory.json").write_text(json.dumps({"schema": 2, "ort_version": "1.22.1", "target": target,
+                    "build_receipt_sha256": "e" * 64,
+                    "lock_sha256": builder.digest(builder.ROOT / "scripts/static-onnx-runtime-lock.json"),
+                    "sources": {name: {"path": source, "bytes": (root / name).stat().st_size, "sha256": package.sha256(root / name)} for name, source in zip(static_names, source_names)},
+                    "files": {name: package.sha256(root / name) for name in static_names}}), encoding="utf-8")
+                if os_name == "macos":
+                    for name, data in builder.macos_bundle_files("1.8.14").items():
+                        path = root / name
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_bytes(data)
+                metadata = dict(schema=2, version="1.8.14", os=os_name,
+                                arch="aarch64" if os_name == "macos" else "x86_64", airk_sha256=package.sha256(root / main))
+                def seal():
+                    (root / "airk-runtime.json").write_text(json.dumps(metadata), encoding="utf-8")
+                    (root / "airk-build.json").write_text(json.dumps(dict(schema=1, source=source, runtime=metadata)), encoding="utf-8")
+                    install = {key: metadata[key] for key in ("version", "os", "arch")}
+                    install.update(schema=1, files={name: value for name, value in package.inventory(root).items() if name != "airk-install.json"})
+                    (root / "airk-install.json").write_text(json.dumps(install), encoding="utf-8")
+                seal()
+                files, executables = package.validate_runtime(root, "1.8.14", target, source)
+                self.assertEqual(executables, (main,))
+                self.assertIn(main, files)
+                for forbidden in ("airk-embed", "airk-launcher-image", "onnxruntime.dll", "libonnxruntime.dylib", "model.onnx"):
+                    (root / forbidden).write_bytes(b"must not ship")
+                    seal()
+                    with self.assertRaisesRegex(ValueError, "Unexpected runtime payload"):
+                        package.validate_runtime(root, "1.8.14", target, source)
+                    (root / forbidden).unlink()
+                metadata["embed_sha256"] = "0" * 64
+                seal()
+                with self.assertRaisesRegex(ValueError, "executable digests"):
+                    package.validate_runtime(root, "1.8.14", target, source)
+
     def test_current_mac_archive_requires_and_preserves_standalone_launcher_image(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

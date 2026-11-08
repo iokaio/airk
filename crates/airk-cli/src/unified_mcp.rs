@@ -16,6 +16,24 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// Bound this caller's wait without aborting the independently owned readiness
+/// attempt or treating a timeout as permission to replay accepted work.
+async fn wait_with_read_context<T>(
+    context: &airk_mcp::read_attempt::ReadAttemptContext,
+    deadline: Instant,
+    waiting: impl std::future::Future<Output = Result<T>>,
+) -> Result<T> {
+    let deadline = context.deadline().min(deadline);
+    tokio::select! {
+        biased;
+        _ = context.cancellation().cancelled() => Err(std::io::Error::new(
+            std::io::ErrorKind::Interrupted, "read canceled while waiting for native readiness").into()),
+        _ = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)) =>
+            Err(airk_mcp::remote::PreparationExpired.into()),
+        result = waiting => result,
+    }
+}
+
 struct Explorer {
     descriptor: PathBuf,
     roots: BTreeMap<String, PathBuf>,
@@ -247,33 +265,35 @@ impl RuntimeReadiness {
                         task: tokio::sync::Mutex::new(None),
                     });
                     let keep_attempt = attempt.clone();
-                    let task = tokio::spawn(async move {
-                        // Retain the owner and its real handle while cooperative
-                        // work drains, even if the outer session is dropped.
-                        let owner = keep_attempt;
-                        let mut future = Box::pin(future);
-                        let mut armed = false;
-                        let outcome = loop {
-                            tokio::select! {
-                                result=&mut future=>break result.map_err(Arc::new),
-                                changed=status_requested.changed(),if !armed=>{
-                                    if changed.is_err(){break Err(Arc::new(anyhow::anyhow!("status setup deadline owner closed")));}
-                                    armed = *status_requested.borrow();
-                                }
-                                _=tokio::time::sleep_until(tokio::time::Instant::from_std(owner.started+Duration::from_secs(10))),if armed=>{
-                                    if let Some(setup)=&owner.setup{
-                                        setup.expire(); // no new election; already admitted exact work drains once
-                                        break future.await.map_err(Arc::new);
+                    let task = tokio::spawn(
+                        crate::service_resource_policy::inherit_query_capacity(async move {
+                            // Retain the owner and its real handle while cooperative
+                            // work drains, even if the outer session is dropped.
+                            let owner = keep_attempt;
+                            let mut future = Box::pin(future);
+                            let mut armed = false;
+                            let outcome = loop {
+                                tokio::select! {
+                                    result=&mut future=>break result.map_err(Arc::new),
+                                    changed=status_requested.changed(),if !armed=>{
+                                        if changed.is_err(){break Err(Arc::new(anyhow::anyhow!("status setup deadline owner closed")));}
+                                        armed = *status_requested.borrow();
                                     }
-                                    break Err(Arc::new(anyhow::Error::new(airk_mcp::remote::PreparationExpired)));
+                                    _=tokio::time::sleep_until(tokio::time::Instant::from_std(owner.started+Duration::from_secs(10))),if armed=>{
+                                        if let Some(setup)=&owner.setup{
+                                            setup.expire(); // no new election; already admitted exact work drains once
+                                            break future.await.map_err(Arc::new);
+                                        }
+                                        break Err(Arc::new(anyhow::Error::new(airk_mcp::remote::PreparationExpired)));
+                                    }
                                 }
-                            }
-                        };
-                        // Publish the completion time before the shared outcome;
-                        // delayed waiters must not infer it from their own poll time.
-                        let _ = owner.completed.set(Instant::now());
-                        let _ = sender.send_replace(Some(outcome));
-                    });
+                            };
+                            // Publish the completion time before the shared outcome;
+                            // delayed waiters must not infer it from their own poll time.
+                            let _ = owner.completed.set(Instant::now());
+                            let _ = sender.send_replace(Some(outcome));
+                        }),
+                    );
                     let _ = attempt.abort.set(task.abort_handle());
                     *attempt.task.try_lock().expect("new readiness task slot") = Some(task);
                     *state = ReadinessState::Running(attempt.clone());
@@ -541,8 +561,30 @@ impl RemoteTools for RootNative {
         *self.client.lock().unwrap() = client;
     }
     fn call(&self, tool: String, arguments: Map<String, Value>) -> RemoteFuture<'_> {
+        self.call_with_read_context(
+            tool,
+            arguments,
+            self.query_concurrency(),
+            airk_mcp::read_attempt::ReadAttemptContext::new(
+                Instant::now() + Duration::from_secs(125),
+                Default::default(),
+            ),
+        )
+    }
+    fn call_with_read_context(
+        &self,
+        tool: String,
+        arguments: Map<String, Value>,
+        _capacity: usize,
+        context: airk_mcp::read_attempt::ReadAttemptContext,
+    ) -> RemoteFuture<'_> {
         Box::pin(async move {
-            self.ready.ensure(&self.install, &self.control).await?;
+            wait_with_read_context(
+                &context,
+                context.deadline(),
+                self.ready.ensure(&self.install, &self.control),
+            )
+            .await?;
             let sequence = self
                 .sequence
                 .fetch_update(
@@ -554,7 +596,9 @@ impl RemoteTools for RootNative {
             let control = self.control.clone();
             let scope = self.scope.clone();
             let observed_control = control.clone();
-            let admission = Instant::now() + Duration::from_secs(2);
+            let admission = context
+                .deadline()
+                .min(Instant::now() + Duration::from_secs(2));
             let candidate = self
                 .observation
                 .lock()
@@ -645,7 +689,7 @@ impl RemoteTools for RootNative {
             drop(cached);
             backend.client(*self.client.lock().unwrap());
             backend
-                .call_observed_until(tool, arguments, fence, observed.expires_at())
+                .call_observed_with_context(tool, arguments, fence, observed.expires_at(), context)
                 .await
         })
     }
@@ -736,19 +780,37 @@ impl RemoteTools for Native {
         arguments: Map<String, Value>,
         capacity: usize,
     ) -> RemoteFuture<'_> {
+        self.call_with_read_context(
+            tool,
+            arguments,
+            capacity,
+            airk_mcp::read_attempt::ReadAttemptContext::new(
+                std::time::Instant::now() + Duration::from_secs(125),
+                Default::default(),
+            ),
+        )
+    }
+    fn call_with_read_context(
+        &self,
+        tool: String,
+        arguments: Map<String, Value>,
+        capacity: usize,
+        context: airk_mcp::read_attempt::ReadAttemptContext,
+    ) -> RemoteFuture<'_> {
         Box::pin(async move {
             if matches!(tool.as_str(), "status" | "airk_status")
                 && let Some(selection) = self.backend.combined_selection()
             {
                 if let Some(install) = &self.install {
-                    match tokio::time::timeout(
-                        Duration::from_secs(10),
+                    match wait_with_read_context(
+                        &context,
+                        Instant::now() + Duration::from_secs(10),
                         self.ready.prepare_status(install, &self.control),
                     )
                     .await
                     {
-                        Ok(Ok(())) => {}
-                        Ok(Err(error)) => {
+                        Ok(()) => {}
+                        Err(error) => {
                             if let Some(reply) = airk_mcp::response::typed_error_result(&error) {
                                 return Ok(serde_json::to_value(reply)?);
                             }
@@ -763,42 +825,43 @@ impl RemoteTools for Native {
                                 Some(false),
                             ));
                         }
-                        Err(_) => {
-                            return Ok(combined_status_unavailable(
-                                selection,
-                                "combined_status_prepare_timeout",
-                                "prepare",
-                                Some(false),
-                            ));
-                        }
                     }
                 }
-                return match tokio::time::timeout(
-                    Duration::from_secs(2),
-                    self.backend.call_with_capacity(tool, arguments, capacity),
+                return match wait_with_read_context(
+                    &context,
+                    Instant::now() + Duration::from_secs(2),
+                    self.backend.call_with_read_context(
+                        tool,
+                        arguments,
+                        capacity,
+                        context.narrowed(std::time::Instant::now() + Duration::from_secs(2)),
+                    ),
                 )
                 .await
                 {
-                    Ok(Ok(result)) => Ok(result),
-                    Ok(Err(_)) => Ok(combined_status_unavailable(
+                    Ok(result) => Ok(result),
+                    Err(error) => Ok(combined_status_unavailable(
                         selection,
-                        "combined_status_observation_unavailable",
-                        "observation",
-                        None,
-                    )),
-                    Err(_) => Ok(combined_status_unavailable(
-                        selection,
-                        "combined_status_timeout",
+                        if error.is::<airk_mcp::remote::PreparationExpired>() {
+                            "combined_status_timeout"
+                        } else {
+                            "combined_status_observation_unavailable"
+                        },
                         "observation",
                         None,
                     )),
                 };
             }
             if let Some(install) = &self.install {
-                self.ready.ensure(install, &self.control).await?;
+                wait_with_read_context(
+                    &context,
+                    context.deadline(),
+                    self.ready.ensure(install, &self.control),
+                )
+                .await?;
             }
             self.backend
-                .call_with_capacity(tool, arguments, capacity)
+                .call_with_read_context(tool, arguments, capacity, context)
                 .await
         })
     }
@@ -835,6 +898,87 @@ pub(crate) fn with_runtime_readiness(
 
 /// One combined native authority under the same unified MCP endpoint. Explorer
 /// requests carry no arbitrary legacy binding or guessed source-folder origin.
+/// Compose the same canonical native/Explorer tool surface for HTTP without
+/// starting stdio or selecting an ambient VS Code window.
+pub(crate) fn http_attachment(
+    backend: Arc<dyn RemoteTools>,
+    control: PathBuf,
+    registration: Option<ProjectRegistration>,
+    descriptor: Option<PathBuf>,
+) -> Result<Arc<dyn RemoteTools>> {
+    let roots = registration
+        .as_ref()
+        .map(|p| BTreeMap::from([(p.binding.to_string(), PathBuf::from(&p.root))]))
+        .unwrap_or_default();
+    let explorer = descriptor.map(|descriptor| {
+        Arc::new(Explorer {
+            descriptor,
+            roots,
+            scopes: BTreeMap::new(),
+            control,
+        }) as Arc<dyn ExplorerTools>
+    });
+    if backend.combined_selection().is_some() {
+        return Ok(Arc::new(Unified::combined(backend, explorer)?));
+    }
+    let registration = registration.context("HTTP native registration unavailable")?;
+    let binding = registration.binding.to_string();
+    Ok(Arc::new(Unified::new(
+        vec![Project {
+            binding: binding.clone(),
+            name: registration.collection.clone(),
+            collection: registration.collection,
+            backend,
+        }],
+        Some(binding),
+        explorer,
+    )?))
+}
+
+/// Preserve the original grouped server's independent project routing. This
+/// does not combine grants or default to the active editor/root.
+pub(crate) fn http_project_attachments(
+    control: PathBuf,
+    projects: Vec<(ProjectRegistration, Arc<dyn RemoteTools>)>,
+    default: Option<String>,
+    descriptor: Option<PathBuf>,
+) -> Result<Arc<dyn RemoteTools>> {
+    ensure!(
+        !projects.is_empty() && projects.len() <= 32,
+        "invalid HTTP project group"
+    );
+    let roots = projects
+        .iter()
+        .map(|(registration, _)| {
+            (
+                registration.binding.to_string(),
+                PathBuf::from(&registration.root),
+            )
+        })
+        .collect();
+    let projects = projects
+        .into_iter()
+        .map(|(registration, backend)| Project {
+            binding: registration.binding.to_string(),
+            name: PathBuf::from(&registration.root)
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| registration.collection.clone()),
+            collection: registration.collection,
+            backend,
+        })
+        .collect();
+    let explorer = descriptor.map(|descriptor| {
+        Arc::new(Explorer {
+            descriptor,
+            roots,
+            scopes: BTreeMap::new(),
+            control,
+        }) as Arc<dyn ExplorerTools>
+    });
+    Ok(Arc::new(Unified::new(projects, default, explorer)?))
+}
+
 pub async fn serve_combined(
     backend: Arc<dyn RemoteTools>,
     descriptor: Option<PathBuf>,
@@ -910,12 +1054,21 @@ pub fn call_explorer(
     arguments: Map<String, Value>,
     client: airk_core::usage::ClientFamily,
 ) -> Result<Value> {
-    let launch = crate::explorer_assistance::plan(&descriptor)?;
+    let (launch, window) =
+        if descriptor.parent().and_then(std::path::Path::file_name) == Some("windows".as_ref()) {
+            let (launch, session) = crate::explorer_assistance::window_plan(&descriptor)?;
+            (launch, Some(session))
+        } else {
+            (crate::explorer_assistance::plan(&descriptor)?, None)
+        };
     let input = serde_json::to_vec(
         &json!({"tool":tool,"arguments":arguments,"client":format!("{client:?}")}),
     )?;
     ensure!(input.len() <= 65536, "Explorer request exceeds bound");
     let mut command = crate::explorer_assistance::command(&launch);
+    if let Some(session) = window {
+        command.arg("--window-session").arg(session);
+    }
     command
         .arg("--one-shot")
         .stdin(Stdio::piped())
@@ -1205,6 +1358,58 @@ pub async fn serve_roots(
 mod readiness_tests {
     use super::*;
     use std::future::Future;
+
+    #[tokio::test]
+    async fn original_read_wait_expiry_and_cancel_preserve_owned_setup() -> Result<()> {
+        for canceled in [false, true] {
+            let ready = Arc::new(RuntimeReadiness::default());
+            let release = Arc::new(tokio::sync::Notify::new());
+            let entered = Arc::new(tokio::sync::Notify::new());
+            let start_release = release.clone();
+            let start_entered = entered.clone();
+            {
+                let start = ready.run(move || async move {
+                    start_entered.notify_one();
+                    start_release.notified().await;
+                    Ok(())
+                });
+                tokio::pin!(start);
+                tokio::select! { result=&mut start=>anyhow::bail!("setup ended before release: {result:?}"),
+                _=entered.notified()=>() }
+            }
+            let context = airk_mcp::read_attempt::ReadAttemptContext::new(
+                Instant::now() + Duration::from_millis(30),
+                Default::default(),
+            );
+            let token = context.cancellation().clone();
+            if canceled {
+                token.cancel();
+            }
+            let wait = wait_with_read_context(
+                &context,
+                Instant::now() + Duration::from_secs(10),
+                ready.run(|| async { anyhow::bail!("replacement setup admitted") }),
+            );
+            let error = wait.await.unwrap_err();
+            if canceled {
+                assert!(
+                    error
+                        .downcast_ref::<std::io::Error>()
+                        .is_some_and(|error| error.kind() == std::io::ErrorKind::Interrupted)
+                );
+            } else {
+                assert!(error.is::<airk_mcp::remote::PreparationExpired>());
+            }
+            assert!(
+                matches!(*ready.state.lock().await, ReadinessState::Running(_)),
+                "caller wait aborted the owned setup"
+            );
+            release.notify_one();
+            await_published_readiness(&ready).await?;
+            ready.shutdown().await?;
+        }
+        Ok(())
+    }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn status_setup_uses_original_start_and_drains_accepted_work_after_waiter_expiry()

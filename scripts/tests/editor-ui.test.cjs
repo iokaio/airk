@@ -1,7 +1,66 @@
 // SPDX-License-Identifier: Apache-2.0
 const {test}=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs'),path=require('node:path');
-const {formFillExpressions,checkboxFillExpressions,appliedReviewMatches,privateEditorEnvironment,openUsageAdministration,retainUiDiagnostic,beginUiDiagnostic,editorActionDeadline,editorRemainingBudget}=require('../editor-ui.cjs');
+const {formFillExpressions,checkboxFillExpressions,appliedReviewMatches,observeReviewedApply,privateEditorEnvironment,privateClientEnvironment,openUsageAdministration,retainUiDiagnostic,beginUiDiagnostic,editorActionDeadline,editorRemainingBudget}=require('../editor-ui.cjs');
 const label='New index storage folder';
+function acceptedApplyFixture(){
+    // Public DTO shape from the actual Mac pending->applied worker/provider drain;
+    // fictional identities only, with no retained source paths or private state.
+    const service='a'.repeat(32),binding='b'.repeat(64),index='idx_'+'c'.repeat(32),worker={service,worker:'d'.repeat(32),project:binding,fencing_generation:1};
+    const request={caller:'e'.repeat(32),key:{namespace:'f'.repeat(32),epoch:0,nonce:'1'.repeat(32)},expected_catalog_revision:4,operation:{operation:'change_index_policy',id:index}};
+    const review={request,requestDigest:'2'.repeat(64),previewDigest:'3'.repeat(64)};
+    const obligation={index_id:index,backing:binding,workers:[worker],providers:[{worker,history:{kind:'helpers',generations:['4'.repeat(32)]}}]};
+    const plan={service,gate_generation:3,targets:[],worker_obligation:obligation};
+    const intent={schema:1,request,operation_id:'5'.repeat(32),preview_digest:review.previewDigest,prepared_digest:'6'.repeat(64),stage:'fence_unknown',plan,confirmations:[],worker_confirmations:[]};
+    const unknown={status:'catalog_outcome_unknown',code:'catalog_apply_outcome_unknown',caller:request.caller,key:request.key,request_digest:review.requestDigest,observation:{kind:'authority_fence',fence:{state:'pending',value:intent}},future_unknown:{retained:true}};
+    const metadata={schema:1,operation_id:intent.operation_id,caller:request.caller,key:request.key,request_digest:review.requestDigest,catalog_revision:5,authority_fence_required:true};
+    const full={request,metadata,preview_digest:review.previewDigest,prepared_digest:intent.prepared_digest,proof:{plan_digest:'7'.repeat(64),service,gate_generation:3,confirmations:[],worker_obligation:obligation,worker_confirmations:[{worker,method:'native_worker_reap'}]}};
+    const initial={generation:11,namespace:request.key.namespace,busy:false,error:'AIRK service: catalog_apply_outcome_unknown',submittedReview:review,outcome:unknown};
+    const pending={status:'catalog_receipt',receipt:null,fence:unknown.observation.fence};
+    const terminal={status:'catalog_receipt',receipt:metadata,fence:{state:'applied',value:full},future_terminal:{retained:true}};
+    const view=response=>({generation:12,namespace:request.key.namespace,busy:false,outcome:{receipts:[response]}});
+    return {review,initial,pending,terminal,view};
+}
+test('Apply dispatches once and observes exact public receipts with canonical full worker/provider validators',async()=>{
+    const f=acceptedApplyFixture(),retained=[],rows=[f.pending,f.terminal];let writes=0,reads=0,time=0;
+    const actual=await observeReviewedApply(f.review,{apply:async()=>{writes++;},read:async()=>f.initial,record:value=>retained.push(structuredClone(value)),check:async()=>f.view(rows[reads++])},{deadline:5000,now:()=>time,pause:async ms=>{time+=ms;}});
+    assert.equal(writes,1);assert.equal(reads,2);assert.deepEqual(actual.outcome,{receipts:[f.terminal]},'Actual receipt DTO is not synthesized as catalog_applied');
+    assert.deepEqual(actual.applyObservation.initial,f.initial);assert.deepEqual(actual.applyObservation.observations,[f.initial.outcome,f.pending,f.terminal]);assert.deepEqual(retained[0],{initial:f.initial});
+    assert.equal(actual.applyObservation.terminal.fence.value.proof.worker_confirmations[0].method,'native_worker_reap');
+});
+test('immediate Apply success retains the actual response and performs no receipt reads',async()=>{
+    const f=acceptedApplyFixture(),value={namespace:f.review.request.key.namespace,submittedReview:f.review,outcome:{status:'catalog_applied',receipt:f.terminal.receipt,fenced_receipt:f.terminal.fence.value}};let writes=0,reads=0;
+    const observed=await observeReviewedApply(f.review,{apply:async()=>{writes++;},read:async()=>value,check:async()=>{reads++;throw Error('Unexpected receipt observation');}},{deadline:Date.now()+5000});
+    assert.equal(observed,value);assert.equal(writes,1);assert.equal(reads,0);
+});
+test('Apply refuses generic and crossed unknown before any receipt observation',async()=>{
+    for(const change of [v=>{v.error='native_read_failed';},v=>{v.outcome.key={...v.outcome.key,nonce:'8'.repeat(32)};},v=>{v.outcome.request_digest='8'.repeat(64);},v=>{v.namespace='8'.repeat(32);},v=>{v.outcome.observation.fence.value.preview_digest='8'.repeat(64);},v=>{v.outcome.observation.fence.value.plan.worker_obligation.providers=[];},v=>{v.submittedReview={};}]){
+        const f=acceptedApplyFixture(),value=structuredClone(f.initial);change(value);let writes=0,reads=0;
+        await assert.rejects(observeReviewedApply(f.review,{apply:async()=>{writes++;},read:async()=>value,check:async()=>{reads++;return f.view(f.terminal);}},{deadline:Date.now()+5000}));assert.equal(writes,1);assert.equal(reads,0);
+    }
+});
+test('Apply receipt observations reject missing, expired, crossed, regressed, or incomplete native proofs',async()=>{
+    for(const change of [v=>{v.receipt=null;delete v.fence;},v=>{v.status='catalog_receipt_unprepared';},v=>{v.receipt={...v.receipt,key:{...v.receipt.key,nonce:'8'.repeat(32)}};},v=>{v.fence.value.prepared_digest='8'.repeat(64);},v=>{v.fence.value.proof.worker_confirmations=[];},v=>{v.fence.value.proof.worker_obligation.providers[0].history.generations=['8'.repeat(32)];},v=>{delete v.fence.value.proof;}]){
+        const f=acceptedApplyFixture(),value=structuredClone(f.terminal);change(value);let writes=0;
+        await assert.rejects(observeReviewedApply(f.review,{apply:async()=>{writes++;},read:async()=>f.initial,check:async()=>f.view(value)},{deadline:Date.now()+5000}));assert.equal(writes,1);
+    }
+});
+test('accepted Apply shared deadline, request and evidence budgets fail without mutation replay',async()=>{
+    for(const mode of ['deadline','requests','bytes']){
+        const f=acceptedApplyFixture();let writes=0,reads=0,time=0;
+        await assert.rejects(observeReviewedApply(f.review,{apply:async()=>{writes++;},read:async()=>f.initial,check:async()=>{reads++;const value=structuredClone(f.pending);if(mode==='deadline')time=5000;if(mode==='bytes')value.extra='x'.repeat(524288);return f.view(value);}},{deadline:5000,maxReceipts:2,now:()=>time,pause:async ms=>{time+=ms;}}),/deadline|request budget|byte budget/);
+        assert.equal(writes,1);assert.ok(reads<=2);
+    }
+});
+test('Apply transport uncertainty and expired preconditions never trigger another dispatch',async()=>{
+    const f=acceptedApplyFixture();let writes=0,reads=0;
+    await assert.rejects(observeReviewedApply(f.review,{apply:async()=>{writes++;throw Error('CDP outcome unknown');},read:async()=>{reads++;return f.initial;}},{deadline:Date.now()+5000}),/CDP outcome unknown/);assert.equal(writes,1);assert.equal(reads,0);
+    await assert.rejects(observeReviewedApply(f.review,{apply:async()=>{writes++;}},{deadline:0}),/deadline/);assert.equal(writes,1);
+});
+test('full initial catalog snapshot is charged before cloning or recording accepted Apply evidence',async()=>{
+    const f=acceptedApplyFixture();f.initial.unrelated_catalog_data='x'.repeat(524288);let writes=0,reads=0,records=0;
+    await assert.rejects(observeReviewedApply(f.review,{apply:async()=>{writes++;},read:async()=>f.initial,record:()=>{records++;},check:async()=>{reads++;return f.view(f.terminal);}},{deadline:Date.now()+5000}),/byte budget/);
+    assert.equal(writes,1);assert.equal(reads,0);assert.equal(records,0);
+});
 function fixture(specs){
     const writes=[],events=[];
     class Input{
@@ -151,4 +210,12 @@ test('action diagnostics preserve first/latest independent native and rendered s
     assert.equal(actions.length,8);assert.equal(actions[0],first);assert.equal(actions.at(-1).sequence,21);
     assert.deepEqual(original.native,[]);assert.deepEqual(original.rendered,[]);
     assert.ok(Buffer.byteLength(JSON.stringify(actions))<8*8*65536+8192);
+});
+
+test('actual editor client homes are isolated only in child environment copies',()=>{
+    const parent={HOME:'ambient-home',USERPROFILE:'ambient-user',CODEX_HOME:'ambient-codex',CLAUDE_CONFIG_DIR:'ambient-claude',APPDATA:'ambient-appdata',PATH:'retain',OTHER:'retain'},before={...parent},owned=path.resolve('owned-fixture','client-home');
+    const child=privateClientEnvironment(parent,owned);assert.deepEqual(parent,before);
+    assert.equal(child.HOME,owned);assert.equal(child.USERPROFILE,owned);assert.equal(child.CODEX_HOME,path.join(owned,'.codex'));assert.equal(child.CLAUDE_CONFIG_DIR,path.join(owned,'.claude'));
+    assert.equal(child.APPDATA,path.join(owned,'AppData','Roaming'));assert.equal(child.XDG_CONFIG_HOME,path.join(owned,'.config'));assert.equal(child.PATH,parent.PATH);assert.equal(child.OTHER,parent.OTHER);
+    assert.throws(()=>privateClientEnvironment(parent,'relative-home'));
 });

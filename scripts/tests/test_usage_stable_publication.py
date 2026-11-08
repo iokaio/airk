@@ -146,13 +146,16 @@ class StablePublicationTests(unittest.TestCase):
 
 
     @driver.contextmanager
-    def wal_fixture(self):
+    def wal_fixture(self, modern=False):
         with tempfile.TemporaryDirectory() as temporary:
             f = Fixture([])
             f.owner = Path(temporary).resolve()
             source = f.owner / "source"
             source.mkdir()
-            data = f.owner / "state"
+            data = f.owner / "index-data"
+            if modern:
+                data /= "fixture"
+                f.single_image = True
             logical = data / "collections-1.4" / "fixture"
             active = "12" * 16
             selected = logical / "incarnations" / active
@@ -191,6 +194,18 @@ class StablePublicationTests(unittest.TestCase):
             self.assertEqual(checkpoint[0], 0, "Read transaction survived guard exit")
             self.assertEqual((selected / "current.sqlite3-wal").stat().st_size, 0)
             self.assertEqual(writer.execute("SELECT value FROM payload").fetchone()[0], 2)
+
+    def test_modern_registered_storage_leaf_pins_actual_wal_and_rejects_changed_layout(self):
+        with self.wal_fixture(modern=True) as (f, writer, selected, _owner, publication):
+            with driver.hold_usage_reader(f, "p", publication):
+                writer.execute("UPDATE payload SET value=2 WHERE id=1")
+                writer.commit()
+                self.assertEqual(writer.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()[0], 1)
+            self.assertEqual(writer.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()[0], 0)
+            f.projects["p"]["collection"] = "foreign"
+            with self.assertRaises((AssertionError, FileNotFoundError)):
+                with driver.hold_usage_reader(f, "p", publication):
+                    self.fail("Changed exact modern registration was admitted")
 
     def test_selected_owner_and_exact_native_token_mismatch_refuse(self):
         with self.wal_fixture() as (f, writer, selected, owner, publication):

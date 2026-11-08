@@ -3,15 +3,19 @@
 import type { TestContext } from 'node:test';
 import { strict as assert } from 'node:assert';
 import Module from 'node:module';
-import { createHash } from 'node:crypto';
+import { X509Certificate, createHash } from 'node:crypto';
 import * as fs from 'node:fs/promises';
+import * as https from 'node:https';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { RuntimeHost, type RuntimeBinding } from '../serviceBootstrap';
-import { ServiceClient, ServiceError, record } from '../serviceClient';
+import { ServiceClient, ServiceError, record, type RecordValue } from '../serviceClient';
 import { ServiceWorkspace } from '../serviceWorkspace';
 import * as native from '../native';
 import * as cliInstall from '../cliInstall';
+import * as globalInventory from '../globalAgentInventory';
+import {ca,cert,key} from './fixtures/httpTlsFixture';
+import {HttpConnectionInfo,HttpSelection,validateHttpConnection} from '../serviceHttp';
 
 export async function serviceTestHost(test:TestContext,options:{trusted?:boolean;roots?:number;workspaceFile?:boolean;registered?:boolean;automatic?:boolean;upgrade?:boolean;assistance?:boolean;installedVersion?:string;runtimeVersion?:string;bundledVersion?:string;discoveryGate?:Promise<void>;deferStartup?:boolean;nativeExecution?:boolean;fresh?:boolean;codeFile?:boolean;nativeSourceScope?:{binding:RuntimeBinding;source:string;collection:string}}={}){
     const bundledVersion=options.bundledVersion??(options.upgrade?'1.4.1':'1.4.0');
@@ -24,10 +28,15 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
     settings.set('explorer.assistance.enabled',options.assistance??false);
     const storage={keys:()=>[...values.keys()],get:<T>(key:string,fallback?:T)=>(values.has(key)?values.get(key):fallback) as T|undefined,update:async(key:string,value:unknown)=>{if(value===undefined)values.delete(key);else values.set(key,structuredClone(value));}};
     const install=options.nativeSourceScope?.binding.installDir??path.join(root,'installation'),control=options.nativeSourceScope?.binding.controlDir??path.join(install,'control'),data=path.join(root,'data');await fs.mkdir(data);
-    const candidateBinding=options.nativeSourceScope?.binding??{installDir:install,controlDir:control,executable:path.join(install,'main'),launcher:path.join(install,'airk-launcher'),
+    // A native Ready owner has already published its private HTTP directory.
+    // Synthetic hosts model that prerequisite without claiming native ACL proof.
+    if(!options.nativeSourceScope)await fs.mkdir(path.join(control,'http-1'),{recursive:true,mode:0o700});
+    const candidateBinding=options.nativeSourceScope?.binding??{installDir:install,controlDir:control,executable:path.join(install,'main'),launcher:path.join(install,process.platform==='win32'?'airk-launcher.exe':'airk-launcher'),
         runtimeSha256:'ab'.repeat(32),version:options.runtimeVersion??'1.4.0',lifecycle:'on-demand' as const,verificationBasis:'trusted_distribution'};
-    assert.ok(candidateBinding.launcher,'service fixture requires its installed stable launcher');
-    const binding={...candidateBinding,launcher:candidateBinding.launcher};
+    // A real schema-2 installation has no launcher. Preserve the actual main
+    // and null launcher independently; historical synthetic defaults above are
+    // intentionally unchanged and never relabel the main as a launcher.
+    const binding:RuntimeBinding={...candidateBinding};
     const registrations=new Map<string,any>(),inactiveRegistrations=new Map<string,any>(),jobs=new Map<string,any>(),plans=new Map<string,any>();
     const folders:any[]=[];for(let i=0;i<(options.roots??1);i++){
         const external=i===0?options.nativeSourceScope:undefined;
@@ -38,7 +47,7 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
     settings.set('cli.autoInstall',options.automatic??false);
     if(options.nativeExecution!==undefined)settings.set('runtime.nativeExecution',options.nativeExecution);
     const digest=(value:string)=>createHash('sha256').update(value).digest('hex');
-    const review=async(_binding:unknown,source:string,data_root:string,collection:string)=>({...binding,binding:digest(JSON.stringify([source,data_root,collection])),root:await fs.realpath(source),data_root,collection});
+    const review=async(_binding:unknown,source:string,data_root:string,collection:string)=>({installDir:binding.installDir,controlDir:binding.controlDir,runtimeSha256:binding.runtimeSha256,binding:digest(JSON.stringify([source,data_root,collection])),root:await fs.realpath(source),data_root,collection});
     const register=async(_binding:unknown,value:any,setupWatch?:boolean,onlyIfMissing=false)=>{
         if(onlyIfMissing&&inactiveRegistrations.has(value.binding))throw new ServiceError('project_was_removed_refresh_registration');
         registrations.set(value.binding,value);if(setupWatch!==undefined)writes.push({reserve_project:{project:value,setup_watch:setupWatch,...(onlyIfMissing?{only_if_missing:true}:{})}});return value;
@@ -47,8 +56,12 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
         const workspace=new ServiceWorkspace(storage,{reviewProject:review,registerProject:register},()=>true);
         for(const folder of folders)await workspace.register(binding,folder.uri.fsPath,data,folder.name.replaceAll(' ','-'),async()=>true);
     }
+    const imported=(registration:any)=>({status:'catalog_legacy_binding',observation:{schema:1,namespace:'34'.repeat(16),catalog_revision:1,project:registration.binding,eligibility:{kind:'imported_snapshot',registration:{binding:registration.binding,root:registration.root,data_root:registration.data_root,collection:registration.collection},grant:{grant:{id:'grt_'+'91'.repeat(16),host:'56'.repeat(32),revision:1,revoked:false,memberships:[{membership:{project_id:'prj_'+'11'.repeat(16),index_id:'idx_'+'22'.repeat(16),revision:1,scope:[{source_root_id:'src_'+'33'.repeat(16),kind:'subtree',path:''}]},source_revision:1,policy_epoch:0,policy_digest:null}]},provenance:{kind:'imported_legacy_snapshot',upgrade_id:'44'.repeat(16),plan_digest:'55'.repeat(32),legacy_binding:registration.binding,configuration_digest:'66'.repeat(32)}}}}});
+    const httpServer=https.createServer({cert,key},(_request,response)=>{response.writeHead(401);response.end();});
+    await new Promise<void>(resolve=>httpServer.listen(0,'127.0.0.1',resolve));const httpUrl=`https://127.0.0.1:${(httpServer.address() as {port:number}).port}/mcp`;
+    const closeHttp=async()=>{httpServer.closeAllConnections();await new Promise<void>(resolve=>httpServer.close(()=>resolve()));};test.after(closeHttp);
     const nativeMethods:string[]=[];
-    const state={down:false,stopped:false,ackLost:false,confirm:true,discovered:0,ensured:0,picks:0,installedVersion:options.installedVersion??bundledVersion,
+    const state={nativeHealthFailures:0,nativeInstance:'12'.repeat(16),httpConnections:[] as {selection:HttpSelection;id:string;client:string;descriptor?:string}[],down:false,stopped:false,ackLost:false,confirm:true,discovered:0,ensured:0,picks:0,installedVersion:options.installedVersion??bundledVersion,
         hostContextKeys:[] as string[],hostContextReply:undefined as undefined|((key:string)=>unknown|Promise<unknown>),
         catalogDetailReply:undefined as undefined|((entity:Record<string,unknown>)=>unknown|Promise<unknown>),
         legacyBindingReply:undefined as undefined|((project:string)=>unknown|Promise<unknown>),legacyBindingProjects:[] as string[],
@@ -95,11 +108,12 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
         executeCommand:async(name:string,...args:unknown[])=>{calls.push(name);if(name==='setContext')commandContexts.set(String(args[0]),args[1]);},getCommands:async()=>['workbench.mcp.listServer']},
     lm:{registerMcpServerDefinitionProvider:(name:string,provider:unknown)=>{if(name==='airk.collections')events.push(provider);else assistance.set(name,provider);return disposable;}},
     env:{clipboard:{writeText:async(text:string)=>{clipboard.push(text);}}},StatusBarAlignment:{Left:1},ConfigurationTarget:{Global:1},ViewColumn:{Active:1,Beside:2},ProgressLocation:{Notification:15},EndOfLine:{LF:1,CRLF:2},
-    EventEmitter:class{listeners:any[]=[];event=(listener:any)=>{this.listeners.push(listener);return disposable;};fire(){for(const listener of this.listeners)listener();}dispose(){}},
-    TreeItem:class{constructor(public label:string){}},Uri:{file:(fsPath:string)=>({scheme:'file',fsPath}),joinPath:(base:any,...parts:string[])=>({scheme:'file',fsPath:path.join(base?.fsPath??'',...parts),toString(){return this.fsPath;}})},
+    EventEmitter:class{listeners:any[]=[];event=(listener:any)=>{this.listeners.push(listener);return disposable;};fire(value:any){for(const listener of this.listeners)listener(value);}dispose(){}},
+    EnvironmentVariableMutatorType:{Replace:1},TreeItem:class{constructor(public label:string){}},Uri:{parse:(value:string)=>({toString:()=>value,scheme:'https'}),file:(fsPath:string)=>({scheme:'file',fsPath}),joinPath:(base:any,...parts:string[])=>({scheme:'file',fsPath:path.join(base?.fsPath??'',...parts),toString(){return this.fsPath;}})},
     Range:class{constructor(..._args:any[]){}},
     RelativePattern:class{constructor(public base:any,public pattern:string){}},
     WorkspaceEdit:class{uri:any;after='';replace(uri:any,_range:any,after:string){this.uri=uri;this.after=after;}},
+    McpHttpServerDefinition:class{constructor(public label:string,public uri:any,public headers:any,public version:string){}},
     McpStdioServerDefinition:class{cwd:unknown;constructor(public label:string,public command:string,public args:string[],public env:unknown,public version:string){}}};
     const transport={dispose(){},async request(method:unknown):Promise<any>{
         const name=typeof method==='string'?method:Object.keys(record(method))[0];
@@ -110,14 +124,14 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
             case 'catalog_legacy_binding':{
                 const project=String(record(record(method).catalog_legacy_binding).project);state.legacyBindingProjects.push(project);
                 if(state.legacyBindingReply)return await state.legacyBindingReply(project);
-                const registration=registrations.get(project);return {status:'catalog_legacy_binding',observation:{schema:1,namespace:'34'.repeat(16),catalog_revision:null,project,eligibility:registration?{kind:'authority_zero',registration}:{kind:'unavailable'}}};
+                const registration=registrations.get(project);return registration?imported(registration):{status:'catalog_legacy_binding',observation:{schema:1,namespace:'34'.repeat(16),catalog_revision:null,project,eligibility:{kind:'unavailable'}}};
             }
             case 'catalog_detail':if(state.catalogDetailReply)return await state.catalogDetailReply(record(record(method).catalog_detail));throw new ServiceError('fixture_catalog_detail_unavailable');
             case 'catalog_host_context':{
                 const key=String(record(record(method).catalog_host_context).key);state.hostContextKeys.push(key);
                 return state.hostContextReply?await state.hostContextReply(key):{status:'catalog_host_context',descriptor:{schema:1,namespace:'34'.repeat(16),host:'56'.repeat(32),key,catalog_revision:1,context:null}};
             }
-            case 'health':return {status:'health',observation:{instance:'12'.repeat(16),version:binding.version,runtime_sha256:binding.runtimeSha256,policy:{accepting:true}}};
+            case 'health':if(state.nativeHealthFailures>0){state.nativeHealthFailures--;throw new ServiceError('native_management_busy');}return {status:'health',observation:{instance:state.nativeInstance,version:binding.version,runtime_sha256:binding.runtimeSha256,policy:{accepting:true}}};
             case 'request_epoch':return {status:'request_epoch',namespace:'34'.repeat(16),epoch:1};
             case 'resources':return {status:'resources',observation:{configuration:{preset:'balanced'}}};
             case 'embedding_status':return {status:'embedding_status',available:false};
@@ -161,8 +175,45 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
             scope:{schema:1,root:source,collection,namespace:'34'.repeat(16),revision:1,observed_unix_ms:1,outcome,
                 registration:outcome==='registered'?matches[0]:null,fencing_generation:outcome==='registered'?1:null}};
     });
+    const httpInfos=new Map<string,HttpConnectionInfo>(),privateMaterial=new Map<string,Promise<void>>();
+    const publishPrivateMaterial=(filename:string,bytes:string|Buffer)=>{
+        let pending=privateMaterial.get(filename);
+        if(!pending){pending=fs.writeFile(filename,bytes,{mode:0o600,flag:'wx'}).catch(async error=>{if(error.code!=='EEXIST')throw error;assert.deepEqual(await fs.readFile(filename),Buffer.from(bytes));});privateMaterial.set(filename,pending);}
+        return pending;
+    };
+    const httpInfo=async(selection:HttpSelection,id:string):Promise<HttpConnectionInfo>=>{
+        // Source-scope qualification supplies a real native control directory.
+        // Synthetic transport certificates/credentials must never overwrite it.
+        if(options.nativeSourceScope)throw new ServiceError('fixture_http_enrollment_unavailable_for_native_control');
+        const directory=path.join(control,'http-1');await fs.mkdir(directory,{recursive:true,mode:0o700});const caFile=path.join(directory,'ca.pem'),tokenFile=path.join(directory,`credential-${id}.token`);
+        await publishPrivateMaterial(caFile,ca);await publishPrivateMaterial(tokenFile,`airk1.${id}.`+'a'.repeat(64));
+        const info=validateHttpConnection({schema:1,connection_id:id,endpoint:{schema:1,installation:'aa'.repeat(32),user:'fixture',namespace:selection.selection.namespace,generation:1,service_instance:'12'.repeat(16),executable_sha256:'bb'.repeat(32),url:httpUrl,ca_sha256:createHash('sha256').update(new X509Certificate(ca).raw).digest('hex'),certificate_sha256:'cc'.repeat(32),state:'ready',predecessor_digest:null},selection,ca_certificate_file:caFile,credential_file:tokenFile},selection,directory);httpInfos.set(id,info);return info;
+    };
+    test.mock.method(RuntimeHost.prototype,'httpConnection',async(_binding:RuntimeBinding,selection:HttpSelection,_file:string,id:string,client:string,descriptor?:string)=>{state.httpConnections.push({selection:structuredClone(selection),id,client,descriptor});return httpInfo(selection,id);});
+    test.mock.method(RuntimeHost.prototype,'httpLegacyConnection',async(_binding:RuntimeBinding,registration:{binding:string;root:string;data_root:string;collection:string},_file:string,receipt:string,id:string,client:string,descriptor?:string)=>{
+        const response=state.legacyBindingReply?await state.legacyBindingReply(registration.binding):registrations.has(registration.binding)?imported(registrations.get(registration.binding)):undefined;
+        const observation=record(record(response).observation),eligibility=record(observation.eligibility);
+        if(eligibility.kind!=='imported_snapshot')throw new ServiceError('legacy_selection_review_required',false,response===undefined?undefined:record(response));
+        const selection:HttpSelection={kind:'imported_legacy',selection:{namespace:String(observation.namespace),expected_catalog_revision:Number(observation.catalog_revision),registration,grant:eligibility.grant as Record<string,any>,configuration_receipt:receipt}};state.httpConnections.push({selection:structuredClone(selection),id,client,descriptor});return httpInfo(selection,id);
+    });
+    test.mock.method(RuntimeHost.prototype,'httpLegacyUnionConnection',async(_binding:RuntimeBinding,rows:{registration:{binding:string;root:string;data_root:string;collection:string};configuration_receipt:string}[],_file:string,id:string,client:string,descriptor?:string)=>{
+        const selections=rows.map(row=>{const response=imported(row.registration);return {namespace:response.observation.namespace,expected_catalog_revision:response.observation.catalog_revision,registration:row.registration,grant:response.observation.eligibility.grant,configuration_receipt:row.configuration_receipt};});
+        const selection:HttpSelection={kind:'imported_legacy_union',selection:{namespace:'34'.repeat(16),selections,no_default_project:true}};state.httpConnections.push({selection:structuredClone(selection),id,client,descriptor});return httpInfo(selection,id);
+    });
+    test.mock.method(RuntimeHost.prototype,'lookupHttpConnection',async(_binding:RuntimeBinding,id:string)=>{const connection=httpInfos.get(id);return {schema:1,active:_binding.runtimeSha256,connection_id:id,status:connection?'owned':'not_owned',...(connection?{connection:structuredClone(connection)}:{})};});
+    test.mock.method(RuntimeHost.prototype,'httpConnectionInfo',async(_binding:RuntimeBinding,id:string)=>{
+        if(state.down||state.stopped)throw new ServiceError('fixture_http_unavailable');
+        const info=httpInfos.get(id);if(!info)throw new ServiceError('http_connection_unavailable');return structuredClone(info);
+    });
     test.mock.method(RuntimeHost.prototype,'client',()=>new ServiceClient(transport));
-    test.mock.method(RuntimeHost.prototype,'retirePrevious',async()=>{calls.push('previous-runtime-retired');});
+    test.mock.method(RuntimeHost.prototype,'migrationClient',async(selected:RuntimeBinding)=>{if(state.stopped)throw new ServiceError('service_explicitly_stopped');if(state.down)throw new ServiceError('service_unavailable');assert.equal(selected.runtimeSha256,binding.runtimeSha256);assert.equal(selected.version,binding.version);calls.push('selected-modern-metadata-verified');const client=new ServiceClient(transport);return {projects:(after:string|null=null,revision:number|null=null,limit=32,inactive=false)=>client.projects(after,revision,limit,inactive),dispose:()=>client.dispose()};});
+    test.mock.method(globalInventory,'inventoryGlobalAgentConfigs',async()=>({files:[],checked:[],blockers:[]}));
+    test.mock.method(RuntimeHost.prototype,'inspectLegacyLaunchers',async()=>({schema:1,active:binding.runtimeSha256,launcher:null,universal_launcher:null}));
+    test.mock.method(RuntimeHost.prototype,'prepareLegacyCaches',async(selected:RuntimeBinding,contextGlobalStorage:string,locatorFile?:string)=>{calls.push('legacy-caches-prepared');if(locatorFile)JSON.parse(await fs.readFile(locatorFile,'utf8'));return {schema:1,active:selected.runtimeSha256,scope:'context-only',context_global_storage:contextGlobalStorage,global_storage_roots:[contextGlobalStorage],caches:[],origin_proofs:[],origin_locators:[],adoption_locators:[],managed_locators:[],origin_classifications:[],inspection_sha256:'fe'.repeat(32)};});
+    test.mock.method(RuntimeHost.prototype,'reprepareLegacyCaches',async(_selected:RuntimeBinding,previous:RecordValue)=>previous);
+    test.mock.method(RuntimeHost.prototype,'retireLegacyCaches',async(selected:RuntimeBinding,prepared:RecordValue)=>{assert.equal(prepared.active,selected.runtimeSha256);calls.push('legacy-caches-retired');return {schema:1,active:selected.runtimeSha256,scope:prepared.scope,global_storage_roots:prepared.global_storage_roots,caches_retired:true,remaining:0,inspection_sha256:prepared.inspection_sha256,retired_caches:prepared.caches,processes:{scope:'verified_legacy_cache_images',remaining:0,observations:[],image_roster:[],image_exclusions:[]}};});
+    test.mock.method(RuntimeHost.prototype,'retireLegacyLaunchers',async()=>{calls.push('legacy-launchers-retired');return {schema:1,active:binding.runtimeSha256,legacy_launchers_retired:true,launcher:null,universal_launcher:null,processes:{scope:'verified_launcher_images',remaining:0,observations:[]}};});
+    test.mock.method(RuntimeHost.prototype,'retirePrevious',async()=>{calls.push('previous-runtime-retired');return {active:binding.runtimeSha256,retired_previous:null};});
     test.mock.method(RuntimeHost.prototype,'reviewTransition',async(current:typeof binding,action:'upgrade'|'rollback'|'resume')=>{
         assert.equal(current.runtimeSha256,binding.runtimeSha256);assert.equal(action,'upgrade');calls.push('upgrade-reviewed');
         return {action,installDir:install,controlDir:control,observedActive:binding.runtimeSha256,expectedActive:binding.runtimeSha256,target:binding.runtimeSha256,version:bundledVersion};
@@ -182,10 +233,11 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
     // Real installations carry compiled code; same-version rebuild detection stats it.
     if(options.codeFile){await fs.mkdir(path.join(root,'out'),{recursive:true});for(const name of ['serviceExtension.js','explorerWebview.js','explorerWebview.css','workbenchWebview.js','workbenchWebview.css'])await fs.writeFile(path.join(root,'out',name),'// fixture build 1\n');}
     try{extension=require('../extension');const context:any={extensionMode:2,extensionPath:root,extensionUri:{scheme:'file',fsPath:path.resolve(__dirname,'../..')},extension:{id:'iokaio.airk',packageJSON:{version:bundledVersion}},globalState:storage,workspaceState:storage,
-        globalStorageUri:{fsPath:path.join(root,'editor-storage')},subscriptions:[],environmentVariableCollection:{persistent:false,prepend(){}}};
+        globalStorageUri:{fsPath:path.join(root,'editor-storage')},subscriptions:[],secrets:{store:async()=>{}},environmentVariableCollection:{persistent:false,get:()=>undefined,replace(){},prepend(){}}};
+        await fs.mkdir(context.globalStorageUri.fsPath,{recursive:true});
         const api=await extension.activate(context);
         if(!options.deferStartup)await api.whenReady();
-        return {nativeMethods,views,root,folders,binding,registrations,inactiveRegistrations,values,settings,commands,commandContexts,writes,calls,warnings,clipboard,panels,openedDocuments,state,stub,api,context,providers:events,assistance,notices,progressRuns,statusBar,
+        return {httpUrl,nativeMethods,views,root,folders,binding,registrations,inactiveRegistrations,values,settings,commands,commandContexts,writes,calls,warnings,clipboard,panels,openedDocuments,state,stub,api,context,providers:events,assistance,notices,progressRuns,statusBar,
             assetWatchers,assetChanged(){for(const watcher of assetWatchers)if(!watcher.disposed)watcher.change();},assetCreated(){for(const watcher of assetWatchers)if(!watcher.disposed)watcher.create();},
             extensionsChanged(){extensionsChanged!();},focus(){windowFocused!({focused:true});},
             async refreshFolders(){await foldersChanged!();},

@@ -29,6 +29,15 @@ const ROLES: [Role; 3] = [Role::Service, Role::Index, Role::Source];
 
 /// Only these fixed aliases, with exactly the approved main image's digest, are owned.
 pub(crate) fn inventory(files: &mut BTreeMap<String, String>) {
+    if !files.contains_key(if cfg!(windows) {
+        "airk-embed.exe"
+    } else if cfg!(target_os = "macos") {
+        "AIRK.app/Contents/MacOS/airk-embed"
+    } else {
+        "airk-embed"
+    }) {
+        return; // schema-2 main owns every native role; never invent alias files.
+    }
     if cfg!(target_os = "macos") && files.contains_key(crate::runtime_install::MAC_LAUNCHER_IMAGE) {
         return; // The sealed Mac main must run in its bundle, not as role copies.
     }
@@ -41,6 +50,9 @@ pub(crate) fn inventory(files: &mut BTreeMap<String, String>) {
 
 pub(crate) fn install(main: &Path) -> Result<()> {
     let root = crate::runtime_pair::payload_root(main)?;
+    if crate::runtime_pair::single_executable(main)? {
+        return require_no_bundle_aliases(root);
+    }
     if standalone_mac_layout(main)? {
         return require_no_bundle_aliases(root);
     }
@@ -120,6 +132,10 @@ pub(crate) fn main_image(executable: &Path) -> Result<PathBuf> {
         .context("process alias parent missing")?
         .join(crate::runtime_install::main_name());
     ensure!(
+        !crate::runtime_pair::single_executable(&main)?,
+        "single executable runtime does not own copied process aliases"
+    );
+    ensure!(
         !standalone_mac_layout(&main)?,
         "process alias is not supported for a sealed Mac payload"
     );
@@ -132,6 +148,10 @@ pub(crate) fn main_image(executable: &Path) -> Result<PathBuf> {
 
 pub(crate) fn executable(main: &Path, role: Role) -> Result<PathBuf> {
     let main = main_image(main)?;
+    if crate::runtime_pair::single_executable(&main)? {
+        require_no_bundle_aliases(crate::runtime_pair::payload_root(&main)?)?;
+        return Ok(main);
+    }
     if standalone_mac_layout(&main)? {
         require_no_bundle_aliases(crate::runtime_pair::payload_root(&main)?)?;
         return Ok(main);
@@ -154,6 +174,21 @@ pub(crate) fn executable(main: &Path, role: Role) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn legacy_receipt(main: &Path) -> Result<()> {
+        let pair = crate::runtime_pair::RuntimePair {
+            schema: 1,
+            version: env!("CARGO_PKG_VERSION").into(),
+            os: std::env::consts::OS.into(),
+            arch: std::env::consts::ARCH.into(),
+            airk_sha256: crate::runtime_pair::digest_file(main)?,
+            embed_sha256: "b".repeat(64),
+        };
+        fs::write(
+            crate::runtime_pair::payload_root(main)?.join("airk-runtime.json"),
+            serde_json::to_vec(&pair)?,
+        )?;
+        Ok(())
+    }
     #[cfg(target_os = "macos")]
     #[test]
     fn sealed_mac_payload_runs_in_bundle_without_copying_process_roles() -> Result<()> {
@@ -162,6 +197,7 @@ mod tests {
         let main = root.join(crate::runtime_install::main_name());
         fs::create_dir_all(main.parent().unwrap())?;
         fs::write(&main, b"sealed main fixture")?;
+        legacy_receipt(&main)?;
         fs::write(
             root.join(crate::runtime_install::MAC_LAUNCHER_IMAGE),
             b"standalone fixture",
@@ -186,6 +222,7 @@ mod tests {
         let main = root.join(crate::runtime_install::main_name());
         fs::create_dir_all(main.parent().unwrap())?;
         fs::write(&main, b"approved engine fixture")?;
+        legacy_receipt(&main)?;
         install(&main)?;
         install(&main)?;
         for role in ROLES {

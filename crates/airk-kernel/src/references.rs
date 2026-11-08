@@ -599,6 +599,7 @@ impl Kernel {
                     let (artifact, payload) = if entry
                         .retained
                         .as_ref()
+                        .filter(|r| r.legacy_origin.is_none())
                         .and_then(|r| r.profile.as_ref())
                         .is_some_and(|p| p.chunk_version == 3)
                     {
@@ -607,11 +608,16 @@ impl Kernel {
                     } else {
                         (self.store.load_retained(&entry)?, None)
                     };
-                    let source = self.store.read_retained_source(&entry)?;
+                    // Original source may be unavailable for saved historical
+                    // evidence. Canonical saved chunks remain reference evidence;
+                    // direct source-line proof requires a current payload.
+                    let source = payload
+                        .as_ref()
+                        .map(|_| self.store.read_retained_source(&entry))
+                        .transpose()?;
                     if artifact.extraction_method == "utf8"
-                        && payload
-                            .as_ref()
-                            .is_some_and(|p| p.text.as_bytes() == source.as_slice())
+                        && let (Some(payload), Some(source)) = (&payload, source)
+                        && payload.text.as_bytes() == source.as_slice()
                     {
                         let Some(lines) = SourceLines::build(source, &artifact, name)? else {
                             reason = Some("artifact_exceeds_source_line_index_budget".into());

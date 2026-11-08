@@ -78,6 +78,38 @@ fn fixture(lifecycle: ManagedLifecycle) -> Result<(tempfile::TempDir, PathBuf, P
 }
 
 #[test]
+fn modern_managed_origin_binds_exact_main_without_a_helper() -> Result<()> {
+    let (_owner, root, state, policy) = fixture(ManagedLifecycle::UserOnDemand)?;
+    let lock = install_lock(&root)?;
+    let authority = InstallerAuthority {
+        root: &root,
+        _lock: &lock,
+    };
+    let reservation = VerifiedManagedReservation::prepare(&authority, &policy, &state)?;
+    assert_eq!(reservation.origin.schema, 2);
+    assert_eq!(reservation.origin.helper_sha256, None);
+    assert!(!policy.source.join(helper_name()).exists());
+    assert!(
+        serde_json::to_value(&reservation.origin)?
+            .get("helper_sha256")
+            .is_none()
+    );
+    layout::initialize_managed(&root, Some(&state), RuntimeChannel::Stable, &reservation)?;
+    verify_origin(&authority, &policy, &reservation.origin)?;
+    let main = policy.saved_executable();
+    let original = fs::read(&main)?;
+    fs::write(&main, b"changed modern provider")?;
+    assert!(verify_origin(&authority, &policy, &reservation.origin).is_err());
+    fs::write(&main, original)?;
+    verify_origin(&authority, &policy, &reservation.origin)?;
+    let mut crossed = reservation.origin.clone();
+    crossed.schema = 1;
+    crossed.helper_sha256 = Some(crossed.main_sha256);
+    assert!(verify_origin(&authority, &policy, &crossed).is_err());
+    Ok(())
+}
+
+#[test]
 fn initial_layout_reservation_survives_without_policy_and_fences_disabled_start() -> Result<()> {
     let (_owner, root, state, policy) = fixture(ManagedLifecycle::UserOnDemand)?;
     let lock = install_lock(&root)?;
@@ -186,11 +218,11 @@ fn changed_reserved_policy_or_payload_is_preserved_and_refused() -> Result<()> {
     let mut changed = policy.clone();
     changed.lifecycle = ManagedLifecycle::External;
     assert!(VerifiedManagedReservation::prepare(&authority, &changed, &state).is_err());
-    fs::write(policy.source.join(helper_name()), b"foreign changed helper")?;
+    fs::write(policy.source.join(main_name()), b"foreign changed main")?;
     assert!(VerifiedManagedReservation::prepare(&authority, &policy, &state).is_err());
     assert_eq!(
-        fs::read(policy.source.join(helper_name()))?,
-        b"foreign changed helper"
+        fs::read(policy.source.join(main_name()))?,
+        b"foreign changed main"
     );
     assert_eq!(fs::read(root.join("runtime-layout.json"))?, before);
     assert!(!reservation.origin.control.exists());
@@ -296,14 +328,11 @@ fn settled_some_checks_current_policy_and_pair_even_with_activation_disabled() -
     );
     assert!(before_start_enabled(&authority, &changed, None, false).is_err());
     replace_json(&root, POLICY, &policy)?;
-    fs::write(
-        policy.source.join(helper_name()),
-        b"changed helper preserved",
-    )?;
+    fs::write(policy.source.join(main_name()), b"changed main preserved")?;
     assert!(before_start_enabled(&authority, &policy, None, false).is_err());
     assert_eq!(
-        fs::read(policy.source.join(helper_name()))?,
-        b"changed helper preserved"
+        fs::read(policy.source.join(main_name()))?,
+        b"changed main preserved"
     );
     Ok(())
 }
@@ -763,5 +792,156 @@ async fn actual_managed_first_pin_settles_before_connection_and_external_health(
         }
         result.and(cleanup)?;
     }
+    Ok(())
+}
+
+#[test]
+fn settled_managed_detach_preserves_reservation_and_external_owner_and_retries() -> Result<()> {
+    let (_owner, root, state, policy) = fixture(ManagedLifecycle::External)?;
+    let lock = install_lock(&root)?;
+    let authority = InstallerAuthority {
+        root: &root,
+        _lock: &lock,
+    };
+    let reservation = VerifiedManagedReservation::prepare(&authority, &policy, &state)?;
+    layout::initialize_managed(&root, Some(&state), RuntimeChannel::Stable, &reservation)?;
+    let origin = reservation.origin();
+    settled_format_fixture(&authority, &policy, origin)?;
+    replace_json(&root, POLICY, &policy)?;
+    replace_json(
+        &root,
+        "selected.json",
+        &Selection {
+            schema: 1,
+            active: policy.approval.manifest_sha256.clone(),
+            previous: None,
+        },
+    )?;
+    let layout_before = fs::read(root.join("runtime-layout.json"))?;
+    let genesis_before = fs::read(origin.control.join("index-catalog-genesis.json"))?;
+    let provider_before = fs::read(policy.saved_executable())?;
+    let lease = ServiceLease::acquire(&origin.control)?;
+    let runtime = tokio::runtime::Runtime::new()?;
+    for _ in 0..2 {
+        let reply = runtime.block_on(detach(&root))?;
+        assert_eq!(reply["detached"], true);
+        assert_eq!(reply["external_supervisor_continues"], true);
+        assert!(ServiceLease::acquire(&origin.control).is_err());
+        assert!(!root.join(POLICY).exists());
+        assert!(!root.join("selected.json").exists());
+        assert!(!root.join(DETACH).exists());
+        assert_eq!(fs::read(root.join("runtime-layout.json"))?, layout_before);
+        assert_eq!(
+            fs::read(origin.control.join("index-catalog-genesis.json"))?,
+            genesis_before
+        );
+        assert_eq!(fs::read(policy.saved_executable())?, provider_before);
+        assert!(require_unmanaged(&root).is_err());
+        let error = runtime
+            .block_on(ensure_running_locked(&authority))
+            .err()
+            .expect("detached managed runtime must not start");
+        assert!(
+            error
+                .to_string()
+                .contains("repeat_same_approved_managed_configure")
+        );
+    }
+    let reattach = VerifiedManagedReservation::prepare(&authority, &policy, &state)?;
+    assert_eq!(reattach.origin(), origin);
+    drop(lease);
+    drop(lock);
+    let error = runtime
+        .block_on(lifecycle::explicit_start(&root))
+        .err()
+        .expect("detached managed runtime must not start");
+    assert!(error.to_string().contains("lifecycle_managed_externally"));
+    assert!(!root.join(POLICY).exists());
+    Ok(())
+}
+
+#[test]
+fn settled_managed_detach_rejects_crossed_policy_and_resumes_missing_provider() -> Result<()> {
+    let (_owner, root, state, policy) = fixture(ManagedLifecycle::UserOnDemand)?;
+    let lock = install_lock(&root)?;
+    let authority = InstallerAuthority {
+        root: &root,
+        _lock: &lock,
+    };
+    let reservation = VerifiedManagedReservation::prepare(&authority, &policy, &state)?;
+    layout::initialize_managed(&root, Some(&state), RuntimeChannel::Stable, &reservation)?;
+    let origin = reservation.origin();
+    settled_format_fixture(&authority, &policy, origin)?;
+    let mut crossed = policy.clone();
+    crossed.lifecycle = ManagedLifecycle::External;
+    replace_json(&root, POLICY, &crossed)?;
+    let runtime = tokio::runtime::Runtime::new()?;
+    assert!(runtime.block_on(detach(&root)).is_err());
+    assert!(!root.join(DETACH).exists());
+    assert_eq!(read(&root)?, Some(crossed));
+    replace_json(&root, POLICY, &policy)?;
+    // Exact accepted intent survives removal of user references and provider.
+    replace_json(&root, DETACH, &policy)?;
+    fs::remove_file(root.join(POLICY))?;
+    let retained = policy.source.join("retained-provider-main");
+    fs::rename(policy.saved_executable(), &retained)?;
+    let before = fs::read(&retained)?;
+    let reply = runtime.block_on(detach(&root))?;
+    assert_eq!(reply["detached"], true);
+    assert_eq!(reply["external_supervisor_continues"], false);
+    assert_eq!(fs::read(&retained)?, before);
+    assert!(!root.join(POLICY).exists());
+    assert!(!root.join(DETACH).exists());
+    assert_eq!(layout::managed_origin(&root)?.as_ref(), Some(origin));
+    genesis::require_managed_settled(&origin.control, origin)?;
+    drop(lock);
+    let error = runtime
+        .block_on(lifecycle::explicit_start(&root))
+        .err()
+        .expect("detached managed runtime must not start");
+    assert!(
+        error
+            .to_string()
+            .contains("repeat_same_approved_managed_configure")
+    );
+    assert!(!root.join("selected.json").exists());
+    Ok(())
+}
+
+#[test]
+fn settled_managed_origin_survives_authenticated_embedded_schema_promotion() -> Result<()> {
+    let (_owner, root, state, policy) = fixture(ManagedLifecycle::UserOnDemand)?;
+    let lock = install_lock(&root)?;
+    let authority = InstallerAuthority {
+        root: &root,
+        _lock: &lock,
+    };
+    let reservation = VerifiedManagedReservation::prepare(&authority, &policy, &state)?;
+    layout::initialize_managed(&root, Some(&state), RuntimeChannel::Stable, &reservation)?;
+    let origin = reservation.origin();
+    settled_format_fixture(&authority, &policy, origin)?;
+    replace_json(&root, POLICY, &policy)?;
+    let before = fs::read(origin.control.join("index-catalog-genesis.json"))?;
+    airk_store::service::registry::runtime_contract::require_embedded_default_write_for_namespace(
+        &origin.control,
+        origin.namespace,
+    )?;
+    let registry = ServiceRegistry::open_saved(&origin.control)?;
+    let current = registry
+        .catalog_state()?
+        .context("promoted catalog missing")?;
+    assert_eq!(current.schema, 13);
+    assert!(current.accepted_new_writes);
+    drop(registry);
+    genesis::require_managed_settled(&origin.control, origin)?;
+    require_detach_policy(&root, &policy)?;
+    assert_eq!(
+        fs::read(origin.control.join("index-catalog-genesis.json"))?,
+        before
+    );
+    // Both excluded and live-owner read-only readiness paths retain identity.
+    let lease = ServiceLease::acquire(&origin.control)?;
+    genesis::require_managed_settled(&origin.control, origin)?;
+    drop(lease);
     Ok(())
 }

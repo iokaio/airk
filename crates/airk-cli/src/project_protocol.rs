@@ -20,6 +20,11 @@ pub struct Init {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    Checkpoint {
+        identity: WorkerIdentity,
+        operation_id: Incarnation,
+        seal: bool,
+    },
     ResolveSourceChange {
         identity: WorkerIdentity,
         nonce: Incarnation,
@@ -94,6 +99,9 @@ pub enum Command {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Reply {
+    Checkpoint {
+        observation: WorkerCheckpointObservation,
+    },
     SourceChangeResolution {
         identity: WorkerIdentity,
         nonce: Incarnation,
@@ -131,9 +139,28 @@ pub enum Reply {
     Failed,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkerCheckpointObservation {
+    pub schema: u32,
+    pub identity: WorkerIdentity,
+    pub operation_id: Incarnation,
+    pub engine_sha256: airk_core::identity::Sha256Digest,
+    pub admission_closed: bool,
+    pub sealed: bool,
+    pub active_work_grant: Option<Incarnation>,
+    pub active_queries: usize,
+    /// True only after the job thread has committed its native outcome and all
+    /// post-completion storage effects, and query delivery has released charges.
+    pub durable_boundary: bool,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Query {
+    /// Feature-version gated; omitted for legacy workers rejecting unknown keys.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_attempt: Option<airk_core::read_attempt::ReadAttemptBudget>,
     #[serde(default)]
     pub frontend: Option<airk_core::service::RuntimeProcess>,
     pub tool: String,
@@ -147,10 +174,22 @@ pub struct Query {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct QueryResult {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_admission: Option<SelectionReadAdmission>,
     pub result: serde_json::Value,
     pub status_receipt: airk_mcp::response::StatusReceipt,
     #[serde(default)]
     pub rebind: bool,
+}
+
+/// Private worker-authenticated proof that no handler, verification or usage
+/// observation began. Never reconstructed from public error JSON.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SelectionReadAdmission {
+    pub request_id: Incarnation,
+    pub identity: WorkerIdentity,
+    pub scope: Option<airk_core::service::ScopedReadRef>,
 }
 
 #[derive(Serialize, Deserialize)]

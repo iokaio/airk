@@ -4,6 +4,101 @@ use super::*;
 
 pub async fn run(command: &RuntimeCommand) -> Result<()> {
     let output = match command {
+        RuntimeCommand::HttpIssuerRotation {
+            install_dir,
+            action,
+            operation_id,
+            expected_ca_sha256,
+            expected_descriptor_sha256,
+            expected_receipt_sha256,
+            overlap_seconds,
+        } => {
+            http_rotation::run(
+                install_dir,
+                http_rotation::Input {
+                    action: *action,
+                    operation: *operation_id,
+                    expected_ca: *expected_ca_sha256,
+                    expected_descriptor: *expected_descriptor_sha256,
+                    expected_receipt: *expected_receipt_sha256,
+                    overlap_seconds: *overlap_seconds,
+                },
+            )
+            .await?
+        }
+        RuntimeCommand::HttpLegacyUnionConnection {
+            install_dir,
+            registrations_file,
+            connection_id,
+            client,
+            explorer_descriptor,
+        } => {
+            http_commands::enroll_legacy_union(
+                install_dir,
+                registrations_file,
+                *connection_id,
+                client,
+                explorer_descriptor.as_deref(),
+            )
+            .await?
+        }
+        RuntimeCommand::HttpTrust {
+            install_dir,
+            action,
+            expected_ca_sha256,
+        } => http_commands::trust(install_dir, *action, *expected_ca_sha256).await?,
+        RuntimeCommand::HttpEndpoint { install_dir } => {
+            http_commands::endpoint(install_dir).await?
+        }
+        RuntimeCommand::HttpConnectionInfo {
+            install_dir,
+            connection_id,
+        } => http_commands::existing_connection(install_dir, *connection_id).await?,
+        RuntimeCommand::LookupHttpConnection {
+            install_dir,
+            expected_active,
+            connection_id,
+        } => http_commands::lookup_connection(install_dir, expected_active, *connection_id).await?,
+        RuntimeCommand::HttpConnection {
+            install_dir,
+            selection_file,
+            connection_id,
+            client,
+            explorer_descriptor,
+        } => {
+            http_commands::enroll(
+                install_dir,
+                selection_file,
+                *connection_id,
+                client,
+                explorer_descriptor.as_deref(),
+            )
+            .await?
+        }
+        RuntimeCommand::HttpRevoke {
+            install_dir,
+            connection_id,
+        } => http_commands::revoke(install_dir, *connection_id).await?,
+        RuntimeCommand::HttpLegacyConnection {
+            install_dir,
+            registration_file,
+            configuration_receipt,
+            connection_id,
+            client,
+            explorer_descriptor,
+            origin_sha256,
+        } => {
+            http_commands::enroll_legacy(
+                install_dir,
+                registration_file,
+                *configuration_receipt,
+                *connection_id,
+                client,
+                explorer_descriptor.as_deref(),
+                *origin_sha256,
+            )
+            .await?
+        }
         RuntimeCommand::LegacyRetirementCandidates { install_dir, after } => {
             legacy_retirement::candidates(install_dir, *after)?
         }
@@ -53,6 +148,22 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             serde_json::json!({"install_dir":install_dir,"control_dir":control,"runtime_sha256":approval.manifest_sha256,"scope":observed})
         }
 
+        RuntimeCommand::ManagedServe { install_dir } => {
+            return managed_service::serve(install_dir).await;
+        }
+        RuntimeCommand::LoginServe { channel } => {
+            #[cfg(target_os = "macos")]
+            {
+                let root = macos_login::direct_root(*channel)?;
+                let control = layout::saved_control(&root)?;
+                return service_runtime::serve(&control).await;
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                let _ = channel;
+                bail!("Mac direct login entry is unavailable on this platform");
+            }
+        }
         RuntimeCommand::LoginForeground { channel } => {
             #[cfg(target_os = "macos")]
             {
@@ -126,6 +237,7 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             } else {
                 Some(install_lock(install_dir)?)
             };
+            require_login_registration_change(install_dir, action)?;
             if !matches!(
                 action,
                 LoginCommand::Plan | LoginCommand::Status | LoginCommand::Stop
@@ -159,9 +271,16 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
                     "organization supervisor owns this runtime; AIRK cannot start another foreground instance"
                 );
             }
-            launcher_repair::require_settled(install_dir)?;
             let (executable, _) = startup_selected(install_dir)?;
             let current = std::env::current_exe()?.canonicalize()?;
+            if runtime_pair::single_executable(&executable)? {
+                ensure!(
+                    current == executable.canonicalize()?,
+                    "legacy_foreground_retired: restart the installed AIRK service through its direct managed/login entry; a copied launcher cannot supervise AIRK 1.8.14"
+                );
+                return service_runtime::serve(&layout::control(install_dir)?).await;
+            }
+            launcher_repair::require_settled(install_dir)?;
             if current != executable.canonicalize()?
                 && runtime_pair::digest_file(&current)? != runtime_pair::digest_file(&executable)?
             {
@@ -203,6 +322,7 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
         )?)?,
         RuntimeCommand::AbortLayout { install_dir } => {
             let _lock = install_lock(install_dir)?;
+            require_issuer_rotation_settled(install_dir)?;
             layout::abort(install_dir)?;
             serde_json::json!({"pending_layout_aborted":true,"state_preserved":true})
         }
@@ -212,6 +332,7 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             expected_active,
         } => {
             let _lock = install_lock(install_dir)?;
+            require_issuer_rotation_settled(install_dir)?;
             managed::require_unmanaged(install_dir)?;
             if let (Some(candidate), Some(active)) = (expected_candidate, expected_active) {
                 activation::require_superseded(install_dir, candidate, active)?;
@@ -262,9 +383,13 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
         }
         RuntimeCommand::Ensure { install_dir } => {
             let mut value = serde_json::to_value(ensure_running(install_dir).await?)?;
-            // Keep the version-free universal launcher pointing at this default installation.
-            // A failure is reported, never fatal: the per-installation launcher still works.
-            if managed::read(install_dir)?.is_none() && value.is_object() {
+            // Only retained schema-1 clients use a universal launcher. A modern
+            // Ensure must never republish old copies or report their absence as
+            // a transport failure after successful HTTPS migration.
+            let (_, executable, _) = selected(install_dir)?;
+            if runtime_pair::single_executable(&executable)? {
+                value["universal_launcher"] = serde_json::Value::Null;
+            } else if managed::read(install_dir)?.is_none() && value.is_object() {
                 let published = install_lock(install_dir).and_then(|_lock| {
                     let (_, channel) = layout::retained_parameters(install_dir)?;
                     crate::universal_launcher::publish_for_default(install_dir, channel)
@@ -332,12 +457,19 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             );
             let (_, main, approval, inventory) = selected_inventory(install_dir)?;
             prepare_client_launcher(install_dir, &main, &approval, &inventory)?;
-            serde_json::json!({"launcher":verified_launcher(install_dir)?,"service_lifecycle_changed":false})
+            let launcher = if runtime_pair::single_executable(&main)? {
+                None
+            } else {
+                Some(verified_launcher(install_dir)?)
+            };
+            serde_json::json!({"launcher":launcher,"executable":main,"service_lifecycle_changed":false})
         }
         RuntimeCommand::Inspect { install_dir } => {
             let (selection, executable, approval) = selected(install_dir)?;
             let policy = managed::read(install_dir)?;
-            let launcher = if policy.is_none() || launcher_path(install_dir).try_exists()? {
+            let launcher = if launcher_path(install_dir).try_exists()?
+                || (policy.is_none() && !runtime_pair::single_executable(&executable)?)
+            {
                 Some(verified_launcher(install_dir)?)
             } else {
                 None
@@ -376,6 +508,7 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
         } => {
             managed::require_unmanaged(install_dir)?;
             let _lock = install_lock(install_dir)?;
+            require_issuer_rotation_settled(install_dir)?;
             activation::require_settled(install_dir)?;
             match fs::symlink_metadata(install_dir.join("selected.json")) {
                 Ok(_) => {
@@ -399,8 +532,92 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             install_dir,
             expected_active,
         } => retirement::retire_previous(install_dir, expected_active).await?,
+        RuntimeCommand::RetireLegacyLaunchers {
+            install_dir,
+            expected_active,
+        } => legacy_launchers::retire(install_dir, expected_active).await?,
+        RuntimeCommand::InspectLegacyLaunchers {
+            install_dir,
+            expected_active,
+        } => legacy_launchers::inspect(install_dir, expected_active)?,
+        RuntimeCommand::InspectLegacyCaches {
+            install_dir,
+            expected_active,
+            global_storage,
+            origin_locators_file,
+        } => legacy_caches::inspect(
+            install_dir,
+            expected_active,
+            global_storage,
+            origin_locators_file.as_deref(),
+            false,
+        )?,
+        RuntimeCommand::PrepareLegacyCaches {
+            install_dir,
+            expected_active,
+            global_storage,
+            origin_locators_file,
+        } => legacy_caches::inspect(
+            install_dir,
+            expected_active,
+            global_storage,
+            origin_locators_file.as_deref(),
+            true,
+        )?,
+        RuntimeCommand::RetireLegacyCaches {
+            install_dir,
+            expected_active,
+            expected_inspection_sha256,
+        } => legacy_caches::retire(install_dir, expected_active, expected_inspection_sha256)?,
+        RuntimeCommand::ReprepareLegacyCaches {
+            install_dir,
+            expected_active,
+            global_storage,
+            origin_locators_file,
+            expected_inspection_sha256,
+        } => legacy_caches::reprepare(
+            install_dir,
+            expected_active,
+            global_storage,
+            origin_locators_file.as_deref(),
+            expected_inspection_sha256,
+        )?,
+        RuntimeCommand::AdoptLegacyIndex {
+            install_dir,
+            expected_active,
+            operation_id,
+            locator_file,
+            expected_cache_inspection_sha256,
+        } => {
+            legacy_index_adoption::adopt(
+                install_dir,
+                expected_active,
+                operation_id,
+                locator_file,
+                expected_cache_inspection_sha256,
+            )
+            .await?
+        }
+        RuntimeCommand::AdoptLegacyIndexes {
+            install_dir,
+            expected_active,
+            operation_id,
+            locators_file,
+            expected_cache_inspection_sha256,
+        } => {
+            legacy_index_adoption::adopt_many(
+                install_dir,
+                expected_active,
+                operation_id,
+                locators_file,
+                expected_cache_inspection_sha256,
+            )
+            .await?
+        }
         RuntimeCommand::Uninstall { install_dir } => {
             let _lock = install_lock(install_dir)?;
+            legacy_caches::require_settled(install_dir)?;
+            require_issuer_rotation_settled(install_dir)?;
             payload_repair::require_settled(install_dir)?;
             retirement::uninstall(install_dir).await?
         }
@@ -409,6 +626,7 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             runtime_sha256,
         } => {
             let _lock = install_lock(install_dir)?;
+            require_issuer_rotation_settled(install_dir)?;
             payload_repair::require_settled(install_dir)?;
             staging::abort(install_dir, runtime_sha256)?;
             serde_json::json!({"aborted_stage":runtime_sha256,"promoted_runtime_preserved":install_dir.join("runtimes").join(runtime_sha256).try_exists()?})
@@ -416,6 +634,7 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
         RuntimeCommand::RepairLauncher { install_dir } => {
             managed::require_unmanaged(install_dir)?;
             let _lock = install_lock(install_dir)?;
+            require_issuer_rotation_settled(install_dir)?;
             activation::require_settled(install_dir)?;
             crate::service_manager::ServiceManager::for_runtime(install_dir)?
                 .require_stopped_for_maintenance()?;
@@ -423,11 +642,12 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
                 "stop the service and wait for all owners before repairing the launcher",
             )?;
             let (selection, _, _) = selected(install_dir)?;
-            launcher_repair::repair(install_dir, &selection.active)?;
-            serde_json::json!({"launcher_repaired":true,"runtime":selection.active})
+            let repaired = launcher_repair::repair(install_dir, &selection.active)?;
+            serde_json::json!({"launcher_repaired":repaired,"runtime":selection.active})
         }
         RuntimeCommand::AbortLauncherRepair { install_dir } => {
             let _lock = install_lock(install_dir)?;
+            require_issuer_rotation_settled(install_dir)?;
             activation::require_settled(install_dir)?;
             crate::service_manager::ServiceManager::for_runtime(install_dir)?
                 .require_stopped_for_maintenance()?;
@@ -484,10 +704,15 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
                 .as_ref()
                 .err()
                 .map(|error| error.to_string().chars().take(512).collect::<String>());
+            let checkpoint = activation::checkpoint_status(install_dir);
+            let checkpoint_error = checkpoint
+                .as_ref()
+                .err()
+                .map(|error| error.to_string().chars().take(512).collect::<String>());
             let logs = layout::control(install_dir)
                 .and_then(|control| crate::service_logs::recent(&control, 32));
             let log_error = logs.is_err();
-            serde_json::json!({"logs":logs.ok(),"logs_unavailable":log_error,"runtime":selection.ok(),"runtime_error":selection_error,"bootstrap":bootstrap.ok().flatten(),"bootstrap_error":bootstrap_error,"pending_stages":stages.ok(),"staging_error":stages_error,"pending_launcher_repair":repair.ok().flatten(),"launcher_repair_error":repair_error,"state_layout":state_layout.ok(),"layout_error":layout_error,"managed_policy":policy.ok().flatten(),"managed_policy_error":policy_error,"pending_activation":activation.ok().flatten(),"activation_error":activation_error,"activation_result":activation_result.ok().flatten(),"activation_result_error":activation_result_error,"live_service_health":"not_checked"})
+            serde_json::json!({"logs":logs.ok(),"logs_unavailable":log_error,"runtime":selection.ok(),"runtime_error":selection_error,"bootstrap":bootstrap.ok().flatten(),"bootstrap_error":bootstrap_error,"pending_stages":stages.ok(),"staging_error":stages_error,"pending_launcher_repair":repair.ok().flatten(),"launcher_repair_error":repair_error,"state_layout":state_layout.ok(),"layout_error":layout_error,"managed_policy":policy.ok().flatten(),"managed_policy_error":policy_error,"pending_activation":activation.ok().flatten(),"activation_error":activation_error,"activation_result":activation_result.ok().flatten(),"activation_result_error":activation_result_error,"upgrade_checkpoint":checkpoint.ok().flatten(),"upgrade_checkpoint_error":checkpoint_error,"live_service_health":"not_checked"})
         }
         RuntimeCommand::ResetStartup { install_dir } => {
             let _lock = install_lock(install_dir)?;
@@ -514,9 +739,10 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             serde_json::to_value(activate(install_dir, &previous).await?)?
         }
         RuntimeCommand::Launch { install_dir, args } => {
+            let (_, executable, _) = selected(install_dir)?;
+            runtime_pair::require_legacy_stdio(&executable)?;
             crate::client_owner::watch()?;
             launcher_repair::require_settled(install_dir)?;
-            let (_, executable, _) = selected(install_dir)?;
             let mut command = Command::new(executable);
             ensure!(
                 !args.iter().any(|value| value == "--service-install-dir"
@@ -596,15 +822,31 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
         }
         RuntimeCommand::SelfTest => {
             let main = std::env::current_exe()?;
-            let helper = runtime_pair::verify_helper(&main)?;
-            crate::service_manager::check_executable_identity(
-                &helper,
-                &format!("airk-embed {}", env!("CARGO_PKG_VERSION")),
-            )?;
+            if runtime_pair::single_executable(&main)? {
+                #[cfg(feature = "local-inference")]
+                {
+                    crate::bundled_assets::verify_inventory()?;
+                }
+                #[cfg(not(feature = "local-inference"))]
+                anyhow::bail!("single executable runtime requires embedded inference");
+            } else {
+                let helper = runtime_pair::verify_helper(&main)?;
+                crate::service_manager::check_executable_identity(
+                    &helper,
+                    &format!("airk-embed {}", env!("CARGO_PKG_VERSION")),
+                )?;
+            }
             serde_json::json!({"protocol":1,"version":env!("CARGO_PKG_VERSION"),"self_test":"passed","state_layout":1,"foreground_dispatch":1,"managed_reference":1,"activation_resume":1,"metadata_console":1,"io_worker_threads":2,"index_catalog":airk_store::service::registry::catalog::capabilities()})
         }
     };
     println!("{}", serde_json::to_string(&output)?);
+    Ok(())
+}
+
+pub(super) fn require_login_registration_change(root: &Path, action: &LoginCommand) -> Result<()> {
+    if matches!(action, LoginCommand::Install | LoginCommand::Uninstall) {
+        require_manager_change_settled(root)?;
+    }
     Ok(())
 }
 

@@ -2,8 +2,14 @@
 //! Installer-owned hard stop, independent of the predecessor's control protocol.
 use super::*;
 
+#[cfg(any(target_os = "macos", test))]
+#[path = "runtime_upgrade_stop_macos.rs"]
+mod macos;
+#[cfg(target_os = "macos")]
+use macos::{capture, terminate, wait};
+
 pub(super) fn stop(root: &Path, identity: &str) -> Result<()> {
-    #[cfg(any(windows, target_os = "linux"))]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     {
         let (main, _) = verify_runtime(root, identity)?;
         let current = std::env::current_exe()?.canonicalize()?;
@@ -13,42 +19,50 @@ pub(super) fn stop(root: &Path, identity: &str) -> Result<()> {
                     || current != launcher_path(root).canonicalize()?),
             "run the upgrade from the new distribution, outside the preceding runtime"
         );
-        let directory = main.parent().context("runtime parent missing")?;
-        let mut paths = vec![main.clone(), directory.join(helper_name())];
-        // This stable launcher may itself be held by old MCP/Assistance clients.
-        // Its saved receipt, rather than the new candidate, proves its identity.
-        let launcher = launcher_path(root);
-        if launcher.try_exists()? {
-            safe_file(&launcher)?;
-            let receipt: LauncherReceipt =
-                serde_json::from_slice(&read_bounded(&root.join("launcher.json"), 4096)?)?;
-            ensure!(
-                receipt.schema == 1 && runtime_pair::digest_file(&launcher)? == receipt.sha256,
-                "unknown or modified launcher preserved"
-            );
-            paths.push(launcher);
-        }
-        for role in [
-            crate::process_roles::Role::Service,
-            crate::process_roles::Role::Index,
-            crate::process_roles::Role::Source,
-        ] {
-            let path = crate::process_roles::executable(&main, role)?;
-            if !paths.contains(&path) {
-                paths.push(path);
-            }
-        }
+        let paths = predecessor_images(root, &main)?;
         stop_paths(&paths)?;
     }
-    #[cfg(not(any(windows, target_os = "linux")))]
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     let _ = (root, identity); // Other hosts retain authenticated control/manager drain.
     Ok(())
+}
+
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+fn predecessor_images(root: &Path, main: &Path) -> Result<Vec<PathBuf>> {
+    let mut paths = vec![main.to_path_buf()];
+    if !runtime_pair::single_executable(main)? {
+        paths.push(runtime_pair::payload_root(main)?.join(helper_name()));
+    }
+    // This stable launcher may itself be held by old MCP/Assistance clients.
+    // Its saved receipt, rather than the new candidate, proves its identity.
+    let launcher = launcher_path(root);
+    if launcher.try_exists()? {
+        safe_file(&launcher)?;
+        let receipt: LauncherReceipt =
+            serde_json::from_slice(&read_bounded(&root.join("launcher.json"), 4096)?)?;
+        ensure!(
+            receipt.schema == 1 && runtime_pair::digest_file(&launcher)? == receipt.sha256,
+            "unknown or modified launcher preserved"
+        );
+        paths.push(launcher);
+    }
+    for role in [
+        crate::process_roles::Role::Service,
+        crate::process_roles::Role::Index,
+        crate::process_roles::Role::Source,
+    ] {
+        let path = crate::process_roles::executable(main, role)?;
+        if !paths.contains(&path) {
+            paths.push(path);
+        }
+    }
+    Ok(paths)
 }
 
 /// The caller must prove every image from the installation's inventory/launcher receipts.
 /// Keep OS identities open through termination; filenames and PIDs alone confer no authority.
 pub(super) fn stop_paths(paths: &[PathBuf]) -> Result<()> {
-    #[cfg(any(windows, target_os = "linux"))]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     {
         let mut owners = Vec::new();
         for path in paths {
@@ -72,7 +86,7 @@ pub(super) fn stop_paths(paths: &[PathBuf]) -> Result<()> {
             wait(owner, deadline)?;
         }
     }
-    #[cfg(not(any(windows, target_os = "linux")))]
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     let _ = paths;
     Ok(())
 }
@@ -175,9 +189,35 @@ fn wait(owner: &Owner, deadline: std::time::Instant) -> Result<()> {
     Ok(())
 }
 
-#[cfg(all(test, any(windows, target_os = "linux")))]
+#[cfg(all(test, any(windows, target_os = "linux", target_os = "macos")))]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn mac_predecessor_roster_uses_payload_root_for_legacy_helper_and_main_for_current_roles()
+    -> Result<()> {
+        let (_owner, root, identity) = super::super::tests::unselected_historical_fixture()?;
+        let (main, _, inventory) = verify_runtime_inventory(&root, &identity)?;
+        prepare_launcher(&root, &main, &inventory)?;
+        let paths = predecessor_images(&root, &main)?;
+        assert_eq!(
+            paths,
+            vec![
+                main.clone(),
+                root.join("runtimes")
+                    .join(&identity)
+                    .join("AIRK.app/Contents/MacOS/airk-embed"),
+                launcher_path(&root)
+            ]
+        );
+        assert!(paths.iter().all(|path| path.is_file()));
+
+        let (_owner, root, identity) = super::super::tests::unselected_fixture()?;
+        let (main, _) = verify_runtime(&root, &identity)?;
+        assert_eq!(predecessor_images(&root, &main)?, vec![main]);
+        Ok(())
+    }
 
     #[test]
     fn old_unresponsive_process_is_stopped_by_verified_handle_only() -> Result<()> {

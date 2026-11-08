@@ -3,9 +3,32 @@
 use airk_core::service_resources::ResourceConfiguration;
 use anyhow::{Result, ensure};
 use std::{
+    future::Future,
     io::{Read, Write},
     path::Path,
+    sync::Arc,
 };
+pub(crate) type QueryCapacityReader = Arc<dyn Fn() -> usize + Send + Sync>;
+tokio::task_local! {
+    static HTTP_QUERY_CAPACITY: QueryCapacityReader;
+}
+/// Keep nested canonical reads on the actual service controller's live capacity.
+pub(crate) async fn with_query_capacity<F: Future>(
+    reader: QueryCapacityReader,
+    future: F,
+) -> F::Output {
+    HTTP_QUERY_CAPACITY.scope(reader, future).await
+}
+/// Capture before spawning: Tokio task locals do not propagate to child tasks.
+pub(crate) fn inherit_query_capacity<F: Future>(future: F) -> impl Future<Output = F::Output> {
+    let reader = HTTP_QUERY_CAPACITY.try_with(Clone::clone).ok();
+    async move {
+        match reader {
+            Some(reader) => with_query_capacity(reader, future).await,
+            None => future.await,
+        }
+    }
+}
 fn check(path: &Path) -> Result<()> {
     match std::fs::symlink_metadata(path) {
         Ok(metadata) => {
@@ -29,6 +52,9 @@ fn check(path: &Path) -> Result<()> {
 }
 /// Reads only bounded service-owned scalar metadata; never opens a collection.
 pub(crate) fn query_concurrency(root: &Path) -> usize {
+    if let Ok(capacity) = HTTP_QUERY_CAPACITY.try_with(|reader| reader()) {
+        return capacity;
+    }
     load(root).map_or(
         airk_core::service_resources::DEFAULT_QUERY_CONCURRENCY,
         |c| c.query_concurrency,
@@ -69,6 +95,39 @@ pub fn save(root: &Path, configuration: &ResourceConfiguration) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn http_capacity_is_live_isolated_and_inherited_without_reading_policy() -> Result<()> {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let directory = tempfile::tempdir()?;
+        // A malformed persistent file must never reset the controller's value.
+        std::fs::write(directory.path().join("resources-1.4.json"), b"invalid")?;
+        let capacity = Arc::new(AtomicUsize::new(4));
+        let observed = capacity.clone();
+        let reader: QueryCapacityReader = Arc::new(move || observed.load(Ordering::Acquire));
+        with_query_capacity(reader, async {
+            assert_eq!(query_concurrency(directory.path()), 4);
+            for limit in [8, 16, 32, 64, 4] {
+                capacity.store(limit, Ordering::Release);
+                assert_eq!(query_concurrency(directory.path()), limit);
+                let root = directory.path().to_path_buf();
+                assert_eq!(
+                    tokio::spawn(inherit_query_capacity(async move {
+                        tokio::task::yield_now().await;
+                        query_concurrency(&root)
+                    }))
+                    .await
+                    .expect("owned capacity task"),
+                    limit
+                );
+            }
+        })
+        .await;
+        assert_eq!(
+            query_concurrency(directory.path()),
+            airk_core::service_resources::DEFAULT_QUERY_CONCURRENCY
+        );
+        Ok(())
+    }
     #[test]
     fn bounded_configuration_round_trips_and_rejects_invalid_values_without_replacement()
     -> Result<()> {

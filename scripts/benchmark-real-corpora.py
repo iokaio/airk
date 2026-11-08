@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Read-only real-corpus campaigns against an approved, isolated AIRK runtime."""
 import argparse
+from contextlib import contextmanager
 import hashlib
 import importlib.util
 import json
@@ -10,6 +11,7 @@ import platform
 from pathlib import Path, PurePosixPath
 import queue
 import re
+import socket
 import subprocess
 import tempfile
 import threading
@@ -126,7 +128,13 @@ def verify_runtime(runtime, approved):
     install = json.loads((runtime / 'airk-install.json').read_bytes())
     pair = json.loads((runtime / 'airk-runtime.json').read_bytes())
     build = json.loads((runtime / 'airk-build.json').read_bytes())
-    require(install.get('schema') == pair.get('schema') == build.get('schema') == 1, 'runtime_schema')
+    version = pair.get('version','')
+    require(isinstance(version,str) and re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+',version) is not None, 'runtime_schema')
+    modern = tuple(map(int,version.split('.'))) >= (1,8,14)
+    require(type(pair.get('schema')) is int and pair['schema'] == (2 if modern else 1)
+            and install.get('schema') == build.get('schema') == 1, 'runtime_schema')
+    expected_fields = {'schema','version','os','arch','airk_sha256'} | (set() if modern else {'embed_sha256'})
+    require(set(pair) == expected_fields, 'runtime_schema')
     require(build.get('runtime') == pair and install.get('version') == pair.get('version'), 'runtime_receipt_mismatch')
     require(build.get('profile') == 'release', 'release_runtime_required')
     files = install.get('files', {})
@@ -140,20 +148,27 @@ def verify_runtime(runtime, approved):
     require(actual == set(files) | {'airk-install.json'}, 'runtime_inventory_extra')
     stem = 'AIRK.app/Contents/MacOS/' if pair['os'] == 'macos' else ''
     suffix = '.exe' if pair['os'] == 'windows' else ''
-    for name, key in [('airk', 'airk_sha256'), ('airk-embed', 'embed_sha256')]:
+    if modern:
+        forbidden = {'airk-embed'+suffix,'airk-launcher'+suffix,'airk-service'+suffix,'airk-index'+suffix,'airk-source'+suffix,
+                     'onnxruntime.dll','libonnxruntime.so','libonnxruntime.dylib'}
+        require(not any(PurePosixPath(name).name in forbidden for name in files),'runtime_retired_process_payload')
+    executables = [('airk','airk_sha256')] if modern else [('airk','airk_sha256'),('airk-embed','embed_sha256')]
+    for name, key in executables:
         binary = runtime / f'{stem}{name}{suffix}'
         require(digest(binary) == pair.get(key), 'runtime_pair_mismatch')
         observed = subprocess.run([str(binary), '--version'], capture_output=True, timeout=30)
         require(observed.returncode == 0 and observed.stdout.decode().strip() == f'{name} {pair["version"]}', 'compiled_version_mismatch')
     return {'version': pair['version'], 'install_sha256': approved, 'main_sha256': pair['airk_sha256'],
-            'helper_sha256': pair['embed_sha256'], 'profile': build['profile'],
-            'lightweight_basis': 'externally_approved_no_default_features_builder', 'build_receipt_sha256': digest(runtime / 'airk-build.json')}
+            'helper_sha256': None if modern else pair['embed_sha256'], 'profile': build['profile'],
+            'lightweight_basis': None if modern else 'externally_approved_no_default_features_builder',
+            'execution_basis': 'externally_approved_single_main_builder' if modern else 'externally_approved_historical_pair',
+            'build_receipt_sha256': digest(runtime / 'airk-build.json')}
 
 
 CODES = {'status_timeout', 'direct_query_admission', 'direct_query_setup', 'publication_busy',
          'index_status_unavailable', 'index_worker_unavailable', 'vector_search_unavailable', 'native_tool_error'}
 STATES = {'available', 'unavailable', 'unknown'}
-SEMANTIC = {'ready', 'partial', 'pending', 'failed', 'disabled'}
+SEMANTIC = {'ready', 'partial', 'pending', 'failed', 'disabled', 'unavailable'}
 READ_STATES = {'history_unavailable', 'content', 'not_modified', 'move_candidate', 'removed_from_index', 'ambiguous', 'unknown'}
 
 
@@ -273,16 +288,53 @@ def remaining(deadline, ceiling):
     return budget
 
 
+
+@contextmanager
+def https_budget(network, deadline, ceiling):
+    """Bound the whole HTTP exchange, including a peer that trickles bytes."""
+    budget = remaining(deadline, ceiling)
+    connection = network.connection
+    connection.timeout = budget
+    if connection.sock is not None:
+        connection.sock.settimeout(budget)
+    expired = threading.Event()
+    def interrupt():
+        expired.set()
+        sock = connection.sock
+        if sock is not None:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+    timer = threading.Timer(budget, interrupt)
+    timer.daemon = True
+    timer.start()
+    try:
+        yield
+        if expired.is_set() or time.monotonic() >= deadline:
+            raise TimeoutError('HTTP campaign original deadline expired')
+    except Exception:
+        if expired.is_set():
+            raise TimeoutError('HTTP campaign original deadline expired') from None
+        raise
+    finally:
+        timer.cancel()
+        timer.join()
+
+
 class Session:
     def __init__(self, fixture, project, deadline=None):
         self.deadline = deadline if deadline is not None else time.monotonic() + fixture.command_timeout
         self.fixture, self.project, self.counter = fixture, project, 0
         self.responses = queue.Queue()
         self.child = None
+        self.network = None
 
     def __enter__(self):
         f = self.fixture
         self.started = time.perf_counter()
+        if getattr(f, 'single_image', False):
+            return self.open_https()
         self.child = subprocess.Popen([str(f.binary), *f.arguments(self.project), 'mcp'], cwd=f.runtime,
                                       env=f.environment, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                       stderr=subprocess.DEVNULL, text=True, encoding='utf-8',
@@ -307,7 +359,42 @@ class Session:
             self.__exit__(type(error), None, None)
             raise
 
+    def open_https(self):
+        f = self.fixture
+        try:
+            selected = f.scopes[self.project]
+            identity = uuid.uuid4().hex
+            connection = f.enroll_http({'kind': 'scoped', 'selection': selected}, identity, 'unknown',
+                                      deadline=self.deadline)
+            require(connection.get('connection_id') == identity, 'http_connection_identity_changed')
+            spec = importlib.util.spec_from_file_location('corpus_https_fixture', repository() / 'scripts/http_fixture.py')
+            transport = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(transport)
+            health = f.rpc('health', deadline=self.deadline)['observation']
+            require(health['instance'] == f.managed_health['instance']
+                    and health['runtime_sha256'] == f.managed_health['runtime_sha256']
+                    and health['executable_sha256'] == f.managed_health['executable_sha256'], 'http_service_identity_changed')
+            transport.validate_native_identity(connection, health)
+            require(connection['selection']['kind'] == 'scoped', 'http_selection_changed')
+            actual, expected = connection['selection']['selection'].copy(), selected.copy()
+            actual.pop('expected_catalog_revision'); expected.pop('expected_catalog_revision')
+            require(actual == expected, 'http_selection_changed')
+            self.network = transport.McpClient(connection, f.control, timeout=remaining(self.deadline, f.command_timeout))
+            response = self.request('initialize', {'protocolVersion': '2025-11-25', 'capabilities': {},
+                'clientInfo': {'name': 'airk-corpus-benchmark', 'version': '1'}})
+            require(isinstance(response.get('serverInfo'), dict), 'initialize_invalid')
+            self.send({'jsonrpc': '2.0', 'method': 'notifications/initialized'})
+            self.initialize_ms = round((time.perf_counter() - self.started) * 1000, 3)
+            return self
+        except BaseException as error:
+            self.__exit__(type(error), None, None)
+            raise
+
     def send(self, message):
+        if getattr(self, 'network', None) is not None:
+            with https_budget(self.network, self.deadline, self.fixture.command_timeout):
+                self.network.send(message)
+            return
         self.child.stdin.write(json.dumps(message) + '\n')
         self.child.stdin.flush()
 
@@ -320,6 +407,11 @@ class Session:
         self.counter += 1
         identifier = self.counter
         self.send({'jsonrpc': '2.0', 'id': identifier, 'method': method, 'params': params})
+        if getattr(self, 'network', None) is not None:
+            value = self.network.receive(identifier, deadline)
+            require(isinstance(value, dict) and value.get('id') == identifier
+                    and 'error' not in value and isinstance(value.get('result'), dict), 'mcp_protocol_error')
+            return value['result']
         while time.monotonic() < deadline:
             try:
                 value = self.responses.get(timeout=max(.001, deadline - time.monotonic()))
@@ -345,6 +437,16 @@ class Session:
                 'is_error': True, 'index_state': 'unknown', 'code': code, **failure}) from None
 
     def __exit__(self, exc_type, *_):
+        if getattr(self, 'network', None) is not None:
+            network, self.network = self.network, None
+            try:
+                deadline = max(time.monotonic() + .001, min(time.monotonic() + 5, self.deadline))
+                with https_budget(network, deadline, 5):
+                    network.close()
+            except Exception:
+                if exc_type is None:
+                    raise CampaignError('mcp_cleanup_failed') from None
+            return
         if self.child:
             cleanup_failed = False
             try:
@@ -373,6 +475,19 @@ class Session:
 
 def close_owned_fixture(fixture, primary=None, detail=None):
     """Always reap our child, even when the graceful shutdown command fails."""
+    if getattr(fixture, 'single_image', False):
+        try:
+            fixture.close()  # Exact-instance native UserStop and exit proof; no discovered PID kills.
+        except Exception:
+            if detail is not None:
+                detail.update({'failed_stages': ['managed_stop'], 'owned_reap': 'not_applicable_native_owner', 'managed_stop':'not_confirmed'})
+            if primary is None:
+                raise CampaignError('service_cleanup_failed') from None
+            return True
+        if detail is not None:
+            detail.update({'failed_stages': [], 'owned_reap': 'not_applicable_native_owner',
+                           'managed_stop': 'native_complete'})
+        return False
     failed = False
     stages = []
     reap = 'not_required'
@@ -410,6 +525,22 @@ def close_owned_fixture(fixture, primary=None, detail=None):
     if primary is None:
         require(not failed, 'service_cleanup_failed')
     return failed
+
+
+@contextmanager
+def owned_campaign_directory(state_parent, result):
+    # Once native activation can run, Python finalizers are not exit authority.
+    # Keep unknown/failing native-stop state for inspection, outside source roots.
+    temporary = tempfile.TemporaryDirectory(prefix='airk-real-corpora-', dir=state_parent)
+    temporary._finalizer.detach()
+    try:
+        yield temporary.name
+    finally:
+        if result.get('cleanup_failed') is False:
+            temporary.cleanup()
+            result['owned_state_retained'] = False
+        else:
+            result['owned_state_retained'] = True
 
 
 def probe_identity(ordinal, name, arguments):
@@ -710,7 +841,21 @@ def reopen_campaign(fixture, project, probes, samples, output=None):
     close_owned_fixture(fixture)
     fixture.log = (fixture.owner / 'service.stderr').open('ab')
     fixture.child = None
-    fixture.start()
+    if getattr(fixture, 'single_image', False):
+        previous = fixture.managed_health
+        # The native start command is the explicit user action that releases
+        # durable UserStop; ordinary activation must not bypass that fence.
+        fixture.managed_stop = None  # Start may succeed before an uncertain reply.
+        fixture.managed_health = None
+        restarted = json.loads(fixture.run('runtime', 'start', '--install-dir', fixture.install).stdout)
+        health = fixture.rpc('health')['observation']
+        require(health['instance'] != previous['instance']
+                and health['runtime_sha256'] == previous['runtime_sha256']
+                and health['executable_sha256'] == previous['executable_sha256'], 'reopen_owner_identity_changed')
+        fixture.managed_health = health
+        (fixture.owner / 'managed-reopen.json').write_text(json.dumps({'start': restarted, 'before': previous, 'after': health}, indent=2) + '\n')
+    else:
+        fixture.start()
     result['shutdown_and_start_ms'] = round((time.perf_counter() - origin) * 1000, 3)
     counter = ProbeCounters(probes)
     result['availability']['probe_summary'] = counter.report
@@ -765,13 +910,14 @@ def run(args, result=None):
     result = result if result is not None else {}
     result.update({'schema': 1, 'runtime': runtime, 'samples': args.samples, 'environment': environment_facts(),
               'completion_basis': 'workflow_only_not_probe_success',
-              'cache_condition': 'fresh_process_not_cold_filesystem', 'service_route': 'owned_explicit_service',
+              'cache_condition': 'fresh_authenticated_HTTPS_session_not_cold_filesystem' if runtime['execution_basis']=='externally_approved_single_main_builder' else 'fresh_process_not_cold_filesystem',
+              'service_route': 'owned_managed_service_HTTPS' if runtime['execution_basis']=='externally_approved_single_main_builder' else 'owned_explicit_service',
               'policy': {'watch': 'disabled', 'index': 'native_default', 'vector_selection': 'native_default',
                          'semantic': 'bundled_default' if args.semantic else 'not_provisioned',
                          'concurrent_corpora': False},
               'limits': ['installed_launcher_not_measured', 'editor_not_measured', 'modified_source_incremental_not_measured',
                          'background_audit_interference_not_measured'] + ([] if args.excerpt_path else ['excerpt_not_measured']), 'corpora': []})
-    with tempfile.TemporaryDirectory(prefix='airk-real-corpora-', dir=state_parent) as temporary:
+    with owned_campaign_directory(state_parent, result) as temporary:
         owner = physical(temporary)
         isolate(roots, [owner])
         fixture = clients().Fixture(args.runtime_dir, owner, command_timeout=args.command_timeout, job_timeout=args.job_timeout)

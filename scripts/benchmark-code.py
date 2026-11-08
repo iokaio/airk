@@ -5,7 +5,6 @@ import importlib.util
 import json
 from pathlib import Path
 import platform
-import tempfile
 import time
 
 spec = importlib.util.spec_from_file_location("airk_service_fixture", Path(__file__).with_name("check-service-clients.py"))
@@ -23,9 +22,9 @@ def main():
         parser.error("files must be 2..2048")
     binary = args.binary.resolve(strict=True)
     observations = []
-    with tempfile.TemporaryDirectory(prefix="airk-native-code-") as temporary:
+    with clients.owned_client_fixture() as temporary:
         base = Path(temporary).resolve(strict=True)
-        root, state = base / "sources", base / "state"
+        root, state = base / "sources", base / "index-data"
         root.mkdir()
         state.mkdir()
         for number in range(args.files):

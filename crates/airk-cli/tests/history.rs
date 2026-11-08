@@ -6,7 +6,9 @@ use serde_json::Value;
 use std::{fs, path::Path, process::Output};
 
 fn run(root: &Path, data: &Path, args: &[&str]) -> Result<Output> {
-    Ok(common::command(root, data, "default").args(args).output()?)
+    Ok(common::evidence_command(root, data, "default")
+        .args(args)
+        .output()?)
 }
 fn call(root: &Path, data: &Path, args: &[&str]) -> Result<Value> {
     common::call(root, data, "default", args)
@@ -16,7 +18,7 @@ fn call(root: &Path, data: &Path, args: &[&str]) -> Result<Value> {
 fn cli_current_revision_expiry_and_unsupported_history_leave_sources_untouched() -> Result<()> {
     let root = tempfile::tempdir()?;
     let data = tempfile::tempdir()?;
-    let _service = common::Service::start(root.path(), data.path(), "default");
+    let _service = common::Service::reviewed(root.path(), data.path(), "default");
     fs::write(
         root.path().join("original.py"),
         "def original():\n    return 17\n",

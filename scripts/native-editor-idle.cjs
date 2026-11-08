@@ -2,6 +2,15 @@
 // Qualification precondition only. A dated observation never grants mutation admission.
 function requireValue(value,message){if(!value)throw Error(message);}
 const uint=value=>Number.isSafeInteger(value)&&value>=0;
+function verifyHealth(value,expected){
+    const observed=value?.observation;
+    requireValue(value?.status==='health'&&observed?.version===expected.version&&observed.protocol===1
+        &&observed.runtime_sha256===expected.runtimeSha256&&observed.executable_sha256===expected.executableSha256
+        &&observed.catalog_clock?.namespace===expected.namespace&&uint(observed.catalog_clock.revision)&&observed.policy?.accepting===true
+        &&/^[a-f0-9]{32}$/.test(observed.instance),'Index idle service identity crossed its approved runtime/catalog');
+    // Broker acceptance is a dated readiness precondition, never source mutation admission.
+    return observed;
+}
 function progressIdle(value,expected){
     requireValue(value?.status==='progress'&&value.project===expected.project,'Progress crossed the exact native backing');
     requireValue(Array.isArray(value.queued_jobs)&&typeof value.queue_truncated==='boolean'&&uint(value.observed_unix_ms),'Progress queue completeness or observation time is unavailable');
@@ -33,4 +42,4 @@ async function waitForIndexIdle(read,expected,{deadline,maxObservations=128,reco
     }
     throw Error('Index idle observation request budget exhausted');
 }
-module.exports={progressIdle,waitForIndexIdle};
+module.exports={verifyHealth,progressIdle,waitForIndexIdle};

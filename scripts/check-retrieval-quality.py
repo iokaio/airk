@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Binary/source-bound retrieval receipts through persistent stdio MCP.
+"""Binary/source-bound retrieval receipts through native HTTPS (historical stdio).
 
 Default static vectors exercise adapter contracts; --corpus with --model-dir
 measures a small original graded corpus using a catalog-pinned offline model.
@@ -17,6 +17,9 @@ import platform
 import queue
 import statistics
 import subprocess
+import socket
+import uuid
+from types import SimpleNamespace
 import tempfile
 import threading
 import time
@@ -24,12 +27,23 @@ import time
 fixture_spec = importlib.util.spec_from_file_location("airk_service_fixture", Path(__file__).with_name("check-service-clients.py"))
 clients = importlib.util.module_from_spec(fixture_spec)
 fixture_spec.loader.exec_module(clients)
+source_spec = importlib.util.spec_from_file_location("retrieval_reviewed_source", Path(__file__).with_name("reviewed-source-fixture.py"))
+reviewed_source = importlib.util.module_from_spec(source_spec)
+source_spec.loader.exec_module(reviewed_source)
 judgments_spec = importlib.util.spec_from_file_location("retrieval_judgments", Path(__file__).with_name("retrieval_judgments.py"))
 judgments = importlib.util.module_from_spec(judgments_spec)
 judgments_spec.loader.exec_module(judgments)
 evidence_spec = importlib.util.spec_from_file_location("combined_evidence", Path(__file__).with_name("combined_evidence.py"))
 combined_evidence = importlib.util.module_from_spec(evidence_spec)
 evidence_spec.loader.exec_module(combined_evidence)
+
+
+http_spec = importlib.util.spec_from_file_location("retrieval_http", Path(__file__).with_name("http_fixture.py"))
+http_fixture = importlib.util.module_from_spec(http_spec)
+http_spec.loader.exec_module(http_fixture)
+process_spec = importlib.util.spec_from_file_location("retrieval_processes", Path(__file__).with_name("owned-runtime-processes.py"))
+processes = importlib.util.module_from_spec(process_spec)
+process_spec.loader.exec_module(processes)
 
 
 CASES = [
@@ -271,6 +285,9 @@ class Session:
         return {"plan_input_schema": parse["inputSchema"].get("properties", {}).get("plan"),
                 "workflows": probes}
 
+    def counters(self, metrics_module, binary):
+        return metrics_module.process_metrics(self.process, binary)
+
     def close(self):
         try:
             if not self.process.stdin.closed:
@@ -286,6 +303,95 @@ class Session:
             self.reader.join(timeout=2)
 
 
+
+class HttpSession(Session):
+    """Reuse ranking assertions over the canonical authenticated HTTPS fixture."""
+    def __init__(self, service, name):
+        self.service, self.sequence, self.publication = service, 0, None
+        self.closed = False
+        selected = {"kind": "scoped", "selection": service.scopes[name]}
+        identity = uuid.uuid4().hex
+        connection = service.enroll_http(selected, identity)
+        expected, observed = dict(selected["selection"]), dict(connection["selection"]["selection"])
+        expected.pop("expected_catalog_revision"); observed.pop("expected_catalog_revision")
+        assert connection["connection_id"] == identity and connection["selection"]["kind"] == "scoped" and observed == expected, "Retrieval enrollment changed reviewed scope"
+        health = service.rpc("health")["observation"]
+        http_fixture.validate_native_identity(connection, health)
+        assert health["instance"] == service.managed_health["instance"], "Retrieval service owner changed"
+        self.network = http_fixture.McpClient(connection, service.control)
+        try:
+            self.request("initialize", {"protocolVersion": "2025-11-25", "capabilities": {},
+                                       "clientInfo": {"name": "airk-qualification", "version": "1"}})
+            self.network.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+            assert self.network.session is not None, "Native retrieval MCP session missing"
+        except BaseException:
+            self.close()
+            raise
+
+    def request(self, method, arguments, deadline=None):
+        deadline = min(deadline if deadline is not None else float("inf"), time.monotonic() + 120)
+        timeout = clients.remaining(deadline, 120)
+        assert not self.closed, "Retrieval HTTP session is closed"
+        self.network.connection.timeout = timeout
+        if self.network.connection.sock is not None:
+            self.network.connection.sock.settimeout(timeout)
+        expired = threading.Event()
+        def interrupt():
+            expired.set()
+            sock = self.network.connection.sock
+            if sock is not None:
+                try:
+                    sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+        timer = threading.Timer(timeout, interrupt)
+        timer.daemon = True
+        timer.start()
+        try:
+            self.sequence += 1
+            self.network.send({"jsonrpc": "2.0", "id": self.sequence, "method": method, "params": arguments})
+            reply = self.network.receive(self.sequence)
+            if expired.is_set() or time.monotonic() >= deadline:
+                raise TimeoutError("Retrieval HTTP original deadline expired")
+            assert reply.get("id") == self.sequence and "error" not in reply, "Native retrieval RPC refused"
+            return reply["result"]
+        finally:
+            timer.cancel()
+            timer.join()
+
+    def counters(self, metrics_module, binary):
+        health = self.service.rpc("health")["observation"]
+        assert health["instance"] == self.service.managed_health["instance"]
+        assert health["executable_sha256"] == digest(binary) == digest(self.service.binary)
+        binary = self.service.binary.resolve(strict=True)
+        resources = self.service.rpc("resources")
+        if platform.system() not in ("Windows", "Linux"):
+            return {"counter_basis": "OS counters unavailable in this harness; native service resource observation retained", "native_resources": resources, "scope": "shared native service, no MCP child process"}
+        backend = processes._backend()
+        owner = backend.open(health["process_id"])
+        try:
+            before = owner.observation()
+            assert not owner.gone() and before["user"] == backend.user and not before.get("image_deleted")
+            assert processes._key(before["path"]) == processes._key(binary)
+            handle = SimpleNamespace(pid=owner.pid, _handle=getattr(owner, "handle", None))
+            result = metrics_module.process_metrics(handle, binary)
+            assert not owner.gone() and owner.observation() == before, "Measured service process identity changed"
+            return {**result, "native_resources": resources, "scope": "shared native service, no MCP child process", "identity": before}
+        finally:
+            owner.close()
+
+    def close(self):
+        if not self.closed:
+            self.closed = True
+            self.network.close()
+
+
+def open_session(service, name):
+    if service.single_image:
+        return HttpSession(service, name)
+    return Session([str(service.binary), *service.arguments(name)])
+
+
 def stats(records):
     values = sorted(record["latency_ms"] for record in records)
     return {"samples": len(values), "p50_ms": statistics.median(values),
@@ -294,8 +400,18 @@ def stats(records):
             "mrr_at_5": statistics.mean(record["reciprocal_rank_at_5"] for record in records)}
 
 
+def add_fixture_root(service, name, alias, root):
+    change = {"operation": "add_root", "alias": alias, "path": str(root)}
+    if service.single_image:
+        # A reviewed Index requires native source admission and a newly reviewed
+        # grant over the resulting source roster; never widen the prior grant.
+        return reviewed_source.SourceReview(service, name).source_change(change)
+    return service.configure(name, change)
+
+
 def fixture(binary, base, count, trials, metrics_module, detail="balanced"):
-    root, state, alias = (base / name for name in ("root", "state", "alias"))
+    # owner/state is reserved for native-created, owner-private service state.
+    root, state, alias = (base / name for name in ("root", "index-data", "alias"))
     root.mkdir(parents=True)
     alias.mkdir()
     sources = {
@@ -329,7 +445,7 @@ def fixture(binary, base, count, trials, metrics_module, detail="balanced"):
     assert service.binary == binary
     with service:
         service.register("qualification", root, state)
-        service.configure("qualification", {"operation": "add_root", "alias": "specs", "path": str(alias)})
+        add_fixture_root(service, "qualification", "specs", alias)
         service.configure("qualification", {"operation": "detail", "level": detail})
         service.configure("qualification", {"operation": "install_model", "directory": str(model)})
         service.job("qualification", "index")
@@ -342,7 +458,6 @@ def fixture(binary, base, count, trials, metrics_module, detail="balanced"):
                 break
             assert time.monotonic() < deadline, readiness
             time.sleep(0.05)
-        command = [str(binary), *service.arguments("qualification")]
         cases = [dict(case, source_sha256=digest(
             alias / case["expected"].removeprefix("@specs/")
             if case["expected"].startswith("@specs/") else root / case["expected"])) for case in CASES]
@@ -350,18 +465,18 @@ def fixture(binary, base, count, trials, metrics_module, detail="balanced"):
         publications = set()
         for disabled in (True, False):
             service.configure("qualification", {"operation": "usage", "mode": "disabled" if disabled else "aggregates_only"})
-            session = Session(command)
+            session = open_session(service, "qualification")
             try:
                 cold = [session.search(cases[0])]
                 warm = [session.search(case) for _ in range(trials) for case in cases]
                 publications.add(session.publication)
-                resources = metrics_module.process_metrics(session.process, binary)
+                resources = session.counters(metrics_module, binary)
             finally:
                 session.close()
             modes["usage_disabled" if disabled else "usage_enabled"] = {"cold": stats(cold), "warm": stats(warm),
                 "process_counters": resources, "judgments": warm[:len(CASES)]}
         def concurrent(_):
-            session = Session(command)
+            session = open_session(service, "qualification")
             try:
                 return session.search(cases[-1])
             finally:
@@ -371,10 +486,10 @@ def fixture(binary, base, count, trials, metrics_module, detail="balanced"):
         publications.update(record["publication"] for record in parallel)
         if len(publications) != 1:
             raise AssertionError("usage modes/processes observed different fixture publications")
-        modes["four_processes"] = stats(parallel)
+        modes["four_https_clients" if service.single_image else "four_processes"] = stats(parallel)
         return {"distractors": count, "publication": publications.pop(),
                 "source_hashes": {case["expected"]: case["source_sha256"] for case in cases},
-                "modes": modes, "usage": json.loads(service.run(*service.arguments("qualification"), "usage", "report").stdout)["report"]}
+                "modes": modes, "usage": json.loads(service.run(*service.management_arguments("qualification"), "usage", "report").stdout)["report"]}
 
 
 def index_controls(service, root, source_hashes, publication, control):
@@ -416,7 +531,7 @@ def index_controls(service, root, source_hashes, publication, control):
 
 def representative_fixture(binary, base, corpus, corpus_hash, trials, detail, model, measurement=None):
     """Measure actual pinned-model results; misses remain measurements, not test failures."""
-    root, state = base / "root", base / "state"
+    root, state = base / "root", base / "index-data"
     root.mkdir(parents=True)
     state.mkdir()
     for name, text in corpus["sources"].items():
@@ -449,7 +564,7 @@ def representative_fixture(binary, base, corpus, corpus_hash, trials, detail, mo
                 break
             assert time.monotonic() < deadline, readiness
             time.sleep(0.05)
-        session = Session([str(binary), *service.arguments("relevance")])
+        session = open_session(service, "relevance")
         try:
             print("Relevance fixture: compact/rich plans and graded queries", flush=True)
             plan_probe = (session.compact_plan_probe(corpus["compact_plan_probe"])
@@ -474,7 +589,7 @@ def representative_fixture(binary, base, corpus, corpus_hash, trials, detail, mo
             "source_hashes": source_hashes, "publication": session.publication,
             "verification_manifest_sha256": digest(model / "model.json"),
             "model_manifest": json.loads((model / "model.json").read_text(encoding="utf-8")),
-            "model_source": "Paired helper bundled default; --model-dir independently verifies the same catalog-pinned manifest and assets, not a reimported model identity.",
+            "model_source": "Native service bundled default; --model-dir independently verifies the same catalog-pinned manifest and assets, not a reimported model identity.",
             "ranking_unit": corpus["ranking_unit"], "judgment_scope": corpus["judgment_scope"],
             "limit": 10, "max_bytes": 65536, "attempts": records,
             "compact_plan_probe": plan_probe,
@@ -524,17 +639,19 @@ def main():
         "binary_sha256": digest(binary), "binary_version": subprocess.check_output([str(binary), "--version"], text=True, timeout=15).strip(),
         "platform": platform.platform(), "architecture": platform.machine(),
         "judgments_sha256": hashlib.sha256(json.dumps(CASES, sort_keys=True).encode()).hexdigest(),
-        "cache_conditions": "cold means first query in a new MCP process; warm reuses its direct project connection and shared worker; OS caches uncontrolled",
+        "cache_conditions": "cold means first query in a newly initialized MCP session; modern HTTPS shares the native service, historical stdio starts a frontend process; OS caches uncontrolled",
         "source_binding": "Observed checkout and binary digests must stay stable during this run. Local dirty-tree receipts do not prove binary build provenance; CI associates a clean checkout with its build.",
         "ranking_units": "Top five returned chunks, with each fixed judgment requiring its expected path and any expected text. Repeated paths retain their chunk rank.",
-        "process_cleanup": "Owned MCP children must exit successfully after stdin closes; each owned service must drain. Static vectors use the shared helper. No external provider or source deletion.",
+        "process_cleanup": "Modern HTTPS sessions send DELETE and close their sockets; historical MCP children must exit after EOF; each owned service must drain. No external provider or source deletion.",
         "scope": "Original synthetic static vectors and fixed judgments outside indexed sources. No production semantic-quality, larger-than-memory, physical-I/O, installed-editor or power-loss qualification.",
         "workloads": []}
     if corpus:
         report.update(judgments_sha256=corpus_hash, ranking_units=corpus["ranking_unit"],
                       cache_conditions="Reused frontend after indexing and compact/rich plan probes; OS caches uncontrolled. No cold-start claim.")
+    retained_fixture = None
     try:
-        with tempfile.TemporaryDirectory(prefix="airk-retrieval-qualification-", dir=os.environ.get("AIRK_PRIVATE_CENSUS_BASE")) as temporary:
+        with clients.owned_client_fixture() as temporary:
+            retained_fixture = Path(temporary).name
             base = Path(temporary).resolve()
             if corpus:
                 report["scope"] = "Small original file-judged corpus using the pinned offline model; lexical/vector/hybrid measured separately. No installed-editor or general relevance claim."
@@ -545,6 +662,33 @@ def main():
                     report["workloads"].append(fixture(binary, base / str(count), count, args.trials, metrics, args.detail))
     except (AssertionError, RuntimeError, TimeoutError, OSError, ValueError, KeyError, TypeError) as error:
         report["failure_class"] = type(error).__name__
+        if retained_fixture is not None:
+            report["retained_fixture"] = retained_fixture
+        # Diagnose fixture/contract failures without serializing source lines,
+        # exception text, absolute private paths or frame locals.
+        frames, frame, stage_failure = [], error.__traceback__, False
+        while frame is not None:
+            frames.append({"file": Path(frame.tb_frame.f_code.co_filename).name, "line": frame.tb_lineno})
+            frames = frames[-12:]
+            if Path(frame.tb_frame.f_code.co_filename).name == "check-service-clients.py" and frame.tb_frame.f_code.co_name == "run":
+                stage_failure = tuple(frame.tb_frame.f_locals.get("args", ())[:2]) == ("runtime", "stage")
+            frame = frame.tb_next
+        report["failure_frames"] = frames
+        if stage_failure and os.environ.get("AIRK_PRIVATE_CENSUS_BASE"):
+            # Runtime staging precedes enrollment and carries no credentials.
+            # Preserve its bounded native refusal only in the operator's private
+            # fixture area; the public receipt exposes no error text or paths.
+            try:
+                private = Path(os.environ["AIRK_PRIVATE_CENSUS_BASE"]).resolve(strict=True)
+                directory = Path(tempfile.mkdtemp(prefix="airk-retrieval-stage-diagnostic-", dir=private))
+                with (directory / "stage-error.txt").open("x", encoding="utf-8") as output:
+                    output.write(str(error).encode("utf-8", errors="replace")[-8192:].decode("utf-8", errors="ignore"))
+                report["private_stage_diagnostic"] = directory.name
+            except (OSError, ValueError) as diagnostic_error:
+                # Supplemental evidence must not replace the original failure
+                # or prevent its source/binary-bound failed receipt. Keep even
+                # the diagnostic's own message/path out of the public report.
+                report["private_stage_diagnostic_error"] = type(diagnostic_error).__name__
     report["source_after"] = source_identity()
     report["binary_sha256_after"] = digest(binary)
     report["passed"] = ("failure_class" not in report and report["source"] == report["source_after"]

@@ -22,7 +22,7 @@ export interface ControlSource {
 const obj = (value: unknown): RecordValue => value && typeof value === 'object' && !Array.isArray(value) ? value as RecordValue : {};
 const text = (value: unknown): string | undefined => typeof value === 'string' && value.length <= 4096 ? value : undefined;
 const count = (value: unknown): number | undefined => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
-const SEMANTIC: readonly SemanticState[] = ['pending', 'partial', 'ready', 'failed', 'disabled'];
+const SEMANTIC: readonly SemanticState[] = ['pending', 'partial', 'ready', 'failed', 'disabled', 'unavailable'];
 
 /** Cached console page rows → project summaries. Missing observations stay undefined, never zero. */
 export function projectSummaries(state: ServiceConsoleState): ProjectSummary[] {
@@ -46,6 +46,8 @@ export function projectSummaries(state: ServiceConsoleState): ProjectSummary[] {
             ...(count(snapshot.indexed_files) !== undefined ? { indexedFiles: count(snapshot.indexed_files) } : {}),
             ...(count(semantic.completed_artifacts) !== undefined ? { semanticCompleted: count(semantic.completed_artifacts) } : {}),
             ...(count(semantic.selected_artifacts) !== undefined ? { semanticSelected: count(semantic.selected_artifacts) } : {}),
+            ...(Object.keys(semantic).length ? { semanticReadiness: structuredClone(semantic) } : {}),
+            ...(Object.keys(obj(snapshot.legacy_adoption)).length ? { legacyAdoption: structuredClone(obj(snapshot.legacy_adoption)) } : {}),
             ...(text(obj(snapshot.discovery).state) ? { discoveryState: text(obj(snapshot.discovery).state) } : {}),
             ...(semanticState ? { semantic: semanticState } : {}),
             ...(text(snapshot.index_state) ? { indexState: text(snapshot.index_state) } : {}),
