@@ -29,6 +29,337 @@ fn selection() -> HttpSelection {
         },
     }
 }
+
+fn standalone_selection() -> anyhow::Result<HttpSelection> {
+    use airk_core::{
+        catalog_legacy_adoption::{
+            LegacyAdoptionPlan, LegacyAdoptionPublication, source_inventory_digest,
+        },
+        catalog_legacy_authority::{StandaloneAdoptionProvenance, StandaloneConfigurationClaim},
+        catalog_setup::{IndexSetupRequest, SetupSource},
+        grant_provenance::{GrantProvenance, PersistedGrant, native_imported_grant_id},
+        identity::RevisionToken,
+        index_catalog::{
+            GrantedMembership, Membership, PathScope, ReviewedGrant, ScopeAtom, SourceRootId,
+        },
+        service::{ProjectRegistration, RequestKey},
+        service_http::NativeImportedHttpSelection,
+    };
+    let digest = Sha256Digest::from_bytes([42; 32]);
+    let id = Incarnation::from_bytes([43; 16]);
+    let registration =
+        ProjectRegistration::new("/source".into(), "/adopted".into(), "saved".into())?;
+    let setup = IndexSetupRequest {
+        caller: id,
+        key: RequestKey {
+            namespace: binding().namespace,
+            epoch: 1,
+            nonce: id,
+        },
+        expected_catalog_revision: CatalogRevision::INITIAL,
+        name: "Saved evidence".into(),
+        registration: registration.clone(),
+        sources: vec![SetupSource {
+            canonical_path: "/source".into(),
+            aliases: vec![],
+            owner: true,
+        }],
+        setup_watch: false,
+    };
+    let operation_id =
+        airk_core::catalog_management::catalog_operation_id(setup.caller, &setup.key)?;
+    let plan = LegacyAdoptionPlan {
+        schema: 1,
+        setup,
+        original_registration: ProjectRegistration::new(
+            "/source".into(),
+            "/original".into(),
+            "saved".into(),
+        )?,
+        origin_sha256: digest,
+        config_sha256: digest,
+        executable_sha256: digest,
+        quiescence_sha256: digest,
+        archive_inventory_sha256: digest,
+        original_publication_sha256: digest,
+        source_inventory_sha256: source_inventory_digest("/source", "saved", &Default::default())?,
+    };
+    let publication = LegacyAdoptionPublication {
+        schema: 1,
+        plan_digest: plan.identity()?,
+        archive_inventory_sha256: digest,
+        original_publication_sha256: digest,
+        current: RevisionToken {
+            incarnation: id,
+            generation: 1,
+            revision: digest,
+        },
+        resource_sha256: digest,
+        compatibility_sha256: digest,
+    };
+    let provenance = GrantProvenance::ImportedStandaloneAdoption {
+        adoption: Box::new(StandaloneAdoptionProvenance {
+            schema: 1,
+            operation_id,
+            plan: Box::new(plan),
+            publication,
+            original_server: "saved_alias".into(),
+            no_default_project: false,
+            configuration_claims: vec![StandaloneConfigurationClaim {
+                schema: 1,
+                origin_sha256: digest,
+                config_sha256: digest,
+                executable_sha256: digest,
+                selected_entry_sha256: digest,
+                container_path: vec!["mcp_servers".into()],
+                original_server: "saved_alias".into(),
+                no_default_project: false,
+            }],
+        }),
+    };
+    let selected = HttpSelection::ImportedLegacy {
+        selection: Box::new(NativeImportedHttpSelection {
+            namespace: binding().namespace,
+            expected_catalog_revision: CatalogRevision::INITIAL,
+            registration,
+            configuration_receipt: digest,
+            grant: PersistedGrant {
+                grant: ReviewedGrant {
+                    id: native_imported_grant_id(binding().namespace, digest, &provenance)?,
+                    host: digest,
+                    revision: CatalogRevision::INITIAL,
+                    revoked: false,
+                    memberships: vec![GrantedMembership {
+                        membership: Membership {
+                            project_id: QueryProjectId::from_identity(id),
+                            index_id: IndexId::from_identity(id),
+                            revision: CatalogRevision::INITIAL,
+                            scope: vec![ScopeAtom {
+                                source_root_id: SourceRootId::from_identity(id),
+                                kind: PathScope::Subtree,
+                                path: String::new(),
+                            }],
+                        },
+                        source_revision: CatalogRevision::INITIAL,
+                        policy_epoch: 0,
+                        policy_digest: None,
+                    }],
+                },
+                provenance,
+            },
+        }),
+    };
+    selected.validate()?;
+    Ok(selected)
+}
+
+fn attachment(root: &Path, session: &str) -> anyhow::Result<std::path::PathBuf> {
+    use sha2::{Digest, Sha256};
+    let assistance = root.join("explorer-assistance");
+    let windows = assistance.join("windows");
+    crate::local_ipc::prepare_root(&assistance)?;
+    crate::local_ipc::prepare_root(&windows)?;
+    let identity = format!("{session}\0{}", root.display());
+    let fingerprint = format!("{:x}", Sha256::digest(identity.as_bytes()));
+    let file = windows.join(format!("{session}.json"));
+    write_private(
+        &windows,
+        file.file_name().unwrap().to_str().unwrap(),
+        &serde_json::to_vec(&serde_json::json!({
+            "schema":"airk-explorer-window/1", "session_id":session,"endpoint":"fixture", "credential":"a".repeat(64),
+            "roots":[root],"binding_fingerprint":&fingerprint[..16], "extension_version":"1.8.14","expires_unix_ms":1000,
+        }))?,
+        16384,
+        false,
+    )?;
+    Ok(file)
+}
+
+#[test]
+fn authority_digest_matches_shared_cross_language_golden_vectors() -> anyhow::Result<()> {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../packages/vscode/src/test/fixtures/httpAuthorityDigest.json"
+    ))?;
+    for vector in fixture["vectors"].as_array().unwrap() {
+        let selected: HttpSelection = serde_json::from_value(vector["selection"].clone())?;
+        assert_eq!(
+            authority_digest(&selected)?.to_string(),
+            vector["authority_sha256"].as_str().unwrap()
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn historical_attached_ids_require_native_provenance_and_mutation_time_revocation_check()
+-> anyhow::Result<()> {
+    use airk_core::usage::ClientFamily;
+    let root = private_root();
+    let mut store = CredentialStore::open(root.path(), binding())?;
+    let selected = standalone_selection()?;
+    let old = attachment(root.path(), &"1".repeat(32))?;
+    let new = attachment(root.path(), &"2".repeat(32))?;
+    // The predecessor ID did not incorporate its attachment. Native metadata,
+    // never ID shape, must distinguish this attached owner from a manual one.
+    let id = Incarnation::from_bytes([71; 16]);
+    let next = Incarnation::from_bytes([72; 16]);
+    store.enroll_default_for_client(
+        id,
+        selected.clone(),
+        Some(old.clone()),
+        ClientFamily::Codex,
+        1,
+    )?;
+    let token = read_client_token(root.path(), id)?;
+    assert!(store.attachment_retirement(id, 2)?.is_none());
+    std::fs::remove_file(&old)?;
+    let initial = store.attachment_retirement(id, 2)?.unwrap();
+    assert_eq!(initial.client, ClientFamily::Codex);
+    assert_eq!(initial.authority_sha256, authority_digest(&selected)?);
+    store.validate_reattachment(id, next, &selected, ClientFamily::Codex, Some(&new), 2)?;
+    assert!(
+        store
+            .validate_reattachment(id, next, &selected, ClientFamily::Codex, None, 2)
+            .is_err()
+    );
+    assert!(
+        store
+            .validate_reattachment(id, next, &selected, ClientFamily::Codex, Some(&old), 2)
+            .is_err()
+    );
+    assert!(
+        store
+            .validate_reattachment(id, next, &selected, ClientFamily::ClaudeCode, Some(&new), 2)
+            .is_err()
+    );
+    let (retired, result) = store.revoke_inactive(2);
+    result?;
+    assert_eq!(retired, vec![id]);
+    store.compact_revoked()?;
+    let marker = std::fs::read(root.path().join(format!("credential-{id}.token")))?;
+    assert!(marker.len() <= 2048);
+    assert!(!String::from_utf8(marker)?.contains(&token));
+    store = CredentialStore::open(root.path(), binding())?;
+    assert_eq!(
+        store
+            .attachment_retirement(id, 2)?
+            .unwrap()
+            .authority_sha256,
+        initial.authority_sha256
+    );
+    store.validate_reattachment(id, next, &selected, ClientFamily::Codex, Some(&new), 2)?;
+    let same_old = attachment(root.path(), &"1".repeat(32))?;
+    assert!(
+        store
+            .validate_reattachment(id, next, &selected, ClientFamily::Codex, Some(&same_old), 2)
+            .is_err()
+    );
+    let mut crossed = selected.clone();
+    if let HttpSelection::ImportedLegacy { selection } = &mut crossed {
+        selection.grant.grant.revision = CatalogRevision::INITIAL.next()?;
+    }
+    assert!(
+        store
+            .validate_reattachment(id, next, &crossed, ClientFamily::Codex, Some(&new), 2)
+            .is_err()
+    );
+    // Lookup already succeeded; an explicit revoke before issuance must win,
+    // even after the original full credential record has compacted away.
+    store.revoke(id)?;
+    assert!(store.attachment_retirement(id, 2)?.is_none());
+    assert!(
+        store
+            .validate_reattachment(id, next, &selected, ClientFamily::Codex, Some(&new), 2)
+            .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn retirement_proof_refuses_manual_expired_unknown_and_recovers_compaction_crash()
+-> anyhow::Result<()> {
+    let root = private_root();
+    let mut store = CredentialStore::open(root.path(), binding())?;
+    let manual = Incarnation::from_bytes([73; 16]);
+    store.enroll_default(manual, selection(), 1)?;
+    assert!(store.attachment_retirement(manual, 2)?.is_none());
+    let expired = Incarnation::from_bytes([74; 16]);
+    let window = attachment(root.path(), &"3".repeat(32))?;
+    store.enroll_attached(expired, selection(), Some(window.clone()), 2, 1)?;
+    std::fs::remove_file(window)?;
+    assert!(store.attachment_retirement(expired, 2)?.is_none());
+    let (ids, result) = store.revoke_inactive(2);
+    result?;
+    assert_eq!(ids, vec![expired]);
+    store.compact_revoked()?;
+    assert!(store.attachment_retirement(expired, 2)?.is_none());
+    let unknown = Incarnation::from_bytes([75; 16]);
+    let unknown_file = format!("credential-{unknown}.token");
+    write_private(
+        root.path(),
+        &unknown_file,
+        &serde_json::to_vec(
+            &serde_json::json!({"schema":1,"binding":binding(),"id":unknown,"revoked":true}),
+        )?,
+        2048,
+        false,
+    )?;
+    assert_eq!(store.ownership(unknown, 2)?, ConnectionOwnership::Revoked);
+    assert!(store.attachment_retirement(unknown, 2)?.is_none());
+    // Model auto marker publication preceding its full-record compaction.
+    let crash = Incarnation::from_bytes([76; 16]);
+    let old = attachment(root.path(), &"4".repeat(32))?;
+    store.enroll_default_attached(crash, selection(), Some(old.clone()), 1)?;
+    std::fs::remove_file(old)?;
+    store.revoke_inactive(2).1?;
+    let full_record = std::fs::read(root.path().join("credentials.json"))?;
+    store.compact_revoked()?;
+    std::fs::write(root.path().join("credentials.json"), full_record)?;
+    store.revoke(crash)?;
+    store.compact_revoked()?;
+    assert!(store.attachment_retirement(crash, 2)?.is_none());
+    // An earlier full revoked record and an ownership-only marker must never
+    // acquire an inferred automatic-retirement reason during crash recovery.
+    for (number, explicit_after) in [(77, false), (78, true)] {
+        let unknown_full = Incarnation::from_bytes([number; 16]);
+        store.enroll_default(unknown_full, selection(), 1)?;
+        store.revoke(unknown_full)?;
+        let ledger_path = root.path().join("credentials.json");
+        let mut ledger: serde_json::Value = serde_json::from_slice(&std::fs::read(&ledger_path)?)?;
+        for record in ledger["records"].as_array_mut().unwrap() {
+            if record["id"] == serde_json::json!(unknown_full) {
+                record.as_object_mut().unwrap().remove("revocation_reason");
+            }
+        }
+        std::fs::write(&ledger_path, serde_json::to_vec(&ledger)?)?;
+        write_private(
+            root.path(),
+            &format!("credential-{unknown_full}.token"),
+            &serde_json::to_vec(
+                &serde_json::json!({"schema":1,"binding":binding(),"id":unknown_full,"revoked":true}),
+            )?,
+            2048,
+            true,
+        )?;
+        if explicit_after {
+            store.revoke(unknown_full)?;
+        }
+        store.compact_revoked()?;
+        assert!(store.attachment_retirement(unknown_full, 2)?.is_none());
+        let marker: serde_json::Value = serde_json::from_slice(&std::fs::read(
+            root.path().join(format!("credential-{unknown_full}.token")),
+        )?)?;
+        assert_eq!(
+            marker["retirement"]["reason"],
+            if explicit_after {
+                "explicit"
+            } else {
+                "unknown"
+            }
+        );
+    }
+    Ok(())
+}
 struct PrivateRoot {
     _parent: tempfile::TempDir,
     path: std::path::PathBuf,
@@ -54,6 +385,132 @@ fn now() -> u64 {
         .as_millis()
         .try_into()
         .unwrap()
+}
+
+#[test]
+fn retired_credentials_reclaim_capacity_preserve_manual_authority_and_never_reissue_ids()
+-> anyhow::Result<()> {
+    let root = private_root();
+    let mut store = CredentialStore::open(root.path(), binding())?;
+    let manual_id = Incarnation::from_bytes([250; 16]);
+    store.enroll_default(manual_id, selection(), 1)?;
+    let manual_token = read_client_token(root.path(), manual_id)?;
+    // More than the former lifetime limit, including reopened readers.
+    for number in 1..=140u128 {
+        let id = Incarnation::from_bytes(number.to_be_bytes());
+        store.enroll_default(id, selection(), 1)?;
+        let token = read_client_token(root.path(), id)?;
+        store.revoke(id)?;
+        let (retired, result) = store.revoke_inactive(2);
+        result?;
+        assert_eq!(retired, vec![id]);
+        store.compact_revoked()?;
+        store = CredentialStore::open(root.path(), binding())?;
+        assert!(store.authenticate(&token, 2).is_err());
+        assert_eq!(store.ownership(id, 2)?, ConnectionOwnership::Revoked);
+        assert!(store.enroll_default(id, selection(), 2).is_err());
+        store.revoke(id)?; // Idempotent after compaction.
+        let marker = std::fs::read(root.path().join(format!("credential-{id}.token")))?;
+        assert!(marker.len() <= 1024);
+        assert!(!String::from_utf8(marker)?.contains(&token));
+    }
+    assert_eq!(
+        store.authenticate(&manual_token, 2)?.connection_id,
+        manual_id
+    );
+    let ledger: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(root.path().join("credentials.json"))?)?;
+    assert_eq!(ledger["records"].as_array().unwrap().len(), 1);
+    Ok(())
+}
+
+#[test]
+fn retirement_preserves_crash_recovery_and_does_not_invent_orphan_ownership() -> anyhow::Result<()>
+{
+    let root = private_root();
+    let mut store = CredentialStore::open(root.path(), binding())?;
+    let id = Incarnation::from_bytes([63; 16]);
+    let issued = store.enroll(id, selection(), 2, 1)?;
+    let original_token = read_client_token(root.path(), id)?;
+    let (ids, result) = store.revoke_inactive(2);
+    result?;
+    assert_eq!(ids, vec![id]);
+    assert!(store.authenticate(&original_token, 1).is_err());
+    let revoked_ledger = std::fs::read(root.path().join("credentials.json"))?;
+    // A missing client secret cannot erase accepted native issuance.
+    std::fs::remove_file(&issued.credential_file)?;
+    store.compact_revoked()?;
+    assert_eq!(store.ownership(id, 3)?, ConnectionOwnership::Revoked);
+    // Simulate marker publication followed by failed ledger compaction.
+    std::fs::write(root.path().join("credentials.json"), &revoked_ledger)?;
+    store.compact_revoked()?;
+    assert_eq!(store.ownership(id, 3)?, ConnectionOwnership::Revoked);
+    assert!(store.enroll_default(id, selection(), 3).is_err());
+    // An immutable token left by failed issuance is unknown, not proof of a
+    // committed connection and not a foreign declaration eligible for cleanup.
+    std::fs::write(&issued.credential_file, original_token.as_bytes())?;
+    assert!(store.ownership(id, 3).is_err());
+    assert!(store.enroll_default(id, selection(), 3).is_err());
+    Ok(())
+}
+
+#[test]
+fn retirement_rejects_crossed_marker_and_preserves_unproven_attachment() -> anyhow::Result<()> {
+    let root = private_root();
+    let mut store = CredentialStore::open(root.path(), binding())?;
+    let id = Incarnation::from_bytes([64; 16]);
+    let issued = store.enroll_default_attached(
+        id,
+        selection(),
+        Some(root.path().join("unknown.json")),
+        1,
+    )?;
+    let token = read_client_token(root.path(), id)?;
+    let (ids, result) = store.revoke_inactive(2);
+    result?;
+    assert!(ids.is_empty());
+    assert!(store.authenticate(&token, 2).is_ok());
+    store.revoke(id)?;
+    store.compact_revoked()?;
+    let mut marker: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&issued.credential_file)?)?;
+    marker["binding"]["installation"] = serde_json::to_value(Sha256Digest::from_bytes([99; 32]))?;
+    std::fs::write(&issued.credential_file, serde_json::to_vec(&marker)?)?;
+    assert!(store.ownership(id, 2).is_err());
+    assert!(store.enroll_default(id, selection(), 2).is_err());
+    Ok(())
+}
+
+#[test]
+fn only_withdrawn_exact_private_window_namespace_retires_attached_credential() -> anyhow::Result<()>
+{
+    let root = private_root();
+    let assistance = root.path().join("explorer-assistance");
+    let windows = assistance.join("windows");
+    crate::local_ipc::prepare_root(&assistance)?;
+    crate::local_ipc::prepare_root(&windows)?;
+    let path = windows.join("11111111111111111111111111111111.json");
+    let id = Incarnation::from_bytes([65; 16]);
+    let mut store = CredentialStore::open(root.path(), binding())?;
+    store.enroll_default_attached(id, selection(), Some(path.clone()), 1)?;
+    // Malformed existing metadata is unknown, even in the correct directory.
+    super::write_private(
+        &windows,
+        path.file_name().unwrap().to_str().unwrap(),
+        b"{}",
+        100,
+        false,
+    )?;
+    let (ids, result) = store.revoke_inactive(2);
+    result?;
+    assert!(ids.is_empty());
+    std::fs::remove_file(path)?;
+    let (ids, result) = store.revoke_inactive(2);
+    result?;
+    assert_eq!(ids, vec![id]);
+    store.compact_revoked()?;
+    assert_eq!(store.ownership(id, 2)?, ConnectionOwnership::Revoked);
+    Ok(())
 }
 
 #[test]

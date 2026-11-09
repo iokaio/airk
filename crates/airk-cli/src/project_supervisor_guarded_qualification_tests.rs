@@ -20,6 +20,8 @@ struct NativeOwner {
     workers: BTreeMap<ProjectBinding, ChildWorker>,
     registry: Option<ServiceRegistry>,
     pool: Option<Pool>,
+    #[cfg(feature = "local-inference")]
+    _factory: Option<crate::service_inference::InferenceFactory>,
     recovery: PoolRecovery,
     resources: airk_kernel::service_resources::Resources,
     drains: WorkerResourceDrains,
@@ -411,6 +413,22 @@ struct NativeFixture {
     _directory: tempfile::TempDir,
 }
 
+fn verify_fixture_image(main: &Path, native: bool) -> Result<()> {
+    ensure!(
+        crate::runtime_pair::single_executable(main)? == native,
+        "fixture runtime execution kind does not match the selected provider"
+    );
+    if native {
+        ensure!(
+            crate::runtime_pair::verify_installed_pair(main, env!("CARGO_PKG_VERSION"))? == main,
+            "modern runtime verification resolved a different executable"
+        );
+    } else {
+        crate::runtime_pair::verify_helper(main)?;
+    }
+    Ok(())
+}
+
 impl NativeFixture {
     fn key(&mut self) -> Result<airk_core::service::RequestKey> {
         let (namespace, epoch) = self.registry.request_epoch()?;
@@ -563,11 +581,30 @@ impl NativeFixture {
             settings: observed
                 .settings_digest
                 .context("actual native settings digest missing")?,
-            configuration: crate::service_configuration::Draft::InstallModel {
-                directory: model.into(),
-            }
-            .prepare()?,
+            configuration: executor()?
+                .block_on(prepare_fixture_model(model, |request| async {
+                    // The opaque capability outlives the synchronous owner borrow.
+                    // No RefCell guard may cross connect/read's await points.
+                    let capability = {
+                        let response = self
+                            .control
+                            .owner
+                            .borrow_mut()
+                            .execute(catalog::Operation::AdministrativeRead { project })?;
+                        let catalog::Response::AdministrativeRead(capability) = response else {
+                            anyhow::bail!("native fixture administrative capability missing")
+                        };
+                        capability
+                    };
+                    (*capability)
+                        .connect(airk_core::usage::ClientFamily::Unknown)
+                        .await?
+                        .read(request)
+                        .await
+                }))
+                .context("fixture setup: native model input preparation")?,
         };
+        request.validate()?;
         let key = self.key()?;
         let job = self.registry.enqueue_configuration(
             project,
@@ -576,13 +613,21 @@ impl NativeFixture {
             &request,
             crate::runtime_pair::engine_identity_at(&self.main)?,
         )?;
-        self.control.owner.borrow_mut().run_job(job)?;
+        self.control
+            .owner
+            .borrow_mut()
+            .run_job(job)
+            .context("fixture setup: model configuration")?;
         for kind in [JobKind::Index, JobKind::Vectors, JobKind::Verify] {
             let key = self.key()?;
             let job = self
                 .registry
                 .enqueue(project, local_ipc::caller_identity()?, &key, kind)?;
-            self.control.owner.borrow_mut().run_job(job)?;
+            self.control
+                .owner
+                .borrow_mut()
+                .run_job(job)
+                .with_context(|| format!("fixture setup: {kind:?}"))?;
         }
         Ok(())
     }
@@ -662,10 +707,41 @@ impl NativeFixture {
         let main = staged
             .join(crate::runtime_install::main_name())
             .canonicalize()?;
-        crate::runtime_pair::verify_helper(&main)?;
-        let directory = tempfile::Builder::new()
+        Self::build_with_image(main, false)
+    }
+
+    #[cfg(feature = "local-inference")]
+    fn build_modern() -> Result<Self> {
+        let main = PathBuf::from(
+            std::env::var_os("AIRK_TEST_BINARY")
+                .context("AIRK_TEST_BINARY must pin a matched modern native runtime")?,
+        )
+        .canonicalize()?;
+        let runtime = crate::runtime_pair::payload_root(&main)?;
+        let expected = std::env::var("AIRK_TEST_NATIVE_SOURCE_SHA256").context(
+            "pin AIRK_TEST_NATIVE_SOURCE_SHA256 to the verified candidate compiled source",
+        )?;
+        let seal = std::env::var("AIRK_TEST_INSTALL_MANIFEST_SHA256").context(
+            "pin AIRK_TEST_INSTALL_MANIFEST_SHA256 to the independently verified candidate seal",
+        )?;
+        modern_checkpoint_tests::verify_modern_fixture_inputs(&main, runtime, &expected, &seal)?;
+        Self::build_with_image(main, true)
+    }
+
+    fn build_with_image(main: PathBuf, native: bool) -> Result<Self> {
+        #[cfg(not(feature = "local-inference"))]
+        ensure!(!native, "native fixture requires local-inference");
+        verify_fixture_image(&main, native)?;
+        let mut directory = tempfile::Builder::new()
             .prefix("airk-guarded-workers-")
             .tempdir_in(std::env::temp_dir().canonicalize()?)?;
+        if native {
+            directory.disable_cleanup(true);
+            eprintln!(
+                "modern checkpoint fixture retained: {}",
+                directory.path().display()
+            );
+        }
         let base = directory.path().canonicalize()?;
         let root = base.join("control");
         let instance = new_instance_id()?;
@@ -679,6 +755,21 @@ impl NativeFixture {
             .context("native fixture catalog absent")?;
         let gate = NativeCatalogAdmission::new(instance, state.namespace, state.revision, 1)?;
         let latch = engine_gate::EngineGate::bind(&root)?;
+        #[cfg(feature = "local-inference")]
+        let mut factory = if native {
+            Some(crate::service_inference::InferenceFactory::new(
+                lease.clone(),
+                instance,
+            )?)
+        } else {
+            None
+        };
+        #[cfg(feature = "local-inference")]
+        let pool = match factory.as_mut() {
+            Some(factory) => factory.start(1)?,
+            None => Pool::start_fixture(&root, instance, &main)?,
+        };
+        #[cfg(not(feature = "local-inference"))]
         let pool = Pool::start_fixture(&root, instance, &main)?;
         let (log, guard) = crate::service_logs::Log::start(root.clone(), instance);
         let native = NativeOwner {
@@ -689,6 +780,8 @@ impl NativeFixture {
             workers: BTreeMap::new(),
             registry: Some(ServiceRegistry::open(&root, instance)?),
             pool: Some(pool),
+            #[cfg(feature = "local-inference")]
+            _factory: factory,
             recovery: PoolRecovery::new(Instant::now()),
             resources: airk_kernel::service_resources::Resources::detect(
                 airk_core::service_resources::ResourceConfiguration {
@@ -754,6 +847,129 @@ impl NativeFixture {
         fixture.review_grant()?;
         Ok(fixture)
     }
+}
+
+/// The observer is the native administrative read owner, never a local hasher.
+async fn prepare_fixture_model<F, Fut>(
+    model: &Path,
+    observe: F,
+) -> Result<airk_core::service_configuration::ProjectConfiguration>
+where
+    F: FnOnce(airk_core::native_reads::NativeRead) -> Fut,
+    Fut: std::future::Future<Output = Result<serde_json::Value>>,
+{
+    use airk_core::service_configuration::{InputFile, ProjectConfiguration};
+    let manifest = model.join("model.json");
+    let path = manifest.to_str().context("model input must be UTF-8")?;
+    ensure!(
+        manifest.is_absolute() && path.len() <= 4096 && !path.chars().any(char::is_control),
+        "invalid bounded native model input"
+    );
+    let result = observe(airk_core::native_reads::NativeRead::PrepareInputFile {
+        path: path.into(),
+        max_source_bytes: 16_384,
+    })
+    .await?;
+    let result = crate::usage_client::require_native_success(result).map_err(|error| {
+        let body = error
+            .downcast_ref::<crate::usage_client::NativeReadFailure>()
+            .map(|failure| failure.body().to_string())
+            .unwrap_or_default();
+        error.context(format!("fixture native model preparation refused: {body}"))
+    })?;
+    let pin: InputFile = serde_json::from_value(result)
+        .context("native model preparation omitted its complete pin")?;
+    pin.validate()?;
+    let configuration = ProjectConfiguration::InstallModel {
+        directory: Path::new(&pin.path)
+            .parent()
+            .context("native model manifest has no directory")?
+            .to_str()
+            .context("native model directory must be UTF-8")?
+            .into(),
+        manifest_sha256: pin.sha256,
+    };
+    configuration.validate()?;
+    Ok(configuration)
+}
+
+#[test]
+fn fixture_model_preparation_preserves_native_request_and_pin() -> Result<()> {
+    use airk_core::service_configuration::{InputFile, ProjectConfiguration};
+    let owner = tempfile::tempdir()?;
+    let base = owner.path().canonicalize()?;
+    // Neither spelling exists: the fixture must leave source access to native.
+    let original = base.join("alias").join("..").join("model");
+    let pin = InputFile {
+        path: base.join("canonical/model.json").to_str().unwrap().into(),
+        sha256: airk_core::identity::Sha256Digest::from_bytes([43; 32]),
+    };
+    let mut calls = 0;
+    let configuration = executor()?.block_on(prepare_fixture_model(&original, |request| {
+        calls += 1;
+        assert_eq!(
+            serde_json::to_value(request).unwrap(),
+            serde_json::to_value(airk_core::native_reads::NativeRead::PrepareInputFile {
+                path: original.join("model.json").to_str().unwrap().into(),
+                max_source_bytes: 16_384,
+            })
+            .unwrap()
+        );
+        std::future::ready(Ok(serde_json::to_value(&pin).unwrap()))
+    }))?;
+    assert_eq!(calls, 1);
+    assert_eq!(
+        configuration,
+        ProjectConfiguration::InstallModel {
+            directory: base.join("canonical").to_str().unwrap().into(),
+            manifest_sha256: pin.sha256,
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn fixture_model_preparation_retains_refusals_and_rejects_invalid_pins() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let model = directory.path().canonicalize()?.join("never-opened");
+    let runtime = executor()?;
+    let refusal = serde_json::json!({"isError": true, "error": {"code": "source_policy"},
+        "retry": {"allowed": false}, "evidence": ["original spelling refused"]});
+    let error = runtime
+        .block_on(prepare_fixture_model(&model, |_| {
+            std::future::ready(Ok(refusal.clone()))
+        }))
+        .unwrap_err();
+    assert_eq!(
+        error
+            .downcast_ref::<crate::usage_client::NativeReadFailure>()
+            .context("lost native refusal type")?
+            .body(),
+        &refusal
+    );
+    assert!(format!("{error:#}").contains(&refusal.to_string()));
+    let error = runtime
+        .block_on(prepare_fixture_model(&model, |_| {
+            std::future::ready(Err(anyhow::anyhow!("transport observation failed")))
+        }))
+        .unwrap_err();
+    assert_eq!(error.to_string(), "transport observation failed");
+    for pin in [
+        serde_json::json!({}),
+        serde_json::json!({"path":"", "sha256":"a".repeat(64)}),
+        serde_json::json!({"path":model.join("model.json"), "sha256":"invalid"}),
+        serde_json::json!({"path":model.join("model.json"), "sha256":"a".repeat(64), "extra":true}),
+    ] {
+        assert!(
+            runtime
+                .block_on(prepare_fixture_model(&model, |_| {
+                    std::future::ready(Ok(pin.clone()))
+                }))
+                .is_err(),
+            "accepted invalid native pin: {pin}"
+        );
+    }
+    Ok(())
 }
 
 fn executor() -> Result<tokio::runtime::Runtime> {
@@ -1066,5 +1282,10 @@ async fn require_semantic_ready(stream: &mut local_ipc::Stream) -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "embedding-worker")]
 #[path = "project_supervisor_split_tests.rs"]
 mod split_tests;
+
+#[cfg(feature = "local-inference")]
+#[path = "project_supervisor_modern_checkpoint_tests.rs"]
+mod modern_checkpoint_tests;

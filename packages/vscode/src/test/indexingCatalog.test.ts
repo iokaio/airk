@@ -48,6 +48,62 @@ function setupFixture(){
     return {selection,draft,response,reserved,prepared,ready};
 }
 
+test('advice can complete during setup apply without changing management ownership or its receipt',async()=>{
+    const f=controller(),setup=setupFixture();let release!:()=>void,valid!:()=>boolean,applies=0;
+    f.control.catalogIndexSetupDraft=async()=>validateNativeIndexSetupDraft(setup.response,setup.selection);
+    f.control.catalogIndexSetupApply=async(_review,current)=>{applies++;valid=current;await new Promise<void>(done=>{release=done;});return {status:'catalog_index_setup_applied',receipt:setup.ready};};
+    await f.value.page('indexes');const {key,expected_catalog_revision,...selection}=setup.selection;
+    await f.value.setupDraft(selection,f.value.snapshot().generation);
+    const generation=f.value.snapshot().generation,pending=f.value.setupApply(generation);
+    const sequence=(f.value as any).sequence;
+    try{
+        await f.value.recommendations(async()=>({schema:'airk.recommendations/1',future_advice:'retained'}));
+        assert.equal(f.value.snapshot().generation,generation);assert.equal((f.value as any).sequence,sequence);
+        assert.equal(f.value.snapshot().busy,true);assert.equal(valid(),true);
+    }finally{release();await pending;}
+    assert.equal(applies,1);assert.deepEqual(f.value.snapshot().outcome,{status:'catalog_index_setup_applied',receipt:setup.ready});
+});
+
+test('failed advice does not clear a prepared management review or change its generation',async()=>{
+    const f=controller();await f.value.page('projects');await f.value.preview(operation,f.value.snapshot().generation);
+    const before=f.value.snapshot(),sequence=(f.value as any).sequence;
+    await assert.rejects(f.value.recommendations(async()=>{throw new Error('advice unavailable');}),/advice unavailable/);
+    const after=f.value.snapshot();assert.equal(after.review,before.review);assert.equal(after.generation,before.generation);assert.equal(after.error,before.error);assert.equal((f.value as any).sequence,sequence);
+});
+
+test('scope and set completion never store a receipt in a replaced management owner',async()=>{
+    for(const set of [false,true]){
+        let owner='original',writes=0;const result={status:set?'index_set_saved':'search_scope_selected'};
+        const work=async()=>{writes++;owner='replacement';return result;};
+        const value=new IndexingCatalogController({identity:()=>owner,authorized:()=>true,changed(){},applySearchScope:work,saveIndexSet:work});
+        const generation=value.snapshot().generation;
+        await assert.rejects(value.scopeApply({},generation,set),/stale_catalog_view/);
+        assert.equal(writes,1);assert.equal(value.snapshot().outcome,undefined);assert.equal(value.snapshot().error,undefined);
+    }
+});
+
+test('scope completion distinguishes a forward catalog clock from authority loss, regression and explicit invalidation',async()=>{
+    for(const change of ['forward','backward','namespace','native host','native key','window','invalidate','trust']){
+        let authorized=true,descriptor={host:digest,key:requestDigest,kind:'folder' as const,name:'Window'};
+        let native={schema:1,namespace,host:descriptor.host,key:descriptor.key,catalog_revision:5,context:null};
+        let value:IndexingCatalogController;
+        value=new IndexingCatalogController({identity:()=> 'runtime',authorized:()=>authorized,changed(){},windowContext:()=>descriptor,windowContextObservation:()=>({status:'catalog_host_context',descriptor:native}),applySearchScope:async()=>{
+            if(change==='forward')native={...native,catalog_revision:6};
+            if(change==='backward')native={...native,catalog_revision:4};
+            if(change==='namespace')native={...native,namespace:'98'.repeat(16)};
+            if(change==='native host')native={...native,host:'98'.repeat(32)};
+            if(change==='native key')native={...native,key:'98'.repeat(32)};
+            if(change==='window')descriptor={...descriptor,name:'Other window'};
+            if(change==='invalidate')value.invalidate();
+            if(change==='trust')authorized=false;
+            value.snapshot();return {status:'search_scope_selected'};
+        }});
+        const pending=value.scopeApply({},value.snapshot().generation);
+        if(change==='forward'){assert.equal((await pending).status,'search_scope_selected');assert.equal(value.snapshot().outcome?.status,'search_scope_selected');}
+        else{await assert.rejects(pending,/stale_catalog_view/,change);assert.equal(value.snapshot().outcome,undefined,change);}
+    }
+});
+
 test('setup selectors carry choices only; native canonical locations and complete review are retained',()=>{
     const f=setupFixture(),{key,expected_catalog_revision,...choices}=f.selection;
     assert.deepEqual(validateIndexSetupSelection(choices),choices);
@@ -645,9 +701,9 @@ test('native host context descriptors preserve complete results and enforce iden
         assert.throws(()=>validateNativeHostContext(value));
     }
     const response={status:'catalog_host_context',descriptor,extra_response_field:{preserved:true}},calls:unknown[]=[];
-    const client=new ServiceClient({dispose(){},async request(method){calls.push(method);return calls.length===1?{status:'failure',code:'registry_busy'}:response;}});
+    const client=new ServiceClient({dispose(){},async request(method){calls.push(method);return response;}});
     const complete=await client.catalogHostContext(key,3);assert.deepEqual(complete,response);
-    assert.deepEqual(calls,[{catalog_host_context:{key,expected_catalog_revision:3}},{catalog_host_context:{key,expected_catalog_revision:3}}]);
+    assert.deepEqual(calls,[{catalog_host_context:{key,expected_catalog_revision:3}}]);
     const copied=JSON.parse(catalogExport({generation:1,busy:false,outcome:complete}));assert.deepEqual(copied.outcome,response);
     for(const altered of [{...descriptor,key:'44'.repeat(32)},{...descriptor,catalog_revision:4}]){
         const invalid=new ServiceClient({dispose(){},async request(){return {status:'catalog_host_context',descriptor:{...altered,context:null}};}});

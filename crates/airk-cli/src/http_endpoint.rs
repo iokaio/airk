@@ -24,9 +24,10 @@ pub use metadata::{
     load_descriptor, publish_descriptor, read_registration_file, read_registrations_file,
     read_selection_file,
 };
+pub(crate) use store::same_authority;
 pub use store::{
-    AuthenticatedCredential, ConnectionOwnership, CredentialStore, IssuedCredential,
-    read_client_token,
+    AttachmentRetirementProof, AuthenticatedCredential, ConnectionOwnership, CredentialStore,
+    IssuedCredential, authority_digest, read_client_token,
 };
 pub use tls::{TlsBundleIdentity, TlsIdentity};
 #[path = "http_endpoint_rotation.rs"]

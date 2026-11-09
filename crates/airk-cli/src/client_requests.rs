@@ -46,13 +46,12 @@ where
         match response {
             ControlResponse::RequestEpoch { namespace, epoch } => return Ok((namespace, epoch)),
             ControlResponse::Failure { code }
-                if matches!(
-                    code.as_str(),
-                    "registry_busy" | "registry_response_unknown_retry_with_key"
-                ) =>
+                if code == "registry_response_unknown_retry_with_key" =>
             {
                 // No job/configuration request or nonce exists yet. Reacquire
                 // current authority; never replay the subsequent mutation here.
+                // Exact registry_busy already exhausted the shared native
+                // retry budget and must not start another acquisition window.
                 last = Some(code);
                 tokio::time::sleep_until(
                     until.min(tokio::time::Instant::now() + std::time::Duration::from_millis(50)),
@@ -371,13 +370,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn epoch_acquisition_retries_only_explicit_registry_waits() -> Result<()> {
+    fn epoch_acquisition_retries_only_unknown_epoch_recovery() -> Result<()> {
         tokio::runtime::Runtime::new()?.block_on(async {
             let namespace = Incarnation::from_bytes([7; 16]);
             let mut responses = vec![
-                ControlResponse::Failure {
-                    code: "registry_busy".into(),
-                },
                 ControlResponse::Failure {
                     code: "registry_response_unknown_retry_with_key".into(),
                 },
@@ -395,6 +391,7 @@ mod tests {
             assert_eq!(result, (namespace, 42));
             assert!(responses.next().is_none());
             for code in [
+                "registry_busy",
                 "registry_unavailable",
                 "invalid_registry_request",
                 "service_rebind_required",
@@ -430,10 +427,13 @@ mod tests {
     }
 
     #[test]
-    fn epoch_acquisition_bounds_busy_and_blocked_requests() -> Result<()> {
+    fn epoch_acquisition_stops_exhausted_busy_and_bounds_unknown_or_blocked_requests() -> Result<()>
+    {
         tokio::runtime::Runtime::new()?.block_on(async {
+            let mut calls = 0;
             let error = acquire_epoch(
                 || {
+                    calls += 1;
                     std::future::ready(Ok(ControlResponse::Failure {
                         code: "registry_busy".into(),
                     }))
@@ -442,8 +442,25 @@ mod tests {
             )
             .await
             .unwrap_err();
-            assert!(error.to_string().contains("deadline exceeded"));
+            assert_eq!(calls, 1);
+            assert!(error.to_string().contains("request epoch unavailable"));
             assert!(error.to_string().contains("registry_busy"));
+            let error = acquire_epoch(
+                || {
+                    std::future::ready(Ok(ControlResponse::Failure {
+                        code: "registry_response_unknown_retry_with_key".into(),
+                    }))
+                },
+                std::time::Duration::from_millis(20),
+            )
+            .await
+            .unwrap_err();
+            assert!(error.to_string().contains("deadline exceeded"));
+            assert!(
+                error
+                    .to_string()
+                    .contains("registry_response_unknown_retry_with_key")
+            );
             let error = acquire_epoch(
                 std::future::pending::<Result<ControlResponse>>,
                 std::time::Duration::from_millis(20),

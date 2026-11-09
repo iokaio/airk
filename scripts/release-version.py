@@ -111,7 +111,7 @@ def plan(version, channel, destination, entries, releases, tags, *, publish, att
         spec = importlib.util.spec_from_file_location("downloads", ROOT / "scripts/build-downloads.py")
         downloads = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(downloads)
-        downloads.release_metadata(published[0])
+        downloads.release_metadata(published[0], require_installers=True)
     if platforms == PLATFORMS and published:
         # A rerun is a retry, never an instruction to prepare another release.
         if attempt > 1:

@@ -121,19 +121,7 @@ fn private_paths_mode(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
         Err(error) => return Err(error.into()),
     }
-    let mut statement =
-        connection.prepare("SELECT path FROM service_private_paths ORDER BY path LIMIT 17")?;
-    let paths = statement
-        .query_map([], |row| row.get::<_, String>(0))?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-    ensure!(
-        paths.len() <= 16 && paths.iter().all(|path| path.len() <= 4096),
-        "private runtime path inventory exceeds bound"
-    );
-    let mut paths = paths
-        .into_iter()
-        .map(std::path::PathBuf::from)
-        .collect::<Vec<_>>();
+    let mut paths = saved_private_paths(connection)?;
     paths.extend(observed);
     paths.sort();
     paths.dedup();
@@ -143,6 +131,94 @@ fn private_paths_mode(
     );
     paths.push(runtime.into());
     Ok(paths)
+}
+
+fn validate_private_path(path: &Path) -> Result<()> {
+    let text = path
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("non-UTF-8 private runtime path"))?;
+    ensure!(
+        path.is_absolute()
+            && text.len() <= 4096
+            && !text.chars().any(char::is_control)
+            && !path.components().any(|part| matches!(
+                part,
+                std::path::Component::ParentDir | std::path::Component::CurDir
+            )),
+        "invalid saved private runtime path"
+    );
+    Ok(())
+}
+
+fn saved_private_paths(connection: &Connection) -> Result<Vec<std::path::PathBuf>> {
+    let mut statement = connection.prepare(
+        "SELECT substr(CAST(path AS BLOB),1,4097) FROM service_private_paths ORDER BY path LIMIT 17",
+    )?;
+    let rows = statement.query_map([], |row| row.get::<_, Vec<u8>>(0))?;
+    let mut paths = Vec::new();
+    for row in rows {
+        let bytes = row?;
+        ensure!(
+            bytes.len() <= 4096 && paths.len() < 16,
+            "private runtime path inventory exceeds bound"
+        );
+        let path = std::path::PathBuf::from(String::from_utf8(bytes)?);
+        validate_private_path(&path)?;
+        paths.push(path);
+    }
+    Ok(paths)
+}
+
+impl super::ServiceRegistry {
+    /// Exact saved protection metadata only. This does not open source folders,
+    /// infer parent directories or validate an installation recovery request.
+    pub fn saved_private_paths(&self) -> Result<Vec<std::path::PathBuf>> {
+        saved_private_paths(&self.connection)
+    }
+
+    /// Preserve native-owned recovery boundaries under the exact service lease.
+    /// Adding protected paths can only restrict future registration; it grants
+    /// no source/index authority. Existing sixteen-path admission stays fixed.
+    /// All supplied paths commit together or none do.
+    pub fn preserve_private_paths(
+        &mut self,
+        lease: &crate::service::ServiceLease,
+        paths: &[std::path::PathBuf],
+    ) -> Result<()> {
+        ensure!(
+            lease.root() == self.root.as_path(),
+            "private-path preservation lease differs"
+        );
+        ensure!(
+            super::retained_namespace(&self.root)? == self.incarnation()?,
+            "private-path preservation namespace changed"
+        );
+        let mut unique = std::collections::BTreeSet::new();
+        for path in paths {
+            validate_private_path(path)?;
+            unique.insert(path);
+            ensure!(
+                unique.len() <= 16,
+                "private runtime path inventory exceeds bound"
+            );
+        }
+        let root = self.root.clone();
+        let tx = self
+            .connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        private_paths_mode(&tx, &root, false)?;
+        for path in unique {
+            tx.execute(
+                "INSERT OR IGNORE INTO service_private_paths VALUES(?1)",
+                [path.to_str().unwrap()],
+            )?;
+        }
+        // Recheck the complete union with actual current native layout paths,
+        // including rows preserved by earlier recoveries, before committing.
+        private_paths_mode(&tx, &root, false)?;
+        tx.commit()?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -374,3 +450,7 @@ fn validate_mode(
 #[cfg(test)]
 #[path = "service_source_isolation_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "service_source_isolation_preservation_tests.rs"]
+mod preservation_tests;

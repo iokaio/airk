@@ -183,7 +183,7 @@ def hold_usage_reader(fixture, project, expected_publication):
     # the registration's Windows extended prefix by same-file identity, rather
     # than treating lexical drive-prefix spellings as an ownership proof.
     expected = fixture.owner / "index-data"
-    if getattr(fixture, "single_image", False):
+    if fixture.catalog_authority:
         expected /= registration["collection"]
     data = expected.resolve(strict=True)
     assert data.samefile(Path(registration["data_root"])), "Usage registration changed the exact fixture storage layout"

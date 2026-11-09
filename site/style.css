@@ -96,6 +96,8 @@ nav a:hover { text-decoration: underline; }
 .download-card p { font-size: .85rem; color: var(--muted); margin: 6px 0 22px; }
 .download-card .button { margin-top: auto; padding: 11px 13px; font-size: .8rem; }
 .download-card .native-link { font-size: .75rem; margin-top: 14px; text-align: center; }
+.download-card .installer-signing { font-size: .73rem; margin-top: 0; }
+.download-card .unavailable-download { color: var(--muted); border-color: var(--line); background: var(--tint); text-align: center; }
 .release-links { display: flex; gap: 24px; flex-wrap: wrap; margin-top: 14px; font-size: .78rem; }
 .release-note, .download-footnote { color: var(--muted); font-size: .78rem; margin-top: 16px; }
 .pending-release { background: var(--tint); border-top: 3px solid var(--accent); padding: 30px; }

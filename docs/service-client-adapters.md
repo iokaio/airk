@@ -50,3 +50,66 @@ The complete default CLI/extension/container cutover, all supported management s
 
 
 For 1.5.2, SQLite busy/locked failures in read-only registry observations use the existing `registry_busy` response. The CLI maintains an explicit read-only method whitelist, and the store classifies storage errors. Job/configuration/plan receipts and cached project observations can be read again within the caller's existing deadline. RequestEpoch, which prunes receipts, and all mutations retain their existing response/recovery semantics. Corruption, missing records, malformed receipts, I/O and validation failures are not contention. No mutation is replayed to recover a failed read.
+
+The 1.8.14 working source moves `registry_busy` recovery to the shared native
+control-request boundary used by CLI, MCP and Workbench. It retains the identical
+method, request key, scope/revision fences, expected service instance and version:
+at most six additional submissions within one original three-second monotonic
+window, waiting 100, 200, 400, 600, 700 and 800 ms. An attempt can exhaust the
+window before all six retries; an already dispatched transport retains its own
+existing timeout. The extension does not add another retry window.
+
+The exact code has two native origins: recognized storage contention on a
+read-only observation, or queue admission rejected before accepting any request.
+Only those explicit responses permit retry, including a mutation rejected at
+admission. Generic refusals, permission failures, `source_change_busy` and
+uncertain outcomes retain their separate contracts and are never replayed by
+this policy. Exhaustion preserves the complete final response. The correction
+passed 22 scoped native regressions and scoped Clippy; debug r23 and complete
+enabled-native extension r14 also passed. Final optimized-package qualification
+remains required; earlier r21 results retain their original compiled-source
+identity.
+
+Automatic HTTP enrollment also binds its saved connection identity to the exact
+Assistance window attachment. A recreated host receives a new attachment-bound
+credential while retaining the original reviewed grant and index scope; an
+unchanged attachment reuses its ID across catalog-clock and endpoint changes.
+Setup captures one attachment for both its key and native request and rejects
+superseded ownership. Fresh enrollment waits for local Assistance publication;
+it does not wait for model work or indexing. Optional Assistance failure retains
+headless operation, and headless keys keep their existing identity bytes.
+Legacy ownership lookup retains existing manually configured credential IDs and
+original migration provenance instead of silently rewriting those declarations.
+
+The 1.8.14 working source retains at most **128 active records / 1 MiB** and
+implements reclamation after durable revocation and gateway delivery fencing.
+It replaces the original token with an installation/ID-bound, secret-free
+retirement proof before compacting its full active record. Proven owned Explorer
+attachment retirement can release capacity; unavailable or malformed ownership
+evidence cannot. Active manual credentials retain their authority, old IDs cannot
+be reused, and historical proof storage grows with issuance. The
+[HTTPS lifecycle contract](local-https-api.md) describes these bounds and fences.
+Scoped regressions cover compaction; final installed capacity and resource
+acceptance remain required. This implemented correction does not qualify every
+client or platform.
+
+The resumed 8 November source also preserves an existing MCP session when the
+same credential's catalog clock advances under unchanged native authority.
+The gateway compares immutable authority before reusing its canonical context;
+a delayed older authentication cannot replace a newer cached context. Actual
+TLS/MCP regression coverage exercises the saved session on the existing TCP
+connection and a fresh connection. This does not replay an uncertain request.
+
+Historical standalone adoption can recover its original base connection ID only
+from a positive native retirement proof matching installation, authority, client
+and unexpired original issuance, plus a different live Explorer attachment.
+Native issuance rechecks the old ID while holding the mutation owner; a prior
+read-only lookup cannot authorize a replacement after explicit revocation races
+it. Explicit revocation takes precedence over automatic attachment retirement,
+including recovery after a compaction crash. Schema-2 secret-free tombstones
+retain this reason/provenance within **2 KiB**. Historical schema-1 proofs lacking
+those facts remain review-required. This metadata is private CLI/native control
+authority, not a new evidence-MCP management operation. Old IDs remain permanently
+retired; replacement retains the original reviewed scope and requires a new ID.
+See the [native proof contract](local-https-api.md) and the resumed implementation
+checkpoint for validation and remaining installed-platform acceptance.

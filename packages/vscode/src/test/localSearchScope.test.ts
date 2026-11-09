@@ -5,6 +5,7 @@ import {applyLocalSearchScope,saveLocalIndexSet,type ManagedScopeProject,type Lo
 import {CatalogObject,CatalogReview,catalogObject} from '../indexingCatalog';
 import {NativeServiceFixture} from './nativeServiceFixture';
 import {record} from '../serviceClient';
+import {IndexingCatalogController} from '../indexingCatalogController';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
@@ -50,6 +51,18 @@ test('direct index Apply creates native full-source membership and reuses an imm
     await applyLocalSearchScope(f.adapter,{index_ids:[index],project_ids:[]});assert.equal(f.operations.filter(op=>op.operation==='create_project').length,2,'A to B to A reuses the exact owned immutable support set');
 });
 
+test('controller acknowledges real scope and set orchestration across its own forward catalog observations',async()=>{
+    for(const save of [false,true]){
+        const f=fixture(),descriptor={host,key,kind:'folder' as const,name:'Fixture'};
+        let observation={status:'catalog_host_context',descriptor:f.adapter.context()};
+        const work=async(selection:CatalogObject)=>save?saveLocalIndexSet(f.adapter,selection):applyLocalSearchScope(f.adapter,selection);
+        const value=new IndexingCatalogController({identity:()=> 'runtime-window',authorized:()=>true,changed(){},control:f.adapter.control,windowContext:()=>descriptor,windowContextObservation:()=>observation,applySearchScope:work,saveIndexSet:work});
+        f.adapter.refreshContext=async()=>{observation={...observation,descriptor:f.adapter.context()};value.snapshot();};
+        const result=await value.scopeApply(save?{name:'Named set',index_ids:[index]}:{index_ids:[index],project_ids:[]},value.snapshot().generation,save);
+        assert.equal(result.status,save?'index_set_saved':'search_scope_selected');assert.equal(value.snapshot().outcome,result);assert.ok(f.revision()>1);
+    }
+});
+
 test('empty selection clears without catalog writes; empty sets and oversized union refuse before writes',async()=>{
     const f=fixture();await applyLocalSearchScope(f.adapter,{index_ids:[],project_ids:[]});assert.equal(f.cleared(),1);assert.equal(f.operations.length,0);
     f.projects.set(set,f.project(set));await assert.rejects(applyLocalSearchScope(f.adapter,{index_ids:[index],project_ids:[set]}),/has no indexes/);assert.equal(f.operations.length,0);
@@ -62,6 +75,18 @@ test('saving a renamed index set retains existing partial-folder membership',asy
     assert.deepEqual(f.members.get(`${set}:${index}`),member);assert.ok(!f.operations.some(op=>op.operation==='set_membership'));assert.equal(f.projects.get(set)!.name,'Backend');
     assert.deepEqual(f.projects.get(set)!.default_indexes,[],'renaming keeps an independently saved empty default selection');
     assert.ok(!f.operations.some(op=>op.operation==='set_project_defaults'),'rename does not rewrite defaults');
+});
+
+test('a first named index set needs no managed scope and existing managed sets remain protected',async()=>{
+    const fresh=fixture();assert.equal(fresh.managed(),undefined);
+    const saved=await saveLocalIndexSet(fresh.adapter,{name:'First named set',index_ids:[index]});
+    assert.equal(saved.status,'index_set_saved');assert.equal(fresh.managed(),undefined);
+    assert.deepEqual(fresh.operations.map(operation=>operation.operation),['create_project','set_membership','set_project_defaults']);
+    assert.deepEqual(fresh.projects.get(String(saved.id))!.default_indexes,[index]);
+    const protectedScope=fixture();await applyLocalSearchScope(protectedScope.adapter,{index_ids:[index],project_ids:[]});
+    const before=protectedScope.operations.length;
+    await assert.rejects(saveLocalIndexSet(protectedScope.adapter,{id:protectedScope.managed()!.id,name:'Must stay immutable',index_ids:[index]}),/managed_scope_set_is_not_editable/);
+    assert.equal(protectedScope.operations.length,before,'Protected scope refusal precedes every native write');
 });
 
 test('uncertain native write stops orchestration without replay or grant activation',async()=>{
@@ -83,13 +108,14 @@ test('local scope orchestration uses the actual native catalog and CLI transport
             catalogGrantDraft:async(key,selection,revision)=>client.catalogGrantDraft(key,{key:await client.key(),expected_catalog_revision:revision,project_ids:selection.project_ids as string[],index_ids:selection.index_ids as string[]|null}),
         };
         const adapter:LocalScopeAdapter={control,current(){},context:()=>context,managed:()=>managed,saveManaged:async value=>{managed=value;},refreshContext:async()=>{context=record((await client.catalogHostContext(contextKey)).descriptor);},clear:async()=>({status:'search_scope_cleared'}),use:async choice=>{activated=choice;return {choice};}};
+        const saved=await saveLocalIndexSet(adapter,{name:'Named index set',index_ids:[spec.catalogSession!.index_id]});assert.equal(saved.status,'index_set_saved');
+        assert.equal(adapter.managed(),undefined);assert.equal((()=>activated)(),undefined,'Creating the first named set does not select scope');
         const outcome=await applyLocalSearchScope(adapter,{index_ids:[spec.catalogSession!.index_id],project_ids:[]});assert.equal(outcome.status,'search_scope_selected');assert.ok(managed&&activated);
         const detail=await client.rpc({catalog_detail:{entity:{kind:'project',id:managed.id},expected_catalog_revision:context.catalog_revision}},'catalog_detail');assert.equal(record(record(record(detail.detail).item).value).id,managed.id);
         const members=await client.rpc({catalog_page:{request:{kind:'memberships',index_id:null,project_id:managed.id,after:null,expected_catalog_revision:context.catalog_revision,limit:32,max_bytes:48*1024}}},'catalog_page');
         const row=record((record(members.page).items as unknown[])[0]);assert.equal(record(row.value).index_id,spec.catalogSession!.index_id);assert.deepEqual((record(row.value).scope as unknown[]).map(value=>record(value).path),['']);
         const selectedSpec=()=>({...spec,http:undefined,catalogSession:undefined,combinedSession:{schema:1 as const,context_key:contextKey,namespace:String(context.namespace),expected_catalog_revision:Number(context.catalog_revision),grant_id:String(activated!.grant_id),expected_grant_revision:Number(activated!.expected_grant_revision),project_ids:activated!.project_ids as string[]}});
         const query=await native.tool(selectedSpec(),'airk_query_scope',{view:'projects',max_bytes:65536,response_mode:undefined});assert.equal(query.schema,'airk.query-scope/1','actual CLI scoped read admits the internally selected grant');
-        const saved=await saveLocalIndexSet(adapter,{name:'Named index set',index_ids:[spec.catalogSession!.index_id]});assert.equal(saved.status,'index_set_saved');
         const group=String(saved.id);await applyLocalSearchScope(adapter,{index_ids:[],project_ids:[group]});
         const setOnly=await native.tool(selectedSpec(),'airk_query_scope',{view:'projects',max_bytes:65536,response_mode:undefined});assert.equal((setOnly.items as unknown[]).length,1);
         await applyLocalSearchScope(adapter,{index_ids:[spec.catalogSession!.index_id],project_ids:[group]});

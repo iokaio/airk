@@ -57,16 +57,22 @@ unlinking. A partial retry cannot reuse that witness for another image; an
 already-missing historical image without it needs a complete native observation
 or reports cleanup incomplete. Fresh installations have no historical image
 roster to retire. Modern Ensure never republishes a universal launcher.
-Activation preserves predecessors only until
-this required post-migration cleanup finishes.
+Ordinary activation preserves predecessors until this required post-migration
+cleanup finishes. An explicitly admitted [rebuild](upgrade-rebuild-fallback.md)
+separately protects its recorded predecessor payloads and old state as recovery
+evidence; that retained set is not ordinary obsolete-payload cleanup.
 
 For a selected schema-2 runtime, `airk runtime retire-previous --install-dir PATH
---expected-active SHA` then retires **every approved nonselected runtime** in the
+--expected-active SHA` then retires **every eligible approved nonselected runtime** in the
 managed installation, including approved orphans no longer named by `previous`.
 It supports skipped version numbers and repeated schema-2 replacements through
 the same inventory contract. A successful receipt has `complete: true`, the
 full `retired_runtimes` list and native process observations. It does not stop or
 restart the selected service, clear User Stop, or modify source/index state.
+Its complete receipt reports explicitly preserved rebuild payloads separately.
+After an A-to-B rebuild, a later ordinary B-to-C upgrade can retire B while
+preserving the recorded A evidence; a historical rebuild receipt does not require
+its candidate B to remain the selected runtime.
 Historical schema-1 selected runtimes keep the older one-previous command
 behavior; current installation orchestration uses the modern branch only after
 configuration migration and verified launcher absence.
@@ -337,6 +343,13 @@ retirement contract. See [index retirement](service-project-retirement.md) and
 [extension cleanup](vscode-extension.md#removing-the-terminal-command-and-uninstalling).
 
 ## Unavailable legacy index during upgrade
+
+**Approved follow-up, pending implementation:** automatic fresh-index recovery
+with notification after a positively identified incompatible migration must
+preserve the previous state and original source boundaries. It is a distinct
+native recovery transaction, not the explicit retirement commands below. See
+the [automatic rebuild policy and acceptance contract](upgrade-rebuild-fallback.md).
+No generic automatic rebuild fallback is currently implemented or qualified.
 
 The explicit legacy-retirement review/resume commands remain administrative
 recovery for a candidate-owned unavailable predecessor index. They preserve the

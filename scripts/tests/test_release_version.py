@@ -66,6 +66,18 @@ class VersionContracts(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Existing draft/tag"):
             self.plan("github", tags=["v0.1.0"])
 
+    def test_modern_stable_publication_is_incomplete_without_all_standalone_installers(self):
+        item = fixtures.release(preview=False)
+        item["tag_name"] = "v1.8.14"
+        for asset in item["assets"]:
+            asset["name"] = asset["name"].replace("0.1.0", "1.8.14")
+            asset["browser_download_url"] = f"{fixtures.site.GITHUB}/releases/download/v1.8.14/{asset['name']}"
+        with self.assertRaisesRegex(ValueError, "required standalone"):
+            version.plan("1.8.14", "stable", "github", [], [item], [], publish=True)
+        # The public page may still describe that legacy asset set honestly;
+        # publication completion cannot treat it as the new installer release.
+        self.assertEqual(fixtures.site.release_metadata(item)["installers"], {})
+
     def test_version_edit_keeps_dependency_versions_and_synchronizes_manifests(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

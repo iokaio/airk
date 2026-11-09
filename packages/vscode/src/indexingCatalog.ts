@@ -31,6 +31,7 @@ export interface CatalogView {
     canReviewSplit?:boolean; splitFormOpen?:boolean; splitReview?:SplitReview; submittedSplitReview?:SplitReview; splitSourceState?:CatalogObject;
     splitStatus?:CatalogObject; reviewedSplitStatus?:CatalogObject;
     recommendations?: CatalogObject;
+    adviceGeneration?: number;
     generation: number; busy: boolean; error?: string; namespace?: string; revision?: number;
     page?: CatalogObject; pageKind?: CatalogKind; detail?: CatalogObject; sources?: CatalogObject; memberships?: CatalogObject;
     review?: CatalogReview; outcome?: CatalogObject; pending?: readonly string[];

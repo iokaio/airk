@@ -526,6 +526,10 @@ async fn deleted_ancestor_case(data_lost: bool, policy_bearing: bool) -> Result<
         );
         drop(registry);
         f.session = healthy_session.clone();
+        // Missing-storage probes can exceed the native header-idle deadline.
+        // Open a fresh pinned TLS connection before this independent read while
+        // retaining the same MCP session and credential. No failed read is replayed.
+        healthy.transport.fresh_tcp()?;
         ensure!(
             healthy_deletion_read(&f, &mut healthy, 60).await? == baseline,
             "healthy member failed after an actual missing-storage admission"

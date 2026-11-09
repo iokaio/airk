@@ -29,7 +29,7 @@ def removal_complete(fixture, binding, collection, inactive, worker):
         return False
     if not bindings:
         return True
-    if not fixture.single_image:
+    if not fixture.catalog_authority:
         return False
     # This is fixture-only observation, never management authority. A retained
     # inactive row alone does not prove the final cleanup transaction committed.
@@ -60,7 +60,7 @@ def replacement_registration(fixture, name, root, parent):
     original request receipt, Index and selected grant are not rewritten.
     """
     previous = dict(fixture.projects[name])
-    selected = dict(fixture.scopes[name]) if fixture.single_image else None
+    selected = dict(fixture.scopes[name]) if fixture.catalog_authority else None
     parent = parent.resolve(strict=True)
     assert parent.is_relative_to(fixture.owner.resolve(strict=True)), "Replacement storage escaped fixture owner"
     assert not any(parent.iterdir()), "Replacement storage is not fresh"
@@ -69,7 +69,7 @@ def replacement_registration(fixture, name, root, parent):
     assert Path(current["root"]).samefile(root)
     assert current["collection"] == previous["collection"]
     assert current["binding"] != previous["binding"], "Replacement reused the removed registration"
-    actual = (parent / current["collection"]).resolve(strict=True) if fixture.single_image else parent
+    actual = (parent / current["collection"]).resolve(strict=True) if fixture.catalog_authority else parent
     assert actual.is_relative_to(parent) and actual.samefile(Path(current["data_root"])), "Replacement registration changed its exact owned storage leaf"
     if selected is not None:
         replacement = fixture.scopes[name]
@@ -126,7 +126,13 @@ def main():
         (root / "main.md").write_bytes(primary_text.encode("utf-8"))
         (specs / "requirements.md").write_bytes(original_text.encode("utf-8"))
         (replacement / "requirements.md").write_bytes(replacement_text.encode("utf-8"))
-        fixture = stack.enter_context(clients.Fixture(binary.parent, base))
+        fixture = clients.Fixture(binary.parent, base)
+        # Reviewed source mutation/retirement below uses the modern native
+        # administrative owner. Historical catalog setup alone proves neither.
+        if fixture.catalog_authority and not fixture.single_image:
+            fixture.log.close()
+            raise RuntimeError("Historical catalog source-mutation/retirement fixture is not qualified; no service started")
+        fixture = stack.enter_context(fixture)
         assert hashlib.sha256(fixture.binary.read_bytes()).digest() == hashlib.sha256(binary.read_bytes()).digest()
         fixture.assert_alive()
         name = "storage-fixture"
@@ -234,7 +240,7 @@ def main():
         assert status()["publication"]["token"] == published
 
         old_arguments = fixture.arguments(name)
-        registered_data = (data / name).resolve(strict=True) if fixture.single_image else data.resolve(strict=True)
+        registered_data = (data / name).resolve(strict=True) if fixture.catalog_authority else data.resolve(strict=True)
         assert registered_data.is_relative_to(base) and registered_data.samefile(Path(fixture.projects[name]["data_root"])), "Registered storage escaped exact fixture layout"
         retirement = None
         if fixture.single_image:

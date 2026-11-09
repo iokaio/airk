@@ -39,7 +39,7 @@ use tokio_util::sync::CancellationToken;
 
 #[cfg(test)]
 #[path = "http_gateway_tests.rs"]
-mod tests;
+pub(crate) mod tests;
 
 /// Revalidates the exact live native selection on every request. Returned
 /// factories must continue native admission checks immediately before each read.
@@ -401,6 +401,20 @@ impl Gateway {
             .try_acquire_owned()
             .map_err(|_| error(StatusCode::SERVICE_UNAVAILABLE, "authentication_busy"))?;
         let store = self.0.credentials.clone();
+        // Capture before asynchronous ledger authentication. Revocation can
+        // reclaim its map slot only because an older authentication epoch can
+        // never create a new delivery cell afterward.
+        let authentication_epoch = self
+            .0
+            .delivery_cells
+            .lock()
+            .map_err(|_| {
+                error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "credential_delivery_unavailable",
+                )
+            })?
+            .epoch;
         let authentication_context = context.clone();
         let task = tokio::task::spawn_blocking(move || {
             let _permit = permit;
@@ -439,12 +453,22 @@ impl Gateway {
                 )
             })?
             .capture(
+                authentication_epoch,
                 &authenticated,
                 delivery.authenticated_ticket().map_err(|_| {
                     error(StatusCode::SERVICE_UNAVAILABLE, "native_delivery_fenced")
                 })?,
             )
-            .map_err(|_| error(StatusCode::UNAUTHORIZED, "credential_delivery_refused"))?;
+            .map_err(|cause| {
+                if cause.is::<CredentialAuthenticationEpochRetired>() {
+                    error(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "credential_authentication_epoch_retired",
+                    )
+                } else {
+                    error(StatusCode::UNAUTHORIZED, "credential_delivery_refused")
+                }
+            })?;
         delivery
             .bind_credential(credential_delivery.clone())
             .map_err(|_| error(StatusCode::UNAUTHORIZED, "credential_connection_changed"))?;
@@ -495,6 +519,27 @@ impl Gateway {
         let ticket = delivery
             .authenticated_ticket()
             .map_err(|_| error(StatusCode::SERVICE_UNAVAILABLE, "native_delivery_fenced"))?;
+        let (service, retired) = self.cache_validated_service(
+            authenticated,
+            backend,
+            delivery,
+            credential_delivery,
+            ticket,
+        )?;
+        if let Some(old) = retired {
+            old.close().await;
+        }
+        Ok(service)
+    }
+
+    fn cache_validated_service(
+        &self,
+        authenticated: AuthenticatedCredential,
+        backend: AuthenticatedBackendFactory,
+        delivery: &ConnectionFence,
+        credential_delivery: Arc<Mutex<CredentialDelivery>>,
+        ticket: IssueTicket,
+    ) -> Result<(HttpReadService, Option<HttpReadService>), Box<HttpResponse>> {
         let mut retired = None;
         let service = {
             let mut clients = self
@@ -502,11 +547,29 @@ impl Gateway {
                 .clients
                 .lock()
                 .map_err(|_| error(StatusCode::SERVICE_UNAVAILABLE, "service_unavailable"))?;
-            if let Some(entry) = clients.get(&authenticated.connection_id)
+            // Serialize cache publication with revocation's removal. A request
+            // may have passed its earlier check before waiting for this lock.
+            // If revocation fences afterward, it waits for this lock and removes
+            // the entry; completed revocation can never be undone by insertion.
+            delivery
+                .check()
+                .map_err(|_| error(StatusCode::SERVICE_UNAVAILABLE, "native_delivery_fenced"))?;
+            if let Some(entry) = clients.get_mut(&authenticated.connection_id)
                 && entry.generation == authenticated.generation
-                && entry.selection == authenticated.selection
                 && entry.ticket == ticket
             {
+                // Re-enrollment can refresh only the saved minimum clock after
+                // this service already validated the current native clock. It
+                // must not replace the initialized SDK sessions or their bound
+                // factory. Native generation turnover still takes the replacement
+                // path below and fences all old buffered delivery.
+                if !crate::http_endpoint::same_authority(&entry.selection, &authenticated.selection)
+                {
+                    return Err(error(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "native_read_context_changed",
+                    ));
+                }
                 delivery
                     .bind_read_context(entry.read_delivery.clone())
                     .map_err(|_| {
@@ -515,7 +578,8 @@ impl Gateway {
                             "native_read_context_fenced",
                         )
                     })?;
-                return Ok(entry.service.clone());
+                entry.selection = authenticated.selection;
+                return Ok((entry.service.clone(), None));
             }
             if clients.len() >= 128 && !clients.contains_key(&authenticated.connection_id) {
                 return Err(error(
@@ -571,10 +635,7 @@ impl Gateway {
             }
             service
         };
-        if let Some(old) = retired {
-            old.close().await;
-        }
-        Ok(service)
+        Ok((service, retired))
     }
 }
 type ReadDeliveryCell = Arc<Mutex<ReadContextDelivery>>;
@@ -613,22 +674,41 @@ impl CredentialDelivery {
 }
 #[derive(Default)]
 struct CredentialDeliveryRegistry {
-    // None is an explicit-revocation tombstone. Never evict it while a stale
-    // authenticated request could still complete asynchronous validation.
-    cells: HashMap<Incarnation, Option<Arc<Mutex<CredentialDelivery>>>>,
+    cells: HashMap<Incarnation, Arc<Mutex<CredentialDelivery>>>,
+    epoch: u64,
     closed: bool,
 }
+
+#[derive(Debug)]
+struct CredentialAuthenticationEpochRetired;
+impl fmt::Display for CredentialAuthenticationEpochRetired {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("credential authentication epoch retired")
+    }
+}
+impl std::error::Error for CredentialAuthenticationEpochRetired {}
+
 impl CredentialDeliveryRegistry {
     fn capture(
         &mut self,
+        authentication_epoch: u64,
         credential: &AuthenticatedCredential,
         ticket: IssueTicket,
     ) -> anyhow::Result<Arc<Mutex<CredentialDelivery>>> {
         anyhow::ensure!(!self.closed, "credential delivery registry closed");
-        if let Some(existing) = self.cells.get(&credential.connection_id) {
-            let old = existing.as_ref().ok_or_else(|| {
-                std::io::Error::new(std::io::ErrorKind::PermissionDenied, "credential revoked")
-            })?;
+        if authentication_epoch != self.epoch {
+            return Err(CredentialAuthenticationEpochRetired.into());
+        }
+        self.cells.retain(|_, cell| {
+            let mut state = cell.lock().unwrap_or_else(|e| e.into_inner());
+            if state.check().is_err() {
+                state.revoked = true;
+                false
+            } else {
+                true
+            }
+        });
+        if let Some(old) = self.cells.get(&credential.connection_id) {
             let mut state = old
                 .lock()
                 .map_err(|_| std::io::Error::other("credential fence unavailable"))?;
@@ -666,27 +746,27 @@ impl CredentialDeliveryRegistry {
         cell.lock()
             .map_err(|_| std::io::Error::other("credential fence unavailable"))?
             .check()?;
-        self.cells
-            .insert(credential.connection_id, Some(cell.clone()));
+        self.cells.insert(credential.connection_id, cell.clone());
         Ok(cell)
     }
     fn revoke(&mut self, id: Incarnation) {
-        if let Some(Some(cell)) = self.cells.get(&id) {
+        match self.epoch.checked_add(1) {
+            Some(epoch) => self.epoch = epoch,
+            None => self.close(),
+        }
+        if let Some(cell) = self.cells.remove(&id) {
             cell.lock().unwrap_or_else(|e| e.into_inner()).revoked = true;
         }
-        self.cells.insert(id, None);
     }
     #[cfg(test)]
     fn retire(&mut self, id: Incarnation) {
-        if self.cells.get(&id).is_some_and(Option::is_some)
-            && let Some(Some(cell)) = self.cells.remove(&id)
-        {
+        if let Some(cell) = self.cells.remove(&id) {
             cell.lock().unwrap_or_else(|e| e.into_inner()).revoked = true;
         }
     }
     fn close(&mut self) {
         self.closed = true;
-        for cell in self.cells.values().flatten() {
+        for cell in self.cells.values() {
             cell.lock().unwrap_or_else(|e| e.into_inner()).revoked = true;
         }
     }

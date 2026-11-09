@@ -363,8 +363,9 @@ class ContainerCheckTests(unittest.TestCase):
             if isinstance(method,dict) and "job" in method:
                 job = method["job"]["id"]
                 inputs = job_inputs.setdefault(job,[]); inputs.append(kwargs["input"])
-                if len(inputs) == 1: return subprocess.CompletedProcess(args,0,json.dumps({"status":"failure","code":"registry_busy"}),"")
-                self.assertEqual(inputs[0],kwargs["input"])
+                # This fake is the native subprocess boundary: its canonical
+                # registry-busy retry budget has already completed internally.
+                self.assertEqual(method, {"job": {"id": job}})
             return subprocess.CompletedProcess(args,0,json.dumps(native(method)),"")
         def mcp(name,install,scope,cli_tool,catalog,records):
             observed_mcp.append(deepcopy(scope["selection"]))
@@ -389,7 +390,8 @@ class ContainerCheckTests(unittest.TestCase):
         self.assertEqual(starts,2); self.assertTrue(volume_removed); self.assertFalse(running)
         self.assertEqual(observed_mcp[:2],observed_mcp[2:])
         self.assertEqual(sum(isinstance(m,dict) and "catalog_index_setup_apply" in m for m in native.calls),2)
-        self.assertTrue(all(len(attempts)==2 for attempts in job_inputs.values()))
+        self.assertTrue(job_inputs)
+        self.assertTrue(all(len(attempts)==1 for attempts in job_inputs.values()), "Python must not repeat completed native observations")
         self.assertTrue(result["records"])
 
     def test_cleanup_accepts_only_missing_owned_container(self):

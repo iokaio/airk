@@ -26,6 +26,12 @@ function harness(handler: Handler, options: { maxInFlight?: number } = {}) {
 }
 const failure = (code: string) => (error: unknown) => error instanceof EvidenceFailure && error.error.code === code;
 
+test('missing reviewed scope has actionable scope guidance even while the service is running',async()=>{
+    const client=new EvidenceClient(spec,'1.8.14',{resolveConnection:async()=>spec});
+    try{await assert.rejects(client.call('airk_status',{}),error=>error instanceof EvidenceFailure&&error.error.code==='SCOPE_NOT_GRANTED'&&/scope/i.test(error.error.message));}
+    finally{client.dispose();}
+});
+
 test('the session identifies as the Explorer and returns parsed payloads with publication tokens', async () => {
     const { client, opened } = harness(async tool => tool === 'airk_status'
         ? text({ index_state: 'available', publication: { token: 'airk-r1:abc', generation: 3 } })

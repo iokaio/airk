@@ -2,7 +2,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import {credentialEnvironment,httpUrl,validateHttpConnection,standaloneHttpServerKey,preservedImportedHttpServerKey,type HttpConnectionInfo} from './serviceHttp';
+import {credentialEnvironment,httpUrl,validateHttpConnection,sameHttpAuthority,standaloneHttpServerKey,preservedImportedHttpServerKey,type HttpConnectionInfo} from './serviceHttp';
 import { consolidateJson, consolidateToml } from './unifiedAgentConfig';
 import { LaunchSpec, unifiedEntry, httpServerFields } from './model';
 import { launchDescriptorPath } from './explorerAssistanceLaunch';
@@ -121,18 +121,24 @@ export function httpConfigurationConnectionId(agent:LocalAgent,fields:Record<str
     const match=/^Bearer \$\{(?:(?:env:)?AIRK_MCP_TOKEN_([A-F0-9]{32})|input:airkToken_([a-f0-9]{32}))\}$/.exec(value);
     return match?(match[1]??match[2]).toLowerCase():undefined;
 }
-export function refreshHttpAgentConfig(agent:LocalAgent,source:string,connection:HttpConnectionInfo,previousUrl:string,serverKey='airk'):string{
+export function refreshHttpAgentConfig(agent:LocalAgent,source:string,connection:HttpConnectionInfo,previousUrl:string,serverKey='airk',previous?:HttpConnectionInfo):string{
     const info=validateHttpConnection(connection),url=httpUrl(previousUrl),client=agent==='copilot'?'vscode':agent;
+    const prior=previous===undefined?info:validateHttpConnection(previous);
+    if(previous!==undefined&&(prior.selection.kind!=='imported_legacy'||info.selection.kind!=='imported_legacy'
+        ||prior.selection.selection.grant.provenance.kind!=='imported_standalone_adoption'||info.selection.selection.grant.provenance.kind!=='imported_standalone_adoption'
+        ||!sameHttpAuthority(info.selection,prior.selection)||info.endpoint.installation!==prior.endpoint.installation||info.endpoint.user!==prior.endpoint.user
+        ||!same(info.ca_certificate_file,prior.ca_certificate_file)||url!==prior.endpoint.url))throw Error('standalone_http_reattachment_unconfirmed');
     const expected=httpServerFields(client,info);
+    const priorFields=httpServerFields(client,prior);
     if(serverKey!=='airk'&&preservedImportedHttpServerKey(info,serverKey)!==serverKey)throw Error('standalone_http_alias_unconfirmed');
     const options={retrievalKey:serverKey,targetKey:serverKey,onlyKey:true,selectedFamily:'unified' as const,entry:{key:serverKey,command:'',args:[],label:'AIRK',http:info},fields:expected,warn:()=>undefined,
         recognizes:(family:string,fields:Record<string,unknown>)=>{
-            if(family!=='unified'||fields.url!==url||httpConfigurationConnectionId(agent,fields)!==info.connection_id||'command'in fields||'args'in fields||'serverUrl'in fields||fields.type!==expected.type)return false;
+            if(family!=='unified'||fields.url!==url||httpConfigurationConnectionId(agent,fields)!==prior.connection_id||'command'in fields||'args'in fields||'serverUrl'in fields||fields.type!==priorFields.type)return false;
             if(agent==='codex'){
                 const headers=fields.http_headers;return fields.headers===undefined&&fields.env_http_headers===undefined&&(!headers||typeof headers==='object'&&!Array.isArray(headers)&&Object.keys(headers).every(key=>key==='X-AIRK-Response-Mode')&&['full','terse'].includes(String((headers as Record<string,unknown>)['X-AIRK-Response-Mode'])));
             }
             const headers=fields.headers as Record<string,unknown>,{['X-AIRK-Response-Mode']:mode,...authorization}=headers;
-            return (mode===undefined||mode==='full'||mode==='terse')&&(isDeepStrictEqual(authorization,{Authorization:(expected.headers as Record<string,unknown>).Authorization})||agent==='copilot'&&isDeepStrictEqual(authorization,{Authorization:'Bearer ${env:'+credentialEnvironment(info)+'}'}));
+            return (mode===undefined||mode==='full'||mode==='terse')&&(isDeepStrictEqual(authorization,{Authorization:(priorFields.headers as Record<string,unknown>).Authorization})||agent==='copilot'&&isDeepStrictEqual(authorization,{Authorization:'Bearer ${env:'+credentialEnvironment(prior)+'}'}));
         }};
     let result=agent==='codex'?consolidateToml(source,options):consolidateJson(source,agent==='copilot'?'servers':'mcpServers',options);
     if(agent==='copilot')result=syncVscodeHttpInput(result,info);

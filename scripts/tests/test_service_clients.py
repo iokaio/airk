@@ -17,11 +17,168 @@ SPEC.loader.exec_module(CLIENTS)
 
 
 class ServiceClientTests(unittest.TestCase):
+    def test_only_exact_reviewed_schema8_artifact_and_source_are_preflight_eligible(self):
+        manifest = "1ec0c84311eab5362e6404205c0ba8aa65b7bf92f7f0b278c76c35d4c80e4651"
+        source = "b98e439b8eab96b8825f0786af68a6d6d6a01f349ae7a6ace101d95d3718c20b"
+        contract = CLIENTS.reviewed_runtime_contract(manifest, source, "1.5.12")
+        self.assertEqual(contract["authority"], "legacy")
+        self.assertEqual(contract["migration_path"], "audited_imported_legacy")
+        self.assertEqual(contract["compiled_source_revision"], "d3b80ddf1c9af3acf97eb8f2f97960a7c2d6c3b7")
+        # These pins admit one authentic native preflight. Stable version labels,
+        # source alone and an unmapped local build cannot inherit that admission.
+        for changed in (("0" * 64, source, "1.5.12"),
+                        (manifest, "0" * 64, "1.5.12"),
+                        (manifest, source, "1.5.13"),
+                        ("bd417c4fe806d16287d25b87c658b16154ad2af669e335c83792e73d4a0a56b9",
+                         "c116f5b92f27e8f311772217face115b09f5b00ee15b4faa54a2af03cd33db55", "1.5.12")):
+            with self.subTest(changed=changed), self.assertRaisesRegex(ValueError, "Unreviewed"):
+                CLIENTS.reviewed_runtime_contract(*changed)
+
+    def test_unreviewed_or_unsupported_runtime_fails_before_start(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            owner=Path(temporary).resolve();runtime=owner/"runtime";runtime.mkdir()
+            modern={"schema":2,"version":"1.8.14","os":"windows","arch":"x86_64","airk_sha256":"a"*64}
+            cases=[{**modern,"schema":3},{**modern,"version":"1.8.15"},{**modern,"os":"unknown"},
+                   {**modern,"arch":"unknown"},{**modern,"airk_sha256":"not-a-digest"},{**modern,"extra":True}]
+            for metadata in cases:
+                with self.subTest(metadata=metadata):
+                    (runtime/"airk-runtime.json").write_text(json.dumps(metadata))
+                    with patch.object(CLIENTS.subprocess,"Popen") as process, self.assertRaises(ValueError):
+                        CLIENTS.Fixture(runtime,owner)
+                    process.assert_not_called()
+                    self.assertFalse((owner/"service.stderr").exists())
+            metadata={**modern,"schema":1,"version":"1.8.7","embed_sha256":"b"*64}
+            (runtime/"airk-runtime.json").write_text(json.dumps(metadata))
+            build={"runtime":metadata,"source":{"sha256":"c"*64}}
+            (runtime/"airk-build.json").write_text(json.dumps(build))
+            manifest={"files":{name:CLIENTS.hashlib.sha256((runtime/name).read_bytes()).hexdigest()
+                for name in ("airk-runtime.json","airk-build.json")}}
+            (runtime/"airk-install.json").write_text(json.dumps(manifest))
+            with patch.object(CLIENTS.subprocess,"Popen") as process, self.assertRaisesRegex(ValueError,"Unreviewed"):
+                CLIENTS.Fixture(runtime,owner)
+            process.assert_not_called()
+
+    def test_startup_matrix_uses_managed_owner_independently_of_packaging(self):
+        for single_image, authority in ((False,"legacy"),(False,"catalog"),(True,"catalog")):
+            with self.subTest(single_image=single_image,authority=authority), tempfile.TemporaryDirectory() as temporary:
+                owner=Path(temporary).resolve();runtime=owner/"payload";runtime.mkdir()
+                binary=runtime/"airk.exe";binary.write_bytes(b"fictional owned image")
+                (runtime/"airk-install.json").write_text("sealed fictional manifest")
+                identity=CLIENTS.hashlib.sha256((runtime/"airk-install.json").read_bytes()).hexdigest()
+                fixture=CLIENTS.Fixture.__new__(CLIENTS.Fixture)
+                fixture.owner,fixture.runtime,fixture.binary=owner,runtime,binary
+                fixture.single_image=single_image
+                fixture.compatibility={"authority":authority,"startup":"managed_install" if authority=="catalog" else "foreground_service"}
+                fixture.install=owner/"install";fixture.control=owner/("state/control" if authority=="catalog" else "control")
+                fixture.environment={};fixture.log=io.BytesIO();fixture.managed_started=False;fixture.child=None
+                health={"instance":"native-instance","runtime_sha256":identity,"executable_sha256":CLIENTS.hashlib.sha256(binary.read_bytes()).hexdigest()}
+                commands=[]
+                def run(*args,**kwargs):
+                    commands.append(args)
+                    if args[:2]==("runtime","stage"):
+                        installed=fixture.install/"runtimes"/identity/binary.name
+                        installed.parent.mkdir(parents=True);installed.write_bytes(binary.read_bytes())
+                        fixture.control.mkdir(parents=True)
+                        value={}
+                    elif args[:2]==("runtime","inspect"):
+                        value={"control_dir":str(fixture.control),"executable":str(fixture.install/"runtimes"/identity/binary.name)}
+                    else:value={}
+                    return subprocess.CompletedProcess([],0,json.dumps(value),"")
+                fixture.run=run;fixture.rpc=Mock(return_value={"observation":health})
+                child=Mock()
+                with patch.object(CLIENTS.subprocess,"Popen",return_value=child) as process:
+                    fixture.start()
+                if authority=="catalog":
+                    process.assert_not_called()
+                    self.assertEqual([command[:2] for command in commands],[("runtime","stage"),("runtime","activate"),*(([("runtime","ensure")]) if not single_image else []),("runtime","inspect")])
+                    self.assertTrue(fixture.managed_started)
+                    fixture.assert_alive()
+                else:
+                    process.assert_called_once()
+                    self.assertEqual(process.call_args.args[0],[str(binary),"serve","--runtime-dir",str(fixture.control)])
+                    self.assertEqual(commands,[("service","health","--runtime-dir",fixture.control)])
+                    self.assertFalse(fixture.managed_started)
+
+    def test_compatibility_matrix_executes_real_setup_and_scope_building(self):
+        for schema, authority in ((1,"legacy"),(1,"catalog"),(2,"catalog")):
+            with self.subTest(schema=schema, authority=authority), tempfile.TemporaryDirectory() as temporary:
+                owner=Path(temporary).resolve()
+                runtime=owner/"runtime";runtime.mkdir()
+                source=owner/"source";source.mkdir()
+                data=owner/"data";data.mkdir()
+                (data/"fiction").mkdir()
+                metadata={"schema":schema,"version":"1.8.14" if schema==2 else "1.8.12","os":"windows","arch":"x86_64","airk_sha256":"a"*64}
+                if schema==1:metadata["embed_sha256"]="b"*64
+                (runtime/"airk-runtime.json").write_text(json.dumps(metadata))
+                build={"runtime":metadata,"source":{"sha256":"c"*64}}
+                (runtime/"airk-build.json").write_text(json.dumps(build))
+                digest=lambda path: CLIENTS.hashlib.sha256(path.read_bytes()).hexdigest()
+                manifest={"files":{name:digest(runtime/name) for name in ("airk-runtime.json","airk-build.json")}}
+                (runtime/"airk-install.json").write_text(json.dumps(manifest))
+                key=(digest(runtime/"airk-install.json"),"c"*64)
+                contract={"version":"1.8.12","authority":authority,"input_owner":"legacy_cli" if authority=="legacy" else "native_administrative","migration_path":"unverified" if authority=="legacy" else "reviewed_catalog","historical_contract_review_revision":"reviewed-test-source"}
+                with patch.dict(CLIENTS.REVIEWED_RUNTIME_CONTRACTS,{key:contract}):
+                    compatibility=CLIENTS.runtime_compatibility(runtime)
+                fixture=CLIENTS.Fixture.__new__(CLIENTS.Fixture)
+                fixture.compatibility=compatibility;fixture.single_image=schema==2
+                fixture.control=owner/"control";fixture.projects={};fixture.scopes={}
+                registration={"binding":"d"*64,"root":str(source),"data_root":str(data/"fiction" if authority=="catalog" else data),"collection":"fiction"}
+                calls=[]
+                def rpc(method):
+                    calls.append(method)
+                    if method=="request_epoch":return {"namespace":"e"*32,"epoch":1}
+                    kind=next(iter(method)); request=method[kind]
+                    if kind=="register":return {"project":{"registration":request["project"]}}
+                    if kind=="catalog_host_context":return {"descriptor":{"catalog_revision":9,"namespace":"e"*32}}
+                    if kind=="catalog_index_setup_draft":return {"draft":{"opaque":"setup"}}
+                    if kind=="catalog_index_setup_apply":return {"status":"catalog_index_setup_applied","receipt":{"stage":"ready","catalog_revision":2,"index_id":"idx","source_ids":["src"]}}
+                    if kind=="catalog_preview":return {"preview_digest":"f"*64}
+                    if kind=="catalog_apply":return {"status":"catalog_applied","receipt":{"catalog_revision":5}}
+                    if kind=="catalog_grant_draft":return {"draft":{"request":{"operation":{"grant":{"id":"grant"}}},"preview_digest":"f"*64}}
+                    if kind=="catalog_detail":return {"detail":{"item":{"value":{"backing":registration}}}}
+                    raise AssertionError(method)
+                fixture.rpc=rpc
+                fixture.run=Mock(return_value=subprocess.CompletedProcess([],0,json.dumps(registration),""))
+                fixture.register("fiction",source,data)
+                self.assertEqual(fixture.projects["fiction"],registration)
+                arguments=fixture.arguments("fiction")
+                self.assertEqual(compatibility["transport"],"https" if schema==2 else "stdio")
+                self.assertEqual(compatibility["original_scope"],"catalog_session" if authority=="catalog" else "service_project")
+                if authority=="catalog":
+                    fixture.run.assert_not_called()
+                    self.assertIn("catalog_index_setup_apply",[next(iter(call)) for call in calls if isinstance(call,dict)])
+                    self.assertNotIn("register",[next(iter(call)) for call in calls if isinstance(call,dict)])
+                    self.assertEqual(arguments[:3],["--service-runtime-dir",str(fixture.control),"--catalog-session"])
+                    self.assertEqual(json.loads(arguments[3]),{**fixture.scopes["fiction"],"expected_catalog_revision":9})
+                    with self.assertRaisesRegex(AssertionError,"canonical Catalog retirement"):fixture.remove("fiction")
+                else:
+                    fixture.run.assert_called_once_with("--root",source,"--data-dir",data,"--collection","fiction","service","prepare-registration")
+                    self.assertEqual(arguments,fixture.management_arguments("fiction"))
+                if schema==1:
+                    with self.assertRaisesRegex(ValueError,"Unreviewed managed predecessor"):
+                        CLIENTS.runtime_compatibility(runtime)
+                    manifest["files"]["airk-build.json"]="0"*64
+                    (runtime/"airk-install.json").write_text(json.dumps(manifest))
+                    with self.assertRaisesRegex(ValueError,"not sealed"):
+                        CLIENTS.runtime_compatibility(runtime)
+
+    def test_schema_one_catalog_authority_never_selects_fresh_raw_registration(self):
+        fixture = CLIENTS.Fixture.__new__(CLIENTS.Fixture)
+        fixture.single_image = False
+        fixture.compatibility = {"authority": "catalog"}
+        fixture.projects, fixture.scopes = {}, {}
+        fixture.run = Mock(side_effect=AssertionError("catalog authority selected fresh raw registration"))
+        fixture.rpc = Mock(side_effect=RuntimeError("reviewed setup reached"))
+        with self.assertRaisesRegex(RuntimeError, "reviewed setup reached"):
+            fixture.register("fixture", Path("source"), Path("data"))
+        fixture.run.assert_not_called()
+
     def test_management_arguments_use_exact_saved_registration_while_modern_evidence_stays_scoped(self):
         for modern in (False, True):
             with self.subTest(single_image=modern):
                 fixture = CLIENTS.Fixture.__new__(CLIENTS.Fixture)
                 fixture.single_image = modern
+                fixture.compatibility = {"authority": "catalog" if modern else "legacy"}
                 fixture.control = Path("owned-control")
                 registration = {"binding":"native-project-binding","root":"native-original-source",
                                 "data_root":"native-owned-index-data","collection":"native-collection"}
@@ -92,6 +249,7 @@ class ServiceClientTests(unittest.TestCase):
             fixture = faults.FaultFixture.__new__(faults.FaultFixture)
             fixture.owner, fixture.install, fixture.binary = owner, owner / "install", binary
             fixture.single_image = True
+            fixture.compatibility = {"authority":"catalog", "startup":"managed_install"}
             fixture.managed_health = {"process_id": 123, "instance": "native-instance"}
             fixture.assert_alive = Mock()
             child = Mock(pid=123, returncode=-9)
@@ -285,6 +443,7 @@ class ServiceClientTests(unittest.TestCase):
     def test_modern_service_identity_failure_does_not_submit_stop_to_another_instance(self):
         fixture = CLIENTS.Fixture.__new__(CLIENTS.Fixture)
         fixture.single_image, fixture.managed_started, fixture.managed_stop = True, True, None
+        fixture.compatibility = {"authority":"catalog", "startup":"managed_install"}
         fixture.managed_health = {"instance":"owned","runtime_sha256":"approved","executable_sha256":"main"}
         fixture.log = Mock()
         with patch.object(fixture,"rpc",return_value={"observation":{"instance":"different","runtime_sha256":"approved","executable_sha256":"main"}}), patch.object(fixture,"run") as run:
@@ -416,25 +575,21 @@ class ServiceClientTests(unittest.TestCase):
         fixture.control = Path("fictional-control")
         return fixture
 
-    def test_registry_contention_repeats_only_the_exact_read_with_remaining_budget(self):
+    def test_metadata_success_retains_the_complete_native_read_and_original_deadline(self):
         fixture, clock = self.metadata_fixture(), [0.0]
         method = {"job": {"id": "accepted-job"}}
-        replies = [{"status": "failure", "code": "registry_busy"},
-                   {"status": "job", "job": {"id": "accepted-job", "state": "succeeded"}}]
+        reply = {"status": "job", "job": {"id": "accepted-job", "state": "succeeded"}, "future_native": {"all": ["retained"]}}
         def run(*args, **kwargs):
             clock[0] += 0.1
-            return subprocess.CompletedProcess(args, 0, json.dumps(replies.pop(0)), "")
+            return subprocess.CompletedProcess(args, 0, json.dumps(reply), "")
         with patch.object(fixture, "run", side_effect=run) as transport, \
                 patch.object(CLIENTS.time, "monotonic", side_effect=lambda: clock[0]), \
                 patch.object(CLIENTS.time, "sleep", side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)):
-            self.assertEqual(fixture.rpc(method, deadline=1.0)["job"]["id"], "accepted-job")
-        self.assertEqual(transport.call_count, 2)
-        first, second = transport.call_args_list
-        self.assertEqual(first.args, second.args)
+            self.assertEqual(fixture.rpc(method, deadline=1.0), reply)
+        transport.assert_called_once()
+        first = transport.call_args
         self.assertEqual(first.kwargs["input"], json.dumps(method))
-        self.assertEqual(first.kwargs["input"], second.kwargs["input"])
         self.assertAlmostEqual(first.kwargs["timeout"], 1.0)
-        self.assertAlmostEqual(second.kwargs["timeout"], 0.875)
 
     def test_metadata_mutations_unknown_failures_and_transport_errors_never_replay(self):
         fixture = self.metadata_fixture()
@@ -457,18 +612,18 @@ class ServiceClientTests(unittest.TestCase):
                     fixture.rpc({"job": {"id": "exact"}})
                 transport.assert_called_once()
 
-    def test_source_review_contention_preserves_selection_key_and_original_deadline(self):
+    def test_source_review_native_busy_exhaustion_preserves_selection_key_and_original_deadline(self):
         method = {"catalog_source_mutation_draft": {"selection": {
             "key": "same-review-key", "catalog_revision": 7, "request_epoch": 0,
             "change": {"kind": "add_root", "alias": "specs", "path": "fixture-specs"}}}}
-        result = {"status": "catalog_source_mutation_draft", "draft": {"operation": "exact-operation"}}
+        busy = {"status": "failure", "code": "registry_busy"}
         clock = [0.0]
         with patch.object(CLIENTS.time, "monotonic", side_effect=lambda: clock[0]), \
                 patch.object(CLIENTS.time, "sleep", side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)):
-            transport = unittest.mock.Mock(side_effect=[{"status": "failure", "code": "registry_busy"}, result])
-            self.assertEqual(CLIENTS.metadata_rpc(transport, method, deadline=1.0), result)
-            self.assertEqual(transport.call_count, 2)
-            self.assertEqual(transport.call_args_list[0], transport.call_args_list[1])
+            transport = unittest.mock.Mock(return_value=busy)
+            with self.assertRaisesRegex(AssertionError, "registry_busy"):
+                CLIENTS.metadata_rpc(transport, method, deadline=1.0)
+            transport.assert_called_once()
             self.assertEqual(transport.call_args.args, (json.dumps(method), 1.0))
         for refused in ({"status": "failure", "code": "invalid_registry_request"},
                         {"status": "failure", "code": "registry_busy", "unexpected": True}):
@@ -478,7 +633,7 @@ class ServiceClientTests(unittest.TestCase):
                     CLIENTS.metadata_rpc(transport, method)
                 transport.assert_called_once()
 
-    def test_source_review_observations_retry_only_exact_native_contention(self):
+    def test_source_review_observations_never_multiply_native_retries(self):
         for name in ('catalog_source_mutation_draft', 'catalog_host_context', 'catalog_page',
                      'catalog_grant_draft', 'catalog_source_change_observation', 'catalog_receipt',
                      'catalog_index_retirement_evidence'):
@@ -486,25 +641,25 @@ class ServiceClientTests(unittest.TestCase):
             result = {'status': name, 'complete': {'native': ['all', 'fields']}}
             with self.subTest(name=name), patch.object(CLIENTS.time, 'monotonic', return_value=0), \
                     patch.object(CLIENTS.time, 'sleep'):
-                transport = unittest.mock.Mock(side_effect=[{'status':'failure','code':'registry_busy'},result])
-                self.assertEqual(CLIENTS.metadata_rpc(transport, method, deadline=1.0), result)
-                self.assertEqual(transport.call_count, 2)
-                self.assertEqual(transport.call_args_list[0], transport.call_args_list[1])
+                transport = unittest.mock.Mock(return_value=result)
+                self.assertIs(CLIENTS.metadata_rpc(transport, method, deadline=1.0), result)
+                transport.assert_called_once()
                 self.assertEqual(transport.call_args.args, (json.dumps(method), 1.0))
-                for refused in ({'status':'failure','code':'invalid_registry_request'},
+                for refused in ({'status':'failure','code':'registry_busy'},
+                                {'status':'failure','code':'invalid_registry_request'},
                                 {'status':'failure','code':'registry_busy','unexpected':True}):
                     transport = unittest.mock.Mock(return_value=refused)
                     with self.assertRaises(AssertionError): CLIENTS.metadata_rpc(transport, method, deadline=1.0)
                     transport.assert_called_once()
 
-    def test_registry_read_contention_has_finite_attempt_and_wall_clock_budgets(self):
+    def test_native_registry_busy_exhaustion_is_one_invocation_with_original_deadline(self):
         fixture, clock = self.metadata_fixture(), [0.0]
         busy = subprocess.CompletedProcess([], 0, json.dumps({"status": "failure", "code": "registry_busy"}), "")
         with patch.object(fixture, "run", return_value=busy) as transport, \
                 patch.object(CLIENTS.time, "monotonic", return_value=0), patch.object(CLIENTS.time, "sleep"):
             with self.assertRaisesRegex(AssertionError, "registry_busy"):
                 fixture.rpc({"job": {"id": "exact"}}, deadline=1.0)
-            self.assertEqual(transport.call_count, 41)
+            transport.assert_called_once()
         def run(*args, **kwargs):
             clock[0] += 0.1
             return busy
@@ -513,6 +668,10 @@ class ServiceClientTests(unittest.TestCase):
             with self.assertRaises(CLIENTS.ObservationTimeout):
                 fixture.rpc({"job": {"id": "exact"}}, deadline=0.1)
             transport.assert_called_once()
+        with patch.object(fixture, "run") as transport, patch.object(CLIENTS.time, "monotonic", return_value=1.0):
+            with self.assertRaises(CLIENTS.ObservationTimeout):
+                fixture.rpc({"job": {"id": "exact"}}, deadline=0.5)
+            transport.assert_not_called()
 
     def test_expected_native_refusal_is_observed_once_without_permitting_other_failures(self):
         method = {"stop_embedding": {"worker": "foreign", "force": True}}
@@ -548,7 +707,7 @@ class ServiceClientTests(unittest.TestCase):
             nested = root / "AIRK.app/Contents/MacOS"
             nested.mkdir(parents=True)
             (nested / "airk").write_bytes(b"fictional native payload")
-            (root / "airk-runtime.json").write_text('{"schema":1}', encoding="utf-8")
+            (root / "airk-runtime.json").write_text(json.dumps({"schema":2,"version":"1.8.14","os":"macos","arch":"aarch64","airk_sha256":"a"*64}), encoding="utf-8")
             for selected in (root, nested):
                 fixture = CLIENTS.Fixture(selected, root)
                 try:
@@ -627,6 +786,7 @@ class ServiceClientTests(unittest.TestCase):
     def fixture(self):
         fixture = CLIENTS.Fixture.__new__(CLIENTS.Fixture)
         fixture.single_image = False
+        fixture.compatibility = {"authority":"legacy", "startup":"foreground_service"}
         fixture.arguments = lambda _: ["--service-project", "project"]
         fixture.projects = {"fixture": {"collection": "fixture", "binding": "project"}}
         fixture.command_timeout = 120

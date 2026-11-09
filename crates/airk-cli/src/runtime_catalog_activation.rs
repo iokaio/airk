@@ -12,6 +12,10 @@ use std::io::{Seek, SeekFrom};
 #[path = "runtime_catalog_authority.rs"]
 mod authority;
 
+pub(super) fn activate_rebuild_genesis(root: &Path, intent: &Intent) -> Result<()> {
+    authority::activate_rebuild_genesis(root, intent)
+}
+
 const MAX_RECEIPT: u64 = 32 * 1024 * 1024;
 const MAX_ERROR: u64 = 65536;
 

@@ -40,6 +40,73 @@ fn add(root: &Path, label: &str, historical: bool) -> Result<String> {
 }
 
 #[test]
+fn later_upgrade_retires_rebuilt_payload_and_explicitly_preserves_original_recovery_inventories()
+-> Result<()> {
+    let (_owner, root, preserved, rebuilt, later) =
+        crate::runtime_install::activation::rebuild::tests::historical_retirement_fixture()?;
+    activation::rebuild::require_retirement_allowed(&root)?;
+    let before = preserved
+        .iter()
+        .map(|identity| -> Result<_> {
+            Ok((
+                identity.clone(),
+                fs::read(
+                    root.join("runtimes")
+                        .join(identity)
+                        .join("airk-install.json"),
+                )?,
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let images = inspect_images(&root, &later)?;
+    assert!(
+        images.iter().any(|image| image["runtime_sha256"] == rebuilt
+            && image["preserved_rebuild_evidence"] == false)
+    );
+    for identity in &preserved {
+        assert!(
+            images
+                .iter()
+                .any(|image| image["runtime_sha256"] == *identity
+                    && image["preserved_rebuild_evidence"] == true)
+        );
+    }
+    let intent = prepare(&root, &later)?;
+    assert_eq!(intent.runtimes, vec![rebuilt.clone()]);
+    let mut crossed = intent.clone();
+    crossed.runtimes.push(preserved[0].clone());
+    assert!(validate(&root, &crossed, &later).is_err());
+    finish_payloads(&root, &intent)?;
+    assert!(!root.join("runtimes").join(rebuilt).exists());
+    assert!(identities(&root, &later)?.is_empty());
+    assert_eq!(
+        activation::rebuild::preserved_runtime_ids(&root)?,
+        preserved
+    );
+    for (identity, bytes) in before {
+        verify_runtime(&root, &identity)?;
+        assert_eq!(
+            fs::read(
+                root.join("runtimes")
+                    .join(&identity)
+                    .join("airk-install.json")
+            )?,
+            bytes
+        );
+        assert!(remove(&root, &identity).is_err());
+        assert!(!root.join(format!("retire-{identity}.json")).exists());
+    }
+    let retained = inspect_images(&root, &later)?;
+    assert!(!retained.is_empty());
+    assert!(
+        retained
+            .iter()
+            .all(|image| image["preserved_rebuild_evidence"] == true)
+    );
+    Ok(())
+}
+
+#[test]
 fn legacy_to_modern_then_modern_to_modern_removes_all_generations_and_preserves_stopped_state()
 -> Result<()> {
     let (_owner, root, legacy) = super::super::super::tests::unselected_historical_fixture()?;

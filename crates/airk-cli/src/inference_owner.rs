@@ -185,6 +185,16 @@ impl InferenceOwner {
     pub(crate) fn generation(&self) -> Incarnation {
         self.provider.provider_generation
     }
+    #[cfg(test)]
+    pub(crate) fn set_compute_hook(&self, hook: ComputeHook) -> Result<()> {
+        let (reply, completed) = oneshot::channel();
+        self.state
+            .sender
+            .blocking_send(Work::ComputeHook { hook, reply })
+            .map_err(|_| anyhow::anyhow!("owned inference queue closed"))?;
+        completed.blocking_recv()?;
+        Ok(())
+    }
     pub(crate) fn provider_status(&self) -> Result<airk_core::inference_provider::ProviderStatus> {
         let mut status = self
             .state

@@ -388,6 +388,7 @@ pub(super) async fn retire(root: &Path, expected: &str) -> Result<serde_json::Va
     let canonical = root.canonicalize()?;
     let root = canonical.as_path();
     let _lock = install_lock(root)?;
+    activation::rebuild::require_retirement_allowed(root)?;
     selected_https(root, expected)?;
     require_issuer_rotation_settled(root)?;
     managed::require_unmanaged(root)?;

@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Actual private TLS fixture: normal CA/IP checks precede bearer delivery."""
 from contextlib import contextmanager
+import base64
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import importlib.util
@@ -20,6 +21,101 @@ SPEC = importlib.util.spec_from_file_location("http_fixture", Path(__file__).par
 HTTP = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(HTTP)
 OPENSSL = shutil.which("openssl") or ("C:/Program Files/Git/usr/bin/openssl.exe" if Path("C:/Program Files/Git/usr/bin/openssl.exe").is_file() else None)
+
+
+class ResponseEvidenceTests(unittest.TestCase):
+    def client(self, status, data, headers=()):
+        from unittest.mock import Mock
+        client = HTTP.McpClient.__new__(HTTP.McpClient)
+        client._token, client.session = "fictional-token", "fictional-session"
+        client._connection_id, client._certificate_sha256 = "owned", hashlib.sha256(b"leaf").hexdigest()
+        client.protocol, client.initialized = "2025-11-25", True
+        response = Mock(status=status)
+        response.read.return_value = data
+        response.getheaders.return_value = list(headers)
+        response.getheader.side_effect = lambda key: dict(headers).get(key)
+        client.connection = Mock()
+        client.connection.sock.getpeercert.return_value = b"leaf"
+        client.connection.getresponse.return_value = response
+        client.pending, client.unsolicited = {}, []
+        return client
+
+    def test_refusal_redacts_sessions_in_bodies_and_arbitrary_headers(self):
+        raw = b'{"echo":"fictional-session fictional-token"}'
+        client = self.client(503, raw, [("X-Echo", "fictional-session"), ("Mcp-Session-Id", "new-session")])
+        with self.assertRaises(HTTP.HttpRefused) as caught:
+            client._request("POST", {"id": 4, "method": "tools/call"})
+        evidence = caught.exception.evidence()
+        self.assertNotIn("fictional-session", json.dumps(evidence))
+        self.assertNotIn("fictional-token", json.dumps(evidence))
+        self.assertTrue(evidence["body_redacted"])
+        self.assertEqual(evidence["header_redactions"], ["X-Echo", "Mcp-Session-Id"])
+        self.assertEqual(evidence["request"]["jsonrpc_id"], 4)
+
+    def test_oversize_response_is_typed_bounded_uncertain_evidence(self):
+        client = self.client(200, b"fictional-session " + b"x" * HTTP.MAX_RESPONSE_BYTES)
+        with self.assertRaises(HTTP.HttpResponseError) as caught:
+            client._request("POST", {"id": 8, "method": "tools/call"})
+        evidence = caught.exception.evidence()
+        self.assertEqual(evidence["failure"], "response_limit")
+        self.assertTrue(evidence["body_truncated"])
+        self.assertEqual(evidence["submission"], "uncertain")
+        self.assertLessEqual(len(caught.exception.raw_body), HTTP.MAX_RESPONSE_BYTES)
+        self.assertEqual(evidence["request"]["jsonrpc_id"], 8)
+
+    def test_oversize_response_redacts_secret_prefix_cut_by_actual_read_bound(self):
+        for secret in (b"fictional-token", b"fictional-session"):
+            with self.subTest(secret=secret):
+                data = b"x" * (HTTP.MAX_RESPONSE_BYTES-4) + secret[:5]
+                client = self.client(200, data)
+                with self.assertRaises(HTTP.HttpResponseError) as caught:
+                    client._request("POST", {"id": 8, "method": "tools/call"})
+                self.assertTrue(secret[:4] not in caught.exception.raw_body, "retained prefix contains secret bytes")
+                self.assertTrue(caught.exception.body_redacted)
+
+    def test_truncation_without_secret_is_not_reported_as_redaction(self):
+        client = self.client(200, b"x" * (HTTP.MAX_RESPONSE_BYTES+1))
+        with self.assertRaises(HTTP.HttpResponseError) as caught:
+            client._request("POST", {"id": 8, "method": "tools/call"})
+        self.assertTrue(caught.exception.body_truncated)
+        self.assertFalse(caught.exception.body_redacted)
+
+    def test_http_200_rpc_error_retains_response_and_request(self):
+        raw = json.dumps({"jsonrpc": "2.0", "id": 9, "error": {"code": -32000, "data": "fictional-session"}}).encode()
+        client = self.client(200, raw, [("Content-Type", "application/json")])
+        with self.assertRaises(HTTP.HttpResponseError) as caught:
+            client.send({"jsonrpc": "2.0", "id": 9, "method": "tools/call"})
+        evidence = caught.exception.evidence()
+        self.assertEqual(evidence["failure"], "jsonrpc_error")
+        self.assertEqual(evidence["body"]["error"]["code"], -32000)
+        self.assertEqual(evidence["request"]["jsonrpc_id"], 9)
+        self.assertNotIn("fictional-session", json.dumps(evidence))
+
+    def test_shared_classifier_rejects_unknown_status_and_submitted_outcomes(self):
+        for status, code in ((429, "query_admission_busy"), (503, "authentication_busy"), (503, "native_validation_busy")):
+            body = {"schema": "airk.local-api-error/1", "error": {"code": code}}
+            self.assertIsNotNone(HTTP.classify_refusal(HTTP.HttpRefused(status, body)))
+            self.assertIsNone(HTTP.classify_refusal(HTTP.HttpRefused(401, body)))
+            body["query_submitted"] = True
+            self.assertIsNone(HTTP.classify_refusal(HTTP.HttpRefused(status, body)))
+
+    def test_phase_accounting_has_no_success_threshold_and_keeps_unexecuted_calls(self):
+        outcomes = [{"outcome": "refused", "code": "authentication_busy"}] * 64
+        phase = HTTP.phase_counts(outcomes, 64)
+        self.assertTrue(phase["passed"])
+        self.assertEqual(phase["succeeded"], 0)
+        self.assertEqual(phase["refused_by_code"], {"authentication_busy": 64})
+        self.assertEqual(HTTP.phase_counts(outcomes[:1], 64)["not_executed"], 63)
+        self.assertFalse(HTTP.phase_counts(outcomes + [{"outcome": "uncertain"}], 65)["passed"])
+        self.assertFalse(HTTP.phase_counts(outcomes + [{"outcome": "failed"}], 65)["passed"])
+        with self.assertRaisesRegex(ValueError, "not documented"):
+            HTTP.phase_counts([{"outcome": "refused", "code": "unknown"}], 1)
+
+    def test_unknown_refusals_are_failures_and_response_limit_is_uncertain(self):
+        body = {"schema": "airk.local-api-error/1", "error": {"code": "native_delivery_fenced"}}
+        self.assertEqual(HTTP.error_outcome(HTTP.HttpRefused(503, body)), "failed")
+        self.assertEqual(HTTP.error_outcome(HTTP.HttpResponseError(200, {}, submission="uncertain")), "uncertain")
+        self.assertEqual(HTTP.error_outcome(ConnectionResetError()), "uncertain")
 
 
 def certificate_key_identifier(path, kind):
@@ -73,7 +169,7 @@ class ActualHttpsFixtureTests(unittest.TestCase):
                 client.close()
 
     @contextmanager
-    def server(self, wire=None):
+    def server(self, wire=None, refusal_status=403, reflect_credential=False):
         observed = []
         class Handler(BaseHTTPRequestHandler):
             protocol_version = "HTTP/1.1"
@@ -98,8 +194,16 @@ class ActualHttpsFixtureTests(unittest.TestCase):
                         self.send_response(400); self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data); return
                 if self.path.startswith("/api/v1/tools/"):
                     if self.path.endswith("/refused"):
-                        data = json.dumps({"error":{"code":"fixture_refused","future_detail":{"retained":True}}}).encode()
-                        self.send_response(403); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data); return
+                        body = {"error":{"code":"fixture_refused","future_detail":{"retained":True}}}
+                        if reflect_credential:
+                            body["reflected"] = self.headers.get("Authorization")
+                        data = json.dumps(body).encode()
+                        self.send_response(refusal_status); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(data)))
+                        self.send_header("X-Fixture-Future", "original-first"); self.send_header("X-Fixture-Future", "original-second")
+                        if reflect_credential:
+                            self.send_header("Mcp-Session-Id", "private-fixture-session")
+                            self.send_header("X-Fixture-Token", self.headers.get("Authorization"))
+                        self.end_headers(); self.wfile.write(data); return
                     data = json.dumps({"content": [], "structuredContent": {"arguments": value, "future_field": {"retained": True}}, "isError": False}).encode()
                     self.send_response(200); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data); return
                 if "id" not in value:
@@ -220,6 +324,36 @@ class ActualHttpsFixtureTests(unittest.TestCase):
                 self.assertEqual(caught.exception.status,403)
                 self.assertEqual(caught.exception.body,{"error":{"code":"fixture_refused","future_detail":{"retained":True}}})
                 self.assertNotIn("airk1.",str(caught.exception))
+                evidence = caught.exception.evidence()
+                self.assertEqual(evidence["error_code"], "fixture_refused")
+                self.assertEqual([value for name,value in evidence["headers"] if name == "X-Fixture-Future"],
+                                 ["original-first", "original-second"])
+                self.assertEqual(json.loads(base64.b64decode(evidence["raw_body_base64"])), caught.exception.body)
+                request = evidence["request"]
+                self.assertEqual((request["http_method"], request["path"], request["connection_id"]),
+                                 ("POST", "/api/v1/tools/refused", connection["connection_id"]))
+                self.assertEqual(request["request_sha256"], hashlib.sha256(b"{}").hexdigest())
+            finally:
+                client.close()
+
+    def test_actual_http_503_preserves_diagnostics_but_redacts_reflected_credentials_and_session(self):
+        with self.server(refusal_status=503, reflect_credential=True) as (connection, observed):
+            client = HTTP.McpClient(connection, self.root)
+            try:
+                with self.assertRaises(HTTP.HttpRefused) as caught:
+                    client.api_read("refused", {"future_original_arguments": [1, 2]})
+                evidence = caught.exception.evidence()
+                self.assertEqual(evidence["status"], 503)
+                self.assertEqual(evidence["body"]["error"]["future_detail"], {"retained": True})
+                self.assertTrue(evidence["body_redacted"])
+                self.assertEqual(evidence["header_redactions"], ["Mcp-Session-Id", "X-Fixture-Token"])
+                self.assertEqual(dict(evidence["headers"])["Mcp-Session-Id"], "[REDACTED]")
+                self.assertNotIn(client._token, json.dumps(evidence))
+                self.assertNotIn("private-fixture-session", json.dumps(evidence))
+                raw = base64.b64decode(evidence["raw_body_base64"])
+                self.assertNotIn(client._token.encode(), raw)
+                self.assertEqual(evidence["raw_body_sha256"], hashlib.sha256(raw).hexdigest())
+                self.assertEqual(len(observed), 1, "A complete refusal is never replayed")
             finally:
                 client.close()
 

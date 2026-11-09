@@ -14,6 +14,7 @@ export function IndexingScreen(props: ScreenProps) {
     const [indexTask,setIndexTask]=useState<'sources'|'split'|'memberships'|'settings'>('sources');
     const selectedPanel=useRef<HTMLElement>(null);
     const automaticRead=useRef('');
+    const workingNow=useRef(false),[working,setWorking]=useState(false);
     const [error,setError]=useState(''),[name,setName]=useState(''),[filter,setFilter]=useState('');
     const [index,setIndex]=useState('');
     const [setIndexes,setSetIndexes]=useState<string[]>([]);
@@ -30,10 +31,12 @@ export function IndexingScreen(props: ScreenProps) {
     useEffect(()=>{setScopeIndexes(scope?.selectedIndexIds??[]);setScopeProjects(scope?.selectedProjectIds??[]);},[scopeSelection]);
     const scopeDirty=JSON.stringify([scopeIndexes.slice().sort(),scopeProjects.slice().sort()])!==JSON.stringify([(scope?.selectedIndexIds??[]).slice().sort(),(scope?.selectedProjectIds??[]).slice().sort()]);
     const toggle=(items:string[],id:string,checked:boolean)=>checked?[...items.filter(item=>item!==id),id]:items.filter(item=>item!==id);
-    const run=async(work:()=>Promise<unknown>)=>{setError('');try{await work();}catch(failure){setError(failure instanceof Error?failure.message:String(failure));}};
+    // Keep the complete action chain exclusive, including fresh reads after a
+    // successful mutation changes the native owner and clears retained rows.
+    const run=async(work:()=>Promise<unknown>)=>{if(workingNow.current)return;workingNow.current=true;setWorking(true);setError('');try{await work();}catch(failure){setError(failure instanceof Error?failure.message:String(failure));}finally{workingNow.current=false;setWorking(false);}};
     const preview=(operation:CatalogObject)=>run(()=>request('indexing.preview',{operation,generation:view.generation}));
     const connectionPending=['connecting','disconnected','incompatible','untrusted'].includes(props.state.connection);
-    const disabled=view.busy||!props.state.trusted||props.state.nativeExecutionEnabled===false||upgradePending(props.state.runtimeUpgrade)||connectionPending;
+    const disabled=working||view.busy||!props.state.trusted||props.state.nativeExecutionEnabled===false||upgradePending(props.state.runtimeUpgrade)||connectionPending;
     const tab=props.route.tab;
     const rows=catalogItems(view.page), retainedDetail=catalogItems(view.detail,'detail')[0];
     const detail=(tab==='library'&&retainedDetail?.kind==='index'||tab==='projects'&&retainedDetail?.kind==='project')?retainedDetail:undefined;
@@ -64,7 +67,7 @@ export function IndexingScreen(props: ScreenProps) {
     const readOwner=JSON.stringify([tab,props.state.selectedProject,props.state.selectionEpoch,props.state.trusted,props.state.nativeExecutionEnabled,props.state.runtimeUpgrade?.toVersion,props.state.runtimeUpgrade?.stage]);
     useEffect(()=>{
         if(connectionPending){automaticRead.current='';return;}
-        if(disabled||automaticRead.current===readOwner)return;
+        if(disabled||workingNow.current||automaticRead.current===readOwner)return;
         if(tab==='window'){
             if(!scope){automaticRead.current=readOwner;void run(()=>request('indexing.scope.read',{}));}
         }else{

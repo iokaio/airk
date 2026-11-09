@@ -189,6 +189,7 @@ impl crate::Kernel {
             read_scope: None,
             verification_cancellation: None,
             progress: None,
+            rebuild_observer: None,
             root: std::path::PathBuf::from(&archive.scope().root),
             collection: registration.collection.clone(),
             data_root,

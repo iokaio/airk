@@ -989,7 +989,7 @@ impl AirkServer {
                 if airk_kernel::retrieval_retry::read_retry_hint(&error).is_some() {
                     return Err(error);
                 }
-                Ok(serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"health":"unknown","index_state":"unavailable","publication":null,"files":null,"chunks":null,"freshness":kernel.changes_freshness(),"index_error":{"code":"index_status_unavailable","message":"Published index metadata could not be read. Use diagnostics for details."}}))
+                kernel.attach_rebuild_observation(serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"health":"unknown","index_state":"unavailable","publication":null,"files":null,"chunks":null,"freshness":kernel.changes_freshness(),"index_error":{"code":"index_status_unavailable","message":"Published index metadata could not be read. Use diagnostics for details."}}))
             })?;
             status["observed_unix_ms"] = serde_json::json!(std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64);
@@ -1039,6 +1039,9 @@ impl AirkServer {
             );
             status["work"] = work
                 .unwrap_or_else(|| serde_json::json!({"error":"native_work_context_unavailable"}));
+            if status.get("rebuild").is_none() && status.get("rebuild_unavailable").is_none() {
+                status = kernel.attach_rebuild_observation(status)?;
+            }
             Ok(status)
         })
         .await

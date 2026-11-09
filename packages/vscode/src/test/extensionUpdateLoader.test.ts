@@ -73,6 +73,23 @@ test('update inventory captures exact source bytes and refuses an incomplete rep
     } finally { await f.close(); }
 });
 
+test('Windows path aliases keep the sealed interface active during an in-flight action', {skip:process.platform!=='win32'}, async () => {
+    const f=await diskFixture(), events:string[]=[];
+    const alias=f.root.toUpperCase();assert.notEqual(alias,f.root);
+    const loader=new ExtensionUpdateLoader(context(f.root),readUpdatePayload,async()=>alias,()=>({
+        activate:async()=>{events.push('activate');return {getServerDefinitions:async()=>[],whenReady:async()=>{},prepareForUpdate:async()=>{events.push('retire');}};},
+        deactivate:async()=>{events.push('deactivate');}
+    }),async()=>{});
+    try{
+        const before=await readUpdatePayload(f.root),after=await readUpdatePayload(alias);
+        assert.equal(before.root,await fs.realpath(f.root));
+        assert.equal(after.root,before.root);assert.equal(after.identity,before.identity);
+        await loader.start();
+        await loader.refresh();await loader.refresh();
+        assert.deepEqual(events,['activate'],'An unchanged installed interface must not invalidate an ongoing native action');
+    }finally{await loader.stop();await f.close();}
+});
+
 test('installed manifests accept only VS Code private metadata and formatting changes while retaining reviewed bytes', async () => {
     const f = await diskFixture();
     try {

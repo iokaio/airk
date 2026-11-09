@@ -12,13 +12,26 @@ use airk_store::service::registry::catalog::upgrade::{
 };
 
 pub(super) fn activate_fresh(root: &Path, intent: &Intent) -> Result<()> {
+    activate_genesis(root, intent, false)
+}
+
+pub(super) fn activate_rebuild_genesis(root: &Path, intent: &Intent) -> Result<()> {
+    rebuild::require_genesis(root, intent)?;
+    activate_genesis(root, intent, true)
+}
+
+fn activate_genesis(root: &Path, intent: &Intent, successor: bool) -> Result<()> {
     use airk_store::service::{
         ServiceLease,
         registry::catalog::genesis::{self, CatalogGenesis, GenesisStage},
     };
-    let producer = NativeProducer::fresh(root, intent)?;
+    let producer = if successor {
+        NativeProducer::successor(root, intent)?
+    } else {
+        NativeProducer::fresh(root, intent)?
+    };
     ensure!(
-        intent.prior.is_none(),
+        successor || intent.prior.is_none(),
         "fresh genesis cannot replace a predecessor"
     );
     let saved = genesis::pending(&intent.control)?;
@@ -100,6 +113,7 @@ pub(in crate::runtime_install) fn activate_managed(
         installer: origin.installer_identity,
         predecessor: None,
         expected_selection: None,
+        successor: false,
     };
     let mut receipt = owner.receipt()?;
     ensure!(
@@ -163,9 +177,25 @@ pub(super) struct NativeProducer<'a> {
     installer: Sha256Digest,
     predecessor: Option<Sha256Digest>,
     expected_selection: Option<Selection>,
+    successor: bool,
 }
 
 impl<'a> NativeProducer<'a> {
+    fn successor(root: &'a Path, intent: &'a Intent) -> Result<Self> {
+        rebuild::require_genesis(root, intent)?;
+        intent.validate(root)?;
+        manager(root, intent)?.require_stopped_for_maintenance()?;
+        let (main, _) = verify_runtime(root, &intent.candidate)?;
+        Ok(Self {
+            root,
+            intent: Some(intent),
+            managed: None,
+            installer: engine_identity(&main)?,
+            predecessor: None,
+            expected_selection: selection(root)?,
+            successor: true,
+        })
+    }
     pub(super) fn new(root: &'a Path, intent: &'a Intent) -> Result<Self> {
         Self::bound(root, intent, false)
     }
@@ -209,6 +239,7 @@ impl<'a> NativeProducer<'a> {
             installer,
             predecessor,
             expected_selection,
+            successor: false,
         })
     }
 
@@ -220,6 +251,9 @@ impl<'a> NativeProducer<'a> {
     }
 
     fn candidate(&self) -> Result<PathBuf> {
+        if self.successor {
+            rebuild::require_genesis(self.root, self.intent.context("rebuild intent missing")?)?;
+        }
         if let Some((authority, policy, origin)) = self.managed {
             managed::catalog::verify_origin(authority, policy, origin)?;
             // The fresh managed Genesis owner holds actual ServiceLease and
@@ -245,7 +279,7 @@ impl<'a> NativeProducer<'a> {
     }
 
     fn predecessor(&self) -> Result<Option<PathBuf>> {
-        if self.managed.is_some() {
+        if self.managed.is_some() || self.successor {
             return Ok(None);
         }
         let intent = self

@@ -302,7 +302,7 @@ for line in sys.stdin:
         child = Mock()
         child.poll.side_effect = [None, None]
         child.wait.side_effect = [subprocess.TimeoutExpired('owned-child', 5), 0]
-        fixture = SimpleNamespace(child=child, run=Mock(side_effect=OSError('private shutdown path')),
+        fixture = SimpleNamespace(managed_installation=False, child=child, run=Mock(side_effect=OSError('private shutdown path')),
                                   control='private control', log=Mock())
         original = BENCH.CampaignError('source_changed')
         self.assertTrue(BENCH.close_owned_fixture(fixture, original))
@@ -398,7 +398,7 @@ for line in sys.stdin:
         child = Mock()
         child.poll.side_effect = [None, None]
         child.wait.side_effect = [subprocess.TimeoutExpired('PRIVATE_CHILD', 5), 0]
-        fixture = SimpleNamespace(child=child, run=Mock(), control='PRIVATE_CONTROL', log=Mock())
+        fixture = SimpleNamespace(managed_installation=False, child=child, run=Mock(), control='PRIVATE_CONTROL', log=Mock())
         primary = BENCH.CampaignError('campaign_deadline')
         detail = {}
         self.assertTrue(BENCH.close_owned_fixture(fixture, primary, detail))
@@ -414,7 +414,7 @@ for line in sys.stdin:
         child = Mock()
         child.poll.side_effect = [None, None]
         child.wait.side_effect = [subprocess.TimeoutExpired('owned', 5), 0]
-        fixture = SimpleNamespace(child=child, run=Mock(), control='private', log=Mock())
+        fixture = SimpleNamespace(managed_installation=False, child=child, run=Mock(), control='private', log=Mock())
         detail = {}
         with self.assertRaisesRegex(BENCH.CampaignError, 'service_cleanup_failed'):
             BENCH.close_owned_fixture(fixture, detail=detail)
@@ -633,7 +633,7 @@ for line in sys.stdin:
         probes = [('search', {'query': 'configuration', 'mode': 'vector'})]
         events = []
         with tempfile.TemporaryDirectory() as temporary:
-            fixture = SimpleNamespace(owner=Path(temporary), child=None, command_timeout=5,
+            fixture = SimpleNamespace(managed_installation=False, owner=Path(temporary), child=None, command_timeout=5,
                                       start=lambda: events.append('service_start'))
             def sample(*args, output, **kwargs):
                 events.append('sample')
@@ -806,7 +806,7 @@ for line in sys.stdin:
         self.assertEqual(session.counter,0)
 
     def test_current_cleanup_uses_native_stop_without_pid_kills_and_retains_unknown_state(self):
-        fixture=SimpleNamespace(single_image=True,close=Mock(),child=Mock())
+        fixture=SimpleNamespace(single_image=False,managed_installation=True,close=Mock(),child=Mock())
         detail={}
         self.assertFalse(BENCH.close_owned_fixture(fixture,detail=detail))
         fixture.close.assert_called_once();fixture.child.kill.assert_not_called()
@@ -830,7 +830,7 @@ for line in sys.stdin:
         before={'instance':'old','runtime_sha256':'a'*64,'executable_sha256':'b'*64}
         after={**before,'instance':'new'}
         with tempfile.TemporaryDirectory() as temporary:
-            fixture=SimpleNamespace(single_image=True,owner=Path(temporary),install=Path(temporary)/'install',
+            fixture=SimpleNamespace(single_image=False,managed_installation=True,owner=Path(temporary),install=Path(temporary)/'install',
                 managed_health=before,managed_stop=None,child=None,command_timeout=5,
                 close=Mock(),rpc=Mock(return_value={'observation':after}),
                 run=Mock(return_value=subprocess.CompletedProcess([],0,'{"status":"started"}','')))

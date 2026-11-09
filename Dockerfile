@@ -27,6 +27,8 @@ COPY Dockerfile .dockerignore ./
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY .cargo/config.toml ./.cargo/config.toml
 COPY crates ./crates
+# Native and extension tests share this exact public authority-digest fixture.
+COPY packages/vscode/src/test/fixtures/httpAuthorityDigest.json ./packages/vscode/src/test/fixtures/httpAuthorityDigest.json
 COPY .config/nextest.toml ./.config/nextest.toml
 COPY scripts/ci-metrics.py scripts/ci-prune-target.py ./scripts/
 COPY scripts/license-notices.py scripts/provision-local-model.py ./scripts/
@@ -43,6 +45,32 @@ ENV AIRK_BUNDLED_MODEL_DIR=/build/model-assets
 ENV LIBONNXRUNTIME_NO_PKG_CONFIG=1 ORT_SKIP_DOWNLOAD=1 ORT_PREFER_DYNAMIC_LINK=0 \
     ORT_LIB_LOCATION=/build/static-onnx-runtime/b ORT_LIB_PROFILE=Release
 COPY third_party/licenses ./third_party/licenses
+
+# Exact external test inputs are reviewed in scripts/container-inputs.json.
+COPY docs/cli-reference.md ./docs/cli-reference.md
+COPY docs/research/contracts-v190/fixtures.json ./docs/research/contracts-v190/fixtures.json
+COPY packages/vscode/src/test/diagnosticLogs.test.ts ./packages/vscode/src/test/diagnosticLogs.test.ts
+COPY packages/vscode/src/test/extensionUninstall.test.ts ./packages/vscode/src/test/extensionUninstall.test.ts
+COPY packages/vscode/src/test/serviceBootstrap.test.ts ./packages/vscode/src/test/serviceBootstrap.test.ts
+COPY scripts/check-container.py ./scripts/check-container.py
+COPY scripts/check-macos-direct-runtime.py ./scripts/check-macos-direct-runtime.py
+COPY scripts/check-managed-runtime.py ./scripts/check-managed-runtime.py
+COPY scripts/check-runtime-activation.py ./scripts/check-runtime-activation.py
+COPY scripts/check-runtime-legacy-retirement.py ./scripts/check-runtime-legacy-retirement.py
+COPY scripts/check-service-clients.py ./scripts/check-service-clients.py
+COPY scripts/check-service-install.py ./scripts/check-service-install.py
+COPY scripts/check-tokenizer-calibration.py ./scripts/check-tokenizer-calibration.py
+COPY scripts/check-usage-inputs.py ./scripts/check-usage-inputs.py
+COPY scripts/container-inputs.json ./scripts/container-inputs.json
+COPY tools/parser-train/conversational-regression-v4.json ./tools/parser-train/conversational-regression-v4.json
+COPY tools/parser-train/evaluation.json ./tools/parser-train/evaluation.json
+COPY tools/parser-train/fixtures-v2.json ./tools/parser-train/fixtures-v2.json
+COPY tools/parser-train/fixtures.json ./tools/parser-train/fixtures.json
+COPY tools/parser-train/inference.json ./tools/parser-train/inference.json
+COPY tools/parser-train/manifest.json ./tools/parser-train/manifest.json
+COPY tools/parser-train/novel-role-queries.json ./tools/parser-train/novel-role-queries.json
+COPY tools/parser-train/role-queries.json ./tools/parser-train/role-queries.json
+COPY tools/parser-train/safety.json ./tools/parser-train/safety.json
 
 FROM source AS test
 ARG AIRK_QUALIFICATION=false

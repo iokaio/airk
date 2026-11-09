@@ -16,18 +16,19 @@ const page = (kind: string, value: unknown) => ({ status: 'catalog_page', page: 
 const detail = (kind: string, value: unknown) => ({ status: 'catalog_detail', detail: { namespace, revision: 1, item: { kind, value } } });
 
 /** Execute the actual screen and its effects, retaining hook state between host snapshots. */
-function screen(tab: 'window' | 'library' | 'projects', indexing: any = {}, extraState: any = {}, panelProps?: any) {
-    const entry = panelProps ? path.join(path.dirname(file), 'indexingSplit.tsx') : file;
+function screen(tab: 'window' | 'library' | 'projects', indexing: any = {}, extraState: any = {}, panelProps?: any, workspace=false) {
+    const entry = path.join(path.dirname(file), workspace?'workspaces.tsx':panelProps?'indexingSplit.tsx':'indexing.tsx');
     let bundle = bundles.get(entry);
     if (!bundle) {
-        bundle = buildSync({ entryPoints: [entry], bundle: true, write: false, platform: 'node', format: 'cjs', jsx: 'automatic', jsxImportSource: 'preact', external: ['preact', 'preact/hooks', 'preact/jsx-runtime'] }).outputFiles[0].text;
+        bundle = buildSync({ entryPoints: [entry], bundle: true, write: false, platform: 'node', format: 'cjs', jsx: 'automatic', jsxImportSource: 'preact', external: ['preact', 'preact/hooks', 'preact/jsx-runtime','airk-explorer-help'] }).outputFiles[0].text;
         bundles.set(entry, bundle);
     }
-    const state: any = { trusted: true, nativeExecutionEnabled: true, indexing: { generation: 1, busy: false, ...indexing }, ...extraState };
+    const state: any = { trusted: true, nativeExecutionEnabled: true, features:{'indexing/window':'implemented','indexing/library':'implemented','indexing/projects':'implemented'}, indexing: { generation: 1, busy: false, ...indexing }, ...extraState };
     const props: any = { state, route: { workspace: 'indexing', tab }, go() {}, publications: [] };
     const slots: any[] = [], effects: (() => unknown)[] = [], sent: any[] = [];
     const events = new Map<string, (event: any) => void>();
-    let cursor = 0, fail = false;
+    let cursor = 0, fail = false, mounted=false, childKey:unknown;
+    const hold=new Set<string>(),held:any[]=[];
     const hooks = {
         useState(initial: any) {
             const at = cursor++;
@@ -44,20 +45,31 @@ function screen(tab: 'window' | 'library' | 'projects', indexing: any = {}, extr
     };
     const module = { exports: {} as any }, nativeRequire = createRequire(file);
     vm.runInNewContext(bundle, { module, exports: module.exports, TextEncoder,
-        require: (id: string) => id === 'preact/hooks' ? hooks : nativeRequire(id),
+        require: (id: string) => id === 'preact/hooks' ? hooks : id==='airk-explorer-help'?{topics:[]}:nativeRequire(id),
         setTimeout: () => 1, clearTimeout() {},
         window: { addEventListener: (name: string, listener: (event: any) => void) => events.set(name, listener) },
         acquireVsCodeApi: () => ({ getState() {}, setState() {}, postMessage(message: any) {
             sent.push(message);
+            if(hold.has(message.type)){held.push(message);return;}
             queueMicrotask(() => events.get('message')?.({ data: { v: 1, type: 'result', requestId: message.requestId,
                 ...(fail ? { ok: false, error: { code: 'HOST_UNAVAILABLE', message: 'Native catalog unavailable' } } : { ok: true, data: { generation: 1, ...(message.type==='indexing.apply'?{outcome:{status:'catalog_applied'}}:{}) } }) } }));
         } }),
     });
     return {
         sent, state, props,
+        hold(type:string){hold.add(type);},
+        release(type:string,data:any={}){const at=held.findIndex(message=>message.type===type);assert.ok(at>=0,`Held ${type} request required`);const message=held.splice(at,1)[0];events.get('message')?.({data:{v:1,type:'result',requestId:message.requestId,ok:true,data}});},
         failure(value: boolean) { fail = value; },
         render() {
             cursor = 0;
+            if(workspace){
+                // Reconcile the child chosen by the real WorkspaceView. A changed
+                // key unmounts hook storage, just as Preact does in the editor.
+                const tree=module.exports.WorkspaceView(props),child=nodes(tree).find(node=>node.type===module.exports.SCREENS[`indexing/${props.route.tab}`]);assert.ok(child);
+                if(mounted&&child.key!==childKey){slots.length=0;effects.length=0;}
+                mounted=true;childKey=child.key;
+                return child.type(child.props);
+            }
             return panelProps ? module.exports.IndexSplitPanel({ ...panelProps, view: state.indexing, disabled: false, run: async (work: () => Promise<unknown>) => work() }) : module.exports.IndexingScreen(props);
         },
         async flush() { while (effects.length) { effects.shift()!(); } for (let i = 0; i < 6; i++) { await Promise.resolve(); } },
@@ -141,6 +153,50 @@ test('Search scope loads local index and set choices once without an association
     assert.equal(f.sent.length, 1); assert.equal(f.sent[0].type, 'indexing.scope.read');
     f.render(); await f.flush(); assert.equal(f.sent.length, 1);
     assert.equal(button(f.render(), /Read grants|Read saved association|Use Grant/), undefined);
+});
+
+test('real WorkspaceView keeps scope Apply ownership across project and evidence-epoch changes',async()=>{
+    const initial={indexes:[indexValue],projects:[projectValue],selectedIndexIds:[],selectedProjectIds:[],active:false};
+    const f=screen('window',{searchScope:initial},{connection:'ready',selectedProject:'original',selectionEpoch:1},undefined,true);
+    f.hold('indexing.scope.apply');f.hold('indexing.scope.read');let tree=f.render();await f.flush();
+    const projectChoice=nodes(tree).find(node=>node.type==='label'&&text(node).includes(projectValue.name));
+    nodes(projectChoice).find(node=>node.type==='input').props.onChange({currentTarget:{checked:true}});tree=f.render();
+    const form=nodes(tree).find(node=>node.type==='form'&&button(node,/^Apply selection$/));assert.ok(form);
+    form.props.onSubmit({preventDefault(){}});await f.flush();
+    assert.equal(f.sent.filter(message=>message.type==='indexing.scope.apply').length,1);
+    assert.equal(f.sent[0].selection.project_ids[0],projectId);
+    f.state.selectedProject='discovered';f.state.selectionEpoch=2;f.state.indexing={generation:3,busy:false};tree=f.render();await f.flush();
+    assert.equal(button(tree,/Refresh choices/).props.disabled,true);
+    button(tree,/Refresh choices/).props.onClick();await f.flush();
+    assert.equal(f.sent.filter(message=>message.type==='indexing.scope.read').length,0,'automatic and manual reads cannot race Apply');
+    f.release('indexing.scope.apply',{status:'search_scope_selected'});await f.flush();tree=f.render();await f.flush();
+    assert.equal(f.sent.filter(message=>message.type==='indexing.scope.read').length,1,'only the explicit post-Apply read runs');
+    assert.equal(button(tree,/Refresh choices/).props.disabled,true,'the complete action remains exclusive during hydration');
+    f.state.indexing={generation:4,busy:false,searchScope:{...initial,active:true,selectedProjectIds:[projectId],responses:[page('project',projectValue)]}};
+    f.release('indexing.scope.read');await f.flush();tree=f.render();await f.flush();
+    assert.equal(button(tree,/Refresh choices/).props.disabled,false);assert.equal(f.state.indexing.searchScope.active,true);
+    assert.equal(f.sent.filter(message=>message.type==='indexing.scope.read').length,1);
+});
+
+test('index-set save retains local ownership through choices, page and detail follow-up reads',async()=>{
+    const scope={indexes:[indexValue],projects:[],selectedIndexIds:[],selectedProjectIds:[],active:false};
+    const f=screen('projects',{revision:1,searchScope:scope,page:page('project',projectValue),pageKind:'projects'},{connection:'ready',selectionEpoch:1});
+    for(const type of ['indexing.set.save','indexing.scope.read','indexing.page','indexing.set.read'])f.hold(type);
+    let tree=f.render();await f.flush();
+    const name=nodes(tree).find(node=>node.type==='label'&&text(node).startsWith('Index set name'));
+    nodes(name).find(node=>node.type==='input').props.onInput({currentTarget:{value:'Chosen set'}});tree=f.render();
+    const form=nodes(tree).find(node=>node.type==='form'&&button(node,/^Create index set$/));assert.ok(form);
+    form.props.onSubmit({preventDefault(){}});await f.flush();
+    f.state.selectionEpoch=2;f.state.indexing={generation:3,busy:false};tree=f.render();await f.flush();
+    assert.equal(f.sent.length,1,'owner replacement cannot start automatic choice/page reads during save');
+    f.release('indexing.set.save',{status:'index_set_saved',id:projectId});await f.flush();
+    assert.equal(f.sent.at(-1).type,'indexing.scope.read');f.render();await f.flush();assert.equal(f.sent.length,2);
+    f.release('indexing.scope.read');await f.flush();assert.equal(f.sent.at(-1).type,'indexing.page');
+    f.render();await f.flush();assert.equal(f.sent.length,3);
+    f.release('indexing.page');await f.flush();assert.equal(f.sent.at(-1).type,'indexing.set.read');
+    f.state.indexing={generation:4,busy:false,searchScope:scope,page:page('project',projectValue),pageKind:'projects'};
+    f.release('indexing.set.read');await f.flush();tree=f.render();await f.flush();
+    assert.equal(f.sent.length,4);assert.equal(button(tree,/Refresh index sets/).props.disabled,false);
 });
 
 test('catalog loading waits for a ready connection and allows one fresh missing-page read after reconnect', async () => {

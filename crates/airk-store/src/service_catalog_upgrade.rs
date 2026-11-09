@@ -30,6 +30,26 @@ const MAX_INTENT_BYTES: usize = 32 * 1024 * 1024;
 const MAX_DIRECTORY_ENTRIES: usize = 16384;
 const MAX_WORKER_LOCKS: usize = 4096;
 
+/// A recognized registry application advertises a schema outside the catalog
+/// migration reader's supported range. This is a diagnostic, not rebuild
+/// authority: the version marker does not authenticate a predecessor's complete
+/// schema, source definitions, settings or process ownership. Recovery must
+/// establish those independently before accepting any replacement state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CatalogMigrationSourceUnsupported {
+    pub observed_registry_schema: u32,
+    pub minimum_registry_schema: u32,
+    pub maximum_registry_schema: u32,
+}
+
+impl std::fmt::Display for CatalogMigrationSourceUnsupported {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("unsupported catalog upgrade source format")
+    }
+}
+
+impl std::error::Error for CatalogMigrationSourceUnsupported {}
+
 #[cfg(test)]
 #[path = "service_catalog_upgrade_tests.rs"]
 mod tests;
@@ -538,8 +558,16 @@ fn registry_read(root: &Path) -> Result<Connection> {
         connection.pragma_query_value(None, "application_id", |row| row.get(0))?;
     let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
     ensure!(
-        application == super::super::APPLICATION && matches!(version, 11..=13),
+        application == super::super::APPLICATION,
         "unsupported catalog upgrade source format"
+    );
+    ensure!(
+        matches!(version, 11..=13),
+        CatalogMigrationSourceUnsupported {
+            observed_registry_schema: version,
+            minimum_registry_schema: 11,
+            maximum_registry_schema: 13,
+        }
     );
     if matches!(version, 12 | 13) {
         super::validate_catalog_layout(&connection)?;

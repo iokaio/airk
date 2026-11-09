@@ -9,6 +9,7 @@ import { automaticUpgrade, NativeRunner, RuntimeHost, RuntimeOptions, validateRu
 import { RecordValue, ServiceClient, ServiceError, record } from '../serviceClient';
 import { nativePayloadDirectory } from './nativeServiceFixture';
 import { LegacyRetirementSession } from '../runtimeLegacyRetirement';
+import { httpAuthorityDigest } from '../serviceHttp';
 const sha=(bytes:Buffer|string)=>createHash('sha256').update(bytes).digest('hex');
 
 test('installation retires previous native runtime with the exact current selection and validates its receipt',async()=>{
@@ -84,14 +85,17 @@ test('legacy HTTP enrollment accepts only native standalone original-to-adopted 
     const first=member(1),second=member(2),directory=path.join(binding.controlDir,'http-1');
     const base={schema:1,connection_id:id,endpoint:{schema:1,installation:f.digest,user:'fixture',namespace,generation:1,service_instance:id,executable_sha256:f.digest,url:'https://127.0.0.1:57421/mcp',ca_sha256:receipt,certificate_sha256:receipt,state:'ready',predecessor_digest:null},ca_certificate_file:path.join(directory,'ca.pem'),credential_file:path.join(directory,'credential-'+id+'.token')};
     const singleton={...base,selection:{kind:'imported_legacy',selection:first.selected}},union={...base,selection:{kind:'imported_legacy_union',selection:{namespace,selections:[first.selected,second.selected],no_default_project:true}}};
-    let response:any=singleton;
+    let response:any=singleton,observedArgs:readonly string[]=[];
     const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable'},async(_command,args)=>{
         if(args[1]==='self-test')return {protocol:1,version:'1.4.0',self_test:'passed',metadata_console:1};
-        assert.ok(['http-legacy-connection','http-legacy-union-connection','adopt-legacy-indexes'].includes(args[1]));return response;
+        assert.ok(['http-legacy-connection','http-legacy-union-connection','adopt-legacy-indexes'].includes(args[1]));observedArgs=args;return response;
     });
     const file=path.join(f.root,'protected-original-registration.json');
     try{
         assert.deepEqual(await host.httpLegacyConnection(binding,first.original,file,receipt,id,'claude'),singleton);
+        const attachment=path.join(f.root,'explorer-assistance','windows','a'.repeat(32)+'.json'),oldId='f'.repeat(32);
+        assert.deepEqual(await host.httpLegacyConnection(binding,first.original,file,receipt,id,'claude',attachment,receipt,oldId),singleton);
+        assert.deepEqual(observedArgs.slice(-4),['--explorer-descriptor',attachment,'--reattach-connection-id',oldId],'Native mutation receives both the live replacement attachment and the exact retirement identity');
         await assert.rejects(host.httpLegacyConnection(binding,{...first.original,data_root:install},file,receipt,id,'claude'),(error:unknown)=>error instanceof ServiceError&&error.code==='crossed_http_legacy_connection'&&error.nativeResponse===response);
         response=union;assert.deepEqual(await host.httpLegacyUnionConnection(binding,[{registration:first.original,configuration_receipt:receipt},{registration:second.original,configuration_receipt:receipt}],file,id,'vscode'),union);
         await assert.rejects(host.httpLegacyUnionConnection(binding,[{registration:second.original,configuration_receipt:receipt},{registration:first.original,configuration_receipt:receipt}],file,id,'vscode'),/crossed_http_legacy_union/);
@@ -366,6 +370,22 @@ test('runtime upgrade uses only its host-owned review and supplies the exact nat
         assert.equal(mutations[0][mutations[0].indexOf('--approved-sha256')+1],t.f.digest);
         assert.equal(mutations[1][mutations[1].indexOf('--expected-active')+1],binding.runtimeSha256);
         await assert.rejects(t.host.transition(binding,review),/runtime_transition_not_reviewed/);
+    }finally{await t.f.cleanup();}
+});
+
+test('an early rebuild choice is bound to the exact host review and native predecessor guard',async()=>{
+    const t=await transitionFixture();
+    try{
+        const binding=t.binding();
+        await assert.rejects(t.host.reviewTransition(binding,'rollback',{rebuildIndexes:true}),/invalid_runtime_rebuild_choice/);
+        const review=await t.host.reviewTransition(binding,'upgrade',{rebuildIndexes:true});
+        assert.equal(review.rebuildIndexes,true);assert.ok(Object.isFrozen(review));
+        await assert.rejects(t.host.transition(binding,{...review,rebuildIndexes:false}),/runtime_transition_not_reviewed/);
+        await t.host.transition(binding,review);
+        const activation=t.calls.filter(args=>args[1]==='activate').at(-1)!;
+        assert.ok(activation.includes('--rebuild-indexes'));
+        assert.equal(activation[activation.indexOf('--expected-active')+1],binding.runtimeSha256);
+        assert.equal(activation[activation.indexOf('--runtime-sha256')+1],t.f.digest);
     }finally{await t.f.cleanup();}
 });
 
@@ -880,8 +900,26 @@ test('native HTTP lookup distinguishes authenticated foreign absence from owned 
     const base={schema:1,active:f.digest,connection_id:id};
     try{
         reply={...base,status:'not_owned',future:{retained:true}};assert.deepEqual(await host.lookupHttpConnection(binding,id),reply);
-        for(const code of ['owned_connection_revoked','owned_connection_expired','owned_connection_unavailable']){reply={...base,status:'unavailable',code,native_error:{exact:'kept'},guidance:'Review native owner'};await assert.rejects(host.lookupHttpConnection(binding,id),error=>error instanceof ServiceError&&!error.outcomeUnknown&&error.nativeResponse===reply&&error.code===code);}
+        for(const code of ['owned_connection_revoked','owned_connection_expired','owned_connection_unavailable','owned_connection_attachment_retired']){reply={...base,status:'unavailable',code,native_error:{exact:'kept'},guidance:'Review native owner'};await assert.rejects(host.lookupHttpConnection(binding,id),error=>error instanceof ServiceError&&!error.outcomeUnknown&&error.nativeResponse===reply&&error.code===code);}
         for(const value of [{...base,status:'not_owned',active:'0'.repeat(64)},{...base,status:'not_owned',connection_id:'0'.repeat(32)},{...base,status:'unavailable',code:'unknown'},{...base,status:'not_owned',connection:{}},{...base,status:'invented'}]){reply=value;await assert.rejects(host.lookupHttpConnection(binding,id));}
+    }finally{await f.cleanup();}
+});
+
+test('only explicit standalone recovery consumes a native attachment retirement proof',async()=>{
+    const f=await modernBindingFixture('1.8.14'),install=path.join(f.root,'install'),id='a'.repeat(32),namespace='b'.repeat(32);let reply:RecordValue;
+    const binding={installDir:install,controlDir:path.join(install,'control'),executable:path.join(f.source,f.main),launcher:null,runtimeSha256:f.digest,version:'1.8.14',lifecycle:'on-demand' as const,verificationBasis:'trusted_distribution'};
+    const selection:any={kind:'scoped',selection:{schema:1,context_key:'a'.repeat(64),namespace,expected_catalog_revision:7,grant_id:'grt_'+'c'.repeat(32),expected_grant_revision:1,index_id:'idx_'+'d'.repeat(32),project_ids:['prj_'+'e'.repeat(32)]}};
+    const connection:any={schema:1,connection_id:id,endpoint:{schema:1,installation:f.digest,user:'fixture',namespace,generation:1,service_instance:'c'.repeat(32),executable_sha256:f.digest,url:'https://127.0.0.1:57421/mcp',ca_sha256:f.digest,certificate_sha256:f.digest,state:'ready',predecessor_digest:null},selection,ca_certificate_file:path.join(binding.controlDir,'http-1','ca.pem'),credential_file:path.join(binding.controlDir,'http-1','credential-'+id+'.token')};
+    const proof={schema:1,connection_id:id,installation:f.digest,namespace,client:'claude_code',expires_unix_ms:Date.now()+60000,explorer_descriptor_sha256:'d'.repeat(64),authority_sha256:httpAuthorityDigest(selection)};
+    const base={schema:1,active:f.digest,connection_id:id,status:'unavailable',code:'owned_connection_attachment_retired',attachment_retirement:proof};
+    const host=new RuntimeHost(f.root,'1.8.14',{channel:'stable'},async(_command,args)=>{assert.deepEqual(args,['runtime','lookup-http-connection','--install-dir',install,'--expected-active',f.digest,'--connection-id',id]);return reply;});
+    try{
+        reply=base;await assert.rejects(host.lookupHttpConnection(binding,id),error=>error instanceof ServiceError&&error.code==='owned_connection_attachment_retired');
+        assert.equal(await host.lookupHttpConnection(binding,id,{connection,client:'claude'}),reply,'Complete native proof result is retained only for the explicit recovery caller');
+        for(const code of ['owned_connection_revoked','owned_connection_expired','owned_connection_unavailable']){reply={...base,code};await assert.rejects(host.lookupHttpConnection(binding,id,{connection,client:'claude'}),error=>error instanceof ServiceError&&error.code===code);}
+        reply={...base,attachment_retirement:{...proof,authority_sha256:'0'.repeat(64)}};await assert.rejects(host.lookupHttpConnection(binding,id,{connection,client:'claude'}),/http_attachment_retirement_unconfirmed/);
+        reply={...base,attachment_retirement:undefined};await assert.rejects(host.lookupHttpConnection(binding,id,{connection,client:'claude'}),/http_attachment_retirement_unconfirmed/);
+        reply={...base,status:'owned',connection};await assert.rejects(host.lookupHttpConnection(binding,id,{connection,client:'claude'}),/http_connection_lookup_unconfirmed/);
     }finally{await f.cleanup();}
 });
 test('modern previous-runtime retirement proves all superseded images gone without restarting selected service',async()=>{

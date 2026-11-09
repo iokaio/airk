@@ -149,13 +149,14 @@ class StablePublicationTests(unittest.TestCase):
     def wal_fixture(self, modern=False):
         with tempfile.TemporaryDirectory() as temporary:
             f = Fixture([])
+            f.catalog_authority = modern
             f.owner = Path(temporary).resolve()
             source = f.owner / "source"
             source.mkdir()
             data = f.owner / "index-data"
             if modern:
                 data /= "fixture"
-                f.single_image = True
+                f.single_image = False  # Schema-1 catalog storage has the same reviewed leaf.
             logical = data / "collections-1.4" / "fixture"
             active = "12" * 16
             selected = logical / "incarnations" / active

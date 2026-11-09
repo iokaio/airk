@@ -64,26 +64,35 @@ fn predecessor_images(root: &Path, main: &Path) -> Result<Vec<PathBuf>> {
 pub(super) fn stop_paths(paths: &[PathBuf]) -> Result<()> {
     #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     {
+        // Audit, capture, signal and retirement consume the same finite budget.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
         let mut owners = Vec::new();
         for path in paths {
+            within_deadline(deadline, "before audit")?;
             let audit = crate::legacy_processes::audit(path);
+            within_deadline(deadline, "after audit")?;
             ensure!(
                 audit.failure.is_none(),
                 "AIRK process audit failed: {:?}",
                 audit.failure
             );
             for pid in audit.matching_executable_pids {
-                if let Some(owner) = capture(pid, path)? {
+                within_deadline(deadline, "before capture")?;
+                if let Some(owner) = capture(pid, path, deadline)? {
                     owners.push(owner);
                 }
+                within_deadline(deadline, "after capture")?;
             }
         }
         for owner in &owners {
-            terminate(owner)?;
+            within_deadline(deadline, "before terminate")?;
+            terminate(owner, deadline)?;
+            within_deadline(deadline, "after terminate")?;
         }
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
         for owner in &owners {
+            within_deadline(deadline, "before wait")?;
             wait(owner, deadline)?;
+            within_deadline(deadline, "after wait")?;
         }
     }
     #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
@@ -91,11 +100,21 @@ pub(super) fn stop_paths(paths: &[PathBuf]) -> Result<()> {
     Ok(())
 }
 
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+fn within_deadline(deadline: std::time::Instant, phase: &str) -> Result<()> {
+    ensure!(
+        std::time::Instant::now() < deadline,
+        "preceding AIRK process stop deadline expired {phase}; activation remains pending"
+    );
+    Ok(())
+}
+
 #[cfg(windows)]
 type Owner = std::os::windows::io::OwnedHandle;
 
 #[cfg(windows)]
-fn capture(pid: u32, expected: &Path) -> Result<Option<Owner>> {
+fn capture(pid: u32, expected: &Path, deadline: std::time::Instant) -> Result<Option<Owner>> {
+    within_deadline(deadline, "before capture")?;
     use std::os::windows::{
         ffi::OsStringExt,
         io::{AsRawHandle, FromRawHandle},
@@ -153,7 +172,8 @@ fn capture(pid: u32, expected: &Path) -> Result<Option<Owner>> {
 }
 
 #[cfg(windows)]
-fn terminate(owner: &Owner) -> Result<()> {
+fn terminate(owner: &Owner, deadline: std::time::Instant) -> Result<()> {
+    within_deadline(deadline, "before terminate")?;
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::System::Threading::{TerminateProcess, WaitForSingleObject};
     // SAFETY: the held handle was verified before signaling; no PID reuse.
@@ -237,15 +257,17 @@ mod tests {
             .stderr(Stdio::null());
         let mut child = crate::native_process::ContainedChild::spawn(&mut command)?;
         let pid = child.id();
-        assert!(capture(pid, &std::env::current_exe()?).is_err());
-        assert!(child.try_wait()?.is_none());
-        let owner = capture(pid, &executable)?.context("fixture exited before capture")?;
         let started = std::time::Instant::now();
-        terminate(&owner)?;
-        wait(&owner, started + Duration::from_secs(5))?;
+        let deadline = started + Duration::from_secs(5);
+        assert!(capture(pid, &std::env::current_exe()?, deadline).is_err());
+        assert!(child.try_wait()?.is_none());
+        let owner =
+            capture(pid, &executable, deadline)?.context("fixture exited before capture")?;
+        terminate(&owner, deadline)?;
+        wait(&owner, deadline)?;
         assert!(!child.wait()?.success());
         assert!(started.elapsed() < Duration::from_secs(5));
-        assert!(capture(std::process::id(), &std::env::current_exe()?).is_err());
+        assert!(capture(std::process::id(), &std::env::current_exe()?, deadline).is_err());
         Ok(())
     }
 }
@@ -254,7 +276,8 @@ mod tests {
 type Owner = std::os::fd::OwnedFd;
 
 #[cfg(target_os = "linux")]
-fn capture(pid: u32, expected: &Path) -> Result<Option<Owner>> {
+fn capture(pid: u32, expected: &Path, deadline: std::time::Instant) -> Result<Option<Owner>> {
+    within_deadline(deadline, "before capture")?;
     use std::os::{fd::FromRawFd, unix::fs::MetadataExt};
     ensure!(
         pid != std::process::id(),
@@ -282,7 +305,8 @@ fn capture(pid: u32, expected: &Path) -> Result<Option<Owner>> {
 }
 
 #[cfg(target_os = "linux")]
-fn terminate(owner: &Owner) -> Result<()> {
+fn terminate(owner: &Owner, deadline: std::time::Instant) -> Result<()> {
+    within_deadline(deadline, "before terminate")?;
     use std::os::fd::AsRawFd;
     // SAFETY: signal the verified process descriptor, never a numeric PID.
     let result = unsafe {

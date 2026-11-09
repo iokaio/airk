@@ -5,7 +5,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { serviceTestHost } from './serviceTestHost';
 import * as cliInstall from '../cliInstall';
-import { assistanceEntry, retrievalEntry, serializeServers, launchArgs, type LaunchSpec } from '../model';
+import { assistanceEntry, retrievalEntry, unifiedEntry, serializeServers, launchArgs, type LaunchSpec } from '../model';
 import { launchDescriptorPath } from '../explorerAssistanceLaunch';
 import { runText } from '../native';
 import * as native from '../native';
@@ -14,6 +14,9 @@ import { NativeControlTransport, ServiceError } from '../serviceClient';
 import { McpStdioSession } from '../mcpStdioSession';
 import { MANAGE_WORKSPACE_TRUST_COMMAND, NATIVE_COMMANDS, NATIVE_COMMAND_ENABLEMENT } from '../explorerCommands';
 import { catalogExport } from '../indexingCatalog';
+import {RuntimeHost} from '../serviceBootstrap';
+import {createHash} from 'node:crypto';
+import {AssistanceIpcHost} from '../explorerAssistanceHost';
 
 function definitionValue(value:any){return {label:value.label,url:value.uri.toString(),headers:value.headers,version:value.version};}
 test('verified reopen migrates both old definitions quietly before publishing the connection',async context=>{
@@ -203,6 +206,190 @@ async function contextReadStarted(keys:string[],count=1):Promise<void>{
     assert.equal(keys.length,count,'explicit context read reached the existing control client');
 }
 
+test('HTTP enrollment binds the current real Assistance attachment across reload without changing grant authority',async context=>{
+    const f=await serviceTestHost(context,{registered:false}),controller=f.context.subscriptions.find((item:any)=>typeof item.prepareWindowContext==='function');
+    const nativeRecords=new Map<string,{descriptor:string|undefined;client:string}>(),original=RuntimeHost.prototype.httpConnection;
+    let endpointGeneration=1,capacity=128,nativeCalls=0,held:Promise<void>|undefined;
+    context.mock.method(RuntimeHost.prototype,'httpConnection',async function(this:RuntimeHost,...args:Parameters<RuntimeHost['httpConnection']>){
+        const id=args[3],client=args[4],descriptor=args[5],previous=nativeRecords.get(id);
+        nativeCalls++;
+        if(previous&&(previous.descriptor!==descriptor||previous.client!==client))throw new ServiceError('http_enrollment_refused',false,{status:'failure',code:'http_enrollment_refused'});
+        if(!previous&&nativeRecords.size>=capacity)throw new ServiceError('http_enrollment_refused',false,{status:'failure',code:'http_enrollment_refused'});
+        nativeRecords.set(id,{descriptor,client});const info=await original.apply(this,args);info.endpoint.generation=endpointGeneration;if(held)await held;return info;
+    });
+    try{
+        await controller.refresh();await controller.console.controller.refresh();
+        const session={schema:1 as const,namespace:'34'.repeat(16),context_key:'56'.repeat(32),expected_catalog_revision:1,grant_id:'grt_'+'11'.repeat(16),expected_grant_revision:1,project_ids:['prj_'+'22'.repeat(16)]};
+        const spec:LaunchSpec={command:f.binding.executable,root:f.folders[0].uri.fsPath,dataDir:path.join(f.root,'data'),collection:'fixture',name:'Saved grant',service:{installDir:f.binding.installDir,project:'77'.repeat(32)},combinedSession:session};
+        f.settings.set('explorer.assistance.enabled',true);await controller.startAssistance();
+        const firstHost=controller.assistanceHost;assert.ok(firstHost?.descriptorPath,'Real first Assistance host required');
+        const before=f.state.httpConnections.length;
+        const [first,coalesced]=await Promise.all([controller.enrollHttpSpec(spec,'vscode'),controller.enrollHttpSpec(spec,'vscode')]);
+        assert.equal(first,coalesced);assert.equal(f.state.httpConnections.length,before+1,'Concurrent enrollment coalesces for the exact attachment');
+        const oldId=first.http.connection_id,firstDescriptor=firstHost.descriptorPath;
+        assert.equal(nativeRecords.get(oldId)?.descriptor,firstDescriptor);
+        const savedKeys=[...f.values.keys()].filter(key=>key.startsWith('airk.http.connection.1.'));assert.equal(savedKeys.length,1);
+        await controller.startAssistance();assert.notEqual(controller.assistanceHost,firstHost);
+        const replacementDescriptor=controller.assistanceHost?.descriptorPath;assert.ok(replacementDescriptor);assert.notEqual(replacementDescriptor,firstDescriptor);
+        assert.ok(f.values.has(savedKeys[0]),'The old saved connection identity survives the recreated window host');
+        const restored=await controller.enrollHttpSpec(spec,'vscode');
+        assert.notEqual(restored.http.connection_id,oldId,'New attachment requires a distinct native credential identity');
+        assert.deepEqual(restored.http.selection,first.http.selection,'Reload never creates or widens the grant');
+        assert.equal(nativeRecords.get(oldId)?.descriptor,firstDescriptor,'Old credential attachment stays untouched');
+        assert.equal(nativeRecords.get(restored.http.connection_id)?.descriptor,replacementDescriptor);
+        endpointGeneration=2;
+        const advanced={...spec,combinedSession:{...session,expected_catalog_revision:2}};
+        const refreshed=await controller.enrollHttpSpec(advanced,'vscode');
+        assert.equal(refreshed.http.connection_id,restored.http.connection_id,'Same attachment retains its identity across clock and endpoint changes');
+        assert.equal(refreshed.http.endpoint.generation,2);
+        f.settings.set('explorer.assistance.enabled',false);
+        const headless=await controller.enrollHttpSpec(spec,'vscode');
+        assert.notEqual(headless.http.connection_id,restored.http.connection_id);
+        assert.equal(nativeRecords.get(headless.http.connection_id)?.descriptor,undefined);
+        const {expected_catalog_revision:_clock,...headlessIdentity}=session;
+        const legacyKey=createHash('sha256').update(JSON.stringify(['vscode','combined',headlessIdentity,f.binding.installDir])).digest('hex');
+        assert.equal(f.values.get('airk.http.connection.1.'+legacyKey),headless.http.connection_id,'None attachment retains the original four-part saved identity');
+        assert.equal((await controller.enrollHttpSpec(spec,'vscode')).http.connection_id,headless.http.connection_id);
+        f.settings.set('explorer.assistance.enabled',true);
+        assert.equal((await controller.enrollHttpSpec(spec,'vscode')).http.connection_id,restored.http.connection_id,'Returning to the same Some attachment reuses its own identity');
+        capacity=nativeRecords.size;const priorCalls=nativeCalls;
+        await assert.rejects(controller.enrollHttpSpec(spec,'explorer'),/http_enrollment_refused/);assert.equal(nativeCalls,priorCalls+1,'Native capacity refusal is never retried');capacity=128;
+        let release!:()=>void;held=new Promise<void>(resolve=>{release=resolve;});
+        const stale=controller.enrollHttpSpec(spec,'workbench'),staleOutcome=assert.rejects(stale,/workspace_registration_changed/);
+        const until=Date.now()+2000;while(![...nativeRecords.values()].some(row=>row.client==='workbench')&&Date.now()<until)await new Promise(resolve=>setTimeout(resolve,1));
+        assert.ok([...nativeRecords.values()].some(row=>row.client==='workbench'),'In-flight native enrollment reached the captured attachment');
+        await controller.startAssistance();release();await staleOutcome;held=undefined;
+        assert.equal([...nativeRecords.values()].find(row=>row.client==='workbench')?.descriptor,replacementDescriptor,'An in-flight request never switches to the replacement attachment');
+        assert.equal(f.writes.length,0,'Attachment replacement never submits a new catalog grant or indexing mutation');
+    }finally{await f.close();}
+});
+
+test('fresh enrollment awaits deferred Assistance publication and notifies definitions only after its attachment is ready',async context=>{
+    const f=await serviceTestHost(context,{registered:false}),controller=f.context.subscriptions.find((item:any)=>typeof item.prepareWindowContext==='function');
+    const original=AssistanceIpcHost.start;let release!:()=>void,reached!:()=>void;
+    const gate=new Promise<void>(resolve=>{release=resolve;}),started=new Promise<void>(resolve=>{reached=resolve;});
+    const startup=context.mock.method(AssistanceIpcHost,'start',async (port:Parameters<typeof AssistanceIpcHost.start>[0])=>{reached();await gate;return original.call(AssistanceIpcHost,port);});
+    let published=0;const subscription=controller.assistanceDefinitions.event(()=>{published++;});
+    try{
+        await controller.refresh();await controller.console.controller.refresh();published=0;
+        await controller.startAssistance();assert.equal(published,0,'An unchanged headless attachment emits no premature MCP definition event');
+        f.settings.set('explorer.assistance.enabled',true);
+        const attaching=controller.startAssistance();await started;
+        const spec:LaunchSpec={command:f.binding.executable,root:f.folders[0].uri.fsPath,dataDir:path.join(f.root,'data'),collection:'fixture',name:'Saved grant',service:{installDir:f.binding.installDir,project:'77'.repeat(32)},combinedSession:{schema:1,namespace:'34'.repeat(16),context_key:'56'.repeat(32),expected_catalog_revision:1,grant_id:'grt_'+'11'.repeat(16),expected_grant_revision:1,project_ids:['prj_'+'22'.repeat(16)]}};
+        const outcome=controller.enrollHttpSpec(spec,'vscode').then((result:any)=>({result}),(error:unknown)=>({error}));
+        assert.equal(published,0,'A pending host cannot publish a completed Assistance attachment notification');
+        release();await attaching;const settled=await outcome;
+        assert.equal(settled.error,undefined);assert.ok(controller.assistanceHost?.descriptorPath);
+        assert.equal(f.state.httpConnections.length,1);assert.equal(f.state.httpConnections[0].descriptor,controller.assistanceHost.descriptorPath,'No temporary headless enrollment escapes during setup');
+        assert.equal(settled.result.http.connection_id,f.state.httpConnections[0].id);assert.equal(published,1);
+        startup.mock.mockImplementation(async()=>{throw new Error('fixture optional Assistance endpoint unavailable');});
+        await controller.startAssistance();assert.equal(controller.assistanceHost,undefined);assert.equal(published,2,'Completed attachment removal emits one withdrawal notification');
+        const headless=await controller.enrollHttpSpec(spec,'vscode');
+        assert.ok(headless.http);assert.equal(f.state.httpConnections.at(-1)?.descriptor,undefined,'Completed optional setup failure retains supported headless enrollment');
+        let releaseOld!:()=>void,reachedOld!:()=>void;
+        const oldGate=new Promise<void>(resolve=>{releaseOld=resolve;}),oldStarted=new Promise<void>(resolve=>{reachedOld=resolve;});let setups=0;
+        startup.mock.mockImplementation(async (port:Parameters<typeof AssistanceIpcHost.start>[0])=>{if(++setups===1){reachedOld();await oldGate;return undefined;}return original.call(AssistanceIpcHost,port);});
+        const obsoleteSetup=controller.startAssistance();await oldStarted;
+        const beforeReplacement=f.state.httpConnections.length;
+        const obsoleteEnrollment=controller.enrollHttpSpec(spec,'vscode'),refused=assert.rejects(obsoleteEnrollment,/workspace_registration_changed/);
+        try{await controller.startAssistance();}finally{releaseOld();}
+        await obsoleteSetup;await refused;
+        assert.equal(f.state.httpConnections.length,beforeReplacement,'A setup replacement cancels its waiter before any native enrollment');
+    }finally{release();subscription.dispose();await f.close();}
+});
+
+test('Assistance withdrawal notifies once across superseded pending setup',async context=>{
+    const f=await serviceTestHost(context,{registered:false}),controller=f.context.subscriptions.find((item:any)=>typeof item.prepareWindowContext==='function');
+    const original=AssistanceIpcHost.start;let hold=false,release!:()=>void,reached!:()=>void;
+    const gate=new Promise<void>(resolve=>{release=resolve;}),started=new Promise<void>(resolve=>{reached=resolve;});
+    context.mock.method(AssistanceIpcHost,'start',async(port:Parameters<typeof AssistanceIpcHost.start>[0])=>{if(hold){reached();await gate;}return original.call(AssistanceIpcHost,port);});
+    let obsolete:Promise<void>|undefined,assistanceChanges=0,definitionChanges=0,awaitingDefinition=false;const subscriptions:{dispose():void}[]=[];
+    try{
+        await controller.refresh();await controller.console.controller.refresh();await controller.prepareWindowContext();
+        subscriptions.push(controller.assistanceDefinitions.event(()=>{assistanceChanges++;awaitingDefinition=true;}),controller.definitions.event(()=>{if(awaitingDefinition){definitionChanges++;awaitingDefinition=false;}}));
+        f.settings.set('explorer.assistance.enabled',true);await controller.startAssistance();assert.ok(controller.assistanceHost?.descriptorPath);
+        assert.deepEqual([assistanceChanges,definitionChanges],[1,1]);
+        hold=true;obsolete=controller.startAssistance();await started;assert.deepEqual([assistanceChanges,definitionChanges],[1,1]);
+        f.settings.set('explorer.assistance.enabled',false);await controller.startAssistance();assert.equal(controller.assistanceHost,undefined);
+        assert.deepEqual([assistanceChanges,definitionChanges],[2,2],'Published attachment withdrawal survives pending replacements');
+        release();await obsolete;assert.deepEqual([assistanceChanges,definitionChanges],[2,2],'Obsolete completion cannot notify or restore an attachment');
+        await controller.startAssistance();assert.deepEqual([assistanceChanges,definitionChanges],[2,2],'None to None remains quiet');
+    }finally{release();await obsolete;for(const subscription of subscriptions)subscription.dispose();await f.close();}
+});
+
+test('legacy single and union enrollment retain headless keys and preserve prior manual credential ownership across attachments',async context=>{
+    const f=await serviceTestHost(context,{roots:2}),controller=f.context.subscriptions.find((item:any)=>typeof item.prepareWindowContext==='function');
+    const records=new Map<string,string|undefined>(),legacy=RuntimeHost.prototype.httpLegacyConnection,union=RuntimeHost.prototype.httpLegacyUnionConnection;
+    const accepted=(id:string,descriptor:string|undefined)=>{if(records.has(id)&&records.get(id)!==descriptor)throw new ServiceError('http_enrollment_refused');records.set(id,descriptor);};
+    context.mock.method(RuntimeHost.prototype,'httpLegacyConnection',async function(this:RuntimeHost,...args:Parameters<RuntimeHost['httpLegacyConnection']>){accepted(args[4],args[6]);return legacy.apply(this,args);});
+    context.mock.method(RuntimeHost.prototype,'httpLegacyUnionConnection',async function(this:RuntimeHost,...args:Parameters<RuntimeHost['httpLegacyUnionConnection']>){accepted(args[3],args[5]);return union.apply(this,args);});
+    try{
+        await controller.refresh();await controller.console.controller.refresh();const specs=controller.specs as LaunchSpec[];assert.equal(specs.length,2);
+        const spec=specs[0],registration={binding:spec.service!.project,root:spec.root,data_root:spec.dataDir,collection:spec.collection},receipt='ab'.repeat(32);
+        const headless=await controller.enrollLegacyHttpSpec(spec,'vscode',receipt);
+        const base=createHash('sha256').update(JSON.stringify(['vscode',f.binding.installDir,registration])).digest('hex');
+        assert.equal(f.values.get('airk.http.legacy.id.1.'+base),headless.http.connection_id);
+        const originalHeadless=structuredClone(f.values.get('airk.http.legacy.1.'+base));
+        const unionHeadless=await controller.enrollLegacyUnion(specs,f.binding,()=>{});
+        f.settings.set('explorer.assistance.enabled',true);await controller.startAssistance();
+        const first=await controller.enrollLegacyHttpSpec(spec,'vscode','cd'.repeat(32)),firstUnion=await controller.enrollLegacyUnion(specs,f.binding,()=>{});
+        assert.notEqual(first.http.connection_id,headless.http.connection_id);assert.notEqual(firstUnion.http.connection_id,unionHeadless.http.connection_id);
+        assert.equal((await controller.enrollLegacyHttpSpec(spec,'vscode',receipt)).http.connection_id,first.http.connection_id);
+        const source=serializeServers('vscode',[unifiedEntry({...spec,http:first.http})]);
+        await controller.startAssistance();
+        const second=await controller.enrollLegacyHttpSpec(spec,'vscode',receipt),secondUnion=await controller.enrollLegacyUnion(specs,f.binding,()=>{});
+        assert.notEqual(second.http.connection_id,first.http.connection_id);assert.notEqual(secondUnion.http.connection_id,firstUnion.http.connection_id);
+        assert.equal((await controller.previousLegacyHttp(spec,'vscode',f.binding,new Set([first.http.connection_id]))).connection_id,first.http.connection_id,'Source-aware ownership finds the exact prior-attachment credential');
+        const owned=await controller.migrationCandidate(spec,'copilot',source);
+        assert.equal(owned.candidate.http.connection_id,first.http.connection_id);assert.equal(owned.old.http.connection_id,first.http.connection_id);
+        assert.deepEqual(f.values.get('airk.http.legacy.1.'+base),originalHeadless,'Original headless credential/provenance stays untouched');
+        assert.deepEqual(second.http.selection,first.http.selection,'Attachment changes retain existing imported native authority');
+        assert.equal(first.http.selection.selection.configuration_receipt,receipt,'Fresh attachment does not replace original configuration provenance with a newer text digest');
+        f.settings.set('explorer.assistance.enabled',false);
+        assert.equal((await controller.enrollLegacyHttpSpec(spec,'vscode',receipt)).http.connection_id,headless.http.connection_id);
+        assert.equal((await controller.enrollLegacyUnion(specs,f.binding,()=>{})).http.connection_id,unionHeadless.http.connection_id);
+        for(let i=0;i<129;i++)f.values.set('airk.http.legacy.1.'+base+'.'+String(i).padStart(64,'0'),originalHeadless);
+        context.mock.method(f.context.globalState,'keys',()=>{throw new Error('Attachment history must not be enumerated');});
+        assert.equal((await controller.previousLegacyHttp(spec,'vscode',f.binding)).connection_id,headless.http.connection_id,'One direct origin record preserves original provenance regardless of attachment history');
+        f.settings.set('explorer.assistance.enabled',true);await controller.startAssistance();
+        const later=await controller.enrollLegacyHttpSpec(spec,'vscode','ef'.repeat(32));
+        assert.equal(later.http.selection.selection.configuration_receipt,receipt,'A later attachment retains the original import proof beyond 128 historical keys');
+        assert.notEqual(later.http.connection_id,second.http.connection_id);
+        assert.equal((await controller.previousLegacyHttp(spec,'vscode',f.binding,new Set([first.http.connection_id]))).connection_id,first.http.connection_id,'Exact manually referenced older connection remains directly addressable');
+        // Old extension state has no per-ID index. Native ownership can resolve
+        // only the exact IDs present in the inspected configuration; arbitrary
+        // old attachment values remain untouched and are never scanned.
+        f.values.delete('airk.http.legacy.origin.1.'+base);
+        f.values.delete('airk.http.legacy.connection.1.'+base+'.'+first.http.connection_id);
+        const lookedUp:string[]=[],lookup=RuntimeHost.prototype.lookupHttpConnection,revoked='fc'.repeat(16),unknown='fd'.repeat(16);
+        // Restore the fixture's existing mock directly, without stacking a
+        // second mock of that same method in Node's restoration queue.
+        RuntimeHost.prototype.lookupHttpConnection=async function(this:RuntimeHost,binding:any,id:string){lookedUp.push(id);if(id===revoked)throw new ServiceError('owned_connection_revoked');return lookup.call(this,binding,id);};
+        try{
+            const oldState=await controller.migrationCandidate(spec,'copilot',source);
+            assert.equal(oldState.candidate.http.connection_id,first.http.connection_id);
+            assert.deepEqual(lookedUp,[first.http.connection_id],'Pre-index history over 128 records resolves the actual configuration ID natively');
+            assert.equal(oldState.candidate.http.selection.selection.configuration_receipt,receipt);
+            await assert.rejects(controller.previousLegacyHttp(spec,'vscode',f.binding,new Set([revoked])),/owned_connection_revoked/);
+            assert.equal(await controller.previousLegacyHttp(spec,'vscode',f.binding,new Set([unknown])),undefined,'Unowned manual configuration is preserved without inventing an import proof');
+        }finally{RuntimeHost.prototype.lookupHttpConnection=lookup;}
+        let releaseLookup!:(value:any)=>void,lookupStarted!:()=>void;
+        const lookupEntered=new Promise<void>(resolve=>{lookupStarted=resolve;}),heldLookup=new Promise<any>(resolve=>{releaseLookup=resolve;}),stale='fa'.repeat(16);
+        RuntimeHost.prototype.lookupHttpConnection=async function(this:RuntimeHost,binding:any,id:string){if(id===stale){lookupStarted();return heldLookup;}return lookup.call(this,binding,id);};
+        const generation=controller.generation,enrollments=f.state.httpConnections.length,writes=f.writes.length,metadata=new Map(f.values);
+        try{
+            const migrating=controller.prepareOwnedHttpMigration(spec,'copilot',source.replaceAll(first.http.connection_id,stale));
+            await lookupEntered;controller.generation++;
+            releaseLookup({schema:1,active:f.binding.runtimeSha256,connection_id:stale,status:'owned',connection:{...first.http,connection_id:stale,credential_file:path.join(f.binding.controlDir,'http-1',`credential-${stale}.token`)}});
+            await assert.rejects(migrating,/workspace_registration_changed/);
+            assert.equal(f.state.httpConnections.length,enrollments,'A stale asynchronous lookup cannot enroll a replacement credential');
+            assert.equal(f.writes.length,writes);assert.deepEqual(f.values,metadata,'A stale lookup cannot save provenance or configuration metadata');
+        }finally{controller.generation=generation;RuntimeHost.prototype.lookupHttpConnection=lookup;}
+        assert.equal(f.values.get('airk.http.legacy.1.'+base+'.'+String(128).padStart(64,'0')),originalHeadless,'Unknown historical metadata stays untouched');
+        assert.equal(f.writes.length,0,'Reattachment never creates catalog grants or indexes');
+    }finally{await f.close();}
+});
+
 test('combined Use Grant freezes selected Projects, deduplicates shared indexes and asks which index to manage',async context=>{
     const f=await serviceTestHost(context,{registered:false}),controller=f.context.subscriptions.find((item:any)=>typeof item.useGrant==='function');
     const namespace='34'.repeat(16),host='56'.repeat(32),grantId='grt_'+'11'.repeat(16),shared='idx_'+'22'.repeat(16),other='idx_'+'23'.repeat(16),a='prj_'+'33'.repeat(16),b='prj_'+'34'.repeat(16),unselected='prj_'+'35'.repeat(16);
@@ -224,6 +411,22 @@ test('combined Use Grant freezes selected Projects, deduplicates shared indexes 
         await controller.index();assert.equal(f.writes.length,before+1);assert.equal(f.writes.at(-1)!.enqueue?.project,indexes[1].backing.binding,'management follows the explicit member picker rather than the display origin');
         assert.equal(selected!.service!.project,indexes[0].backing.binding,'display metadata does not become management authority');
         assert.equal(rows.at(-1).entity.id,other,'the chosen native backing was revalidated before management');
+        const originalDetails=f.state.catalogDetailReply!;
+        // A peer window can apply its own selection without changing this
+        // window's selected Index or immutable backing. Its new grant advances
+        // the global catalog clock, not this management intent's authority.
+        f.state.catalogDetailReply=args=>{if(args.expected_catalog_revision!==null&&args.expected_catalog_revision!==2)throw new ServiceError('invalid_registry_request');const response=originalDetails(args) as any;return {...response,detail:{...response.detail,revision:2}};};
+        const beforePeer=f.writes.length;
+        await controller.index();
+        assert.equal(f.writes.length,beforePeer+1);assert.equal(f.writes.at(-1)!.enqueue?.project,indexes[1].backing.binding);
+        assert.equal(rows.at(-1).expected_catalog_revision,null,'exact chosen Index is revalidated at the current catalog clock');
+        for(const change of [{revision:0},{namespace:'99'.repeat(16)},{item:{kind:'index',value:{...indexes[1],tombstone:true,source_import:'complete'}}}]){
+            f.state.catalogDetailReply=args=>{const response=originalDetails(args) as any;return {...response,detail:{...response.detail,revision:2,...change}};};
+            const writes=f.writes.length;
+            await assert.rejects(controller.index(),/crossed_native_index_administration|invalid_catalog_revision|catalog_namespace_changed_refresh/);
+            assert.equal(f.writes.length,writes,'regressed, crossed or retired metadata cannot dispatch native work');
+        }
+        f.state.catalogDetailReply=originalDetails;
         const prior=f.writes.length;f.state.pick=()=>undefined;await controller.pause(true);assert.equal(f.writes.length,prior,'cancelled member selection dispatches no pause');
         // A metadata refresh can finish while the explicit management picker is
         // open. Identical complete metadata retains that intent's owner; an
@@ -300,9 +503,14 @@ for(const peerInstalled of [false,true])test(`explicit Use Grant validates nativ
         const usage=await controller.explorerHost().usage(workbenchSpec,()=>true);assert.match(usage.view().html,/Open Index administration/);assert.equal(reports.length,0,'selected Usage cannot read entire Index history');
         await assert.rejects(controller.usageWriter(workbenchSpec,()=>true)(['clear']),/explicit_index_administration_required/);assert.equal(f.writes.length,afterIndexWrites);
         await usage.action({type:'usage',action:'openIndexAdministration'});assert.equal(reports.length,1);assert.equal(reports[0].includes('--catalog-session'),false);assert.equal(reports[0][reports[0].indexOf('--service-project')+1],backing.binding);
+        const beforePeerDetail=f.state.catalogDetailReply!;
+        f.state.catalogDetailReply=args=>{if(args.expected_catalog_revision!==null&&args.expected_catalog_revision!==2)throw new ServiceError('invalid_registry_request');const response=beforePeerDetail(args) as any;return {...response,detail:{...response.detail,revision:2}};};
+        await controller.openIndexAdministration(workbenchSpec,()=>true);assert.equal(reports.length,2,'Usage retains the selected Index across an unrelated forward catalog clock');
+        assert.equal(rows.at(-1).expected_catalog_revision,null);
+        f.state.catalogDetailReply=beforePeerDetail;
         const admin=f.panels.find((panel:any)=>panel.viewType==='airk.usage');assert.ok(admin);assert.match(admin.webview.html,/Entire Index history and shared data-root totals/);
         const actualDetail=f.state.catalogDetailReply;f.state.catalogDetailReply=args=>{const response=actualDetail!(args) as any;if((args.entity as any).kind==='index')return {...response,detail:{...response.detail,item:{...response.detail.item,value:{...response.detail.item.value,backing:{...backing,binding:'88'.repeat(32)}}}}};return response;};
-        await assert.rejects(controller.openIndexAdministration(workbenchSpec,()=>true),/crossed_native_index_administration/);assert.equal(reports.length,1,'crossed native backing cannot open another administrative reader');f.state.catalogDetailReply=actualDetail;usage.dispose();
+        await assert.rejects(controller.openIndexAdministration(workbenchSpec,()=>true),/crossed_native_index_administration/);assert.equal(reports.length,2,'crossed native backing cannot open another administrative reader');f.state.catalogDetailReply=actualDetail;usage.dispose();
         assert.deepEqual(f.values.get('airk.scope.explicitWithdrawal.1'),{schema:1,namespace,host,context_key:key,grant_id:grantId,expected_grant_revision:1,index_id:indexId,project_ids:[projectId]});
         f.stub.workspace.workspaceFile={scheme:'file',toString:()=> 'file:///replaced-window.code-workspace'};
         assert.deepEqual(controller.explorerHost().specs(),[],'a stale explicit selection cannot fall back to broader legacy evidence');assert.deepEqual(await controller.provideDefinitions(),[]);

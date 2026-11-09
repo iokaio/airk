@@ -14,6 +14,38 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 struct Echo;
 
 #[tokio::test]
+async fn saturated_authentication_refuses_before_native_validation() -> anyhow::Result<()> {
+    let f = fixture(57422)?;
+    let permits = f
+        .gateway
+        .0
+        .authentication
+        .clone()
+        .acquire_many_owned(AUTH_TASKS as u32)
+        .await?;
+    let refused = f
+        .gateway
+        .handle(
+            request(&f, "/api/v1/tools/airk_search"),
+            CancellationToken::new(),
+        )
+        .await;
+    assert_eq!(refused.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body: serde_json::Value =
+        serde_json::from_slice(&refused.into_body().collect().await?.to_bytes())?;
+    assert_eq!(
+        body,
+        serde_json::json!({"schema":"airk.local-api-error/1","error":{"code":"authentication_busy"}})
+    );
+    assert_eq!(f.checks.load(Ordering::SeqCst), 0);
+    assert_eq!(f.gateway.0.validation.available_permits(), AUTH_TASKS);
+    drop(permits);
+    assert_eq!(f.gateway.0.authentication.available_permits(), AUTH_TASKS);
+    f.gateway.close().await;
+    Ok(())
+}
+
+#[tokio::test]
 async fn abandoned_native_validation_retains_its_bounded_blocking_capacity() -> anyhow::Result<()> {
     let mut f = fixture(57421)?;
     let block = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
@@ -287,6 +319,75 @@ async fn canceled_authentication_wait_keeps_bounded_work_until_lock_settles() ->
     })
     .await?;
     assert_eq!(f.checks.load(Ordering::SeqCst), 0);
+    f.gateway.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn unrelated_revocation_fences_old_authentication_as_unavailable_not_invalid_credential()
+-> anyhow::Result<()> {
+    let f = fixture(57421)?;
+    let other_id = Incarnation::from_bytes([47; 16]);
+    let other_token = {
+        let mut store = f.gateway.0.credentials.lock().unwrap();
+        let selection = store.authenticate(&f.token, now_ms())?.selection;
+        let issued = store.enroll_default(other_id, selection, now_ms())?;
+        std::fs::read_to_string(issued.credential_file)?
+    };
+    let store = f.gateway.0.credentials.clone();
+    let (locked_tx, locked_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let holder = std::thread::spawn(move || -> anyhow::Result<()> {
+        let mut guard = store.lock().unwrap();
+        guard.revoke(other_id)?;
+        let _ = locked_tx.send(());
+        // Keep actual asynchronous authentication blocked at its native ledger
+        // read until the durable unrelated revocation reaches the gateway.
+        let _ = release_rx.recv_timeout(Duration::from_secs(10));
+        Ok(())
+    });
+    locked_rx.await?;
+    let gateway = f.gateway.clone();
+    let input = request(&f, "/api/v1/tools/airk_search");
+    let pending =
+        tokio::spawn(async move { gateway.handle(input, CancellationToken::new()).await });
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while f.gateway.0.authentication.available_permits() != AUTH_TASKS - 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await?;
+    f.gateway.revoke(other_id).await;
+    release_tx.send(())?;
+    holder.join().unwrap()?;
+    let response = pending.await?;
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body: serde_json::Value =
+        serde_json::from_slice(&response.into_body().collect().await?.to_bytes())?;
+    assert_eq!(
+        body["error"]["code"],
+        "credential_authentication_epoch_retired"
+    );
+    assert_eq!(f.checks.load(Ordering::SeqCst), 0);
+    let fresh = f
+        .gateway
+        .handle(
+            request(&f, "/api/v1/tools/airk_search"),
+            CancellationToken::new(),
+        )
+        .await;
+    assert_eq!(fresh.status(), StatusCode::OK);
+    let _ = fresh.into_body().collect().await?;
+    let mut revoked = request(&f, "/api/v1/tools/airk_search");
+    revoked.headers_mut().insert(
+        http::header::AUTHORIZATION,
+        format!("Bearer {other_token}").parse()?,
+    );
+    let refused = f.gateway.handle(revoked, CancellationToken::new()).await;
+    assert_eq!(refused.status(), StatusCode::UNAUTHORIZED);
+    let body: serde_json::Value =
+        serde_json::from_slice(&refused.into_body().collect().await?.to_bytes())?;
+    assert_eq!(body["error"]["code"], "credential_refused");
     f.gateway.close().await;
     Ok(())
 }
@@ -1145,13 +1246,11 @@ async fn tls_read_driven_alert_cannot_flush_ciphertext_after_native_fence() -> a
             .authenticate(&f.token, now_ms())?;
         delivery.capture(&credential.selection)?;
         if revoke_credential {
-            let cell = f
-                .gateway
-                .0
-                .delivery_cells
-                .lock()
-                .unwrap()
-                .capture(&credential, delivery.authenticated_ticket()?)?;
+            let cell = f.gateway.0.delivery_cells.lock().unwrap().capture(
+                0,
+                &credential,
+                delivery.authenticated_ticket()?,
+            )?;
             delivery.bind_credential(cell)?;
         }
         // Queue a real rustls application record, without flushing the socket.
@@ -1174,7 +1273,7 @@ async fn tls_read_driven_alert_cannot_flush_ciphertext_after_native_fence() -> a
                     .delivery_cells
                     .lock()
                     .unwrap()
-                    .capture(&credential, delivery.authenticated_ticket()?)
+                    .capture(0, &credential, delivery.authenticated_ticket()?)
                     .is_err(),
                 "stale authentication cannot recreate a delivery cell after revoke acknowledgement"
             );
@@ -1229,21 +1328,21 @@ async fn credential_cells_reject_connection_switch_expiry_and_retired_generation
     delivery.capture(&credential.selection)?;
     let ticket = delivery.authenticated_ticket()?;
     let mut registry = CredentialDeliveryRegistry::default();
-    let first = registry.capture(&credential, ticket)?;
+    let first = registry.capture(0, &credential, ticket)?;
     delivery.bind_credential(first.clone())?;
     let mut other = credential.clone();
     other.connection_id = Incarnation::from_bytes([99; 16]);
     assert!(
         delivery
-            .bind_credential(registry.capture(&other, ticket)?)
+            .bind_credential(registry.capture(0, &other, ticket)?)
             .is_err()
     );
     let mut changed_expiry = credential.clone();
     changed_expiry.expires_unix_ms += 1;
-    assert!(registry.capture(&changed_expiry, ticket).is_err());
+    assert!(registry.capture(0, &changed_expiry, ticket).is_err());
     registry.retire(credential.connection_id);
     assert!(delivery.check().is_err());
-    let fresh = registry.capture(&credential, ticket)?;
+    let fresh = registry.capture(0, &credential, ticket)?;
     assert!(!Arc::ptr_eq(&fresh, &first));
     assert!(delivery.bind_credential(fresh).is_err());
     // Expiry is checked at delivery, even without the periodic sweeper.
@@ -1256,7 +1355,44 @@ async fn credential_cells_reject_connection_switch_expiry_and_retired_generation
     };
     assert!(expired.check().is_err());
     registry.revoke(credential.connection_id);
-    assert!(registry.capture(&credential, ticket).is_err());
+    assert!(registry.capture(0, &credential, ticket).is_err());
+    f.gateway.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn credential_retirement_reclaims_registry_slots_but_fences_old_authentication()
+-> anyhow::Result<()> {
+    let f = fixture(57421)?;
+    let mut credential = f
+        .gateway
+        .0
+        .credentials
+        .lock()
+        .unwrap()
+        .authenticate(&f.token, now_ms())?;
+    let delivery = ConnectionFence::new(f.gateway.0.native_gate.clone());
+    delivery.capture(&credential.selection)?;
+    let ticket = delivery.authenticated_ticket()?;
+    let mut registry = CredentialDeliveryRegistry::default();
+    for number in 1..=160u128 {
+        credential.connection_id = Incarnation::from_bytes(number.to_be_bytes());
+        let epoch = registry.epoch;
+        let old = registry.capture(epoch, &credential, ticket)?;
+        registry.revoke(credential.connection_id);
+        assert!(old.lock().unwrap().check().is_err());
+        assert!(registry.cells.is_empty());
+        assert!(registry.capture(epoch, &credential, ticket).is_err());
+    }
+    // A fresh authentication from the durable ledger uses the current epoch;
+    // historical revocations consume no active map slots.
+    credential.connection_id = f.id;
+    let retained = registry.capture(registry.epoch, &credential, ticket)?;
+    registry.epoch = u64::MAX;
+    // Exhaustion fences every retained cell, including an unrelated ID.
+    registry.revoke(Incarnation::from_bytes([211; 16]));
+    assert!(retained.lock().unwrap().check().is_err());
+    assert!(registry.capture(u64::MAX, &credential, ticket).is_err());
     f.gateway.close().await;
     Ok(())
 }
@@ -1287,6 +1423,70 @@ async fn async_scope_validation_cannot_cross_the_captured_delivery_fence() -> an
     assert_eq!(body["error"]["code"], "native_delivery_fenced");
     assert!(f.gateway.0.clients.lock().unwrap().is_empty());
     f.gateway.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn completed_revocation_cannot_be_undone_by_delayed_validated_cache_insertion()
+-> anyhow::Result<()> {
+    for already_cached in [false, true] {
+        let f = fixture(57421)?;
+        if already_cached {
+            let initial = f
+                .gateway
+                .handle(
+                    request(&f, "/api/v1/tools/airk_search"),
+                    CancellationToken::new(),
+                )
+                .await;
+            assert_eq!(initial.status(), StatusCode::OK);
+            initial.into_body().collect().await?;
+            assert_eq!(f.gateway.0.clients.lock().unwrap().len(), 1);
+        }
+        let credential = f
+            .gateway
+            .0
+            .credentials
+            .lock()
+            .unwrap()
+            .authenticate(&f.token, now_ms())?;
+        let delivery = ConnectionFence::new(f.gateway.0.native_gate.clone());
+        delivery.capture(&credential.selection)?;
+        let ticket = delivery.authenticated_ticket()?;
+        let cell = {
+            let mut registry = f.gateway.0.delivery_cells.lock().unwrap();
+            let epoch = registry.epoch;
+            registry.capture(epoch, &credential, ticket)?
+        };
+        delivery.bind_credential(cell.clone())?;
+        let backend = (f.gateway.0.validate)(
+            credential.clone(),
+            ReadAttemptContext::new(
+                Instant::now() + Duration::from_secs(5),
+                CancellationToken::new(),
+            ),
+        )
+        .await?;
+        // This is the same pre-cache check passed by dispatch. Delay only cache
+        // publication until actual durable revocation and removal complete.
+        delivery.check()?;
+        f.gateway.0.credentials.lock().unwrap().revoke(f.id)?;
+        f.gateway.revoke(f.id).await;
+        assert!(f.gateway.0.clients.lock().unwrap().is_empty());
+        let refused = match f
+            .gateway
+            .cache_validated_service(credential, backend, &delivery, cell, ticket)
+        {
+            Ok(_) => anyhow::bail!("revoked validated request recreated a cached context"),
+            Err(refused) => refused,
+        };
+        assert_eq!(refused.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body: serde_json::Value =
+            serde_json::from_slice(&refused.into_body().collect().await?.to_bytes())?;
+        assert_eq!(body["error"]["code"], "native_delivery_fenced");
+        assert!(f.gateway.0.clients.lock().unwrap().is_empty());
+        f.gateway.close().await;
+    }
     Ok(())
 }
 
@@ -1363,6 +1563,440 @@ async fn fresh_tcp_can_capture_unrelated_catalog_advance_but_existing_tcp_cannot
             .is_err(),
         "future saved minimum cannot grant current delivery"
     );
+    f.gateway.close().await;
+    Ok(())
+}
+
+struct CatalogClockEcho {
+    revision: CatalogRevision,
+    calls: Arc<AtomicUsize>,
+}
+impl RemoteTools for CatalogClockEcho {
+    fn catalog(&self) -> Vec<airk_mcp::remote::Tool> {
+        vec![
+            serde_json::from_value(serde_json::json!({
+                "name":"search","description":"Original saved-clock regression fixture",
+                "inputSchema":{"type":"object","additionalProperties":true},
+                "annotations":{"readOnlyHint":true}
+            }))
+            .unwrap(),
+        ]
+    }
+    fn local_help(&self) -> bool {
+        false
+    }
+    fn call(
+        &self,
+        name: String,
+        args: serde_json::Map<String, serde_json::Value>,
+    ) -> RemoteFuture<'_> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async move {
+            Ok(
+                serde_json::json!({"content":[],"isError":false,"structuredContent":{
+                    "tool":name,"args":args,"validated_catalog_revision":self.revision,
+                    "coverage":{"complete":false,"future_native_field":[1,2,3]},
+                    "continuation":"opaque:original-clock-fixture"
+                }}),
+            )
+        })
+    }
+}
+
+type ClockTestSender = hyper::client::conn::http1::SendRequest<Full<Bytes>>;
+
+/// A real CA-validated HTTPS exchange against the supplied native status owner.
+/// Callers hold their inference lane separately; this helper owns only ingress.
+pub(crate) async fn live_https_status(
+    backend: Arc<dyn RemoteTools>,
+) -> anyhow::Result<serde_json::Value> {
+    let endpoint = BoundEndpoint::bind(None)?;
+    let port = endpoint.port()?;
+    let mut f = fixture(port)?;
+    Arc::get_mut(&mut f.gateway.0).unwrap().validate = Arc::new(move |_, _| {
+        let backend = backend.clone();
+        Box::pin(
+            async move { Ok(Arc::new(move || Ok(backend.clone())) as AuthenticatedBackendFactory) },
+        )
+    });
+    let stop = CancellationToken::new();
+    let shutdown = stop.clone();
+    let gateway = f.gateway.clone();
+    let server = tokio::spawn(async move { gateway.run(endpoint, shutdown).await });
+    let exchange = async {
+        let (mut sender, connection) = clock_test_tcp(&f, port).await?;
+        let response = clock_test_exchange(
+            &f,
+            &mut sender,
+            "/api/v1/tools/status",
+            serde_json::json!({}),
+            None,
+        )
+        .await;
+        drop(sender);
+        tokio::time::timeout(Duration::from_secs(5), connection).await???;
+        let (status, _, body) = response?;
+        assert_eq!(status, StatusCode::OK, "native status over HTTPS: {body}");
+        Ok::<_, anyhow::Error>(body)
+    }
+    .await;
+    stop.cancel();
+    tokio::time::timeout(Duration::from_secs(5), server).await???;
+    exchange
+}
+
+async fn clock_test_tcp(
+    f: &Fixture,
+    port: u16,
+) -> anyhow::Result<(
+    ClockTestSender,
+    tokio::task::JoinHandle<Result<(), hyper::Error>>,
+)> {
+    let mut roots = rustls::RootCertStore::empty();
+    roots.add(rustls::pki_types::CertificateDer::from(f.ca.clone()))?;
+    let config = rustls::ClientConfig::builder_with_provider(Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()?
+    .with_root_certificates(roots)
+    .with_no_client_auth();
+    let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
+    let socket = tokio::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port)).await?;
+    let tls = connector
+        .connect(
+            rustls::pki_types::ServerName::try_from("127.0.0.1")?,
+            socket,
+        )
+        .await?;
+    let (sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(tls)).await?;
+    Ok((sender, tokio::spawn(connection)))
+}
+async fn clock_test_exchange(
+    f: &Fixture,
+    sender: &mut ClockTestSender,
+    path: &str,
+    body: serde_json::Value,
+    session: Option<&http::HeaderValue>,
+) -> anyhow::Result<(StatusCode, Option<http::HeaderValue>, serde_json::Value)> {
+    let mut request = Request::builder()
+        .method("POST")
+        .uri(path)
+        .header("host", &f.gateway.0.authority)
+        .header("authorization", format!("Bearer {}", f.token))
+        .header("content-type", "application/json")
+        .header("accept", "application/json, text/event-stream")
+        .header("mcp-protocol-version", "2025-11-25")
+        .header("x-airk-response-mode", "full");
+    if let Some(session) = session {
+        request = request.header("mcp-session-id", session);
+    }
+    let response = tokio::time::timeout(
+        Duration::from_secs(5),
+        sender.send_request(request.body(Full::new(Bytes::from(serde_json::to_vec(&body)?)))?),
+    )
+    .await??;
+    let status = response.status();
+    let session = response.headers().get("mcp-session-id").cloned();
+    let bytes = tokio::time::timeout(Duration::from_secs(5), response.into_body().collect())
+        .await??
+        .to_bytes();
+    let value = if bytes.is_empty() {
+        serde_json::Value::Null
+    } else if let Ok(value) = serde_json::from_slice(&bytes) {
+        value
+    } else {
+        let text = std::str::from_utf8(&bytes)?;
+        match text.lines().find_map(|line| line.strip_prefix("data:")) {
+            Some(data) => serde_json::from_str(data.trim_start())?,
+            None => serde_json::Value::String(text.to_owned()),
+        }
+    };
+    Ok((status, session, value))
+}
+
+#[tokio::test]
+async fn saved_catalog_clock_refresh_preserves_real_mcp_session_on_same_and_fresh_tcp()
+-> anyhow::Result<()> {
+    let held = BoundEndpoint::bind(None)?;
+    let port = held.port()?;
+    let mut f = fixture(port)?;
+    let current = CatalogRevision::INITIAL.next()?;
+    f.gateway
+        .0
+        .native_gate
+        .observe_catalog_commit(CatalogRevision::INITIAL, current)?;
+    let gate = f.gateway.0.native_gate.clone();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed_calls = calls.clone();
+    Arc::get_mut(&mut f.gateway.0).unwrap().validate = Arc::new(move |_, _| {
+        // Like the native backend factory, capture the actual validated clock,
+        // rather than the saved credential's older minimum revision.
+        let revision = gate.catalog_clock().unwrap().revision;
+        let calls = observed_calls.clone();
+        Box::pin(async move {
+            Ok(Arc::new(move || {
+                Ok(Arc::new(CatalogClockEcho {
+                    revision,
+                    calls: calls.clone(),
+                }) as Arc<dyn RemoteTools>)
+            }) as AuthenticatedBackendFactory)
+        })
+    });
+    let original = f
+        .gateway
+        .0
+        .credentials
+        .lock()
+        .unwrap()
+        .authenticate(&f.token, now_ms())?;
+    let stop = CancellationToken::new();
+    let gateway = f.gateway.clone();
+    let shutdown = stop.clone();
+    let owner = tokio::spawn(async move { gateway.run(held, shutdown).await });
+    let (mut same_tcp, first_task) = clock_test_tcp(&f, port).await?;
+    let (status, session, initialized) = clock_test_exchange(
+        &f,
+        &mut same_tcp,
+        "/mcp",
+        serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"original-clock-fixture","version":"1"}}}),
+        None,
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(initialized["result"]["protocolVersion"], "2025-11-25");
+    let session = session.context("MCP initialization must create its original session")?;
+    let (status, _, _) = clock_test_exchange(
+        &f,
+        &mut same_tcp,
+        "/mcp",
+        serde_json::json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+        Some(&session),
+    )
+    .await?;
+    assert!(status.is_success());
+    let (status, _, listed) = clock_test_exchange(
+        &f,
+        &mut same_tcp,
+        "/mcp",
+        serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}),
+        Some(&session),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(listed["result"]["tools"][0]["name"], "search");
+    let args = serde_json::json!({"query":"original","response_mode":"full","future_input":{"retained":true}});
+    let call = |id| serde_json::json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{"name":"search","arguments":args}});
+    let (status, _, before) =
+        clock_test_exchange(&f, &mut same_tcp, "/mcp", call(3), Some(&session)).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        before["result"]["structuredContent"]["validated_catalog_revision"],
+        serde_json::json!(current)
+    );
+    let (old_ticket, old_context) = {
+        let clients = f.gateway.0.clients.lock().unwrap();
+        let cached = clients.get(&f.id).unwrap();
+        (cached.ticket, cached.read_delivery.clone())
+    };
+    let mut advanced = original.selection.clone();
+    if let HttpSelection::Scoped { selection } = &mut advanced {
+        selection.expected_catalog_revision = current;
+    }
+    f.gateway
+        .0
+        .credentials
+        .lock()
+        .unwrap()
+        .enroll_default(f.id, advanced.clone(), now_ms())?;
+    let authenticated = f
+        .gateway
+        .0
+        .credentials
+        .lock()
+        .unwrap()
+        .authenticate(&f.token, now_ms())?;
+    assert_eq!(authenticated.connection_id, original.connection_id);
+    assert_eq!(authenticated.generation, original.generation);
+    assert_eq!(authenticated.expires_unix_ms, original.expires_unix_ms);
+    assert_eq!(authenticated.selection, advanced);
+    assert_eq!(
+        read_client_token(&f._root.path().join("http"), f.id)?,
+        f.token
+    );
+    // Both requests use the original initialized session. No reinitialization,
+    // re-enrollment or replay may hide a cache-induced session replacement.
+    let (status, _, same_reply) =
+        clock_test_exchange(&f, &mut same_tcp, "/mcp", call(4), Some(&session)).await?;
+    let same_status = status;
+    let (mut fresh_tcp, second_task) = clock_test_tcp(&f, port).await?;
+    let (status, _, fresh_reply) =
+        clock_test_exchange(&f, &mut fresh_tcp, "/mcp", call(5), Some(&session)).await?;
+    assert_eq!(
+        (same_status, status),
+        (StatusCode::OK, StatusCode::OK),
+        "independent one-dispatch calls; same TCP: {same_reply}; fresh TCP: {fresh_reply}"
+    );
+    assert_eq!(same_reply["result"], before["result"]);
+    assert_eq!(fresh_reply["result"], before["result"]);
+    let (status, _, json_reply) = clock_test_exchange(
+        &f,
+        &mut fresh_tcp,
+        "/api/v1/tools/search",
+        args.clone(),
+        None,
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        json_reply, before["result"],
+        "canonical JSON/MCP complete result parity"
+    );
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        4,
+        "no accepted read was replayed"
+    );
+    {
+        let clients = f.gateway.0.clients.lock().unwrap();
+        let cached = clients.get(&f.id).unwrap();
+        assert_eq!(cached.ticket, old_ticket);
+        assert!(Arc::ptr_eq(&cached.read_delivery, &old_context));
+        assert_eq!(cached.selection, advanced);
+    }
+    // Actual native clock turnover still retires the old delivery generation.
+    // A fresh JSON request creates a new current factory; old SDK sessions stay
+    // fenced and do not transparently replay in that new generation.
+    let next = current.next()?;
+    f.gateway
+        .0
+        .native_gate
+        .observe_catalog_commit(current, next)?;
+    assert!(f.gateway.0.native_gate.check_issue(old_ticket).is_err());
+    let (mut next_tcp, third_task) = clock_test_tcp(&f, port).await?;
+    let (status, _, next_json) = clock_test_exchange(
+        &f,
+        &mut next_tcp,
+        "/api/v1/tools/search",
+        args.clone(),
+        None,
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        next_json["structuredContent"]["validated_catalog_revision"],
+        serde_json::json!(next)
+    );
+    assert!(old_context.lock().unwrap().closed);
+    let (status, _, unknown_session) =
+        clock_test_exchange(&f, &mut next_tcp, "/mcp", call(6), Some(&session)).await?;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(unknown_session, "Not Found: Session not found");
+    assert_eq!(calls.load(Ordering::SeqCst), 5);
+    drop((same_tcp, fresh_tcp, next_tcp));
+    for task in [first_task, second_task, third_task] {
+        let _ = tokio::time::timeout(Duration::from_secs(5), task).await?;
+    }
+    stop.cancel();
+    tokio::time::timeout(Duration::from_secs(5), owner).await???;
+    Ok(())
+}
+
+#[tokio::test]
+async fn delayed_old_authenticated_clock_cannot_replace_newer_cached_authority()
+-> anyhow::Result<()> {
+    let f = fixture(57421)?;
+    let current = CatalogRevision::INITIAL.next()?;
+    f.gateway
+        .0
+        .native_gate
+        .observe_catalog_commit(CatalogRevision::INITIAL, current)?;
+    // Hold the exact snapshot and delivery cell after authentication/validation,
+    // but before publication into the cache, like a delayed async validator.
+    let stale = f
+        .gateway
+        .0
+        .credentials
+        .lock()
+        .unwrap()
+        .authenticate(&f.token, now_ms())?;
+    let delivery = ConnectionFence::new(f.gateway.0.native_gate.clone());
+    delivery.capture(&stale.selection)?;
+    let ticket = delivery.authenticated_ticket()?;
+    let cell = {
+        let mut registry = f.gateway.0.delivery_cells.lock().unwrap();
+        let epoch = registry.epoch;
+        registry.capture(epoch, &stale, ticket)?
+    };
+    delivery.bind_credential(cell.clone())?;
+    let backend = (f.gateway.0.validate)(
+        stale.clone(),
+        ReadAttemptContext::new(
+            Instant::now() + Duration::from_secs(5),
+            CancellationToken::new(),
+        ),
+    )
+    .await?;
+    delivery.check()?;
+    let mut advanced = stale.selection.clone();
+    if let HttpSelection::Scoped { selection } = &mut advanced {
+        selection.expected_catalog_revision = current;
+    }
+    {
+        let mut store = f.gateway.0.credentials.lock().unwrap();
+        store.enroll_default(f.id, advanced.clone(), now_ms())?;
+        assert!(
+            store
+                .enroll_default(f.id, stale.selection.clone(), now_ms())
+                .is_err(),
+            "saved clock cannot regress"
+        );
+        let mut crossed = advanced.clone();
+        if let HttpSelection::Scoped { selection } = &mut crossed {
+            selection.grant_id = GrantId::from_identity(Incarnation::from_bytes([91; 16]));
+        }
+        assert!(
+            store.enroll_default(f.id, crossed, now_ms()).is_err(),
+            "a clock refresh cannot replace the original grant"
+        );
+    }
+    let response = f
+        .gateway
+        .handle(
+            request(&f, "/api/v1/tools/airk_search"),
+            CancellationToken::new(),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    response.into_body().collect().await?;
+    let retained = f
+        .gateway
+        .0
+        .clients
+        .lock()
+        .unwrap()
+        .get(&f.id)
+        .unwrap()
+        .read_delivery
+        .clone();
+    let refused = match f
+        .gateway
+        .cache_validated_service(stale, backend, &delivery, cell, ticket)
+    {
+        Ok(_) => anyhow::bail!("delayed old authentication replaced the newer cached selection"),
+        Err(response) => response,
+    };
+    assert_eq!(refused.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let refused_body: serde_json::Value =
+        serde_json::from_slice(&refused.into_body().collect().await?.to_bytes())?;
+    assert_eq!(refused_body["error"]["code"], "native_read_context_changed");
+    {
+        let clients = f.gateway.0.clients.lock().unwrap();
+        let cached = clients.get(&f.id).unwrap();
+        assert_eq!(cached.selection, advanced);
+        assert_eq!(cached.ticket, ticket);
+        assert!(Arc::ptr_eq(&cached.read_delivery, &retained));
+        assert!(!retained.lock().unwrap().closed);
+    }
     f.gateway.close().await;
     Ok(())
 }

@@ -95,15 +95,6 @@ def assert_frozen_query_scope(value, selection, observation):
     assert value.get("scope_observation") == observation, value
     assert isinstance(value.get("reason"), str) and value["reason"], value
 
-# Match service_management::execute_request's registry-contention contract.
-# RequestEpoch prunes receipts and is deliberately not a read-only observation.
-REGISTRY_READS = {"job", "request_receipt", "configuration_result", "plan", "plan_items", "projects", "events",
-                  "maintenance", "watch", "progress", "inspection", "console", "inactive_console",
-                  "catalog_source_mutation_draft", "catalog_host_context", "catalog_page",
-                  "catalog_grant_draft", "catalog_source_change_observation", "catalog_receipt",
-                  "catalog_index_retirement_evidence"}
-
-
 def tool_value(envelope):
     assert isinstance(envelope, dict) and isinstance(envelope.get("content"), list), envelope
     assert len(envelope["content"]) == 1 and envelope["content"][0].get("type") == "text", "Invalid native text envelope"
@@ -160,24 +151,16 @@ def remaining(deadline, ceiling):
 
 
 def metadata_rpc(invoke, method, deadline=None, *, expected_failure=None):
-    """Replay only explicit contention on exact, read-only registry observations."""
+    """Invoke once: canonical native control owns registry-busy recovery."""
     deadline = min(deadline if deadline is not None else float("inf"), time.monotonic() + 90)
     exact = json.dumps(method)
-    name = next(iter(method)) if isinstance(method, dict) and len(method) == 1 else method
-    read_only = isinstance(name, str) and name in REGISTRY_READS
-    for attempt in range(41):
-        remaining(deadline, 90)
-        value = invoke(exact, deadline)
-        remaining(deadline, 90)
-        # A transport exception, mutation or unknown failure is never retried.
-        if (read_only and value == {"status": "failure", "code": "registry_busy"}
-                and attempt < 40 and time.monotonic() + 0.025 < deadline):
-            time.sleep(0.025)
-            continue
-        if (value.get("status") in ("failure", "incompatible")
-                and (expected_failure is None or value != {"status": "failure", "code": expected_failure})):
-            raise AssertionError(f"Native metadata refused: {value}")
-        return value
+    remaining(deadline, 90)
+    value = invoke(exact, deadline)
+    remaining(deadline, 90)
+    if (value.get("status") in ("failure", "incompatible")
+            and (expected_failure is None or value != {"status": "failure", "code": expected_failure})):
+        raise AssertionError(f"Native metadata refused: {value}")
+    return value
 
 
 def read_envelope(read, deadline, attempts=41, admission_only=False):
@@ -360,6 +343,82 @@ def inference_worker_clean_exit(fixture):
     return True
 
 
+# Exact retained artifacts whose source contracts were reviewed. Runtime schema
+# describes executable packaging; it never identifies registry authority.
+# The 1.5.12 schema-8 startup bridge has an authentic historical-DDL regression;
+# audited_imported_legacy admits its producer preflight, not a passing migration.
+REVIEWED_RUNTIME_CONTRACTS = {
+    ("1ec0c84311eab5362e6404205c0ba8aa65b7bf92f7f0b278c76c35d4c80e4651",
+     "b98e439b8eab96b8825f0786af68a6d6d6a01f349ae7a6ace101d95d3718c20b"):
+        {"version": "1.5.12", "authority": "legacy", "input_owner": "legacy_cli", "migration_path": "audited_imported_legacy", "historical_contract_review_revision": "d3b80ddf1c9af3acf97eb8f2f97960a7c2d6c3b7", "compiled_source_revision": "d3b80ddf1c9af3acf97eb8f2f97960a7c2d6c3b7"},
+    ("be73a42fb700d058dd4b2719a672d82c7a82ad9e0e5eb527529c2f23ac4ae30a",
+     "51536a705cf9cbabe4947cacddf43a8cb29b0af8bad4e23ca7f293aa6dd347fa"):
+        {"version": "1.8.12", "authority": "catalog", "input_owner": "native_administrative", "migration_path": "reviewed_catalog", "historical_contract_review_revision": "3c6e81cf5911751aac8dbe6767ea77abab11d206"},
+}
+
+
+def reviewed_runtime_contract(manifest_sha256, source_sha256, version):
+    """Exact source/artifact admission to a preflight, never an acceptance result."""
+    contract = REVIEWED_RUNTIME_CONTRACTS.get((manifest_sha256, source_sha256))
+    if contract is None or contract["version"] != version:
+        raise ValueError("Unreviewed managed predecessor contract; no service may start")
+    return contract
+
+
+def classify_runtime(runtime):
+    metadata_bytes = (runtime / "airk-runtime.json").read_bytes()
+    metadata = json.loads(metadata_bytes)
+    schema = metadata.get("schema")
+    if schema not in (1, 2):
+        raise ValueError("Unsupported fixture executable topology")
+    if schema == 2:
+        main_digest = metadata.get("airk_sha256")
+        if (set(metadata) != {"schema", "version", "os", "arch", "airk_sha256"}
+                or metadata.get("version") != "1.8.14"
+                or metadata.get("os") not in ("windows", "macos", "linux")
+                or metadata.get("arch") not in ("x86_64", "aarch64")
+                or not isinstance(main_digest, str) or len(main_digest) != 64
+                or any(character not in "0123456789abcdef" for character in main_digest)):
+            raise ValueError("Unsupported single-image runtime metadata")
+        authority = "catalog"
+        input_owner = "native_administrative"
+        migration_path = "reviewed_catalog"
+        evidence = {"kind": "current_schema_2_contract"}
+    else:
+        manifest_bytes = (runtime / "airk-install.json").read_bytes()
+        manifest = json.loads(manifest_bytes)
+        build_bytes = (runtime / "airk-build.json").read_bytes()
+        build = json.loads(build_bytes)
+        digest = lambda value: hashlib.sha256(value).hexdigest()
+        if (manifest["files"].get("airk-runtime.json") != digest(metadata_bytes)
+                or manifest["files"].get("airk-build.json") != digest(build_bytes)
+                or build.get("runtime") != metadata):
+            raise ValueError("Fixture source/metadata receipt is not sealed by its manifest")
+        key = (digest(manifest_bytes), build["source"]["sha256"])
+        contract = reviewed_runtime_contract(*key, metadata.get("version"))
+        authority = contract["authority"]
+        input_owner = contract["input_owner"]
+        migration_path = contract["migration_path"]
+        evidence = {"kind": "reviewed_artifact_source_contract", "manifest_sha256": key[0],
+                    "source_sha256": key[1], "historical_contract_review_revision": contract["historical_contract_review_revision"]}
+        if "compiled_source_revision" in contract:
+            evidence["compiled_source_revision"] = contract["compiled_source_revision"]
+    if authority not in ("legacy", "catalog") or schema == 2 and authority != "catalog":
+        raise ValueError("Unsupported fixture authority/topology combination")
+    catalog = authority == "catalog"
+    return {"topology": "single_image" if schema == 2 else "paired",
+            "transport": "https" if schema == 2 else "stdio", "authority": authority,
+            "setup_owner": "reviewed_catalog_setup" if catalog else "raw_registration",
+            "input_owner": input_owner, "original_scope": "catalog_session" if catalog else "service_project",
+            "migration_provenance": "user_reviewed_project_grant" if catalog else "imported_legacy_snapshot",
+            "migration_path": migration_path,
+            "startup": "managed_install" if catalog else "foreground_service",
+            "evidence": evidence}
+
+
+runtime_compatibility = classify_runtime
+
+
 class Fixture:
     def __init__(self, runtime, owner, command_timeout=120, job_timeout=180):
         self.runtime = runtime_root(runtime)
@@ -370,9 +429,10 @@ class Fixture:
         self.control = owner / "control"
         self.projects = {}
         self.scopes = {}
-        self.single_image = json.loads((self.runtime / "airk-runtime.json").read_text(encoding="utf-8"))["schema"] == 2
+        self.compatibility = classify_runtime(self.runtime)
+        self.single_image = self.compatibility["topology"] == "single_image"
         self.install = owner / "install"
-        if self.single_image:
+        if self.managed_installation:
             self.control = owner / "state" / "control"
         self.managed_started, self.managed_stop = False, None
         self.managed_health = None
@@ -434,13 +494,15 @@ class Fixture:
         return result
 
     def start(self):
-        if self.single_image:
+        if self.managed_installation:
             identity = hashlib.sha256((self.runtime / "airk-install.json").read_bytes()).hexdigest()
             staged = json.loads(self.run("runtime", "stage", "--source", self.runtime, "--install-dir", self.install,
                 "--state-dir", self.owner / "state", "--approved-sha256", identity,
                 "--verification-basis", "organization-digest").stdout)
             self.managed_started = True  # Activation may start before an uncertain response.
             activated = json.loads(self.run("runtime", "activate", "--install-dir", self.install, "--runtime-sha256", identity).stdout)
+            if not self.single_image:
+                self.run("runtime", "ensure", "--install-dir", self.install)
             inspection = json.loads(self.run("runtime", "inspect", "--install-dir", self.install).stdout)
             expected_main = self.install / "runtimes" / identity / self.binary.relative_to(self.runtime)
             assert Path(inspection["control_dir"]).samefile(self.control)
@@ -466,7 +528,7 @@ class Fixture:
         raise AssertionError("Owned native service did not become healthy")
 
     def assert_alive(self):
-        if self.single_image:
+        if self.managed_installation:
             actual = self.rpc("health")["observation"]
             assert actual["instance"] == self.managed_health["instance"]
             assert actual["runtime_sha256"] == self.managed_health["runtime_sha256"]
@@ -476,7 +538,7 @@ class Fixture:
 
     def close(self):
         try:
-            if self.single_image and self.managed_started and self.managed_stop is None:
+            if self.managed_installation and self.managed_started and self.managed_stop is None:
                 actual = self.rpc("health")["observation"]
                 if self.managed_health is not None:
                     self.assert_alive()
@@ -516,8 +578,16 @@ class Fixture:
                                        input=exact, timeout=remaining(until, 90)).stdout)
         return metadata_rpc(invoke, method, deadline)
 
+    @property
+    def managed_installation(self):
+        return self.compatibility["startup"] == "managed_install"
+
+    @property
+    def catalog_authority(self):
+        return self.compatibility["authority"] == "catalog"
+
     def register(self, name, root, data):
-        if self.single_image:
+        if self.catalog_authority:
             spec = importlib.util.spec_from_file_location("runtime_reviewed_fixture", Path(__file__).with_name("check-runtime-upgrade.py"))
             reviewed = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(reviewed)
@@ -533,7 +603,7 @@ class Fixture:
 
     def arguments(self, name):
         project = self.projects[name]
-        if self.single_image:
+        if self.catalog_authority:
             selected = self.scopes[name].copy()
             descriptor = self.rpc({"catalog_host_context": {"key": selected["context_key"], "expected_catalog_revision": None}})["descriptor"]
             assert descriptor["namespace"] == selected["namespace"]
@@ -654,7 +724,7 @@ class Fixture:
 
     def remove(self, project):
         """Submit once; removal proof survives pruning of detailed job receipts."""
-        assert not self.single_image, "Reviewed indexes require canonical Catalog retirement, not legacy unregister"
+        assert not self.catalog_authority, "Reviewed indexes require canonical Catalog retirement, not legacy unregister"
         self.wait(self.enqueue(project, "inspect"))
         prepared = self.prepare_configuration(project, {"operation": "unregister"})
         saved = json.loads((self.control / "client-requests" / (prepared["prepared"] + ".json")).read_text(encoding="utf-8"))
@@ -827,7 +897,7 @@ class Fixture:
         scope_reply = receive(8)["result"]
         assert scope_reply.get("isError") is not True, scope_reply
         query_scope = tool_value(scope_reply)
-        if self.single_image:
+        if self.catalog_authority:
             assert_frozen_query_scope(query_scope, self.scopes[name], search_body.get("scope_observation"))
         else:
             assert_legacy_query_scope(query_scope)
@@ -879,7 +949,7 @@ def mixed_mcp_clients(fixture, project):
 
 def retained_job_failure(fixture, project):
     """Break only this disposable fixture's derived metadata, then restore exact bytes."""
-    data = (fixture.owner / "data" / project if fixture.single_image else fixture.owner / "data").resolve(strict=True)
+    data = (fixture.owner / "data" / project if fixture.catalog_authority else fixture.owner / "data").resolve(strict=True)
     assert data.is_relative_to(fixture.owner), "Diagnostic fixture escaped its private owner"
     # Native Windows registrations use extended paths; samefile verifies identity
     # without treating the \\?\ spelling as a different parent directory.
@@ -971,7 +1041,7 @@ def automatic_orphan_recovery(fixture, root):
         try:
             status = fixture.published_status("project-a", deadline)
             last["status"] = status
-            if fixture.single_image:
+            if fixture.catalog_authority:
                 assert_scoped_freshness_private(status)
                 progress = fixture.rpc({"progress": {"project": project}}, deadline=deadline)
                 last["progress"] = progress
@@ -1088,8 +1158,8 @@ def qualify(runtime, files, model):
                       "elapsed_seconds": round(time.monotonic() - started, 3), "source_bytes_preserved": True}
         finally:
             fixture.close()
-        report["service_clean_exit"] = fixture.child.returncode == 0 if not fixture.single_image else None
-        report["managed_stop_complete"] = fixture.managed_stop["record"]["phase"] == "complete" if fixture.single_image else None
+        report["service_clean_exit"] = fixture.child.returncode == 0 if not fixture.managed_installation else None
+        report["managed_stop_complete"] = fixture.managed_stop["record"]["phase"] == "complete" if fixture.managed_installation else None
         return report
 
 

@@ -1202,6 +1202,10 @@ impl ServiceRegistry {
 }
 
 #[cfg(test)]
+#[path = "service_predecessor_schema8_tests.rs"]
+mod predecessor_schema8_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

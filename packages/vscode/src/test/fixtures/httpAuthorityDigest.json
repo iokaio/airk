@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "vectors": [
+    {
+      "name": "scoped-clock-seven",
+      "selection": {
+        "kind": "scoped",
+        "selection": {
+          "schema": 1,
+          "context_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "namespace": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "expected_catalog_revision": 7,
+          "grant_id": "grt_cccccccccccccccccccccccccccccccc",
+          "expected_grant_revision": 1,
+          "index_id": "idx_dddddddddddddddddddddddddddddddd",
+          "project_ids": [
+            "prj_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          ]
+        }
+      },
+      "authority_sha256": "e36db878986d079f35ef50c0cf77b789929b19a1fa16f056b363564ed355313c"
+    },
+    {
+      "name": "combined-clock-eleven",
+      "selection": {
+        "kind": "combined",
+        "selection": {
+          "schema": 1,
+          "context_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "namespace": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "expected_catalog_revision": 11,
+          "grant_id": "grt_cccccccccccccccccccccccccccccccc",
+          "expected_grant_revision": 2,
+          "project_ids": [
+            "prj_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "prj_ffffffffffffffffffffffffffffffff"
+          ],
+          "index_ids": [
+            "idx_dddddddddddddddddddddddddddddddd"
+          ]
+        }
+      },
+      "authority_sha256": "343ada83ca88462332216ef7cd8a88d575a21b2418ed3e7753e6710307593ba8"
+    }
+  ]
+}

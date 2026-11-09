@@ -114,7 +114,7 @@ test('service activation advertises reviewed bindings without indexing and prese
         createFileSystemWatcher:()=>{throw new Error('Editor-owned source watching is forbidden');}},
     window:{createOutputChannel:(name:string)=>({appendLine(){},show(preserve:boolean){outputShows.push([name,preserve]);},dispose(){}}),createStatusBarItem:()=>({show(){},dispose(){}}),
         registerWebviewViewProvider:()=>disposable,createTreeView:()=>disposable,onDidChangeActiveTextEditor:(listener:(editor:any)=>void)=>{editorListeners.add(listener);return {dispose:()=>editorListeners.delete(listener)};},
-        showErrorMessage:async()=>undefined,showWarningMessage:async()=>undefined,
+        showErrorMessage:async()=>undefined,showWarningMessage:async()=>undefined,showInformationMessage:async()=>undefined,
         createTerminal:(options:any)=>{terminals.push(options);return {show(){},dispose(){}};}},
     commands:{registerCommand:(name:string,action:()=>Promise<unknown>)=>{commands.set(name,action);return disposable;},executeCommand:async()=>{}},
     lm:{registerMcpServerDefinitionProvider:(name:string,value:any)=>{if(name==='airk.collections')provider=value;return disposable;}},env:{},StatusBarAlignment:{Left:1},
@@ -299,6 +299,61 @@ test('service activation advertises reviewed bindings without indexing and prese
                 assert.equal(progress.length,completedProgress,'a superseded setup generation cannot publish completion');
             }finally{configuration.mock.restore();remember.mock.restore();scoped.dispose();}
         }
+        // A retained completed-rebuild receipt is historical evidence. It must
+        // not hide a later reviewed upgrade, including a rebuilt same-version
+        // bundle with a different approved manifest. The current exact bundle
+        // remains eligible for the ordinary rebuilt reconnect shortcut.
+        const defaultConfiguration=stub.workspace.getConfiguration;
+        const automaticConfiguration=context.mock.method(stub.workspace,'getConfiguration',(...args:any[])=>{
+            const value=defaultConfiguration(...args);
+            return {...value,inspect:(key:string)=>key==='cli.autoInstall'?{globalValue:true}:value.inspect(key)};
+        });
+        const rememberRebuild=context.mock.method(require('../extensionUninstall'),'rememberUninstallTarget',async()=>{});
+        try{
+            for(const variant of ['older-version','same-version-old-manifest','exact-bundle','exact-unavailable']){
+                const exact=variant.startsWith('exact-'),unavailable=variant==='exact-unavailable',digest='de'.repeat(32);
+                const scoped=new controller.constructor({...extensionContext,globalStorageUri:stub.Uri.file(root),extension:{packageJSON:{version:'1.8.9'}}});
+                const next:any={...binding,version:'1.8.9',runtimeSha256:digest};
+                const previous:any={...binding,version:variant==='older-version'?'1.8.8':'1.8.9',runtimeSha256:exact?digest:'ac'.repeat(32)};
+                const original={...savedRegistration(registration),data_root:path.join(root,'preserved-index')};
+                const replacement={...original,binding:'dc'.repeat(32),data_root:path.join(root,'replacement-index')};
+                const rebuild={schema:1,operation_id:(variant==='older-version'?'a1':variant==='same-version-old-manifest'?'a2':unavailable?'a4':'a3').repeat(16),stage:unavailable?'unavailable':'ready',
+                    provenance:'native_rebuild_from_saved_configuration',candidate:previous.runtimeSha256,predecessor:'ad'.repeat(32),original_namespace:'b1'.repeat(16),
+                    preserved_state:path.join(root,'preserved-state'),preserved_control:path.join(root,'preserved-state','control'),preserved_index_roots:[original.data_root],
+                    successor_state:path.dirname(previous.controlDir),successor_control:previous.controlDir,successor_namespace:'b2'.repeat(16),original_failure:null,failure:null,index_scope:null,
+                    indexes:[{original,replacement,sources:{},settings_sha256:'b3'.repeat(32),original_paused:false,paused:false,watching:false,
+                        job:unavailable?null:{id:'b4'.repeat(32),project:replacement.binding,kind:'index',state:'succeeded',fencing_generation:1,attempts:1,outcome:{state:'succeeded',revision:null}},readiness:unavailable?'unavailable':'ready',
+                        failure:unavailable?{code:'rebuild_observation_unavailable',message:'Original rebuild job receipt was pruned'}:null}]};
+                previous.rebuild=rebuild;
+                const savedReceipt=JSON.stringify(rebuild),calls:string[]=[];
+                let active=previous;
+                const observed=()=>({bundle:{digest},installDir:root,installed:true,location:{user_paths:{launcher:root}},
+                    inspection:{selection:{active:active.runtimeSha256},approval:{manifest_sha256:active.runtimeSha256,version:active.version,verification_basis:'trusted_distribution'},
+                        executable:active.executable,launcher:active.launcher,control_dir:active.controlDir,rebuild}});
+                scoped.host={discover:async()=>observed(),binding:()=>active,supersedePending:async()=>false,
+                    reviewTransition:async(current:any,action:string)=>{assert.equal(current,previous);assert.equal(action,'upgrade');calls.push('review');return {action};},
+                    transition:async(current:any,_review:any,report:(message:string,stage:string)=>void)=>{assert.equal(current,previous);calls.push('activate');report('Staging runtime','staging');report('Activating runtime','activating');active=next;},
+                    reconnect:async()=>{calls.push('reconnect');assert.ok(exact,'a historical rebuild must reach upgrade review before reconnecting');return active;},
+                    ensure:async()=>{calls.push('ensure');assert.equal(active,next);return next;}};
+                context.mock.method(scoped,'installCommandLine',async()=>{calls.push('install-cli');});
+                context.mock.method(scoped,'prepareWorkspaceProjects',async()=>{calls.push('prepare');});
+                context.mock.method(scoped,'finalizeLegacyLauncherRemoval',async()=>{calls.push('finalize');});
+                context.mock.method(scoped,'refresh',async()=>{calls.push('refresh');scoped.binding=next;});
+                context.mock.method(scoped,'openWorkbenchAfterSetup',async()=>{});
+                context.mock.method(scoped,'reportLastUninstall',async()=>{});
+                context.mock.method(scoped,'withInstallProgress',async(action:()=>Promise<void>)=>action());
+                try{
+                    await scoped.automaticSetup(false,false);
+                    assert.deepEqual(calls,exact?['reconnect']:['review','activate','install-cli','ensure','prepare','finalize','refresh'],variant);
+                    assert.equal(scoped.installationFailed,false,variant);
+                    assert.equal(JSON.stringify(rebuild),savedReceipt,'later upgrades retain the original complete rebuild receipt');
+                    if(unavailable){
+                        assert.equal(scoped.explorerHost().runtimeUpgrade(),undefined,'unavailable history cannot become an upgrade success/failure banner');
+                        assert.equal(scoped.status.text,'AIRK: rebuild history unavailable');
+                    }
+                }finally{scoped.dispose();}
+            }
+        }finally{automaticConfiguration.mock.restore();rememberRebuild.mock.restore();}
         extension.deactivate();await assert.rejects(provider.resolveMcpServerDefinition(definitions[0]),(error:unknown)=>error instanceof ServiceError&&error.code==='runtime_client_no_longer_authorized');assert.equal(ensures,before);
     }finally{extension?.deactivate();loader._load=original;delete require.cache[require.resolve('../serviceExtension')];await fs.rm(root,{recursive:true,force:true});}
 });

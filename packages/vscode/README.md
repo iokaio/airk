@@ -1,13 +1,36 @@
 # AIRK: Local Search for Coding Agents
 
+The [fixture compatibility matrix](https://github.com/iokaio/airk/blob/feat/finetuning/docs/testing/fixture-compatibility.md)
+keeps imported-legacy migration distinct from reviewed catalog upgrades. The
+authentic legacy producer and installed-editor acceptance remain pending; the
+1.5.12 schema-8 metadata bridge passed scoped regression. r26 remains preserved.
+
+The approved [automatic rebuild option](https://github.com/iokaio/airk/blob/feat/finetuning/docs/upgrade-rebuild-fallback.md)
+will let users choose rebuilding earlier in an upgrade, then automatically build
+fresh indexes from eligible raw managed saved sources while preserving previous
+state and supported settings. Unsupported configurations are refused before state
+changes; client re-enrollment is explicit. Native/editor source is implemented;
+installed and frozen qualification are pending.
+
+[Standalone CLI onboarding](https://github.com/iokaio/airk/blob/feat/finetuning/docs/agent-integration.md#standalone-onboarding-without-vs-code)
+is implemented on this branch for setup without VS Code: native service
+discovery, reviewed index scope and protected client launch. Scoped CLI tests
+pass; actual client launch and installed acceptance remain pending. Use the printed installed executable path;
+setup does not change `PATH`.
+Standalone Windows/macOS/Linux installer source installs only the CLI/native
+server; this VS Code extension remains a separate optional distribution.
+Actual installer builds, signing and publication remain pending.
+
 **1.8.14 implementation and qualification are in progress; unpublished.** The source versions and generated catalog identify the [One AIRK implementation](https://github.com/iokaio/airk/blob/feat/finetuning/docs/one-airk.md). The single-executable HTTPS runtime is implemented; remaining migration corrections and final native and installed-platform acceptance are tracked in the [1.8.14 working record](https://github.com/iokaio/airk/blob/feat/finetuning/docs/releases/release-1.8.14.md). Earlier binaries keep their original versions and hashes.
 
 Modern installation must migrate recognized owned Codex, Claude Code and
 VS Code/Copilot Chat connections to direct native HTTPS, then remove verified
-legacy launcher images, their processes and all superseded runtime executables.
+legacy launcher images, their processes and eligible superseded runtime executables.
 This applies to legacy-to-modern and later modern-to-modern updates, preserving
-the selected runtime, sources, indexes and settings. Obsolete payloads may remain
-only while migration or cleanup is unfinished; they are not a fallback. Unsupported clients,
+the selected runtime, sources, indexes and settings. The explicit rebuild option
+separately preserves its predecessor runtime and old state as recovery evidence.
+Later ordinary upgrades retire unprotected intermediates and report that
+preserved evidence separately. Unexplained obsolete payloads mean unfinished cleanup. Unsupported clients,
 unproven scopes and blocked cleanup leave installation explicitly incomplete.
 Installed-client and platform acceptance remain pending.
 
@@ -17,6 +40,11 @@ discovery reports the actual bound port, including an alternate when the preferr
 port is occupied. Owned connection configuration can be refreshed, while external
 clients may still require reconnection. See the [local HTTPS API](https://github.com/iokaio/airk/blob/feat/finetuning/docs/local-https-api.md)
 for trust, credentials, endpoint discovery and local-tool examples.
+
+Credential lifecycle corrections reclaim bounded active-ledger capacity after
+revocation and proven Explorer attachment retirement, while retaining immutable
+connection ownership and ID-reuse fences. Active manual credentials are preserved.
+Validation and remaining client/platform gates are recorded in the working record.
 
 **Explorer notices and updates:** dismiss update, connection and action-outcome notices with **×**. Dismissals are saved for the workspace and stay hidden across screens, Explorer reopen and window reload. Once the new loader is running, later detected AIRK extension replacements reload AIRK automatically and reopen its single Explorer panel when it was open. For the first transition from an older loaded extension, use **Restart Extensions** in VS Code’s Extensions pane to activate the new version. Installed-editor acceptance is recorded separately.
 

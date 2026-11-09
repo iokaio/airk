@@ -69,7 +69,7 @@ tokio-util.workspace = true
 hyper = { workspace = true, features = ["client"] }
 airk-ingest.workspace = true
 rusqlite.workspace = true
-tokio = { workspace = true, features = ["process"] }
+tokio = { workspace = true, features = ["process", "test-util"] }
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true

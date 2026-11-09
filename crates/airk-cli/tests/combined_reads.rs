@@ -2223,6 +2223,7 @@ async fn owned_combined_benchmark_replays_one_two_four_and_thirty_two_indexes() 
                         selection: selection.clone(),
                     }),
                     explorer_descriptor: None,
+                    reattach_connection_id: None,
                 },
             ),
         )

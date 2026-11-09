@@ -63,6 +63,76 @@ for line in sys.stdin:
 
 
 class InvestigationBenchmarkTests(unittest.TestCase):
+    def test_http_cleanup_failure_retains_original_and_complete_secondary_evidence(self):
+        session = BENCH.Session({"transport": "https"}, 5)
+        primary = BENCH.http_fixture.HttpResponseError(200, "bounded prefix", submission="uncertain")
+        secondary = BENCH.http_fixture.HttpRefused(503, {"schema": "airk.local-api-error/1", "error": {"code": "native_delivery_fenced"}},
+                                                  headers=[["X-Future", "complete"]], request={"http_method": "DELETE"})
+        session.networks = [mock.Mock()]
+        session.networks[0].close.side_effect = secondary
+        self.assertFalse(session.__exit__(type(primary), primary, None))
+        self.assertEqual(session.cleanup["errors"][0]["http_response"], secondary.evidence())
+        self.assertTrue(any("cleanup also failed" in note for note in primary.__notes__))
+
+    def test_modern_tool_hint_is_observed_once_without_harness_retry(self):
+        session = BENCH.Session({"transport": "https"}, 5)
+        envelope = {"isError": True, "structuredContent": {"error": {
+            "code": "selection_busy", "query_submitted": False, "retryable": True, "retry_after_ms": 50}}}
+        session.request = mock.Mock(return_value=(envelope, {"elapsed_ms": 1, "completed_at": BENCH.time.perf_counter()}))
+        with mock.patch.object(BENCH.time, "sleep", side_effect=AssertionError("no harness retry")):
+            result, metadata = session.tool(("search", {"query": "original"}))
+        self.assertIs(result, envelope)
+        self.assertEqual(metadata["retries"], 0)
+        session.request.assert_called_once()
+
+    def test_http_failures_keep_full_redacted_evidence_and_never_replay_uncertain(self):
+        for code, status, outcome in (("authentication_busy", 503, "refused"),
+                                      ("native_delivery_fenced", 503, "failed"),
+                                      ("response_limit", 200, "uncertain")):
+            body = {"schema": "airk.local-api-error/1", "error": {"code": code}, "future": {"retained": [1]}}
+            error_type = BENCH.http_fixture.HttpResponseError if outcome == "uncertain" else BENCH.http_fixture.HttpRefused
+            error = error_type(status, body, headers=[["X-Future", "one"], ["X-Future", "two"]],
+                               request={"jsonrpc_id": 1, "connection_id": "owned"},
+                               raw_body=json.dumps(body).encode(), header_redactions=["Mcp-Session-Id"],
+                               body_redacted=True, submission="uncertain" if outcome == "uncertain" else "observed")
+            session = BENCH.RetainedSession({"transport": "https"}, 5)
+            session.local.network = network = mock.Mock()
+            session.networks = [network]
+            network._request.side_effect = error
+            with self.subTest(code=code), self.assertRaises(error_type) as caught:
+                session.request("tools/call", {"name": "search", "arguments": {}})
+            self.assertIs(caught.exception, error)
+            self.assertEqual(session.query_replies[0]["http_response"], error.evidence())
+            self.assertEqual(session.query_replies[0]["outcome"], outcome)
+            if outcome == "uncertain":
+                with self.assertRaisesRegex(RuntimeError, "transport_uncertain"):
+                    session.request("tools/call", {"name": "search", "arguments": {}})
+                network._request.assert_called_once()
+            session.__exit__(None, None, None)
+            network.close.assert_called_once_with(delete=outcome != "uncertain")
+
+    def test_all_refused_trial_accounts_every_call_and_leaves_coverage_unobserved(self):
+        error = BENCH.http_fixture.HttpRefused(503, {"schema": "airk.local-api-error/1", "error": {"code": "authentication_busy"}})
+        session = SimpleNamespace(tool=mock.Mock(side_effect=error), started=BENCH.time.perf_counter())
+        result = BENCH.run_trial(session, 4, {}, {})
+        selected = len(BENCH.task_workload())
+        self.assertEqual(session.tool.call_count, selected)
+        self.assertEqual(result["accounting"]["refused"], selected)
+        self.assertEqual(result["accounting"]["succeeded"], 0)
+        self.assertTrue(result["accounting"]["passed"])
+        self.assertFalse(result["coverage"]["available"])
+        self.assertFalse(result["coverage"]["complete"])
+        self.assertTrue(all(call["retries"] == 0 and call["submission"] == "not_submitted" for call in result["calls"]))
+
+    def test_partial_combined_group_retains_failed_and_unexecuted_samples(self):
+        group = {"trials": [{"sample": 0, "validated": False, "outcome": "uncertain"}],
+                 "frontend_cleanup": {"frontend_process_created": False, "http_session_delete": False}}
+        BENCH.combined_phase_evidence(group, 3)
+        self.assertEqual(group["accounting"]["uncertain"], 1)
+        self.assertEqual(group["accounting"]["not_executed"], 2)
+        self.assertEqual(group["assertion_coverage"]["unverified_samples"], [0, 1, 2])
+        self.assertFalse(group["qualified"])
+
     def legacy_metadata_fixture(self, temporary):
         owner = Path(temporary).resolve()
         control, source = owner / "control", owner / "source"
@@ -344,6 +414,27 @@ class InvestigationBenchmarkTests(unittest.TestCase):
             self.assertGreater(trial["response_bytes"], 0)
             self.assertTrue(report["cases"][0]["frontend_cleanup"]["graceful_eof"])
             self.assertTrue(report["source_unchanged"])
+
+            class RefusedSession:
+                def __init__(self, *args, **kwargs):
+                    self.cleanup = {"frontend_process_created": False, "http_session_delete": True}
+                    self.calls = 0
+                def __enter__(self): return self
+                def __exit__(self, *_): return False
+                def tool(self, *args):
+                    self.calls += 1
+                    raise BENCH.http_fixture.HttpRefused(503, {"schema": "airk.local-api-error/1", "error": {"code": "authentication_busy"}})
+            args.output, args.samples = owner / "refused-output", 2
+            with mock.patch.dict(BENCH.os.environ, {BENCH.COMBINED_RAW_ENV: "0", BENCH.LEGACY_COMPARE_ENV: "0"}), \
+                    mock.patch.object(BENCH, "Session", RefusedSession):
+                self.assertFalse(BENCH.combined(args), "unobserved oracle validation cannot qualify")
+            report = json.loads((args.output / "report.json").read_text())
+            group = report["cases"][0]
+            self.assertEqual(len(group["trials"]), 2, "documented refusal does not stop later samples")
+            self.assertEqual(group["accounting"]["refused"], 2)
+            self.assertTrue(group["accounting"]["passed"])
+            self.assertFalse(group["qualified"])
+            self.assertEqual(group["assertion_coverage"]["unverified_samples"], [0, 1])
             self.assertNotIn("raw_outcomes", report)
             self.assertFalse((args.output / "raw.jsonl").exists())
             # A typed native size failure remains an exact full raw outcome;
@@ -353,7 +444,7 @@ class InvestigationBenchmarkTests(unittest.TestCase):
             server.write_text(PAIRED_SERVER, encoding="utf-8")
             config["env"] = {"BENCH_REPLY": json.dumps(failed_envelope)}
             config_path.write_text(json.dumps(config), encoding="utf-8")
-            args.output = owner / "raw-output"
+            args.output, args.samples = owner / "raw-output", 1
             with mock.patch.dict(BENCH.os.environ, {BENCH.COMBINED_RAW_ENV: "1", BENCH.LEGACY_COMPARE_ENV: "0"}):
                 self.assertFalse(BENCH.combined(args))
             report = json.loads((args.output / "report.json").read_text())

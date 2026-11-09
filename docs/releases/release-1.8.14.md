@@ -1,5 +1,138 @@
 # AIRK 1.8.14 implementation record
 
+**8 November local manual-test candidate:** Windows debug **r28** and its VSIX
+are built and package-verified. The local file is
+`artifacts/local/one-airk-1.8.14/windows-debug-vsix-r28/publish/airk-1.8.14-win32-x64.vsix`
+(86,430,214 bytes), SHA-256
+`2312dd70adc75ca831d3d1b89a26a0bc35ff44536d3c5aa51ed79b62471f8de5`.
+Native manifest `5882675c…` seals compiled source `c173380b…` / 1,136 inputs;
+the [ledger](../research/one-airk-implementation.md#corrected-r28-manual-test-candidate)
+retains exact identities and receipts. Workspace Clippy, 49 selected native
+regressions and the full mocked extension suite passed. The clean Python suite
+passed 883 tests with 13 skips. This is an unsigned local debug package, with
+installed/platform and final release qualification pending. Original r26 and
+the intervening r27 runtime/package remain preserved; no r27 VSIX was built.
+
+**8 November rebuild follow-up:** explicitly preserved predecessor payloads and
+old state are recovery evidence, distinct from incomplete obsolete-payload
+cleanup. A later ordinary upgrade retires unprotected intermediates and reports
+the protected set separately. Historical rebuild receipts remain readable after
+their candidate is superseded. Missing or expired original job receipts report
+`Unavailable`; they prove neither execution success nor failure, and current
+native readiness remains separate. These corrections require a new candidate
+after r27; final artifact/installed qualification remains pending.
+The clean full contributor-identity Python run selected 896 tests: 883 passed,
+13 skipped, 77.768 s wrapper. Earlier sandbox failures and targeted recovery
+results retain their original evidence scope.
+
+**8 November standalone installer implementation:** Windows and macOS installer
+support is implemented in source for only the CLI and native MCP/HTTPS service. They must not
+install or invoke the VS Code extension/VSIX or Code actions; that distribution
+remains optional and separate. Installers must use the existing platform signing
+methods and verified GitHub release-asset pipeline before a signed download is
+claimed. Actual native installer builds, signing and installed qualification are
+pending. No publication action is authorized or claimed by this work.
+Linux x64 standalone packaging and GitHub workflow attestations for its installer
+and GitHub-hosted VSIX files are also implemented in source. Attestations authenticate
+workflow provenance; Linux still has no native OS installer signature.
+Marketplace retains Microsoft's automatic extension signing. The
+[canonical standalone guide](../agent-integration.md#standalone-onboarding-without-vs-code)
+records asset names and verification; website links and the version asset catalog
+remain pending until exact artifacts are published and verified.
+
+**8 November standalone onboarding:** guided `airk setup` without VS Code is
+implemented in the working tree to discover/start native service, select or create indexes
+with explicit source review, and obtain native grant/credential references plus
+client trust/provisioning instructions. Existing-selector setup alone does not
+provide this first-use flow. The [agent guide](../agent-integration.md#standalone-onboarding-without-vs-code)
+and [HTTPS API](../local-https-api.md#obtain-a-connection) distinguish standalone
+client environment provisioning from the VS Code resolver; bearer values remain
+in native owner-protected files and never project JSON. Headless use requires
+the native service, not a running VS Code proxy. Rebuilding into a successor
+namespace requires explicit re-enrollment. Setup prints the approved installed
+CLI path; it adds no proxy launcher and does not modify `PATH` or shell startup
+files. `--launch` provisions only the child client process; top-level `uninstall`
+delegates to native ownership. Validation and installed qualification are pending;
+retained actual Codex/Claude acceptance keeps its older debug identity.
+
+**8 November automatic rebuild scope refined:** offer rebuilding earlier in an
+upgrade through native `runtime activate --rebuild-indexes --expected-active`
+and the corresponding editor choice. After explicit admission, automatically
+preserve previous state and supported settings, create fresh compatible indexes from
+authenticated saved source definitions, and notify the user of progress/outcome.
+Native and editor source is **implemented; installed/frozen qualification is pending**.
+This replaces the earlier incompatible-failure trigger; no actual incompatible
+failure receipt is retained, and exhaustive failure permutations are outside
+this bounded implementation. The authentic 1.5.12 schema-8 metadata bridge passed
+its scoped regression using original DDL independently of this rebuild path. The
+[recovery contract](../upgrade-rebuild-fallback.md) records ownership, scope,
+pause/watch policy, durable resume and interface parity requirements. Rebuilding
+will remain separate from successful migration coverage. Versions remain 1.8.14;
+production changes require a new candidate identity, preserving r26 evidence.
+Initial support is limited to authenticated raw managed pre-catalog definitions
+with exact saved source aliases, pause/watch preferences, vector opt-out, simple
+detail settings and default bundled model policy. Modern catalog memberships or
+grants and unsupported custom settings are refused before state changes; see
+the recovery contract's complete limits. Old client configuration and credentials
+remain preserved under their original namespace; explicit re-enrollment is
+required for the successor. Selecting the editor option still requires native
+authentication and eligibility checks before mutation. No complete-settings or
+automatic grant-migration claim is made.
+Selected recovery checks passed 8/8 Store tests, then 32/33 native tests with one
+MCP fixture budget failure retained; corrected MCP tests passed 2/2. Fourteen
+Store-backed interruption subcases passed. `Ready` records native Index-job
+success; semantic readiness is separate. Standalone packaging contracts passed
+77/77 and release/site contracts 51/51 with mocked platform tools. The latest
+mocked extension suite passed 1,095 of 1,116 selected tests, 21 skipped, no
+failures, in 9.052 s wrapper time. These are scoped development/component results,
+not installed recovery, actual installer/signing or frozen qualification.
+
+**8 November fixture compatibility repair:** a retained failing T0 regression
+reproduced schema-1 catalog authority selecting raw registration. The
+[compatibility matrix](../testing/fixture-compatibility.md) separates topology,
+lifecycle, authority, input preparation, original scope and migration provenance.
+The imported-legacy producer now requires a verified compatible managed raw
+predecessor before installation and preserves exact launcher forwarding and scope.
+At that repair checkpoint the prerequisite remained blocked: published 1.5.12 had schema-8 migration
+eligibility unverified; newer raw artifacts lack matching reviewed source
+correspondence. Reviewed 1.8.12 catalog migration remains separate. No new T2
+producer/editor attempt, rebuild, release or publication is claimed by that repair.
+The later authentic schema-8 bridge result above resolves the metadata question;
+publication/imported-authority and installed producer acceptance remain separate.
+
+**8 November resumed packaging:** the r26 native archive and debug VSIX passed
+canonical packaging checks in **17.471 s** and **20.498 s**, respectively.
+The original native build identity and all 811 runtime seals are preserved;
+the two approved test-only corrections retain a separate source identity.
+VSIX SHA-256: `e91f564a2db03a3e97fa1832aeb9f6075bb55be5b189c5f96720fe2bca8a8272`.
+Enabled-native extension acceptance passed **1,108 tests / 3 skips / 0 failures**
+in **162.923 s**. The authentic legacy-editor fixture producer then failed at
+1.8.12 registration (`invalid_registry_request`), before editor launch. Its
+failed fixture is retained; exact native Stop and subsequent unavailable health
+were recorded. The raw-registration/catalog-authority fixture mismatch needs
+resolution before another producer run. Installed-editor, load, raw clients/trust,
+Neo, Docker and final Windows qualification remain pending.
+No release action occurred; see the [ledger](../research/one-airk-implementation.md).
+
+**8 November authorized fixture repair:** the shared modern/historical fixture
+now requests native bounded model input preparation and preserves the returned
+pin and complete refusals. Four T0 regressions and scoped Clippy passed; separate
+actual r26 setup and held/checkpoint preflights passed one test each, including
+66 embedding calls before checkpoint completion. All 811 original r26 seals and
+production inputs remain unchanged; the runtime was reused, not rebuilt.
+Historical runtime execution, cleanup, installed/platform and full final gates
+remain unqualified. Versions remain 1.8.14; no release action occurred.
+
+**8 November completion-plan stop:** the planned repairs and T0/T1 checks passed
+combined review, and the original r26 debug runtime built with verified embedded
+model/import receipts. The new actual checkpoint preflight then failed twice in
+fixture setup. The mandatory two-strike rule stopped further validation;
+local completion and release completion remain unmet. No r26 VSIX, OS trust
+operation or later platform campaign ran. See the
+[root-cause/evidence note](../research/one-airk-completion-stop-2026-11-08.md)
+and [implementation ledger](../research/one-airk-implementation.md). Earlier
+dated results below keep their original source/artifact identities.
+
 **7 November 2026 — implementation in progress; unpublished and unqualified.**
 
 **8 November commit checkpoint:** saved Windows receipts now show 3,224 workspace
@@ -19,6 +152,72 @@ campaign on the unchanged, seal-verified r21 executable in **321.351 s**. Eight
 focused harness tests passed and a separate review found no blocking issues.
 Native cleanup behavior is unchanged. This supersedes that storage blockage,
 not the remaining platform/editor/package qualification requirements.
+
+**C8 extension checkpoint:** the complete enabled-native r3 suite passed
+**1,042 tests, three skipped, zero failures** on the verified reused r21 debug
+runtime. Actual staged-editor acceptance then failed at its first Start action.
+The working source corrects false interface replacement for Windows path aliases;
+18 focused loader regressions passed. A subsequent staged-editor failure retained
+`registry_busy`; the then-current shared client retained exact whitelisted reads through
+six bounded retries in three seconds, with increasing waits. The historical full
+extension r6 passed **1,044 tests, three skipped, zero failures**. Actual editor acceptance is still
+pending. No final VSIX or optimized qualification
+is implied; see the [C8 evidence](../research/one-airk-implementation.md#c8-full-extension-pass-and-staged-editor-startup-correction).
+
+**First index-set correction:** actual editor acceptance subsequently exposed
+creation being mistaken for editing an immutable managed set when both IDs were
+absent. The working guard now requires an existing ID before that comparison;
+new named sets stay unselected until explicit Apply. Fresh-state native/CLI
+and focused regressions passed; the post-correction complete suite passed
+**1,048 tests, three skipped, zero failures**. Actual installed debug VSIX
+creation passed, then scope selection failed with retained generic
+`invalid_registry_request`; a later trace proved the driver requested a grant
+before asynchronous source-policy application completed. The driver now waits
+for the exact application receipt. Atomic private-editor mailboxes also correct
+a separate partial-JSON handoff race. The shared native index/catalog boundary
+now owns the six-retry/three-second busy policy for all management frontends;
+the extension no longer duplicates that window. The corrected r23 debug build,
+22 scoped native regressions and Clippy passed; the new complete enabled-native
+suite passed **1,057 tests, three skipped, zero failures**. The matching local
+debug VSIX is packaged and sealed. Its installed-editor check failed at the
+first UI dispatch with an unknown result; that action was not replayed, and
+a later run progressed to a successful native grant but exposed lost scope
+acknowledgment and competing choice refreshes. The working extension corrects
+that sequence; 80 focused UI/controller tests passed. A new complete suite and
+installed VSIX check remain required after this production change. The actual Explorer
+update check passed with native execution disabled, preserving its route,
+singleton and saved dismissal in the same extension host. These partial
+results do not complete installed-native or final optimized-package acceptance.
+
+**Reload attachment correction:** the later complete suite passed **1,060 tests,
+three skipped, zero failures**, but installed reload then exposed an immutable
+HTTP attachment mismatch. The saved grant persisted; a new Assistance host must
+not reuse a credential tied to its old descriptor. The working extension now
+binds automatic enrollment to the captured attachment and waits for its local
+publication, preserving headless and old manual identities. The exact failure
+was reproduced before the fix. Final notification handling also preserves a
+published attachment withdrawal when a newer setup supersedes a pending one;
+**146 focused tests passed**. Complete enabled-native r14 then passed **1,072
+tests, three skipped, zero failures** in **295.142 s** on the unchanged sealed
+r23 debug runtime. Fresh local debug VSIX r4 packaged in **21.422 s** from that
+tested extension source; installed-editor acceptance remains pending. The existing 128-record
+credential ledger has no reclamation; safe retention/compaction remains an
+explicit matrix gap before final release qualification.
+
+**Installed-editor checkpoint:** the current debug candidate passed actual
+reload restoration, scoped HTTPS reads, standalone Assistance and provider Stop
+with lexical reads afterward. Its r15 journey then failed a test-only assertion
+that confused canonical status publication tokens with expanded envelopes;
+68 final harness checks passed after the correction. Installed **multi r16**
+then passed the complete selected journey in **104.973 s**, including endpoint
+relocation, Explorer, revocation, final owned Stop/qualified cleanup and unchanged
+hashes for all six source files. Its old-port listener retained three unattributed
+TCP contacts; application data was not inspected. This result does not assert
+zero contacts or attribute them to discovery. The same
+VSIX passed actual same-window Explorer update in **16.858 s**, with native
+execution disabled. These debug installed results do not qualify the final
+optimized artifact or the other scenario/platform matrix entries.
+
 The user authorized implementation of [One AIRK](../one-airk.md), including its
 section 12.2 version adjustment to **1.8.14**. This record begins with C0 source
 metadata preparation. It does not claim that the planned architecture or its
@@ -678,6 +877,196 @@ and the original deadline, with no generic refusal retry, mutation replay or
 retrieval native-production change. Actual r5 and storage-fix validation remain
 pending; earlier failures are not relabeled as passes. Neo r10, current-source
 editor/platform and final VSIX/release gates are still incomplete.
+
+**8 November — C2–C9 reconciliation resumed:** all fifteen client entries are
+now [classified](../agent-integration.md); three have implemented HTTPS adapters
+and twelve stay explicitly blocked. Actual scoped Claude and Code/Copilot MCP
+host acceptance remains pending. The retained Codex TLS experiment did not use
+a bearer credential or execute a scoped AIRK read.
+
+Missing installed Windows scenario preflight failed in **same** after
+**61.722 s** on sealed debug r23 / VSIX r4; the remaining selected scenarios did
+not run and native cleanup is unqualified. A peer window advanced the catalog
+clock, causing selected Index management to pin stale metadata. The correction
+revalidates current exact Index/backing metadata under unchanged window and
+selection ownership, including Entire Index Usage. Its full controller/trust
+module passed **32/32** (**3.142 s** runner); fresh packaged acceptance is pending.
+
+Credential lifecycle source corrections durably revoke before gateway fencing
+and compaction. The original token path retains a bounded secret-free ownership
+proof and permanently blocks old-ID reuse; active manual credentials remain.
+Positive owned attachment retirement can reclaim the 128-record active ledger;
+historical proof storage still grows with issuance. Typed authentication-epoch
+fences return 503, invalid credentials remain 401, and cache insertion rechecks
+delivery while serialized with revocation. Independent source review found no
+remaining blocker; formatting, native regressions and actual lifecycle evidence
+remain separately required. Shipping-feature Clippy exposed legacy test guards
+that are now corrected; its failed attempt is retained.
+
+Neo r11's earlier **679.370 s** batch is collected and remains failed. Python,
+formatting, workspace Clippy, lightweight compile, debug model build and
+checkpoint checks passed on its original source. Installation preflight failed
+because two live foreign process image paths were unobservable. Later workspace,
+optimized, signed and installed-editor stages never ran; required Cargo cleanup
+passed and all completed logs/timings were retained. A related safety correction
+requires a proven dead retained task-name right before a Mac audit-token path
+`ESRCH` can mean process retirement; its native Mac regression is pending.
+See the [implementation ledger](../research/one-airk-implementation.md) for exact
+source identities, commands, timings, retained failures and subsequent gates.
+No optimized freeze or final package/platform completion is claimed here.
+
+**Reconciliation validation checkpoint:** scoped shipping-feature preflight
+passed **98/98** tests (**213.365 s** runner, **168.571 s** execution), including
+actual semantic setup, MCP/CLI reads and recovery, credential compaction, TLS
+fencing and cross-host Mac exit classification. Two earlier Assistance test
+failures retained their fixture/architecture evidence; the correction preserves
+the existing owner/SYSTEM/admin ACL and pure forwarder boundary. Fresh sealed
+Windows debug **r24** built in **78.497 s**, native source
+`01814b2357ba556faf4d4f8d3ad21c0183e490f10d3e4bc1b315b665202688fe`
+(**1,115 inputs**), installer manifest
+`501c8d85a8d6b836489d4d425f0cb142d3aa965221f70629899dd85de58b7acc`.
+Its actual HTTPS/model-client gate passed (**67.062 s**) with complete managed
+Stop. Current native workspace Clippy (**48.292 s**), lightweight compile
+(**34.841 s**) and default build (**41.542 s**) passed; full workspace execution
+is still running. The previous **791-test / 12-skip** Python pass predates the
+new container-seal parser and is not final-source script qualification.
+
+Actual Codex **0.164.0-alpha.11.1** passed scoped native reads, crossed-authority
+refusal, fresh-process reconnect, retained additive CA trust and wrong-issuer
+rejection on r24 (**62.412 s**). No model turn, OS trust or user configuration
+change was used; all client processes exited and native Stop completed. Earlier
+fixture-access and one-line-range harness failures remain separately recorded.
+Claude and the separate Code MCP host still need their actual acceptance.
+
+The extension's separate lifetime-history limit was also found and corrected:
+legacy reconnection now uses stable original provenance and direct/native exact
+connection IDs, retaining old manual metadata without scanning every attachment.
+The new asynchronous owner-fence and >128-history regressions require the full
+current enabled-native suite, which is running. Native r24 is reused with its
+original compiled identity; this extension change still needs a fresh VSIX.
+
+The first actual 1/10/64-client benchmark failed before a completed cohort
+(**86.629 s**). Its held HTTP connection outlived the native 15-second header
+idle timeout while a semantic job took **21.745 s**; teardown then masked the
+primary transport failure. A corrected harness must use an explicit fresh TCP
+connection before a new request and preserve uncertain failures without replay.
+This is not an accepted resource campaign yet. Linux/container qualification
+first failed before compilation because the pinned base image lacked Clippy.
+That failed attempt and historical cache exports remain identified; the isolated
+component-prerequisite correction is running. Its source-seal parser correction
+passed **15** focused tests. No final platform or package pass follows yet.
+
+**Recovered completed results (8 November):** the earlier “running” Windows
+campaigns have completed. Workspace reconciliation r1 ran **3,237 tests:
+3,235 passed, two failed, 52 skipped** in **1,974.948 s** runner time
+(**1,867.631 s** execution). The failures cover explicit source/storage
+retirement and reference refresh; reference refresh aborted with Windows stack
+overflow `0xc00000fd`. Its receipt reports `native_inputs_unchanged=false`, so
+this result does not qualify one exact current source tree. The unfiltered
+workspace command restored the four routine exclusions, retained Cargo timings
+and used persistent `artifacts/v190/p10-target` with incremental on. A corrected,
+frozen-source workspace result and final doctests remain required.
+
+Enabled-native extension reconciliation r1 passed **1,074 tests, three skipped,
+zero failures** in **311.732 s**, reusing sealed r24 with its original compiled
+identity. The packaged installed r2 attempt then failed **same** in **88.123 s**
+with HTTP **404**, `Not Found: Session not found`. Its read-only audit retained
+catalog revision **9 → 10**, unchanged immutable selection and an unrevoked
+credential; completed delivery receipts already used revision 10. This supports
+the cached-context/session replacement diagnosis when only the catalog clock
+advances, without directly observing the retained in-process cache. Remaining
+scenarios and this failed fixture's native cleanup are unqualified. The earlier
+multi r16 success retains its separate artifact/scenario scope.
+
+Frozen Python r3 passed **801 total / 12 skips** in **87.782 s**. Repository
+checks passed **2,064 public files** in **2.928 s**. The dependency gate passed
+in **15.771 s**, including live advisories, with documented dispositions for
+`paste` (`RUSTSEC-2024-0436`), `ttf-parser` (`RUSTSEC-2026-0192`) and `minimatch`
+(`GHSA-g3hv-75wg-m249`); this is not a zero-findings claim. Later harness edits
+require their affected checks again.
+
+Actual Code r1 failed tool discovery (**115.886 s**) and has no qualified native
+cleanup receipt. Actual Codex r4's **62.412 s** scoped authenticated acceptance
+above remains passed on sealed r24; Code/Copilot, Claude, final-artifact and
+other-platform acceptance remain incomplete.
+
+Resource campaign r2 completed **1**- and **10**-client cohorts, then failed
+**64** clients with an additional-model-load assertion (**410.050 s** overall).
+The later harness permits exactly one first-warmup reload only after observed
+uncached/no-outstanding state, then freezes owner and load count. Its **39**
+focused checks passed; actual execution of the newer campaign remains required.
+This does not establish private memory, idle CPU or global helper absence.
+Credential compaction is implemented and scoped-tested; installed capacity and
+resource acceptance remain separate gates.
+
+Read-only Docker history recovery resolves the stale Linux/container r2
+“running” receipt: build `lw5phixc05c3iw4ozvtbl1udy` was **canceled**,
+`context canceled`, after **2,251.936 s** at **2026-11-08 12:27:54 America/Denver**.
+Its cache-owner regression passed (**2.168 s**) and Clippy/rustfmt provisioning
+completed; static ORT provisioning was canceled before AIRK qualification.
+The original receipt and recovered Buildx record/log remain separate evidence.
+
+Neo **r12** was also recovered on native source `01814b2357ba556faf4d4f8d3ad21c0183e490f10d3e4bc1b315b665202688fe`
+(**1,115 inputs**). Python (**801 total / 19 skips**), formatting, workspace
+Clippy, lightweight compile, debug static runtime/model and checkpoint passed.
+Shipping native regressions passed **46/46** (**8.878 s** execution,
+**126.311 s** runner), including actual owned-child Mac task-name and missing-path
+classification checks; these regressions are no longer unrun on that source.
+The batch was deliberately interrupted before broad workspace/release tests on
+known pre-correction MCP session-cache source. Installer preflight returned **-2**
+after **121.364 s**, with `KeyboardInterrupt` during its stable-owner interval;
+this is neither a Mac assertion failure nor passing installed acceptance.
+The overall r12 result remains **failed/interrupted**, **603.141 s**. Required
+Cargo cleanup passed (**0.720 s**) after preserving evidence, and owned
+descendants settled. Complete existing receipts/logs/JUnit/timings are retained
+in `artifacts/local/one-airk-1814/neo-r12-recovered-20261108/evidence`.
+R11 remains the earlier separate census failure; recovery launched no workloads
+and stopped no processes. Final-source, optimized, signed, installed-platform
+and VSIX qualification remain incomplete. No final package acceptance
+follows from these results. The [recovered ledger](../research/one-airk-implementation.md#recovered-completed-reconciliation-results-8-november-2026)
+names the exact retained receipts and source limitations. Version stays **1.8.14**.
+
+**Resumed correction checkpoint (8 November):** the native MCP context cache now
+retains its canonical SDK service/session across a forward catalog clock under
+unchanged credential generation and immutable authority. Delayed older
+authentication cannot replace a newer context. Actual TLS/MCP regressions passed
+same-session reads on retained and fresh TCP; a matched installed rerun is still
+required before claiming the earlier installed r2 session failure is resolved.
+
+Historical standalone base-ID recovery now requires native installation,
+authority/client/expiry proof and a different live Explorer attachment. Native
+issuance rechecks the old ID under its mutation owner, so explicit revocation
+overrides automatic attachment retirement even across compaction-crash recovery.
+Schema-2 tombstones retain the reason/provenance within **2 KiB**; unknown
+schema-1 history stays review-required. This metadata remains private CLI/native
+control authority; evidence MCP gains no management capability. The original
+reviewed scope and retired-ID reuse fence remain enforced.
+
+Selected adoption/provenance TypeScript modules passed **147 tests, one skipped,
+zero failures** (**148 total**) in **8.379 s** after compilation in **12.625 s**.
+Core/CLI shipping-feature scoped Clippy r4 passed in **18.862 s**, with two jobs,
+incremental on, persistent P10 target and retained Cargo timings. These focused
+checks do not replace the full extension/native/platform gates.
+
+Native preflight r2 completed **47 passed, one failed, 770 skipped**. Explicit
+source/storage retirement now passed in approximately **33 s**, preserving the
+same MCP session through explicit fresh TLS and replaying no exchange. Reference
+refresh still aborted with stack overflow in that retained attempt. Diagnosis
+measured **1,540,016 bytes** of additional journey poll stack (approximately
+**1.47 MiB / 1.54 MB**) against a **2 MiB** standard thread stack; the heap future
+itself was **41,056 bytes**. The initial phase-helper attempt failed and remains
+recorded. The minimal independent native-task correction preserves canonical
+handlers and assertions; `resume-reference-and-control-r1` completed **11/11
+passed**, **133.458 s** execution / **144.289 s** runner, with stable native/shared
+fixtures. Temporary diagnostics are all removed and source is ready for freeze.
+This focused result does not qualify full workspace or installed acceptance.
+
+Actual Claude/Code runners and Neo r13 are prepared, not run. R13 retains the
+shipping corrective → debug/model → checkpoint → actual installed preflight
+order before full workspace, restored long campaigns, doctests, optimized,
+signed and editor acceptance. No final optimized, full-workspace, doctest,
+platform or release qualification is established. Exact receipts and remaining
+limits are in the [resumed ledger](../research/one-airk-implementation.md#resumed-correction-checkpoint-8-november-2026).
 
 ## Planned changes and acceptance evidence still required
 

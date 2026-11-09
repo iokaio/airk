@@ -38,7 +38,7 @@ mod worker_read_settlement;
 use worker_read_settlement::ReadSettlement;
 #[path = "catalog_control.rs"]
 mod catalog;
-#[cfg(all(test, feature = "embedding-worker"))]
+#[cfg(all(test, any(feature = "embedding-worker", feature = "local-inference")))]
 #[path = "project_supervisor_guarded_qualification_tests.rs"]
 mod guarded_qualification_tests;
 #[cfg(test)]

@@ -1,8 +1,30 @@
 # Protected PRs, GitHub downloads and extension release
 
-The current manual-test working version is **1.8.12**, with later promotion to 1.9.0; see [the working-build record](releases/release-1.8.12.md). To check a published package yourself, follow [release verification](release-verification.md). Prior build and qualification records below retain their original scope.
+The current implementation version is **1.8.14**, unpublished and still under
+qualification; see [the working record](releases/release-1.8.14.md). To check a
+published package, follow [release verification](release-verification.md).
+Earlier version-specific build and qualification records retain their original scope.
 
-For current behavior and upgrade guidance, see the [1.8.12 working-build record](releases/release-1.8.12.md) and [versioning process](versioning.md). For historical behavior, see the [1.3.2 release notes](releases/release-1.3.2.md); the [1.3.0 release notes](releases/release-1.3.0.md) cover the preceding storage-format change. The [1.2.2 semantic indexing fix](releases/release-1.2.2.md) updated both the bundled helper and extension. The [October 17 release summary](releases/releases-2026-10-17.md) records earlier 1.1 releases. Documentation changes alone do not dispatch these workflows.
+For current behavior and upgrade guidance, see the [1.8.14 working record](releases/release-1.8.14.md) and [versioning process](versioning.md). The [1.8.12 working-build record](releases/release-1.8.12.md), [1.3.2 release notes](releases/release-1.3.2.md) and [1.3.0 release notes](releases/release-1.3.0.md) retain historical behavior. The [1.2.2 semantic indexing fix](releases/release-1.2.2.md) updated both the bundled helper and extension. The [October 17 release summary](releases/releases-2026-10-17.md) records earlier 1.1 releases. Documentation changes alone do not dispatch these workflows.
+
+## Standalone installers and artifact provenance (in progress)
+
+Standalone installer support is implemented in source for the authenticated
+GitHub release asset set, for native CLI/MCP use without VS Code. Installers
+contain no VSIX or extension.
+Windows retains Azure Artifact Signing; macOS retains Developer ID Application
+signing and accepted notarization. Linux has no native OS installer signature;
+its planned GitHub artifact attestation authenticates workflow provenance.
+GitHub-hosted VSIX files will also receive attestations. Marketplace continues
+using Microsoft's automatic extension signing, separate from native OS signing.
+
+Contract checks passed with mocked platform tools; actual installer builds,
+signing, attestation generation and installed acceptance remain pending.
+Published assets, website links and the version asset catalog must
+remain pending until the release pipeline publishes and verifies the exact
+artifacts. No signed or attested installer is claimed by these documentation
+changes. See [standalone onboarding](agent-integration.md#standalone-onboarding-without-vs-code)
+and [artifact verification](release-verification.md#artifact-attestations).
 
 Marketplace and GitHub publication are separately authorized manual actions; Marketplace now requires matching published GitHub assets first. A merge starts CI and eligible validation/site jobs; it does not publish either destination. To release GitHub downloads without Marketplace publication, dispatch only **GitHub release**. Its `publish` input controls GitHub downloads, not Marketplace.
 

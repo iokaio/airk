@@ -17,38 +17,125 @@ builder = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(builder)
 
 
+def docker_instructions(recipe):
+    """Read bounded logical Docker instructions without parsing unrelated shell code.
+
+    Only the default Docker escape character is supported by this source sealer.
+    Heredocs need their own reviewed parser before they can carry COPY authority.
+    Full-line comments disappear during continuation; inline '#' remains data.
+    """
+    if len(recipe.encode("utf-8")) > 512 * 1024:
+        raise ValueError("Container recipe exceeds source seal byte bound")
+    pending = ""
+    for ordinal, physical in enumerate(recipe.splitlines()):
+        if ordinal >= 8192:
+            raise ValueError("Container recipe exceeds source seal line bound")
+        line = physical.strip()
+        if not line:
+            continue
+        if line.startswith("#"):
+            directive = line[1:].strip().lower().replace(" ", "")
+            if directive.startswith("escape=") and directive != "escape=\\":
+                raise ValueError("Container recipe escape directive needs an explicit reviewed parser")
+            continue
+        continued = line.endswith("\\")
+        pending += line[:-1] if continued else line
+        if len(pending.encode("utf-8")) > 64 * 1024:
+            raise ValueError("Container recipe instruction exceeds source seal byte bound")
+        if continued:
+            continue
+        # Docker also permits tabs between the opcode and arguments.
+        fields = pending.split(None, 1)
+        instruction, arguments = fields[0].upper(), fields[1] if len(fields) == 2 else ""
+        if "<<" in arguments:
+            raise ValueError("Container recipe heredoc needs an explicit reviewed parser")
+        yield instruction, arguments
+        pending = ""
+    if pending:
+        raise ValueError("Container recipe ends inside a continued instruction")
+
+
+def public_input_manifest(root):
+    """Exact external files; only the existing three owning trees are recursive."""
+    path = root / "scripts/container-inputs.json"
+    for candidate in (path, *path.parents):
+        if candidate == root:
+            break
+        if candidate.is_symlink() or getattr(candidate.lstat(), "st_file_attributes", 0) & 0x400:
+            raise ValueError("Redirected container public input manifest")
+    with path.open("rb") as stream:
+        encoded = stream.read(1024 * 1024 + 1)
+    if len(encoded) > 1024 * 1024:
+        raise ValueError("Container public input manifest exceeds byte budget")
+    manifest = json.loads(encoded)
+    if (not isinstance(manifest, dict) or manifest.get("schema") != 1
+            or set(manifest) != {"schema", "trees", "files"}
+            or not isinstance(manifest["files"], list) or not isinstance(manifest["trees"], list)
+            or any(not isinstance(name, str) for name in manifest["files"] + manifest["trees"])
+            or len(set(manifest["files"])) != len(manifest["files"])
+            or len(set(manifest["trees"])) != len(manifest["trees"])
+            or len(manifest["files"]) > 16_384
+            or not set(manifest["trees"]).issubset({"crates", "third_party/models", "third_party/licenses"})):
+        raise ValueError("Container public input manifest differs from its reviewed schema")
+    for name in manifest["files"]:
+        path = Path(name)
+        if (not name or not path.parts or path.anchor or path.as_posix() != name
+                or any(part in ("", ".", "..") for part in path.parts)
+                or any(char in name for char in "\\*?[$:")
+                or any(ord(char) < 32 for char in name)):
+            raise ValueError("Container public build inputs require exact relative file paths")
+    return set(manifest["files"]), set(manifest["trees"])
+
+
 def container_source_identity(root=None):
     """Seal actual public COPY inputs; this is not a Git/release attestation."""
     root = Path(root or ROOT).resolve(strict=True)
     source_stage = False
     inputs = set()
-    for line in (root / "Dockerfile").read_text(encoding="utf-8").splitlines():
-        words = shlex.split(line, comments=True)
-        if not words:
-            continue
-        if words[0].upper() == "FROM":
+    with (root / "Dockerfile").open("rb") as stream:
+        recipe = stream.read(512 * 1024 + 1).decode("utf-8")
+    for instruction, arguments in docker_instructions(recipe):
+        if instruction == "FROM":
             if source_stage:
                 break
-            source_stage = words[-2:] == ["AS", "source"]
-        elif source_stage and words[0].upper() == "COPY":
+            words = shlex.split(arguments)
+            source_stage = len(words) >= 3 and words[-2].upper() == "AS" and words[-1].lower() == "source"
+        elif source_stage and instruction == "ADD":
+            raise ValueError("Container source ADD needs an explicit reviewed inventory")
+        elif source_stage and instruction == "COPY":
+            # COPY is Docker syntax, not a shell: inline '#' is an input token,
+            # and unreviewed flags/JSON/expansion must not silently shrink its seal.
+            if arguments.lstrip().startswith("["):
+                raise ValueError("Container source COPY form needs an explicit reviewed inventory")
+            words = shlex.split(arguments)
             # Separately verified C++/tool build outputs are bound by static_ort,
             # not misrepresented as original repository COPY inputs.
-            if words[1:] == ["--from=static-inference", "/build/static-onnx-runtime", "/build/static-onnx-runtime"]:
+            if words == ["--from=static-inference", "/build/static-onnx-runtime", "/build/static-onnx-runtime"]:
                 continue
-            if len(words) < 3 or any(word.startswith("--") for word in words[1:]):
+            if len(words) < 2 or any(word.startswith("--") for word in words):
                 raise ValueError("Container source COPY form needs an explicit reviewed inventory")
-            inputs.update(words[1:-1])
-    if not inputs or not {"Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "crates", "Dockerfile", ".dockerignore"}.issubset(inputs):
+            if any(any(char in word for char in "$\\*?[") for word in words[:-1]):
+                raise ValueError("Container source COPY expansion needs an explicit reviewed inventory")
+            inputs.update(words[:-1])
+    if not inputs or not {"Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "crates", "Dockerfile", ".dockerignore", "scripts/container-inputs.json"}.issubset(inputs):
         raise ValueError("Container source COPY inventory is incomplete")
+    public_files, public_trees = public_input_manifest(root)
     files = set()
     for name in inputs:
         path = Path(name)
         if (path.is_absolute() or any(part in ("", ".", "..") for part in path.parts)
-                or path.parts[0] not in {"Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "Dockerfile", ".dockerignore", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "crates", "scripts", "third_party", ".cargo", ".config"}):
+                or path.as_posix() not in public_files | public_trees):
             raise ValueError("Container source COPY escaped public build inputs")
         copied = root / path
         if not copied.exists() or copied.is_symlink() or getattr(copied.lstat(), "st_file_attributes", 0) & 0x400:
             raise ValueError("Missing or redirected container source COPY input")
+        if copied.is_dir() != (name in public_trees):
+            raise ValueError("Container public build inputs require exact files outside owning trees")
+        for parent in copied.parents:
+            if parent == root:
+                break
+            if parent.is_symlink() or getattr(parent.lstat(), "st_file_attributes", 0) & 0x400:
+                raise ValueError("Redirected container source input")
         candidates = copied.rglob("*") if copied.is_dir() else (copied,)
         for candidate in candidates:
             if candidate.is_symlink() or getattr(candidate.lstat(), "st_file_attributes", 0) & 0x400:

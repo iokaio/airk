@@ -27,6 +27,7 @@ export const EXPLORER_ERRORS = {
     HELP_TOPIC_UNKNOWN: { plane: 'assistance', message: 'No Explorer help topic has that id; search the catalog first.' },
     // Extension host.
     SERVICE_UNAVAILABLE: { plane: 'host', message: 'The AIRK service is not connected.' },
+    SCOPE_NOT_GRANTED: { plane: 'host', message: 'This connection has no reviewed search scope.' },
     CLIENT_NOT_AUTHORIZED: { plane: 'host', message: 'This AIRK client is no longer authorized. Reopen AIRK after the client or window has been renewed.' },
     SERVICE_INCOMPATIBLE: { plane: 'host', message: 'The AIRK runtime version does not match this extension.' },
     EMBEDDING_UNAVAILABLE: { plane: 'host', message: 'Local vector search is unavailable for this project.' },
@@ -50,6 +51,7 @@ export interface ExplorerError { readonly code: ExplorerErrorCode | string; read
 export function friendlyError(error: ExplorerError): string {
     const recovery: Partial<Record<ExplorerErrorCode, string>> = {
         SERVICE_UNAVAILABLE: 'Open Management > Service and choose Connect / reconnect. Use Start service only when you intend to start it.',
+        SCOPE_NOT_GRANTED: 'Open Indexing > Search scope to choose indexes or index sets and review the scope grant before searching.',
         HOST_UNAVAILABLE: 'Try reconnecting, or close and reopen Explorer if the extension host restarted.',
         WORKSPACE_UNTRUSTED: 'Review VS Code workspace trust, then reopen the intended project when you are ready.',
         NO_PROJECT: 'Open Management > Projects to review a registration for this workspace.',

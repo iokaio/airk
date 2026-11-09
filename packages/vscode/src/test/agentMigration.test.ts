@@ -10,6 +10,7 @@ import { parse } from 'jsonc-parser';
 import { LaunchSpec, unifiedEntry, assistanceEntry, serializeServers, RETRIEVAL_TOOLS } from '../model';
 import { launchDescriptorPath } from '../explorerAssistanceLaunch';
 import { LocalAgent, migrateStandaloneHttpEntry, httpConfigurationConnectionId, refreshHttpAgentConfig, hasUnifiedVscodeConfig, migrateAgentConfig, migrateLocalAgents } from '../agentMigration';
+import { httpAuthorityDigest } from '../serviceHttp';
 
 const storage=path.resolve('fixture-storage');
 const spec:LaunchSpec={root:path.resolve('fixture-source'),dataDir:path.resolve('fresh-data'),collection:'project-fixture',name:'fixture',
@@ -223,4 +224,25 @@ test('a pre-service native alias literally named airk translates wildcard approv
     const original={command:path.resolve('old-helper'),args:['mcp'],alwaysAllow:['*']},source=JSON.stringify({mcpServers:{airk:original}}),digest=createHash('sha256').update(source).digest('hex'),info=adoptedAliasInfo('airk','a'.repeat(32),digest);
     const after=migrateStandaloneHttpEntry('claude',source,'airk',original,info,digest),value=parse(after);
     assert.deepEqual(value.mcpServers.airk.alwaysAllow,[...RETRIEVAL_TOOLS]);assert.ok(!value.mcpServers.airk.alwaysAllow.includes('draft_plan'));
+});
+
+for(const agent of ['codex','claude','copilot'] as const)test(`standalone ${agent} reattachment replaces only the exact owned credential under unchanged native authority`,()=>{
+    const alias='old_saved',fields={command:path.resolve('old-helper'),args:['mcp'],disabled:true,enabled_tools:['airk_search'],custom_setting:'keep-original-policy'};
+    const source=agent==='codex'?`# Keep original comment\n[mcp_servers.old_saved]\ncommand = ${JSON.stringify(fields.command)}\nargs = ["mcp"]\ndisabled = true\nenabled_tools = ["airk_search"]\ncustom_setting = "keep-original-policy"\n`:JSON.stringify({keep:'foreign',[agent==='copilot'?'servers':'mcpServers']:{[alias]:fields,other:{command:'other-tool'}}});
+    const receipt=createHash('sha256').update(source).digest('hex'),old=adoptedAliasInfo(alias,'a'.repeat(32),receipt,[agent==='codex'?'mcp_servers':agent==='copilot'?'servers':'mcpServers']);
+    const nested=structuredClone(old.selection);nested.selection.grant.provenance.adoption.plan.setup.expected_catalog_revision++;
+    assert.notEqual(httpAuthorityDigest(nested),httpAuthorityDigest(old.selection),'Only the selected minimum clock is normalized; original adoption intent stays exact');
+    const before=migrateStandaloneHttpEntry(agent,source,alias,fields,old,receipt),next=structuredClone(old);next.connection_id='b'.repeat(32);next.credential_file=path.join(path.dirname(old.credential_file),'credential-'+next.connection_id+'.token');next.endpoint.url='https://127.0.0.1:57422/mcp';next.endpoint.generation++;
+    const untouched=structuredClone({old,next}),after=refreshHttpAgentConfig(agent,before,next,old.endpoint.url,alias,old),rows=globalConfigDeclarations(agent,after),row=rows.find(value=>value.serverKey===alias)!;
+    assert.equal(httpConfigurationConnectionId(agent,row.fields),next.connection_id);assert.equal(row.fields.url,next.endpoint.url);assert.equal(row.fields.disabled,true);assert.deepEqual(row.fields.enabled_tools,['search']);assert.equal(row.fields.custom_setting,fields.custom_setting);assert.deepEqual({old,next},untouched);
+    if(agent==='codex')assert.ok(after.startsWith('# Keep original comment'));else assert.deepEqual(JSON.parse(JSON.stringify(rows.find(value=>value.serverKey==='other')?.fields)),{command:'other-tool'});
+    for(const mutate of [
+        (value:any)=>{value.endpoint.installation='0'.repeat(64);},
+        (value:any)=>{value.endpoint.user='other-user';},
+        (value:any)=>{value.selection.selection.grant.grant.id='grt_'+'0'.repeat(32);},
+        (value:any)=>{value.selection.selection.registration.data_root=path.resolve('crossed-backing');},
+        (value:any)=>{value.selection.selection.grant.provenance.adoption.configuration_claims[0].origin_sha256='0'.repeat(64);},
+    ]){const crossed=structuredClone(next);mutate(crossed);assert.throws(()=>refreshHttpAgentConfig(agent,before,crossed,old.endpoint.url,alias,old));}
+    assert.throws(()=>refreshHttpAgentConfig(agent,before,next,'https://127.0.0.1:57423/mcp',alias,old),/reattachment_unconfirmed/);
+    assert.throws(()=>refreshHttpAgentConfig(agent,before.replaceAll(old.connection_id, 'c'.repeat(32)).replaceAll(old.connection_id.toUpperCase(),'C'.repeat(32)),next,old.endpoint.url,alias,old),/Unrecognized/);
 });

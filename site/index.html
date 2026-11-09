@@ -4,7 +4,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="AIRK gives coding agents local code and document evidence with source locations. Download the native VS Code extension for Windows, macOS and Linux.">
+  <meta name="description" content="AIRK gives coding agents local code and document evidence with source locations. Find standalone CLI and MCP installers for Windows, macOS and Linux.">
   <meta name="theme-color" content="#112e3c">
   <meta property="og:title" content="AIRK: Local Search for Coding Agents">
   <meta property="og:description" content="Index your workspace. Retrieve bounded evidence. Follow it back to the source.">
@@ -35,7 +35,7 @@
         <p class="intro">Find the code and documents behind a feature.</p>
         <p class="hero-detail">Give your coding agent cited evidence, or explore it yourself in AIRK Workbench. Search a local index of code and documents, inspect relevant passages and open their sources. Indexing and retrieval run on your machine without a cloud service or API key.</p>
         <div class="hero-actions">
-          <a class="button primary" href="#downloads">Get the VS Code extension <span aria-hidden="true">↓</span></a>
+          <a class="button primary" href="#downloads">Get AIRK CLI + MCP <span aria-hidden="true">↓</span></a>
           <a class="button secondary" href="https://github.com/iokaio/airk">Explore the source <span aria-hidden="true">↗</span></a>
         </div>
         <p class="platform-note">Windows x64 · macOS Apple silicon &amp; Intel · Linux x64</p>
@@ -75,15 +75,16 @@
     <section class="downloads-section wrap section" id="downloads" aria-labelledby="downloads-title">
       <div class="section-heading">
         <div><p class="eyebrow">01 / Get AIRK</p><h2 id="downloads-title">Your workspace.<br>Your platform.</h2></div>
-        <p>Download the extension for the machine running your workspace. Each VSIX includes its matching native helper.</p>
+        <p>Standalone CLI and MCP installers for the machine holding your source files. No VS Code extension is required. Links appear only when an installer is published in the selected GitHub release.</p>
       </div>
       <!-- RELEASE_DOWNLOADS -->
       <div class="install-strip">
-        <span class="step-label">Install the extension</span>
-        <p>In VS Code, open the command palette and run <strong>Extensions: Install from VSIX</strong>. Select your download, then open a trusted workspace.</p>
-        <a href="https://github.com/iokaio/airk/blob/main/docs/vscode-extension.md">Installation guide <span aria-hidden="true">↗</span></a>
+        <span class="step-label">Install CLI + MCP</span>
+        <p>Choose your platform’s standalone installer and follow its setup prompts to select source folders and connect your coding agent. Existing portable runtime ZIPs remain available below.</p>
+        <a href="https://github.com/iokaio/airk/blob/main/docs/agent-integration.md#standalone-onboarding-without-vs-code">Installation guide <span aria-hidden="true">↗</span></a>
       </div>
-      <p class="download-footnote">Using SSH, WSL or a development container? Choose the package for the remote workspace host. AIRK requires desktop VS Code; browser-only workspaces cannot run its native helper.</p>
+      <p class="download-footnote">Using SSH, WSL or a development container? Choose the package for the host holding your source files. Windows installers are signed; macOS installers are signed and notarized. Linux installers are unsigned. Verify the release checksums before installation.</p>
+      <p class="download-footnote">Want Explorer and Workbench in VS Code? The <a href="https://marketplace.visualstudio.com/items?itemName=iokaio.airk">optional VS Code extension</a> is available separately.</p>
     </section>
     <section class="workflow-section" id="how-it-works" aria-labelledby="workflow-title">
       <div class="wrap section">
@@ -92,7 +93,7 @@
           <p>Keep the index on your machine, see what is covered, and give your agent a way back to the original material.</p>
         </div>
         <ol class="workflow-steps">
-          <li><span class="step-number">1</span><h3>Index your workspace</h3><p>Open a trusted project. Automatic setup registers the folder and starts indexing saved files. Review readiness and extraction failures in Explorer’s Management tabs.</p></li>
+          <li><span class="step-number">1</span><h3>Choose your source folders</h3><p>Install AIRK on the source host, then review the folders and indexing preferences in setup. Native indexing reads saved files; inspect readiness and any extraction failures before relying on results.</p></li>
           <li><span class="step-number">2</span><h3>Open Workbench or connect an agent</h3><p>Use <strong>AIRK: Open Workbench</strong> to run /files and inspect a cited result. Or run <strong>AIRK: Connect Coding Agent</strong>, review its scoped configuration and enable AIRK in that client.</p></li>
           <li><span class="step-number">3</span><h3>Retrieve with a reference</h3><p>Your agent can search, inspect definitions and read document evidence. Results retain source paths, content hashes and original locations within a published index revision.</p></li>
         </ol>

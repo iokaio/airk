@@ -449,3 +449,4 @@ pub mod storage_format;
 
 pub mod catalog_upgrade_recovery;
 pub mod inference_provider;
+pub mod rebuild;

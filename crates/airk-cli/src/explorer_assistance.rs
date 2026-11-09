@@ -53,6 +53,86 @@ pub struct Launch {
 /// Validate one explicitly attached window. Launch metadata is global, but this
 /// session identity must never be replaced by discovery of another window.
 pub(crate) fn window_plan(descriptor: &Path) -> Result<(Launch, String)> {
+    let window = read_window(descriptor)?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_millis();
+    ensure!(
+        u128::from(window.expires_unix_ms) > now,
+        "Explorer window attachment expired"
+    );
+    let assistance = descriptor
+        .parent()
+        .and_then(Path::parent)
+        .context("invalid Explorer attachment directory")?;
+    Ok((plan(&assistance.join("launch-1.json"))?, window.session_id))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Window {
+    schema: String,
+    session_id: String,
+    endpoint: String,
+    credential: String,
+    roots: Vec<String>,
+    binding_fingerprint: String,
+    extension_version: String,
+    expires_unix_ms: u64,
+}
+
+/// Absence is retirement evidence only in the exact, still-private owning
+/// namespace. Unreadable/redirected directories and malformed descriptors are
+/// unknown; a temporarily unavailable Assistance executable is irrelevant.
+pub(crate) fn window_retired(descriptor: &Path, now_unix_ms: u64) -> Result<bool> {
+    let windows = descriptor.parent().context("missing window namespace")?;
+    let assistance = windows.parent().context("missing Assistance namespace")?;
+    let name = descriptor.file_stem().and_then(|name| name.to_str());
+    ensure!(
+        descriptor.is_absolute()
+            && windows.file_name() == Some("windows".as_ref())
+            && assistance.file_name() == Some("explorer-assistance".as_ref())
+            && descriptor.extension() == Some("json".as_ref())
+            && name.is_some_and(|name| name.len() == 32
+                && name
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))),
+        "invalid retired window namespace"
+    );
+    for directory in [assistance, windows] {
+        let metadata = fs::symlink_metadata(directory)?;
+        ensure!(
+            metadata.is_dir() && !metadata.file_type().is_symlink(),
+            "redirected Explorer window namespace"
+        );
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt;
+            ensure!(
+                metadata.file_attributes() & 0x400 == 0,
+                "redirected Explorer window namespace"
+            );
+        }
+    }
+    // Match the extension's existing writer/reader ACL contract, which permits
+    // the Windows owner, SYSTEM and Administrators. Runtime-socket ACLs are a
+    // different boundary and are deliberately not imported into this forwarder.
+    #[cfg(unix)]
+    owner_only(windows)?;
+    #[cfg(windows)]
+    owner_only_windows(windows)?;
+    ensure!(
+        windows.canonicalize()? == assistance.canonicalize()?.join("windows"),
+        "redirected Explorer window namespace"
+    );
+    match fs::symlink_metadata(descriptor) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
+        Err(error) => Err(error.into()),
+        Ok(_) => Ok(read_window(descriptor)?.expires_unix_ms <= now_unix_ms),
+    }
+}
+
+fn read_window(descriptor: &Path) -> Result<Window> {
     ensure!(
         descriptor.is_absolute()
             && descriptor.parent().and_then(Path::file_name) == Some("windows".as_ref()),
@@ -63,18 +143,6 @@ pub(crate) fn window_plan(descriptor: &Path) -> Result<(Launch, String)> {
     owner_only(descriptor)?;
     #[cfg(windows)]
     owner_only_windows(descriptor)?;
-    #[derive(Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct Window {
-        schema: String,
-        session_id: String,
-        endpoint: String,
-        credential: String,
-        roots: Vec<String>,
-        binding_fingerprint: String,
-        extension_version: String,
-        expires_unix_ms: u64,
-    }
     let window: Window = serde_json::from_slice(&bytes)?;
     let hex = |s: &str, n| {
         s.len() == n
@@ -100,25 +168,14 @@ pub(crate) fn window_plan(descriptor: &Path) -> Result<(Launch, String)> {
             && window.extension_version.len() <= 64,
         "invalid explicit Explorer window binding"
     );
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)?
-        .as_millis();
-    ensure!(
-        u128::from(window.expires_unix_ms) > now,
-        "Explorer window attachment expired"
-    );
     let mut identity = vec![window.session_id.clone()];
-    identity.extend(window.roots);
+    identity.extend(window.roots.iter().cloned());
     let fingerprint = format!("{:x}", Sha256::digest(identity.join("\0").as_bytes()));
     ensure!(
         fingerprint[..16] == window.binding_fingerprint,
         "Explorer window binding changed"
     );
-    let assistance = descriptor
-        .parent()
-        .and_then(Path::parent)
-        .context("invalid Explorer attachment directory")?;
-    Ok((plan(&assistance.join("launch-1.json"))?, window.session_id))
+    Ok(window)
 }
 
 fn regular_file(path: &Path, limit: u64, what: &str) -> Result<()> {
@@ -423,6 +480,11 @@ mod tests {
         write(&fixture, |_| {})?;
         let windows = fixture.descriptor.parent().unwrap().join("windows");
         fs::create_dir(&windows)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&windows, fs::Permissions::from_mode(0o700))?;
+        }
         let session = "a".repeat(32);
         let descriptor = windows.join(format!("{session}.json"));
         let root = fixture.root.to_string_lossy().to_string();
@@ -438,13 +500,20 @@ mod tests {
             "binding_fingerprint":&fingerprint[..16],"extension_version":"1.5.0","expires_unix_ms":now+60_000});
         fs::write(&descriptor, serde_json::to_vec(&value)?)?;
         assert_eq!(window_plan(&descriptor)?.1, session);
+        assert!(!window_retired(&descriptor, now)?);
+        assert!(window_retired(&descriptor, now + 60_000)?);
+        // Retirement inspects the protected window, not optional launch files.
+        fs::remove_file(fixture.descriptor.parent().unwrap().join("launch-1.json"))?;
+        assert!(!window_retired(&descriptor, now)?);
         value["session_id"] = "c".repeat(32).into();
         fs::write(&descriptor, serde_json::to_vec(&value)?)?;
         assert!(window_plan(&descriptor).is_err());
+        assert!(window_retired(&descriptor, now).is_err());
         value["session_id"] = session.into();
         value["expires_unix_ms"] = 1.into();
         fs::write(&descriptor, serde_json::to_vec(&value)?)?;
         assert!(window_plan(&descriptor).is_err());
+        assert!(window_retired(&descriptor, now)?);
         assert!(window_plan(&fixture.descriptor).is_err());
         Ok(())
     }

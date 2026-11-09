@@ -65,7 +65,7 @@ impl Kernel {
         self.require_source_policy_scope()?;
         let source_policy = self.source_policy_observation()?;
         if self.source_policy_for_work().is_err() {
-            return Ok(
+            return self.attach_rebuild_observation(
                 serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"health":"needs_attention","index_state":"unavailable","collection":self.collection,"generation":null,"publication":null,"files":null,"chunks":null,"indexed_vectors":null,"source_policy":source_policy,"freshness":{"state":"blocked","live_source_verified":false},"discovery_readiness":{"state":"unknown"},"semantic_readiness":{"state":"unknown"},"error":crate::SourcePolicyReadUnavailable.receipt()["error"]}),
             );
         }
@@ -130,7 +130,7 @@ impl Kernel {
             result["semantic_readiness"] = serde_json::to_value(&semantic)?;
             result["legacy_adoption"] = legacy.observation;
         }
-        Ok(result)
+        self.attach_rebuild_observation(result)
     }
 
     pub fn maintain_current(&self) -> Result<airk_store::current::maintenance::ReclamationReport> {
@@ -210,7 +210,10 @@ impl Kernel {
             legacy.qualify(&mut semantic_readiness);
         }
         let discovery_readiness = super::progress::readiness(&read, &self.store)?;
+        let rebuild = self.rebuild_metadata()?;
         Ok(Status {
+            rebuild: rebuild.observation,
+            rebuild_unavailable: rebuild.unavailable,
             legacy_adoption: legacy_adoption.map(|legacy| legacy.observation),
             source_policy: self.source_policy_observation()?,
             source_availability: self.service_source_observation(),

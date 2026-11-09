@@ -27,6 +27,12 @@ function checkboxFillExpressions(button,groups){
     const lookup=`const buttons=[...document.querySelectorAll('button')].filter(b=>b.textContent.trim()===${JSON.stringify(button)});const form=buttons.length===1?buttons[0].closest('form'):null;if(!form)return false;const rows=[];for(const group of ${JSON.stringify(groups)}){const fields=[...form.querySelectorAll('fieldset')].filter(f=>f.querySelector('legend')?.textContent.trim()===group.legend);if(fields.length!==1||fields[0].disabled)return false;const labels=[...fields[0].querySelectorAll('label')].map(label=>({name:(label.querySelector('strong')?.textContent??label.textContent).trim(),node:label.querySelector('input[type="checkbox"]')}));if(labels.some(row=>!row.node||row.node.disabled)||group.names.some(name=>labels.filter(row=>row.name===name).length!==1))return false;rows.push(...labels.map(row=>({...row,value:group.names.includes(row.name)})));}`;
     return {ready:`(()=>{${lookup}return true;})()`,apply:`(()=>{${lookup}for(const {node,value}of rows){Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'checked').set.call(node,value);node.dispatchEvent(new Event('change',{bubbles:true}));}return true;})()`,readback:`(()=>{${lookup}return rows.every(({node,value})=>node.checked===value);})()`};
 }
+function clearedSearchScope(value){
+    const scope=value?.searchScope;
+    return value?.outcome?.status==='search_scope_cleared'&&
+        Array.isArray(scope?.selectedIndexIds)&&scope.selectedIndexIds.length===0&&
+        Array.isArray(scope?.selectedProjectIds)&&scope.selectedProjectIds.length===0;
+}
 function appliedReviewMatches(value,review){
     const same=require('node:util').isDeepStrictEqual;
     const request=review?.request,receipt=value?.outcome?.receipt;
@@ -101,6 +107,27 @@ function editorRemainingBudget(deadline,maximum,now=Date.now()){
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function until(action,label,timeout=180000){const end=Date.now()+timeout;while(Date.now()<end){const value=await action();if(value)return value;await delay(120);}throw new Error(`Editor UI timeout: ${label}`);}
 const pollUntil=until;
+function clickDispatchExpression(find){
+    // Only this synchronous branch certifies that click() was never invoked.
+    // Capture control metadata, never document text or native credential fields.
+    return `(()=>{const b=${find};if(!b||b.disabled)return {dispatched:false,reason:'target_unavailable',diagnostic:{visibility:document.visibilityState,button_count:document.querySelectorAll('button').length,target_present:!!b,target_disabled:b?b.disabled:null}};b.click();return {dispatched:true};})()`;
+}
+const knownUnclicked=result=>result&&result.dispatched===false&&result.reason==='target_unavailable'&&!Object.keys(result).some(key=>!['dispatched','reason','diagnostic'].includes(key));
+async function retryUnclicked(discover,evaluate,{deadline,now=()=>performance.now(),wallNow=Date.now,pause=delay}={}){
+    const check=()=>{if(wallNow()>=deadline)throw Error('Editor UI action/scenario deadline exhausted');};
+    check();let target=await discover(),until=now()+3000;const waits=[100,200,400,600,700,800];
+    for(let attempt=0;;attempt++){
+        check();if(now()>=until)throw Error('Known no-click retry deadline exhausted');
+        const result=await evaluate(target);
+        if(result&&result.dispatched===true&&Object.keys(result).length===1)return result;
+        if(!knownUnclicked(result))throw Error('Unknown UI dispatch outcome; no replay');
+        if(attempt===waits.length)throw Error('Known no-click retry budget exhausted');
+        const wait=waits[attempt];check();
+        if(now()+wait>=until||wallNow()+wait>=deadline)throw Error('Known no-click retry deadline exhausted');
+        await pause(wait);check();if(now()>=until)throw Error('Known no-click retry deadline exhausted');
+        target=await discover(Math.min(until-now(),deadline-wallNow()));
+    }
+}
 async function connect(target,deadline){
     const socket=new WebSocket(target.webSocketDebuggerUrl),contexts=new Set(),pending=new Map();let sequence=0;
     const budget=max=>{const left=Math.min(max,deadline-Date.now());if(left<=0)throw new Error('Shared editor scenario deadline exhausted');return left;};
@@ -139,16 +166,38 @@ async function editorUi(port,deadline=Date.now()+600000){
     const workbench=expression=>document('!!document.querySelector(".monaco-workbench")',expression,'page');
     // AIRK Explorer › Management drives the same native controller the Service Console used.
     const service=expression=>document("!!document.querySelector('.airk-explorer')",expression);
-    async function dispatch(predicate,ready,expression,type='iframe'){
+    async function dispatch(predicate,ready,expression,type='iframe',knownClick=false){
         const diagnostic=beginUiDiagnostic(mutationDiagnostics,{next_dispatch:dispatches+1,type,ready_sha256:require('node:crypto').createHash('sha256').update(ready).digest('hex'),samples:[]});
-        const target=await until(async()=>{
+        const discover=timeout=>until(async()=>{
             const found=await document(predicate,ready,type);
             if(found?.value)return found;
             // Read-only diagnostics never dispatch or retry a mutation. Retain
             // bounded first/latest rendered states when an exact control vanishes.
             if(found){try{retainUiDiagnostic(diagnostic.samples,await found.client.evaluate(found.context,"({title:document.title,visibility:document.visibilityState,text:document.body.innerText.slice(0,32768),text_truncated:document.body.innerText.length>32768,buttons:[...document.querySelectorAll('button')].slice(0,64).map(b=>({text:b.textContent.trim().slice(0,160),disabled:b.disabled})),buttons_truncated:document.querySelectorAll('button').length>64})"));}catch(error){retainUiDiagnostic(diagnostic.samples,{observation_unavailable:String(error).slice(0,4096)});}}
             return undefined;
-        },'exact mutation target');
+        },'exact mutation target',timeout??180000);
+        if(knownClick){
+            if(dispatches>=1024)throw Error('UI mutation dispatch budget exhausted');
+            let attempts=0;
+            await retryUnclicked(discover,async target=>{
+                const receipt={attempt:++attempts,context:target.context,target:target.target.id,started:Date.now(),expression_sha256:require('node:crypto').createHash('sha256').update(expression).digest('hex'),mutation_dispatches:'unknown'};dispatchLog.push(receipt);
+                try{
+                    const value=await target.client.evaluate(target.context,expression);
+                    receipt.result_kind=value===null?'null':typeof value;
+                    if(knownUnclicked(value)){
+                        receipt.mutation_dispatches=0;
+                        receipt.refusal={dispatched:false,reason:'target_unavailable'};
+                        retainUiDiagnostic(diagnostic.samples,value.diagnostic??{observation_unavailable:'No synchronous control diagnostic'});
+                    }else if(value&&value.dispatched===true&&Object.keys(value).length===1){
+                        receipt.dispatch=++dispatches;receipt.mutation_dispatches=1;receipt.completed=Date.now();
+                        if(dispatches>1024)throw Error('UI mutation dispatch budget exhausted');
+                    }else receipt.error='Unknown UI dispatch outcome; no replay';
+                    return value;
+                }catch(error){receipt.error=String(error);throw error;}
+            },{deadline:actionDeadline});
+            return {...dispatchLog.at(-1),no_click_attempts:attempts-1};
+        }
+        const target=await discover();
         const number=++dispatches;
         if(number>1024)throw new Error('UI mutation dispatch budget exhausted');
         const receipt={dispatch:number,context:target.context,target:target.target.id,started:Date.now(),expression_sha256:require('node:crypto').createHash('sha256').update(expression).digest('hex')};dispatchLog.push(receipt);
@@ -197,7 +246,7 @@ async function editorUi(port,deadline=Date.now()+600000){
     // unknown CDP/native outcome must never resubmit Apply on a polling loop.
     async function click(label,card){
         const find=`(()=>{const roots=${card?`[...document.querySelectorAll('article')].filter(a=>[...a.children].some(n=>/^H[23]$/.test(n.tagName)&&n.textContent.trim()===${JSON.stringify(card)}))`:`[document]`};const b=roots.flatMap(a=>[...a.querySelectorAll('button')]).filter(b=>b.textContent.trim()===${JSON.stringify(label)});return b.length===1&&!b[0].disabled?b[0]:null;})()`;
-        return dispatch(explorerPredicate,`!!${find}`,`(()=>{const b=${find};if(!b||b.disabled)return false;b.click();return true;})()`);
+        return dispatch(explorerPredicate,`!!${find}`,clickDispatchExpression(find),'iframe',true);
     }
     async function fill(button,values){
         const expressions=formFillExpressions(button,values);
@@ -249,6 +298,29 @@ async function editorUi(port,deadline=Date.now()+600000){
         finally{actionDeadline=previous;activeReadDiagnostic=previousDiagnostic;}
     }
     async function indexingAction(request){
+        if(['workbenchRead','workbenchCopy'].includes(request.action)){
+            const predicate='document.visibilityState===\'visible\'&&!!document.querySelector(\'textarea[aria-label="Request indexed evidence"]\')';
+            const observe=async expression=>(await document(predicate,expression))?.value;
+            return require('./native-editor-workbench.cjs').workbenchAction(request,{
+                observe,mutate:(ready,apply)=>dispatch(predicate,ready,apply),
+                settle:async()=>{
+                    const target=await document(predicate,'true');
+                    if(!target)throw Error('Visible Workbench context disappeared after dispatch');
+                    const result=await target.client.call('Runtime.evaluate',{contextId:target.context,expression:'new Promise(resolve=>requestAnimationFrame(()=>resolve(true)))',awaitPromise:true,returnByValue:true});
+                    if(result.exceptionDetails||result.result?.value!==true)throw Error('Workbench render observation incomplete');
+                },
+                wait:(expression,label)=>until(async()=>await observe(expression)||undefined,label),
+                waitValue:(action,label)=>until(action,label)
+            });
+        }
+        if(request.action==='providerStart'||request.action==='providerStop'){
+            if(request.action==='providerStop'&&!/^[a-f0-9]{32}$/.test(request.worker??''))throw new Error('Exact observed model generation required');
+            await click('Check status now');
+            const started=Date.now();
+            const receipt=await click(request.action==='providerStart'?'Start inference helper':'Stop this inference helper');
+            const confirmation=request.action==='providerStop'?await confirm('Continue',['Stop in-service model generation',request.worker]):undefined;
+            return {started,dispatch:receipt,confirmation,worker:request.worker,mutation_dispatches:1};
+        }
         if(request.action==='serviceStop'){
             await click('Check status now');
             const before=await until(async()=>{const found=await service("(()=>{const b=[...document.querySelectorAll('button')].find(n=>n.textContent.trim()==='Stop service');return b&&!b.disabled?{text:document.body.innerText}:false;})()");return found?.value;},'healthy owned fixture Stop control');
@@ -310,11 +382,20 @@ async function editorUi(port,deadline=Date.now()+600000){
                 // Each explicit selection gets its actual new native grant. Retained
                 // transport assertions keep their original immutable selector.
                 const select=async(names,predicate)=>{await checkboxes('Apply selection',[{legend:'Indexes',names:[]},{legend:'Index sets',names}]);return afterClick('Apply selection',predicate);};
-                const before=await catalog();if(before.searchScope.active)await select([],v=>v.outcome?.status==='search_scope_cleared'&&!v.searchScope.active);
+                const before=await catalog();if(before.searchScope.active)await select([],clearedSearchScope);
                 return select([request.setName],v=>v.searchScope?.active&&v.outcome?.status==='search_scope_selected'&&v.outcome.selected.project_ids.length===1&&v.outcome.selected.project_ids[0]===request.project);
             }
             case 'sources':await click('Sources and exclusions');return afterClick('Read Sources',v=>!!v.sources);
-            case 'blockDraft':await fill('Prepare permanent-block review',{'Source root':request.root,'Block':'exact','Path relative to the selected root':request.path});return afterClick('Prepare permanent-block review',v=>v.review?.request?.operation?.operation==='change_index_policy');
+            case 'blockDraft':{
+                await fill('Prepare permanent-block review',{'Source root':request.root,'Block':'exact','Path relative to the selected root':request.path});
+                const previous=JSON.stringify(await catalog());await click('Prepare permanent-block review');let advanced=false;
+                // This prepares a read-only review. Return its complete native
+                // refusal so the driver can distinguish known non-admission
+                // from an unknown Apply; never click Prepare or Apply again here.
+                return until(async()=>{const value=await catalog();advanced||=JSON.stringify(value)!==previous;
+                    return advanced&&!value.busy&&(value.error||value.review?.request?.operation?.operation==='change_index_policy')?value:undefined;
+                },'new native permanent-block review or complete refusal');
+            }
             case 'deleteSetDraft':return afterClick('Delete index set',v=>v.review?.request?.operation?.operation==='delete_project');
             case 'renameDraft':await click('Index settings');await openDetails('Rename index');await fill('Preview rename',{'New name':request.name});return afterClick('Preview rename',v=>!!v.review);
             case 'apply':{
@@ -354,4 +435,4 @@ async function editorUi(port,deadline=Date.now()+600000){
     }
     return {dispatch,dispatchReceipts:()=>structuredClone(dispatchLog),diagnostics:()=>({picker:structuredClone(pickerDiagnostics),mutations:structuredClone(mutationDiagnostics),read_observations:structuredClone(readDiagnostics),reads,dispatches}),document,workbench,service,quickPick,confirm,indexing,catalog,click,approveRepair,responseMode,until,close(){for(const client of clients.values())client.close();}};
 }
-module.exports={editorUi,until,formFillExpressions,checkboxFillExpressions,appliedReviewMatches,observeReviewedApply,privateEditorEnvironment,privateClientEnvironment,openUsageAdministration,retainUiDiagnostic,beginUiDiagnostic,editorActionDeadline,editorRemainingBudget};
+module.exports={editorUi,until,formFillExpressions,checkboxFillExpressions,clearedSearchScope,appliedReviewMatches,observeReviewedApply,privateEditorEnvironment,privateClientEnvironment,openUsageAdministration,retainUiDiagnostic,beginUiDiagnostic,editorActionDeadline,editorRemainingBudget,clickDispatchExpression,retryUnclicked};

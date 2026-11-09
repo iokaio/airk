@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Pinned build-tool policy tests; fixtures never compile Ninja or ORT."""
 import copy
+from contextlib import nullcontext
 import hashlib
 import importlib.util
 import io
@@ -44,6 +45,52 @@ class StaticToolTests(unittest.TestCase):
             with patch.object(MODULE, "LOCK", lock), self.assertRaises(ValueError):
                 MODULE.validate_lock(CORE)
 
+    def test_tar_extraction_is_one_forward_pass_with_sorted_identical_receipts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            archive = root / "out-of-order.tar.gz"
+            with tarfile.open(archive, "w:gz") as output:
+                for name, content in (("z-last", b"z"), ("a-first", b"a"), ("middle", b"m")):
+                    member = tarfile.TarInfo("tool/" + name)
+                    member.size, member.mode = len(content), 0o644
+                    output.addfile(member, io.BytesIO(content))
+            row = {"archive_root": "tool", "bytes": archive.stat().st_size, "sha256": CORE.digest(archive)}
+            expected = MODULE.archive_entries(archive, row, CORE)
+            original_open = tarfile.open
+            with patch.object(MODULE.tarfile, "open", wraps=original_open) as opened:
+                entries = MODULE.extract(archive, root / "extracted", row, CORE)
+            self.assertEqual(entries, expected)
+            self.assertEqual([entry["path"] for entry in entries], ["a-first", "middle", "z-last"])
+            self.assertEqual(opened.call_count, 1)
+            self.assertEqual(opened.call_args.kwargs.get("mode"), "r|gz")
+
+    def test_streamed_tar_retains_root_duplicate_type_and_budget_checks(self):
+        cases = [
+            ("wrong-root", [("other/file", tarfile.REGTYPE), ("tool/ok", tarfile.REGTYPE)], {}, "root differs"),
+            ("duplicate", [("tool/file", tarfile.REGTYPE)] * 2, {}, "Duplicate"),
+            ("root-file", [("tool", tarfile.REGTYPE)], {}, "archive root"),
+            ("root-duplicate", [("tool", tarfile.DIRTYPE)] * 2, {}, "archive root"),
+            ("special", [("tool/fifo", tarfile.FIFOTYPE)], {}, "type/size"),
+            ("file-budget", [("tool/file", tarfile.REGTYPE)], {"MAX_FILE": 0}, "type/size"),
+            ("total-budget", [("tool/a", tarfile.REGTYPE), ("tool/b", tarfile.REGTYPE)], {"MAX_EXPANDED": 1}, "expansion"),
+            ("member-budget", [("tool", tarfile.DIRTYPE), ("tool/a", tarfile.REGTYPE)], {"MAX_MEMBERS": 1}, "member count"),
+        ]
+        for name, members, limits, message in cases:
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                archive = root / "invalid.tar.gz"
+                with tarfile.open(archive, "w:gz") as output:
+                    for member_name, kind in members:
+                        member = tarfile.TarInfo(member_name)
+                        member.type = kind
+                        content = b"x" if kind == tarfile.REGTYPE else b""
+                        member.size = len(content)
+                        output.addfile(member, io.BytesIO(content))
+                row = {"archive_root": "tool", "bytes": archive.stat().st_size, "sha256": CORE.digest(archive)}
+                with patch.multiple(MODULE, **limits) if limits else nullcontext():
+                    with self.assertRaisesRegex(ValueError, message):
+                        MODULE.extract(archive, root / "failed", row, CORE)
+
     def test_archive_internal_links_are_omitted_and_outside_links_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
@@ -57,7 +104,10 @@ class StaticToolTests(unittest.TestCase):
             archive, row = self.archive(root, link="../../outside")
             with self.assertRaises(ValueError):
                 MODULE.extract(archive, root / "extracted", row, CORE)
-            self.assertFalse((root / "extracted").exists())
+            # A later invalid streamed member leaves earlier verified bytes as
+            # failed-attempt evidence, and never creates its escaping target.
+            self.assertFalse((root / "outside").exists())
+            self.assertEqual((root / "extracted/bin/program").read_bytes(), b"original pinned executable fixture")
 
     def test_existing_tree_requires_exact_sealed_bytes_and_roster(self):
         with tempfile.TemporaryDirectory() as directory:

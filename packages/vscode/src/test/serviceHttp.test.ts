@@ -5,7 +5,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import {X509Certificate,createHash} from 'node:crypto';
-import {validateHttpConnection,httpUrl,httpMaterial,HttpConnectionInfo,HttpSelection,credentialEnvironment,validateHttpSelection,sameHttpAuthority,publishNativeInput,removeNativeInput} from '../serviceHttp';
+import {validateHttpConnection,httpUrl,httpMaterial,HttpConnectionInfo,HttpSelection,credentialEnvironment,validateHttpSelection,sameHttpAuthority,httpAuthorityDigest,validateAttachmentRetirement,publishNativeInput,removeNativeInput} from '../serviceHttp';
 import {serializeServers,LaunchSpec} from '../model';
 import {migrateAgentConfig} from '../agentMigration';
 import {ca} from './fixtures/httpTlsFixture';
@@ -50,6 +50,22 @@ test('native setup input refuses a redirected HTTP directory without changing it
 });
 function selection():HttpSelection{return {kind:'scoped',selection:{schema:1,context_key:'a'.repeat(64),namespace:'b'.repeat(32),expected_catalog_revision:7,grant_id:'grt_'+'c'.repeat(32),expected_grant_revision:1,index_id:'idx_'+'d'.repeat(32),project_ids:['prj_'+'e'.repeat(32)]}};}
 function info(directory:string):HttpConnectionInfo{return {schema:1,connection_id:'f'.repeat(32),endpoint:{schema:1,installation:'1'.repeat(64),user:'fixture',namespace:'b'.repeat(32),generation:1,service_instance:'2'.repeat(32),executable_sha256:'3'.repeat(64),url:'https://127.0.0.1:57421/mcp',ca_sha256:digest(new X509Certificate(ca).raw),certificate_sha256:'4'.repeat(64),state:'ready',predecessor_digest:null},selection:selection(),ca_certificate_file:path.join(directory,'ca.pem'),credential_file:path.join(directory,'credential-'+ 'f'.repeat(32)+'.token')};}
+
+test('native authority digest uses shared frozen vectors and normalizes only the catalog minimum',async()=>{
+    const fixture=JSON.parse(await fs.readFile(path.resolve(__dirname,'../../src/test/fixtures/httpAuthorityDigest.json'),'utf8'));assert.equal(fixture.schema,1);
+    for(const vector of fixture.vectors){const original=structuredClone(vector.selection);assert.equal(httpAuthorityDigest(vector.selection),vector.authority_sha256,vector.name);assert.deepEqual(vector.selection,original);vector.selection.selection.expected_catalog_revision++;assert.equal(httpAuthorityDigest(vector.selection),vector.authority_sha256);vector.selection.selection.expected_grant_revision++;assert.notEqual(httpAuthorityDigest(vector.selection),vector.authority_sha256);}
+});
+test('attachment retirement proof binds exact native connection, installation, client and complete authority',()=>{
+    const connection=info(path.resolve('fixture')),proof={schema:1,connection_id:connection.connection_id,installation:connection.endpoint.installation,namespace:connection.endpoint.namespace,client:'claude_code',expires_unix_ms:200,explorer_descriptor_sha256:'a'.repeat(64),authority_sha256:httpAuthorityDigest(connection.selection)};
+    assert.deepEqual(validateAttachmentRetirement(proof,connection,'claude',100),proof);
+    for(const mutate of [
+        (value:any)=>value.schema=2,(value:any)=>value.connection_id='0'.repeat(32),(value:any)=>value.installation='0'.repeat(64),
+        (value:any)=>value.namespace='0'.repeat(32),(value:any)=>value.client='vscode',(value:any)=>value.expires_unix_ms=100,
+        (value:any)=>value.expires_unix_ms=Number.MAX_SAFE_INTEGER+1,(value:any)=>value.explorer_descriptor_sha256='bad',
+        (value:any)=>value.authority_sha256='0'.repeat(64),(value:any)=>value.extra='unreviewed',
+    ]){const crossed=structuredClone(proof);mutate(crossed);assert.throws(()=>validateAttachmentRetirement(crossed,connection,'claude',100));}
+    assert.throws(()=>validateAttachmentRetirement(proof,connection,'unknown',100));
+});
 test('HTTP DTO preserves exact authority and permits only a monotonic catalog clock refresh',()=>{
     const value=info(path.resolve('fixture'));assert.deepEqual(validateHttpConnection(value,selection()),value);
     const next=structuredClone(value);(next.selection.selection as any).expected_catalog_revision++;assert.equal((validateHttpConnection(next,selection()).selection.selection as any).expected_catalog_revision,8);
@@ -83,8 +99,14 @@ test('imported legacy unions retain every original authority through the native 
     });
     const value=info(path.resolve('fixture'));value.selection={kind:'imported_legacy_union',selection:{namespace:'b'.repeat(32),selections:members,no_default_project:true}};
     assert.ok(Buffer.byteLength(JSON.stringify(value))>16384);assert.deepEqual(validateHttpConnection(value),value);
+    const digest=httpAuthorityDigest(value.selection),single:HttpSelection={kind:'imported_legacy',selection:structuredClone(members[0])},singleDigest=httpAuthorityDigest(single);
+    const advancedSingle=structuredClone(single);advancedSingle.selection.expected_catalog_revision++;assert.equal(httpAuthorityDigest(advancedSingle),singleDigest);
+    const changedSingle=structuredClone(single);changedSingle.selection.grant.provenance.configuration_digest='0'.repeat(64);assert.notEqual(httpAuthorityDigest(changedSingle),singleDigest,'Imported original configuration provenance is part of exact authority');
     const refreshed=structuredClone(value.selection);if(refreshed.kind==='imported_legacy_union')for(const member of refreshed.selection.selections)member.expected_catalog_revision++;assert.equal(sameHttpAuthority(refreshed,value.selection),true);
+    assert.equal(httpAuthorityDigest(refreshed),digest,'Every union member minimum clock is normalized');
+    const reordered=structuredClone(value.selection);if(reordered.kind==='imported_legacy_union')reordered.selection.selections.reverse();assert.notEqual(httpAuthorityDigest(reordered),digest,'Original union member order is retained');
     const crossed=structuredClone(refreshed);if(crossed.kind==='imported_legacy_union')crossed.selection.selections[1].grant.grant.revision++;assert.equal(sameHttpAuthority(crossed,value.selection),false);
+    assert.notEqual(httpAuthorityDigest(crossed),digest,'A changed member grant is never normalized away');
     const duplicate=structuredClone(value.selection);if(duplicate.kind==='imported_legacy_union')duplicate.selection.selections[1]=duplicate.selection.selections[0];assert.throws(()=>validateHttpSelection(duplicate),/union/);
     const defaulted=structuredClone(value.selection) as any;defaulted.selection.no_default_project=false;assert.throws(()=>validateHttpSelection(defaulted),/union/);
     const tooLarge=structuredClone(value);if(tooLarge.selection.kind==='imported_legacy_union')tooLarge.selection.selection.selections[0].grant.future='x'.repeat(61440);assert.throws(()=>validateHttpConnection(tooLarge),/bound/);

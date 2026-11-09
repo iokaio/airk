@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import * as fs from 'node:fs/promises';
-import { HttpConnectionInfo, HttpSelection, validateHttpConnection, validateEndpoint, matchesImportedHttpOrigin } from './serviceHttp';
+import { HttpConnectionInfo, HttpSelection, validateHttpConnection, validateEndpoint, matchesImportedHttpOrigin, validateAttachmentRetirement } from './serviceHttp';
 import * as path from 'node:path';
 import { runText } from './native';
 import { NativeControlTransport, ServiceClient, ServiceError, record, RecordValue, identifier, count, ProjectConfigurationRequest, validateConfigurationRequest } from './serviceClient';
@@ -10,6 +10,7 @@ import type { LifecycleIntent } from './serviceIntents';
 import { validateRetirementReply } from './runtimeLegacyRetirement';
 import {validateNativeLegacyBinding} from './indexingCatalog';
 import {IssuerRotationAction,IssuerRotationStatus,validateIssuerRotation} from './httpIssuerRotation';
+import { NativeRebuildObservation, validateRebuildObservation } from './runtimeRebuild';
 
 /** Version direction only, never a protocol/storage compatibility claim.
  * Native authenticated formats and migration capabilities decide whether a
@@ -40,6 +41,8 @@ export interface RuntimeBinding {
     runtimeSha256: string; version: string; lifecycle: 'on-demand' | 'external' | 'user-on-demand';
     verificationBasis: string;
     payloadVerified?:boolean;
+    /** Complete native observation, kept separate from runtime health/readiness. */
+    rebuild?:NativeRebuildObservation;
 }
 export interface LegacyOriginLocator {path:string;format:'codex_toml'|'mcp_servers_json'|'vscode_servers_json'|'open_code_json';server:string;container_path?:string[]}
 export function legacyOriginLocatorIdentity(locator:LegacyOriginLocator):string{
@@ -101,6 +104,7 @@ export interface BootstrapObservation {
 export interface RuntimeTransitionReview {
     readonly action:'upgrade'|'rollback'|'resume'; readonly installDir:string; readonly controlDir:string;
     readonly observedActive:string; readonly expectedActive:string; readonly target:string; readonly version:string;
+    readonly rebuildIndexes?:boolean;
 }
 export interface ProjectRegistrationReview {
     readonly installDir:string; readonly controlDir:string; readonly runtimeSha256:string;
@@ -131,7 +135,9 @@ export interface NativeSourceScope {
     readonly fencing_generation:number|null;
 }
 const exactScopeOwners=new WeakMap<NativeSourceScope,{binding:string;root:string;collection:string|null}>();
-const exactBindingIdentity=(binding:RuntimeBinding)=>JSON.stringify(binding);
+/** Recovery progress is an observation, not part of a connection's identity. */
+export const runtimeBindingIdentity=(binding:RuntimeBinding)=>{const {rebuild:_rebuild,...identity}=binding;return JSON.stringify(identity);};
+const exactBindingIdentity=runtimeBindingIdentity;
 export function exactScopeMatches(value:NativeSourceScope,binding:RuntimeBinding,root:string,collection:string|null):boolean {
     const owner=exactScopeOwners.get(value);
     return !!owner&&owner.binding===exactBindingIdentity(binding)&&owner.root===root&&owner.collection===collection;
@@ -433,7 +439,8 @@ export class RuntimeHost {
             universalLauncher:typeof inspection.universal_launcher==='string'?safePath(inspection.universal_launcher):null,runtimeSha256,version,
             lifecycle:managed?.lifecycle==='external'?'external':managed?'user-on-demand':'on-demand',
             verificationBasis:typeof approval.verification_basis==='string'?approval.verification_basis:'unknown',
-            payloadVerified:inspection.payload_verified!==false&&inspection.metadata_only!==true};
+            payloadVerified:inspection.payload_verified!==false&&inspection.metadata_only!==true,
+            ...(inspection.rebuild!==undefined&&inspection.rebuild!==null?{rebuild:validateRebuildObservation(inspection.rebuild)}:{})};
     }
     async retirePrevious(binding:RuntimeBinding):Promise<RecordValue|undefined>{
         this.active();
@@ -698,10 +705,10 @@ export class RuntimeHost {
         const response=await this.invoke(bundle.main,['runtime','http-connection','--install-dir',binding.installDir,'--selection-file',selectionFile,'--connection-id',connectionId,'--client',client,...(explorerDescriptor?['--explorer-descriptor',safePath(explorerDescriptor)]:[])],60000);
         this.active();const info=validateHttpConnection(response,selection,path.join(binding.controlDir,'http-1'));if(info.connection_id!==connectionId)throw new ServiceError('crossed_http_connection_identity');return info;
     }
-    async httpLegacyConnection(binding:RuntimeBinding,registration:{binding:string;root:string;data_root:string;collection:string},registrationFile:string,receipt:string,connectionId:string,client:string,explorerDescriptor?:string,originSha256?:string):Promise<HttpConnectionInfo>{
-        this.active();if(originSha256)identifier(originSha256,32);if(!/^[a-f0-9]{32}$/.test(connectionId)||!/^[a-f0-9]{64}$/.test(receipt)||!/^[A-Za-z0-9._-]{1,64}$/.test(client))throw new ServiceError('invalid_http_enrollment_identity');
+    async httpLegacyConnection(binding:RuntimeBinding,registration:{binding:string;root:string;data_root:string;collection:string},registrationFile:string,receipt:string,connectionId:string,client:string,explorerDescriptor?:string,originSha256?:string,reattachConnectionId?:string):Promise<HttpConnectionInfo>{
+        this.active();if(originSha256)identifier(originSha256,32);if(reattachConnectionId)identifier(reattachConnectionId,16);if(!/^[a-f0-9]{32}$/.test(connectionId)||!/^[a-f0-9]{64}$/.test(receipt)||!/^[A-Za-z0-9._-]{1,64}$/.test(client))throw new ServiceError('invalid_http_enrollment_identity');
         safePath(registrationFile);const bundle=await this.verified();
-        const response=await this.invoke(bundle.main,['runtime','http-legacy-connection','--install-dir',binding.installDir,'--registration-file',registrationFile,'--configuration-receipt',receipt,...(originSha256?['--origin-sha256',originSha256]:[]),'--connection-id',connectionId,'--client',client,...(explorerDescriptor?['--explorer-descriptor',safePath(explorerDescriptor)]:[])],60000);this.active();
+        const response=await this.invoke(bundle.main,['runtime','http-legacy-connection','--install-dir',binding.installDir,'--registration-file',registrationFile,'--configuration-receipt',receipt,...(originSha256?['--origin-sha256',originSha256]:[]),'--connection-id',connectionId,'--client',client,...(explorerDescriptor?['--explorer-descriptor',safePath(explorerDescriptor)]:[]),...(reattachConnectionId?['--reattach-connection-id',reattachConnectionId]:[])],60000);this.active();
         if(response.status==='review_required')throw new ServiceError('legacy_selection_review_required',false,response);
         let info:HttpConnectionInfo;try{info=validateHttpConnection(response,undefined,path.join(binding.controlDir,'http-1'));}catch{throw new ServiceError('http_legacy_connection_unconfirmed',true,response);}
         if(info.connection_id!==connectionId||info.selection.kind!=='imported_legacy'||!matchesImportedHttpOrigin(info.selection.selection,registration,receipt))throw new ServiceError('crossed_http_legacy_connection',true,response);
@@ -718,12 +725,21 @@ export class RuntimeHost {
     }
     /** Typed ownership lookup never issues/renews credentials. Absence is valid
      * only when the native private ledger proves this installation never owned it. */
-    async lookupHttpConnection(binding:RuntimeBinding,connectionId:string):Promise<RecordValue>{
+    async lookupHttpConnection(binding:RuntimeBinding,connectionId:string,reattachment?:{connection:HttpConnectionInfo;client:string}):Promise<RecordValue>{
         this.active();identifier(connectionId,16);const bundle=await this.verified();
         const result=await this.invoke(bundle.main,['runtime','lookup-http-connection','--install-dir',binding.installDir,'--expected-active',binding.runtimeSha256,'--connection-id',connectionId],60000);
         if(result.schema!==1||result.active!==binding.runtimeSha256||result.connection_id!==connectionId)throw new ServiceError('http_connection_lookup_unconfirmed',false,result);
-        if(result.status==='not_owned'){if(result.connection!==undefined)throw new ServiceError('http_connection_lookup_unconfirmed',false,result);return result;}
-        if(result.status==='unavailable'){if(typeof result.code!=='string'||!/^owned_connection_(?:revoked|expired|unavailable)$/.test(result.code))throw new ServiceError('http_connection_lookup_unconfirmed',false,result);throw new ServiceError(result.code,false,result);}
+        if(result.status==='not_owned'){if(result.connection!==undefined||result.attachment_retirement!==undefined)throw new ServiceError('http_connection_lookup_unconfirmed',false,result);return result;}
+        if(result.status==='unavailable'){
+            if(typeof result.code!=='string'||!/^owned_connection_(?:revoked|expired|unavailable|attachment_retired)$/.test(result.code))throw new ServiceError('http_connection_lookup_unconfirmed',false,result);
+            if(result.code==='owned_connection_attachment_retired'&&reattachment){
+                if(reattachment.connection.connection_id!==connectionId)throw new ServiceError('http_connection_lookup_unconfirmed',false,result);
+                try{validateAttachmentRetirement(result.attachment_retirement,reattachment.connection,reattachment.client);}catch{throw new ServiceError('http_attachment_retirement_unconfirmed',false,result);}
+                return result;
+            }
+            throw new ServiceError(result.code,false,result);
+        }
+        if(result.attachment_retirement!==undefined)throw new ServiceError('http_connection_lookup_unconfirmed',false,result);
         if(result.status!=='owned')throw new ServiceError('http_connection_lookup_unconfirmed',false,result);
         const connection=validateHttpConnection(result.connection,undefined,path.join(binding.controlDir,'http-1'));
         if(connection.connection_id!==connectionId)throw new ServiceError('http_connection_lookup_unconfirmed',false,result);
@@ -800,10 +816,11 @@ export class RuntimeHost {
         if(result.approval!==review.approval||result.startup_removed!==true||result.sources_preserved!==true||result.project_settings_preserved!==true||result.indexes_retained!==true)throw new ServiceError('crossed_legacy_removal',true);
         this.legacyReviews.delete(review);return result;
     }
-    async reviewTransition(binding:RuntimeBinding,action:RuntimeTransitionReview['action']):Promise<RuntimeTransitionReview>{
-        return this.inspectTransition(binding,action,false);
+    async reviewTransition(binding:RuntimeBinding,action:RuntimeTransitionReview['action'],options?:{rebuildIndexes?:boolean}):Promise<RuntimeTransitionReview>{
+        if(options?.rebuildIndexes!==undefined&&typeof options.rebuildIndexes!=='boolean'||options?.rebuildIndexes&&action!=='upgrade')throw new ServiceError('invalid_runtime_rebuild_choice');
+        return this.inspectTransition(binding,action,false,options?.rebuildIndexes===true);
     }
-    private async inspectTransition(binding:RuntimeBinding,action:RuntimeTransitionReview['action'],superseding:boolean):Promise<RuntimeTransitionReview>{
+    private async inspectTransition(binding:RuntimeBinding,action:RuntimeTransitionReview['action'],superseding:boolean,rebuildIndexes=false):Promise<RuntimeTransitionReview>{
         this.active();
         if(binding.lifecycle!=='on-demand'||this.options.managed)throw new ServiceError('runtime_payload_managed_externally');
         if(!['upgrade','rollback','resume'].includes(action))throw new ServiceError('invalid_runtime_transition');
@@ -840,7 +857,7 @@ export class RuntimeHost {
                 ||!['trusted_distribution','organization_digest'].includes(String(approval.verification_basis)))throw new ServiceError('candidate_not_compatible_with_this_extension');
         }
         const review:RuntimeTransitionReview=Object.freeze({action,installDir:binding.installDir,controlDir:binding.controlDir,
-            observedActive:current.runtimeSha256,expectedActive,target,version});
+            observedActive:current.runtimeSha256,expectedActive,target,version,...(rebuildIndexes?{rebuildIndexes:true}:{})});
         if(!superseding)this.transitionReviews.add(review);return review;
     }
     async transition(binding:RuntimeBinding,review:RuntimeTransitionReview,progress?:(message:string,stage:'staging'|'activating')=>void):Promise<RecordValue>{
@@ -855,9 +872,9 @@ export class RuntimeHost {
             await this.invoke(bundle.main,['runtime','stage','--source',bundle.source,'--install-dir',binding.installDir,
                 '--approved-sha256',bundle.digest,'--verification-basis','trusted-distribution','--channel',this.options.channel],180000);
         }
-        progress?.('Stopping previous AIRK processes and activating runtime…','activating');
+        progress?.(review.rebuildIndexes?'Preserving previous AIRK state and rebuilding indexes from saved sources…':'Stopping previous AIRK processes and activating runtime…','activating');
         const selected=await this.invoke(bundle.main,['runtime','activate','--install-dir',binding.installDir,
-            '--runtime-sha256',review.target,'--expected-active',review.expectedActive],180000);
+            '--runtime-sha256',review.target,'--expected-active',review.expectedActive,...(review.rebuildIndexes?['--rebuild-indexes']:[])],180000);
         if(selected.schema!==1||selected.active!==review.target)throw new ServiceError('crossed_runtime_activation_receipt',true);
         this.transitionReviews.delete(review);return selected;
     }

@@ -366,6 +366,7 @@ class Session:
         self.first_status, self.initialize_through_status_ms = None, None
         self.pending, self.lock, self.write_lock = {}, threading.Lock(), threading.Lock()
         self.next_id, self.tx_bytes, self.rx_bytes = 0, 0, 0
+        self.uncertain = False
         self.child = None
         self.https = configuration.get("transport") == "https"
         self.networks, self.local = [], threading.local()
@@ -423,8 +424,12 @@ class Session:
             self.startup_ms = (time.perf_counter()-started)*1000
             self.startup_wire = {"request_bytes": self.tx_bytes, "response_bytes": self.rx_bytes}
             return self
-        except BaseException:
-            self.__exit__(None, None, None)
+        except BaseException as primary:
+            self.uncertain = http_fixture.error_outcome(primary) == "uncertain"
+            try:
+                self.__exit__(type(primary), primary, primary.__traceback__)
+            except BaseException as cleanup:
+                primary.add_note("Owned session cleanup also failed: " + type(cleanup).__name__)
             raise
 
     def send(self, message):
@@ -478,6 +483,8 @@ class Session:
         if deadline <= time.monotonic():
             raise TimeoutError("request_not_submitted")
         with self.lock:
+            if self.uncertain:
+                raise RuntimeError("transport_uncertain")
             self.next_id += 1
             identifier = self.next_id
         network = getattr(self.local, "network", None)
@@ -498,13 +505,18 @@ class Session:
             self.tx_bytes += sent
         try:
             reply = network._request("POST", message)
-        except http_fixture.HttpRefused as refused:
+        except http_fixture.HttpResponseError as refused:
             with self.lock:
                 self.rx_bytes += len(canonical(refused.body))
-            error = RuntimeError("http_refused")
-            # Actual transport evidence, never a fabricated JSON-RPC envelope.
-            error.raw_response = {"http_status":refused.status,"body":refused.body}
-            raise error from refused
+                self.uncertain = self.uncertain or refused.submission == "uncertain"
+            # Keep original type, request identity, headers and redaction flags.
+            # Unknown/fenced responses remain failures, never retry candidates.
+            refused.refusal = http_fixture.classify_refusal(refused)
+            raise
+        except (OSError, TimeoutError):
+            with self.lock:
+                self.uncertain = True
+            raise
         received = time.perf_counter()
         size = len(canonical(reply))
         with self.lock:
@@ -533,7 +545,9 @@ class Session:
         while True:
             envelope, metadata = self.request("tools/call", {"name": name, "arguments": arguments}, deadline)
             attempts.append({**metadata, **observation(envelope)})
-            delay = typed_retry(envelope)
+            # Modern HTTPS reads have their one bounded native-owned retry.
+            # Retain legacy stdio fixture behavior under its original identity.
+            delay = None if self.https else typed_retry(envelope)
             if delay is None or time.monotonic() + delay >= deadline or len(attempts) >= MAX_READ_ATTEMPTS:
                 break
             time.sleep(delay)
@@ -541,7 +555,20 @@ class Session:
             "retry_limit_reached": len(attempts) >= MAX_READ_ATTEMPTS and delay is not None,
             "elapsed_ms": (time.perf_counter()-started)*1000, "completed_at": time.perf_counter()}
 
-    def __exit__(self, *_):
+    def __exit__(self, error_type, primary, traceback):
+        try:
+            self._close()
+        except BaseException as cleanup:
+            observation = {"failure_class": type(cleanup).__name__}
+            if isinstance(cleanup, http_fixture.HttpResponseError):
+                observation["http_response"] = cleanup.evidence()
+            self.cleanup.setdefault("errors", []).append(observation)
+            if primary is None:
+                raise
+            primary.add_note("Owned session cleanup also failed: " + type(cleanup).__name__)
+        return False
+
+    def _close(self):
         if self.https:
             failures = []
             for network in self.networks[1:]:
@@ -551,12 +578,14 @@ class Session:
                     failures.append("owned_tls_connection_close_failed")
             try:
                 if self.networks:
-                    self.networks[0].close()
+                    self.networks[0].close(delete=not self.uncertain)
             except Exception:
                 failures.append("owned_http_session_delete_failed")
                 raise
             finally:
-                self.cleanup = {"http_session_delete":not failures,"owned_tls_connections":len(self.networks),"frontend_process_created":False}
+                self.cleanup = {"http_session_delete":not failures and not self.uncertain,
+                                "session_delete_skipped_uncertain":self.uncertain,
+                                "owned_tls_connections":len(self.networks),"frontend_process_created":False}
             if failures:
                 raise RuntimeError(failures[0])
             return
@@ -587,7 +616,11 @@ class RetainedSession(Session):
     def request(self, method, params, deadline=None):
         try:
             result, metadata = super().request(method, params, deadline)
-        except RuntimeError as error:
+        except (RuntimeError, http_fixture.HttpResponseError) as error:
+            if method == "tools/call" and isinstance(error, http_fixture.HttpResponseError):
+                self.query_replies.append({"http_response": error.evidence(),
+                                           "outcome": http_fixture.error_outcome(error),
+                                           "refusal": http_fixture.classify_refusal(error)})
             if method == "tools/call" and hasattr(error, "raw_response"):
                 self.query_replies.append({"jsonrpc_response": error.raw_response})
             raise
@@ -671,20 +704,30 @@ def run_trial(session, concurrency, oracle, expected_hashes):
                 envelope, metadata = future.result()
                 results[task_id] = (envelope, {**metadata, "task_id": task_id})
             except (OSError, ValueError, RuntimeError, TimeoutError) as error:
-                # Preserve every failed sample without serializing error text.
+                refusal = http_fixture.classify_refusal(error)
+                # Preserve every outcome and complete bounded HTTP evidence.
                 results[task_id] = ({"isError": True}, {"tool": task[0], "task_id": task_id, "failure_class": type(error).__name__,
-                    "submission": "uncertain", "attempts": [], "retries": 0,
+                    "submission": "not_submitted" if refusal else "uncertain",
+                    "outcome": http_fixture.error_outcome(error), "refusal": refusal,
+                    **({"http_response": error.evidence()} if isinstance(error, http_fixture.HttpResponseError) else {}),
+                    "attempts": [], "retries": 0,
                     "elapsed_ms": (time.perf_counter()-started)*1000, "completed_at": time.perf_counter()})
     successful = [metadata["completed_at"] for envelope, metadata in results.values() if not envelope.get("isError")
                   and has_evidence(body(envelope))]
     publications = {attempt["publication_token_sha256"] for _, metadata in results.values()
                     for attempt in metadata["attempts"] if attempt["publication_token_sha256"]}
     batch_status = results["batch-status"][1]
+    outcomes = [{"outcome": metadata.get("outcome", "failed" if envelope.get("isError") else "succeeded"),
+                 "code": (metadata.get("refusal") or {}).get("code")} for envelope, metadata in results.values()]
+    observed_coverage = (coverage(results, oracle, expected_hashes)
+                         if all(not results[key][0].get("isError") for key in ("references", "definitions"))
+                         else {"available": False, "complete": False, "reason": "required_evidence_not_observed"})
     return {"concurrency": concurrency, "calls": [metadata for _, metadata in results.values()],
+        "accounting": http_fixture.phase_counts(outcomes, len(tasks)),
         "batch_status": batch_status,
         "batch_status_from_session_start_ms": (batch_status["completed_at"]-session.started)*1000,
         "first_useful_ms": (min(successful)-started)*1000 if successful else None,
-        "task_ms": (time.perf_counter()-started)*1000, "coverage": coverage(results, oracle, expected_hashes),
+        "task_ms": (time.perf_counter()-started)*1000, "coverage": observed_coverage,
         "publication_consistent": len(publications) == 1, "distinct_publications": len(publications)}
 
 
@@ -986,6 +1029,18 @@ def compare_one_index(combined_envelope, legacy_envelope, case):
             "hit_records_sha256": digest_bytes(canonical(combined_hits)), "hit_records": len(combined_hits)}
 
 
+def combined_phase_evidence(group, planned):
+    """Account partial groups as well as completed ones, without inventing reads."""
+    group["accounting"] = http_fixture.phase_counts([
+        {"outcome": row.get("outcome", "succeeded" if row["validated"] else "failed"),
+         "code": (row.get("refusal") or {}).get("code")} for row in group["trials"]], planned)
+    group["assertion_coverage"] = {"oracle_verified": len(group["trials"]) == planned and all(row["validated"] for row in group["trials"]),
+        "unverified_samples": [sample for sample in range(planned)
+                               if not any(row["sample"] == sample and row["validated"] for row in group["trials"])]}
+    group["qualified"] = (group["accounting"]["passed"] and group["assertion_coverage"]["oracle_verified"]
+                          and cleanup_ok(group.get("frontend_cleanup", {})))
+
+
 def combined(args):
     """Read-only replay against an explicitly prepared original fixture catalog.
 
@@ -1113,6 +1168,14 @@ def combined(args):
                             except (OSError, ValueError, RuntimeError, TimeoutError) as error:
                                 paired.setdefault("elapsed_ms", (time.perf_counter() - at) * 1000)
                                 paired["failure_class"] = type(error).__name__
+                                paired["outcome"] = http_fixture.error_outcome(error)
+                                refusal = http_fixture.classify_refusal(error)
+                                if isinstance(error, http_fixture.HttpResponseError):
+                                    paired["http_response"] = error.evidence()
+                                if refusal:
+                                    paired.update(refusal=refusal, submission="not_submitted")
+                                    retain_query_replies(retained, legacy, sample, "legacy")
+                                    continue
                                 if isinstance(error, LegacyComparisonError):
                                     paired["failure_code"] = error.code
                                 if "attempts" not in paired:
@@ -1125,10 +1188,18 @@ def combined(args):
                             retain_query_replies(retained, legacy, sample, "legacy")
                         trial.setdefault("elapsed_ms", (time.perf_counter() - started) * 1000)
                         trial.update(failure_class=type(error).__name__)
+                        refusal = http_fixture.classify_refusal(error)
+                        trial["outcome"] = "succeeded" if trial["validated"] else http_fixture.error_outcome(error)
+                        if isinstance(error, http_fixture.HttpResponseError):
+                            trial["http_response"] = error.evidence()
+                        if refusal:
+                            trial.update(refusal=refusal, submission="not_submitted")
+                            continue
                         if "attempts" not in trial:
                             trial["submission"] = "uncertain"
                         raise
             group["frontend_cleanup"] = session.cleanup
+            combined_phase_evidence(group, args.samples)
             group["latency_ms"] = distribution([row["elapsed_ms"] for row in group["trials"]])
             if matched_case:
                 comparison = report["legacy_one_index"]
@@ -1141,11 +1212,15 @@ def combined(args):
                                         and cleanup_ok(comparison["frontend_cleanup"]))
         if not report["cases"]:
             raise ValueError("combined_fanout_cases_missing")
-        report["passed"] = all(cleanup_ok(group["frontend_cleanup"]) for group in report["cases"])
+        report["passed"] = all(group["qualified"] for group in report["cases"])
         if compare_legacy:
             report["passed"] = report["passed"] and report["legacy_one_index"]["passed"]
     except (OSError, ValueError, RuntimeError, TimeoutError) as error:
         report["failure_class"] = type(error).__name__
+        report["failure_outcome"] = http_fixture.error_outcome(error)
+        if isinstance(error, http_fixture.HttpResponseError):
+            report["http_response"] = error.evidence()
+            report["refusal"] = http_fixture.classify_refusal(error)
         if isinstance(error, LegacyComparisonError):
             report["failure_code"] = error.code
     finally:
@@ -1153,12 +1228,19 @@ def combined(args):
             raw_stream.close()
         if report["cases"] and group_session is not None:
             report["cases"][-1].setdefault("frontend_cleanup", getattr(group_session, "cleanup", {"observed": False}))
+        for group in report["cases"]:
+            combined_phase_evidence(group, args.samples)
+        report["passed"] = report["passed"] and all(group["qualified"] for group in report["cases"])
         try:
             report["source_unchanged"] = all(combined_source_inventory(root) == inventory for root, inventory in sources.values())
         except (OSError, ValueError):
             report["source_unchanged"] = False
         report["passed"] = report["passed"] and report["source_unchanged"]
         if compare_legacy:
+            comparison = report["legacy_one_index"]
+            comparison["accounting"] = http_fixture.phase_counts([
+                {"outcome": row.get("outcome", "succeeded" if row["validated"] else "failed"),
+                 "code": (row.get("refusal") or {}).get("code")} for row in comparison["trials"]], args.samples)
             report["legacy_one_index"]["source_unchanged"] = report["source_unchanged"]
             report["legacy_one_index"]["passed"] = report["legacy_one_index"]["passed"] and report["source_unchanged"]
             if comparison_session is not None:
@@ -1381,6 +1463,10 @@ def run(args):
     except (OSError, ValueError, RuntimeError, TimeoutError) as error:
         # Class name only: arbitrary exception messages can contain local paths.
         report.update(status="failed", failure_class=type(error).__name__)
+        report["failure_outcome"] = http_fixture.error_outcome(error)
+        if isinstance(error, http_fixture.HttpResponseError):
+            report["http_response"] = error.evidence()
+            report["refusal"] = http_fixture.classify_refusal(error)
     finally:
         report["source_unchanged"] = source_inventory(source) == manifest["inventory"]
         (output / "report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

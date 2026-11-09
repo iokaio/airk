@@ -6,15 +6,18 @@ const {promisify}=require('node:util');
 const execute=promisify(execFile),services=[],legacyServices=new Map();
 let bundle;
 const profiles=new Map();
+const initialIndexObservations=new Map();
 const receiptPlans=new Map(),retainedProfileFolders=new Set();
 const {prepareOwnedReceipts,cleanupOwnedReceipts,verifyOwnedReceiptsAbsent}=require('./native-editor-receipts.cjs');
-const {verifyHealth:verifyIdleHealth,waitForIndexIdle}=require('./native-editor-idle.cjs');
+const {verifyHealth:verifyIdleHealth,waitForIndexIdle,idleEvidencePrefix}=require('./native-editor-idle.cjs');
 const {editorUi,privateEditorEnvironment,privateClientEnvironment}=require('./editor-ui.cjs');
+const {publishMailbox,readMailbox}=require('./editor-mailbox.cjs');
 const root=path.resolve(__dirname,'..');
 const [editor,cli,source]=process.argv.slice(2).map(value=>path.resolve(value));
 if(!source)throw new Error('Expected editor, its cli.js, and an approved extension stage or VSIX.');
 const scenarios=(process.env.AIRK_EDITOR_SCENARIOS||'same,different,multi,usage,untrusted,legacy').split(',');
 if(scenarios.some(value=>!['same','different','multi','usage','untrusted','legacy'].includes(value)))throw new Error('Unknown native editor scenario');
+require('./native-editor-legacy.cjs').requireLegacyInput(scenarios,process.env);
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms)),active=new Map();
 const environment=privateEditorEnvironment(process.env); // Child only: never inherit the normal editor's bootstrap/cache/IPC role.
 async function privateProfile(run,label){
@@ -86,7 +89,8 @@ async function observeIndexIdle(folder,role,request,scenarioDeadline){
     const fixture=await fs.realpath(folder),install=await canonicalOwned(fixture,path.join(folder,'native-service'));
     if(!/^idx_[a-f0-9]{32}$/.test(request.index)||!/^[a-f0-9]{64}$/.test(request.binding))throw new Error('Invalid exact indexing precondition binding');
     await canonicalOwned(fixture,request.root);await canonicalOwned(fixture,request.data);
-    const deadline=Math.min(scenarioDeadline,Date.now()+90000),calls=[],samples=[],evidenceFile=path.join(folder,role+'-index-idle-'+request.index+'.json');
+    const prefix=idleEvidencePrefix(role,request.sequence,request.index);
+    const deadline=Math.min(scenarioDeadline,Date.now()+90000),calls=[],samples=[],evidenceFile=path.join(folder,prefix+'-index-idle.json');
     let count=0;
     async function run(args){
         if(++count>128||Date.now()>=deadline)throw new Error('Index idle native read budget/deadline exhausted');
@@ -96,15 +100,11 @@ async function observeIndexIdle(folder,role,request,scenarioDeadline){
         catch(error){record.error=String(error);record.stdout=error.stdout;record.stderr=error.stderr;throw error;}
     }
     async function rpc(control,method){
-        const file=path.join(folder,role+'-idle-request-'+calls.length+'.json');await fs.writeFile(file,JSON.stringify(method),{flag:'wx'});
+        const file=path.join(folder,prefix+'-idle-request-'+calls.length+'.json');await fs.writeFile(file,JSON.stringify(method),{flag:'wx'});
         const args=['service','rpc','--runtime-dir',control,'--request-file',file];
-        for(let attempt=0;attempt<=40;attempt++){
-            const value=await run(args);
-            // The native Progress registry observation is read-only. Only its
-            // exact public contention refusal authorizes repeating this input.
-            if(Object.keys(value).sort().join(',')==='code,status'&&value.status==='failure'&&value.code==='registry_busy'&&method.progress&&attempt<40&&Date.now()+25<deadline){await delay(25);continue;}
-            return value;
-        }
+        // Native control owns exact registry_busy retries. Idle polling below
+        // observes separate dated snapshots; never multiply a failed read's budget.
+        return run(args);
     }
     try{
         const before=await run(['runtime','inspect','--install-dir',install]);
@@ -118,14 +118,17 @@ async function observeIndexIdle(folder,role,request,scenarioDeadline){
             if(response.status!=='catalog_detail'||detail.namespace!==before.registry_namespace||detail.item.kind!=='index'||index?.id!==request.index||index.tombstone!==false||index.backing?.binding!==request.binding||index.backing.root!==request.root||index.backing.data_root!==request.data||index.backing.collection!==request.collection)throw new Error('Index idle observation crossed the exact setup backing');
             return response;
         }
-        const original=await backing();
-        const idle=await waitForIndexIdle(()=>rpc(control,{progress:{project:request.binding}}),{project:request.binding,service:service.instance},{deadline,record:async value=>samples.push(value)});
+        const original=await backing(),initialKey=JSON.stringify([fixture,role,request.index,request.binding,request.root,request.data,request.collection]);
+        const remembered=initialIndexObservations.get(initialKey),prior=remembered?.service_instance===service.instance&&remembered.namespace===before.registry_namespace?remembered:undefined;
+        const idle=await waitForIndexIdle(()=>rpc(control,{progress:{project:request.binding}}),{project:request.binding,service:service.instance},{deadline,requireIndexWork:!prior,record:async value=>samples.push(value)});
         const confirmedHealth=verifyHealth(await rpc(control,'health'));if(confirmedHealth.instance!==service.instance)throw new Error('Service restarted during indexing precondition observation');
         const confirmed=await backing(),after=await run(['runtime','inspect','--install-dir',install]);
         if(after.payload_verified!==true||after.approval?.manifest_sha256!==bundle.digest||after.registry_namespace!==before.registry_namespace||after.control_dir!==before.control_dir)throw new Error('Index idle runtime changed during observation');
-        const result={...idle,index:request.index,binding:request.binding,namespace:before.registry_namespace,runtime_sha256:bundle.digest,service_instance:service.instance,evidence:evidenceFile,original,confirmed};
-        await fs.writeFile(evidenceFile,JSON.stringify({request,calls,samples,result},null,2));return result;
-    }catch(error){await fs.writeFile(evidenceFile,JSON.stringify({request,calls,samples,error:String(error)},null,2));throw error;}
+        const result={...idle,index:request.index,binding:request.binding,namespace:before.registry_namespace,runtime_sha256:bundle.digest,service_instance:service.instance,evidence:evidenceFile,initial_index_evidence:prior??null,original,confirmed};
+        await fs.writeFile(evidenceFile,JSON.stringify({request,calls,samples,result},null,2),{flag:'wx'});
+        if(!prior)initialIndexObservations.set(initialKey,{evidence:evidenceFile,index:request.index,binding:request.binding,namespace:before.registry_namespace,service_instance:service.instance});
+        return result;
+    }catch(error){try{await fs.writeFile(evidenceFile,JSON.stringify({request,calls,samples,error:String(error)},null,2),{flag:'wx'});}catch(retention){error.cause??=retention;}throw error;}
 }
 const sha=bytes=>require('node:crypto').createHash('sha256').update(bytes).digest('hex');
 function inside(root,value){const normalize=value=>process.platform==='win32'?path.toNamespacedPath(value).toLowerCase():value;const relative=path.relative(normalize(root),normalize(value));return relative!==''&&!relative.startsWith('..'+path.sep)&&relative!=='..'&&!path.isAbsolute(relative);}
@@ -167,8 +170,9 @@ async function legacyFixture(){
     await canonicalOwned(fixture,filename);
     for(const key of ['install_dir','control_dir','source_root','data_root'])await canonicalOwned(fixture,value[key]);
     const config=value.legacy_config;if(config?.kind!=='vscode_servers'||typeof config.entry_key!=='string')throw new Error('Unsupported legacy configuration fixture');
-    for(const key of ['path','command','cwd'])await canonicalOwned(fixture,config[key]);
-    if(!['stable_launcher','pinned_predecessor'].includes(config.binding_kind))throw new Error('Legacy command binding kind is required');
+    for(const key of ['path','cwd'])await canonicalOwned(fixture,config[key]);
+    if(config.binding_kind!=='retired_installation_launcher')await canonicalOwned(fixture,config.command);
+    if(!['stable_launcher','retired_installation_launcher','pinned_predecessor'].includes(config.binding_kind))throw new Error('Legacy command binding kind is required');
     if(config.binding_kind==='pinned_predecessor'&&(!Array.isArray(value.expected_refusal_codes)||!value.expected_refusal_codes.length||value.expected_refusal_codes.some(code=>typeof code!=='string'||['registry_busy','status_timeout','native_read_failed'].includes(code))))throw new Error('Pinned predecessor needs actual native incompatible-format refusal codes');
     const original=await fs.readFile(config.path);if(sha(original)!==config.sha256)throw new Error('Original legacy configuration changed');
     const parseErrors=[],parsed=require('../packages/vscode/node_modules/jsonc-parser').parse(original.toString('utf8'),parseErrors,{allowTrailingComma:true}),entry=parsed?.servers?.[config.entry_key];
@@ -186,7 +190,7 @@ async function legacyFixture(){
         if(sha(manifest)!==owner.install_manifest_sha256)throw new Error('Actual predecessor payload manifest changed');
         const inventory=JSON.parse(manifest),payload=owner.command_payload;
         if(!payload||inventory.files[payload.relative_path]!==payload.sha256||sha(await fs.readFile(config.command))!==payload.sha256||await canonicalOwned(commandRuntime,path.resolve(commandRuntime,payload.relative_path))!==config.command)throw new Error('Pinned predecessor command is not its exact verified payload');
-    }else{
+    }else if(config.binding_kind==='stable_launcher'){
         const binding=config.launcher_binding,installation=binding?.installation_launcher;
         if(!binding||!['installation','universal'].includes(binding.kind)||binding.command_path!==config.command||sha(await fs.readFile(config.command))!==binding.command_sha256||!installation)throw new Error('Actual stable launcher binding is missing or changed');
         await canonicalOwned(fixture,installation.path);await canonicalOwned(fixture,installation.receipt.path);
@@ -216,6 +220,16 @@ async function legacyFixture(){
     if(sha(await fs.readFile(probe))!==value.probe.content_sha256)throw new Error('Actual original legacy probe bytes changed');
     const previous=value.predecessor;
     if(!previous)throw new Error('Actual predecessor inventory is required');
+    if(config.binding_kind==='retired_installation_launcher'){
+        if(pair.schema!==2||typeof previous.snapshot?.path!=='string')throw new Error('Retired provenance requires a modern candidate and original JSON snapshot');
+        await canonicalOwned(fixture,previous.snapshot.path);
+        const bytes=await fs.readFile(previous.snapshot.path);
+        if(bytes.length>1048576||sha(bytes)!==previous.snapshot.sha256)throw new Error('Original predecessor provenance snapshot changed or exceeds 1 MiB');
+        const {qualifyRetiredLauncher,verifyRetiredPaths}=require('./native-editor-legacy.cjs');
+        const previousPair=qualifyRetiredLauncher(value,JSON.parse(bytes));
+        await verifyRetiredPaths(value);
+        return {...value,candidate_runtime:pair,qualification:qualifyLegacyNative(value,{candidateIdentity:executableContract.engineIdentity,predecessorIdentity:pairIdentity(previousPair),runtimeSchema:executableContract.runtimeSchema})};
+    }
     const previousRuntime=await canonicalOwned(fixture,previous.runtime_dir),previousManifest=await fs.readFile(path.join(previousRuntime,'airk-install.json'));
     if(sha(previousManifest)!==previous.install_manifest_sha256)throw new Error('Predecessor manifest changed');
     const previousInventory=JSON.parse(previousManifest),previousNames=Object.keys(previousInventory.files);
@@ -288,7 +302,7 @@ async function cleanupServices(){
     return results;
 }
 async function main(){
-    const harnessPaths=['scripts/check-native-editor.cjs','scripts/editor-ui.cjs','scripts/native-editor-legacy.cjs','scripts/native-editor-receipts.cjs','scripts/native-editor-idle.cjs','packages/vscode/out/test/installedEditor.js','packages/vscode/out/test/installedEditorContracts.js','packages/vscode/out/test/installedEditorHttp.js'];
+    const harnessPaths=['scripts/check-native-editor.cjs','scripts/editor-ui.cjs','scripts/native-editor-workbench.cjs','scripts/editor-mailbox.cjs','scripts/native-editor-legacy.cjs','scripts/native-editor-receipts.cjs','scripts/native-editor-idle.cjs','packages/vscode/out/test/installedEditor.js','packages/vscode/out/test/installedCompletion.js','packages/vscode/out/test/installedControlTrace.js','packages/vscode/out/test/installedEditorC8.js','packages/vscode/out/test/installedEditorContracts.js','packages/vscode/out/test/installedEditorHttp.js'];
     const harness=Object.fromEntries(await Promise.all(harnessPaths.map(async name=>[name,sha(await fs.readFile(path.join(root,name)))])));
     const stage=(await fs.lstat(source)).isDirectory();
     if(stage){const version=JSON.parse(await fs.readFile(path.join(source,'package.json'),'utf8')).version;
@@ -303,11 +317,12 @@ async function main(){
         if(installed.length!==1)throw new Error('Expected one private installed AIRK extension');
         const directory=path.join(extensions,installed[0]),version=JSON.parse(await fs.readFile(path.join(directory,'package.json'),'utf8')).version;
         bundle=await require(path.join(root,'packages/vscode/out/serviceBootstrap.js')).verifyBundledRuntime(directory,version);}
+    if(scenarios.includes('legacy'))await legacyFixture(); // Reject crossed/retired inputs before the first scenario.
     const driver=path.join(extensions,'local-test.airk-driver-0.0.1');await fs.mkdir(driver);
     await fs.writeFile(path.join(driver,'package.json'),JSON.stringify({name:'airk-driver',publisher:'local-test',version:'0.0.1',engines:{vscode:'^1.140.0'},main:'driver.js',activationEvents:['onStartupFinished'],capabilities:{untrustedWorkspaces:{supported:true}}}));
-    await fs.writeFile(path.join(driver,'driver.js'),`const vscode=require('vscode'),fs=require('node:fs/promises'),path=require('node:path');
+    await fs.writeFile(path.join(driver,'driver.js'),`const vscode=require('vscode'),path=require('node:path'),{publishMailbox}=require(${JSON.stringify(path.join(root,'scripts/editor-mailbox.cjs'))});
 exports.activate=()=>{if(!process.env.AIRK_EDITOR_RUN)return;void require(${JSON.stringify(path.join(root,'packages/vscode/out/test/installedEditor.js'))}).run()
-.catch(error=>fs.writeFile(path.join(process.env.AIRK_EDITOR_RUN,process.env.AIRK_EDITOR_SCENARIO,process.env.AIRK_EDITOR_ROLE+'-error.json'),JSON.stringify({error:String(error),stack:error.stack})))
+.catch(error=>publishMailbox(path.join(process.env.AIRK_EDITOR_RUN,process.env.AIRK_EDITOR_SCENARIO,process.env.AIRK_EDITOR_ROLE+'-error.json'),{error:String(error),stack:error.stack}))
 .finally(()=>vscode.commands.executeCommand('workbench.action.quit'));};`);
     const summary={schema:'airk-native-editor/2',source,staged:stage,nativeInstallDigest:bundle.digest,harness,selectedScenarios:scenarios,legacyUpgradeCoverage:false,scenarios:[]};
     console.log(`Native editor output: ${run}`);
@@ -362,12 +377,12 @@ exports.activate=()=>{if(!process.env.AIRK_EDITOR_RUN)return;void require(${JSON
         try{
             const end=scenarioDeadline;
             while(true){if(failure)throw failure;
-                for(const role of roles){const error=await fs.readFile(path.join(folder,`${role}-error.json`),'utf8').catch(()=>undefined);if(error)throw new Error(error);
-                    const request=JSON.parse(await fs.readFile(path.join(folder,`${role}-ui-request.json`),'utf8').catch(()=>'null'));
+                for(const role of roles){const error=await readMailbox(path.join(folder,`${role}-error.json`));if(error)throw new Error(JSON.stringify(error));
+                    const request=await readMailbox(path.join(folder,`${role}-ui-request.json`));
                     if(request&&handled.get(role)!==request.sequence){
                         if(!Number.isSafeInteger(request.sequence)||request.sequence<1||request.sequence>256)throw new Error('Private UI action budget/sequence invalid');
                         uis[role]??=await editorUi(ports[role],scenarioDeadline);
-                        const actions=['serviceStop','connect','startService','page','inspect','setupDraft','setupApply','setCreate','scopeSelect','sources','indexIdle','blockDraft','deleteSetDraft','renameDraft','apply','read','reconcile','staleApply','restricted','usageScoped','usageAdmin','usageJson','usageClear'];
+                        const actions=['workbenchRead','workbenchCopy','providerStart','providerStop','serviceStop','connect','startService','page','inspect','setupDraft','setupApply','setCreate','scopeSelect','sources','indexIdle','blockDraft','deleteSetDraft','renameDraft','apply','read','reconcile','staleApply','restricted','usageScoped','usageAdmin','usageJson','usageClear'];
                         if(!actions.includes(request.action))throw new Error('Unknown private Indexing action');
                         const fixture=await fs.realpath(folder);
                         if(request.action==='serviceStop'||(legacy&&request.action==='startService')){
@@ -393,10 +408,10 @@ exports.activate=()=>{if(!process.env.AIRK_EDITOR_RUN)return;void require(${JSON
                         handled.set(role,request.sequence);
                         const value=request.action==='indexIdle'?await observeIndexIdle(folder,role,request,scenarioDeadline):await uis[role].indexing(request);
                         if(Buffer.byteLength(JSON.stringify(value))>1048576)throw new Error('Complete private UI receipt exceeds 1 MiB');
-                        await fs.writeFile(path.join(folder,`${role}-ui-done-${request.sequence}.json`),JSON.stringify(value));}
+                        await publishMailbox(path.join(folder,`${role}-ui-done-${request.sequence}.json`),value);}
                 }
                 if(scenario==='multi'&&await exists(path.join(folder,'a-explorer-ready.json'))&&!explorerTask){uis.a??=await editorUi(ports.a,scenarioDeadline);
-                    explorerTask=checkExplorer(uis.a).then(value=>fs.writeFile(path.join(folder,'explorer-checked.json'),JSON.stringify(value,null,2))).catch(error=>{failure=error;});}
+                    explorerTask=checkExplorer(uis.a).then(value=>publishMailbox(path.join(folder,'explorer-checked.json'),value)).catch(error=>{failure=error;});}
                 if((await Promise.all(roles.map(role=>exists(path.join(folder,`${role}-capture.json`))))).every(Boolean))break;
                 if(allExited)throw new Error(`Private editor exited before acceptance completed: ${scenario}`);
                 if(Date.now()>end)throw new Error(`Native editor scenario timed out: ${scenario}`);await delay(150);
@@ -409,7 +424,7 @@ exports.activate=()=>{if(!process.env.AIRK_EDITOR_RUN)return;void require(${JSON
                 const page=await ui.workbench('document.title');const image=await page.client.call('Page.captureScreenshot',{format:'png'});
                 await fs.writeFile(path.join(folder,`${role}-workbench.png`),Buffer.from(image.data,'base64'));
             }
-        }finally{for(const [role,ui]of Object.entries(uis)){await fs.writeFile(path.join(folder,role+'-ui-dispatch-receipts.json'),JSON.stringify(ui.dispatchReceipts(),null,2));try{await fs.writeFile(path.join(folder,role+'-ui-diagnostics.json'),JSON.stringify(ui.diagnostics(),null,2));}catch(error){console.error('Private UI diagnostic retention failed:',String(error));}ui.close();}await fs.writeFile(path.join(folder,'capture-complete.json'),'{}');}
+        }finally{for(const [role,ui]of Object.entries(uis)){await fs.writeFile(path.join(folder,role+'-ui-dispatch-receipts.json'),JSON.stringify(ui.dispatchReceipts(),null,2));try{await fs.writeFile(path.join(folder,role+'-ui-diagnostics.json'),JSON.stringify(ui.diagnostics(),null,2));}catch(error){console.error('Private UI diagnostic retention failed:',String(error));}ui.close();}await publishMailbox(path.join(folder,'capture-complete.json'),{});}
         await exited;if(failure)throw failure;
         const sourcePreservation=[];
         for(const [name,original]of Object.entries(originalSources)){

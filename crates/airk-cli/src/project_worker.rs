@@ -735,7 +735,15 @@ pub async fn run() -> Result<()> {
     // Bind immutable bundled model descriptors only. This creates no model,
     // reserves no quota and grants no staged evidence access. Keeping this
     // metadata on the ordinary Kernel also supports reads after activation.
-    let kernel = crate::bundled_assets::bind_service_models(kernel, &init.runtime)?;
+    let rebuild_control = init.runtime.clone();
+    let rebuild_project = init.project;
+    let kernel = crate::bundled_assets::bind_service_models(kernel, &init.runtime)?
+        .with_rebuild_observer(rebuild_project, move || {
+            crate::runtime_install::rebuild_observation_for_control(
+                &rebuild_control,
+                rebuild_project,
+            )
+        });
     airk_kernel::service_execution::install(Path::new(&registration.data_root), identity)?;
     let receipt = if split_write_fenced {
         None

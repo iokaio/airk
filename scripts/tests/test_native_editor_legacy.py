@@ -2,6 +2,7 @@
 """Synthetic wire contracts for the editor fixture verifier, not native qualification."""
 import copy
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import subprocess
@@ -55,6 +56,27 @@ def fixture():
 
 
 class NativeEditorLegacyContracts(unittest.TestCase):
+    def test_retired_original_connection_must_match_complete_upgrade_registration(self):
+        value, expected = fixture()
+        registration = value['native']['upgrade_receipt']['plan']['indexes'][0]['registration']
+        registration['collection'] = 'legacy'
+        spec = importlib.util.spec_from_file_location('retired_original_producer', ROOT/'scripts/prepare-native-editor-legacy.py')
+        producer = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(producer)
+        from types import SimpleNamespace
+        native = SimpleNamespace(compatibility={'topology':'paired','authority':'legacy','original_scope':'service_project',
+            'migration_path':'audited_imported_legacy'}, projects={'legacy':registration})
+        value['original_connection'] = producer.original_connection(native,'legacy',Path(value['install_dir']))
+        value['legacy_config'] = {'binding_kind':'retired_installation_launcher','args':value['original_connection']['args']}
+        self.assertEqual(self.validate(value,expected).returncode,0)
+        for field, replacement in [('collection','crossed'),('extra','unrecognized')]:
+            crossed = copy.deepcopy(value)
+            crossed['original_connection']['scope'][field] = replacement
+            if field == 'collection':
+                crossed['original_connection']['args'][10] = replacement
+                crossed['legacy_config']['args'][10] = replacement
+            self.assertNotEqual(self.validate(crossed,expected).returncode,0)
+
     def validate(self, value, expected, retained=True):
         value = copy.deepcopy(value)
         native = value['native']

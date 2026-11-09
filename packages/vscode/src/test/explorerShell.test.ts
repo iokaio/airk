@@ -103,6 +103,93 @@ function controller(trusted = true, stored = new Map<string, unknown>(), handoff
 }
 const flush = () => new Promise(resolve => setTimeout(resolve, 5));
 
+test('management actions and UI-local completions retain their outcomes across evidence changes',async t=>{
+    for(const type of ['manage.action','manage.command','notice.dismiss','details.copy','workbench.toggle','extension.reload']){
+        const f=controller(),instance=f.explorer as any;
+        const change=async()=>{instance.select(undefined);return {committed:type};};
+        if(type==='manage.action')f.host.control.run=async()=>{await change();};
+        if(type==='manage.command')t.mock.method(vscodeStub.commands,'executeCommand',change);
+        if(type==='notice.dismiss')instance.dismissNotice=change;
+        if(type==='details.copy')t.mock.method(vscodeStub.env.clipboard,'writeText',change);
+        if(type==='workbench.toggle')(f.host as any).toggleWorkbench=change;
+        if(type==='extension.reload'){(f.host as any).extensionUpdate=()=>({version:'new'});(f.host as any).reloadUpdatedExtension=change;}
+        try{
+            f.explorer.open('#indexing/library');const panel=panels.at(-1);panel.send({v:1,type:'ready',requestId:'ready'});await flush();const epoch=f.explorer.snapshot().selectionEpoch;
+            await instance.handle({v:1,type,requestId:'committed',action:'refresh',command:'airk.httpIssuerRotationStatus',section:'service',key:'notice'});
+            assert.notEqual(f.explorer.snapshot().selectionEpoch,epoch,type);
+            const reply=panel.posted.find((message:any)=>message.type==='result'&&message.requestId==='committed');assert.equal(reply?.ok,true,type);
+            if(type==='manage.command'||type==='notice.dismiss')assert.deepEqual(reply.data,{committed:type});
+        }finally{f.explorer.dispose();t.mock.restoreAll();}
+    }
+});
+
+for(const replacement of ['evidence selection','runtime/install owner','window/workspace owner','workspace trust'])test(`native setup completion during discovery retains only its current management owner (${replacement})`,async()=>{
+    const f=controller(),namespace='aa'.repeat(16),backing='bb'.repeat(32),index='idx_'+'cc'.repeat(16),reviewDigest='dd'.repeat(32);
+    const spec={command:'/approved/native',root:'/chosen/source-b',dataDir:'/chosen/storage-b',collection:'fixture-b',name:'Fixture B',service:{installDir:'/install',project:backing}};
+    let specs:typeof spec[]=[],applies=0,validAfterDiscovery=false,windowIdentity='original-window';f.host.specs=()=>specs;f.fireSpecs();(f.host as any).windowContextIdentity=()=>windowIdentity;
+    const native=f.host.control.controller as any;native.observationIdentity='same-runtime-installation';
+    const selection={name:'Fixture B',primary_root:spec.root,data_root:spec.dataDir,collection:spec.collection,additional_roots:[],setup_watch:false};
+    const request={caller:'ee'.repeat(16),key:{namespace,epoch:0,nonce:'ff'.repeat(16)},expected_catalog_revision:8,name:selection.name,registration:{binding:backing,root:spec.root,data_root:spec.dataDir,collection:spec.collection},sources:[{canonical_path:spec.root,aliases:[],owner:true}],setup_watch:false};
+    const draft={schema:1,request,storage_action:'create_missing_leaf',review_digest:reviewDigest},review={response:{status:'catalog_index_setup_draft',draft,request_digest:reviewDigest},draft,requestDigest:reviewDigest};
+    const outcome={status:'catalog_index_setup_applied',receipt:{schema:1,operation_id:'11'.repeat(16),request,request_digest:reviewDigest,index_id:index,source_ids:['src_'+'22'.repeat(16)],stage:'ready',catalog_revision:10,source_revision:2,preparation:{future_native_preparation:'retained'},completion:{future_native_completion:'retained'}},future_native_outcome:{retained:'complete'}};
+    Object.assign(native,{catalogRead:async()=>({status:'catalog_page',page:{namespace,revision:8,items:[],continuation:null}}),catalogPrepare:async()=>{throw Error('unexpected catalog preview');},catalogApply:async()=>{throw Error('unexpected catalog mutation');},catalogReconcile:async()=>[],catalogPending:()=>[],catalogIndexSetupDraft:async()=>review,
+        catalogIndexSetupApply:async(submitted:unknown,valid:()=>boolean)=>{
+            applies++;assert.equal(submitted,review);assert.equal(valid(),true);specs=[spec];f.fireSpecs();
+            if(replacement==='runtime/install owner')native.observationIdentity='replacement-runtime-installation';
+            else if(replacement==='window/workspace owner')windowIdentity='replacement-window';
+            else if(replacement==='workspace trust')f.host.trusted=()=>false;
+            if(replacement==='evidence selection'){
+                const indexing=(f.explorer as any).indexing,generation=indexing.snapshot().generation;indexing.dismissRecommendations();
+                assert.equal(indexing.snapshot().generation,generation,'Advice dismissal does not invalidate the active native review');assert.equal(indexing.snapshot().busy,true);
+            }
+            validAfterDiscovery=valid();return outcome;
+        }});
+    try{
+        f.explorer.open('#indexing/library');const panel=panels.at(-1);panel.send({v:1,type:'ready',requestId:'setup-ready'});await flush();
+        await (f.explorer as any).dispatch({type:'indexing.page',kind:'indexes'});
+        await (f.explorer as any).dispatch({type:'indexing.setup.draft',selection,generation:f.explorer.snapshot().indexing!.generation});
+        const epoch=f.explorer.snapshot().selectionEpoch;
+        await (f.explorer as any).handle({v:1,type:'indexing.setup.apply',requestId:'setup-with-discovery',generation:f.explorer.snapshot().indexing!.generation});
+        const reply=panel.posted.find((message:any)=>message.type==='result'&&message.requestId==='setup-with-discovery');
+        assert.equal(applies,1,'The committed native setup is submitted once');assert.notEqual(f.explorer.snapshot().selectionEpoch,epoch,'The new registration changes only the evidence selection');
+        if(replacement==='evidence selection'){
+            assert.equal(validAfterDiscovery,true,'Unchanged native management ownership survives evidence discovery');assert.equal(reply?.ok,true);
+            assert.deepEqual(reply.data.outcome,outcome);assert.deepEqual(f.explorer.snapshot().indexing?.outcome,outcome);assert.deepEqual(f.explorer.snapshot().indexing?.submittedSetupReview,review);
+        }else{
+            assert.equal(validAfterDiscovery,false,'Actual native owner changes still fence the original review');assert.equal(reply?.ok,false);assert.equal(f.explorer.snapshot().indexing?.outcome,undefined);
+        }
+    }finally{f.explorer.dispose();}
+});
+
+test('clearing evidence selection rejects late advice before storage while retaining the native management generation',async()=>{
+    const f=controller(),native=f.host.control.controller as any,indexing=(f.explorer as any).indexing;
+    Object.assign(native,{observationIdentity:'same-native-owner',catalogRead:async()=>{throw Error('unexpected catalog read');},catalogPrepare:async()=>{throw Error('unexpected preview');},catalogApply:async()=>{throw Error('unexpected mutation');},catalogReconcile:async()=>[],catalogPending:()=>[]});
+    const advice={schema:'airk.recommendations/1',selected:{project_ids:['prj_'+'11'.repeat(16)],index_ids:['idx_'+'22'.repeat(16)]},future_native_advice:{retained:'complete'}};
+    let release!:(value:unknown)=>void,entered!:()=>void,reads=0;const reading=new Promise<void>(resolve=>{entered=resolve;});
+    (f.explorer as any).session=()=>({call:async(tool:string)=>{assert.equal(tool,'airk_query_scope');reads++;entered();return new Promise(resolve=>{release=resolve;});},dispose(){}});
+    try{
+        await indexing.recommendations(async()=>advice);const generation=indexing.snapshot().generation;
+        const request=(f.explorer as any).dispatch({type:'indexing.recommendations',arguments:{}});const rejected=assert.rejects(request,/stale_catalog_view/i);await reading;
+        (f.explorer as any).select(undefined);assert.equal(indexing.snapshot().recommendations,undefined);assert.equal(indexing.snapshot().generation,generation);assert.equal(indexing.snapshot().busy,false,'advice does not own management admission');
+        release({payload:advice});await rejected;assert.equal(reads,1);assert.equal(indexing.snapshot().recommendations,undefined,'Old source-scope advice cannot appear under a replacement evidence selection');assert.equal(indexing.snapshot().generation,generation);
+    }finally{f.explorer.dispose();}
+});
+
+test('explicit scope and index-set operations acknowledge their own selection change through the actual panel',async()=>{
+    for(const [type,adapter,status]of [['indexing.scope.apply','applySearchScope','search_scope_selected'],['indexing.set.save','saveIndexSet','index_set_saved']] as const){
+        const {explorer}=controller();
+        try{
+            explorer.open('#indexing/window');const panel=panels.at(-1);panel.send({v:1,type:'ready',requestId:'ready'});await flush();
+            const indexing=(explorer as any).indexing;
+            indexing.host[adapter]=async()=>{(explorer as any).select(undefined);return {status};};
+            const generation=indexing.snapshot().generation;
+            panel.send({v:1,type,requestId:'own-scope-change',generation,selection:type==='indexing.scope.apply'?{index_ids:[],project_ids:[]}:{name:'Chosen set',index_ids:[]}});await flush();
+            const reply=panel.posted.find((message:any)=>message.type==='result'&&message.requestId==='own-scope-change');
+            assert.equal(reply?.ok,true,type);assert.equal(reply.data.status,status);
+        }finally{explorer.dispose();}
+    }
+});
+
 test('notice dismissal accepts only exact bounded UTF-8 keys', () => {
     const message = { v: 1, type: 'notice.dismiss', requestId: 'dismiss', key: 'é'.repeat(4096) };
     assert.ok(parseWebviewMessage(message));
@@ -213,7 +300,7 @@ test('Explorer automatically observes native capabilities once per connected run
 test('an open Explorer automatically retries known read-only capability refusals and enables splitting', async t => {
     t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
     try {
-        for (const code of ['registry_busy', 'console_queue_full', 'catalog_control_connection_unavailable']) {
+        for (const code of ['console_queue_full', 'catalog_control_connection_unavailable']) {
             const f = automaticContextFixture(); let reads = 0;
             f.host.prepareWindowContext = async () => { reads++; if (reads === 1) { throw new ServiceError(code); } f.observe(f.generation()); };
             try {
@@ -238,7 +325,7 @@ test('window-generation replacement fences a late capability retry even when the
     const held = new Promise<void>(resolve => { release = resolve; });
     f.host.prepareWindowContext = async () => {
         const generation = f.generation(); reads++;
-        if (reads === 1) { throw new ServiceError('registry_busy'); }
+        if (reads === 1) { throw new ServiceError('console_queue_full'); }
         if (reads === 2) { await held; }
         // This is the existing producer fence in ServiceExtension.prepareWindowContext.
         if (generation !== f.generation()) { throw new ServiceError('window_context_changed'); }
@@ -261,7 +348,7 @@ test('window-generation replacement fences a late capability retry even when the
 test('capability retry timers stop while hidden, on disposal and after their bounded attempt budget', async t => {
     t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
     const f = automaticContextFixture(); let reads = 0;
-    f.host.prepareWindowContext = async () => { reads++; throw new ServiceError('registry_busy'); };
+    f.host.prepareWindowContext = async () => { reads++; throw new ServiceError('console_queue_full'); };
     try {
         f.explorer.open(); await contextMicrotasks(); f.instance.visibility(false);
         t.mock.timers.tick(4000); await contextMicrotasks(); assert.equal(reads, 1, 'hidden views have no retry timer');
@@ -280,7 +367,7 @@ test('capability retry timers stop while hidden, on disposal and after their bou
 test('capability observation never retries unknown outcomes, terminal codes or lookalike error text', async t => {
     t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
     try {
-        for (const error of [new ServiceError('registry_busy', true), new ServiceError('invalid_saved_window_context_key'), new Error('registry_busy')]) {
+        for (const error of [new ServiceError('registry_busy'), new ServiceError('registry_busy', true), new ServiceError('invalid_saved_window_context_key'), new Error('registry_busy')]) {
             const f = automaticContextFixture(); let reads = 0;
             f.host.prepareWindowContext = async () => { reads++; throw error; };
             try {
@@ -365,7 +452,7 @@ test('retired window and control observations cannot satisfy a replacement nativ
             const held=new Promise<void>(resolve=>{release=resolve;}),owner=()=>JSON.stringify([f.generation(),f.host.control.controller.observationIdentity]);
             f.host.windowContextObservation=()=>payload?.owner===owner()?payload.response:undefined;completeAutomaticWindow(f);
             f.host.prepareWindowContext=async()=>{
-                reads++;const producer=owner();if(reads===1)throw new ServiceError('registry_busy');if(reads===2)await held;
+                reads++;const producer=owner();if(reads===1)throw new ServiceError('console_queue_full');if(reads===2)await held;
                 payload={owner:producer,response:{status:'catalog_host_context',capabilities:{policy_contract:3},descriptor:{schema:1,namespace:f.generation().toString(16).padStart(32,'0'),host:'22'.repeat(32),key:'33'.repeat(32),catalog_revision:1,context:null}}};
                 f.instance.observeConnectedContext();
             };
@@ -385,7 +472,7 @@ test('external missing malformed mismatched or unknown metadata cannot satisfy a
     try{
         for(const malformed of ['missing','descriptor','mismatch','capability-missing','capability-array','capability-negative','capability-fraction'] as const){
             const f=automaticContextFixture();completeAutomaticWindow(f);let reads=0;
-            f.host.prepareWindowContext=async()=>{reads++;throw new ServiceError('registry_busy');};
+            f.host.prepareWindowContext=async()=>{reads++;throw new ServiceError('console_queue_full');};
             try{
                 f.explorer.open();await contextMicrotasks();assert.equal(reads,1);
                 if(malformed!=='missing'){
@@ -441,6 +528,32 @@ test('Recommendations copy and temporary scope use revalidate native scope and n
         await assert.rejects(instance.dispatch({type:'indexing.recommendations.copy'}),/changed/);assert.equal(copied.length,1);
         f.host.trusted=()=>false;await assert.rejects(instance.dispatch({type:'indexing.recommendations.use'}));assert.equal(applied.length,1);
     }finally{f.explorer.dispose();}
+});
+
+test('advice result is delivered after an unrelated host snapshot during the read',async()=>{
+    const f=controller(),instance=f.explorer as any,indexing=instance.indexing;
+    const advice={schema:'airk.recommendations/1',future_native_advice:'retained'};let release!:(value:any)=>void;
+    try{
+        f.explorer.open('#indexing/window');const panel=panels.at(-1);panel.send({v:1,type:'ready',requestId:'ready'});await flush();
+        const pending=indexing.recommendations(()=>new Promise(resolve=>{release=resolve;}));
+        instance.publish();const generation=indexing.snapshot().generation;
+        release(advice);await pending;
+        assert.deepEqual(panel.posted.filter((message:any)=>message.type==='indexing.session').at(-1)?.session.recommendations,advice);
+        assert.equal(indexing.snapshot().generation,generation);
+    }finally{f.explorer.dispose();}
+});
+
+test('new advice requests invalidate copy and use even when the same response object is returned',async t=>{
+    for(const type of ['indexing.recommendations.copy','indexing.recommendations.use']){
+        const f=controller(),instance=f.explorer as any,indexing=instance.indexing;let actions=0,release!:(value:any)=>void;
+        const advice={schema:'airk.recommendations/1',scope_identity:'same',catalog_revision:1,selected:{project_ids:[],index_ids:[],member_availability:'require'},instructions:{status:'available',text:'scope'}};
+        t.mock.method(vscodeStub.env.clipboard,'writeText',async()=>{actions++;});(f.host as any).prefillRecommendedSearch=async()=>{actions++;};
+        instance.session=()=>({call:()=>new Promise(resolve=>{release=resolve;})});
+        try{
+            await indexing.recommendations(async()=>advice);const pending=instance.dispatch({type});const rejected=assert.rejects(pending,/stale_catalog_view/);
+            await indexing.recommendations(async()=>advice);release({payload:advice});await rejected;assert.equal(actions,0);
+        }finally{f.explorer.dispose();t.mock.restoreAll();}
+    }
 });
 
 test('registered spec-change listener fences same-backing scoped identity even before an evidence client exists',()=>{

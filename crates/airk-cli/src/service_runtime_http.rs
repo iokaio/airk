@@ -198,6 +198,7 @@ impl Owner {
         selection: HttpSelection,
         explorer_descriptor: Option<PathBuf>,
         client: airk_core::usage::ClientFamily,
+        reattach_connection_id: Option<Incarnation>,
     ) -> Result<HttpConnectionInfo> {
         let context = airk_mcp::read_attempt::ReadAttemptContext::new(
             Instant::now() + Duration::from_secs(30),
@@ -209,16 +210,52 @@ impl Owner {
         let saved = selection.clone();
         let guard = context.lifetime_guard();
         let ownership = self.ownership.clone();
+        let retirement_credentials = credentials.clone();
+        let retirement_guard = guard.clone();
+        let retirement_ownership = ownership.clone();
+        let (retired, retirement_result) = tokio::task::spawn_blocking(move || {
+            let _guard = retirement_guard;
+            let _ownership = retirement_ownership;
+            match retirement_credentials.lock() {
+                Ok(mut credentials) => match now_ms() {
+                    Ok(now) => credentials.revoke_inactive(now),
+                    Err(error) => (Vec::new(), Err(error)),
+                },
+                Err(_) => (
+                    Vec::new(),
+                    Err(anyhow::anyhow!("HTTP credential store unavailable")),
+                ),
+            }
+        })
+        .await?;
+        // Fence even an uncertain durable mutation before permitting another
+        // enrollment. Captured authentication and TLS buffers keep their old
+        // delivery cells and cannot recover authority through compaction.
+        for retired_id in retired {
+            self.gateway.revoke(retired_id).await;
+        }
+        retirement_result?;
         let issued = tokio::task::spawn_blocking(move || {
             let _guard = guard;
             let _ownership = ownership;
             if let Some(descriptor) = explorer_descriptor.as_ref() {
                 crate::explorer_assistance::window_plan(descriptor)?;
             }
-            credentials
+            let mut credentials = credentials
                 .lock()
-                .map_err(|_| anyhow::anyhow!("HTTP credential store unavailable"))?
-                .enroll_default_for_client(id, saved, explorer_descriptor, client, now_ms()?)
+                .map_err(|_| anyhow::anyhow!("HTTP credential store unavailable"))?;
+            if let Some(previous) = reattach_connection_id {
+                credentials.validate_reattachment(
+                    previous,
+                    id,
+                    &saved,
+                    client,
+                    explorer_descriptor.as_deref(),
+                    now_ms()?,
+                )?;
+            }
+            credentials.compact_revoked()?;
+            credentials.enroll_default_for_client(id, saved, explorer_descriptor, client, now_ms()?)
         })
         .await??;
         let connection = HttpConnectionInfo {

@@ -210,6 +210,7 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 selection,
                 client,
                 explorer_descriptor,
+                reattach_connection_id,
             } => match state.http.get() {
                 Some(owner) => match owner
                     .enroll(
@@ -218,6 +219,7 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                         *selection,
                         explorer_descriptor.map(std::path::PathBuf::from),
                         client,
+                        reattach_connection_id,
                     )
                     .await
                 {
@@ -736,6 +738,44 @@ async fn request_scoped(
     version: &str,
     expected_instance: Option<airk_core::identity::Incarnation>,
 ) -> Result<ControlResponse> {
+    // registry_busy means either an unaccepted metadata queue entry or a
+    // classified read-only contention failure. Retain every request identity;
+    // uncertain outcomes and other refusals never enter this retry contract.
+    registry_busy_retry(|| request_once(root, method.clone(), version, expected_instance)).await
+}
+
+async fn registry_busy_retry<F, Fut>(mut request: F) -> Result<ControlResponse>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<ControlResponse>>,
+{
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    let mut response = request().await?;
+    for millis in [100, 200, 400, 600, 700, 800] {
+        if !matches!(&response, ControlResponse::Failure { code } if code == "registry_busy") {
+            break;
+        }
+        let next = tokio::time::Instant::now() + Duration::from_millis(millis);
+        if next >= deadline {
+            break;
+        }
+        tokio::time::sleep_until(next).await;
+        if tokio::time::Instant::now() >= deadline {
+            break;
+        }
+        // Keep the existing timeout for an accepted in-flight request. A
+        // transport timeout is uncertain and must never trigger another send.
+        response = request().await?;
+    }
+    Ok(response)
+}
+
+async fn request_once(
+    root: &Path,
+    method: ControlMethod,
+    version: &str,
+    expected_instance: Option<airk_core::identity::Incarnation>,
+) -> Result<ControlResponse> {
     let response_deadline = if matches!(method, ControlMethod::ObserveUpgradeCheckpoint { .. }) {
         Duration::from_secs(30)
     } else if matches!(method, ControlMethod::UpgradeRecoveryProbe { .. }) {
@@ -771,6 +811,10 @@ async fn request_scoped(
     }
     Ok(response)
 }
+
+#[cfg(test)]
+#[path = "service_runtime_registry_retry_tests.rs"]
+mod registry_retry_tests;
 
 #[cfg(test)]
 mod connection_failure_tests {

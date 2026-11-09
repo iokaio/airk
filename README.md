@@ -1,14 +1,41 @@
 # AIRK: Local Search for Coding Agents
 
+Windows debug r28 is built and package-verified for manual testing; see the
+[1.8.14 working record](docs/releases/release-1.8.14.md). Release and installed
+qualification remain pending.
+
+The [fixture compatibility matrix](docs/testing/fixture-compatibility.md) keeps
+imported-legacy migration distinct from reviewed catalog upgrades. The authentic
+legacy producer and installed-editor acceptance remain pending; the authentic
+1.5.12 schema-8 metadata bridge passed scoped regression. r26 remains preserved.
+
+The approved [automatic rebuild option](docs/upgrade-rebuild-fallback.md) will
+let users choose rebuilding earlier in an upgrade, then automatically build fresh
+indexes from eligible raw managed saved sources while preserving previous state
+and supported settings. Unsupported configurations are refused before state
+changes; client re-enrollment is explicit. Native/editor source is implemented;
+installed and frozen qualification are pending.
+
+[Standalone CLI onboarding](docs/agent-integration.md#standalone-onboarding-without-vs-code)
+is implemented on this branch for setup without VS Code: native service
+discovery, reviewed index scope and protected client launch. Scoped CLI tests
+pass; actual client launch and installed acceptance remain pending. Use the printed installed executable path;
+setup does not change `PATH`.
+Standalone Windows/macOS/Linux installer source installs only the CLI/native
+server; the VS Code extension remains a separate optional distribution.
+Actual installer builds, signing and publication remain pending.
+
 **1.8.14 implementation and qualification are in progress; unpublished.** The source versions and generated catalog identify the [One AIRK implementation](docs/one-airk.md). The single-executable HTTPS runtime is implemented; remaining migration corrections and final native and installed-platform acceptance are tracked in the [1.8.14 working record](docs/releases/release-1.8.14.md). Earlier binaries keep their original versions and hashes.
 
 Modern installation must connect supported MCP clients directly through HTTPS,
 migrate recognized owned Codex, Claude Code and VS Code/Copilot Chat declarations,
-then remove ownership-proven legacy launchers, their processes and all superseded
+then remove ownership-proven legacy launchers, their processes and eligible superseded
 runtime executables. Both legacy-to-modern and later modern-to-modern upgrades
 must finish this cleanup while preserving the selected runtime, sources, indexes
-and settings. Retained obsolete payloads mean an unfinished transaction, not a
-working fallback or clean success.
+and settings. The explicit rebuild option separately preserves its predecessor
+runtime and old state as recovery evidence. Later ordinary upgrades retire
+unprotected intermediates and report that preserved evidence separately;
+unexplained obsolete payloads still mean unfinished cleanup.
 Unproven scopes, unsupported clients and blocked cleanup remain explicitly
 incomplete; actual installed qualification is still pending.
 
@@ -18,6 +45,11 @@ discovery reports the actual bound port, including an alternate when the preferr
 port is occupied. Owned connection configuration can be refreshed, while external
 clients may still require reconnection. See the [local HTTPS API](docs/local-https-api.md)
 for trust, credentials, endpoint discovery and local-tool examples.
+
+Credential lifecycle corrections reclaim bounded active-ledger capacity after
+revocation and proven Explorer attachment retirement, while retaining immutable
+connection ownership and ID-reuse fences. Active manual credentials are preserved.
+Validation and remaining client/platform gates are recorded in the working record.
 
 **Explorer notices and updates:** dismiss update, connection and action-outcome notices with **×**. Dismissals are saved for the workspace and stay hidden across screens, Explorer reopen and window reload. Once the new loader is running, later detected AIRK extension replacements reload AIRK automatically and reopen its single Explorer panel when it was open. For the first transition from an older loaded extension, use **Restart Extensions** in VS Code’s Extensions pane to activate the new version. Installed-editor acceptance is recorded separately.
 
@@ -143,11 +175,11 @@ Installation and upgrades now display a VS Code progress notification with the c
 
 Successful runtime activation finishes quietly. The active AIRK loader handles later detected extension replacements automatically; external coding-agent sessions may need their own restart to load the new tool connection. Connection or cleanup issues produce a specific warning and details instead of a clean success message.
 
-For 1.8.14, trusted startup and **Install or Repair CLI** migrate recognized owned project-local Codex, Claude Code and VS Code/Copilot Chat connections to the native HTTPS endpoint, preserving complete original authority, other servers, disabled state and tool policies. Successful installation then requires verified native removal of old launcher images, their processes and all approved superseded runtime executables, including skipped-release and later modern-to-modern updates. Unsupported clients, unproven/custom declarations, conflicts, unsafe files, unsaved edits and blocked cleanup remain incomplete. Restart external agents to load the new connection; a saved file alone does not prove reconnection.
+For 1.8.14, trusted startup and **Install or Repair CLI** migrate recognized owned project-local Codex, Claude Code and VS Code/Copilot Chat connections to the native HTTPS endpoint, preserving complete original authority, other servers, disabled state and tool policies. Successful installation then requires verified native removal of old launcher images, their processes and eligible approved superseded runtime executables, including skipped-release and later modern-to-modern updates. Unsupported clients, unproven/custom declarations, conflicts, unsafe files, unsaved edits and blocked cleanup remain incomplete. Restart external agents to load the new connection; a saved file alone does not prove reconnection.
 
 The current published stable release is **1.7.6** (see its [release record](docs/releases/release-1.7.6.md)); the previous release, 1.7.3, is described in [its record](docs/releases/release-1.7.3.md). The earlier 1.5.0 candidate superseded 1.4.4; its [release notes](docs/releases/release-1.5.0.md) retain their original validation scope.
 
-Successful CLI installation removes obsolete extension-managed terminal executable copies and all approved nonselected runtime payloads regardless of version, after activation and complete known-client configuration migration. It preserves the selected runtime, sources, indexes and settings. Locked files report incomplete cleanup; disconnect old clients and use **AIRK: Install or Repair CLI**, or allow the next trusted activation to resume the exact cleanup transaction. Close old terminal sessions completely; **Developer: Reload Window** can preserve their environment.
+Successful CLI installation removes obsolete extension-managed terminal executable copies and eligible approved nonselected runtime payloads regardless of version, after activation and complete known-client configuration migration. It preserves the selected runtime, sources, indexes and settings. Locked files report incomplete cleanup; disconnect old clients and use **AIRK: Install or Repair CLI**, or allow the next trusted activation to resume the exact cleanup transaction. Close old terminal sessions completely; **Developer: Reload Window** can preserve their environment.
 
 Trusted VSIX activation can install the approved native runtime and terminal integration; `airk.cli.autoInstall: false` disables automatic installation. Opening a folder does not create an index or grant evidence access. Use **Indexing > Index library** to review sources, storage and watching, then create the index. In **Search scope**, select the indexes or index sets to search and apply the selection. Saved watching, pause and manual-update preferences govern existing work; explicit Stop remains authoritative. Upgrade preserves existing saved evidence and settings rather than requesting a fresh reindex as migration proof. Agent connection is a separate scoped action. See [reviewed setup](docs/service-project-setup.md); earlier automatic-folder behavior remains in the dated release records.
 
@@ -196,7 +228,7 @@ Approved managed payloads can remain read-only. In 1.8.14, clients use HTTPS and
 
 ## Native CLI
 
-Install/select an independently approved single-image runtime using the [installation contract](docs/service-installation.md). A manifest's own checksum is not executable approval. The interactive CLI and direct manager use the approved main; MCP clients use HTTPS. The commands below assume an already reviewed Index mapping; `init` does not create one from a folder.
+Install/select an independently approved single-image runtime using the [installation contract](docs/service-installation.md). A manifest's own checksum is not executable approval. The interactive CLI and direct manager use the approved main; MCP clients use HTTPS. Use the exact installed executable path printed by setup, or add its directory to `PATH` yourself; bare `airk` is not installed into `PATH` automatically. The commands below assume an already reviewed Index mapping; `init` does not create one from a folder. For guided first use, see [standalone onboarding](docs/agent-integration.md#standalone-onboarding-without-vs-code).
 
 ```console
 airk --service-install-dir <installation> --root <source> --data-dir <data> --collection project-a init

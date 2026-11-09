@@ -391,6 +391,16 @@ mod native {
         pub(crate) fn identity(&self) -> Incarnation {
             self.generation
         }
+        #[cfg(test)]
+        pub(crate) fn set_compute_hook(
+            &self,
+            hook: crate::inference_engine::ComputeHook,
+        ) -> Result<()> {
+            self.owner
+                .as_ref()
+                .context("native inference owner unavailable")?
+                .set_compute_hook(hook)
+        }
         pub(crate) fn provider_status(
             &self,
         ) -> anyhow::Result<Option<airk_core::inference_provider::ProviderStatus>> {

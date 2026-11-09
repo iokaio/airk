@@ -69,7 +69,7 @@ mod previous_tests {
         Ok(())
     }
 
-    #[cfg(any(windows, target_os = "linux"))]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     #[tokio::test]
     async fn uninstall_stops_owned_clients_and_prevents_relaunch_without_stopping_foreign_processes()
     -> Result<()> {
@@ -93,6 +93,15 @@ mod previous_tests {
             let mut inventory: InstallManifest =
                 serde_json::from_slice(&fs::read(directory.join("airk-install.json"))?)?;
             inventory.files.insert(main_name().into(), hash.clone());
+            if historical && cfg!(target_os = "macos") {
+                // A sealed Mac predecessor has no role aliases. Its standalone
+                // launcher is a separate inventoried image, so make that fixture
+                // runnable and seal its actual test-executable bytes as well.
+                fs::copy(&main, directory.join(MAC_LAUNCHER_IMAGE))?;
+                inventory
+                    .files
+                    .insert(MAC_LAUNCHER_IMAGE.into(), hash.clone());
+            }
             inventory.files.insert(
                 "airk-runtime.json".into(),
                 runtime_pair::digest_file(&pair_path)?,
@@ -113,7 +122,7 @@ mod previous_tests {
             let installed = root.join("runtimes").join(&identity);
             fs::rename(directory, &installed)?;
             let main = installed.join(main_name());
-            let index = if historical {
+            let index = if historical && !cfg!(target_os = "macos") {
                 crate::process_roles::install(&main)?;
                 installed.join(crate::process_roles::Role::Index.name())
             } else {
@@ -339,6 +348,7 @@ pub(super) async fn retire_previous(root: &Path, expected: &str) -> Result<serde
     let canonical = root.canonicalize()?;
     let root = canonical.as_path();
     let _lock = install_lock(root)?;
+    activation::rebuild::require_retirement_allowed(root)?;
     require_issuer_rotation_settled(root)?;
     managed::require_unmanaged(root)?;
     activation::require_settled(root)?;
@@ -437,6 +447,10 @@ fn validated_inventory(root: &Path, identity: &str) -> Result<InstallManifest> {
 }
 
 pub(super) fn remove(root: &Path, identity: &str) -> Result<()> {
+    ensure!(
+        !activation::rebuild::preserved_runtime(root, identity)?,
+        "rebuild predecessor is preserved as recovery evidence; use separately reviewed cleanup"
+    );
     remove_with(root, identity, true)
 }
 
@@ -628,7 +642,7 @@ fn uninstall_process_paths(root: &Path, runtimes: &[String]) -> Result<Vec<PathB
     Ok(paths)
 }
 
-pub(super) async fn uninstall(root: &Path) -> Result<serde_json::Value> {
+pub(crate) async fn uninstall(root: &Path) -> Result<serde_json::Value> {
     require_issuer_rotation_settled(root)?;
     if managed::is_configured(root)? {
         return managed::detach(root).await;
@@ -730,7 +744,7 @@ pub(super) async fn uninstall(root: &Path) -> Result<serde_json::Value> {
         digest(identity)?;
         if (root.join("runtimes").join(identity).exists()
             || root.join(format!("retire-{identity}.json")).exists())
-            && remove(root, identity).is_err()
+            && remove_with(root, identity, true).is_err()
         {
             deferred.push(identity.clone());
         }

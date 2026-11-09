@@ -16,9 +16,7 @@ fn native_selection_preserves_opt_out_and_publishes_through_source_jobs() -> Res
     fs::write(&source, original)?;
     #[cfg(feature = "local-inference")]
     let service = common::Service::reviewed(root.path(), state.path(), "default");
-    #[cfg(all(feature = "embedding-worker", not(feature = "local-inference")))]
-    let service = common::Service::with_helper(root.path(), state.path(), "default");
-    #[cfg(not(feature = "embedding-worker"))]
+    #[cfg(not(feature = "local-inference"))]
     let service = common::Service::start(root.path(), state.path(), "default");
     service.configure(airk_cli::service_configuration::Draft::Vectors { enabled: false });
     common::call(root.path(), state.path(), "default", &["index"])?;
@@ -106,9 +104,9 @@ fn native_selection_preserves_opt_out_and_publishes_through_source_jobs() -> Res
         "default",
         json!({"operation":"vectors","enabled":true}),
     )?;
-    #[cfg(feature = "embedding-worker")]
+    #[cfg(feature = "local-inference")]
     assert_eq!(enabled.state, JobState::Succeeded);
-    #[cfg(not(feature = "embedding-worker"))]
+    #[cfg(not(feature = "local-inference"))]
     {
         assert_eq!(
             enabled.state,

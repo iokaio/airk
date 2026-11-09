@@ -88,7 +88,7 @@ export async function readUpdatePayload(root: string): Promise<UpdatePayload> {
     const manifest = JSON.parse(files.get('package.json')!.toString('utf8'));
     const native = JSON.parse(files.get('native/manifest.json')!.toString('utf8'));
     if (manifest.name !== 'airk' || manifest.publisher !== 'iokaio' || manifest.version !== inventory.version || native.version !== inventory.version) { throw new Error('AIRK update versions do not agree'); }
-    return { root: path.resolve(root), identity: digest(bytes), version: inventory.version, manifest, files };
+    return { root: canonical, identity: digest(bytes), version: inventory.version, manifest, files };
 }
 
 /** Local imports execute captured bytes without changing Node's or another extension's cache. */
@@ -253,7 +253,7 @@ export class ExtensionUpdateLoader implements vscode.Disposable {
         const root = await this.root(this.context);
         // A sealed inventory changes for every shipped byte change. Routine polls
         // read its small descriptor only; full hashing belongs to a changed candidate.
-        if (this.read === readUpdatePayload && path.resolve(root) === this.payload?.root
+        if (this.read === readUpdatePayload && this.payload && path.relative(path.resolve(root), this.payload.root) === ''
             && digest(await boundedFile(path.join(root, INVENTORY), 256 * 1024)) === this.payload.identity) { return; }
         const next = await this.read(root);
         if (this.disposed || (next.root === this.payload?.root && next.identity === this.payload.identity) || next.identity === this.failedIdentity) { return; }

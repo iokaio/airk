@@ -2,6 +2,10 @@
 // Qualification precondition only. A dated observation never grants mutation admission.
 function requireValue(value,message){if(!value)throw Error(message);}
 const uint=value=>Number.isSafeInteger(value)&&value>=0;
+function idleEvidencePrefix(role,sequence,index){
+    requireValue(['a','b'].includes(role)&&Number.isSafeInteger(sequence)&&sequence>=1&&sequence<=256&&/^idx_[a-f0-9]{32}$/.test(index),'Invalid exact idle observation identity');
+    return `${role}-ui-${sequence}-${index}`;
+}
 function verifyHealth(value,expected){
     const observed=value?.observation;
     requireValue(value?.status==='health'&&observed?.version===expected.version&&observed.protocol===1
@@ -11,7 +15,10 @@ function verifyHealth(value,expected){
     // Broker acceptance is a dated readiness precondition, never source mutation admission.
     return observed;
 }
-function progressIdle(value,expected){
+// A later caller may accept maintenance only after separately retaining its
+// initial index-work proof for this exact backing and service incarnation.
+function progressIdle(value,expected,{requireIndexWork=true}={}){
+    requireValue(typeof requireIndexWork==='boolean','Index work requirement must be explicit boolean');
     requireValue(value?.status==='progress'&&value.project===expected.project,'Progress crossed the exact native backing');
     requireValue(Array.isArray(value.queued_jobs)&&typeof value.queue_truncated==='boolean'&&uint(value.observed_unix_ms),'Progress queue completeness or observation time is unavailable');
     requireValue(value.project_paused===true||value.project_paused===false,'Progress project pause state is unavailable');
@@ -30,16 +37,17 @@ function progressIdle(value,expected){
     // A missing/old observation is never evidence that the queue is idle.
     return value.queue_truncated===false&&value.pending_job===null&&value.queued_jobs.length===0&&value.project_paused===false
         &&value.pending_paused!==true&&observed!==null&&observed.job.state==='succeeded'
-        &&['model_setup','index','reconcile','vectors'].includes(observed.job.kind)
+        &&(requireIndexWork?['model_setup','index','reconcile','vectors']:['model_setup','index','reconcile','vectors','verify','inspect','recover','maintain']).includes(observed.job.kind)
         &&observed.worker.fencing_generation===observed.current_fencing_generation;
 }
-async function waitForIndexIdle(read,expected,{deadline,maxObservations=128,record=async()=>{},now=Date.now,pause=ms=>new Promise(resolve=>setTimeout(resolve,ms))}){
+async function waitForIndexIdle(read,expected,{deadline,maxObservations=128,record=async()=>{},now=Date.now,pause=ms=>new Promise(resolve=>setTimeout(resolve,ms)),requireIndexWork=true}){
+    requireValue(typeof requireIndexWork==='boolean','Index work requirement must be explicit boolean');
     for(let count=1;count<=maxObservations;count++){
         requireValue(now()<deadline,'Index idle observation deadline exhausted');
         const observed=await read();await record(observed,count);
-        if(progressIdle(observed,expected))return {observations:count,progress:observed,qualification:'dated_read_only_precondition_not_mutation_admission'};
+        if(progressIdle(observed,expected,{requireIndexWork}))return {observations:count,progress:observed,qualification:'dated_read_only_precondition_not_mutation_admission'};
         requireValue(now()<deadline,'Index idle observation deadline exhausted');await pause(Math.min(750,deadline-now()));
     }
     throw Error('Index idle observation request budget exhausted');
 }
-module.exports={verifyHealth,progressIdle,waitForIndexIdle};
+module.exports={verifyHealth,progressIdle,waitForIndexIdle,idleEvidencePrefix};

@@ -6,6 +6,12 @@ AIRK command, launcher, proxy or Node bridge. The listener URL comes from verifi
 native discovery: an occupied preferred port can select another saved port, so
 copy the actual endpoint rather than assuming a machine-wide fixed port.
 
+The native service owns connections and protected credential files. VS Code is
+an optional setup interface, not an MCP proxy: closing it does not put its
+extension between a standalone client and AIRK. Headless reads still require the
+native service to be running and the client process to have its reviewed
+credential and CA trust. A saved configuration alone does not supply either.
+
 ## Select scope and provision the actual client
 
 In Explorer **Indexing → Search scope**, review indexes/index sets and choose
@@ -37,6 +43,62 @@ or cross-platform qualification. Other formats remain
 The [dated predecessor matrix](reviews/agent-integration-before-http-2026-11-07.md)
 is historical evidence, not a supported current stdio setup path.
 
+### Client classification for 1.8.14 (8 November 2026)
+
+This matrix classifies all fifteen entries in AIRK's client catalog. **Implemented**
+means AIRK emits the HTTPS configuration and protected credential reference; it
+does not mean the named client has passed a scoped connection test. **Blocked**
+means current HTTPS setup returns `http_client_compatibility_unverified` without
+rewriting the existing configuration. For blocked clients, URL fields, trust,
+credential storage, configuration location and reconnect behavior remain
+unverified; historical stdio formats do not qualify those fields.
+
+| Client | Current AIRK adapter / configuration location | Actual connecting-process evidence | Qualification still required |
+| --- | --- | --- | --- |
+| VS Code / Copilot Chat | Implemented: workspace `.vscode/mcp.json`; `servers.airk`, HTTP `url`, Authorization command input and top-level `inputs`. Built-in provider uses the same enrolled native authority. | Code **1.145.2** actual LocalProcess MCP host attempted connection on sealed debug **r24** and refused the certificate before tool discovery; the fixture issuer was absent from CurrentUser Root. Earlier installed-extension journeys exercise AIRK's own provider clients and retain that separate scope. | Review/provision actual host trust, then prove Code/Copilot initialization, tool discovery, scoped reads and reconnect against the final artifact on each claimed OS. |
+| Claude Code | Implemented: project `.mcp.json`; `mcpServers.airk`, `type: "http"`, literal `url`, environment-reference Authorization header. | Windows **2.1.118** actual connecting-process acceptance passed on sealed native debug **r25**: credential-authenticated scoped reads, reconnect, additive trust and wrong-issuer rejection. Sources were preserved and native Stop completed; no model turn or OS trust mutation. Receipts `resume-actual-claude-r25-r1.json` / `resume-actual-claude-r25-result-r1.json` are recorded in the [implementation ledger](research/one-airk-implementation.md). Claude's control projection omits MCP `isError`, limiting that observation. | Repeat against the final optimized artifact and each other claimed OS; Windows debug acceptance is not release or cross-platform qualification. |
+| Codex | Implemented: project `.codex/config.toml`; `mcp_servers.airk.url`, `bearer_token_env_var`, nested `http_headers`. | Windows **0.164.0-alpha.11.1** actual app-server acceptance passed on sealed native debug **r24**: 29 tools, credential-authenticated status/source reads with original publication, crossed-project refusal, fresh-process reconnect with unchanged configuration/authority, and preserved additive trust. An untrusted issuer received zero HTTP requests or Authorization headers. All owned clients exited and native Stop completed; no model turn or OS trust mutation. The earlier fictional TLS spike retains its separate scope. | Repeat against the final optimized artifact and each other claimed OS; debug acceptance is not release or cross-platform qualification. |
+| Cursor | Blocked; HTTPS adapter unverified. | None retained for 1.8.14 HTTPS. | Complete trusted HTTPS/client qualification. |
+| Gemini | Blocked; HTTPS adapter unverified. | None retained for 1.8.14 HTTPS. | Complete trusted HTTPS/client qualification. |
+| Antigravity | Blocked; HTTPS adapter unverified. | None retained for 1.8.14 HTTPS. | Complete trusted HTTPS/client qualification. |
+| Cline | Blocked; HTTPS adapter unverified. | None retained for 1.8.14 HTTPS. | Complete trusted HTTPS/client qualification. |
+| Roo | Blocked; HTTPS adapter unverified. | None retained for 1.8.14 HTTPS. | Complete trusted HTTPS/client qualification. |
+| Junie | Blocked; HTTPS adapter unverified. | None retained for 1.8.14 HTTPS. | Complete trusted HTTPS/client qualification. |
+| Copilot CLI | Blocked; HTTPS adapter unverified. | None retained for 1.8.14 HTTPS. | Complete trusted HTTPS/client qualification. |
+| OpenCode | Blocked; HTTPS adapter unverified. | None retained for 1.8.14 HTTPS. | Complete trusted HTTPS/client qualification. |
+| OpenCode v2 | Blocked; HTTPS adapter unverified. | None retained for 1.8.14 HTTPS. | Complete trusted HTTPS/client qualification. |
+| Kilo | Blocked; HTTPS adapter unverified. | None retained for 1.8.14 HTTPS. | Complete trusted HTTPS/client qualification. |
+| Amazon Q | Blocked; HTTPS adapter unverified. Historical connection details are not automatic modern setup. | None retained for 1.8.14 HTTPS. | Complete trusted HTTPS/client qualification. |
+| Windsurf | Blocked; HTTPS adapter unverified. Historical connection details are not automatic modern setup. | None retained for 1.8.14 HTTPS. | Complete trusted HTTPS/client qualification. |
+
+Source owners are the [extension client catalog and serializers](../packages/vscode/src/model.ts),
+[native setup serializer](../crates/airk-cli/src/main.rs),
+[native setup contract tests](../crates/airk-cli/src/main_http_setup_tests.rs),
+[owned configuration locations](../packages/vscode/src/agentMigration.ts),
+[Codex project configuration](../packages/vscode/src/agentConnections.ts) and
+[Claude project configuration](../packages/vscode/src/agentConfig.ts).
+The [implementation ledger](research/one-airk-implementation.md) retains the
+dated Codex TLS spike and installed-extension evidence with their original
+artifact identities. Unsupported clients stay blocked; classification completes
+the inventory, not the remaining C2 acceptance.
+
+The failed Code host attempt prepared an additive child CA bundle whose issuer
+matched the native service. A separate read-only Code **1.145.2** extension-host
+probe confirmed that the environment value reached Node and the native issuer
+appeared in its extra/default CA sets. Installed source inspection identifies a
+separate MCP fetch path: its proxy dispatcher supplies bundled and system CAs,
+which omit that extra-only issuer in the tested configuration. This is not an
+environment-propagation failure. The tested default Code path still needs
+reviewed per-user native trust enrollment and actual acceptance afterward;
+neither investigation changed an OS trust store. Do not disable system CA
+support or certificate verification to make the test pass.
+
+All implemented adapters retain the original reviewed selector and native grant.
+AIRK can refresh its owned endpoint definition after native discovery; external
+clients may require their own reload or reconnect. An environment reference only
+works in a process which received that credential and additive trust. Existing
+client processes do not acquire new environment values when a file is saved.
+
 VS Code command inputs require the AIRK extension and its Local harness support. Portable/forwarded harnesses that reject input/command variables remain unqualified; do not convert them by guessing. The resolver accepts only a connection ID, verifies current native grant/expiry/ACL and the actual matching workspace configuration, then reads the exact protected native token. No token or caller-nominated file path is saved in the JSON.
 
 Recognized owned-file migration preserves comments, other servers, disabled
@@ -53,6 +115,105 @@ by saving a project file. Provision and qualify the process which will connect.
 A host cannot reach a container's private loopback merely by copying its URL.
 
 ## Native setup output
+
+### Standalone onboarding without VS Code
+
+Standalone Windows, macOS and Linux installer support is implemented in source for the CLI and native
+MCP/HTTPS service only. They do not install a VSIX or VS Code extension, run Code
+actions, or require VS Code. The extension remains a separate optional
+distribution. The intended path is native installation, then guided `airk setup`
+and reviewed client enrollment. Installer signing, native installed journeys and
+GitHub release-asset verification remain pending; no published installer is
+claimed here. See [native signing](native-signing.md) and the
+[release workflow](release-workflow.md).
+
+The pending standalone release assets use these names (`<version>` is the
+published release version; names alone do not establish availability):
+
+| Platform | Installer asset | Intended entry point |
+| --- | --- | --- |
+| Windows x64 | `airk-<version>-x86_64-pc-windows-msvc-installer.exe` | Per-user native installer, then guided CLI setup |
+| macOS Apple Silicon | `airk-<version>-aarch64-apple-darwin-installer.dmg` | Mount, open **Install AIRK.command** in Terminal |
+| macOS Intel | `airk-<version>-x86_64-apple-darwin-installer.dmg` | Mount, open **Install AIRK.command** in Terminal |
+| Linux x64 | `airk-<version>-x86_64-unknown-linux-gnu-installer.tar.gz` | Extract, run `./install.sh` |
+
+Windows packaging uses the existing Azure signing method for the installer and
+uninstaller as well as the native payload. Its per-user Installed Apps uninstall
+entry delegates to native cleanup first; an incomplete native result must not
+be reported as successful removal. The Mac disk images use the
+existing Developer ID Application identity, accepted notarization and a stapled
+ticket; they do not need a new Developer ID Installer certificate. The native
+app remains inside its signed bundle. Linux remains unsigned by an OS signing
+identity; its GitHub artifact-attestation integration verifies workflow provenance.
+Verify the exact downloaded artifact using the [release verification guide](release-verification.md)
+before running it. Actual signed/notarized installer and published-attestation
+verification remain pending. These installers do not enroll arbitrary OS trust
+or silently replace existing client configuration.
+
+Packaging contracts passed 77/77 and release/site contracts 51/51 with mocked
+platform tools. Those checks do not compile, sign or install an actual installer,
+and no published installer or attestation is claimed. Retained actual-client
+acceptance in the matrix above keeps its original older debug identity.
+
+Guided setup is implemented in the working tree; validation and installed
+acceptance are pending. In a terminal, `airk setup` asks which supported client
+(Claude Code or Codex) and index scope to use. It discovers/starts the native
+service, lists native indexes/index sets or offers explicit creation, reviews
+scope, then requests native grants and credential references. Opening a folder
+is not authorization to index it.
+
+Setup prints the exact approved installed executable as `cli_executable`, with
+setup/uninstall instructions. In all examples below, replace `airk` with that
+full path unless you have added its directory to `PATH` yourself. The installer
+does not add a proxy launcher or change shell startup files or `PATH`. You can
+finish setup and launch your client in the installer terminal without changing
+`PATH`; on macOS the printed executable is the installed copy, so the disk image
+can be ejected after successful installation.
+
+```console
+airk setup
+airk setup --client codex --project <native-project-id> --yes --launch
+airk setup --client claude --create-root <source-folder> --storage <index-storage> --name <index-name> --yes --launch
+airk uninstall
+```
+
+Without a terminal, supply `--client`, explicit `--project` or `--index` IDs and
+`--yes`; `--index` can be repeated for a reviewed selection. `--create-root` uses
+the native index-setup owner; `--storage`, `--name` and `--watch` are explicit
+creation choices. Watching defaults to off. Index-job acceptance and search
+readiness remain separate.
+
+Installer bootstrapping pairs `--runtime-source <bundled-payload>` with
+`--approved-sha256 <distributor-pinned-manifest-digest>`. The signed or attested
+distribution supplies that pin; hashing arbitrary downloaded bytes does not
+create approval. `--install-only --yes` installs without client enrollment.
+During an upgrade, choose migration or the bounded early rebuild option;
+`--rebuild-indexes` selects rebuilding explicitly. Its
+[supported-configuration limits](upgrade-rebuild-fallback.md#initial-supported-configuration)
+still apply. `airk uninstall [--yes]` uses the native owner to stop/remove owned
+runtime files while preserving source files and index data; removing a downloaded
+installer or ejecting its image is not uninstalling the service.
+
+The native credential owner creates the bearer secret in an owner-protected
+file. Setup returns complete native receipts and references without printing
+the secret. `--launch -- <client-arguments>` starts the selected installed client
+in the foreground with child-only credential variables and an additive CA bundle.
+It does not modify OS trust stores.
+Claude receives a private per-session MCP configuration; Codex receives a
+per-process AIRK override and `--no-daemon`, so an older shared daemon cannot miss
+the new environment. Existing project files and unrelated client settings remain
+unchanged. Without `--launch`, use the returned provisioning instructions for the
+actual process; saving project JSON does not update an existing process.
+The VS Code `airk.httpCredential` resolver is a separate extension
+mechanism and is not available to headless clients. Neither path writes a raw
+bearer token to project configuration.
+
+After an [upgrade rebuild](upgrade-rebuild-fallback.md), old client files and
+credentials remain preserved but their original namespace does not grant access
+to the successor. Review and enroll the replacement scope explicitly; do not
+reuse an old namespace or silently broaden the client selection.
+
+### Existing reviewed selector
 
 Use the exact reviewed native selector, not invented IDs or folder-derived scope.
 The following is a template with values supplied by authenticated native setup:

@@ -1,0 +1,17 @@
+AIRK @@VERSION@@ — @@ARCH@@
+
+This installer contains the native AIRK command-line application, local MCP
+server, bundled models and license notices. It installs no VS Code extension.
+
+Open "Install AIRK.command" to start the native setup in Terminal. Setup reviews
+the per-user installation or upgrade, then guides you through source selection
+and connecting a supported MCP client. No administrator password is required.
+
+After successful setup, eject this disk image. Setup prints the installed AIRK
+executable path and instructions for adding it to PATH; it does not edit your
+shell startup files. Keep your original source folders in place. To remove AIRK,
+invoke the installed executable with "uninstall" and review the native cleanup.
+Index data and source preservation are reported separately.
+
+The disk image and native application use Ioka LLC's Developer ID Application
+signature and Apple notarization. This package contains no account credentials.

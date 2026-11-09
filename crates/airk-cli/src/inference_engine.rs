@@ -42,4 +42,6 @@ mod pool {
         include!("inference_owner_tests.rs");
     }
 }
+#[cfg(test)]
+pub(crate) use pool::ComputeHook;
 pub(crate) use pool::{InferenceOwner, NativeCompletionWitness};

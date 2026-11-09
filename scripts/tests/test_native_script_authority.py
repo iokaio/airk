@@ -30,7 +30,7 @@ class NativeScriptAuthorityTests(unittest.TestCase):
             owner = Path(temporary).resolve()
             control = owner/'control'; control.mkdir()
             collection = owner/'collection'
-            fixture = SimpleNamespace(owner=owner, control=control, single_image=True)
+            fixture = SimpleNamespace(owner=owner, control=control, single_image=False, catalog_authority=True)
             inactive = {'projects': [{'project': {'registration': {'binding': 'original'}}}], 'after': None}
             worker = {'identity': None}
             with contextlib.closing(sqlite3.connect(control/'service-1.4.sqlite3')) as connection:
@@ -46,7 +46,7 @@ class NativeScriptAuthorityTests(unittest.TestCase):
                 self.assertFalse(storage.removal_complete(fixture, 'original', collection, inactive, worker))
                 collection.rmdir()
                 self.assertFalse(storage.removal_complete(fixture, 'original', collection, inactive, {'identity': {'pid': 1}}))
-                fixture.single_image = False
+                fixture.catalog_authority = False
                 self.assertFalse(storage.removal_complete(fixture, 'original', collection, inactive, worker))
                 self.assertTrue(storage.removal_complete(fixture, 'original', collection, {'projects': [], 'after': None}, worker))
             for unexpected in [
@@ -113,7 +113,7 @@ class NativeScriptAuthorityTests(unittest.TestCase):
             original = source / 'source.txt'; original.write_bytes(b'Preserve original source')
             previous = {'binding': 'removed-binding', 'root': str(source), 'data_root': str(owner/'removed'), 'collection': 'fixture'}
             selected = {'namespace': 'exact-namespace', 'index_id': 'old-index', 'grant_id': 'old-grant', 'project_ids': ['old-project']}
-            fixture = SimpleNamespace(owner=owner, single_image=True, projects={'p': copy.deepcopy(previous)}, scopes={'p': copy.deepcopy(selected)})
+            fixture = SimpleNamespace(owner=owner, single_image=False, catalog_authority=True, projects={'p': copy.deepcopy(previous)}, scopes={'p': copy.deepcopy(selected)})
             def native_setup(name, root, parent):
                 target = parent / 'fixture'; target.mkdir()
                 fixture.projects[name] = {**previous, 'binding': 'native-new-binding', 'data_root': str(target)}
@@ -129,7 +129,7 @@ class NativeScriptAuthorityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary, tempfile.TemporaryDirectory() as foreign:
             owner = Path(temporary).resolve(); occupied = owner/'occupied'; occupied.mkdir()
             marker = occupied/'preserve'; marker.write_bytes(b'unknown')
-            fixture = SimpleNamespace(owner=owner, single_image=True, projects={'p': {'binding': 'old'}}, scopes={'p': {}}, register=Mock())
+            fixture = SimpleNamespace(owner=owner, single_image=False, catalog_authority=True, projects={'p': {'binding': 'old'}}, scopes={'p': {}}, register=Mock())
             for candidate in [Path(foreign).resolve(), occupied]:
                 with self.assertRaises(AssertionError):
                     storage.replacement_registration(fixture, 'p', owner, candidate)

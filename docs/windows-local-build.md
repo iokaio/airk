@@ -275,12 +275,24 @@ The fixture creates both roots required by `register`, lets the stable launcher 
 
 ### Installed-editor legacy configuration evidence
 
-The optional `AIRK_EDITOR_LEGACY_FIXTURE` names an actual native managed-upgrade
+`AIRK_EDITOR_LEGACY_FIXTURE`, required when the legacy scenario is selected,
+names an actual native managed-upgrade
 receipt under the owned artifact directory. The harness verifies every retained
 payload/evidence digest, original configuration bytes and source hashes before
 the editor runs. A modern candidate has schema-2 main-only metadata and a null
 launcher observation; the old configuration's launcher ownership remains
 predecessor evidence, not a promise that modern stdio still works.
+
+For a schema-2 candidate, `scripts/prepare-native-editor-legacy.py` prepares a
+stopped retained fixture from reviewed predecessor and candidate manifests. The
+`retired_installation_launcher` binding retains JSON-only original manifest,
+runtime metadata, native inspection and launcher ownership evidence. Verification
+requires the old launcher, its receipt and superseded runtime to be absent, with
+only the selected candidate payload remaining. It preserves original config and
+source hashes and retains failed fixtures. Selecting legacy without its receipt
+fails before scenarios start; the complete supplied fixture is verified before
+the first editor journey. This producer is itself a T2 native journey and must
+wait for the combined source review and input freeze.
 
 The positive editor migration uses that exact original configuration SHA and
 full original registration to enroll an existing sealed imported HTTPS scope.

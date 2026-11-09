@@ -72,6 +72,18 @@ checks under `--network none`. Its public-copy input receipt is
 private state, credentials or build caches belong in exported artifacts. See the
 [container builder](../scripts/build-service-container.py).
 
+The [public input manifest](../scripts/container-inputs.json) retains the existing
+crate, model and license trees and admits external inputs file by file. Cheap
+inventory tests compare the manifest with Docker COPY/context rules and resolve
+Rust includes, manifest-relative reads and the CLI source-map table. External
+documentation, parser corpora and extension fixtures are test inputs; they remain
+outside the distributed runtime's production-source identity. Parent traversal
+rules exclude neighboring files, and the existing private-state exclusions stay
+in force. Gzip build-tool extraction validates, copies and hashes one sequential
+pass, then sorts receipts and verifies the tree. A late invalid member leaves
+earlier safe extracted bytes as failed-attempt evidence. Extraction speed and
+the final container remain unqualified until the recorded Docker run completes.
+
 MCP qualification uses the actual saved HTTPS URL and protected native
 connection/grant, not a per-client stdio helper or assumed fixed port. Actual
 Code/client CA/auth provisioning, port relocation, complete CLI/MCP/Workbench

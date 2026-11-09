@@ -1350,6 +1350,19 @@ test('runtime activation reviews the exact target and requires host confirmation
     f.controller.dispose();
 });
 
+test('Management offers rebuilding before native upgrade review and cancellation starts no operation',async()=>{
+    const f=fixture();let mode:'migrate'|'rebuild'|undefined,reviewed=0,applied=0;
+    const base=await f.host.runtime.reviewTransition(await f.host.runtime.ensure(),'upgrade');
+    f.host.chooseUpgradeMode=async()=>mode;
+    f.host.runtime.reviewTransition=async(_binding,action,options)=>{reviewed++;assert.equal(action,'upgrade');assert.deepEqual(options,{rebuildIndexes:true});return {...base,rebuildIndexes:true};};
+    f.host.runtime.transition=async(_binding,review)=>{assert.equal(review.rebuildIndexes,true);applied++;return {schema:1,active:review.target};};
+    f.host.confirm=async message=>{assert.match(message,/Rebuild indexes from saved sources/);assert.match(message,/Previous state and indexes stay preserved/);return true;};
+    try{
+        await f.controller.refresh();await f.action('upgradeRuntime');assert.equal(reviewed,0);assert.equal(applied,0);
+        mode='rebuild';await f.action('upgradeRuntime');assert.equal(reviewed,1);assert.equal(applied,1);
+    }finally{f.controller.dispose();}
+});
+
 test('a different native version keeps installer observations without executing its console',async()=>{
     const f=fixture(),binding=await f.host.runtime.ensure();binding.version='1.4.1';
     f.host.runtime.client=()=>{throw new Error('Mismatched console must not execute');};

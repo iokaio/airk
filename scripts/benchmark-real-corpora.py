@@ -475,7 +475,7 @@ class Session:
 
 def close_owned_fixture(fixture, primary=None, detail=None):
     """Always reap our child, even when the graceful shutdown command fails."""
-    if getattr(fixture, 'single_image', False):
+    if fixture.managed_installation:
         try:
             fixture.close()  # Exact-instance native UserStop and exit proof; no discovered PID kills.
         except Exception:
@@ -841,7 +841,7 @@ def reopen_campaign(fixture, project, probes, samples, output=None):
     close_owned_fixture(fixture)
     fixture.log = (fixture.owner / 'service.stderr').open('ab')
     fixture.child = None
-    if getattr(fixture, 'single_image', False):
+    if fixture.managed_installation:
         previous = fixture.managed_health
         # The native start command is the explicit user action that releases
         # durable UserStop; ordinary activation must not bypass that fence.

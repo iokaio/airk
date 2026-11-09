@@ -7,6 +7,9 @@ mod catalog_upgrade;
 #[path = "runtime_checkpoint.rs"]
 mod checkpoint;
 pub(super) use checkpoint::prepare_native_checkpoint;
+#[path = "runtime_rebuild.rs"]
+pub(super) mod rebuild;
+pub(super) use rebuild::SuccessorPermit;
 
 const INTENT: &str = "activation.json";
 const MAX_INTENT: u64 = 16384;
@@ -490,6 +493,10 @@ pub(super) fn legacy_retirement_candidate(
 
 /// Resume under the same installer ownership, preserving the public selection.
 pub(super) async fn resume(root: &Path) -> Result<()> {
+    if rebuild::pending(root)? {
+        rebuild::resume(root).await?;
+        return Ok(());
+    }
     require_issuer_rotation_settled(root)?;
     let mut intent = pending(root)?.context("no pending activation")?;
     result(root)?;
@@ -761,6 +768,9 @@ pub(super) fn reviewed_request(root: &Path, candidate: &str, expected: &str) -> 
 }
 
 pub(super) async fn begin(root: &Path, candidate: &str) -> Result<Selection> {
+    if rebuild::pending(root)? {
+        return rebuild::resume(root).await;
+    }
     require_issuer_rotation_settled(root)?;
     managed::require_unmanaged(root)?;
     verify_runtime(root, candidate)?;

@@ -73,7 +73,7 @@ fn accepted_index_waits_for_restored_source_without_another_request() -> Result<
 }
 
 #[test]
-#[cfg(feature = "embedding-worker")]
+#[cfg(feature = "local-inference")]
 fn semantic_preference_accepted_while_paused_prepares_itself_and_publishes() -> Result<()> {
     use airk_core::service_configuration::{ConfigurationRequest, ProjectConfiguration};
     let root = tempfile::tempdir()?;
@@ -267,7 +267,7 @@ fn reviewed_setup_creates_reserved_storage_and_publishes_text_without_editor_fol
 }
 
 #[test]
-#[cfg(feature = "embedding-worker")]
+#[cfg(feature = "local-inference")]
 fn reviewed_setup_publishes_semantic_readiness_without_editor_followup() -> Result<()> {
     setup_without_editor(true)
 }

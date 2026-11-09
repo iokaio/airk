@@ -10,6 +10,7 @@ import { runText } from './native';
 import * as fs from 'node:fs/promises';
 import { DiagnosticCaptures } from './diagnosticCaptures';
 import { recordDiagnosticFailure } from './diagnosticLogs';
+import { chooseRuntimeUpgradeMode } from './runtimeRebuild';
 export type ConsoleRuntime=Pick<RuntimeHost,'discover'|'binding'|'ensure'|'client'|'snapshot'|'repair'|'prepareConfiguration'|'reviewTransition'|'transition'|'lifecycle'|'abandonLifecycle'> & Partial<Pick<RuntimeHost,'reviewLegacyStartup'|'loadLegacyStartup'|'legacyStartupReceipts'|'removeLegacyStartup'>>;
 
 /** Machine/user settings only. A repository cannot nominate an executable or approval. */
@@ -60,6 +61,7 @@ export class ServiceConsole implements vscode.Disposable {
             version:this.context.extension.packageJSON.version,authority:vscode.env.remoteName?`Remote execution host (${vscode.env.remoteName})`:'Local execution host',
             storage:this.context.globalState,runtime:this.runtime,trusted:()=>vscode.workspace.isTrusted&&!this.disposed,
             changed:state=>this.changed(state),confirm:async(message,acceptLabel='Continue')=>(await vscode.window.showWarningMessage(message,{modal:true},acceptLabel))===acceptLabel,
+            chooseUpgradeMode:()=>chooseRuntimeUpgradeMode(items=>vscode.window.showQuickPick(items,{title:'AIRK runtime upgrade',placeHolder:'Choose how AIRK handles the saved indexes'})),
             copy:async text=>vscode.env.clipboard.writeText(text),logs:observation=>this.logs(observation),resources:(current,queryOnly)=>this.resources(current,queryOnly),
             openReport:async text=>{await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({content:text,language:'json'}),{preview:false});},
             saveReport:async text=>{await this.saveDiagnostic(text,'airk-diagnostic-report');},

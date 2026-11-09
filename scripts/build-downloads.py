@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Build AIRK's static downloads page from published GitHub release metadata."""
 import argparse
+import importlib.util
 from datetime import datetime
 from html import escape
 import json
@@ -21,9 +22,20 @@ PLATFORMS = (
 PRODUCT_SCREENSHOTS = {"workbench-1.7.1-results.png": "workbench", "explorer-1.7.1.png": "explorer"}
 NUMBER = r"(?:0|[1-9][0-9]*)"
 TAG = re.compile(rf"v({NUMBER}\.{NUMBER}\.{NUMBER})(?:-build\.([1-9][0-9]*))?")
+_spec = importlib.util.spec_from_file_location("standalone_contract", ROOT / "scripts/standalone-installer-contract.py")
+standalone = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(standalone)
 
 
-def release_metadata(release):
+def installer_names(version):
+    return {platform: standalone.artifact(version, target) for platform, target, *_ in PLATFORMS}
+
+
+def installer_manifest_names(version):
+    return {platform: standalone.manifest(version, target) for platform, target, *_ in PLATFORMS}
+
+
+def release_metadata(release, *, require_installers=False):
     """Accept only complete versioned releases with direct AIRK asset URLs."""
     tag = release["tag_name"]
     match = TAG.fullmatch(tag)
@@ -37,8 +49,17 @@ def release_metadata(release):
                          f"airk-{version}-{platform}.vsix-manifest.json",
                          f"airk-{version}-{target}.native-manifest.json"))
     assets = release["assets"]
-    if {asset["name"] for asset in assets} != expected or len(assets) != len(expected):
+    names = {asset["name"] for asset in assets}
+    installer_assets, installer_manifests = installer_names(version), installer_manifest_names(version)
+    optional = set(installer_assets.values()) | set(installer_manifests.values())
+    if not expected <= names or names - expected - optional or len(names) != len(assets):
         raise ValueError(f"{tag}: incomplete or unexpected release assets")
+    for platform, name in installer_assets.items():
+        if (name in names) != (installer_manifests[platform] in names):
+            raise ValueError(f"{tag}: incomplete standalone installer assets")
+    if require_installers and standalone.required(version, "preview" if release["prerelease"] else "stable"):
+        if not optional <= names:
+            raise ValueError(f"{tag}: incomplete required standalone installer assets")
     for asset in assets:
         expected_url = f"{GITHUB}/releases/download/{tag}/{asset['name']}"
         if (asset.get("state") != "uploaded"
@@ -46,7 +67,11 @@ def release_metadata(release):
                 or not re.fullmatch(r"sha256:[0-9a-f]{64}", asset.get("digest") or "")
                 or not isinstance(asset.get("size"), int) or asset["size"] <= 0):
             raise ValueError(f"{tag}: invalid asset URL, state, size or digest")
-    return {"tag": tag, "version": version, "published": published,
+    by_name = {asset["name"]: asset for asset in assets}
+    installers = {platform: {"url": by_name[name]["browser_download_url"],
+                             "manifest": by_name[installer_manifests[platform]]["browser_download_url"]}
+                  for platform, name in installer_assets.items() if name in by_name}
+    return {"tag": tag, "version": version, "published": published, "installers": installers,
             "channel": "preview" if release["prerelease"] else "stable"}
 
 
@@ -77,12 +102,25 @@ def render_downloads(records):
         base = f"{GITHUB}/releases/download/{tag}"
         cards = []
         for platform, target, system, architecture, mark in PLATFORMS:
-            label = escape(f"Download {channel} extension for {system} {architecture}")
+            installer = record["installers"].get(platform)
+            signing = "Unsigned · extract and run install.sh" if system == "Linux" else (
+                "Signed and notarized · disk image" if system == "macOS" else "Signed · Windows installer")
+            if installer:
+                label = escape(f"Download {channel} CLI and MCP installer for {system} {architecture}")
+                download = f'<a class="button primary" aria-label="{label}" href="{escape(installer["url"], quote=True)}">Download installer <span aria-hidden="true">↓</span></a>'
+                provenance = f'<a class="native-link" href="{escape(installer["manifest"], quote=True)}">Installer build and signing record</a>'
+                if system == "Linux":
+                    signing = 'Unsigned · <a href="https://github.com/iokaio/airk/blob/main/docs/release-verification.md#artifact-attestations">Verify build provenance</a>'
+            else:
+                download = '<span class="button unavailable-download" aria-disabled="true">Installer not published</span>'
+                provenance = ''
             cards.append(f"""<article class="download-card">
             <span class="os-mark" aria-hidden="true">{mark}</span>
             <h4>{system}</h4><p>{architecture}</p>
-            <a class="button primary" aria-label="{label}" href="{base}/airk-{version}-{platform}.vsix">Download VSIX <span aria-hidden="true">↓</span></a>
-            <a class="native-link" aria-label="Download {channel} native ZIP for {system} {architecture}" href="{base}/airk-{version}-{target}.zip">Native CLI ZIP</a>
+            <p class="installer-signing">{signing}</p>
+            {download}
+            {provenance}
+            <a class="native-link" aria-label="Download {channel} portable runtime ZIP for {system} {architecture}" href="{base}/airk-{version}-{target}.zip">Portable runtime ZIP</a>
           </article>""")
         date = record["published"].date().isoformat()
         note = ("Preview builds are for early testing. " if channel == "preview" else "")
@@ -97,7 +135,7 @@ def render_downloads(records):
           <a href="{base}/SHA256SUMS">SHA-256 checksums ↓</a>
           <a href="{base}/release.json">Build record ↓</a>
         </div>
-        <p class="release-note">{note}The installed extension and native helper report version {version}.</p>
+        <p class="release-note">{note}Standalone installers provide the native CLI and MCP runtime without a VSIX. “Installer not published” means this release has no standalone installer for that platform; its portable runtime ZIP remains available. Package version: {version}.</p>
       </section>""")
     return "\n".join(sections)
 

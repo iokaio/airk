@@ -4,7 +4,7 @@ import {ReferenceRefreshFlow,type RefreshFlowHost} from './referenceRefresh';
 import {refreshWithinAuthority,type PreparedWorkbenchRefresh} from './workbenchReferenceRefresh';
 import {validateCombinedCatalogSession} from './catalogSession';
 import { isDeepStrictEqual } from 'node:util';
-import { BootstrapObservation, LegacyStartupReview, LegacyStartupTarget, RuntimeBinding, RuntimeHost } from './serviceBootstrap';
+import { BootstrapObservation, LegacyStartupReview, LegacyStartupTarget, RuntimeBinding, RuntimeHost, runtimeBindingIdentity } from './serviceBootstrap';
 import { count, identifier, parseConsolePage, record, RecordValue, ServiceClient, ServiceError } from './serviceClient';
 import { ConsoleIntent, IntentJournal, IntentStorage, LifecycleIntent } from './serviceIntents';
 import { CatalogObject, CatalogReview, IndexSetupReview, catalogBound, catalogHex, catalogObject, catalogRevision, sameCatalogValue, validateCatalogApply, validateCatalogOperation, validateGrantSelection, validateIndexSetupSelection, validateIndexSetupApply } from './indexingCatalog';
@@ -20,6 +20,7 @@ export interface ConsoleHost {
     trusted():boolean;
     changed(state:ServiceConsoleState):void;
     confirm(message:string,acceptLabel?:string):Promise<boolean>;
+    chooseUpgradeMode?():Promise<'migrate'|'rebuild'|undefined>;
     copy(text:string):Promise<void>;
     openReport?(text:string):Promise<void>;
     saveReport?(text:string):Promise<void>;
@@ -527,6 +528,7 @@ export class ServiceConsoleController {
             installed:this.bootstrap.installed,installDir:this.bootstrap.installDir,
             bundleDigest:this.bootstrap.bundle.digest,platform:this.bootstrap.bundle.platform,
             error:this.bootstrap.error,diagnosis:this.bootstrap.diagnosis,
+            rebuild:this.bootstrap.inspection?.rebuild,
             lifecycle:this.bootstrap.inspection?.lifecycle,
         }};
         this.client?.dispose();this.client=undefined;this.binding=undefined;this.disconnected();
@@ -841,12 +843,12 @@ export class ServiceConsoleController {
         let retain=false;
         return this.journal.submit(this.client,id,async response=>{await this.receipt(response);return !retain;},async intent=>{
             this.authorized();if(!this.binding)throw new ServiceError('runtime_binding_not_observed');
-            const binding=this.binding,client=this.client,journal=this.journal,identity=this.observationIdentity,namespace=this.registryNamespace,runtime=JSON.stringify(binding);
+            const binding=this.binding,client=this.client,journal=this.journal,identity=this.observationIdentity,namespace=this.registryNamespace,runtime=runtimeBindingIdentity(binding);
             const before=this.state.connected&&this.state.health.state==='live'&&this.state.health.value?structuredClone(this.state.health.value):null;
             this.clearLifecycleCapture();
             try{
                 const result=await this.host.lifecycle(binding,intent,force);this.authorized();
-                if(binding!==this.binding||runtime!==JSON.stringify(this.binding)||client!==this.client||journal!==this.journal||identity!==this.observationIdentity||namespace!==this.registryNamespace||namespace!==intent.lifecycle.key.namespace)throw new ServiceError('stale_lifecycle_response',true,result);
+                if(binding!==this.binding||runtime!==runtimeBindingIdentity(this.binding)||client!==this.client||journal!==this.journal||identity!==this.observationIdentity||namespace!==this.registryNamespace||namespace!==intent.lifecycle.key.namespace)throw new ServiceError('stale_lifecycle_response',true,result);
                 retain=!this.captureLifecycleResponse(result,intent,binding,before,force);return result;
             }catch(error){
                 // Discovery only: expose the saved native phase/force ownership
@@ -906,8 +908,10 @@ export class ServiceConsoleController {
             if(['upgradeRuntime','rollbackRuntime','resumeActivation'].includes(action.action)){
                 if(!this.binding)throw new ServiceError('runtime_binding_not_observed');
                 const kind=action.action==='upgradeRuntime'?'upgrade':action.action==='rollbackRuntime'?'rollback':'resume';
-                const review=await this.host.runtime.reviewTransition(this.binding,kind);this.authorized();
-                if(!await this.host.confirm(`${kind==='upgrade'?'Use the bundled runtime':kind==='rollback'?'Roll back the runtime':'Resume the saved native activation'} on ${this.host.authority}? Reviewed selection ${review.expectedActive}; target ${review.target}, version ${review.version}. Native activation drains affected work and starts the selected service. Requests can disconnect. Other clients have not been counted. A changed selection invalidates this review.`))return;
+                const mode=kind==='upgrade'&&this.host.chooseUpgradeMode?await this.host.chooseUpgradeMode():'migrate';this.authorized();
+                if(mode===undefined)return;
+                const review=await this.host.runtime.reviewTransition(this.binding,kind,mode==='rebuild'?{rebuildIndexes:true}:undefined);this.authorized();
+                if(!await this.host.confirm(`${review.rebuildIndexes?'Rebuild indexes from saved sources':kind==='upgrade'?'Use the bundled runtime':kind==='rollback'?'Roll back the runtime':'Resume the saved native activation'} on ${this.host.authority}? Reviewed selection ${review.expectedActive}; target ${review.target}, version ${review.version}. ${review.rebuildIndexes?'Previous state and indexes stay preserved. Native AIRK creates fresh indexes using saved source and indexing settings. Search readiness is separate; saved connections require reconnection.':'Native activation drains affected work and starts the selected service.'} Requests can disconnect. Other clients have not been counted. A changed selection invalidates this review.`))return;
                 this.authorized();this.clearLifecycleCapture();this.client?.dispose();this.client=undefined;this.disconnected();
                 try{await this.host.runtime.transition(this.binding,review);this.authorized();}
                 catch(error){try{await this.discover();}catch{/* Preserve the native intent for explicit recovery. */}throw error;}

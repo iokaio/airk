@@ -2,6 +2,40 @@
 use super::*;
 
 #[test]
+fn early_rebuild_option_requires_the_reviewed_predecessor() -> Result<()> {
+    use clap::Parser;
+    #[derive(Parser)]
+    struct Arguments {
+        #[command(subcommand)]
+        runtime: RuntimeCommand,
+    }
+    let base = [
+        "airk",
+        "activate",
+        "--install-dir",
+        "fixture",
+        "--runtime-sha256",
+        "candidate",
+    ];
+    assert!(matches!(
+        Arguments::try_parse_from(base)?.runtime,
+        RuntimeCommand::Activate {
+            rebuild_indexes: false,
+            ..
+        }
+    ));
+    let mut rebuild = base.to_vec();
+    rebuild.push("--rebuild-indexes");
+    assert!(Arguments::try_parse_from(&rebuild).is_err());
+    rebuild.extend(["--expected-active", "predecessor"]);
+    let parsed = Arguments::try_parse_from(rebuild)?;
+    assert!(matches!(parsed.runtime, RuntimeCommand::Activate {
+        rebuild_indexes: true, expected_active: Some(expected), ..
+    } if expected == "predecessor"));
+    Ok(())
+}
+
+#[test]
 fn launcher_source_selection_binds_the_declared_mac_image_and_preserves_legacy_layouts()
 -> Result<()> {
     assert_eq!(standalone_launcher_name("macos", "1.8.7")?, None);
@@ -109,14 +143,35 @@ fn catalog_activation_checks_formats_instead_of_trusting_equal_application_versi
         backup_digest: Sha256Digest::from_bytes([4; 32]),
     };
     let old = serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"self_test":"passed"});
-    assert!(require_catalog_capabilities(&state, &old).is_err());
+    let missing = require_catalog_capabilities(&state, &old).unwrap_err();
+    assert!(
+        missing
+            .downcast_ref::<airk_store::service::registry::runtime_contract::RuntimeContractUnsupported>()
+            .is_none(),
+        "missing capability evidence must not become a positive incompatibility observation"
+    );
     let current = serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"index_catalog":airk_store::service::registry::catalog::capabilities()});
     require_catalog_capabilities(&state, &current)?;
     state.authority_contract = 1;
     let mut earlier_capabilities = airk_store::service::registry::catalog::capabilities();
     earlier_capabilities.authority_contract = 0;
     let earlier_same_version = serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"index_catalog":earlier_capabilities});
-    assert!(require_catalog_capabilities(&state, &earlier_same_version).is_err());
+    let incompatible = require_catalog_capabilities(&state, &earlier_same_version).unwrap_err();
+    let typed = incompatible
+        .downcast_ref::<airk_store::service::registry::runtime_contract::RuntimeContractUnsupported>()
+        .context("installer capability rejection lost canonical native contract details")?;
+    assert_eq!(typed.required.minimum_registry_schema, state.schema);
+    assert_eq!(typed.required.authority_contract, state.authority_contract);
+    assert_eq!(typed.required.policy_contract, state.policy_contract);
+    assert_eq!(
+        serde_json::to_value(&typed.supported)?,
+        earlier_same_version["index_catalog"]
+    );
+    assert!(
+        incompatible
+            .to_string()
+            .starts_with("selected runtime cannot enforce the saved index catalog contracts;")
+    );
     assert_eq!(
         require_catalog_capabilities(&state, &current).is_ok(),
         airk_store::service::registry::catalog::capabilities().supports(

@@ -23,7 +23,7 @@ SPEC.loader.exec_module(QUALITY)
 class RetrievalQualityTests(unittest.TestCase):
     def test_additional_root_requires_native_review_and_updated_grant_without_legacy_fallback(self):
         selected = {"grant_id": "original", "index_id": "same-index"}
-        service = SimpleNamespace(single_image=True, scopes={"qualification": selected}, configure=Mock())
+        service = SimpleNamespace(single_image=True, catalog_authority=True, scopes={"qualification": selected}, configure=Mock())
         complete = {"completion": {"catalog_revision": 7}, "future_evidence": {"retained": True}}
         def apply(change):
             self.assertEqual(change, {"operation": "add_root", "alias": "specs", "path": str(Path("original-alias"))})
@@ -41,6 +41,10 @@ class RetrievalQualityTests(unittest.TestCase):
                 QUALITY.add_fixture_root(service, "qualification", "specs", Path("original-alias"))
         service.configure.assert_not_called()
         service.single_image = False
+        with self.assertRaisesRegex(ValueError, "Historical catalog source-root review protocol"):
+            QUALITY.add_fixture_root(service, "qualification", "specs", Path("original-alias"))
+        service.configure.assert_not_called()
+        service.catalog_authority = False
         with patch.object(QUALITY.reviewed_source, "SourceReview", side_effect=AssertionError("legacy cannot use modern grant")):
             QUALITY.add_fixture_root(service, "qualification", "specs", Path("original-alias"))
         service.configure.assert_called_once_with("qualification", {"operation": "add_root", "alias": "specs", "path": str(Path("original-alias"))})

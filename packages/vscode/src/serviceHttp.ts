@@ -71,6 +71,10 @@ export interface EndpointDescriptor {
     state:'recovering'|'ready'|'stopping';predecessor_digest:string|null;
 }
 export interface HttpConnectionInfo {schema:1;connection_id:string;endpoint:EndpointDescriptor;selection:HttpSelection;ca_certificate_file:string;credential_file:string}
+export interface AttachmentRetirementProof {
+    schema:1;connection_id:string;installation:string;namespace:string;client:string;
+    expires_unix_ms:number;explorer_descriptor_sha256:string;authority_sha256:string;
+}
 function object(value:unknown):Record<string,any>{if(!value||typeof value!=='object'||Array.isArray(value))throw Error('invalid_http_connection');return value as Record<string,any>;}
 function keys(value:Record<string,any>,fields:string[]):void{if(Object.keys(value).some(key=>!fields.includes(key))||fields.some(key=>!Object.hasOwn(value,key)))throw Error('invalid_http_connection_fields');}
 function hex(value:unknown,length=64):void{if(typeof value!=='string'||!new RegExp(`^[a-f0-9]{${length}}$`).test(value))throw Error('invalid_http_identity');}
@@ -134,6 +138,34 @@ export function sameHttpAuthority(actual:HttpSelection,expected:HttpSelection):b
     if(left.expected_catalog_revision<right.expected_catalog_revision)return false;
     delete (left as any).expected_catalog_revision;delete (right as any).expected_catalog_revision;
     return isDeepStrictEqual(left,right);
+}
+/** Matches native authority_digest: preserve complete reviewed authority while
+ * normalizing only saved minimum catalog clocks. Arrays retain their order. */
+export function httpAuthorityDigest(input:HttpSelection):string{
+    const selection=validateHttpSelection(structuredClone(input));
+    if(selection.kind==='imported_legacy_union')for(const member of selection.selection.selections)member.expected_catalog_revision=1;
+    else selection.selection.expected_catalog_revision=1;
+    const canonical=(value:unknown):string=>{
+        if(value===null||typeof value==='boolean'||typeof value==='string')return JSON.stringify(value);
+        if(typeof value==='number'){if(!Number.isSafeInteger(value))throw Error('unsupported_http_authority_number');return JSON.stringify(value);}
+        if(Array.isArray(value))return '['+value.map(canonical).join(',')+']';
+        if(value&&typeof value==='object')return '{'+Object.keys(value).sort((left,right)=>Buffer.compare(Buffer.from(left),Buffer.from(right))).map(key=>JSON.stringify(key)+':'+canonical((value as Record<string,unknown>)[key])).join(',')+'}';
+        throw Error('invalid_http_authority_value');
+    };
+    const hash=createHash('sha256').update(Buffer.from('AIRK-DIGEST-1\0'));
+    for(const bytes of [Buffer.from('airk-http-authority/1'),Buffer.from(canonical(selection))]){const length=Buffer.alloc(8);length.writeBigUInt64BE(BigInt(bytes.length));hash.update(length).update(bytes);}
+    return hash.digest('hex');
+}
+export function validateAttachmentRetirement(input:unknown,connection:HttpConnectionInfo,client:string,now=Date.now()):AttachmentRetirementProof{
+    const info=validateHttpConnection(connection),value=object(input);
+    keys(value,['schema','connection_id','installation','namespace','client','expires_unix_ms','explorer_descriptor_sha256','authority_sha256']);
+    for(const field of ['installation','explorer_descriptor_sha256','authority_sha256'])hex(value[field]);
+    hex(value.connection_id,32);hex(value.namespace,32);
+    const nativeClient=client==='claude'?'claude_code':client;
+    if(value.schema!==1||value.connection_id!==info.connection_id||value.installation!==info.endpoint.installation||value.namespace!==info.selection.selection.namespace
+        ||!['codex','claude_code','vscode'].includes(nativeClient)||value.client!==nativeClient||!Number.isSafeInteger(value.expires_unix_ms)||value.expires_unix_ms<=now
+        ||value.authority_sha256!==httpAuthorityDigest(info.selection))throw Error('crossed_http_attachment_retirement');
+    return structuredClone(value) as AttachmentRetirementProof;
 }
 export function validateEndpoint(input:unknown):EndpointDescriptor{
     const endpoint=object(input);keys(endpoint,['schema','installation','user','namespace','generation','service_instance','executable_sha256','url','ca_sha256','certificate_sha256','state','predecessor_digest']);

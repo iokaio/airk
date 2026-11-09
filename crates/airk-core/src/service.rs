@@ -137,6 +137,10 @@ pub enum ControlMethod {
         client: crate::usage::ClientFamily,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         explorer_descriptor: Option<String>,
+        /// An original managed attachment proven retired by native ownership.
+        /// Checked again under the credential owner before replacement issuance.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reattach_connection_id: Option<Incarnation>,
     },
     HttpRevoke {
         connection_id: Incarnation,

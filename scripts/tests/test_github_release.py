@@ -1,11 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 import importlib.util
+import copy
+import io
 import json
 import os
 import shutil
 from pathlib import Path
 import subprocess
 import tempfile
+import tarfile
 import unittest
 from unittest.mock import patch
 import zipfile
@@ -218,6 +221,14 @@ def pair_vsix(directory, native_dir, files, native_receipt, executables):
              "native/manifest.json": json.dumps(wrapper).encode(),
              "native/candidate.json": (native_dir / "manifest.json").read_bytes(),
              **{"native/runtime/" + name: data for name, data in files.items()}}
+    if tuple(map(int, version.split("."))) >= (1, 8, 12):
+        files["package.json"] = json.dumps({"name": "airk", "publisher": "iokaio", "version": version}).encode()
+        for name in release.extension.package.update_inventory_paths():
+            files.setdefault(name, b"fictional extension update graph")
+        update_files = {name: release.hashlib.sha256(files[name]).hexdigest()
+                        for name in release.extension.package.update_inventory_paths()}
+        files["airk-update.json"] = release.extension.package.encode_update_inventory(
+            update_files, version, files["package.json"].decode())
     archive = directory / f"airk-{version}-{platform}.vsix"
     with zipfile.ZipFile(archive, "w") as zipped:
         for name, data in files.items():
@@ -238,6 +249,168 @@ def pair_vsix(directory, native_dir, files, native_receipt, executables):
 
 
 class ServicePairReleaseContracts(unittest.TestCase):
+    def standalone_fixture(self, directory, target):
+        files, runtime, _ = pair_fixture(directory / "native", target, target in release.SIGNED_TARGETS, "1.8.14")
+        output = directory / "installer"
+        output.mkdir()
+        artifact = release.standalone.artifact("1.8.14", target)
+        payload = {"runtime/" + name: data for name, data in files.items()}
+        if "apple" in target:
+            mac = release.module("test_installer_mac", "package-standalone-macos.py")
+            payload.update(mac.installer_files("1.8.14", target, runtime["install_manifest_sha256"],
+                                               runtime["payload"]["AIRK.app/Contents/MacOS/airk"]))
+        elif "linux" in target:
+            linux = release.module("test_installer_linux", "package-standalone-linux.py")
+            sums = "".join(f"{value}  runtime/{path}\n" for path, value in sorted(runtime["payload"].items())).encode()
+            values = {"VERSION": "1.8.14", "ARCHIVE_NAME": artifact, "DIRECTORY_NAME": artifact.removesuffix(".tar.gz"),
+                "PAYLOAD_FILE_COUNT": len(runtime["payload"]), "INSTALL_MANIFEST_SHA256": runtime["install_manifest_sha256"],
+                "PAYLOAD_SUMS_SHA256": release.hashlib.sha256(sums).hexdigest()}
+            payload.update({"payload.sha256": sums, **{name: linux.render_template(name + ".in", values).encode()
+                           for name in ("install.sh", "README.txt")}})
+        else:
+            payload["notices/inno-setup/LICENSE.txt"] = b"Fictional compiler license"
+        if "linux" in target:
+            with tarfile.open(output / artifact, "w:gz", format=tarfile.GNU_FORMAT) as archive:
+                for name, encoded in payload.items():
+                    info = tarfile.TarInfo(artifact.removesuffix(".tar.gz") + "/" + name)
+                    info.size = len(encoded)
+                    info.mode = 0o755 if name in ("install.sh", "runtime/airk") else 0o644
+                    archive.addfile(info, io.BytesIO(encoded))
+        else:
+            (output / artifact).write_bytes(b"Fictional OS installer; these tests assert no actual platform trust")
+        receipt = {"schema": "airk-standalone-installer/1", "version": "1.8.14", "target": target,
+            "commit": COMMIT, "cargo_lock_sha256": runtime["cargo_lock_sha256"],
+            "runtime_install_sha256": runtime["install_manifest_sha256"], "runtime_source": runtime["source"],
+            "artifact": artifact, "artifact_sha256": release.digest(output / artifact),
+            "installer_kind": release.standalone.TARGETS[target][2],
+            "payload": {name: release.hashlib.sha256(data).hexdigest() for name, data in payload.items()}}
+        if "windows" in target:
+            verification = {"trust": "authenticode_valid", "timestamp_present": True, "signer_thumbprint": "c" * 40}
+            receipt.update(signing={"platform": "Windows", "identity": "c" * 40, "azure": release.signer.AZURE_SIGNING,
+                "binary_sha256": receipt["artifact_sha256"], "verification": verification},
+                uninstaller={"identity": "c" * 40, "azure": release.signer.AZURE_SIGNING,
+                    "unsigned_sha256": "1" * 64, "binary_sha256": "2" * 64, "verification": dict(verification)},
+                compiler={"version": "6.7.1.0", "sha256": "3" * 64},
+                installer_source_sha256=release.digest(release.ROOT / "installers/windows/airk.iss"))
+        elif "apple" in target:
+            receipt.update(runtime_signing=runtime["signing"], runtime_signing_sha256="1" * 64,
+                signing={"platform": "Darwin", "identity": "c" * 40, "team_id": "5PX7D99PXA",
+                    "certificate_sha256": "4260bd90b8623e45da6d67144a2bff4fd8fa0a8186c7281c0125e39877c3f5c1",
+                    "trust": "apple_developer_id", "timestamp_present": True,
+                    "notarization": {"id": "fictional-notary-job", "status": "Accepted", "stapled": True, "scope": artifact}})
+        else:
+            receipt["signing"] = {"platform": "Linux", "trust": "unsigned"}
+            receipt["native_archive_sha256"] = runtime["archive_sha256"]
+        self.write_installer(output, receipt)
+        return output, runtime, receipt
+
+    def write_installer(self, output, receipt):
+        (output / "installer.json").write_text(json.dumps(receipt))
+        (output / "SHA256SUMS").write_text(
+            f'{release.digest(output / receipt["artifact"])}  {receipt["artifact"]}\n'
+            f'{release.digest(output / "installer.json")}  installer.json\n')
+
+    def test_standalone_installers_bind_actual_artifact_and_matching_verified_native_candidate(self):
+        for target in release.native.TARGETS:
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as temporary:
+                output, native, receipt = self.standalone_fixture(Path(temporary), target)
+                self.assertEqual(release.verify_installer(output, target, COMMIT, "1.8.14", native)[0], receipt)
+                for field, changed in (("commit", "b" * 40), ("runtime_install_sha256", "0" * 64),
+                                       ("runtime_source", {"sha256": "0" * 64, "files": 4}),
+                                       ("artifact_sha256", "0" * 64), ("target", "other")):
+                    wrong = copy.deepcopy(receipt)
+                    wrong[field] = changed
+                    self.write_installer(output, wrong)
+                    with self.subTest(field=field), self.assertRaisesRegex(ValueError, "identity differs"):
+                        release.verify_installer(output, target, COMMIT, "1.8.14", native)
+                wrong = copy.deepcopy(receipt)
+                wrong["payload"]["runtime/airk-install.json"] = "0" * 64
+                self.write_installer(output, wrong)
+                with self.assertRaisesRegex(ValueError, "different native runtime"):
+                    release.verify_installer(output, target, COMMIT, "1.8.14", native)
+                # An untouched manifest cannot authorize a different executable.
+                wrong = copy.deepcopy(receipt)
+                executable = "AIRK.app/Contents/MacOS/airk" if "apple" in target else "airk.exe" if "windows" in target else "airk"
+                wrong["payload"]["runtime/" + executable] = "0" * 64
+                self.assertEqual(wrong["payload"]["runtime/airk-install.json"], receipt["payload"]["runtime/airk-install.json"])
+                self.write_installer(output, wrong)
+                with self.assertRaisesRegex(ValueError, "different native runtime"):
+                    release.verify_installer(output, target, COMMIT, "1.8.14", native)
+
+    def test_installer_signing_evidence_is_platform_specific_and_cannot_be_relabelled(self):
+        for target in release.native.TARGETS:
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as temporary:
+                output, native, receipt = self.standalone_fixture(Path(temporary), target)
+                wrong = copy.deepcopy(receipt)
+                if "windows" in target:
+                    wrong["uninstaller"]["verification"]["timestamp_present"] = False
+                elif "apple" in target:
+                    wrong["signing"]["notarization"]["stapled"] = False
+                else:
+                    wrong["signing"]["trust"] = "os_signed"
+                self.write_installer(output, wrong)
+                with self.assertRaisesRegex(ValueError, "Authenticode|notarization|unsigned"):
+                    release.verify_installer(output, target, COMMIT, "1.8.14", native)
+
+    def test_installer_publication_boundary_preserves_historical_and_preview_contracts(self):
+        self.assertFalse(release.standalone.required("1.4.4", "stable"))
+        self.assertFalse(release.standalone.required("1.8.14", "preview"))
+        self.assertTrue(release.standalone.required("1.8.14", "stable"))
+        self.assertTrue(release.standalone.required("1.9.0", "stable"))
+
+    def test_installer_bootstrap_hashes_must_match_reviewed_source_even_with_resealed_metadata(self):
+        for target in release.native.TARGETS:
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as temporary:
+                output, native, receipt = self.standalone_fixture(Path(temporary), target)
+                if "windows" in target:
+                    receipt["installer_source_sha256"] = "0" * 64
+                elif "apple" in target:
+                    receipt["payload"]["Install AIRK.command"] = "0" * 64
+                else:
+                    receipt["payload"]["install.sh"] = "0" * 64
+                self.write_installer(output, receipt)
+                with self.assertRaisesRegex(ValueError, "provenance differs|bootstrap differs"):
+                    release.verify_installer(output, target, COMMIT, "1.8.14", native)
+
+    def test_modern_stable_assembly_and_bundle_recheck_require_all_installer_pairs(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            inputs = root / "inputs"
+            inputs.mkdir()
+            version = "1.8.14"
+            for target in release.native.TARGETS:
+                signed = target in release.SIGNED_TARGETS
+                prefix = "airk-signed" if signed else "airk"
+                native_dir = inputs / f"{prefix}-native-{target}-{SUFFIX}"
+                files, receipt, executables = pair_fixture(native_dir, target, signed, version)
+                if signed:
+                    pair_fixture(inputs / f"airk-native-{target}-{SUFFIX}", target, False, version)
+                pair_vsix(inputs / f"{prefix}-vsix-{target}-{SUFFIX}", native_dir, files, receipt, executables)
+                fixture = root / target
+                fixture.mkdir()
+                installer, _, _ = self.standalone_fixture(fixture, target)
+                shutil.copytree(installer, inputs / f"airk-installer-{target}-{COMMIT}-123")
+            record = release.assemble(inputs, root / "output", COMMIT, version, "v" + version, "stable", "123", "1")
+            self.assertEqual(len(record["assets"]), 24)
+            self.assertEqual(release.verify_bundle(root / "output", COMMIT, version, "v" + version, "123", "1"), record)
+            # Missing input refuses before a publication directory is created.
+            shutil.rmtree(inputs / f"airk-installer-x86_64-unknown-linux-gnu-{COMMIT}-123")
+            with self.assertRaisesRegex(ValueError, "standalone installer files"):
+                release.assemble(inputs, root / "missing-output", COMMIT, version, "v" + version, "stable", "123", "1")
+            self.assertFalse((root / "missing-output").exists())
+            # A metadata mismatch remains invalid even if generic bundle hashes
+            # are recomputed; the native/installer relationship is revalidated.
+            manifest = release.standalone.manifest(version, "x86_64-pc-windows-msvc")
+            changed = json.loads((root / "output" / manifest).read_text())
+            changed["runtime_source"]["sha256"] = "0" * 64
+            (root / "output" / manifest).write_text(json.dumps(changed))
+            record["assets"][manifest] = release.digest(root / "output" / manifest)
+            (root / "output/release.json").write_text(json.dumps(record))
+            (root / "output/SHA256SUMS").write_text("".join(
+                f"{release.digest(path)}  {path.name}\n" for path in sorted((root / "output").iterdir()) if path.name != "SHA256SUMS"))
+            with self.assertRaisesRegex(ValueError, "identity differs"):
+                release.verify_bundle(root / "output", COMMIT, version, "v" + version, "123", "1")
+
     def test_modern_single_image_release_keeps_full_signed_bundle_without_launcher_copy(self):
         for target in release.native.TARGETS:
             signed = target in release.SIGNED_TARGETS

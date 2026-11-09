@@ -348,6 +348,17 @@ impl ServiceRegistry {
         id.map(|id| record(&self.connection, id.parse()?))
             .transpose()
     }
+    /// Full saved desired-state predicate for an offline rebuild owner. Unlike
+    /// a bounded console queue page, this includes paused and running work and
+    /// model-setup continuations. A stopped process does not prove that an
+    /// accepted configuration has a known terminal outcome.
+    pub fn has_unsettled_configuration(&self, project: ProjectBinding) -> Result<bool> {
+        self.get(project)?;
+        self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM service_jobs WHERE project=?1 AND state IN('pending','running') AND kind IN('configure','model_setup')) OR EXISTS(SELECT 1 FROM service_setup_pending WHERE project=?1)",
+            [project.to_string()], |row| row.get(0),
+        ).map_err(Into::into)
+    }
     /// Bounded FIFO observations include paused jobs and never admit or mutate work.
     pub fn queued_jobs_observation(
         &self,
@@ -1769,6 +1780,10 @@ pub(super) fn request_cancellation_in(
     super::maintenance::job_completed(connection, id, super::maintenance::clock_ms()?, None)?;
     Ok(result)
 }
+
+#[cfg(test)]
+#[path = "service_rebuild_settings_jobs_tests.rs"]
+mod rebuild_settings_tests;
 
 #[cfg(test)]
 mod tests {

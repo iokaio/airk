@@ -64,6 +64,18 @@ class FakeTransport implements ControlTransport {
     async request(method:unknown):Promise<RecordValue>{this.calls.push(structuredClone(method));return this.reply;}
     dispose():void{}
 }
+
+test('management adapter retains complete failures without multiplying native retry budgets',async()=>{
+    const method={catalog_source_mutation_draft:{selection:{index_id:'idx_'+'ab'.repeat(16),key:{nonce:'cd'.repeat(16)}}}};
+    for(const request of [method,'request_epoch',{catalog_apply:{request:{same:'saved'}}}]){
+        for(const code of ['registry_busy','invalid_registry_request','registry_response_unknown_retry_with_key']){
+            const calls:unknown[]=[],response={status:'failure',code,native_detail:{retained:true}};
+            const client=new ServiceClient({request:async value=>{calls.push(value);return response;},dispose(){}});
+            await assert.rejects(client.rpc(request),error=>error instanceof ServiceError&&error.nativeResponse===response);
+            assert.deepEqual(calls,[request]);assert.equal(calls[0],request,'Native budget exhaustion preserves the exact original request');
+        }
+    }
+});
 test('prepared durable mutations preserve the exact key after an unknown registry outcome',async()=>{
     const fake=new FakeTransport(),client=new ServiceClient(fake);
     const intent=await client.prepareJob(project,'index');

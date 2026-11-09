@@ -153,6 +153,119 @@ fn fixture() -> Result<(tempfile::TempDir, Kernel)> {
 }
 
 #[tokio::test]
+async fn recovery_details_outside_frozen_project_scope_are_explicitly_unavailable_without_changing_status()
+-> Result<()> {
+    use airk_core::{rebuild::*, service::ProjectRegistration};
+    let (temporary, kernel) = fixture()?;
+    let grant = authority(&kernel, false, "")?;
+    let baseline = kernel.with_scoped_reads(grant.clone())?.status_summary()?;
+    let replacement = ProjectRegistration::new(
+        kernel.root().to_str().unwrap().into(),
+        kernel.data_dir().to_str().unwrap().into(),
+        kernel.collection().into(),
+    )?;
+    let original = ProjectRegistration::new(
+        replacement.root.clone(),
+        temporary
+            .path()
+            .join("preserved-data")
+            .to_string_lossy()
+            .into_owned(),
+        replacement.collection.clone(),
+    )?;
+    let observation = RebuildObservation {
+        schema: 1,
+        operation_id: Incarnation::from_bytes([71; 16]),
+        stage: RebuildStage::Paused,
+        provenance: RebuildProvenance::NativeRebuildFromSavedConfiguration,
+        candidate: Sha256Digest::from_bytes([72; 32]),
+        predecessor: Sha256Digest::from_bytes([73; 32]),
+        original_namespace: Incarnation::from_bytes([74; 16]),
+        preserved_state: "/old-state".into(),
+        preserved_control: "/old-state/control".into(),
+        preserved_index_roots: vec![original.data_root.clone()],
+        successor_state: "/new-state".into(),
+        successor_control: "/new-state/control".into(),
+        successor_namespace: Some(Incarnation::from_bytes([75; 16])),
+        original_failure: None,
+        failure: None,
+        index_scope: None,
+        indexes: vec![RebuildIndexObservation {
+            original,
+            replacement: Some(replacement),
+            sources: std::collections::BTreeMap::from([(
+                "secret".into(),
+                "/private-saved-alias-must-not-leak".into(),
+            )]),
+            settings_sha256: Sha256Digest::from_bytes([76; 32]),
+            original_paused: true,
+            paused: true,
+            watching: false,
+            job: None,
+            readiness: RebuildReadiness::Paused,
+            failure: None,
+        }],
+    };
+    let operation = observation.operation_id;
+    let kernel = kernel.with_rebuild_observer(grant.backing, move || Ok(Some(observation.clone())));
+    let mut owner = LocalTools::new(kernel).await?;
+    let mut selected = owner.scoped_session(grant.clone()).await?;
+    let response = selected
+        .call(
+            "airk_status".into(),
+            json!({"response_mode":"full"}).as_object().unwrap().clone(),
+        )
+        .await?;
+    assert!(!response.is_error.unwrap_or(false), "{response:?}");
+    let mut body: Value = serde_json::from_str(&response.content[0].as_text().unwrap().text)?;
+    assert_eq!(
+        body["rebuild_unavailable"],
+        json!({"operation_id":operation,"index_scope":grant.backing,"reason":"partial_project_scope"})
+    );
+    assert!(body.get("rebuild").is_none());
+    assert!(
+        !body
+            .to_string()
+            .contains("private-saved-alias-must-not-leak")
+    );
+    body.as_object_mut().unwrap().remove("rebuild_unavailable");
+    for (key, value) in baseline.as_object().unwrap() {
+        assert_eq!(
+            &body[key], value,
+            "recovery changed existing status field {key}"
+        );
+    }
+    let native = selected
+        .read_native(
+            NativeRead::Settings {
+                view: SettingsView::Roots,
+                cursor: None,
+                max_bytes: 20 << 10,
+            },
+            grant.backing,
+        )
+        .await?;
+    assert!(
+        !native
+            .to_string()
+            .contains("private-saved-alias-must-not-leak")
+    );
+    let page: usage_page::Page = serde_json::from_value(native)?;
+    let mut document = Value::Null;
+    for record in page.items {
+        usage_page::assemble(&mut document, record)?;
+    }
+    assert_eq!(
+        document["rebuild_unavailable"]["reason"],
+        "partial_project_scope"
+    );
+    assert!(document.get("rebuild").is_none());
+    selected.close().await?;
+    owner.close().await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn native_final_projection_verification_uses_only_its_installed_owner() -> Result<()> {
     use airk_core::{
         SearchQuery,

@@ -87,6 +87,7 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             client,
             explorer_descriptor,
             origin_sha256,
+            reattach_connection_id,
         } => {
             http_commands::enroll_legacy(
                 install_dir,
@@ -96,6 +97,7 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
                 client,
                 explorer_descriptor.as_deref(),
                 *origin_sha256,
+                *reattach_connection_id,
             )
             .await?
         }
@@ -369,9 +371,21 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             install_dir,
             runtime_sha256,
             expected_active,
-        } => serde_json::to_value(match expected_active {
-            Some(expected) => activate_reviewed(install_dir, runtime_sha256, expected).await?,
-            None => activate(install_dir, runtime_sha256).await?,
+            rebuild_indexes,
+        } => serde_json::to_value(if *rebuild_indexes {
+            activate_rebuilding_reviewed(
+                install_dir,
+                runtime_sha256,
+                expected_active
+                    .as_deref()
+                    .context("rebuild requires the reviewed preceding selection")?,
+            )
+            .await?
+        } else {
+            match expected_active {
+                Some(expected) => activate_reviewed(install_dir, runtime_sha256, expected).await?,
+                None => activate(install_dir, runtime_sha256).await?,
+            }
         })?,
         RuntimeCommand::InspectCandidate {
             install_dir,
@@ -500,7 +514,8 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             // Optional, current receipt observations only; not an execution proof
             // across lock waits. Actual native startup retains all locked guards.
             let connection_observation = connection_observation(install_dir);
-            serde_json::json!({"selection":selection,"executable":executable,"approval":approval,"launcher":launcher,"universal_launcher":universal_launcher,"managed_policy":policy,"control_dir":control.ok(),"state_error":state_error,"lifecycle":lifecycle,"registry_namespace":registry_namespace,"payload_verified":true,"payload_repair":payload_repair::status(install_dir)?,"connection_observation":connection_observation})
+            let (rebuild, rebuild_error) = rebuild_report(install_dir);
+            serde_json::json!({"selection":selection,"executable":executable,"approval":approval,"launcher":launcher,"universal_launcher":universal_launcher,"managed_policy":policy,"control_dir":control.ok(),"state_error":state_error,"lifecycle":lifecycle,"registry_namespace":registry_namespace,"payload_verified":true,"payload_repair":payload_repair::status(install_dir)?,"connection_observation":connection_observation,"rebuild":rebuild,"rebuild_error":rebuild_error})
         }
         RuntimeCommand::Remove {
             install_dir,
@@ -712,7 +727,8 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             let logs = layout::control(install_dir)
                 .and_then(|control| crate::service_logs::recent(&control, 32));
             let log_error = logs.is_err();
-            serde_json::json!({"logs":logs.ok(),"logs_unavailable":log_error,"runtime":selection.ok(),"runtime_error":selection_error,"bootstrap":bootstrap.ok().flatten(),"bootstrap_error":bootstrap_error,"pending_stages":stages.ok(),"staging_error":stages_error,"pending_launcher_repair":repair.ok().flatten(),"launcher_repair_error":repair_error,"state_layout":state_layout.ok(),"layout_error":layout_error,"managed_policy":policy.ok().flatten(),"managed_policy_error":policy_error,"pending_activation":activation.ok().flatten(),"activation_error":activation_error,"activation_result":activation_result.ok().flatten(),"activation_result_error":activation_result_error,"upgrade_checkpoint":checkpoint.ok().flatten(),"upgrade_checkpoint_error":checkpoint_error,"live_service_health":"not_checked"})
+            let (rebuild, rebuild_error) = rebuild_report(install_dir);
+            serde_json::json!({"logs":logs.ok(),"logs_unavailable":log_error,"runtime":selection.ok(),"runtime_error":selection_error,"bootstrap":bootstrap.ok().flatten(),"bootstrap_error":bootstrap_error,"pending_stages":stages.ok(),"staging_error":stages_error,"pending_launcher_repair":repair.ok().flatten(),"launcher_repair_error":repair_error,"state_layout":state_layout.ok(),"layout_error":layout_error,"managed_policy":policy.ok().flatten(),"managed_policy_error":policy_error,"pending_activation":activation.ok().flatten(),"activation_error":activation_error,"activation_result":activation_result.ok().flatten(),"activation_result_error":activation_result_error,"upgrade_checkpoint":checkpoint.ok().flatten(),"upgrade_checkpoint_error":checkpoint_error,"live_service_health":"not_checked","rebuild":rebuild,"rebuild_error":rebuild_error})
         }
         RuntimeCommand::ResetStartup { install_dir } => {
             let _lock = install_lock(install_dir)?;
@@ -851,9 +867,13 @@ pub(super) fn require_login_registration_change(root: &Path, action: &LoginComma
 }
 
 fn connection_observation(root: &Path) -> Option<serde_json::Value> {
-    match (activation::pending(root), launcher_repair::pending(root)) {
-        (Ok(activation), Ok(launcher)) => Some(serde_json::json!({"schema":1,
-            "activation_pending":activation.is_some(),"launcher_repair_pending":launcher.is_some()})),
+    match (
+        activation::pending(root),
+        launcher_repair::pending(root),
+        activation::rebuild::pending(root),
+    ) {
+        (Ok(activation), Ok(launcher), Ok(rebuild)) => Some(serde_json::json!({"schema":1,
+            "activation_pending":activation.is_some() || rebuild,"launcher_repair_pending":launcher.is_some()})),
         _ => None,
     }
 }

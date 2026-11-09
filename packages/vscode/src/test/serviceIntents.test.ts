@@ -14,9 +14,9 @@ class Memory implements IntentStorage {
 }
 const namespace='ab'.repeat(16),project='cd'.repeat(32),caller='ef'.repeat(16);
 const intent=(index:number):MutationIntent=>({enqueue:{project,caller,kind:'index',key:{namespace,epoch:7,nonce:index.toString(16).padStart(32,'0')}}});
-test('transient metadata contention retries bounded reads but never automatically retries mutations',async()=>{
+test('exhausted native metadata contention never restarts a read or mutation budget',async()=>{
     let calls=0;const client=new ServiceClient({dispose(){},async request(){calls++;return calls<3?{status:'failure',code:'registry_busy'}:{status:'job',job:{id:'12'.repeat(32),project}};}});
-    await client.rpc({job:{id:'12'.repeat(32)}},'job');assert.equal(calls,3);
+    await assert.rejects(client.rpc({job:{id:'12'.repeat(32)}},'job'),/registry_busy/);assert.equal(calls,1);
     calls=0;await assert.rejects(client.submitMutation(intent(1)),/registry_busy/);assert.equal(calls,1);
 });
 test('lost acknowledgement reconciles by read-only receipt and never resubmits a missing request',async()=>{

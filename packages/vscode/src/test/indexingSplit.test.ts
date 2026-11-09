@@ -125,6 +125,16 @@ test('new catalog pages or inspected details discard the previous split selectio
     }
 });
 
+test('advice between split prepare and apply preserves the exact reviewed sequence',async()=>{
+    const f=listedSplitController();let applies=0;
+    f.control.catalogSplitApply=async(review,valid)=>{applies++;assert.equal(review.draft,f.f.draft);assert.equal(valid(),true);return {status:'catalog_split_applied',future_native_receipt:'retained'};};
+    await f.controller.page('indexes');await f.controller.splitOpen(f.f.index,f.controller.snapshot().generation);
+    await f.controller.splitSourceRead(f.controller.snapshot().generation);await f.controller.splitDraft(f.f.choice,f.controller.snapshot().generation);
+    const generation=f.controller.snapshot().generation;
+    await f.controller.recommendations(async()=>({schema:'airk.recommendations/1',selected:{index_ids:[f.f.index],project_ids:[]}}));
+    await f.controller.splitApply(generation);assert.equal(applies,1);assert.equal(f.controller.snapshot().outcome?.future_native_receipt,'retained');
+});
+
 test('connected native context hydrates split capability automatically and context reads retain it',async()=>{
     const f=splitFixture(),descriptor={host:'22'.repeat(32),key:'33'.repeat(32),kind:'folder' as const,name:'AIRK'};
     const capabilities={policy_contract:3,future_native_capability:{retained:true}};
@@ -144,10 +154,10 @@ test('connected native context hydrates split capability automatically and conte
     assert.equal(controller.snapshot().canReviewSplit,false,'a version or missing metadata cannot imply capability');
 });
 
-test('split receipt reads retry typed contention but split mutations dispatch only once',async()=>{
+test('split receipt exhaustion and mutations do not restart native retry budgets',async()=>{
     const f=splitFixture();let reads=0,writes=0;
-    const client=new ServiceClient({dispose(){},async request(input){const method=catalogObject(input);if('catalog_split_receipt'in method){reads++;if(reads<3)return {status:'failure',code:'registry_busy'};return {status:'catalog_split_receipt',caller:catalogObject(f.draft.request).caller,key:catalogObject(f.draft.request).key,snapshot:f.snapshot,expired:false};}writes++;return {status:'failure',code:'invalid_registry_request'};}});
-    await client.catalogSplitReceipt({catalog_split_apply:{draft:f.draft}});assert.equal(reads,3);
+    const client=new ServiceClient({dispose(){},async request(input){const method=catalogObject(input);if('catalog_split_receipt'in method){reads++;return {status:'failure',code:'registry_busy'};}writes++;return {status:'failure',code:'invalid_registry_request'};}});
+    await assert.rejects(client.catalogSplitReceipt({catalog_split_apply:{draft:f.draft}}),/registry_busy/);assert.equal(reads,1);
     await assert.rejects(client.submitSplit({catalog_split_apply:{draft:f.draft}}),(error:unknown)=>error instanceof ServiceError&&error.outcomeUnknown);assert.equal(writes,1);
 });
 

@@ -1123,7 +1123,7 @@ fn default_terse_https_supports_full_and_requested_status_without_changing_revis
 }
 
 #[test]
-#[cfg(feature = "embedding-worker")]
+#[cfg(feature = "local-inference")]
 fn default_search_uses_vectors_and_live_mcp_connections_observe_panel_opt_out() -> anyhow::Result<()>
 {
     let root = tempfile::tempdir()?;

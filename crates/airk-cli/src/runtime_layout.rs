@@ -11,6 +11,9 @@ const CONTROL_OWNER: &str = "airk-control-1.4.owner.json";
 const CONTROL_PART: &str = "airk-control-1.4.owner.part";
 #[path = "runtime_registry_binding.rs"]
 mod registry_binding;
+#[path = "runtime_layout_successor.rs"]
+mod successor;
+pub(super) use successor::{admit_successor, successor_handoff_started};
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -125,6 +128,7 @@ impl Layout {
                 "runtime log location is redirected or overlaps protected execution/control state"
             );
         }
+        successor::validate_binding(root, &layout)?;
         Ok(Some(layout))
     }
     fn owner(&self) -> Self {
@@ -554,6 +558,12 @@ pub(super) fn validate_control(control: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Resolve only an already authenticated installed control binding. Raw native
+/// development namespaces have no installation; this never creates state.
+pub(super) fn installation_for_control(control: &Path) -> Result<Option<PathBuf>> {
+    Ok(control_binding(&control_location(control)?)?.map(|owner| owner.install))
+}
+
 /// Installer-only validation with a namespace already checked against the saved
 /// catalog intent/owner. No pin repair, directory creation or SQLite open occurs.
 pub(super) fn validate_catalog_control(
@@ -636,6 +646,7 @@ pub(super) fn retained_private_paths(root: &Path) -> Result<Vec<PathBuf>> {
     if let Some(origin) = layout.managed_catalog_origin {
         paths.push(origin.source);
     }
+    paths.extend(successor::preserved_private_paths(root)?);
     Ok(paths)
 }
 /// Record initialization before any registry creation, under singleton ownership.

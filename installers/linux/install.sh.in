@@ -1,0 +1,30 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+# Offline unsigned installer. Release checksums establish integrity, not a signature.
+set -eu
+umask 077
+
+fail() { printf '%s\n' "AIRK installer: $*" >&2; exit 1; }
+[ "$(uname -s)" = Linux ] || fail 'this package is for Linux.'
+case "$(uname -m)" in x86_64|amd64) ;; *) fail 'this package requires Linux x86-64.' ;; esac
+command -v sha256sum >/dev/null 2>&1 || fail 'sha256sum is required.'
+command -v find >/dev/null 2>&1 || fail 'find is required.'
+
+package_dir=$(CDPATH= cd -P -- "$(dirname -- "$0")" && pwd)
+cd -- "$package_dir"
+[ -f payload.sha256 ] && [ ! -L payload.sha256 ] || fail 'the payload checksum roster is missing or linked.'
+printf '%s  %s\n' '@PAYLOAD_SUMS_SHA256@' payload.sha256 | sha256sum --check --strict --status \
+    || fail 'the payload checksum roster changed. Download the complete package again.'
+[ -d runtime ] && [ ! -L runtime ] || fail 'the runtime directory is missing or linked.'
+unsafe=$(find runtime \( -type l -o \( ! -type f ! -type d \) -o \( -type f -links +1 \) \) -print -quit)
+[ -z "$unsafe" ] || fail 'the runtime contains linked or special files.'
+count=$(find runtime -type f -printf '.\n' | wc -l | tr -d '[:space:]')
+[ "$count" = '@PAYLOAD_FILE_COUNT@' ] || fail 'the runtime file roster changed.'
+sha256sum --check --strict --status payload.sha256 \
+    || fail 'runtime bytes differ from this installer. Download the complete package again.'
+[ -x runtime/airk ] || fail 'the native executable is not executable; extract the complete tar.gz package again.'
+
+printf '%s\n' 'AIRK @VERSION@ — unsigned Linux CLI/native-server installer.'
+printf '%s\n' 'The native setup guide reviews installation, saved indexes and coding-agent connections. No editor extension is installed.'
+exec "$package_dir/runtime/airk" setup --runtime-source "$package_dir/runtime" \
+    --approved-sha256 '@INSTALL_MANIFEST_SHA256@' "$@"

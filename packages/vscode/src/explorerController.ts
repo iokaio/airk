@@ -149,8 +149,8 @@ export class ExplorerController implements vscode.Disposable {
     constructor(private readonly host: ExplorerHost) {
         this.control = new ExplorerControl(host.control, host.version);
         const control=this.control;
-        this.indexing = new IndexingCatalogController({ get control(){return control.catalog;}, identity: () => `${this.control.observationIdentity}:${this.selectionEpoch}`,
-            authorized: () => !this.disposed && this.host.trusted() && !this.host.extensionUpdate?.(), windowContext:()=>this.host.windowContext?.(),windowContextObservation:()=>this.host.windowContextObservation?.(),canReadWindowContext:()=>!!this.host.prepareWindowContext&&this.host.nativeExecutionEnabled?.()!==false,...(host.useGrant?{useGrant:host.useGrant.bind(host)}:{}),searchScopeSelection:host.searchScopeSelection?.bind(host),applySearchScope:host.applySearchScope?.bind(host),saveIndexSet:host.saveIndexSet?.bind(host),changed: () => this.publish() });
+        this.indexing = new IndexingCatalogController({ get control(){return control.catalog;}, identity: () => JSON.stringify([this.control.observationIdentity,this.host.windowContextIdentity?.()]),
+            authorized: () => !this.disposed && this.host.trusted() && !this.host.extensionUpdate?.(), evidenceEpoch:()=>this.selectionEpoch, windowContext:()=>this.host.windowContext?.(),windowContextObservation:()=>this.host.windowContextObservation?.(),canReadWindowContext:()=>!!this.host.prepareWindowContext&&this.host.nativeExecutionEnabled?.()!==false,...(host.useGrant?{useGrant:host.useGrant.bind(host)}:{}),searchScopeSelection:host.searchScopeSelection?.bind(host),applySearchScope:host.applySearchScope?.bind(host),saveIndexSet:host.saveIndexSet?.bind(host),changed: () => this.publish() });
         this.panel = new ExplorerPanel(host.extensionUri, {
             message: message => { void this.handle(message); },
             visible: visible => this.visibility(visible),
@@ -271,7 +271,7 @@ export class ExplorerController implements vscode.Disposable {
         const {indexing,...scalarState}=state;
         this.panel.post({ v: MESSAGE_VERSION, type: 'state', state: scalarState });
         if(indexing){
-            const tag=JSON.stringify([indexing.generation,indexing.busy,indexing.error,indexing.pending,indexing.review?.previewDigest]);
+            const tag=JSON.stringify([indexing.generation,indexing.adviceGeneration,indexing.busy,indexing.error,indexing.pending,indexing.review?.previewDigest]);
             if(this.indexingDelivery?.panel!==this.panel.generation||this.indexingDelivery.tag!==tag){
                 this.indexingDelivery={panel:this.panel.generation,tag};
                 this.panel.post({v:MESSAGE_VERSION,type:'indexing.session',session:indexing});
@@ -304,6 +304,7 @@ export class ExplorerController implements vscode.Disposable {
         this.selected = project;
         this.selectedSpecIdentity=JSON.stringify(this.host.specs().find(spec=>spec.service?.project===project));
         this.selectionEpoch++;
+        this.indexing.clearEvidenceRecommendations();
         this.searchState = undefined;
         this.evidence?.dispose(); this.evidence = undefined;
         this.status = undefined; this.statusFor = undefined; this.notice = undefined;
@@ -318,6 +319,7 @@ export class ExplorerController implements vscode.Disposable {
             this.selectedSpecIdentity=identity;
             this.evidence?.dispose(); this.evidence = undefined;
             this.selectionEpoch++; this.status = undefined; this.statusFor = undefined;
+            this.indexing.clearEvidenceRecommendations();
             this.retainedDetails=undefined;this.statusIdentity=undefined;this.usageSession?.value.then(value=>value.dispose(),()=>{});this.usageSession=undefined;
             this.searchState = undefined;
             this.refs.clear(); this.facts.clear();
@@ -414,7 +416,7 @@ export class ExplorerController implements vscode.Disposable {
             if (!current()) { return; }
             this.host.log(`AIRK connected-runtime capability observation failed: ${String(error)}`);
             if (error instanceof ServiceError && !error.outcomeUnknown
-                && ['registry_busy', 'console_queue_full', 'catalog_control_connection_unavailable'].includes(error.code)) {
+                && ['console_queue_full', 'catalog_control_connection_unavailable'].includes(error.code)) {
                 observation.state = 'waiting';
                 observation.retryAt = Date.now() + Math.min(4000, 250 * 2 ** (observation.attempts - 1));
                 this.scheduleContextObservation(observation);
@@ -565,7 +567,13 @@ export class ExplorerController implements vscode.Disposable {
         const panelGeneration = this.panel.generation;
         try {
             const data = await this.dispatch(message);
-            if (epoch !== this.selectionEpoch && !['project.select', 'status.refresh', 'source.choose','indexing.grant.use'].includes(message.type)) { throw new EvidenceFailure(explorerError('REQUEST_SUPERSEDED')); }
+            // Native catalog handlers fence their control/window owner and
+            // exact reviewed inputs internally. Evidence discovery or selection
+            // can change while those operations return their committed receipt.
+            // Recommendation reads/actions still belong to the evidence epoch.
+            const catalogManagement=message.type.startsWith('indexing.')&&!message.type.startsWith('indexing.recommendations');
+            const managementOrLocal=['manage.action','manage.command','notice.dismiss','details.copy','workbench.toggle','extension.reload'].includes(message.type);
+            if (epoch !== this.selectionEpoch && !catalogManagement&&!managementOrLocal&&!['project.select', 'status.refresh', 'source.choose'].includes(message.type)) { throw new EvidenceFailure(explorerError('REQUEST_SUPERSEDED')); }
             if (message.type !== 'ready' && panelGeneration === this.panel.generation) { this.respond(message.requestId, { data: data ?? null }); }
         } catch (error) {
             if (panelGeneration === this.panel.generation) { this.respond(message.requestId, { error: failure(error) }); }
@@ -577,19 +585,25 @@ export class ExplorerController implements vscode.Disposable {
         if(message.type.startsWith('indexing.'))this.requireAuthorization(message.type!=='indexing.export');
         switch (message.type) {
             case 'notice.dismiss': return this.dismissNotice(message.key);
-            case 'indexing.recommendations':
-                return this.indexing.recommendations(async()=> (await this.session().call('airk_query_scope',{...message.arguments,view:'recommendations',max_bytes:65536},{supersede:'recommendations'})).payload);
+            case 'indexing.recommendations':{
+                return this.indexing.recommendations(async()=>{
+                    const result=await this.session().call('airk_query_scope',{...message.arguments,view:'recommendations',max_bytes:65536},{supersede:'recommendations'});
+                    return result.payload;
+                });
+            }
             case 'indexing.recommendations.dismiss': return this.indexing.dismissRecommendations();
             case 'indexing.recommendations.copy':
             case 'indexing.recommendations.use': {
                 const prior=this.indexing.snapshot().recommendations;
                 const scopeEpoch=this.selectionEpoch;
+                const adviceCurrent=this.indexing.recommendationGuard();
                 if(prior?.schema!=='airk.recommendations/1')throw new Error('Read current recommendations first.');
                 const selection=prior.selected as CatalogObject;
                 const choice={project_ids:selection.project_ids,index_ids:selection.index_ids,member_availability:selection.member_availability};
                 // Revalidate the exact selection and current grants before an action.
                 const current=(await this.session().call('airk_query_scope',{view:'recommendations',selection:choice,max_bytes:65536},{supersede:'recommendations'})).payload;
                 this.requireAuthorization(true);
+                adviceCurrent();
                 if(scopeEpoch!==this.selectionEpoch||this.indexing.snapshot().recommendations!==prior)throw new Error('Recommendations changed; refresh before acting.');
                 if(current.scope_identity!==prior.scope_identity||current.catalog_revision!==prior.catalog_revision)throw new Error('Recommendations changed; refresh before acting.');
                 if(message.type==='indexing.recommendations.copy'){

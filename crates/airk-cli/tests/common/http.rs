@@ -28,6 +28,7 @@ type Reply = mpsc::Sender<Result<Vec<Value>>>;
 enum Command {
     Send(Value, Instant, Reply),
     Probe(Vec<u8>, Reply),
+    FreshTcp(Reply),
     Close(Reply),
 }
 
@@ -167,6 +168,12 @@ impl HttpMcpSession {
                             });
                             let _ = reply.send(result);
                         }
+                        Command::FreshTcp(reply) => {
+                            let result = runtime.block_on(async {
+                                tokio::time::timeout(TIMEOUT, wire.fresh_tcp()).await?
+                            });
+                            let _ = reply.send(result.map(|()| Vec::new()));
+                        }
                         Command::Close(reply) => {
                             let result = runtime.block_on(async {
                                 tokio::time::timeout(Duration::from_secs(10), wire.close()).await?
@@ -195,6 +202,17 @@ impl HttpMcpSession {
     }
     pub fn send(&mut self, value: Value) -> Result<()> {
         self.send_until(value, Instant::now() + TIMEOUT)
+    }
+    /// Explicitly replace an idle TCP connection before a new independent read.
+    /// Preserve the MCP session and credential; never replay a failed exchange.
+    pub fn fresh_tcp(&mut self) -> Result<()> {
+        let (sender, receiver) = mpsc::channel();
+        self.commands
+            .as_ref()
+            .context("HTTPS fixture closed")?
+            .send(Command::FreshTcp(sender))?;
+        receiver.recv_timeout(TIMEOUT + Duration::from_secs(5))??;
+        Ok(())
     }
     pub fn send_until(&mut self, value: Value, deadline: Instant) -> Result<()> {
         let replies = submit_until(
@@ -291,6 +309,7 @@ impl Drop for HttpMcpSession {
 struct Wire {
     sender: hyper::client::conn::http1::SendRequest<Full<Bytes>>,
     task: tokio::task::JoinHandle<Result<(), hyper::Error>>,
+    tls_config: Arc<rustls::ClientConfig>,
     info: HttpConnectionInfo,
     token: String,
     session: Option<String>,
@@ -346,6 +365,7 @@ impl Wire {
                     selection: Box::new(selection.clone()),
                     client,
                     explorer_descriptor: None,
+                    reattach_connection_id: None,
                 },
                 health.instance,
             )
@@ -412,18 +432,44 @@ impl Wire {
         // modifies/replaces a user's OS or application trust configuration.
         let mut roots = rustls::RootCertStore::empty();
         roots.add(certificates[0].clone().into_owned())?;
-        let config = rustls::ClientConfig::builder_with_provider(Arc::new(
-            rustls::crypto::ring::default_provider(),
-        ))
-        .with_safe_default_protocol_versions()?
-        .with_root_certificates(roots)
-        .with_no_client_auth();
+        let config = Arc::new(
+            rustls::ClientConfig::builder_with_provider(Arc::new(
+                rustls::crypto::ring::default_provider(),
+            ))
+            .with_safe_default_protocol_versions()?
+            .with_root_certificates(roots)
+            .with_no_client_auth(),
+        );
+        let (sender, task) = Self::connect(&info, config.clone()).await?;
+        // Bearer bytes are read only after TLS/IP/issuer/leaf verification.
+        let token = airk_cli::http_endpoint::read_client_token(&root, id)?;
+        Ok(Self {
+            sender,
+            task,
+            tls_config: config,
+            info: *info,
+            token,
+            session: None,
+            initialized: false,
+            protocol: "2025-11-25".into(),
+            mode,
+            evidence: control.to_path_buf(),
+            sequence: 0,
+        })
+    }
+    async fn connect(
+        info: &HttpConnectionInfo,
+        config: Arc<rustls::ClientConfig>,
+    ) -> Result<(
+        hyper::client::conn::http1::SendRequest<Full<Bytes>>,
+        tokio::task::JoinHandle<Result<(), hyper::Error>>,
+    )> {
         let socket = tokio::net::TcpStream::connect((
             std::net::Ipv4Addr::LOCALHOST,
             info.endpoint.url.port(),
         ))
         .await?;
-        let tls = tokio_rustls::TlsConnector::from(Arc::new(config))
+        let tls = tokio_rustls::TlsConnector::from(config)
             .connect(ServerName::try_from("127.0.0.1")?, socket)
             .await?;
         let peer = tls
@@ -436,22 +482,16 @@ impl Wire {
             Sha256::digest(peer.as_ref()).as_slice() == info.endpoint.certificate_sha256.as_bytes(),
             "fixture TLS peer differs from native control"
         );
-        // Bearer bytes are read only after TLS/IP/issuer/leaf verification.
-        let token = airk_cli::http_endpoint::read_client_token(&root, id)?;
         let (sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(tls)).await?;
         let task = tokio::spawn(connection);
-        Ok(Self {
-            sender,
-            task,
-            info: *info,
-            token,
-            session: None,
-            initialized: false,
-            protocol: "2025-11-25".into(),
-            mode,
-            evidence: control.to_path_buf(),
-            sequence: 0,
-        })
+        Ok((sender, task))
+    }
+    async fn fresh_tcp(&mut self) -> Result<()> {
+        let (sender, task) = Self::connect(&self.info, self.tls_config.clone()).await?;
+        self.task.abort();
+        self.sender = sender;
+        self.task = task;
+        Ok(())
     }
     async fn exchange(
         &mut self,

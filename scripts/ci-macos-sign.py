@@ -220,7 +220,20 @@ def qualify_signed_runtime(output, paired, target):
     return report
 
 
-def sign(target, paired=False):
+def package_standalone_installer(target, identity_sha1, keychain):
+    """Reuse this exact short-lived keychain for the native-only DMG wrapper."""
+    if any(name in os.environ for name in SECRET_NAMES):
+        raise ValueError("Installer packaging requires signing secrets to be removed first")
+    subprocess.run([sys.executable, str(ROOT / "scripts/package-standalone-macos.py"),
+        "--target", target, "--runtime-dir", f"artifacts/runtime/{target}",
+        "--signed-dir", f"artifacts/signed/{target}", "--identity", identity_sha1,
+        "--team-id", TEAM, "--notary-profile", "airk-ci", "--keychain", str(keychain),
+        "--output", f"artifacts/standalone/{target}"], cwd=ROOT, check=True)
+
+
+def sign(target, paired=False, standalone=False):
+    if standalone and not paired:
+        raise ValueError("Standalone installer packaging requires a complete native runtime")
     directory = runner_directory()
     values = {name: os.environ.pop(name, "") for name in SECRET_NAMES}
     if not all(values.values()):
@@ -257,6 +270,8 @@ def sign(target, paired=False):
                         "--notarize", "--keychain-profile", "airk-ci", "--keychain", str(keychain),
                         "--output", f"artifacts/signed/{target}"], cwd=ROOT, check=True)
         verify_signed_output(ROOT / "artifacts/signed" / target, paired, identity_sha1)
+        if standalone:
+            package_standalone_installer(target, identity_sha1, keychain)
     finally:
         try:
             security("list-keychains", "-d", "user", "-s", *original_keychains)
@@ -272,11 +287,14 @@ def main():
     parser.add_argument("--target", choices=("aarch64-apple-darwin", "x86_64-apple-darwin"))
     parser.add_argument("--cleanup", action="store_true")
     parser.add_argument("--pair", action="store_true")
+    parser.add_argument("--standalone-installer", action="store_true",
+                        default=os.environ.get("AIRK_STANDALONE_INSTALLER") == "true",
+                        help="Package the native-only installer using this same isolated identity")
     args = parser.parse_args()
     if args.cleanup:
         cleanup(runner_directory())
     elif args.target:
-        sign(args.target, args.pair)
+        sign(args.target, args.pair, args.standalone_installer)
     else:
         parser.error("Supply --target or --cleanup")
 

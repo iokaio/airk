@@ -2,7 +2,7 @@
 //! The 1.4 CLI is a native service client. Source/store ownership stays in workers.
 use airk_core::service::{ControlMethod, ControlResponse, JobKind};
 use anyhow::{Context, Result, ensure};
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
 use serde_json::{Value, json};
 use std::{
     io::Read,
@@ -147,6 +147,39 @@ impl Cli {
     /// Clap validates subcommands before propagating parent-level global values.
     /// Check this cross-level relationship only after the complete CLI is merged.
     fn validate_setup(&self) -> Result<()> {
+        if let Command::Setup {
+            standalone,
+            existing_connection_id,
+            explorer_descriptor,
+            ..
+        } = &self.command
+        {
+            let guided_scope = !standalone.projects.is_empty()
+                || !standalone.indexes.is_empty()
+                || standalone.create_root.is_some();
+            ensure!(
+                existing_connection_id.is_none()
+                    || !guided_scope && standalone.runtime_source.is_none(),
+                "existing connection cannot be combined with guided enrollment inputs"
+            );
+            ensure!(
+                self.catalog_session.is_none() && self.combined_session.is_none()
+                    || !guided_scope && standalone.runtime_source.is_none(),
+                "choose a frozen reviewed session or guided setup inputs, not both"
+            );
+            ensure!(
+                standalone.runtime_source.is_none() || self.service_runtime_dir.is_none(),
+                "payload installation cannot target an arbitrary control directory"
+            );
+            ensure!(
+                !standalone.launch || self.service_runtime_dir.is_none(),
+                "client launch requires the verified installation, not a nominated control directory"
+            );
+            ensure!(
+                !guided_scope || explorer_descriptor.is_none(),
+                "standalone setup does not attach an editor Assistance descriptor"
+            );
+        }
         if let Command::Setup {
             existing_connection_id: Some(_),
             connection_id,
@@ -380,10 +413,10 @@ enum Command {
         #[arg(long, default_value_t = 8192)]
         max_bytes: usize,
     },
-    /// Enroll an explicit existing catalog selection for HTTPS and print configuration references.
+    /// Guided standalone installation, index selection and coding-agent MCP setup.
     Setup {
-        #[arg(long,value_enum,default_value_t=SetupClient::Claude)]
-        client: SetupClient,
+        #[arg(long, value_enum)]
+        client: Option<SetupClient>,
         /// Reuse the exact connection ID when retrying enrollment.
         #[arg(long)]
         connection_id: Option<airk_core::identity::Incarnation>,
@@ -393,6 +426,14 @@ enum Command {
         /// Exact private explorer-assistance/windows/<session>.json attachment.
         #[arg(long)]
         explorer_descriptor: Option<PathBuf>,
+        #[command(flatten)]
+        standalone: StandaloneSetupArgs,
+    },
+    /// Uninstall the native per-user service and owned runtime files; preserve source files and indexes.
+    Uninstall {
+        /// Explicitly confirm uninstall without an interactive prompt.
+        #[arg(long)]
+        yes: bool,
     },
     /// Acknowledge an existing reviewed index mapping and prepare its reserved storage.
     ///
@@ -1042,6 +1083,55 @@ enum SetupClient {
     OpencodeV2,
     Kilo,
 }
+#[derive(clap::Args, Default)]
+struct StandaloneSetupArgs {
+    /// Select existing index sets by native ID; repeat or separate IDs with commas.
+    #[arg(
+        long = "project",
+        value_delimiter = ',',
+        conflicts_with = "create_root"
+    )]
+    projects: Vec<airk_core::index_catalog::QueryProjectId>,
+    /// Select indexes, or narrow explicitly selected index sets to these indexes.
+    #[arg(long = "index", value_delimiter = ',', conflicts_with = "create_root")]
+    indexes: Vec<airk_core::index_catalog::IndexId>,
+    /// Review and create an index from this source folder through the native setup owner.
+    #[arg(long)]
+    create_root: Option<PathBuf>,
+    /// Storage for the explicitly created index; otherwise use the native installation's default.
+    #[arg(long, requires = "create_root")]
+    storage: Option<PathBuf>,
+    #[arg(long, requires = "create_root")]
+    name: Option<String>,
+    /// Watch the explicitly created source folder; defaults to off.
+    #[arg(long, requires = "create_root")]
+    watch: bool,
+    /// Confirm the explicitly supplied install and scope choices without prompting.
+    #[arg(long)]
+    yes: bool,
+    /// Native payload supplied by a trusted offline installer or explicit distributor policy.
+    #[arg(
+        long,
+        requires = "approved_sha256",
+        conflicts_with = "existing_connection_id"
+    )]
+    runtime_source: Option<PathBuf>,
+    /// Distributor-pinned install-manifest digest; never inferred from the same payload.
+    #[arg(long, requires = "runtime_source")]
+    approved_sha256: Option<airk_core::identity::Sha256Digest>,
+    /// Choose the native early rebuild option when upgrading an installed predecessor.
+    #[arg(long, requires = "runtime_source")]
+    rebuild_indexes: bool,
+    /// Install the reviewed native payload and leave client enrollment for a later setup invocation.
+    #[arg(long,requires="runtime_source",conflicts_with_all=["projects","indexes","create_root","launch"])]
+    install_only: bool,
+    /// Launch the selected client with protected credentials and additive trust in its process environment.
+    #[arg(long)]
+    launch: bool,
+    /// Additional foreground client arguments, passed directly without a shell string.
+    #[arg(last = true, requires = "launch")]
+    client_args: Vec<std::ffi::OsString>,
+}
 #[derive(Clone, Copy, ValueEnum)]
 enum SearchMode {
     Lexical,
@@ -1232,7 +1322,10 @@ async fn run() -> Result<()> {
             std::env::args_os().skip(1).collect(),
         );
     }
-    let mut cli = Cli::parse();
+    let matches = Cli::command().get_matches();
+    let explicit_root =
+        matches.value_source("root") == Some(clap::parser::ValueSource::CommandLine);
+    let mut cli = Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
     cli.validate_setup()?;
     if matches!(cli.command, Command::Mcp { .. } | Command::Bridge { .. }) {
         airk_cli::runtime_pair::require_legacy_stdio(&executable)?;
@@ -1241,7 +1334,8 @@ async fn run() -> Result<()> {
         cli.service_runtime_dir.is_none()
             || cli.service_project.is_some()
             || cli.catalog_session.is_some()
-            || cli.combined_session.is_some(),
+            || cli.combined_session.is_some()
+            || matches!(cli.command, Command::Setup { .. }),
         "native control selection requires a project binding or catalog session"
     );
     if cli.catalog_session.is_some() {
@@ -1346,62 +1440,26 @@ async fn run() -> Result<()> {
             connection_id,
             existing_connection_id,
             explorer_descriptor,
+            standalone,
         } => {
-            ensure!(
-                matches!(
-                    client,
-                    SetupClient::Claude | SetupClient::Codex | SetupClient::Vscode
-                ),
-                "http_client_compatibility_unverified: this client has no qualified HTTPS trust/credential adapter"
-            );
-            let value = if let Some(id) = existing_connection_id {
-                airk_cli::runtime_install::existing_http_connection(
-                    cli.service_install_dir
-                        .as_deref()
-                        .context("existing connection requires --service-install-dir")?,
-                    *id,
-                )
-                .await?
-            } else {
-                let selection = if let Some(selection) = &cli.catalog_session {
-                    airk_core::service_http::HttpSelection::Scoped {
-                        selection: selection.clone(),
-                    }
-                } else if let Some(selection) = &cli.combined_session {
-                    airk_core::service_http::HttpSelection::Combined {
-                        selection: selection.clone(),
-                    }
-                } else {
-                    anyhow::bail!(
-                        "review_required: setup needs --catalog-session or --combined-session with an existing grant; migrate an owned old configuration with runtime http-legacy-connection and its original configuration receipt"
-                    );
-                };
-                let id = connection_id
-                    .map(Ok)
-                    .unwrap_or_else(airk_kernel::service_broker::new_instance_id)?;
-                let label = match client {
-                    SetupClient::Claude => "claude",
-                    SetupClient::Codex => "codex",
-                    _ => "vscode",
-                };
-                airk_cli::runtime_install::setup_http_connection(
-                    cli.service_install_dir.as_deref(),
-                    cli.service_runtime_dir.as_deref(),
-                    selection,
-                    id,
-                    label,
-                    explorer_descriptor.as_deref(),
-                )
-                .await?
-            };
-            let connection: airk_core::service_http::HttpConnectionInfo =
-                serde_json::from_value(value)?;
-            let (configuration, environment) = http_configuration(&connection, *client)?;
-            return print_json(
-                &json!({"connection":connection,"configuration":configuration,"environment":environment,
-                "trust":"Use normal CA validation. Add this installation CA to this client's trust without replacing existing roots; never disable TLS validation.",
-                "credential":"Load the protected credential_file into the named environment variable in the client process. Token bytes are not printed."}),
-            );
+            return run_setup(
+                &cli,
+                *client,
+                *connection_id,
+                *existing_connection_id,
+                explorer_descriptor.as_deref(),
+                standalone,
+                explicit_root,
+            )
+            .await;
+        }
+        Command::Uninstall { yes } => {
+            return airk_cli::standalone_setup::uninstall(
+                cli.service_install_dir.as_deref(),
+                *yes,
+                &mut airk_cli::standalone_setup::Terminal,
+            )
+            .await;
         }
         // Hands stdio to the extension's server; prints nothing and never contacts the service.
         Command::ExplorerAssistance { descriptor } => {
@@ -1791,7 +1849,9 @@ async fn run() -> Result<()> {
             )
             .await
         }
-        Command::Setup { .. } => unreachable!("setup handled before project resolution"),
+        Command::Setup { .. } | Command::Uninstall { .. } => {
+            unreachable!("setup handled before project resolution")
+        }
         Command::Index { .. } => job(&project.control, registration.binding, JobKind::Index).await,
         Command::SetupModel => {
             job(&project.control, registration.binding, JobKind::ModelSetup).await
@@ -2497,6 +2557,195 @@ fn query(command: Command) -> Result<(&'static str, Value)> {
     controls.resolve()?;
     Ok((tool, value))
 }
+async fn run_setup(
+    cli: &Cli,
+    selected_client: Option<SetupClient>,
+    connection_id: Option<airk_core::identity::Incarnation>,
+    existing_connection_id: Option<airk_core::identity::Incarnation>,
+    explorer_descriptor: Option<&Path>,
+    options: &StandaloneSetupArgs,
+    explicit_root: bool,
+) -> Result<()> {
+    use airk_cli::standalone_setup::{Client as StandaloneClient, SetupPrompt};
+    let mut terminal = airk_cli::standalone_setup::Terminal;
+    let install = airk_cli::standalone_setup::installation(cli.service_install_dir.as_deref())?;
+    if let (Some(source), Some(approved)) = (&options.runtime_source, options.approved_sha256) {
+        airk_cli::standalone_setup::install_payload(
+            &install,
+            source,
+            &approved.to_string(),
+            options.yes,
+            options.rebuild_indexes,
+            &mut terminal,
+        )
+        .await?;
+    }
+    let installed_cli = if install.join("selected.json").try_exists()? {
+        Some(airk_cli::runtime_install::selected(&install)?.1)
+    } else {
+        None
+    };
+    if let Some(executable) = &installed_cli {
+        terminal.message(&format!("Installed AIRK executable: {executable:?}"))?;
+        terminal.message("Run that executable with setup or uninstall, or add its directory to PATH. Setup does not change shell startup files.")?;
+    }
+    if options.install_only {
+        return print_json(
+            &json!({"native_installed":true,"client_enrolled":false,"install_dir":install,
+            "cli_executable":installed_cli,"commands":{"setup":["setup"],"uninstall":["uninstall"]},"next":"Run the installed executable with setup to review an index scope and connect a coding agent. The executable directory is not added to PATH automatically."}),
+        );
+    }
+    let guided = existing_connection_id.is_none()
+        && cli.catalog_session.is_none()
+        && cli.combined_session.is_none();
+    let client = match selected_client {
+        Some(client) => client,
+        None if guided && terminal.interactive() && !options.yes => match terminal
+            .answer("Connect [1] Claude Code or [2] Codex? Choice [1]:")?
+            .as_str()
+        {
+            "" | "1" => SetupClient::Claude,
+            "2" => SetupClient::Codex,
+            _ => anyhow::bail!("select Claude Code or Codex"),
+        },
+        None => SetupClient::Claude,
+    };
+    ensure!(
+        matches!(
+            client,
+            SetupClient::Claude | SetupClient::Codex | SetupClient::Vscode
+        ),
+        "http_client_compatibility_unverified: this client has no qualified HTTPS trust/credential adapter"
+    );
+    let standalone_client = match client {
+        SetupClient::Claude => Some(StandaloneClient::Claude),
+        SetupClient::Codex => Some(StandaloneClient::Codex),
+        _ => None,
+    };
+    let mut native_receipts = Vec::new();
+    let mut journal_files = Vec::new();
+    let mut suggested_directory = explicit_root.then(|| cli.root.clone());
+    let connection = if let Some(id) = existing_connection_id {
+        serde_json::from_value(
+            airk_cli::runtime_install::existing_http_connection(&install, id).await?,
+        )?
+    } else if guided {
+        let outcome=airk_cli::standalone_setup::enroll(airk_cli::standalone_setup::Options{
+            client:standalone_client.context("guided standalone setup supports Claude Code and Codex; the VS Code adapter requires its extension")?,
+            install_dir:Some(install.clone()),control_dir:cli.service_runtime_dir.clone(),context_directory:cli.root.clone(),
+            project_ids:options.projects.clone(),index_ids:options.indexes.clone(),create_root:options.create_root.clone(),
+            data_root:options.storage.clone(),name:options.name.clone(),watch:options.watch,yes:options.yes,connection_id,
+        },&mut terminal).await?;
+        native_receipts = outcome.native_receipts;
+        journal_files = outcome.journal_files;
+        if !explicit_root {
+            suggested_directory = outcome.suggested_directory;
+        }
+        outcome.connection
+    } else {
+        let selection = if let Some(selection) = &cli.catalog_session {
+            airk_core::service_http::HttpSelection::Scoped {
+                selection: selection.clone(),
+            }
+        } else {
+            airk_core::service_http::HttpSelection::Combined {
+                selection: cli
+                    .combined_session
+                    .clone()
+                    .context("reviewed setup selection missing")?,
+            }
+        };
+        let id = connection_id
+            .map(Ok)
+            .unwrap_or_else(airk_kernel::service_broker::new_instance_id)?;
+        let (value, journal) = airk_cli::standalone_setup::enroll_selection(
+            cli.service_install_dir.as_deref(),
+            cli.service_runtime_dir.as_deref(),
+            selection,
+            id,
+            match client {
+                SetupClient::Claude => "claude",
+                SetupClient::Codex => "codex",
+                _ => "vscode",
+            },
+            explorer_descriptor,
+        )
+        .await?;
+        journal_files.push(journal);
+        native_receipts.push(value.clone());
+        serde_json::from_value(value)?
+    };
+    let (configuration, environment) = http_configuration(&connection, client)?;
+    let launch_instructions = standalone_client.map(|client| {
+        airk_cli::standalone_setup::launch_instructions(
+            client,
+            &connection,
+            &install,
+            suggested_directory.as_deref(),
+        )
+    });
+    let output = json!({"connection":&connection,"configuration":configuration,"environment":environment,
+        "native_receipts":native_receipts,"setup_journal_files":journal_files,"cli_executable":installed_cli,
+        "launch":launch_instructions,
+        "trust":"Use normal CA validation. Native launch adds this installation CA without replacing existing public or enterprise roots; no OS trust change is performed.",
+        "credential":"The native launcher reads the protected credential into the child process environment. Token bytes are never printed or placed in project configuration.",
+        "command_path":"Use cli_executable as the full command path, or add its directory to PATH yourself; setup does not modify shell startup files."});
+    let launch = options.launch || guided && !options.yes && terminal.interactive();
+    if launch {
+        let recovery = format!(
+            "Connection {} is retained; reuse --existing-connection-id {} with --root <working-folder> --launch",
+            connection.connection_id, connection.connection_id
+        );
+        let directory = match suggested_directory {
+            Some(directory) => directory,
+            None if terminal.interactive() => PathBuf::from(terminal.answer("Choose the coding agent working folder (required for multiple scopes or an existing connection):")?),
+            None => anyhow::bail!("--launch requires explicit --root when no single authorized subtree was selected. {recovery}"),
+        };
+        let directory = directory
+            .canonicalize()
+            .with_context(|| format!("working folder is unavailable. {recovery}"))?;
+        ensure!(
+            directory.is_dir(),
+            "working folder is not a directory. {recovery}"
+        );
+        if !options.launch
+            && !terminal
+                .answer(&format!(
+                    "Launch {} in {} with this scoped AIRK connection? [y/N]",
+                    standalone_client
+                        .context("native launch client missing")?
+                        .label(),
+                    directory.display()
+                ))?
+                .eq_ignore_ascii_case("y")
+        {
+            return print_json(&output);
+        }
+        terminal.message(&format!(
+            "Launching {} in {}",
+            standalone_client
+                .context("native launch client missing")?
+                .label(),
+            directory.display()
+        ))?;
+        terminal.message(&serde_json::to_string_pretty(&output)?)?;
+        let status = airk_cli::standalone_setup::launch_client(
+            standalone_client.context("native standalone launch supports Claude Code and Codex")?,
+            &connection,
+            Some(&install),
+            &options.client_args,
+            &directory,
+        )
+        .await?;
+        if status != 0 {
+            std::process::exit(status);
+        }
+    } else {
+        print_json(&output)?;
+    }
+    Ok(())
+}
+
 fn http_configuration(
     connection: &airk_core::service_http::HttpConnectionInfo,
     client: SetupClient,
@@ -2549,6 +2798,10 @@ fn http_configuration(
 #[cfg(test)]
 #[path = "main_http_setup_tests.rs"]
 mod http_setup_tests;
+
+#[cfg(test)]
+#[path = "main_standalone_setup_tests.rs"]
+mod standalone_setup_tests;
 
 #[cfg(test)]
 mod tests {

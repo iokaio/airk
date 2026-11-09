@@ -236,16 +236,26 @@ pub async fn lookup_connection(
     check_endpoint(&control, &endpoint, &health)?;
     let binding = crate::http_endpoint::installation_binding(&control, endpoint.namespace)?;
     let private = control.join("http-1");
-    let ownership = tokio::task::spawn_blocking(move || -> Result<_> {
+    let (ownership, attachment_retirement) = tokio::task::spawn_blocking(move || -> Result<_> {
         let store = CredentialStore::read_existing(&private, binding)?;
         let now: u64 = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_millis()
             .try_into()?;
-        store.ownership(id, now)
+        Ok((
+            store.ownership(id, now)?,
+            store.attachment_retirement(id, now)?,
+        ))
     })
     .await??;
     let mut reply = serde_json::json!({"schema":1,"active":expected,"connection_id":id});
+    if let Some(proof) = attachment_retirement {
+        reply["status"] = "unavailable".into();
+        reply["code"] = "owned_connection_attachment_retired".into();
+        reply["attachment_retirement"] = serde_json::to_value(proof)?;
+        reply["guidance"] = "Only the exact original managed standalone claim may replace this retired attachment using a fresh ID and native mutation-time retirement validation.".into();
+        return Ok(reply);
+    }
     match ownership {
         ConnectionOwnership::NotOwned => reply["status"] = "not_owned".into(),
         ConnectionOwnership::Revoked | ConnectionOwnership::Expired => {
@@ -293,6 +303,7 @@ async fn enroll_at(
     id: Incarnation,
     client: airk_core::usage::ClientFamily,
     explorer_descriptor: Option<&Path>,
+    reattach_connection_id: Option<Incarnation>,
 ) -> Result<serde_json::Value> {
     selection.validate()?;
     let explorer_descriptor = explorer_descriptor
@@ -311,6 +322,7 @@ async fn enroll_at(
             selection: Box::new(selection.clone()),
             client,
             explorer_descriptor,
+            reattach_connection_id,
         },
         health.instance,
     )
@@ -334,6 +346,7 @@ pub async fn enroll(
         id,
         client,
         explorer_descriptor,
+        None,
     )
     .await
 }
@@ -370,6 +383,7 @@ pub async fn setup(
         id,
         client,
         explorer_descriptor,
+        None,
     )
     .await
 }
@@ -389,6 +403,7 @@ pub async fn revoke(install: &Path, id: Incarnation) -> Result<serde_json::Value
         _ => refused(response),
     }
 }
+#[allow(clippy::too_many_arguments)]
 pub async fn enroll_legacy(
     install: &Path,
     file: &Path,
@@ -397,6 +412,7 @@ pub async fn enroll_legacy(
     label: &str,
     explorer_descriptor: Option<&Path>,
     origin_sha256: Option<Sha256Digest>,
+    reattach_connection_id: Option<Incarnation>,
 ) -> Result<serde_json::Value> {
     let registration = crate::http_endpoint::read_registration_file(file)?;
     let client = client(label)?;
@@ -417,6 +433,7 @@ pub async fn enroll_legacy(
                 id,
                 client,
                 explorer_descriptor,
+                reattach_connection_id,
             )
             .await
         }
@@ -574,6 +591,7 @@ pub async fn enroll_legacy_union(
         id,
         client,
         explorer_descriptor,
+        None,
     )
     .await
 }

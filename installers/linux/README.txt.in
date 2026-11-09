@@ -1,0 +1,49 @@
+AIRK @VERSION@ — Linux x86-64 offline installer
+
+This package installs AIRK's native command-line client and local server. It
+contains no VSIX, does not install an editor extension, and does not open VS Code.
+The offline inference models and their license notices remain in the native
+payload. The VS Code extension is an optional, separate download.
+
+This Linux installer is unsigned. SHA256SUMS and the published release record
+provide integrity/provenance checks; they are not a code-signing signature.
+Download from AIRK's official release and verify its published checksum before
+running any bundled executable. The installer also verifies its exact payload
+and passes a pinned install-manifest digest to AIRK's native installation owner.
+
+For an artifact published by the attestation-enabled GitHub release workflow,
+also verify its GitHub build provenance before extracting or running it:
+
+  gh attestation verify @ARCHIVE_NAME@ -R iokaio/airk \
+    --signer-workflow iokaio/airk/.github/workflows/github-release.yml \
+    --deny-self-hosted-runners
+
+Check that verification succeeds for the expected official repository and
+release workflow. A locally generated package does not acquire an attestation
+merely by being packaged. This check uses GitHub; installation itself is offline.
+Build provenance does not make this Linux executable OS-code-signed.
+GitHub CLI reference: https://cli.github.com/manual/gh_attestation_verify
+
+On Linux x86-64:
+
+  tar -xzf @ARCHIVE_NAME@
+  cd @DIRECTORY_NAME@
+  ./install.sh
+
+The guide reviews per-user installation without sudo, offers migration or a
+fresh rebuild before upgrading saved indexes, then helps select search scope
+and connect a supported coding agent. Sources stay read-only. Native setup
+retains the authority for paths, state ownership, activation and indexing.
+
+Keep the extracted package if installation is interrupted. Running install.sh
+again resumes through the native installation owner; it does not delete old
+state or substitute source folders. Retained failures may need review.
+
+Existing client configuration and trust are not silently replaced. Linux
+system certificate-store enrollment requires the separately documented
+administrator process; this installer does not change OS trust or use sudo.
+After installation, run `airk setup` for guided setup or `airk uninstall` for
+native uninstall. Removing the extracted download alone does not uninstall AIRK.
+
+Requirements: Linux x86-64, a POSIX shell and standard GNU sha256sum/find/coreutils.
+No Python, jq, network download or editor is required by this installer.

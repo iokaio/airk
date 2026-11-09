@@ -61,6 +61,7 @@ pub(crate) mod macos_login;
 mod payload_repair;
 #[path = "runtime_retirement.rs"]
 mod retirement;
+pub(crate) use retirement::uninstall as uninstall_receipt;
 #[path = "runtime_snapshot.rs"]
 mod snapshot;
 #[path = "runtime_staging.rs"]
@@ -165,6 +166,8 @@ pub enum RuntimeCommand {
         client: String,
         #[arg(long)]
         explorer_descriptor: Option<PathBuf>,
+        #[arg(long)]
+        reattach_connection_id: Option<airk_core::identity::Incarnation>,
     },
     /// Migrate an original no-default multi-project declaration without widening authority.
     HttpLegacyUnionConnection {
@@ -306,6 +309,9 @@ pub enum RuntimeCommand {
         /// Refuse if the reviewed preceding selection changed; exact completed replay does not start a service.
         #[arg(long)]
         expected_active: Option<String>,
+        /// Preserve previous state and automatically rebuild indexes in fresh storage from saved sources.
+        #[arg(long, requires = "expected_active")]
+        rebuild_indexes: bool,
     },
     /// Verify one immutable approved candidate without selecting or executing it.
     InspectCandidate {
@@ -650,6 +656,9 @@ pub fn caller_install_root() -> Result<PathBuf> {
 }
 
 pub fn default_project_data(root: &Path) -> Result<PathBuf> {
+    if let Some(data) = activation::rebuild::successor_default_data(root)? {
+        return Ok(data);
+    }
     let (_, channel) = layout::retained_parameters(root)?;
     Ok(crate::user_paths::UserPaths::discover(channel)?.data)
 }
@@ -2079,6 +2088,7 @@ fn prepare_connection_with<'a>(
     let settlement = lifecycle::connection_settlement(root)?;
     if matches!(settlement, lifecycle::ConnectionSettlement::EffectsRequired)
         || activation::pending(root)?.is_some()
+        || activation::rebuild::pending(root)?
     {
         // This includes unreadable/legacy saved state and pending same-identity
         // restart/stop. Success or unchanged selected.json is not a no-op witness.
@@ -2153,6 +2163,13 @@ async fn ensure_running_locked_checked_after_settlement(
     // Preserve direct callers' settlement order: a pending STOP authenticates
     // saved identity and must not require a runnable payload just to drain it.
     payload_repair::require_settled(root)?;
+    if activation::rebuild::pending(root)? {
+        setup::settle_then_checkpoint(
+            async { activation::rebuild::resume(root).await.map(|_| ()) },
+            cancel,
+        )
+        .await?;
+    }
     managed::catalog::resume_before_lifecycle(authority, cancel)?;
     setup::settle_then_checkpoint(
         async {
@@ -2351,15 +2368,13 @@ fn require_catalog_capabilities(
     observation: &serde_json::Value,
 ) -> Result<()> {
     let capabilities:airk_core::index_catalog::CatalogCapabilities=serde_json::from_value(observation.get("index_catalog").cloned().context("selected runtime has no index catalog capability; preserve the current payload and resume or repair the upgrade")?)?;
-    ensure!(
-        capabilities.supports(
-            state.schema,
-            state.authority_contract,
-            state.policy_contract
-        ),
-        "selected runtime cannot enforce the saved index catalog contracts; restore the qualified snapshot before new writes or use forward repair afterwards"
-    );
-    Ok(())
+    airk_store::service::registry::runtime_contract::RequiredCapabilities {
+        minimum_registry_schema: state.schema,
+        authority_contract: state.authority_contract,
+        policy_contract: state.policy_contract,
+    }
+    .require_supported(&capabilities)
+    .context("selected runtime cannot enforce the saved index catalog contracts; restore the qualified snapshot before new writes or use forward repair afterwards")
 }
 
 fn quiescent(root: &Path) -> Result<Quiescence> {
@@ -2432,12 +2447,58 @@ pub async fn activate_reviewed(root: &Path, identity: &str, expected: &str) -> R
     activate_with_expected(root, identity, Some(expected)).await
 }
 
+/// An explicit early rebuild choice avoids relying on classifications of failed
+/// migration attempts. Native recovery still authenticates saved scope/settings
+/// and preserves the complete predecessor state before creating a successor.
+pub async fn activate_rebuilding_reviewed(
+    root: &Path,
+    identity: &str,
+    expected: &str,
+) -> Result<Selection> {
+    let _lock = install_lock(root)?;
+    if activation::rebuild::pending(root)? {
+        return activation::rebuild::activate(root, identity, expected).await;
+    }
+    require_issuer_rotation_settled(root)?;
+    retirement::require_previous_settled(root)?;
+    legacy_launchers::require_settled(root)?;
+    payload_repair::require_settled(root)?;
+    activation::rebuild::activate(root, identity, expected).await
+}
+
+/// Canonical native observation, scoped by the actual worker binding. A saved
+/// JSON observation supplies no authority to change installation or index state.
+pub(crate) fn rebuild_observation_for_control(
+    control: &Path,
+    binding: airk_core::service::ProjectBinding,
+) -> Result<Option<airk_core::rebuild::RebuildObservation>> {
+    activation::rebuild::observation_for_control(control, binding)
+}
+
+pub(super) fn rebuild_report(
+    root: &Path,
+) -> (
+    Option<airk_core::rebuild::RebuildObservation>,
+    Option<String>,
+) {
+    match activation::rebuild::observation(root) {
+        Ok(observation) => (observation, None),
+        Err(error) => (None, Some(format!("{error:#}"))),
+    }
+}
+
 async fn activate_with_expected(
     root: &Path,
     identity: &str,
     expected: Option<&str>,
 ) -> Result<Selection> {
     let _lock = install_lock(root)?;
+    if activation::rebuild::pending(root)? {
+        let expected = expected.context(
+            "an accepted index rebuild requires its exact reviewed predecessor to resume",
+        )?;
+        return activation::rebuild::activate(root, identity, expected).await;
+    }
     require_issuer_rotation_settled(root)?;
     retirement::require_previous_settled(root)?;
     legacy_launchers::require_settled(root)?;

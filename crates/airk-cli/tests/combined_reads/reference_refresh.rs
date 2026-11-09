@@ -37,7 +37,15 @@ fn positive(reply: &Value, index: IndexId, label: &str) -> Result<Value> {
 }
 async fn parity(f: &Fixture, tool: &str, args: Value) -> Result<Value> {
     let backend = airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
-    let native = native_read(backend.as_ref(), tool, &args).await?;
+    // Poll native work independently of this long journey's debug assertion
+    // frame, using the standard test stack and the same canonical backend.
+    let native_backend = backend.clone();
+    let native_tool = tool.to_owned();
+    let native_args = args.clone();
+    let native = tokio::spawn(async move {
+        native_read(native_backend.as_ref(), &native_tool, &native_args).await
+    })
+    .await??;
     let cli = f.cli(tool, &args).await?;
     let mut mcp = McpSession::start(f)?;
     let wire = mcp.call(4, tool, args)?;

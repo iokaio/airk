@@ -62,23 +62,26 @@ def fetch(archive, row, download, core, ninja=False):
     core.fetch(archive, row, download, source=True)
 
 
-def archive_entries(archive, row, core):
+def archive_entries(archive, row, core, destination=None):
     """Validate the whole archive; all filesystem links are omitted, never followed."""
     core.verify_file(archive, row)
     is_zip = archive.name.endswith(".zip")
-    container = zipfile.ZipFile(archive) if is_zip else tarfile.open(archive, "r:gz")
+    container = zipfile.ZipFile(archive) if is_zip else tarfile.open(archive, mode="r|gz")
     members = container.infolist() if is_zip else container
     entries = []
     seen = set()
     expanded = 0
     try:
-        for member in members:
-            if len(entries) >= MAX_MEMBERS:
+        for ordinal, member in enumerate(members):
+            if ordinal >= MAX_MEMBERS:
                 raise ValueError("Pinned build-tool member count exceeds budget")
             name = core.relative_name(member.filename.rstrip("/") if is_zip else member.name)
             if name.parts[0] != row["archive_root"]:
                 raise ValueError("Pinned build-tool archive root differs")
             if len(name.parts) == 1:
+                if not (member.is_dir() if is_zip else member.isdir()) or "" in seen:
+                    raise ValueError("Invalid or duplicate build-tool archive root")
+                seen.add("")
                 continue
             relative = PurePosixPath(*name.parts[1:]).as_posix()
             key = relative.casefold() if os.name == "nt" else relative
@@ -92,6 +95,8 @@ def archive_entries(archive, row, core):
             size = member.file_size if is_zip else member.size
             if directory:
                 entries.append({"path": relative, "kind": "directory"})
+                if destination is not None:
+                    core.child(destination, relative).mkdir(parents=True, exist_ok=True)
                 continue
             if link:
                 if size > 4096:
@@ -116,8 +121,26 @@ def archive_entries(archive, row, core):
             if expanded > MAX_EXPANDED:
                 raise ValueError("Build-tool archive expansion exceeds budget")
             stream = container.open(member) if is_zip else container.extractfile(member)
-            with stream:
-                sha = hashlib.file_digest(stream, "sha256").hexdigest()
+            if destination is None:
+                with stream:
+                    sha = hashlib.file_digest(stream, "sha256").hexdigest()
+            else:
+                path = core.child(destination, relative)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                digest = hashlib.sha256()
+                copied = 0
+                with stream, path.open("xb") as output:
+                    while content := stream.read(1024 * 1024):
+                        copied += len(content)
+                        if copied > size:
+                            raise ValueError("Build-tool archive member exceeds declared size")
+                        output.write(content)
+                        digest.update(content)
+                if copied != size:
+                    raise ValueError("Build-tool archive member size differs")
+                sha = digest.hexdigest()
+                if os.name != "nt":
+                    path.chmod(0o755 if mode & 0o111 else 0o644)
             entries.append({"path": relative, "kind": "file", "bytes": size, "sha256": sha,
                             "executable": bool(mode & 0o111)})
     finally:
@@ -126,10 +149,18 @@ def archive_entries(archive, row, core):
 
 
 def extract(archive, destination, row, core):
-    entries = archive_entries(archive, row, core)
     if destination.exists():
+        entries = archive_entries(archive, row, core)
         verify_tree(destination, entries, core)
         return entries
+    if not archive.name.endswith(".zip"):
+        # Validate and copy each gzip member as it arrives. Sorting before lookup
+        # forces backward decompression; stream mode makes that impossible.
+        entries = archive_entries(archive, row, core, destination=destination)
+        destination.mkdir(parents=True, exist_ok=True)
+        verify_tree(destination, entries, core)
+        return entries
+    entries = archive_entries(archive, row, core)
     destination.mkdir(parents=True)
     is_zip = archive.name.endswith(".zip")
     container = zipfile.ZipFile(archive) if is_zip else tarfile.open(archive, "r:gz")

@@ -13,6 +13,34 @@ fn controls(mode: &str) -> Value {
 }
 
 #[tokio::test]
+async fn full_capability_catalog_fits_installed_body_budget_without_schema_loss() -> Result<()> {
+    let source = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    let server = AirkServer::new(Kernel::open(source.path(), Some(data.path().into()))?);
+    let reply = server
+        .capabilities(Parameters(serde_json::from_value(json!({
+            "response_mode": "full"
+        }))?))
+        .await;
+    ensure!(
+        !reply.is_error.unwrap_or(false),
+        "canonical capabilities failed: {reply:?}"
+    );
+    let complete = body(&reply)?;
+    let bytes = serde_json::to_vec(&complete)?.len();
+    eprintln!("canonical full capabilities: {bytes} bytes; installed body budget: 65536");
+    ensure!(
+        bytes <= 65_536,
+        "full capabilities exceed the installed body budget: {bytes}"
+    );
+    assert_eq!(
+        complete["workbench"]["operations"],
+        airk_kernel::workbench::operation_catalog()["operations"]
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn search_execution_survives_verification_results_and_all_reply_projections() -> Result<()> {
     use airk_core::{
         SearchFilters, SearchQuery,

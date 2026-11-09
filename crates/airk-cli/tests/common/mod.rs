@@ -771,7 +771,7 @@ impl Service {
             std::thread::sleep(Duration::from_millis(25));
         }
     }
-    #[cfg(feature = "embedding-worker")]
+    #[cfg(feature = "local-inference")]
     pub fn wait_semantic(&self, artifacts: u64) -> anyhow::Result<serde_json::Value> {
         tokio::runtime::Builder::new_current_thread()
             .enable_all()

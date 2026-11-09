@@ -364,7 +364,9 @@ impl LocalTools {
                             .ok_or(airk_core::scoped_reads::ScopeReadRefused)?,
                     )?;
                     return Ok(serde_json::to_value(airk_kernel::usage_page::scoped_page(
-                        serde_json::json!({"project":project,"value":metadata.value}),
+                        kernel.attach_rebuild_observation(
+                            serde_json::json!({"project":project,"value":metadata.value}),
+                        )?,
                         cursor.as_deref(),
                         max_bytes,
                         metadata.observation,
@@ -434,7 +436,9 @@ impl LocalTools {
                             }
                         };
                         Ok(serde_json::to_value(airk_kernel::usage_page::page(
-                            serde_json::json!({"project":project,"value":value}),
+                            kernel.attach_rebuild_observation(
+                                serde_json::json!({"project":project,"value":value}),
+                            )?,
                             cursor.as_deref(),
                             max_bytes,
                         )?)?)
@@ -469,7 +473,9 @@ impl LocalTools {
                             }
                         };
                         Ok(serde_json::to_value(airk_kernel::usage_page::page(
-                            serde_json::json!({"project":project,"value":value}),
+                            kernel.attach_rebuild_observation(
+                                serde_json::json!({"project":project,"value":value}),
+                            )?,
                             cursor.as_deref(),
                             max_bytes,
                         )?)?)
@@ -567,6 +573,10 @@ fn retry_native_read<T>(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "rebuild_parity_tests.rs"]
+mod rebuild_parity_tests;
 
 #[cfg(test)]
 mod tests {

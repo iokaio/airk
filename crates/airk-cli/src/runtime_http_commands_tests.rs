@@ -88,6 +88,7 @@ async fn enrollment_uses_real_native_control_pins_instance_and_preserves_complet
     let expected = serde_json::to_value(&info)?;
     let selection = info.selection.clone();
     let id = info.connection_id;
+    let previous = Some(Incarnation::from_bytes([89; 16]));
     let instance = health.instance;
     let mut listener = local_ipc::Listener::bind(&local_ipc::endpoint(&root, "control")?)?;
     let request_selection = selection.clone();
@@ -105,6 +106,7 @@ async fn enrollment_uses_real_native_control_pins_instance_and_preserves_complet
             selection,
             client,
             explorer_descriptor,
+            reattach_connection_id,
         } = request.method
         else {
             bail!("wrong native operation");
@@ -113,7 +115,8 @@ async fn enrollment_uses_real_native_control_pins_instance_and_preserves_complet
             connection_id == id
                 && *selection == request_selection
                 && client == airk_core::usage::ClientFamily::Codex
-                && explorer_descriptor.is_none(),
+                && explorer_descriptor.is_none()
+                && reattach_connection_id == previous,
             "native enrollment changed frozen inputs"
         );
         local_ipc::write_message(
@@ -132,6 +135,7 @@ async fn enrollment_uses_real_native_control_pins_instance_and_preserves_complet
         id,
         airk_core::usage::ClientFamily::Codex,
         None,
+        previous,
     )
     .await?;
     server.await??;

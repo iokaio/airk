@@ -206,12 +206,9 @@ export class ServiceClient {
     constructor(readonly transport: ControlTransport) {}
     async rpc(method: unknown, expected?: string): Promise<RecordValue> {
         const name=typeof method==='string'?method:method&&typeof method==='object'?Object.keys(method)[0]:undefined;
-        const readOnly=['health','resources','embedding_status','source_status','workers','worker','console','inactive_console','projects','job','configuration_result','reference_refresh_receipt','request_receipt','inspection','watch','progress','events','plan','plan_items','maintenance','catalog_page','catalog_detail','catalog_context','catalog_receipt','catalog_host_context','catalog_grant_draft','catalog_index_setup_draft','catalog_index_setup_receipt','catalog_legacy_binding','catalog_source_mutation_draft','catalog_source_change_observation','catalog_pending_source_change','catalog_policy_status','catalog_policy_resume_receipt','catalog_split_draft','catalog_split_source_state','catalog_split_status','catalog_split_receipt','catalog_split_recovery_receipt'].includes(String(name));
-        let response = await this.transport.request(method);
-        for(let attempt=0;(readOnly||name==='catalog_index_retirement_evidence')&&response.status==='failure'&&response.code==='registry_busy'&&attempt<2;attempt++){
-            await new Promise(resolve=>setTimeout(resolve,25*(attempt+1)));
-            response=await this.transport.request(method);
-        }
+        // The native management boundary owns bounded registry-busy recovery for
+        // every frontend. Never multiply that budget or replay uncertain work here.
+        const response = await this.transport.request(method);
         if (response.status === 'failure') {
             const code = typeof response.code === 'string' && /^[a-z0-9_]{1,128}$/.test(response.code) ? response.code : 'invalid_service_failure';
             // Older catalog handlers can collapse a post-prepare failure into this generic code.

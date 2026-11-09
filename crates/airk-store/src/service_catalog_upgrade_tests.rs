@@ -4,6 +4,43 @@ use crate::service::registry::ServiceRegistry;
 use airk_core::index_catalog::SourceRootId;
 use rusqlite::params;
 
+#[test]
+fn unsupported_source_schema_retains_typed_contract_details_without_authorizing_rebuild()
+-> Result<()> {
+    let (root, _) = fixture()?;
+    let connection = Connection::open(root.path().join(DATABASE))?;
+    // A version marker alone cannot qualify this relabeled schema as an
+    // authentic predecessor. The diagnostic reports incompatibility only.
+    connection.pragma_update(None, "user_version", 8)?;
+    drop(connection);
+    let error = registry_read(root.path())
+        .err()
+        .context("old schema accepted")?;
+    let rejection = error
+        .downcast_ref::<CatalogMigrationSourceUnsupported>()
+        .context("source incompatibility lost its typed identity")?;
+    assert_eq!(rejection.observed_registry_schema, 8);
+    assert_eq!(rejection.minimum_registry_schema, 11);
+    assert_eq!(rejection.maximum_registry_schema, 13);
+    assert_eq!(
+        error.to_string(),
+        "unsupported catalog upgrade source format"
+    );
+
+    let connection = Connection::open(root.path().join(DATABASE))?;
+    connection.pragma_update(None, "application_id", 0)?;
+    drop(connection);
+    let foreign = registry_read(root.path())
+        .err()
+        .context("foreign registry accepted")?;
+    assert!(
+        foreign
+            .downcast_ref::<CatalogMigrationSourceUnsupported>()
+            .is_none()
+    );
+    Ok(())
+}
+
 pub(super) fn fixture() -> Result<(tempfile::TempDir, ProjectRegistration)> {
     let root = tempfile::tempdir()?;
     let registry = ServiceRegistry::open(root.path(), Incarnation::from_bytes([1; 16]))?;

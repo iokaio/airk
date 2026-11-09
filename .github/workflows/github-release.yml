@@ -7,6 +7,10 @@ on:
       - .github/workflows/github-release.yml
       - scripts/github-release.py
       - scripts/ci-*-sign.py
+      - scripts/package-standalone-*.py
+      - scripts/standalone-installer-contract.py
+      - installers/**
+      - scripts/tests/test_standalone_*.py
       - scripts/tests/test_github_release.py
       - scripts/tests/test_ci_*_signing.py
   workflow_dispatch:
@@ -51,6 +55,7 @@ jobs:
           python -m unittest discover -s scripts/tests -p test_github_release.py -v
           python -m unittest discover -s scripts/tests -p test_release_1_4_4_repair.py -v
           python -m unittest discover -s scripts/tests -p 'test_ci_*_signing.py' -v
+          python -m unittest discover -s scripts/tests -p 'test_standalone_*.py' -v
   preflight:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
@@ -248,6 +253,59 @@ jobs:
         if: runner.os == 'Windows'
         run: python scripts/ci-windows-sign.py record --pair
         working-directory: ${{ env.AIRK_RELEASE_SOURCE_ROOT }}
+      - name: Prepare the standalone Windows uninstaller from the signed native payload
+        if: ${{ runner.os == 'Windows' && !inputs.repair_1_4_4 && inputs.channel == 'stable' }}
+        run: python scripts/package-standalone-windows.py prepare --runtime-dir artifacts/runtime/${{ matrix.target }} --signed-dir artifacts/signed/${{ matrix.target }}
+      - name: Sign the standalone Windows uninstaller with the existing Azure profile
+        if: ${{ runner.os == 'Windows' && !inputs.repair_1_4_4 && inputs.channel == 'stable' }}
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2
+        with:
+          endpoint: https://wus2.codesigning.azure.net
+          signing-account-name: ioka-llc-signing
+          certificate-profile-name: WritingForgePro
+          files: artifacts/standalone/${{ matrix.target }}/uninstaller.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          cache-dependencies: false
+          exclude-environment-credential: true
+          exclude-workload-identity-credential: true
+          exclude-managed-identity-credential: true
+          exclude-shared-token-cache-credential: true
+          exclude-visual-studio-credential: true
+          exclude-visual-studio-code-credential: true
+          exclude-azure-cli-credential: false
+          exclude-azure-powershell-credential: true
+          exclude-azure-developer-cli-credential: true
+          exclude-interactive-browser-credential: true
+      - name: Verify and embed the signed Windows uninstaller
+        if: ${{ runner.os == 'Windows' && !inputs.repair_1_4_4 && inputs.channel == 'stable' }}
+        run: python scripts/package-standalone-windows.py build
+      - name: Sign the standalone Windows installer with the existing Azure profile
+        if: ${{ runner.os == 'Windows' && !inputs.repair_1_4_4 && inputs.channel == 'stable' }}
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2
+        with:
+          endpoint: https://wus2.codesigning.azure.net
+          signing-account-name: ioka-llc-signing
+          certificate-profile-name: WritingForgePro
+          files: artifacts/standalone/${{ matrix.target }}/airk-${{ needs.preflight.outputs.version }}-${{ matrix.target }}-installer.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          cache-dependencies: false
+          exclude-environment-credential: true
+          exclude-workload-identity-credential: true
+          exclude-managed-identity-credential: true
+          exclude-shared-token-cache-credential: true
+          exclude-visual-studio-credential: true
+          exclude-visual-studio-code-credential: true
+          exclude-azure-cli-credential: false
+          exclude-azure-powershell-credential: true
+          exclude-azure-developer-cli-credential: true
+          exclude-interactive-browser-credential: true
+      - name: Verify the standalone Windows installer and uninstaller
+        if: ${{ runner.os == 'Windows' && !inputs.repair_1_4_4 && inputs.channel == 'stable' }}
+        run: python scripts/package-standalone-windows.py record
       - name: Clear Azure login
         if: always() && runner.os == 'Windows' && steps.azure.outcome == 'success'
         run: az logout
@@ -261,6 +319,7 @@ jobs:
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          AIRK_STANDALONE_INSTALLER: ${{ !inputs.repair_1_4_4 && inputs.channel == 'stable' }}
         run: python scripts/ci-macos-sign.py --target ${{ matrix.target }} --pair
         working-directory: ${{ env.AIRK_RELEASE_SOURCE_ROOT }}
       - name: Remove temporary Apple credentials after any failure
@@ -287,6 +346,15 @@ jobs:
           python scripts/package-native.py --target ${{ matrix.target }} --runtime-dir artifacts/runtime/${{ matrix.target }} --signed-dir artifacts/signed/${{ matrix.target }} --source-manifest artifacts/tested-native/manifest.json
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python scripts/promote-vsix.py package --native artifacts/native/${{ matrix.target }}/publish --original artifacts/tested-native --vsix artifacts/tested-vsix --target ${{ matrix.target }} --channel $env:AIRK_CHANNEL --output artifacts/extension/${{ matrix.target }}/publish
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !inputs.repair_1_4_4 && inputs.channel == 'stable' }}
+        with:
+          name: airk-installer-${{ matrix.target }}-${{ needs.preflight.outputs.source_commit }}-${{ github.run_id }}
+          path: artifacts/standalone/${{ matrix.target }}/publish/
+          overwrite: true
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !inputs.repair_1_4_4 }}
         with:
@@ -369,6 +437,18 @@ jobs:
           python scripts/ci-candidates.py download --pinned --kind vsix --target x86_64-unknown-linux-gnu --output artifacts/tested-vsix
           python scripts/promote-vsix.py source --native artifacts/native/x86_64-unknown-linux-gnu/publish --vsix artifacts/tested-vsix --target x86_64-unknown-linux-gnu --output artifacts/source/x86_64-unknown-linux-gnu
           python scripts/promote-vsix.py package --native artifacts/native/x86_64-unknown-linux-gnu/publish --vsix artifacts/tested-vsix --target x86_64-unknown-linux-gnu --channel "$AIRK_CHANNEL" --output artifacts/extension/x86_64-unknown-linux-gnu/publish
+      - name: Package the offline standalone Linux CLI installer
+        if: ${{ !inputs.repair_1_4_4 && inputs.channel == 'stable' }}
+        run: python scripts/package-standalone-linux.py --native-dir artifacts/native/x86_64-unknown-linux-gnu/publish
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !inputs.repair_1_4_4 && inputs.channel == 'stable' }}
+        with:
+          name: airk-installer-x86_64-unknown-linux-gnu-${{ needs.preflight.outputs.source_commit }}-${{ github.run_id }}
+          path: artifacts/standalone/x86_64-unknown-linux-gnu/publish/
+          overwrite: true
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !inputs.repair_1_4_4 }}
         with:
@@ -398,6 +478,11 @@ jobs:
     needs: [preflight, sign, package-linux]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -426,6 +511,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python scripts/ci-candidates.py release-inputs --output artifacts/candidates
+      - name: Restore this run's verified standalone installer outputs
+        if: ${{ !inputs.repair_1_4_4 && inputs.channel == 'stable' }}
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: airk-installer-*-${{ needs.preflight.outputs.source_commit }}-${{ github.run_id }}
+          path: artifacts/candidates
+          merge-multiple: false
       - name: Verify complete signed platform set and stage public downloads
         env:
           AIRK_CHANNEL: ${{ inputs.channel }}
@@ -434,6 +526,30 @@ jobs:
           args=()
           if [ "${{ inputs.repair_1_4_4 }}" != true ]; then args+=(--pinned-producer --source-records); fi
           python scripts/${{ inputs.repair_1_4_4 && 'release-1.4.4-repair.py' || 'github-release.py' }} assemble --directory artifacts/candidates --output artifacts/github-release --channel "$AIRK_CHANNEL" --producer artifacts/producer.json "${args[@]}"
+      - name: Attest the final GitHub-hosted VSIX bytes
+        if: ${{ !inputs.repair_1_4_4 }}
+        id: vsix_attestation
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        with:
+          subject-path: artifacts/github-release/*.vsix
+          create-storage-record: false
+      - name: Attest the final standalone Linux installer bytes
+        if: ${{ !inputs.repair_1_4_4 && inputs.channel == 'stable' }}
+        id: linux_attestation
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        with:
+          subject-path: artifacts/github-release/airk-${{ needs.preflight.outputs.version }}-x86_64-unknown-linux-gnu-installer.tar.gz
+          create-storage-record: false
+      - name: Retain the verification bundles separately from the immutable release asset set
+        if: ${{ !inputs.repair_1_4_4 }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: airk-release-attestations-${{ needs.preflight.outputs.source_commit }}-${{ github.run_id }}
+          path: |
+            ${{ steps.vsix_attestation.outputs.bundle-path }}
+            ${{ steps.linux_attestation.outputs.bundle-path }}
+          if-no-files-found: error
+          retention-days: 90
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: airk-release-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}

@@ -42,6 +42,10 @@ pub use split::{SplitBuildPermit, validate_split_store_access};
 mod retention_inheritance;
 pub use retention_inheritance::{CapturedSplitExtractionPolicy, SavedSplitExtractionPolicy};
 
+#[path = "service_collection_settings_capture.rs"]
+mod settings_capture;
+pub use settings_capture::CapturedCollectionSettings;
+
 #[derive(Clone, Copy, Debug)]
 pub struct SelectionContention;
 impl SelectionContention {

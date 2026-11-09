@@ -2,6 +2,51 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs'),path=require('node:path');
 const {formFillExpressions,checkboxFillExpressions,appliedReviewMatches,observeReviewedApply,privateEditorEnvironment,privateClientEnvironment,openUsageAdministration,retainUiDiagnostic,beginUiDiagnostic,editorActionDeadline,editorRemainingBudget}=require('../editor-ui.cjs');
 const label='New index storage folder';
+const {clickDispatchExpression,retryUnclicked}=require('../editor-ui.cjs');
+const {clearedSearchScope}=require('../editor-ui.cjs');
+
+test('cleared scope accepts the canonical active empty choice and rejects retained authority',()=>{
+    const value={outcome:{status:'search_scope_cleared'},searchScope:{active:true,selectedIndexIds:[],selectedProjectIds:[]}};
+    assert.equal(clearedSearchScope(value),true);
+    assert.equal(clearedSearchScope({...value,searchScope:{...value.searchScope,selectedIndexIds:['idx_retained']}}),false);
+    assert.equal(clearedSearchScope({...value,searchScope:{...value.searchScope,selectedProjectIds:['prj_retained']}}),false);
+    assert.equal(clearedSearchScope({...value,searchScope:{active:false}}),false);
+    assert.equal(clearedSearchScope({...value,outcome:{status:'search_scope_selected'}}),false);
+});
+test('typed click refuses synchronously before click and captures only bounded control metadata',()=>{
+    let clicks=0;const button={disabled:true,click(){clicks++;}},document={visibilityState:'visible',querySelectorAll:()=>[button]};
+    const expression=clickDispatchExpression('button');
+    const refused=vm.runInNewContext(expression,{button,document});
+    assert.equal(refused.dispatched,false);assert.equal(refused.reason,'target_unavailable');assert.equal(clicks,0);
+    assert.deepEqual(JSON.parse(JSON.stringify(refused.diagnostic)),{visibility:'visible',button_count:1,target_present:true,target_disabled:true});
+    button.disabled=false;assert.equal(vm.runInNewContext(expression,{button,document}).dispatched,true);assert.equal(clicks,1);
+});
+test('known no-click retries rediscover readiness with increasing waits and dispatch one click',async()=>{
+    let time=0,reads=0,attempts=0,clicks=0;const waits=[];
+    const result=await retryUnclicked(async()=>++reads,async target=>{assert.equal(target,++attempts);if(attempts<3)return {dispatched:false,reason:'target_unavailable'};clicks++;return {dispatched:true};},
+        {deadline:10000,now:()=>time,wallNow:()=>time,pause:async ms=>{waits.push(ms);time+=ms;}});
+    assert.deepEqual(result,{dispatched:true});assert.equal(clicks,1);assert.equal(reads,3);assert.deepEqual(waits,[100,200]);
+});
+test('known no-click exhaustion has seven attempts and cannot dispatch after its original deadline',async()=>{
+    let time=0,attempts=0;const waits=[],refused={dispatched:false,reason:'target_unavailable'};
+    const options={deadline:10000,now:()=>time,wallNow:()=>time,pause:async ms=>{waits.push(ms);time+=ms;}};
+    await assert.rejects(retryUnclicked(async()=>true,async()=>{attempts++;return refused;},options),/budget exhausted/);
+    assert.equal(attempts,7);assert.deepEqual(waits,[100,200,400,600,700,800]);assert.equal(time,2800);
+    time=0;attempts=0;let reads=0;
+    await assert.rejects(retryUnclicked(async()=>{if(++reads===2)time=3000;return true;},async()=>{attempts++;return refused;},options),/deadline exhausted/);
+    assert.equal(attempts,1);assert.equal(reads,2);
+    time=10000;reads=0;
+    await assert.rejects(retryUnclicked(async()=>{reads++;},async()=>{throw Error('must not dispatch');},options),/deadline exhausted/);assert.equal(reads,0);
+});
+test('unknown click values and CDP failures are never replayed',async()=>{
+    for(const value of [undefined,null,false,true,{}, {dispatched:false}, {dispatched:false,reason:'other'}, {dispatched:true,extra:true}, {dispatched:false,reason:'target_unavailable',extra:true}]){
+        let attempts=0,reads=0;
+        await assert.rejects(retryUnclicked(async()=>{reads++;},async()=>{attempts++;return value;},{deadline:10000,now:()=>0,wallNow:()=>0,pause:async()=>{throw Error('must not wait');}}),/Unknown UI dispatch outcome/);
+        assert.equal(attempts,1);assert.equal(reads,1);
+    }
+    const failure=Error('CDP context disappeared');let attempts=0;
+    await assert.rejects(retryUnclicked(async()=>true,async()=>{attempts++;throw failure;},{deadline:10000,now:()=>0,wallNow:()=>0}),error=>error===failure);assert.equal(attempts,1);
+});
 function acceptedApplyFixture(){
     // Public DTO shape from the actual Mac pending->applied worker/provider drain;
     // fictional identities only, with no retained source paths or private state.

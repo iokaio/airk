@@ -93,6 +93,8 @@ def drain_initial_owner(fixture):
 class FaultFixture(clients.Fixture):
     """Canonical installed foreground entry, supervised by this retained Popen."""
     def start(self):
+        if not self.single_image and self.catalog_authority:
+            raise ValueError("Historical catalog fault injection has no supported retained-child startup protocol")
         if not self.single_image:
             return super().start()
         if not self.managed_started:

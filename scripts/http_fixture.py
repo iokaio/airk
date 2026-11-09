@@ -198,10 +198,79 @@ def response_messages(data, content_type):
     return messages
 
 
-class HttpRefused(ValueError):
-    def __init__(self, status, body):
-        super().__init__("HTTP fixture request refused with status " + str(status))
+class HttpResponseError(ValueError):
+    def __init__(self, status, body, *, headers=None, request=None, raw_body=None,
+                 header_redactions=None, body_redacted=False, failure="http_response",
+                 body_truncated=False, submission="observed"):
+        super().__init__("HTTP fixture " + failure + " with status " + str(status))
         self.status, self.body = status, body
+        self.headers = headers
+        self.request = request
+        self.raw_body = raw_body
+        self.header_redactions = header_redactions or []
+        self.body_redacted = body_redacted
+        self.failure, self.body_truncated, self.submission = failure, body_truncated, submission
+
+    def evidence(self):
+        """Complete bounded response metadata, never bearer/session material."""
+        return {"status": self.status, "body": self.body, "headers": self.headers,
+                "failure": self.failure, "body_truncated": self.body_truncated, "submission": self.submission,
+                "request": self.request, "header_redactions": self.header_redactions,
+                "body_redacted": self.body_redacted,
+                "raw_body_base64": base64.b64encode(self.raw_body).decode("ascii") if self.raw_body is not None else None,
+                "raw_body_sha256": hashlib.sha256(self.raw_body).hexdigest() if self.raw_body is not None else None,
+                "error_code": self.body.get("error", {}).get("code")
+                    if isinstance(self.body, dict) and isinstance(self.body.get("error"), dict) else None}
+
+
+class HttpRefused(HttpResponseError):
+    pass
+
+
+REFUSAL_STAGES = {(429, "query_admission_busy"): "query",
+                  (503, "authentication_busy"): "authentication",
+                  (503, "native_validation_busy"): "native_validation"}
+
+
+def classify_refusal(error):
+    """Only documented complete pre-admission responses prove non-submission."""
+    if not isinstance(error, HttpRefused) or error.body_truncated:
+        return None
+    body = error.body
+    if not isinstance(body, dict) or body.get("schema") != "airk.local-api-error/1" or not isinstance(body.get("error"), dict):
+        return None
+    code = body["error"].get("code")
+    stage = REFUSAL_STAGES.get((error.status, code)) if isinstance(code, str) else None
+    if stage is None or any("query_submitted" in item and item["query_submitted"] is not False for item in (body, body["error"])):
+        return None
+    return {"code": code, "stage": stage, "status": error.status, "query_submitted": False}
+
+
+def error_outcome(error):
+    """Do not infer non-submission from unknown codes, fences or disconnections."""
+    if classify_refusal(error) is not None:
+        return "refused"
+    if isinstance(error, HttpResponseError):
+        return "uncertain" if error.submission == "uncertain" else "failed"
+    return "uncertain" if isinstance(error, (OSError, TimeoutError)) else "failed"
+
+
+def phase_counts(outcomes, planned):
+    """Every planned exchange has one outcome; no success-count threshold."""
+    if len(outcomes) > planned or planned < 0:
+        raise ValueError("phase outcome count exceeds planned exchanges")
+    counts = {key: 0 for key in ("succeeded", "refused", "failed", "uncertain")}
+    codes = {}
+    for outcome in outcomes:
+        kind = outcome["outcome"]
+        if kind == "refused" and outcome.get("code") not in {code for _, code in REFUSAL_STAGES}:
+            raise ValueError("phase refusal code is not documented")
+        counts[kind] += 1
+        if kind == "refused":
+            code = outcome["code"]
+            codes[code] = codes.get(code, 0) + 1
+    return {**counts, "refused_by_code": codes, "not_executed": planned-len(outcomes),
+            "planned": planned, "passed": not counts["failed"] and not counts["uncertain"] and len(outcomes) == planned}
 
 
 def request_protocol(value, initialized, negotiated):
@@ -240,6 +309,54 @@ def standard_headers(value, protocol):
 
 
 class McpClient:
+    def response_error(self, status, data, response_headers, method, value, path, *, failure="http_response", truncated=False):
+        """Bound and redact error evidence before it can enter any receipt."""
+        session_values = [self.session] if self.session else []
+        session_values.extend(item for name, item in response_headers if name.lower() == "mcp-session-id")
+        secrets = [(self._token, "[REDACTED_FIXTURE_CREDENTIAL]")]
+        secrets.extend((item, "[REDACTED_FIXTURE_SESSION]") for item in session_values if item)
+        secrets.sort(key=lambda pair: len(pair[0]), reverse=True)
+        def redact(item):
+            for secret, replacement in secrets:
+                if secret:
+                    item = item.replace(secret, replacement)
+            return item
+        protected = {"authorization", "proxy-authorization", "set-cookie", "cookie", "mcp-session-id"}
+        redactions = [name for name, item in response_headers if name.lower() in protected or redact(item) != item]
+        headers = [[name, "[REDACTED]" if name.lower() in protected else redact(item)] for name, item in response_headers]
+        # Redact before bounding the prefix so a secret cut by the prefix cannot leak.
+        redacted_data = data
+        for secret, replacement in secrets:
+            if secret:
+                redacted_data = redacted_data.replace(secret.encode(), replacement.encode())
+        body_redacted = redacted_data != data
+        if truncated:
+            # read(limit+1) can end inside a secret. Its observed prefix must
+            # also be removed, including the byte beyond the retained limit.
+            for secret, _ in secrets:
+                encoded_secret = secret.encode()
+                for length in range(min(len(encoded_secret)-1, len(redacted_data)), 0, -1):
+                    if redacted_data.endswith(encoded_secret[:length]):
+                        redacted_data = redacted_data[:-length] + b"[REDACTED_PARTIAL_FIXTURE_SECRET]"
+                        body_redacted = True
+                        break
+        redacted_data = redacted_data[:MAX_RESPONSE_BYTES]
+        try:
+            body = json.loads(redacted_data) if redacted_data else None
+        except ValueError:
+            body = redacted_data.decode("utf-8", errors="replace")
+        encoded = None if value is None else json.dumps(value, separators=(",", ":")).encode()
+        request = {"http_method": method, "path": path, "connection_id": self._connection_id,
+                   "session_sha256": hashlib.sha256(self.session.encode()).hexdigest() if self.session is not None else None,
+                   "jsonrpc_method": value.get("method") if isinstance(value, dict) else None,
+                   "jsonrpc_id": value.get("id") if isinstance(value, dict) else None,
+                   "request_sha256": hashlib.sha256(encoded).hexdigest() if encoded is not None else None}
+        error_type = HttpRefused if failure == "http_response" else HttpResponseError
+        return error_type(status, body, headers=headers, request=request, raw_body=redacted_data,
+                          header_redactions=redactions, body_redacted=body_redacted,
+                          failure=failure, body_truncated=truncated,
+                          submission="uncertain" if truncated else "observed")
+
     def __init__(self, connection, control_root, timeout=60):
         endpoint = connection["endpoint"]
         matched = re.fullmatch(r"https://127\.0\.0\.1:([1-9][0-9]{0,4})/mcp", endpoint["url"])
@@ -266,6 +383,7 @@ class McpClient:
             self.connection.close()
             raise ValueError("HTTP fixture peer differs from native control")
         self._token = token
+        self._connection_id = connection["connection_id"]
         self.session = None
         self.initialized = False
         self.protocol = "2025-11-25"
@@ -293,22 +411,23 @@ class McpClient:
             raise ValueError("HTTP fixture peer changed before authentication")
         self.connection.request(method, path, encoded, headers)
         response = self.connection.getresponse()
-        data = response.read(1_048_577)
-        if len(data) > 1_048_576:
-            raise ValueError("HTTP fixture response exceeds native output bound")
+        data = response.read(MAX_RESPONSE_BYTES + 1)
+        response_headers = response.getheaders()
+        if len(data) > MAX_RESPONSE_BYTES:
+            # Consume no more bytes; the connection is not safe for another exchange.
+            self.connection.close()
+            raise self.response_error(response.status, data, response_headers, method, value, path,
+                                      failure="response_limit", truncated=True)
         if not 200 <= response.status < 300:
-            try:
-                body = json.loads(data) if data else None
-            except ValueError:
-                body = data.decode("utf-8", errors="replace")
-            raise HttpRefused(response.status, body)
+            if len(response_headers) > 100 or sum(len(name) + len(item) for name, item in response_headers) > 65_536:
+                raise ValueError("HTTP fixture refusal headers exceed observation bound")
+            raise self.response_error(response.status, data, response_headers, method, value, path)
         session = response.getheader("Mcp-Session-Id")
         if session is not None:
             if path != "/mcp":
                 raise ValueError("HTTP fixture JSON API unexpectedly created an MCP session")
             if self.session not in (None, session) or not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", session):
                 raise ValueError("HTTP fixture session identity changed")
-            self.session = session
         try:
             messages = response_messages(data, response.getheader("Content-Type"))
         except (ValueError, UnicodeError) as error:
@@ -328,9 +447,16 @@ class McpClient:
                     self.unsolicited.append(message)
             if len(matching) > 1:
                 raise ValueError("HTTP fixture received duplicate matching JSON-RPC replies")
+            if matching and "error" in matching[0]:
+                raise self.response_error(response.status, data, response_headers, method, value, path,
+                                          failure="jsonrpc_error")
+            if session is not None:
+                self.session = session
             return matching[0] if matching else None
         if len(messages) > 1:
             raise ValueError("HTTP fixture single-result endpoint returned multiple messages")
+        if session is not None:
+            self.session = session
         return messages[0] if messages else None
 
     def api_catalog(self):

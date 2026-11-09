@@ -30,13 +30,17 @@ export interface CatalogControl {
     catalogRetirementReview?(id:string):Promise<CatalogRetirementReview>;
     catalogStopTracking?(review:CatalogRetirementReview,valid:()=>boolean):Promise<CatalogObject>;
 }
-export interface CatalogHost { control?: CatalogControl; identity(): string; authorized(): boolean; changed(): void; windowContext?(): WindowContextDescriptor | undefined; windowContextObservation?(): CatalogObject | undefined; canReadWindowContext?(): boolean; useGrant?(choice:CatalogObject,namespace:string,revision:number,valid:()=>boolean):Promise<CatalogObject>;searchScopeSelection?():{index_ids:string[];project_ids:string[];managedProjectIds:string[];active:boolean};applySearchScope?(selection:CatalogObject):Promise<CatalogObject>;saveIndexSet?(selection:CatalogObject):Promise<CatalogObject> }
+export interface CatalogHost { control?: CatalogControl; identity(): string; authorized(): boolean; changed(): void; evidenceEpoch?():number; windowContext?(): WindowContextDescriptor | undefined; windowContextObservation?(): CatalogObject | undefined; canReadWindowContext?(): boolean; useGrant?(choice:CatalogObject,namespace:string,revision:number,valid:()=>boolean):Promise<CatalogObject>;searchScopeSelection?():{index_ids:string[];project_ids:string[];managedProjectIds:string[];active:boolean};applySearchScope?(selection:CatalogObject):Promise<CatalogObject>;saveIndexSet?(selection:CatalogObject):Promise<CatalogObject> }
 /** Window memory only; the shared native console owns durable intents and transport. No polling or source scanning. */
 export class IndexingCatalogController {
     private owner?: string;
+    private scopeOwner?: string;
+    private nativeRevision?: number;
+    private scopeSequence = 0;
     private splitPreparedSequence?:number;
     private splitObservedSequence?:number;
     private sequence = 0;
+    private adviceSequence = 0;
     private view: CatalogView = { generation: 0, busy: false };
     private pageRequest?: CatalogObject;
     private membershipRequest?: CatalogObject;
@@ -46,28 +50,53 @@ export class IndexingCatalogController {
     constructor(private readonly host: CatalogHost) {}
     snapshot(): CatalogView {
         this.sync();
-        return this.host.authorized() ? { ...this.view, busy:this.view.busy||this.scopeApplying, canReviewSplit:hasSplitCapability(this.view.capabilities)&&!!this.host.control?.catalogSplitDraft&&!!this.host.control?.catalogSplitApply&&!!this.host.control?.catalogSplitSourceState, canReadPolicy:!!this.host.control?.catalogPolicyStatus,canResumePolicy:!!this.host.control?.catalogPolicyResume,canReviewRetirement:!!this.host.control?.catalogRetirementReview&&!!this.host.control?.catalogStopTracking,windowDescriptor:this.descriptor(),canReadWindowContext:this.host.canReadWindowContext?.(),canReviewGrant:!!this.host.control?.catalogGrantDraft,canUseGrant:!!this.host.useGrant,canReviewSource:!!this.host.control?.catalogSourceDraft,canReadPendingSource:!!this.host.control?.catalogPendingSource,canReviewSetup:!!this.host.control?.catalogIndexSetupDraft&&!!this.host.control?.catalogIndexSetupApply,pending: this.host.control?.catalogPending() ?? [],pendingDetails:this.host.control?.catalogPendingDetails?.() } : { generation: this.view.generation, busy: false, error: 'Workspace trust or client authority is unavailable.' };
+        return this.host.authorized() ? { ...this.view, adviceGeneration:this.adviceSequence, busy:this.view.busy||this.scopeApplying, canReviewSplit:hasSplitCapability(this.view.capabilities)&&!!this.host.control?.catalogSplitDraft&&!!this.host.control?.catalogSplitApply&&!!this.host.control?.catalogSplitSourceState, canReadPolicy:!!this.host.control?.catalogPolicyStatus,canResumePolicy:!!this.host.control?.catalogPolicyResume,canReviewRetirement:!!this.host.control?.catalogRetirementReview&&!!this.host.control?.catalogStopTracking,windowDescriptor:this.descriptor(),canReadWindowContext:this.host.canReadWindowContext?.(),canReviewGrant:!!this.host.control?.catalogGrantDraft,canUseGrant:!!this.host.useGrant,canReviewSource:!!this.host.control?.catalogSourceDraft,canReadPendingSource:!!this.host.control?.catalogPendingSource,canReviewSetup:!!this.host.control?.catalogIndexSetupDraft&&!!this.host.control?.catalogIndexSetupApply,pending: this.host.control?.catalogPending() ?? [],pendingDetails:this.host.control?.catalogPendingDetails?.() } : { generation: this.view.generation, busy: false, error: 'Workspace trust or client authority is unavailable.' };
     }
-    /** Complete native read, retained with the same owner fence as catalog data. */
+    /** Advice belongs to the evidence selection and native owner, independently
+     * of management's sequence, reviews and busy state. */
     async recommendations(read:()=>Promise<CatalogObject>):Promise<CatalogView>{
-        return this.run(async(_control,current)=>{
-            const response=await read();current();catalogBound(response,65536);
-            this.view={...this.view,recommendations:response,generation:this.view.generation+1};
-        });
+        this.sync();
+        if(!this.host.authorized())throw new Error('runtime_client_no_longer_authorized');
+        this.adviceSequence++;
+        const current=this.recommendationGuard();
+        const response=await read();current();catalogBound(response,65536);
+        this.view={...this.view,recommendations:response};this.adviceSequence++;this.host.changed();
+        return this.snapshot();
     }
-    dismissRecommendations():CatalogView {this.sync();this.sequence++;this.view={...this.view,busy:false,recommendations:undefined,generation:this.view.generation+1};this.host.changed();return this.snapshot();}
+    /** Fence copy/use through their native revalidation, including a new read
+     * returning the same object or a dismissal while no advice is stored. */
+    recommendationGuard():()=>void {
+        this.sync();const owner=this.owner,sequence=this.adviceSequence,epoch=this.host.evidenceEpoch?.();
+        return ()=>{this.sync();if(!this.host.authorized()||owner!==this.owner||sequence!==this.adviceSequence||epoch!==this.host.evidenceEpoch?.())throw new Error('stale_catalog_view');};
+    }
+    /** Evidence selection owns advice, independently of an in-flight native
+     * management review or its complete receipt. Clearing advice cannot retire
+     * that operation's generation, request sequence or busy state. */
+    clearEvidenceRecommendations():void {this.adviceSequence++;if(this.view.recommendations!==undefined)this.view={...this.view,recommendations:undefined};}
+    dismissRecommendations():CatalogView {this.sync();this.clearEvidenceRecommendations();this.host.changed();return this.snapshot();}
     invalidate(): void {
-        this.sequence++; this.view = { generation: this.view.generation + 1, busy: false };
+        this.invalidateView(false);
+    }
+    private invalidateView(retainScope:boolean): void {
+        if(!retainScope)this.scopeSequence++;
+        this.sequence++; this.adviceSequence++; this.view = { generation: this.view.generation + 1, busy: false };
         this.pageRequest = this.membershipRequest = this.sourceRequest = undefined;
         this.grantRequest=undefined;
     }
     private sync(): void {
-        let native:unknown,capabilities:CatalogObject|undefined;
+        let native:unknown[]|undefined,capabilities:CatalogObject|undefined;
         try{const observation=this.host.windowContextObservation?.(),observed=observation?.descriptor;if(observed&&typeof observed==='object'&&!Array.isArray(observed)){const value=validateNativeHostContext(observed);native=[value.namespace,value.host,value.key,value.catalog_revision];
             if(observation?.status==='catalog_host_context'&&observation.capabilities&&typeof observation.capabilities==='object')capabilities=catalogObject(observation.capabilities);
         }}catch{/* An unavailable producer cannot retain a prior authority identity. */}
         const owner = JSON.stringify([this.host.authorized(),this.host.identity(),this.descriptor(),native]);
-        if (owner !== this.owner) { this.owner = owner; this.invalidate(); }
+        const scopeOwner=JSON.stringify([this.host.authorized(),this.host.identity(),this.descriptor(),native?.slice(0,3)]),revision=native?.[3] as number|undefined;
+        if (owner !== this.owner) {
+            // Scope orchestration refreshes the catalog clock after its own
+            // journaled writes. That invalidates old reviews, but cannot retire
+            // this action while its runtime/window/native authority is unchanged.
+            const retainScope=this.scopeApplying&&scopeOwner===this.scopeOwner&&revision!==undefined&&this.nativeRevision!==undefined&&revision>this.nativeRevision;
+            this.owner = owner; this.scopeOwner=scopeOwner;this.nativeRevision=revision;this.invalidateView(retainScope);
+        }
         // Automatic connection observations establish capability without loading
         // library rows, changing membership, restoring a grant or starting work.
         if(capabilities&&this.view.capabilities===undefined)this.view={...this.view,capabilities};
@@ -158,13 +187,15 @@ export class IndexingCatalogController {
         const work=set?this.host.saveIndexSet:this.host.applySearchScope;
         if(!this.host.authorized()||!work)throw new Error('native_search_scope_unavailable');
         if(this.view.busy||this.scopeApplying||generation!==this.view.generation)throw new Error('stale_catalog_view');
+        const owner=this.scopeOwner,sequence=++this.scopeSequence;this.sequence++;
+        const current=()=>{this.sync();if(!this.host.authorized()||owner!==this.scopeOwner||sequence!==this.scopeSequence)throw new Error('stale_catalog_view');};
         this.scopeApplying=true;this.host.changed();
         try{
-            const result=await work(selection);this.sync();
+            const result=await work(selection);current();
             const selected=this.host.searchScopeSelection?.();
             this.view={...this.view,outcome:result,generation:this.view.generation+1,...(this.view.searchScope&&selected?{searchScope:{...this.view.searchScope,selectedIndexIds:selected.index_ids,selectedProjectIds:selected.project_ids,managedProjectIds:selected.managedProjectIds,active:selected.active}}:{})};
             return result;
-        }catch(error){this.sync();const native=error&&typeof error==='object'?(error as {nativeResponse?:unknown}).nativeResponse:undefined;this.view={...this.view,...(native&&typeof native==='object'&&!Array.isArray(native)?{outcome:catalogObject(native)}:{}),error:error instanceof Error?error.message:'search_scope_failed'};throw error;}
+        }catch(error){this.sync();if(owner===this.scopeOwner&&sequence===this.scopeSequence){const native=error&&typeof error==='object'?(error as {nativeResponse?:unknown}).nativeResponse:undefined;this.view={...this.view,...(native&&typeof native==='object'&&!Array.isArray(native)?{outcome:catalogObject(native)}:{}),error:error instanceof Error?error.message:'search_scope_failed'};}throw error;}
         finally{this.scopeApplying=false;this.host.changed();}
     }
     setRead(id:string):Promise<CatalogView>{

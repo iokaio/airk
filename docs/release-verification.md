@@ -40,15 +40,45 @@ The check does **not** prove that rebuilding the source reproduces the same byte
 
 5. Record the result, including which install, upgrade and uninstall tests actually ran on that platform. A source test, a CI candidate test and a test of the signed installed artifact are separate kinds of evidence.
 
-## Mac installed-artifact and channel acceptance
+## Artifact attestations
+
+GitHub artifact attestations for the standalone Linux installer and GitHub-hosted
+VSIX packages are implemented in the release workflow source. Their generation and
+published-artifact acceptance remain pending for 1.8.14. After an artifact and
+its attestation have actually been published, verify the downloaded bytes:
+
+```console
+gh attestation verify <downloaded-artifact> -R iokaio/airk
+```
+
+For the release workflow's expected identity, constrain the signer and source
+ref as well:
+
+```console
+gh attestation verify <downloaded-artifact> -R iokaio/airk --signer-workflow iokaio/airk/.github/workflows/github-release.yml --source-ref refs/heads/main
+```
+
+This checks signed workflow provenance. It is not a native OS signature, an
+installed-behavior test, or proof of a reproducible build. Linux remains without
+a native OS installer signature. Windows Azure signatures and macOS Developer ID
+signing/notarization remain required independently. Marketplace's automatic
+Microsoft extension signature is separate from the GitHub VSIX attestation.
+Use a current GitHub CLI and inspect the verified workflow and source identity;
+the [GitHub CLI verification reference](https://cli.github.com/manual/gh_attestation_verify)
+describes repository, workflow and source-ref constraints.
+
+## Historical schema-1 Mac installed-artifact and channel acceptance
 
 Bundle verification alone does not qualify the installed launcher. The
 [issue 66 review](https://github.com/iokaio/airk/issues/66#issuecomment-6710990197)
 identifies a signed 1.8.7 main executable that verifies inside `AIRK.app` but
-fails after the installer copies it outside the bundle. Current layouts use a
+fails after the installer copies it outside the bundle. Those schema-1 layouts used a
 separately signed `AIRK.app/Contents/MacOS/airk-launcher-image`; service and worker
 processes keep using the sealed app executables. Changing certificates does not
-repair the historical copy defect.
+repair the historical copy defect. The modern 1.8.14 single-image layout keeps
+its main inside the app bundle; use the [current signing contract](native-signing.md#current-1814-signing-contract)
+and its own installed-artifact evidence rather than applying these historical
+copied-launcher checks to a modern payload.
 
 Before declaring the corrected Mac release accepted, retain these additional
 results for Apple Silicon and Intel separately:

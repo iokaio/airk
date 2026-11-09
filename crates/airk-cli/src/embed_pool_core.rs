@@ -53,7 +53,7 @@ pub(crate) struct ComputeContext {
     pub session: Incarnation,
 }
 #[cfg(test)]
-type ComputeHook = Box<dyn FnMut(Option<&ComputeContext>, &Request) + Send>;
+pub(crate) type ComputeHook = Box<dyn FnMut(Option<&ComputeContext>, &Request) + Send>;
 
 pub(crate) struct Engine {
     runtime: PathBuf,
@@ -550,6 +550,12 @@ macro_rules! define_provider_work {
     ($owner_cfg:meta) => {
         enum Work {
             Sweep,
+            #[$owner_cfg]
+            #[cfg(test)]
+            ComputeHook {
+                hook: ComputeHook,
+                reply: oneshot::Sender<()>,
+            },
             Request {
                 grant: Box<protocol::Grant>,
                 envelope: Box<protocol::Envelope>,
@@ -580,6 +586,12 @@ macro_rules! define_provider_work {
         }
         fn process_work(engine: &mut Engine, work: Work, closing: &AtomicBool) {
             match work {
+                #[$owner_cfg]
+                #[cfg(test)]
+                Work::ComputeHook { hook, reply } => {
+                    engine.before_compute = Some(hook);
+                    let _ = reply.send(());
+                }
                 Work::Sweep => {
                     engine.retire_disconnected();
                     if engine.sessions.is_empty() && engine.used.elapsed() > Duration::from_secs(60)

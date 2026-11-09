@@ -11,12 +11,38 @@ indexing mutations or private management commands.
 
 ## Obtain a connection
 
+VS Code is optional. Guided standalone `airk setup` onboarding is implemented
+in the working tree, with validation and installed acceptance pending. Its service
+discovery/start, index selection or creation, explicit scope review and native
+enrollment must complete before a first API connection
+can be used. See the [standalone onboarding status](agent-integration.md#standalone-onboarding-without-vs-code).
+The existing `runtime http-connection` interface below enrolls an already
+reviewed selection; it is not a first-use index setup wizard.
+Standalone Windows/macOS/Linux installer support is implemented in source for
+only the CLI/native server; the installers do not install or invoke a VS Code extension.
+Use the exact installed `cli_executable` path printed by setup, or add that
+executable's directory to `PATH` yourself. No proxy launcher or automatic shell
+startup/PATH change is installed. The standalone guide includes explicit inputs,
+child-process launch and native uninstall.
+
 Use AIRK's reviewed connection setup to select existing authorized indexes or
 index sets. Native setup validates the grant and supplies a versioned connection
 description with `endpoint.url`, `connection_id`, exact `selection`,
 `ca_certificate_file` and `credential_file`. The native `runtime http-connection`
 command accepts an owner-private selection file, an explicit connection ID and
 client label. It returns file references, never the bearer secret itself.
+
+The native credential owner creates the secret in an owner-protected file.
+Read it only into the connecting process's credential handling; project
+configuration stores a reference, never the bearer value. For standalone
+Codex/Claude clients, provision that process's environment and additive CA trust.
+VS Code's extension resolver is a distinct mechanism and is not required by the
+raw HTTPS API. Closing VS Code removes no proxy from this connection: clients
+connect directly to the native service, which must remain running.
+
+An upgrade rebuild creates a new namespace. Preserved old credentials and
+configuration do not authorize it; explicitly review and enroll the successor
+selection before connecting again.
 
 For an already enrolled connection, `runtime http-connection-info` accepts the
 verified installation directory and connection ID. It checks the protected
@@ -59,6 +85,63 @@ request. Revoked or expired credentials fail. Repeating enrollment with the same
 connection ID preserves its original token and expiry; a different authority or
 an expired/revoked connection needs a new explicitly reviewed ID. A forward
 catalog clock alone can be refreshed without changing the selected authority.
+When the credential generation and native delivery ticket are unchanged, that
+refresh preserves initialized MCP sessions. A delayed authentication with an
+older saved clock cannot replace the newer cached authority. Actual native
+generation changes still fence old connections and sessions; this continuity
+rule does not replay an interrupted request.
+
+Before native enrollment, the service revokes expired credentials and positively
+retired Explorer attachments. Retirement requires either a validated expired
+window descriptor or its absence in the exact still-private owning
+`explorer-assistance/windows` directory. Unreadable or malformed descriptors,
+missing ownership evidence and unavailable optional Assistance executables do
+not retire a credential. Active manual/headless connections keep their original
+authority and files.
+
+After durable revocation and gateway delivery fencing, the original token file
+becomes a secret-free retirement proof, bound to the installation and connection
+ID. Only then is its full record removed from the 128-entry/1 MiB active ledger.
+The proof preserves read-only ownership checks and permanently refuses reuse of
+that ID. An orphan token from an uncompleted issuance remains unknown ownership.
+Crash recovery retains a revoked full record or its validated retirement proof;
+it never recreates an old secret. Each historical proof is at most 2 KiB, uses
+the original token path and is read by exact ID without scanning historical
+files. Historical proof storage grows with the number of retired connections;
+this is not a fixed total-storage bound or permission to delete those proofs.
+Gateway revocation fences retained TLS buffers and all authentication captured
+before the revocation epoch, while reclaiming its active delivery-map slot.
+An otherwise valid credential captured before an unrelated revocation receives
+HTTP 503 with `credential_authentication_epoch_retired`; fresh authentication
+can succeed with the same credential. Actual revoked credentials retain HTTP
+401 refusal. Epoch retirement does not replay an operation or mutation. Epoch
+exhaustion closes the delivery registry and fences every retained delivery cell.
+
+Legacy client reconnection keeps a stable original import proof and direct
+connection-ID metadata. Routine attachment replacement does not enumerate or cap
+the lifetime attachment history. A manually referenced connection missing local
+metadata is checked by its exact native ID under the original registration;
+revoked or unknown authority still requires review. Historical extension records
+are retained, so their storage can grow; this is bounded lookup, not deletion of
+old manual configurations or a fixed total-history size.
+
+Managed standalone adoption can recover a partially saved configuration after
+its Explorer window closes. Native ownership must positively identify automatic
+attachment retirement, the original installation, client and complete reviewed
+authority. Replacement uses a different live attachment and a new connection ID;
+the native credential owner checks the old ID again during issuance. Explicit
+revocation wins even if it occurs after the ownership read. Manual credentials,
+expired credentials and older ownership-only markers do not supply this proof.
+Disabling Assistance during this interrupted attached migration requires review;
+ordinary fresh headless setup remains available.
+
+The private `runtime lookup-http-connection` receipt retains this evidence in
+`attachment_retirement` with `owned_connection_attachment_retired`. The private
+`runtime http-legacy-connection --reattach-connection-id <old-id>` setup path
+performs the mutation-time check. These are authenticated native administration
+interfaces; evidence MCP and the read-only HTTPS API do not expose enrollment or
+credential ownership management. Workbench's native adapter preserves the full
+lookup receipt, including refusal details.
 
 The leaf certificate renews under the existing local CA. Its Authority Key
 Identifier names that CA's Subject Key Identifier so strict X.509 clients can
@@ -233,6 +316,44 @@ an `airk.local-api-error/1` body with `error.code`. Examples include
 `query_admission_busy`, `upgrade_in_progress`, `request_body_limit` and
 `request_deadline_exhausted`. Other canonical tool failures remain complete tool
 results. Treat a disconnected stream as incomplete, not as an empty result.
+
+The documented pre-admission HTTP refusals are:
+
+| HTTP status | `error.code` | Phase | Effect |
+| --- | --- | --- | --- |
+| 429 | `query_admission_busy` | Evidence admission | No work submitted |
+| 503 | `authentication_busy` | Bounded credential authentication | No work submitted; no session or credential state changed |
+| 503 | `native_validation_busy` | Bounded native scope validation | No work submitted; no session or credential state changed |
+
+The body remains `{"schema":"airk.local-api-error/1","error":{"code":"…"}}`.
+These are complete refusals, separate from successful evidence reads. The load
+harness uses one shared classifier for these exact status/code pairs. Unknown
+codes, credential errors, delivery fences and HTTP 200 JSON-RPC/tool errors are
+failures, even if a payload resembles a retry hint. An incomplete exchange or an
+oversized response is uncertain and is never replayed.
+
+| Observed outcome | Status / code | Load accounting | Harness retry | Cleanup |
+| --- | --- | --- | --- | --- |
+| Authentication refusal | 503 / `authentication_busy` | Refused by code, in the attempted initialization/read/API phase | None | Close owned socket; delete an already established session when the exchange is complete |
+| Validation refusal | 503 / `native_validation_busy` | Refused by code, in the attempted phase | None | Same complete-response cleanup |
+| Query refusal | 429 / `query_admission_busy` | Refused by code, in the attempted phase | None | Same complete-response cleanup |
+| Credential, fence, unknown status/code, JSON-RPC or tool error | Other pair, or HTTP 200 error | Failed | None | Retain bounded response/request evidence; close owned sockets and retain failed cleanup |
+| Disconnect, response limit or incomplete exchange | Any / unobserved | Uncertain | None | Close sockets; do not submit session deletion after an uncertain exchange; retain the fixture |
+| Work blocked by missing initialization or an earlier failure | No exchange | Not executed | None | Report the unexecuted count explicitly |
+
+Each load phase records succeeded, refused by code, failed, uncertain and not
+executed exchanges. A fully executed phase has no minimum success count: it
+passes only with zero failed and uncertain outcomes and documented refusals.
+Refusals do not prevent later available-client phases from running. Separate
+model ownership, process role, resource release, readiness, source preservation
+and complete-result parity checks still apply. Refused parity comparisons
+remain explicitly unverified; they are not successful comparisons. Overall
+qualification stays false when required parity comparisons or the semantic
+warmup baseline are unobserved, even when the exchange accounting has no failed
+or uncertain outcomes. This is assertion coverage, not a success-count threshold.
+Error receipts retain bounded bodies, request identity, duplicate response headers,
+redaction flags and truncation, while removing credentials and session values
+from both headers and bodies.
 
 A typed native pre-admission `selection_busy` can consume one internal retry
 after a 50 ms wait within the original budget. This does not replay work whose

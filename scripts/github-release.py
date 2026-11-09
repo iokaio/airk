@@ -29,6 +29,7 @@ native = module("native_package", "package-native.py")
 signer = module("native_signer", "sign-native.py")
 producers = module("ci_candidates", "ci-candidates.py")
 reads = module("github_read", "github-read.py")
+standalone = module("standalone_contract", "standalone-installer-contract.py")
 SIGNED_TARGETS = {"x86_64-pc-windows-msvc", "aarch64-apple-darwin", "x86_64-apple-darwin"}
 REPOSITORY = "iokaio/airk"
 WORKFLOW = REPOSITORY + "/.github/workflows/github-release.yml@refs/heads/main"
@@ -281,6 +282,108 @@ def source_receipt(directory, producer, target, commit, version, tree=None):
     return original
 
 
+def verify_installer(directory, target, commit, version, runtime, *, published=False):
+    """Recheck sealed bytes and native/signing provenance from the platform job.
+
+    Windows/Mac OS signature checks happen on their native signing runners. The
+    assembly host validates their exact retained receipts and final artifact hash.
+    """
+    name = standalone.artifact(version, target)
+    manifest_name = standalone.manifest(version, target) if published else "installer.json"
+    if (directory.is_symlink() or not directory.is_dir()
+            or not published and {path.name for path in directory.iterdir()} != {name, manifest_name, "SHA256SUMS"}
+            or any((directory / entry).is_symlink() or not (directory / entry).is_file()
+                   for entry in (name, manifest_name, "SHA256SUMS"))):
+        raise ValueError("Unexpected standalone installer files")
+    receipt = extension.read_receipt(directory / manifest_name)
+    archive = directory / name
+    metadata = archive.stat()
+    if not 0 < metadata.st_size <= 4_294_967_296 or metadata.st_nlink != 1:
+        raise ValueError("Linked, empty or oversized standalone installer")
+    if (receipt.get("schema") != "airk-standalone-installer/1"
+            or receipt.get("version") != version or receipt.get("target") != target
+            or receipt.get("commit") != commit
+            or receipt.get("cargo_lock_sha256") != digest(ROOT / "Cargo.lock")
+            or receipt.get("runtime_install_sha256") != runtime.get("install_manifest_sha256")
+            or receipt.get("runtime_source") != runtime.get("source")
+            or receipt.get("artifact") != name or receipt.get("artifact_sha256") != digest(archive)
+            or receipt.get("installer_kind") != standalone.TARGETS[target][2]):
+        raise ValueError("Standalone installer source, runtime or artifact identity differs")
+    expected = f'{digest(archive)}  {name}\n{digest(directory / manifest_name)}  {manifest_name}\n'
+    if not published and (directory / "SHA256SUMS").read_text(encoding="utf-8") != expected:
+        raise ValueError("Standalone installer checksums differ")
+    payload = receipt.get("payload")
+    if not isinstance(payload, dict) or not 0 < len(payload) <= 15_000:
+        raise ValueError("Invalid standalone installer payload roster")
+    for path, value in payload.items():
+        extension.package.safe_name(path)
+        if not re.fullmatch(r"[0-9a-f]{64}", value):
+            raise ValueError("Invalid standalone installer payload digest")
+    if {path.removeprefix("runtime/"): value for path, value in payload.items()
+            if path.startswith("runtime/")} != runtime["payload"]:
+        raise ValueError("Standalone installer contains a different native runtime")
+    wrappers = set(payload) - {"runtime/" + path for path in runtime["payload"]}
+    if "windows" in target:
+        if wrappers != {"notices/inno-setup/LICENSE.txt"}:
+            raise ValueError("Unexpected Windows installer payload files")
+        signing, uninstaller = receipt.get("signing"), receipt.get("uninstaller")
+        if not isinstance(signing, dict) or not isinstance(uninstaller, dict):
+            raise ValueError("Standalone Windows installer lacks signature evidence")
+        for item in (signing, uninstaller):
+            identity = item.get("identity", "")
+            verification = item.get("verification", {})
+            if (item.get("azure") != signer.AZURE_SIGNING
+                    or not re.fullmatch(r"[0-9a-fA-F]{40}", identity)
+                    or verification.get("trust") != "authenticode_valid"
+                    or verification.get("timestamp_present") is not True
+                    or verification.get("signer_thumbprint") != identity):
+                raise ValueError("Standalone Windows Authenticode evidence differs")
+        if (signing.get("platform") != "Windows" or signing.get("binary_sha256") != digest(archive)
+                or not re.fullmatch(r"[0-9a-f]{64}", uninstaller.get("unsigned_sha256", ""))
+                or not re.fullmatch(r"[0-9a-f]{64}", uninstaller.get("binary_sha256", ""))
+                or receipt.get("installer_source_sha256") != digest(ROOT / "installers/windows/airk.iss")
+                or not re.fullmatch(r"6\.7\.1(?:\.\d+)?", receipt.get("compiler", {}).get("version", ""))
+                or not re.fullmatch(r"[0-9a-f]{64}", receipt.get("compiler", {}).get("sha256", ""))):
+            raise ValueError("Standalone Windows installer/uninstaller provenance differs")
+    elif "apple" in target:
+        signing = receipt.get("signing", {})
+        notarization = signing.get("notarization", {})
+        if (wrappers != {"Install AIRK.command", "README.txt"}
+                or receipt.get("runtime_signing") != runtime.get("signing")
+                or not re.fullmatch(r"[0-9a-f]{64}", receipt.get("runtime_signing_sha256", ""))
+                or signing.get("platform") != "Darwin" or signing.get("trust") != "apple_developer_id"
+                or not re.fullmatch(r"[0-9a-f]{40}", signing.get("identity", ""))
+                or signing.get("team_id") != "5PX7D99PXA"
+                or signing.get("certificate_sha256") != "4260bd90b8623e45da6d67144a2bff4fd8fa0a8186c7281c0125e39877c3f5c1"
+                or signing.get("timestamp_present") is not True
+                or notarization.get("status") != "Accepted" or not notarization.get("id")
+                or notarization.get("stapled") is not True or notarization.get("scope") != name):
+            raise ValueError("Standalone Mac signature, payload or notarization evidence differs")
+        mac = module("standalone_macos_package", "package-standalone-macos.py")
+        for path, encoded in mac.installer_files(version, target, receipt["runtime_install_sha256"],
+                                                runtime["payload"]["AIRK.app/Contents/MacOS/airk"]).items():
+            if payload[path] != hashlib.sha256(encoded).hexdigest():
+                raise ValueError("Standalone Mac installer bootstrap differs from reviewed source")
+    else:
+        if (wrappers != {"install.sh", "README.txt", "payload.sha256"}
+                or receipt.get("signing") != {"platform": "Linux", "trust": "unsigned"}):
+            raise ValueError("Standalone Linux installer must retain explicit unsigned provenance")
+        linux = module("standalone_linux_package", "package-standalone-linux.py")
+        sums = "".join(f"{value}  runtime/{path}\n" for path, value in sorted(runtime["payload"].items()))
+        sums_sha256 = hashlib.sha256(sums.encode()).hexdigest()
+        values = {"VERSION": version, "ARCHIVE_NAME": name, "DIRECTORY_NAME": name.removesuffix(".tar.gz"),
+                  "PAYLOAD_FILE_COUNT": len(runtime["payload"]), "INSTALL_MANIFEST_SHA256": receipt["runtime_install_sha256"],
+                  "PAYLOAD_SUMS_SHA256": sums_sha256}
+        expected_wrappers = {"payload.sha256": sums.encode(), **{path: linux.render_template(path + ".in", values).encode()
+                            for path in ("install.sh", "README.txt")}}
+        if any(payload[path] != hashlib.sha256(encoded).hexdigest() for path, encoded in expected_wrappers.items()):
+            raise ValueError("Standalone Linux installer bootstrap differs from reviewed source")
+        if receipt.get("native_archive_sha256") != runtime["archive_sha256"]:
+            raise ValueError("Standalone Linux native archive identity differs")
+        linux.verify_installer(archive, payload, name.removesuffix(".tar.gz"))
+    return receipt, archive
+
+
 def assemble(directory, output, commit, version, tag, channel, run_id, attempt, producer=None, repair=None, *, tree=None, pinned=False, source_records=False):
     if tag != identity(version) or channel not in ("preview", "stable"):
         raise ValueError("Invalid release identity/channel")
@@ -333,6 +436,11 @@ def assemble(directory, output, commit, version, tag, channel, run_id, attempt, 
         selected.extend(((archive, archive.name), (vsix, vsix.name),
                          (native_dir / "manifest.json", f"airk-{version}-{target}.native-manifest.json"),
                          (vsix_dir / "manifest.json", f"airk-{version}-{native.TARGETS[target]}.vsix-manifest.json")))
+        if standalone.required(version, channel):
+            installer_dir = directory / f"airk-installer-{target}-{commit}-{run_id}"
+            _, installer = verify_installer(installer_dir, target, commit, version, receipt)
+            selected.extend(((installer, installer.name),
+                             (installer_dir / "installer.json", standalone.manifest(version, target))))
     extension.verify(directory, commit, version, channel, receipts=extensions, tree=tree)
     output.mkdir(parents=True, exist_ok=False)
     for source, name in selected:
@@ -358,6 +466,8 @@ def assemble(directory, output, commit, version, tag, channel, run_id, attempt, 
              f"Changes and upgrade guidance: https://github.com/{REPOSITORY}/blob/{commit}/{notes_path}\n"
              f"Build and checks: https://github.com/{REPOSITORY}/actions/runs/{build_run}/attempts/{build_attempt}\n"
              f"Signing and assembly: https://github.com/{REPOSITORY}/actions/runs/{run_id}/attempts/{attempt}\n\n"
+             + ("Standalone CLI/MCP installers are included without a VSIX: signed Windows EXE, signed/notarized macOS DMG and unsigned Linux tar.gz. "
+              if standalone.required(version, channel) else "") +
              "Downloads include native ZIPs and matching platform VSIX files. Windows uses Ioka LLC "
              "Azure Artifact Signing. macOS runtime executables use Developer ID signing and accepted Apple "
              + ("notarization and a stapled app ticket. Linux is unsigned.\n\n" if tuple(map(int, version.split(".")[:2])) >= (1, 4)
@@ -411,6 +521,8 @@ def verify_bundle(directory, commit, version, tag, run_id, attempt):
         expected.update((f"airk-{version}-{target}.zip", f"airk-{version}-{platform}.vsix",
                          f"airk-{version}-{target}.native-manifest.json",
                          f"airk-{version}-{platform}.vsix-manifest.json"))
+        if standalone.required(version, record["channel"]):
+            expected.update((standalone.artifact(version, target), standalone.manifest(version, target)))
     if set(record["assets"]) != expected:
         raise ValueError("Release bundle asset set differs")
     expected.update(("release.json", "release-notes.md", "SHA256SUMS"))
@@ -424,6 +536,10 @@ def verify_bundle(directory, commit, version, tag, run_id, attempt):
     paths = sorted(p for p in directory.iterdir() if p.name != "SHA256SUMS")
     if (directory / "SHA256SUMS").read_text(encoding="utf-8") != "".join(f"{digest(p)}  {p.name}\n" for p in paths):
         raise ValueError("Release bundle checksums differ")
+    if standalone.required(version, record["channel"]):
+        for target in native.TARGETS:
+            runtime = extension.read_receipt(directory / f"airk-{version}-{target}.native-manifest.json")
+            verify_installer(directory, target, commit, version, runtime, published=True)
     return record
 
 

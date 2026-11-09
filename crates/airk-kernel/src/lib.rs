@@ -31,6 +31,7 @@ pub mod maintenance;
 /// Read-only native capability/catalog inspection; does not open collection state.
 pub use airk_retrieval::model_catalog::inspect_catalog as inspect_model_catalog;
 mod publication;
+mod rebuild_observation;
 mod references;
 mod remote_tokenization;
 mod resources;
@@ -86,6 +87,7 @@ pub struct Kernel {
     read_scope: Option<Arc<scoped_reads::SessionScope>>,
     verification_cancellation: Option<Arc<std::sync::atomic::AtomicBool>>,
     progress: Option<ProgressObserver>,
+    rebuild_observer: Option<Arc<rebuild_observation::RebuildObserver>>,
     root: PathBuf,
     collection: String,
     data_root: PathBuf,
@@ -145,6 +147,10 @@ fn managed_data_path(path: PathBuf) -> Result<PathBuf> {
 
 #[derive(Serialize)]
 pub struct Status {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rebuild: Option<airk_core::rebuild::RebuildObservation>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rebuild_unavailable: Option<airk_core::rebuild::RebuildUnavailable>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub legacy_adoption: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -372,6 +378,7 @@ impl Kernel {
             read_scope: None,
             verification_cancellation: None,
             progress: None,
+            rebuild_observer: None,
             root,
             collection: collection.into(),
             data_root: directory.clone(),
@@ -430,6 +437,7 @@ impl Kernel {
             read_scope: None,
             verification_cancellation: None,
             progress: None,
+            rebuild_observer: None,
             root: PathBuf::from(&registration.root),
             collection: registration.collection.clone(),
             data_root: PathBuf::from(&registration.data_root),

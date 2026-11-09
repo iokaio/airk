@@ -89,6 +89,8 @@ fn run_empty_native_split(
     )?;
     let source_wake = sources.wake_handle();
     let owner = Rc::new(RefCell::new(NativeOwner {
+        #[cfg(feature = "local-inference")]
+        _factory: None,
         root: fixture.control.clone(),
         instance,
         gate: gate.clone(),

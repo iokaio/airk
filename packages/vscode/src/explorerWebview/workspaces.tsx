@@ -94,7 +94,7 @@ export function WorkspaceView(props: ScreenProps) {
                     })}
                 </div>
             )}
-            <div class="workspace-content" role={activeTab ? "tabpanel" : undefined} id={`panel-${workspace.id}`} aria-labelledby={activeTab ? `tab-${workspace.id}-${activeTab}` : undefined}>{Screen ? <Screen key={`${management ? 'manage' : key}:${props.state.selectedProject}:${props.state.selectionEpoch}:${!management && props.navigation?.route === key ? props.navigation.serial : ''}`} {...props} /> : <Planned routeKey={key} availability={props.state.features[key] ?? 'unsupported'} />}</div>
+            <div class="workspace-content" role={activeTab ? "tabpanel" : undefined} id={`panel-${workspace.id}`} aria-labelledby={activeTab ? `tab-${workspace.id}-${activeTab}` : undefined}>{Screen ? <Screen key={workspace.id==='indexing'?'indexing':`${management ? 'manage' : key}:${props.state.selectedProject}:${props.state.selectionEpoch}:${!management && props.navigation?.route === key ? props.navigation.serial : ''}`} {...props} /> : <Planned routeKey={key} availability={props.state.features[key] ?? 'unsupported'} />}</div>
             </div>
         </section>
     );

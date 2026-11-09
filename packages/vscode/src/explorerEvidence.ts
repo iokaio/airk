@@ -208,7 +208,9 @@ export class EvidenceClient {
                     if (this.disposed) { session.close(); throw new EvidenceFailure(explorerError('SERVICE_UNAVAILABLE', 'The Explorer evidence session was closed.')); }
                     this.session = session; return session;
                 }, error => {
-                    throw error instanceof EvidenceFailure ? error : new EvidenceFailure(explorerError('SERVICE_UNAVAILABLE', error instanceof Error ? error.message : String(error)));
+                    if(error instanceof EvidenceFailure)throw error;
+                    const detail=error instanceof Error?error.message:String(error);
+                    throw new EvidenceFailure(explorerError(detail==='http_connection_requires_reviewed_scope'?'SCOPE_NOT_GRANTED':'SERVICE_UNAVAILABLE',detail));
                 })
                 .finally(() => { this.opening = undefined; });
         }

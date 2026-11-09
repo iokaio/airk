@@ -27,7 +27,7 @@ pub(super) fn require_settled(root: &Path) -> Result<()> {
     Ok(())
 }
 
-fn identities(root: &Path, active: &str) -> Result<Vec<String>> {
+fn all_identities(root: &Path, active: &str) -> Result<Vec<String>> {
     let mut identities = BTreeSet::new();
     let directory = root.join("runtimes");
     for (count, entry) in fs::read_dir(&directory)?.take(6).enumerate() {
@@ -68,6 +68,14 @@ fn identities(root: &Path, active: &str) -> Result<Vec<String>> {
     Ok(identities.into_iter().collect())
 }
 
+fn identities(root: &Path, active: &str) -> Result<Vec<String>> {
+    let preserved = activation::rebuild::preserved_runtime_ids(root)?;
+    Ok(all_identities(root, active)?
+        .into_iter()
+        .filter(|identity| !preserved.contains(identity))
+        .collect())
+}
+
 fn images_for(root: &Path, identity: &str, inventory: &InstallManifest) -> Result<Vec<Image>> {
     let mut files = inventory.files.clone();
     crate::process_roles::inventory(&mut files);
@@ -95,7 +103,8 @@ fn images_for(root: &Path, identity: &str, inventory: &InstallManifest) -> Resul
 
 pub(super) fn inspect_images(root: &Path, active: &str) -> Result<Vec<serde_json::Value>> {
     let mut result = Vec::new();
-    for identity in identities(root, active)? {
+    for identity in all_identities(root, active)? {
+        let preserved = activation::rebuild::preserved_runtime(root, &identity)?;
         let receipt = root.join(format!("retire-{identity}.json"));
         let inventory = if present(&receipt)? {
             let raw = read_bounded(&receipt, MAX_MANIFEST)?;
@@ -116,7 +125,8 @@ pub(super) fn inspect_images(root: &Path, active: &str) -> Result<Vec<serde_json
                     runtime_pair::digest_file(&image.path)? == image.sha256,
                     "changed superseded image preserved"
                 );
-                result.push(serde_json::json!({"path":image.path,"sha256":image.sha256,"runtime_sha256":identity}));
+                result.push(serde_json::json!({"path":image.path,"sha256":image.sha256,"runtime_sha256":identity,
+                    "preserved_rebuild_evidence":preserved}));
             }
         }
     }
@@ -145,7 +155,9 @@ fn validate(root: &Path, intent: &Intent, expected: &str) -> Result<()> {
     for (index, identity) in intent.runtimes.iter().enumerate() {
         digest(identity)?;
         ensure!(
-            identity != expected && !intent.runtimes[..index].contains(identity),
+            identity != expected
+                && !intent.runtimes[..index].contains(identity)
+                && !activation::rebuild::preserved_runtime(root, identity)?,
             "invalid superseded runtime roster"
         );
         if present(&root.join("runtimes").join(identity))?
@@ -384,7 +396,8 @@ pub(super) fn retire(root: &Path, expected: &str) -> Result<serde_json::Value> {
     let observations = observe(&intent.images, &intent.image_exclusions)?;
     drop(exclusion);
     finish_payloads(root, &intent)?;
-    let result = serde_json::json!({"active":expected,"retired_previous":intent.previous,"retired_runtimes":intent.runtimes,"complete":true,
+    let result = serde_json::json!({"active":expected,"retired_previous":intent.previous,"retired_runtimes":intent.runtimes,
+        "preserved_rebuild_runtimes":activation::rebuild::preserved_runtime_ids(root)?,"complete":true,
         "processes":{"scope":"verified_superseded_runtime_images","remaining":0,"observations":observations,"pre_removal_observations":pre_observations,"image_roster":intent.images,"image_exclusions":intent.image_exclusions},"selected_service_restarted":false});
     fs::remove_file(root.join(JOURNAL))?;
     sync_directory(root)?;

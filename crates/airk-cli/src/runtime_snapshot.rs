@@ -141,12 +141,14 @@ pub(super) fn read(
     let launcher = launcher_path(root)
         .try_exists()?
         .then(|| launcher_path(root));
+    let (rebuild, rebuild_error) = rebuild_report(root);
     let mut value = serde_json::json!({"schema":1,"metadata_only":true,"payload_verified":false,"observed_unix_ms":unix_ms()?,
         "selection":saved.selection,"executable":saved.executable,"approval":saved.approval,"executable_sha256":saved.executable_sha256,
         "managed_policy":policy,"launcher":launcher,"control_dir":control.ok(),"state_error":state_error,
         "registry_namespace":namespace,"request_epoch":epoch,"lifecycle":lifecycle,"registry_error":registry_error,
         "console":console,"startup_manager":startup_manager,"logs":logs,"log_control_dir":log_control,
         "configuration_results":configuration.0,"configuration_results_omitted":configuration.1,
+        "rebuild":rebuild,"rebuild_error":rebuild_error,
         "payload_repair":payload_repair::status(root).unwrap_or_else(|_|serde_json::json!({"phase":"unavailable"}))});
     for _ in 0..32 {
         if serde_json::to_vec_pretty(&value)?.len() < 256 * 1024 {

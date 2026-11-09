@@ -27,6 +27,66 @@ def release(build=1, *, preview=True, published="2026-10-14T10:00:00Z"):
 
 
 class DownloadSiteTests(unittest.TestCase):
+    def with_installers(self, item, platforms=None):
+        for platform, name in site.installer_names(item["tag_name"].split("-build.")[0][1:]).items():
+            if platforms is None or platform in platforms:
+                item["assets"].append({"name": name, "state": "uploaded", "size": 1234,
+                    "digest": "sha256:" + "b" * 64,
+                    "browser_download_url": f"{site.GITHUB}/releases/download/{item['tag_name']}/{name}"})
+                manifest = site.installer_manifest_names(item["tag_name"].split("-build.")[0][1:])[platform]
+                item["assets"].append({"name": manifest, "state": "uploaded", "size": 512,
+                    "digest": "sha256:" + "c" * 64,
+                    "browser_download_url": f"{site.GITHUB}/releases/download/{item['tag_name']}/{manifest}"})
+        return item
+
+    def test_unpublished_installers_are_unavailable_without_guessed_download_links(self):
+        html = site.render_downloads(site.select_releases([release(preview=False)]))
+        self.assertEqual(html.count('aria-disabled="true">Installer not published'), 4)
+        self.assertNotIn("Download installer", html)
+        self.assertNotIn(".vsix\"", html)
+        self.assertNotIn("Verify build provenance", html)
+        self.assertIn("Portable runtime ZIP", html)
+
+    def test_published_installer_assets_select_exact_platform_architecture_and_signing(self):
+        item = self.with_installers(release(preview=False))
+        html = site.render_downloads(site.select_releases([item]))
+        self.assertEqual(html.count(">Download installer "), 4)
+        expected = {
+            "win32-x64": "airk-0.1.0-x86_64-pc-windows-msvc-installer.exe",
+            "darwin-arm64": "airk-0.1.0-aarch64-apple-darwin-installer.dmg",
+            "darwin-x64": "airk-0.1.0-x86_64-apple-darwin-installer.dmg",
+            "linux-x64": "airk-0.1.0-x86_64-unknown-linux-gnu-installer.tar.gz",
+        }
+        self.assertEqual(site.installer_names("0.1.0"), expected)
+        for platform, name in expected.items():
+            self.assertIn(f"{site.GITHUB}/releases/download/{item['tag_name']}/{name}", html)
+        for label in ("Windows", "Apple silicon", "Intel x64", "Linux", "Signed", "Unsigned"):
+            self.assertIn(label, html)
+        self.assertNotIn(".vsix\"", html)
+        self.assertIn("Unsigned · <a", html)
+        self.assertIn("Verify build provenance", html)
+        self.assertIn("release-verification.md#artifact-attestations", html)
+
+    def test_installer_presence_never_borrows_an_asset_from_another_release_or_platform(self):
+        item = self.with_installers(release(3, preview=False, published="2026-10-15T10:00:00Z"), {"win32-x64"})
+        html = site.render_downloads(site.select_releases([self.with_installers(release(1, preview=False)), item]))
+        self.assertEqual(html.count(">Download installer "), 1)
+        self.assertEqual(html.count('aria-disabled="true">Installer not published'), 3)
+        self.assertNotIn("/v0.1.0-build.1/", html)
+
+    def test_installer_requires_its_uploaded_provenance_pair_and_exact_release_url(self):
+        for missing in (-1, -2):
+            item = self.with_installers(release(), {"win32-x64"})
+            item["assets"].pop(missing)
+            with self.assertRaisesRegex(ValueError, "incomplete standalone"):
+                site.select_releases([item])
+        for field, value in (("browser_download_url", "https://example.com/installer.exe"),
+                             ("state", "starter"), ("digest", None), ("size", 0)):
+            item = self.with_installers(release(), {"win32-x64"})
+            item["assets"][-2][field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "invalid asset"):
+                site.select_releases([item])
+
     def test_clean_version_tags_and_legacy_downloads(self):
         current = release(preview=False, published="2026-10-17T12:00:00Z")
         old_tag = current["tag_name"]
@@ -36,7 +96,7 @@ class DownloadSiteTests(unittest.TestCase):
         records = site.select_releases([release(preview=False), current])
         self.assertEqual([record["tag"] for record in records], ["v0.1.0"])
         html = site.render_downloads(records)
-        self.assertIn("/v0.1.0/airk-0.1.0-win32-x64.vsix", html)
+        self.assertIn("/v0.1.0/airk-0.1.0-x86_64-pc-windows-msvc.zip", html)
         self.assertNotIn("build number", html)
         current["assets"].pop()
         with self.assertRaisesRegex(ValueError, "incomplete"):
@@ -50,8 +110,8 @@ class DownloadSiteTests(unittest.TestCase):
         self.assertEqual([r["tag"] for r in records], ["v0.1.0-build.2", "v0.1.0-build.3"])
         html = site.render_downloads(records)
         for number in (2, 3):
-            for platform, *_ in site.PLATFORMS:
-                self.assertIn(f"/v0.1.0-build.{number}/airk-0.1.0-{platform}.vsix", html)
+            for _, target, *_ in site.PLATFORMS:
+                self.assertIn(f"/v0.1.0-build.{number}/airk-0.1.0-{target}.zip", html)
         self.assertNotIn("build.1", html)
         self.assertNotIn("build.4", html)
 
@@ -98,7 +158,9 @@ class DownloadSiteTests(unittest.TestCase):
                 self.assertEqual((output / "images" / name).read_bytes(), (site.ROOT / "docs" / component / "images" / name).read_bytes())
                 self.assertIn(f'./images/{name}', html)
 
-            self.assertEqual(html.count(">Download VSIX "), 4)
+            self.assertEqual(html.count('aria-disabled="true">Installer not published'), 4)
+            self.assertNotIn(">Download VSIX ", html)
+            self.assertIn("marketplace.visualstudio.com/items?itemName=iokaio.airk", html)
             with self.assertRaises(FileExistsError):
                 site.build([], output)
 

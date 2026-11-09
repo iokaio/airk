@@ -7,12 +7,20 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { parse as parseJsonc, type ParseError } from 'jsonc-parser';
-import { UNIFIED_TOOLS } from '../model';
+import { UNIFIED_TOOLS,launchArgs } from '../model';
+import {ASSISTANCE_TOOLS} from '../explorerContracts';
+import {launchDescriptorPath} from '../explorerAssistanceLaunch';
 import { readRetryDelay } from '../readRetry';
 import {InstalledHttpTransport,InstalledHttpFailure,installedHttpIdentity} from './installedEditorHttp';
 import {RuntimeHost,nativeRunner,type RuntimeBinding} from '../serviceBootstrap';
-import {httpMaterial,sameHttpAuthority,publishNativeInput,removeNativeInput} from '../serviceHttp';
-import { installedDeliveryFence, installedSelector, installedToolBody, installedMember, installedRevocation, finishInstalledClient, InstalledNativeReplyError as NativeReplyError, installedLegacyLifecycle } from './installedEditorContracts';
+import {httpMaterial,sameHttpAuthority,publishNativeInput,removeNativeInput,type HttpConnectionInfo} from '../serviceHttp';
+import {ownedConfigurationSource,assertOwnedConfigurationRefresh,assertInstalledWorkbenchCopies,installedWorkbenchCopy,installedParityValue,assertInstalledInputCatalog,assertInstalledEnvelopeParity,type InstalledAgent} from './installedCompletion';
+import {refreshHttpAgentConfig} from '../agentMigration';
+import {toolFormFields,type WorkbenchSession} from '../workbenchContracts';
+import { installedDeliveryFence, installedSelector, installedToolBody, installedMember, installedRevocation, finishInstalledClient, InstalledNativeReplyError as NativeReplyError, installedLegacyLifecycle,installedSourceReview,installedPolicyReady,installedRestoredDefinition,installedDefinitionContinuity } from './installedEditorContracts';
+import {checkInstalledEditorC8,checkInstalledEditorC8Endpoint} from './installedEditorC8';
+import {installInstalledControlTrace} from './installedControlTrace';
+const {publishMailbox,readMailbox}: {publishMailbox(file:string,value:unknown):Promise<void>;readMailbox(file:string):Promise<any>} = require(path.resolve(__dirname,'../../../../scripts/editor-mailbox.cjs'));
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 async function waitFor(file: string): Promise<void> {
@@ -86,14 +94,14 @@ class LegacyMcp {
             this.child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
         });
     }
-    async start(): Promise<void> {
+    async start(expectedTools:readonly string[]=UNIFIED_TOOLS): Promise<void> {
         const result = await this.request('initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'airk-installed-editor-test', version: '1' } });
         this.observations.push({method:'initialize',result});
         if(result.error)throw new NativeReplyError(result,result.error.data);
         this.child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
         const tools=await this.request('tools/list',{});
         this.observations.push({method:'tools/list',result:tools});assert.equal(tools.error,undefined);assert.ok(Array.isArray(tools.result?.tools));
-        assert.deepEqual(tools.result.tools.map((tool:any)=>tool.name).sort(),[...UNIFIED_TOOLS].sort());
+        assert.deepEqual(tools.result.tools.map((tool:any)=>tool.name).sort(),[...expectedTools].sort());
     }
     async call(name: string, args: object, rejected = false): Promise<any> {
         const deadline = Math.min(Date.now()+30000,this.cohort.deadline);
@@ -118,7 +126,7 @@ class LegacyMcp {
         if(!result){this.child.kill('SIGKILL');result=await wait(2000);}
         const terminal=this.terminal?.message;this.fail(new Error('MCP closed'));const receipt={pid:this.child.pid,closed:!!result,result,forced,terminal};
         await fs.writeFile(path.join(process.env.AIRK_EDITOR_RUN!,process.env.AIRK_EDITOR_SCENARIO!,`${process.env.AIRK_EDITOR_ROLE}-mcp-${this.child.pid}-cleanup.json`),JSON.stringify(receipt,null,2));
-        assert.ok(result&&!forced,'Owned MCP required force or did not close');return receipt;
+        assert.ok(result&&!forced&&result.code===0&&result.signal===null,'Owned MCP did not exit cleanly: '+JSON.stringify(receipt));return receipt;
     }
 }
 
@@ -151,7 +159,9 @@ class Mcp extends InstalledHttpTransport {
     }
 }
 
-export async function run(): Promise<void> {
+let restoreControlTrace:(()=>void)|undefined;
+export async function run():Promise<void>{try{await runEditor();}finally{restoreControlTrace?.();restoreControlTrace=undefined;}}
+async function runEditor(): Promise<void> {
     const runRoot=process.env.AIRK_EDITOR_RUN!,role=process.env.AIRK_EDITOR_ROLE!,scenario=process.env.AIRK_EDITOR_SCENARIO!;
     assert.ok(runRoot&&['a','b'].includes(role)&&['same','different','multi','usage','untrusted','legacy'].includes(scenario));
     const allowed=path.resolve(__dirname,'../../../../artifacts/editor-qualification');
@@ -159,23 +169,24 @@ export async function run(): Promise<void> {
     assert.ok(relative&&!relative.startsWith('..')&&!path.isAbsolute(relative),'Private qualification directory');
     const sharedDeadline=Number(process.env.AIRK_EDITOR_DEADLINE);assert.ok(Number.isSafeInteger(sharedDeadline)&&sharedDeadline>Date.now(),'Shared editor scenario deadline');
     const folder=path.join(runRoot,scenario),marker=(name:string,owner=role)=>path.join(folder,owner+'-'+name+'.json');
-    const mark=(name:string,value:unknown={})=>fs.writeFile(marker(name),JSON.stringify(value,null,2));
+    if(process.env.AIRK_EDITOR_CONTROL_TRACE==='1')restoreControlTrace=installInstalledControlTrace({installDir:path.join(folder,'native-service'),outputDirectory:folder,role,runtimeSha256:process.env.AIRK_EDITOR_RUNTIME_SHA256!});
+    const mark=(name:string,value:unknown={})=>publishMailbox(marker(name),value);
     const extension=vscode.extensions.getExtension('iokaio.airk');assert.ok(extension);
     const packageVersion=JSON.parse(await fs.readFile(path.resolve(__dirname,'../../package.json'),'utf8')).version;
     assert.equal(extension.packageJSON.version,packageVersion);
     const stage=process.env.AIRK_EDITOR_DEVELOPMENT_STAGE;
-    if(stage)assert.equal(await fs.realpath(extension.extensionPath),await fs.realpath(stage));
-    else assert.ok(path.resolve(extension.extensionPath).startsWith(path.join(runRoot,'extensions')+path.sep));
+    if(stage)assert.equal(path.toNamespacedPath(await fs.realpath(extension.extensionPath)),path.toNamespacedPath(await fs.realpath(stage)));
+    else{const relative=path.relative(await fs.realpath(path.join(runRoot,'extensions')),await fs.realpath(extension.extensionPath));assert.ok(relative&&relative!=='..'&&!relative.startsWith('..'+path.sep)&&!path.isAbsolute(relative));}
     const api=await extension.activate();await api.whenReady();
     const evidence:any={scenario,role,editor:vscode.version,version:packageVersion,installed:!stage,trusted:vscode.workspace.isTrusted,extensionHostPid:process.pid,checks:[],native:[]};
     const checks=evidence.checks as string[];
-    const phaseFile=marker('phase'),phase=JSON.parse(await fs.readFile(phaseFile,'utf8').catch(()=>'null'));
+    const phaseFile=marker('phase'),phase=await readMailbox(phaseFile);
     let sequence=phase?.sequence??0;
     const ui=async(action:string,input:any={},route?:string):Promise<any>=>{
         if(route)await vscode.commands.executeCommand('airk.explorer.open',route);
         const id=++sequence;await mark('ui-request',{sequence:id,action,...input});
         const file=marker('ui-done-'+id);await waitFor(file);
-        const value=JSON.parse(await fs.readFile(file,'utf8'));
+        const value=await readMailbox(file);
         assert.ok(Buffer.byteLength(JSON.stringify(value))<=1048576,'Complete UI evidence exceeds the disclosed fixture bound');
         evidence.native.push({action,value});return value;
     };
@@ -185,13 +196,15 @@ export async function run(): Promise<void> {
         if(evidence.cacheCleanupScope?.active===binding.runtimeSha256)return;
         const ownershipFile=path.join(folder,'profile-'+role+'-owned.json'),before=await fs.readFile(ownershipFile),ownership=JSON.parse(before.toString('utf8'));
         assert.equal(ownership.label,role);assert.equal(ownership.private_user_data_dir,true);
-        const profile=await fs.realpath(ownership.path);assert.equal(profile,ownership.path);
+        const profile=await fs.realpath(ownership.path);assert.equal(path.toNamespacedPath(profile),path.toNamespacedPath(ownership.path));
         const contextStorage=await fs.realpath(path.join(profile,'User','globalStorage'));
         const configured=vscode.workspace.getConfiguration('airk').get<string>('service.installDir');assert.ok(configured);
-        assert.equal(await fs.realpath(binding.installDir),await fs.realpath(configured),'Scope evidence belongs to the actual explicitly configured private installation');
+        assert.equal(path.toNamespacedPath(await fs.realpath(binding.installDir)),path.toNamespacedPath(await fs.realpath(configured)),'Scope evidence belongs to the actual explicitly configured private installation');
         const inspection=await host.inspectLegacyCaches(binding,contextStorage);
         assert.equal(inspection.scope,'context-only','A private custom installation must never enumerate unrelated native-default caches');
-        assert.equal(inspection.context_global_storage,contextStorage);assert.deepEqual(inspection.global_storage_roots,[contextStorage]);
+        assert.ok(typeof inspection.context_global_storage==='string');assert.ok(Array.isArray(inspection.global_storage_roots));
+        assert.equal(path.toNamespacedPath(inspection.context_global_storage),path.toNamespacedPath(contextStorage));
+        assert.deepEqual(inspection.global_storage_roots.map((value:unknown)=>{assert.ok(typeof value==='string');return path.toNamespacedPath(value);}),[path.toNamespacedPath(contextStorage)]);
         assert.deepEqual(await fs.readFile(ownershipFile),before,'Original runner-owned profile identity remained immutable');
         evidence.cacheCleanupScope={...inspection,profile_ownership_sha256:createHash('sha256').update(before).digest('hex'),profile_ownership:ownership,scope_basis:'native_custom_install_identity'};
         checks.push('native custom installation keeps old-cache scope within the immutable owned editor profile');
@@ -291,7 +304,7 @@ export async function run(): Promise<void> {
         }catch(error){evidence.failure={error:String(error),stack:error instanceof Error?error.stack:undefined,native:error instanceof NativeReplyError?error.reply:error instanceof InstalledHttpFailure?{kind:error.kind,...error.detail}:undefined};throw error;}finally{await finishInstalledClient(client,evidence,mark);}
         },async()=>{
             const stop=await ui('serviceStop',{installDir:fixture.install_dir,runtimeSha256:fixture.candidate.install_manifest_sha256},'#manage/service');
-            await fs.writeFile(path.join(folder,'native-stop.json'),JSON.stringify(stop,null,2));
+            await publishMailbox(path.join(folder,'native-stop.json'),stop);
             evidence.native.push({ownedLegacyServiceStop:stop});
         },evidence,mark);
         assert.equal(createHash('sha256').update(await fs.readFile(fixture.legacy_config.path)).digest('hex'),fixture.legacy_config.sha256);
@@ -336,11 +349,19 @@ export async function run(): Promise<void> {
         assert.equal(idle.qualification,'dated_read_only_precondition_not_mutation_admission');
         // Setup admits asynchronous native work. Observe its actual completion
         // before this first explicit policy review; never retry/cancel a policy.
-        const exclusion=await ui('blockDraft',{root:ownerRoot.id,path:'hidden.ts'});
+        const exclusion=await installedSourceReview(index,
+            ()=>ui('blockDraft',{index,root:ownerRoot.id,path:'hidden.ts'}),
+            async()=>{await ui('indexIdle',{index,binding:backing.binding,root:backing.root,data:backing.data_root,collection:backing.collection});},
+            attempts=>mark('source-review-attempts-'+index,attempts),sharedDeadline);
         assert.equal(exclusion.review.request.operation.operation,'change_index_policy');
         assert.deepEqual(exclusion.review.request.operation.change.selector,{source_root_id:ownerRoot.id,kind:'exact',path:'hidden.ts'});
         assert.equal(exclusion.review.request.operation.change.operation,'trim');
         applied(await ui('apply'));
+        const policyHost=hostFor(),policyInstallation=await policyHost.discover();assert.ok(policyInstallation.inspection);
+        const policyClient=policyHost.client(policyHost.binding(policyInstallation.inspection,policyInstallation.installDir));
+        try{await installedPolicyReady(index,exclusion.review.request.operation,async()=>({policyStatus:await policyClient.catalogPolicyStatus(index),
+            indexDetail:await policyClient.rpc({catalog_detail:{entity:{kind:'index',id:index},expected_catalog_revision:null}},'catalog_detail')}),
+            observations=>mark('policy-application-'+index,observations),Math.min(sharedDeadline,Date.now()+90000));}finally{policyClient.dispose();}
         await noSelection('Reviewed permanent exclusion does not select the index');
         const setName='Fixture index set '+suffix;
         const saved=await ui('setCreate',{name:setName,index,indexName:nativeIndex.name},route.projects);
@@ -351,10 +372,12 @@ export async function run(): Promise<void> {
         return {index,project,setName,backing,name:nativeIndex.name,source:primary,additional:extra,data:leaf,source_ids:roots.filter((row:any)=>row.index_id===index&&row.enabled===true).map((row:any)=>row.id)};
     };
     let selection:any=phase?.selection;
+    let restoredDefinition:Awaited<ReturnType<typeof installedRestoredDefinition>>|undefined;
     if(phase?.stage==='reloaded'){
         await vscode.commands.executeCommand('airk.collections');await ui('connect',{},'#manage/service');
-        const restored=await definitions();assert.equal(restored.length,1,'Previously applied choice revalidates on reload');
-        assert.ok(sameHttpAuthority(restored[0].nativeConnection.selection,{kind:'combined',selection:selection.session}),'Reload preserves exact authority with forward catalog clock');
+        const restored=await installedRestoredDefinition(definitions,selection.session,observations=>mark('reload-definition-observations',observations),sharedDeadline);
+        assert.ok(sameHttpAuthority(restored.nativeConnection.selection,{kind:'combined',selection:selection.session}),'Reload preserves exact authority with forward catalog clock');
+        restoredDefinition=restored;
         checks.push('real reload revalidated the saved applied choice without widening its native selector');
     }else{
         await noSelection('Fresh trusted folders are not indexes or permission');
@@ -364,7 +387,7 @@ export async function run(): Promise<void> {
         await ui('page',{kind:'indexes'},route.library);
         if(scenario==='same'&&role==='b'){
             await waitFor(marker('created','a'));
-            selection=JSON.parse(await fs.readFile(marker('created','a'),'utf8'));
+            selection=await readMailbox(marker('created','a'));
             checks.push('second window reuses the existing native Index without setup');
         }else{
             if(scenario==='different'&&role==='b')await waitFor(marker('created','a'));
@@ -383,7 +406,9 @@ export async function run(): Promise<void> {
     }
     if(['same','different'].includes(scenario)){await mark('metadata-ready');await waitFor(marker('metadata-ready',role==='a'?'b':'a'));}
     if(['same','different'].includes(scenario)&&role==='b')await waitFor(marker('scope-selected','a'));
-    const definition=await use(selection);
+    // A reload must exercise the restored grant, without clearing it and
+    // creating another grant through an unnecessary Apply selection.
+    const definition=restoredDefinition??await use(selection);
     if(['same','different'].includes(scenario))await mark('scope-selected');
     if(scenario==='multi'&&!phase){
         await mark('phase',{stage:'reloaded',selection,sequence});
@@ -400,7 +425,7 @@ export async function run(): Promise<void> {
     if(['same','different'].includes(scenario)){
         await mark('ready');await waitFor(marker('ready',role==='a'?'b':'a'));
     }
-    const transportSelection=structuredClone(selection),client=new Mcp(definition,definition.ca);
+    const transportSelection=structuredClone(selection);let client=new Mcp(definition,definition.ca);
     try{
         await client.start();
         const fixtureDocument=await vscode.workspace.openTextDocument(vscode.Uri.file(path.join(source,'fixture.ts')));
@@ -423,7 +448,7 @@ export async function run(): Promise<void> {
         const before=safeDefinition(definition),otherData=path.join(folder,'selected-storage');
         await fs.mkdir(otherData,{recursive:true});
         await vscode.workspace.getConfiguration('airk').update('storage.path',otherData,vscode.ConfigurationTarget.Global);
-        const after=await definitions();assert.equal(after.length,1);assert.deepEqual(safeDefinition(after[0]),before);
+        const after=await definitions();assert.equal(after.length,1);installedDefinitionContinuity(before,safeDefinition(after[0]));
         assert.deepEqual(await fs.readdir(otherData),[],'Storage preference does not move immutable backing');
         checks.push('storage preference preserves selected Index identity and backing');
         if(['same','different'].includes(scenario)){
@@ -439,7 +464,7 @@ export async function run(): Promise<void> {
             assert.equal(changed.items.length,expected);
             if(expected)assert.equal(changed.items[0].citation.content_hash,createHash('sha256').update(await fs.readFile(path.join(source,'fixture.ts'))).digest('hex'));
             await mark('retrieved');await waitFor(marker('retrieved',role==='a'?'b':'a'));
-            const peer=JSON.parse(await fs.readFile(marker('created',role==='a'?'b':'a'),'utf8'));
+            const peer=await readMailbox(marker('created',role==='a'?'b':'a'));
             if(scenario==='same')assert.equal(selection.index,peer.index);else assert.notEqual(selection.index,peer.index);
             checks.push('peer edit publication and Index isolation');
             if(scenario==='same'){
@@ -470,7 +495,7 @@ export async function run(): Promise<void> {
                     const retained=reconciled.pendingDetails.find((row:any)=>row.id===old.review.request.key.nonce);assert.ok(retained);
                     assert.deepEqual(retained.intent,pending.intent);evidence.native.push({staleReconciliation:reconciled});
                     await ui('page',{kind:'indexes'});const current=await ui('inspect',{kind:'index',id:selection.index});
-                    const peer=JSON.parse(await fs.readFile(marker('peer-mutation-done','b'),'utf8'));
+                    const peer=await readMailbox(marker('peer-mutation-done','b'));
                     const appliedRevision=peer.applied.verifiedReceipt.catalog_revision;
                     assert.ok(appliedRevision>old.review.request.expected_catalog_revision);
                     assert.equal(current.revision,appliedRevision);assert.equal(current.detail.detail.revision,appliedRevision);
@@ -487,7 +512,7 @@ export async function run(): Promise<void> {
             }
         }
         if(scenario==='usage'){
-            const secondary=JSON.parse(await fs.readFile(marker('secondary'),'utf8'));
+            const secondary=await readMailbox(marker('secondary'));
             const report=async(target:any)=>{
                 // Close only this private profile's real AIRK Usage panels so
                 // a previous hidden report cannot satisfy a later DOM read.
@@ -527,6 +552,129 @@ export async function run(): Promise<void> {
             checks.push('scoped Usage remains unavailable until explicit entire-Index administration','actual clear preserves the other Index ledger and read grant');
         }
         if(scenario==='multi'){
+            const runtimeHost=hostFor(),runtimeObservation=await runtimeHost.discover();assert.ok(runtimeObservation.inspection);
+            const runtimeBinding=runtimeHost.binding(runtimeObservation.inspection,runtimeObservation.installDir);
+            const capabilities=await client.call('capabilities',{response_mode:'full'}),operations=capabilities.workbench?.operations;
+            assert.ok(operations&&typeof operations==='object','Actual canonical Workbench operation schemas');
+            evidence.workbenchParity={catalog:capabilities,normalization:['request/observation timing fields only','positive original allocation deadline compared independently','delivery result_digest binds retained timing; native delivery/scope checked before normalization'],cases:[]};
+            let originalClipboard=await vscode.env.clipboard.readText(),ownedClipboard:string|undefined,workbenchFailure:unknown;
+            const copied=async(format:'json'|'markdown',selected:boolean,verify:(value:string)=>void)=>{
+                const prior=await vscode.env.clipboard.readText();if(prior!==ownedClipboard)originalClipboard=prior;
+                const sentinel='airk-owned-copy-'+randomBytes(16).toString('hex');await vscode.env.clipboard.writeText(sentinel);ownedClipboard=sentinel;
+                await ui('workbenchCopy',{format,selected});
+                for(let count=0;count<128;count++){
+                    assert.ok(Date.now()<sharedDeadline,'Original Workbench copy deadline');const value=await vscode.env.clipboard.readText();
+                    if(value!==sentinel){assert.ok(Buffer.byteLength(value)<=1048576,'Complete bounded Workbench UI copy');verify(value);ownedClipboard=value;return value;}
+                    await sleep(25);
+                }
+                throw Error('Actual Workbench copy did not complete');
+            };
+            try{for(const [tool,arguments_]of [['capabilities',{}],['search',{query:own,mode:'lexical',limit:5,max_bytes:8192,full_chunks:true}]] as const){
+                await vscode.commands.executeCommand('airk.workbench.newSession');await vscode.commands.executeCommand('airk.workbench.focus');
+                const fields=Object.fromEntries(Object.entries(arguments_).map(([key,value])=>[toolFormFields(operations[tool]).find(field=>field.name===key)?.label??key,String(value)]));
+                const rendered=await ui('workbenchRead',{tool,fields});assertInstalledInputCatalog(operations,rendered.catalog);
+                const json=await copied('json',false,value=>{
+                    const export_=JSON.parse(value),turn_=export_.turns?.at(-1);
+                    assert.equal(export_.schema,'airk.workbench.export/1');assert.equal(export_.turns.length,1);assert.equal(turn_?.input,tool+' form');assert.equal(turn_?.request?.schema,'airk.parse.request/1');assert.equal(turn_.request.mode,'execute');assert.equal(turn_.request.plan.steps.length,1);assert.equal(turn_.request.plan.steps[0].tool,tool);assert.deepEqual(turn_.request.plan.steps[0].args,arguments_);assert.deepEqual(turn_.envelope,rendered.envelope);
+                }),exported=JSON.parse(json),turn=exported.turns?.at(-1);
+                assert.equal(exported.schema,'airk.workbench.export/1');assert.equal(exported.turns.length,1,'Isolated real Workbench session');assert.ok(turn?.request&&turn.envelope,'Original request and full reply retained');
+                assert.deepEqual(turn.envelope,rendered.envelope,'Actual Complete response and full JSON retain identical raw result');
+                const session={schema:1,id:'installed-observation',project:exported.project,title:'Actual UI',createdAt:1,updatedAt:1,revision:1,omitted:exported.omitted_turns,turns:exported.turns} as WorkbenchSession;
+                assert.equal(turn.request.schema,'airk.parse.request/1');assert.equal(turn.request.mode,'execute');assert.equal(turn.request.plan.steps.length,1);assert.equal(turn.request.plan.steps[0].tool,tool);
+                assert.deepEqual(turn.request.plan.steps[0].args,arguments_,'Exact typed UI form arguments preserved before native dispatch');
+                const exact=(format:'json'|'markdown',selected=false)=>(value:string)=>assert.equal(value,installedWorkbenchCopy(session,format,selected),'Actual copied export must match before claiming clipboard ownership');
+                const markdown=await copied('markdown',false,exact('markdown'));
+                const copies={json,markdown,...(tool==='search'?{selectedJson:await copied('json',true,exact('json',true)),selectedMarkdown:await copied('markdown',true,exact('markdown',true))}:{})};
+                assertInstalledWorkbenchCopies(session,copies,tool==='search');
+                // Execute the exact retained request on canonical MCP and native
+                // CLI paths; these are reads, with no reshaped arguments/replay.
+                const parityClient=new Mcp({...definition,headers:{...definition.headers,'X-AIRK-Response-Mode':'full'}},definition.ca),transport:{native:unknown[];failure?:unknown}={native:[]};
+                evidence.workbenchParity.transports??=[];evidence.workbenchParity.transports.push(transport);
+                let wire:any;try{await parityClient.start();wire=await parityClient.request('tools/call',{name:'airk_parse',arguments:turn.request});}
+                catch(error){transport.failure={code:'installed_parity_native_request_failed'};throw error;}
+                finally{await finishInstalledClient(parityClient,transport,()=>mark('retained-evidence',evidence));}
+                const mcp=installedToolBody(wire);
+                const spec={command:runtimeBinding.executable,root:selection.backing.root,dataDir:selection.backing.data_root,collection:selection.backing.collection,name:'Installed parity',combinedSession:selection.session,service:{installDir:runtimeBinding.installDir,project:selection.backing.binding,direct:true}};
+                const counter=path.join(folder,'native-request-budget');await fs.appendFile(counter,'x');assert.ok((await fs.stat(counter)).size<=512,'Shared scenario CLI read budget');
+                const cliEnvelope=await nativeRunner(runtimeBinding.executable,[...launchArgs(spec,'tools'),'call','airk_parse','--args',JSON.stringify(turn.request)],Math.min(35000,sharedDeadline-Date.now()));
+                const cli=installedToolBody({result:cliEnvelope});
+                const observed={tool,arguments:arguments_,ui:rendered,copies,request:turn.request,mcp_wire:wire,cli_envelope:cliEnvelope};evidence.workbenchParity.cases.push(observed);await mark('retained-evidence',evidence);
+                for(const result of [turn.envelope,mcp,cli]){
+                    assert.equal(result.status,'complete');assert.equal(result.executed,true);assert.ok(Array.isArray(result.steps)&&result.steps.length===1,'Full single-step parse result');
+                    if(tool==='search'){
+                        scoped(result.steps[0].result,transportSelection);
+                        assert.equal(result.steps[0].result.delivery_observation?.digest_basis,'canonical_body_without_delivery_observation');
+                        assert.match(result.steps[0].result.delivery_observation?.receipt?.result_digest,/^[a-f0-9]{64}$/,'Original native delivery digest retained before comparison');
+                        assert.equal(result.steps[0].result.delivery_observation?.receipt?.service_instance,definition.nativeConnection.endpoint.service_instance,'Native delivery belongs to the selected actual service');
+                    }
+                }
+                assert.deepEqual(installedParityValue(mcp),installedParityValue(turn.envelope),'Complete actual Workbench/MCP parity');
+                assert.deepEqual(installedParityValue(cli),installedParityValue(turn.envelope),'Complete actual Workbench/CLI parity');
+                assertInstalledEnvelopeParity(wire.result,cliEnvelope);
+            }}catch(error){workbenchFailure=error;throw error;}finally{
+                try{if(ownedClipboard!==undefined&&await vscode.env.clipboard.readText()===ownedClipboard){await vscode.env.clipboard.writeText(originalClipboard);evidence.workbenchParity.clipboard_restored=true;}else evidence.workbenchParity.clipboard_restored='intervening_clipboard_change_preserved';}
+                catch(error){evidence.workbenchParity.clipboard_cleanup_failure=true;if(!workbenchFailure)throw error;}
+            }
+            checks.push('actual installed Workbench full canonical results, native input catalog, JSON/Markdown full and selected UI copies agree with MCP and CLI');
+            const control=runtimeHost.client(runtimeBinding);
+            try{evidence.c8=await checkInstalledEditorC8({deadline:sharedDeadline,ui,mark,
+                rpc:(method,expected)=>control.rpc(method,expected),call:async(name,args)=>{const value=await client.call(name,args);if(name==='diagnostics')scoped(value,transportSelection);return value;},
+                uiStatus:async()=>{
+                    const ownership=JSON.parse(await fs.readFile(path.join(folder,'profile-'+role+'-owned.json'),'utf8'));
+                    assert.equal(ownership.private_user_data_dir,true);assert.equal(ownership.label,role);
+                    const storage=path.join(ownership.path,'User','globalStorage','iokaio.airk'),descriptor=launchDescriptorPath(storage);
+                    assert.equal(path.toNamespacedPath(await fs.realpath(descriptor)),path.toNamespacedPath(descriptor));
+                    const assistance=new LegacyMcp({label:'Private installed Assistance',command:runtimeBinding.executable,args:['explorer-assistance','--descriptor',descriptor],cwd:vscode.Uri.file(source)} as vscode.McpStdioServerDefinition);
+                    let primary=false;
+                    try{await assistance.start(ASSISTANCE_TOOLS);
+                        // native read: one standalone UI observation proves actual attachment without enriching a combined native reply.
+                        const reply=await assistance.request('tools/call',{name:'airk_explorer_ui_status',arguments:{}});assistance.observations.push({name:'airk_explorer_ui_status',result:reply});
+                        assert.notEqual(reply.result?.isError,true,JSON.stringify(reply));const body=installedToolBody(reply);return body.ui;
+                    }catch(error){primary=true;throw error;}finally{
+                        evidence.standaloneAssistance={transport:assistance.observations};
+                        try{evidence.standaloneAssistance.cleanup=await assistance.close();}catch(error){evidence.standaloneAssistance.cleanup_failure=String(error);if(!primary)throw error;}
+                        try{await mark('standalone-assistance',evidence.standaloneAssistance);}catch(error){if(!primary)throw error;}
+                    }
+                },
+                lexical:async()=>{const value=scoped(await client.call('search',{query:own,mode:'lexical',limit:5}),transportSelection);assert.ok(value.hits.length>0);}});}finally{control.dispose();}
+            checks.push('actual HTTPS help, installed standalone Assistance and single-dispatch model Stop preserve lexical evidence and service ownership');
+            await finishInstalledClient(client,evidence,mark);
+            const ownedConfigurations:Array<{agent:InstalledAgent;file:string;before:string;connection:HttpConnectionInfo;credential_sha256:string}>=[];
+            evidence.c8Endpoint=await checkInstalledEditorC8Endpoint({deadline:sharedDeadline,ui,definitions,mark,
+                installation:{installDir:path.join(folder,'native-service'),runtimeSha256:process.env.AIRK_EDITOR_RUNTIME_SHA256!},
+                prepareOwnedConfigurations:async()=>{
+                    const host=hostFor(),observed=await host.discover();assert.ok(observed.inspection);const binding=host.binding(observed.inspection,observed.installDir);
+                    for(const agent of ['codex','claude','copilot'] as const){
+                        const parts=agent==='codex'?['.codex','config.toml']:agent==='claude'?['.mcp.json']:['.vscode','mcp.json'],file=path.join(source,...parts);
+                        await fs.mkdir(path.dirname(file),{recursive:true});assert.equal(path.toNamespacedPath(await fs.realpath(path.dirname(file))),path.toNamespacedPath(path.dirname(file)),'Config parent remains in the exact owned source');
+                        const choice={kind:'combined' as const,selection:selection.session},input=await publishNativeInput(binding.controlDir,JSON.stringify(choice),()=>assert.ok(Date.now()<sharedDeadline&&vscode.workspace.isTrusted));
+                        let connection:HttpConnectionInfo;try{connection=await host.httpConnection(binding,choice,input,randomBytes(16).toString('hex'),agent==='claude'?'claude-code':agent==='copilot'?'vscode':'codex');}finally{await removeNativeInput(input);}
+                        const before=ownedConfigurationSource(agent,connection);await fs.writeFile(file,before,{flag:'wx'});
+                        const material=await httpMaterial(connection),credential_sha256=createHash('sha256').update(material.credential).digest('hex');
+                        ownedConfigurations.push({agent,file,before,connection,credential_sha256});
+                    }
+                    evidence.ownedConfigurationRefresh={scope:'only private fixture source configurations; no real user home',before:ownedConfigurations};await mark('retained-evidence',evidence);
+                },
+                verifyOwnedConfigurations:async()=>{
+                    const host=hostFor(),observed=await host.discover();assert.ok(observed.inspection);const binding=host.binding(observed.inspection,observed.installDir),results=[];
+                    for(const owned of ownedConfigurations){
+                        const current=await host.httpConnectionInfo(binding,owned.connection.connection_id),expected=refreshHttpAgentConfig(owned.agent,owned.before,current,owned.connection.endpoint.url);
+                        let after='';for(let count=0;count<128;count++){assert.ok(Date.now()<sharedDeadline,'Original configuration refresh deadline');after=await fs.readFile(owned.file,'utf8');if(after===expected)break;await sleep(100);}
+                        results.push({...owned,current,after});evidence.ownedConfigurationRefresh.after=results;await mark('retained-evidence',evidence);
+                        assert.equal(createHash('sha256').update((await httpMaterial(current)).credential).digest('hex'),owned.credential_sha256,'Ordinary restart preserves the exact native credential');
+                        assertOwnedConfigurationRefresh(owned.agent,owned.before,after,owned.connection,current);
+                    }
+                    assert.equal(results.length,3,'Every supported owned saved config refreshed');
+                },
+                verifyFresh:async next=>{
+                    const fresh=new Mcp(next,next.ca),retained:{native:unknown[];failure?:unknown}={native:[]};
+                    evidence.native.push({endpointRefreshVerification:retained});
+                    try{await fresh.start();scoped(await fresh.call('status',{response_mode:'full'}),transportSelection);}
+                    catch(error){retained.failure={error:String(error),stack:error instanceof Error?error.stack:undefined,native:error instanceof NativeReplyError?error.reply:error instanceof InstalledHttpFailure?{kind:error.kind,...error.detail}:undefined};throw error;}
+                    finally{await finishInstalledClient(fresh,retained,()=>mark('retained-evidence',evidence));}
+                }});
+            const refreshed=await definitions();assert.equal(refreshed.length,1);client=new Mcp(refreshed[0],refreshed[0].ca);await client.start();
+            checks.push('actual installed endpoint refresh retains selection and trust after owned port collision');
             await vscode.commands.executeCommand('airk.explorer.search','return 42');await mark('explorer-ready');await waitFor(path.join(folder,'explorer-checked.json'));
             checks.push('installed Explorer cited search, current Index sets and live help');
             await ui('page',{kind:'projects'},route.projects);await ui('inspect',{kind:'project',id:selection.project});
@@ -552,7 +700,7 @@ export async function run(): Promise<void> {
     if(['same','different'].includes(scenario))await waitFor(marker('transport-closed',role==='a'?'b':'a'));
     if(role==='a'){
         const stop=await ui('serviceStop',{installDir:path.join(folder,'native-service'),runtimeSha256:process.env.AIRK_EDITOR_RUNTIME_SHA256},'#manage/service');
-        await fs.writeFile(path.join(folder,'native-stop.json'),JSON.stringify(stop,null,2));
+        await publishMailbox(path.join(folder,'native-stop.json'),stop);
         evidence.native.push({ownedServiceStop:stop});
     }else await waitFor(path.join(folder,'native-stop.json'));
     await vscode.commands.executeCommand('airk.explorer.open',route.window);

@@ -400,9 +400,15 @@ def stats(records):
             "mrr_at_5": statistics.mean(record["reciprocal_rank_at_5"] for record in records)}
 
 
+def require_source_change_contract(service):
+    if service.catalog_authority and not service.single_image:
+        raise ValueError("Historical catalog source-root review protocol is unsupported by this fixture")
+
+
 def add_fixture_root(service, name, alias, root):
+    require_source_change_contract(service)
     change = {"operation": "add_root", "alias": alias, "path": str(root)}
-    if service.single_image:
+    if service.catalog_authority:
         # A reviewed Index requires native source admission and a newly reviewed
         # grant over the resulting source roster; never widen the prior grant.
         return reviewed_source.SourceReview(service, name).source_change(change)
@@ -442,6 +448,11 @@ def fixture(binary, base, count, trials, metrics_module, detail="balanced"):
     (model / "model.json").write_text(json.dumps({"schema": 1, "name": "original-qualification-fixture",
         "license": "Apache-2.0", "dimensions": 2, "sha256": digest(model / "vocabulary.json")}), encoding="utf-8")
     service = clients.Fixture(binary.parent, base)
+    try:
+        require_source_change_contract(service)
+    except BaseException:
+        service.log.close()
+        raise
     assert service.binary == binary
     with service:
         service.register("qualification", root, state)

@@ -141,7 +141,7 @@ export async function saveLocalIndexSet(adapter:LocalScopeAdapter,input:unknown)
     if(Object.keys(selection).some(key=>!['id','name','index_ids'].includes(key))||typeof selection.name!=='string'||!selection.name.trim()||Buffer.byteLength(selection.name)>256)throw new Error('invalid_index_set');
     const chosen=localScopeChoice({index_ids:selection.index_ids,project_ids:[]});
     const existing=selection.id===undefined?undefined:catalogId(selection.id,'prj_');
-    if(existing===adapter.managed()?.id)throw new Error('managed_scope_set_is_not_editable');
+    if(existing!==undefined&&existing===adapter.managed()?.id)throw new Error('managed_scope_set_is_not_editable');
     const id=existing??`prj_${randomUUID().replaceAll('-','')}`,native=validateNativeHostContext(adapter.context());
     let revision=native.catalog_revision;
     const steps:{review:CatalogReview;outcome:CatalogObject}[]=[],observations:CatalogObject[]=[];

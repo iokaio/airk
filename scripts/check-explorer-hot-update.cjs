@@ -32,7 +32,9 @@ async function privateDriver(){
     const write=async(name,value)=>{const filename=path.join(directory,name+'.json'),stage=filename+'.stage-'+crypto.randomBytes(8).toString('hex');try{await fs.writeFile(stage,JSON.stringify(value),{flag:'wx',mode:0o600});await fs.rename(stage,filename);}finally{await fs.rm(stage,{force:true});}};
     try{
         const extension=vscode.extensions.getExtension('iokaio.airk');
-        if(!extension||!extension.extensionPath.startsWith(config.extensions+path.sep))throw Error('Installed AIRK escaped the private extension root');
+        if(!extension)throw Error('Installed AIRK is unavailable');
+        const installed=await fs.realpath(extension.extensionPath),owned=await fs.realpath(config.extensions),relative=path.relative(owned,installed);
+        if(!relative||relative==='..'||relative.startsWith('..'+path.sep)||path.isAbsolute(relative))throw Error('Installed AIRK escaped the private extension root');
         if(vscode.workspace.getConfiguration('airk').get('runtime.nativeExecution')!==false)throw Error('Native execution must stay disabled');
         if(typeof require(path.join(extension.extensionPath,'out/extensionUpdateLoader.js')).ExtensionUpdateLoader!=='function')throw Error('Baseline does not implement the update loader');
         await extension.activate();await write('driver-ready',{pid:process.pid,boot,profile});
@@ -88,7 +90,7 @@ async function main(args=process.argv.slice(2)){
     const clientHome=path.join(run,'client-home');let env=privateClientEnvironment(privateEditorEnvironment(),clientHome),child,ui,sequence=0,closed,ownedExit,launchFailure,finalResult,cleanupConfirmed=false;
     for(const directory of [clientHome,extensions,driver,source,path.join(profile,'User')])await fs.mkdir(directory,{recursive:true,mode:0o700});
     await fs.writeFile(path.join(profile,'User/settings.json'),JSON.stringify({'airk.runtime.nativeExecution':false,'airk.cli.autoInstall':false,'airk.explorer.assistance.enabled':false,'airk.service.installDir':path.join(run,'native-disabled'),'window.restoreWindows':'none','security.workspace.trust.enabled':false,'extensions.autoUpdate':false,'update.mode':'none'}));
-    await fs.writeFile(path.join(driver,'package.json'),JSON.stringify({name:'airk-owned-hot-ui-driver',publisher:'local-test',version:'0.0.1',engines:{vscode:'*'},activationEvents:['onStartupFinished'],main:'driver.cjs'}));
+    await fs.writeFile(path.join(driver,'package.json'),JSON.stringify({name:'airk-owned-hot-ui-driver',publisher:'local-test',version:'0.0.1',engines:{vscode:'^1.140.0'},activationEvents:['onStartupFinished'],main:'driver.cjs'}));
     await fs.writeFile(path.join(driver,'driver.cjs'),'exports.activate=()=>('+privateDriver.toString()+')();');
     await fs.writeFile(path.join(run,'driver-config.json'),JSON.stringify({profile,extensions,deadline:deadline+20000}));
     const save=(name,value)=>fs.writeFile(path.join(run,name+'.json'),JSON.stringify(value,null,2));
