@@ -6,10 +6,6 @@ use airk_store::service::registry::catalog::genesis::activation::{
     AuthorityV1Basis, AuthorityV1CandidateObservation, AuthorityV1NativeQualification,
     AuthorityV1ReadinessProducer,
 };
-use airk_store::service::registry::catalog::upgrade::{
-    NativeReadRefusalEntrypoint, NativeRefusalDiagnostic, NativeRefusalEntrypoints,
-    NativeRefusalProvenance, NativeWriteRefusalEntrypoint,
-};
 
 pub(super) fn activate_fresh(root: &Path, intent: &Intent) -> Result<()> {
     activate_genesis(root, intent, false)
@@ -113,7 +109,6 @@ pub(in crate::runtime_install) fn activate_managed(
         intent: None,
         managed: Some((authority, policy, origin)),
         installer: origin.installer_identity,
-        predecessor: None,
         expected_selection: None,
         successor: false,
     };
@@ -145,30 +140,6 @@ pub(in crate::runtime_install) fn activate_managed(
     Ok(())
 }
 
-pub(super) fn settle_upgrade(
-    root: &Path,
-    intent: &Intent,
-    owner: CatalogUpgrade,
-    receipt: UpgradeReceipt,
-) -> Result<()> {
-    let producer = NativeProducer::new(root, intent)?;
-    let host = crate::catalog_host_context::current_native_host(receipt.plan.namespace)?;
-    ensure!(
-        receipt.authority_v1_host.is_none_or(|saved| saved == host),
-        "catalog compatibility host differs from the original native owner"
-    );
-    if receipt.authority_v1.is_none() {
-        owner.promote_authority_v1(host)?;
-        owner.record_authority_v1_readiness(
-            host,
-            airk_kernel::service_broker::new_instance_id()?,
-            &producer,
-        )?;
-    }
-    owner.settle_authority_v1(host)?;
-    Ok(())
-}
-
 pub(super) struct NativeProducer<'a> {
     root: &'a Path,
     intent: Option<&'a Intent>,
@@ -178,7 +149,6 @@ pub(super) struct NativeProducer<'a> {
         &'a airk_store::service::registry::catalog::genesis::ManagedGenesisOrigin,
     )>,
     installer: Sha256Digest,
-    predecessor: Option<Sha256Digest>,
     expected_selection: Option<Selection>,
     successor: bool,
 }
@@ -194,53 +164,30 @@ impl<'a> NativeProducer<'a> {
             intent: Some(intent),
             managed: None,
             installer: engine_identity(&main)?,
-            predecessor: None,
             expected_selection: selection(root)?,
             successor: true,
         })
     }
-    pub(super) fn new(root: &'a Path, intent: &'a Intent) -> Result<Self> {
-        Self::bound(root, intent, false)
-    }
-
     fn fresh(root: &'a Path, intent: &'a Intent) -> Result<Self> {
         ensure!(
             intent.prior.is_none(),
             "fresh qualification has a predecessor"
         );
-        Self::bound(root, intent, true)
-    }
-
-    fn bound(root: &'a Path, intent: &'a Intent, fresh: bool) -> Result<Self> {
         intent.validate(root)?;
         let expected_selection = selection(root)?;
         ensure!(
             intent.phase == Phase::Probe
-                && (expected_selection == Some(intent.selected())
-                    || (fresh && intent.prior.is_none() && expected_selection.is_none())),
+                && (expected_selection == Some(intent.selected()) || expected_selection.is_none()),
             "authority qualification requires the exact installer selection"
         );
         manager(root, intent)?.require_stopped_for_maintenance()?;
         let (candidate, _) = verify_runtime(root, &intent.candidate)?;
         let installer = engine_identity(&candidate)?;
-        let predecessor = intent
-            .prior
-            .as_ref()
-            .map(|prior| -> Result<_> {
-                let (main, _) = verify_runtime(root, &prior.active)?;
-                engine_identity(&main)
-            })
-            .transpose()?;
-        ensure!(
-            predecessor != Some(installer),
-            "candidate cannot certify itself as a refused predecessor"
-        );
         Ok(Self {
             root,
             intent: Some(intent),
             managed: None,
             installer,
-            predecessor,
             expected_selection,
             successor: false,
         })
@@ -280,151 +227,13 @@ impl<'a> NativeProducer<'a> {
         );
         Ok(main)
     }
-
-    fn predecessor(&self) -> Result<Option<PathBuf>> {
-        if self.managed.is_some() || self.successor {
-            return Ok(None);
-        }
-        let intent = self
-            .intent
-            .context("native copied installer intent missing")?;
-        let Some(prior) = &intent.prior else {
-            ensure!(
-                self.predecessor.is_none(),
-                "fresh installation proof changed"
-            );
-            return Ok(None);
-        };
-        let (main, _) = verify_runtime(self.root, &prior.active)?;
-        ensure!(
-            engine_identity(&main)? == self.predecessor.context("predecessor proof missing")?,
-            "predecessor inventory changed"
-        );
-        Ok(Some(main))
-    }
-}
-
-impl NativeProducer<'_> {
-    fn capture_refusals(
-        &self,
-        upgrade_id: Option<airk_core::identity::Incarnation>,
-        nonce: airk_core::identity::Incarnation,
-    ) -> Result<Vec<RuntimeRefusal>> {
-        let mut predecessor_refusals = Vec::new();
-        if let Some(predecessor) = self.predecessor()? {
-            let mut diagnostics = Vec::new();
-            let mut hidden = Vec::new();
-            for write in [false, true] {
-                let mut command = Command::new(&predecessor);
-                command
-                    .args(["service", "requests", "--runtime-dir"])
-                    .arg(self.control());
-                if write {
-                    command
-                        .arg("forget")
-                        .arg(airk_kernel::service_broker::new_instance_id()?.to_string());
-                } else {
-                    command.arg("list");
-                }
-                let output = capture(self.control(), command, 16384, Duration::from_secs(30))?;
-                self.predecessor()?;
-                let initial = output.stderr.clone();
-                let mut output = output;
-                let mut entrypoint = "service requests";
-                if !output.success && admission_refusal(&String::from_utf8_lossy(&output.stderr)) {
-                    let upgrade_id = upgrade_id
-                        .context("fresh genesis cannot supply a legacy predecessor probe")?;
-                    // P5-aware predecessors honor the live owner fence before
-                    // reading SQLite. Their existing native upgrade commands
-                    // instead parse the saved upgrade format first. The real
-                    // fence remains installed throughout both attempts.
-                    let mut command = Command::new(&predecessor);
-                    entrypoint = if write {
-                        "runtime catalog-upgrade-migrate"
-                    } else {
-                        "runtime catalog-upgrade-probe"
-                    };
-                    command
-                        .args([
-                            "runtime",
-                            if write {
-                                "catalog-upgrade-migrate"
-                            } else {
-                                "catalog-upgrade-probe"
-                            },
-                            "--control-root",
-                        ])
-                        .arg(self.control())
-                        .arg("--upgrade-id")
-                        .arg(upgrade_id.to_string());
-                    if !write {
-                        command.arg("--nonce").arg(nonce.to_string());
-                    }
-                    self.predecessor()?;
-                    output = capture(self.control(), command, 16384, Duration::from_secs(30))?;
-                    self.predecessor()?;
-                }
-                let error = String::from_utf8_lossy(&output.stderr);
-                ensure!(
-                    !output.success && authority_refusal(&error),
-                    "predecessor did not refuse the authority contract: {error}"
-                );
-                let fallback = entrypoint != "service requests";
-                hidden.push(fallback);
-                diagnostics.push(NativeRefusalDiagnostic {
-                    initial_admission_pending_digest: fallback
-                        .then(|| framed_digest(b"airk/catalog-refusal-diagnostic/1", &[&initial])),
-                    final_classified_diagnostic_digest: framed_digest(
-                        b"airk/catalog-refusal-diagnostic/1",
-                        &[&output.stderr],
-                    ),
-                });
-            }
-            predecessor_refusals.push(RuntimeRefusal::from_native(
-                self.predecessor.context("predecessor proof missing")?,
-                NativeRefusalProvenance {
-                    native_entrypoints: NativeRefusalEntrypoints {
-                        read: if hidden[0] {
-                            NativeReadRefusalEntrypoint::HiddenUpgradeProbe
-                        } else {
-                            NativeReadRefusalEntrypoint::ServiceRequestsList
-                        },
-                        write: if hidden[1] {
-                            NativeWriteRefusalEntrypoint::HiddenUpgradeMigrate
-                        } else {
-                            NativeWriteRefusalEntrypoint::ServiceRequestsForget
-                        },
-                    },
-                    read: diagnostics.remove(0),
-                    write: diagnostics.remove(0),
-                },
-            )?);
-        }
-        self.candidate()?;
-        Ok(predecessor_refusals)
-    }
-}
-
-pub(super) fn preseal_refusals(
-    root: &Path,
-    intent: &Intent,
-    upgrade_id: airk_core::identity::Incarnation,
-    nonce: airk_core::identity::Incarnation,
-) -> Result<Vec<RuntimeRefusal>> {
-    let producer = NativeProducer::new(root, intent)?;
-    let refusals = producer.capture_refusals(Some(upgrade_id), nonce)?;
-    ensure!(
-        refusals.len() == 1,
-        "preseal readiness requires its exact native predecessor"
-    );
-    Ok(refusals)
 }
 
 impl AuthorityV1ReadinessProducer for NativeProducer<'_> {
+    /// Fresh, rebuild and managed Genesis have no refused predecessor.
     fn required_predecessor_identities(&self) -> Result<Vec<Sha256Digest>> {
         self.candidate()?;
-        self.predecessor()?;
-        Ok(self.predecessor.into_iter().collect())
+        Ok(Vec::new())
     }
 
     fn qualify(
@@ -444,27 +253,9 @@ impl AuthorityV1ReadinessProducer for NativeProducer<'_> {
             .arg(expected.nonce.to_string());
         match expected.basis {
             AuthorityV1Basis::FreshGenesis { operation, .. } => {
-                ensure!(
-                    self.predecessor.is_none(),
-                    "fresh genesis has a preceding installation"
-                );
                 probe.arg("--operation").arg(operation.to_string());
             }
-            AuthorityV1Basis::LegacyUpgrade {
-                upgrade_id,
-                native_host,
-                ..
-            } => {
-                ensure!(
-                    self.predecessor.is_some(),
-                    "legacy qualification has no predecessor"
-                );
-                probe
-                    .arg("--operation")
-                    .arg(upgrade_id.to_string())
-                    .arg("--native-host")
-                    .arg(native_host.to_string());
-            }
+            AuthorityV1Basis::LegacyUpgrade { .. } => bail!(CATALOG_UPGRADE_UNSUPPORTED),
         }
         let result = capture(self.control(), probe, 16384, Duration::from_secs(30))?;
         self.candidate()?;
@@ -474,79 +265,10 @@ impl AuthorityV1ReadinessProducer for NativeProducer<'_> {
             &observed == expected,
             "native authority observation changed"
         );
-        let upgrade_id = match expected.basis {
-            AuthorityV1Basis::LegacyUpgrade { upgrade_id, .. } => Some(upgrade_id),
-            AuthorityV1Basis::FreshGenesis { .. } => None,
-        };
-        let predecessor_refusals = self.capture_refusals(upgrade_id, expected.nonce)?;
         self.candidate()?;
         Ok(AuthorityV1NativeQualification {
             candidate: observed,
-            predecessor_refusals,
+            predecessor_refusals: Vec::new(),
         })
-    }
-}
-
-fn authority_refusal(error: &str) -> bool {
-    registry_refusal(error)
-        || (!error.contains("Usage:")
-            && !error.contains("unexpected argument")
-            && !error.contains("unrecognized subcommand")
-            && (error.contains("unsupported index catalog authority contract")
-                || error.contains("unsupported catalog authority contract")
-                || error.contains("unknown field `authority_v1_host`")
-                || error.contains("unknown field `authority_v1`")
-                // P5's strict saved RuntimeRefusal decoder can reject this
-                // added receipt field before reaching the authority-1 fields.
-                // This is a saved-format refusal from the actual old artifact,
-                // not an argument-parser or connection error.
-                || error.contains("unknown field `native_provenance`")
-                || error
-                    .contains("unsupported registry table, index, foreign-key or trigger shape")))
-}
-
-fn admission_refusal(error: &str) -> bool {
-    !error.contains("Usage:")
-        && !error.contains("unexpected argument")
-        && !error.contains("unrecognized subcommand")
-        && error.contains("index catalog upgrade is pending; resume owned installation")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn authority_refusal_requires_format_failure_not_parser_or_connection_failure() {
-        for value in [
-            "unsupported index catalog authority contract",
-            "Error: unknown field `native_provenance`, expected one of `payload_identity`, `read_refusal_digest`, `write_refusal_digest` at line 1 column 2764",
-            "unsupported catalog authority contract",
-            "unsupported saved service registry format",
-            "unsupported registry table, index, foreign-key or trigger shape",
-            "unknown field `authority_v1_host`, expected `schema`",
-        ] {
-            assert!(authority_refusal(value));
-        }
-        for value in [
-            "connection refused",
-            "Usage: unsupported catalog authority contract",
-            "unrecognized subcommand 'unsupported catalog authority contract'",
-            "unexpected argument unsupported index catalog authority contract",
-            "Usage: unsupported registry table, index, foreign-key or trigger shape",
-            "index catalog upgrade is pending; resume owned installation",
-            "Usage: unknown field `authority_v1_host`",
-            "Usage: unknown field `native_provenance`",
-            "unexpected argument: unknown field `native_provenance`",
-            "unrecognized subcommand 'unknown field `native_provenance`'",
-            "unknown field `unrelated_user_input`",
-        ] {
-            assert!(!authority_refusal(value));
-        }
-        assert!(admission_refusal(
-            "index catalog upgrade is pending; resume owned installation"
-        ));
-        assert!(!admission_refusal(
-            "Usage: index catalog upgrade is pending; resume owned installation"
-        ));
     }
 }

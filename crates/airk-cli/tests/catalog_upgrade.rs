@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Process-level compatibility checks in disposable control state only.
+//! Process-level compatibility checks in disposable control state only. The
+//! in-place catalog upgrade commands remain parseable but are refused.
 #[path = "common/read_retry.rs"]
 mod read_retry;
 use airk_core::{
-    identity::{Incarnation, Sha256Digest, framed_digest},
+    identity::{Incarnation, Sha256Digest},
+    index_catalog::IndexId,
     service::{ControlMethod, ControlResponse, ProjectRegistration},
 };
 use airk_store::service::registry::{
     ServiceRegistry,
-    catalog::upgrade::{
-        self, CatalogUpgrade, CatalogUpgradeObservation, ReadinessEvidence, RuntimeRefusal,
-    },
+    catalog::upgrade::{self, CatalogUpgrade},
 };
 use anyhow::{Context, Result, ensure};
 use rusqlite::{Connection, params};
@@ -264,107 +264,133 @@ fn candidate() -> PathBuf {
         .unwrap_or_else(|| env!("CARGO_BIN_EXE_airk").into())
 }
 
-#[test]
-fn native_migration_requires_exact_admission_and_replays_without_rebuilding() -> Result<()> {
-    let binary = candidate();
-    let root = fixture()?;
-    let migrate = |id: Incarnation| -> Result<Output> {
-        let mut command = Command::new(&binary);
-        command
-            .args(["runtime", "catalog-upgrade-migrate", "--control-root"])
-            .arg(root.path())
-            .arg("--upgrade-id")
-            .arg(id.to_string());
-        run(&command)
-    };
-    let wrong_id = Incarnation::from_bytes([201; 16]);
-    let before = files(root.path())?;
-    let output = migrate(wrong_id)?;
+fn refused(output: &Output, command: &str) -> Result<()> {
+    let stderr = String::from_utf8_lossy(&output.stderr);
     ensure!(
-        !output.status.success() && String::from_utf8_lossy(&output.stderr).contains("not fenced"),
-        "unadmitted migration: {output:?}"
-    );
-    assert!(files(root.path())? == before);
-    let owner = CatalogUpgrade::acquire(root.path())?;
-    let receipt = airk_kernel::service_catalog_upgrade::prepare(
-        &owner,
-        airk_cli::runtime_pair::engine_identity_at(&binary)?,
-    )?;
-    drop(owner);
-    let before = files(root.path())?;
-    let output = migrate(wrong_id)?;
-    ensure!(
-        !output.status.success()
-            && String::from_utf8_lossy(&output.stderr)
-                .contains("differs from the admitted upgrade"),
-        "crossed migration: {output:?}"
-    );
-    assert!(files(root.path())? == before);
-    let output = migrate(receipt.plan.id)?;
-    ensure!(
-        output.status.success(),
-        "native migration failed: {output:?}"
-    );
-    let actual: upgrade::UpgradeReceipt = serde_json::from_slice(&output.stdout)?;
-    assert_eq!(actual.plan, receipt.plan);
-    assert_eq!(actual.stage, upgrade::UpgradeStage::Imports);
-    assert_eq!(
-        serde_json::to_value(upgrade::pending(root.path())?)?,
-        serde_json::to_value(Some(&actual))?
-    );
-    let before = files(root.path())?;
-    let replay = migrate(receipt.plan.id)?;
-    ensure!(
-        replay.status.success(),
-        "migration replay failed: {replay:?}"
-    );
-    assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&replay.stdout)?,
-        serde_json::to_value(&actual)?
-    );
-    assert!(files(root.path())? == before);
-    let ordinary = run(&requests(&binary, root.path(), false))?;
-    ensure!(
-        !ordinary.status.success()
-            && String::from_utf8_lossy(&ordinary.stderr).contains("catalog upgrade is pending"),
-        "migration admitted an ordinary reader: {ordinary:?}"
-    );
-    CatalogUpgrade::resume_for_installer(root.path(), actual.plan.installer_identity)?.restore()?;
-    assert!(
-        run(&requests(&binary, root.path(), false))?
-            .status
-            .success()
+        output.status.code() == Some(1)
+            && stderr.contains("catalog_upgrade_unsupported")
+            && !stderr.contains("Usage:"),
+        "{command} was not refused as an unsupported in-place upgrade: {output:?}"
     );
     Ok(())
 }
 
+/// The hidden installer-only P5 commands and the explicit legacy-retirement
+/// commands keep parsing but refuse before touching stdin, the installation or
+/// any control state, whether or not a saved upgrade admission exists.
 #[test]
-fn native_migration_refuses_another_installer_before_database_access() -> Result<()> {
+fn in_place_upgrade_commands_are_refused_before_any_state_access() -> Result<()> {
     let binary = candidate();
-    let root = fixture()?;
-    let owner = CatalogUpgrade::acquire(root.path())?;
-    let receipt =
-        airk_kernel::service_catalog_upgrade::prepare(&owner, Sha256Digest::from_bytes([202; 32]))?;
-    drop(owner);
-    let before = files(root.path())?;
-    let mut command = Command::new(&binary);
-    command
-        .args(["runtime", "catalog-upgrade-migrate", "--control-root"])
-        .arg(root.path())
-        .arg("--upgrade-id")
-        .arg(receipt.plan.id.to_string());
-    let output = run(&command)?;
-    ensure!(
-        !output.status.success()
-            && String::from_utf8_lossy(&output.stderr)
-                .contains("another verified installer payload"),
-        "crossed installer entered migration: {output:?}"
-    );
-    assert!(files(root.path())? == before);
-    assert_eq!(
-        upgrade::pending(root.path())?.unwrap().stage,
-        upgrade::UpgradeStage::Admission
-    );
+    let nonce = Incarnation::from_bytes([4; 16]);
+    let host = Sha256Digest::from_bytes([5; 32]);
+    let control_commands = |control: &Path, id: Incarnation| {
+        let mut migrate = Command::new(&binary);
+        migrate
+            .args(["runtime", "catalog-upgrade-migrate", "--control-root"])
+            .arg(control)
+            .arg("--upgrade-id")
+            .arg(id.to_string());
+        let mut probe = Command::new(&binary);
+        probe
+            .args(["runtime", "catalog-upgrade-probe", "--control-root"])
+            .arg(control)
+            .arg("--upgrade-id")
+            .arg(id.to_string())
+            .arg("--nonce")
+            .arg(nonce.to_string());
+        let mut authority = Command::new(&binary);
+        authority
+            .args(["runtime", "catalog-authority-probe", "--control-root"])
+            .arg(control)
+            .arg("--operation")
+            .arg(id.to_string())
+            .arg("--native-host")
+            .arg(host.to_string())
+            .arg("--nonce")
+            .arg(nonce.to_string());
+        [
+            ("catalog-upgrade-migrate", migrate),
+            ("catalog-upgrade-probe", probe),
+            ("catalog-authority-probe --native-host", authority),
+        ]
+    };
+    // None: no admission. Some(false): admitted and migrated for this exact
+    // candidate (formerly migrated/probed). Some(true): another installer.
+    for admitted in [None, Some(false), Some(true)] {
+        let root = fixture()?;
+        let id = match admitted {
+            None => Incarnation::from_bytes([201; 16]),
+            Some(crossed) => {
+                let owner = CatalogUpgrade::acquire(root.path())?;
+                let identity = if crossed {
+                    Sha256Digest::from_bytes([202; 32])
+                } else {
+                    airk_cli::runtime_pair::engine_identity_at(&binary)?
+                };
+                let receipt = airk_kernel::service_catalog_upgrade::prepare(&owner, identity)?;
+                if !crossed {
+                    owner.migrate()?;
+                }
+                receipt.plan.id
+            }
+        };
+        let stage = upgrade::pending(root.path())?.map(|receipt| receipt.stage);
+        let before = files(root.path())?;
+        for (name, command) in control_commands(root.path(), id) {
+            refused(&run(&command)?, name)?;
+            assert!(files(root.path())? == before, "{name} changed state");
+        }
+        assert_eq!(
+            upgrade::pending(root.path())?.map(|receipt| receipt.stage),
+            stage
+        );
+        if admitted.is_some() {
+            // The Store admission fence remains authoritative for ordinary
+            // readers and service startup over a retained upgrade journal.
+            let ordinary = run(&requests(&binary, root.path(), false))?;
+            ensure!(
+                !ordinary.status.success()
+                    && String::from_utf8_lossy(&ordinary.stderr)
+                        .contains("catalog upgrade is pending"),
+                "ordinary reader crossed admission: {ordinary:?}"
+            );
+            let mut service = Command::new(&binary);
+            service.args(["serve", "--runtime-dir"]).arg(root.path());
+            let output = run(&service)?;
+            ensure!(
+                !output.status.success()
+                    && String::from_utf8_lossy(&output.stderr)
+                        .contains("catalog upgrade is pending"),
+                "ordinary service started before catalog settlement: {output:?}"
+            );
+            assert_eq!(
+                files(root.path())?,
+                before,
+                "pending startup must not create endpoints or start source/helper supervisors"
+            );
+        }
+    }
+    let owner = tempfile::tempdir()?;
+    let missing = owner.path().join("not-installed");
+    let index = IndexId::from_identity(Incarnation::from_bytes([6; 16])).to_string();
+    for (action, extra) in [
+        ("legacy-retirement-candidates", vec![]),
+        (
+            "legacy-retirement-review",
+            vec!["--index-id", index.as_str()],
+        ),
+        ("legacy-retirement-authorize", vec![]),
+        ("legacy-retirement-receipt", vec![]),
+        ("legacy-retirement-resume", vec![]),
+    ] {
+        let mut command = Command::new(&binary);
+        command
+            .args(["runtime", action, "--install-dir"])
+            .arg(&missing)
+            .args(extra);
+        refused(&run(&command)?, action)?;
+        assert!(!missing.exists(), "{action} created a missing installation");
+    }
     Ok(())
 }
 
@@ -388,17 +414,6 @@ fn requests(binary: &Path, root: &Path, write: bool) -> Command {
     }
     command
 }
-fn probe(binary: &Path, root: &Path, id: Incarnation, nonce: Incarnation) -> Result<Output> {
-    let mut command = Command::new(binary);
-    command
-        .args(["runtime", "catalog-upgrade-probe", "--control-root"])
-        .arg(root)
-        .arg("--upgrade-id")
-        .arg(id.to_string())
-        .arg("--nonce")
-        .arg(nonce.to_string());
-    run(&command)
-}
 fn files(root: &Path) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
     fn collect(root: &Path, path: &Path, entries: &mut BTreeMap<PathBuf, Vec<u8>>) -> Result<()> {
         for entry in fs::read_dir(path)? {
@@ -421,221 +436,6 @@ fn files(root: &Path) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
     let mut entries = BTreeMap::new();
     collect(root, root, &mut entries)?;
     Ok(entries)
-}
-
-#[test]
-fn actual_candidate_probe_preserves_the_complete_observation_and_refuses_a_crossed_payload()
--> Result<()> {
-    let binary = candidate();
-    for crossed in [false, true] {
-        let root = fixture()?;
-        // Validate the same existing native owner boundary as serve before
-        // testing upgrade/payload refusal; an ACL setup error must not mask it.
-        airk_cli::local_ipc::prepare_root(root.path())
-            .context("catalog fixture must satisfy native owner-only control admission")?;
-        let owner = CatalogUpgrade::acquire(root.path())?;
-        let identity = if crossed {
-            Sha256Digest::from_bytes([3; 32])
-        } else {
-            airk_cli::runtime_pair::engine_identity_at(&binary)?
-        };
-        let receipt = airk_kernel::service_catalog_upgrade::prepare(&owner, identity)?;
-        owner.migrate()?;
-        let before = files(root.path())?;
-        let nonce = Incarnation::from_bytes([4; 16]);
-        let output = probe(&binary, root.path(), receipt.plan.id, nonce)?;
-        if crossed {
-            ensure!(
-                !output.status.success(),
-                "crossed candidate was accepted: {output:?}"
-            );
-            ensure!(
-                String::from_utf8_lossy(&output.stderr).contains("payload identity differs"),
-                "wrong refusal: {output:?}"
-            );
-        } else {
-            ensure!(
-                output.status.success(),
-                "candidate probe failed: {output:?}"
-            );
-            let actual: CatalogUpgradeObservation = serde_json::from_slice(&output.stdout)?;
-            assert_eq!(
-                actual,
-                upgrade::observe(root.path(), receipt.plan.id, nonce)?
-            );
-            assert_eq!(
-                actual.production_activation_enabled,
-                upgrade::PRODUCTION_ACTIVATION_ENABLED
-            );
-        }
-        let ordinary = run(&requests(&binary, root.path(), false))?;
-        ensure!(
-            !ordinary.status.success()
-                && String::from_utf8_lossy(&ordinary.stderr).contains("catalog upgrade is pending"),
-            "ordinary reader crossed admission: {ordinary:?}"
-        );
-        assert_eq!(
-            files(root.path())?,
-            before,
-            "probes cannot mutate control, collection or source state"
-        );
-        drop(owner);
-        let mut service = Command::new(&binary);
-        service.args(["serve", "--runtime-dir"]).arg(root.path());
-        let output = run(&service)?;
-        ensure!(
-            !output.status.success()
-                && String::from_utf8_lossy(&output.stderr).contains("catalog upgrade is pending"),
-            "ordinary service started before catalog settlement: {output:?}"
-        );
-        assert_eq!(
-            files(root.path())?,
-            before,
-            "pending startup must not create endpoints or start source/helper supervisors"
-        );
-    }
-    Ok(())
-}
-
-fn predecessor_identity(binary: &Path) -> Result<Sha256Digest> {
-    let directory = binary
-        .parent()
-        .context("predecessor payload directory missing")?;
-    let pair: airk_cli::runtime_pair::RuntimePair =
-        serde_json::from_slice(&fs::read(directory.join("airk-runtime.json"))?)?;
-    ensure!(
-        pair.airk_sha256 == airk_cli::runtime_pair::digest_file(binary)?,
-        "predecessor main identity changed"
-    );
-    let helper = directory.join(if cfg!(windows) {
-        "airk-embed.exe"
-    } else {
-        "airk-embed"
-    });
-    ensure!(
-        pair.embed_sha256 == airk_cli::runtime_pair::digest_file(&helper)?,
-        "predecessor helper identity changed"
-    );
-    Ok(framed_digest(
-        b"airk-maintenance-engine/1.4",
-        &[&serde_json::to_vec(&pair)?],
-    ))
-}
-
-#[test]
-#[ignore = "requires explicitly selected retained predecessor runtimes; no downloads or installed state"]
-fn actual_predecessors_refuse_reads_and_writes_at_admission_and_the_schema_floor() -> Result<()> {
-    let selected = std::env::var_os("AIRK_CATALOG_PREDECESSOR_BINARIES")
-        .context("select exact retained predecessor binaries")?;
-    let predecessors: Vec<_> = std::env::split_paths(&selected).collect();
-    ensure!(
-        !predecessors.is_empty() && predecessors.len() <= 8,
-        "bounded predecessor selection required"
-    );
-    let root = fixture()?;
-    for binary in &predecessors {
-        for write in [false, true] {
-            let output = run(&requests(binary, root.path(), write))?;
-            ensure!(
-                output.status.success(),
-                "predecessor cannot execute the original schema-11 command: {output:?}"
-            );
-        }
-    }
-    let owner = CatalogUpgrade::acquire(root.path())?;
-    let receipt = airk_kernel::service_catalog_upgrade::prepare(
-        &owner,
-        airk_cli::runtime_pair::engine_identity_at(&candidate())?,
-    )?;
-    let mut evidence = Vec::new();
-    for migrated in [false, true] {
-        if migrated {
-            owner.migrate()?;
-        }
-        let before = files(root.path())?;
-        for binary in &predecessors {
-            let mut refusals = Vec::new();
-            for write in [false, true] {
-                let output = run(&requests(binary, root.path(), write))?;
-                ensure!(
-                    !output.status.success()
-                        && String::from_utf8_lossy(&output.stderr).contains("catalog_upgrade"),
-                    "expected actual owner-format refusal, not a parser/connection error: {output:?}"
-                );
-                refusals.push(framed_digest(
-                    b"airk/catalog-predecessor-refusal/1",
-                    &[&output.stderr],
-                ));
-            }
-            if migrated {
-                evidence.push(RuntimeRefusal {
-                    payload_identity: predecessor_identity(binary)?,
-                    read_refusal_digest: refusals[0],
-                    write_refusal_digest: refusals[1],
-                    native_provenance: None,
-                });
-            }
-        }
-        assert_eq!(
-            files(root.path())?,
-            before,
-            "predecessor refusal changed state"
-        );
-    }
-    // Isolated format-floor fixture: remove only the admission field so the
-    // retained reader must inspect schema 12. This never enables ordinary access.
-    let owner_path = root.path().join("service-1.4.owner.json");
-    let fenced = fs::read(&owner_path)?;
-    let mut without_fence: serde_json::Value = serde_json::from_slice(&fenced)?;
-    without_fence
-        .as_object_mut()
-        .unwrap()
-        .remove("catalog_upgrade");
-    fs::write(&owner_path, serde_json::to_vec(&without_fence)?)?;
-    let before = files(root.path())?;
-    for binary in &predecessors {
-        for write in [false, true] {
-            let output = run(&requests(binary, root.path(), write))?;
-            ensure!(
-                !output.status.success()
-                    && String::from_utf8_lossy(&output.stderr)
-                        .contains("unsupported saved service registry format"),
-                "expected schema-floor refusal: {output:?}"
-            );
-        }
-    }
-    assert_eq!(files(root.path())?, before);
-    fs::write(&owner_path, fenced)?;
-    let output = probe(
-        &candidate(),
-        root.path(),
-        receipt.plan.id,
-        Incarnation::from_bytes([7; 16]),
-    )?;
-    ensure!(
-        output.status.success(),
-        "actual candidate probe failed: {output:?}"
-    );
-    let observation = serde_json::from_slice(&output.stdout)?;
-    let ready = owner.record_readiness(ReadinessEvidence {
-        schema: 1,
-        candidate: observation,
-        predecessor_refusals: evidence,
-    })?;
-    assert_eq!(ready.stage, upgrade::UpgradeStage::Readiness);
-    assert!(
-        owner.settle().is_err(),
-        "production activation stays disabled at P5"
-    );
-    owner.restore()?;
-    for binary in predecessors {
-        let output = run(&requests(&binary, root.path(), false))?;
-        ensure!(
-            output.status.success(),
-            "restored predecessor read failed: {output:?}"
-        );
-    }
-    Ok(())
 }
 
 // Actual owned service, stdin CLI and trusted console all retain full canonical

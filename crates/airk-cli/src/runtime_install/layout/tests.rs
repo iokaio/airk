@@ -40,12 +40,11 @@ fn catalog_validation_preserves_the_independent_namespace_pin_and_normal_admissi
         namespace
     );
     validate_catalog_control(&control, namespace)?;
-    assert_eq!(catalog_control(&root, installer)?, control);
     assert!(validate_catalog_control(&control, Incarnation::from_bytes([183; 16])).is_err());
     let pin = state.join(registry_binding::PIN);
     let saved_pin = fs::read(&pin)?;
     fs::write(&pin, b"unrecognized independent namespace pin")?;
-    assert!(catalog_control(&root, installer).is_err());
+    assert!(validate_catalog_control(&control, namespace).is_err());
     assert_eq!(fs::read(&pin)?, b"unrecognized independent namespace pin");
     fs::write(&pin, saved_pin)?;
     assert!(

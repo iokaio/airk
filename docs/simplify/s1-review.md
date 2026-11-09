@@ -428,3 +428,49 @@ remaining deletions are blocked on that rule.
     path can begin a P5 upgrade. Then a behavior step disables P5 begin and
     resume (keeping Genesis resume), and only after that the deletion.
 - **Step 5: delete the extension paths.** Follows steps 3 and 4.
+
+### S2 step 4a (decision: no in-place catalog upgrade; behavior, CLI side)
+
+- P5 can no longer begin or resume: `activation::resume`,
+  `resume_catalog_before_lifecycle` and `catalog_upgrade::activate` keep only the
+  fresh-Genesis and ordinary-update paths.
+- An ordinary update drains, verifies the candidate and predecessor payloads,
+  then requires an existing index catalog. Without one it fails with
+  `catalog_upgrade_unsupported`.
+- The P5-only CLI code is deleted:
+  - `legacy_retirement.rs`;
+  - `prepare_readiness`, `resume_restore`, `resolved_control` and
+    `control_for_resume`;
+  - the predecessor-refusal capture in `authority.rs`;
+  - `layout::catalog_control`;
+  - the managed `Disabled` path.
+- The P5 commands stay in the CLI surface and refuse with the same typed code
+  before touching any state.
+- Store's Genesis guard keeps refusing an in-place upgrade journal, now with the
+  typed message.
+
+**Kept for the next wave:**
+
+- Public Store, Kernel and Core P5 APIs. Many CLI test fixtures still build
+  catalogs with `CatalogUpgrade`.
+- `PRODUCTION_ACTIVATION_ENABLED`.
+- Persisted and wire shapes (`catalog_upgrade` owner field,
+  `AuthorityV1Basis::LegacyUpgrade`, `RuntimeRefusal`).
+- The extension's `runtimeLegacyRetirement.ts`. It now receives the typed
+  refusal.
+- `scripts/check-runtime-legacy-retirement.*`, which now fail as obsolete.
+
+**Evidence:**
+
+- Clippy is clean (workspace all-features and no-default `airk-cli`).
+- The workspace test targets compile.
+- `airk-cli` library: 832 passed, plus the same 4 host-environment failures.
+- `catalog_upgrade` integration test: 2/2. It now asserts the typed refusals
+  without state access.
+- `cli_commands` gives the same 9 passed / 5 failed as unmodified `HEAD`. Four
+  fail in the native self-test, which cannot run without default features on
+  this host. One is a pre-existing gap: the `uninstall` command has no test
+  mapping.
+- The new regression
+  `ordinary_update_refuses_a_registry_without_a_catalog_and_keeps_existing_catalogs`
+  checks that no file changes either way.

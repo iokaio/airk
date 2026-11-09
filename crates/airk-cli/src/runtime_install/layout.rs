@@ -572,23 +572,6 @@ pub(super) fn validate_catalog_control(
     Ok(())
 }
 
-pub(super) fn catalog_control(
-    root: &Path,
-    installer: airk_core::identity::Sha256Digest,
-) -> Result<PathBuf> {
-    let layout = Layout::read(root)?.context("catalog installation layout missing")?;
-    ensure!(
-        layout.ready && layout.claimed()?,
-        "catalog state ownership is incomplete"
-    );
-    let control = layout.state.join("control");
-    let namespace =
-        airk_store::service::registry::catalog::upgrade::CatalogUpgrade::check_installer_resume(
-            &control, installer,
-        )?;
-    validate_catalog_control(&control, namespace)?;
-    Ok(control)
-}
 /// Read-only routing for installer transaction exclusion, including incomplete
 /// initial staging. A known issuer journal never falls back to another control.
 pub(super) fn issuer_rotation_control(root: &Path) -> Result<Option<PathBuf>> {

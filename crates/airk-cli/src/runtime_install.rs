@@ -51,7 +51,6 @@ mod legacy_caches;
 mod legacy_index_adoption;
 mod legacy_launchers;
 mod legacy_maintenance;
-mod legacy_retirement;
 mod lifecycle;
 #[cfg(any(target_os = "macos", test))]
 #[path = "runtime_macos_login.rs"]
@@ -67,6 +66,11 @@ const MAX_MANIFEST: u64 = 512 * 1024;
 /// Typed refusal for `adopt-legacy-index(es)`: the 1.8.16 clean-break baseline
 /// rebuilds from original sources and never adopts standalone saved indexes.
 const STANDALONE_ADOPTION_UNSUPPORTED: &str = "standalone_adoption_unsupported: AIRK no longer adopts standalone saved indexes; set up a new index from the original sources in Indexing";
+/// Typed refusal for every in-place P5 catalog upgrade entry point: a raw
+/// registry is never migrated in place; the 1.8.16 clean break creates fresh
+/// state with Genesis instead.
+const CATALOG_UPGRADE_UNSUPPORTED: &str =
+    "catalog_upgrade_unsupported: AIRK no longer upgrades a registry in place; run the clean break";
 const MAX_FILES: usize = 2048;
 const MAX_PAYLOAD: u64 = 4 * 1024 * 1024 * 1024;
 pub use crate::user_paths::Channel as RuntimeChannel;
@@ -536,38 +540,38 @@ pub enum RuntimeCommand {
         #[arg(last = true, required = true)]
         args: Vec<OsString>,
     },
-    /// Review saved unavailable legacy indexes. No source/data reads or activation.
+    /// Refused (catalog_upgrade_unsupported): in-place catalog upgrade review was removed; run the clean break.
     LegacyRetirementCandidates {
         #[arg(long)]
         install_dir: PathBuf,
         #[arg(long)]
         after: Option<airk_core::index_catalog::IndexId>,
     },
-    /// Create one exact retirement review from a saved upgrade index identity.
+    /// Refused (catalog_upgrade_unsupported): in-place catalog upgrade review was removed; run the clean break.
     LegacyRetirementReview {
         #[arg(long)]
         install_dir: PathBuf,
         #[arg(long)]
         index_id: airk_core::index_catalog::IndexId,
     },
-    /// Explicitly authorize exact reviewed stdin JSON; activation requires separate Resume.
+    /// Refused (catalog_upgrade_unsupported): in-place catalog upgrade retirement was removed; run the clean break.
     LegacyRetirementAuthorize {
         #[arg(long)]
         install_dir: PathBuf,
     },
-    /// Read only the exact saved request on stdin; never authorize/replay/resume.
+    /// Refused (catalog_upgrade_unsupported): in-place catalog upgrade retirement was removed; run the clean break.
     LegacyRetirementReceipt {
         #[arg(long)]
         install_dir: PathBuf,
     },
-    /// Explicit continuation of an already accepted exact request on stdin.
+    /// Refused (catalog_upgrade_unsupported): in-place catalog upgrade retirement was removed; run the clean break.
     LegacyRetirementResume {
         #[arg(long)]
         install_dir: PathBuf,
     },
     /// Bounded executable/paired-helper self-test, without collection access or inference.
     SelfTest,
-    /// Installer-only read of a fenced, inactive catalog upgrade. No activation.
+    /// Refused (catalog_upgrade_unsupported): the in-place catalog upgrade was removed.
     #[command(hide = true)]
     CatalogUpgradeProbe {
         #[arg(long)]
@@ -584,14 +588,14 @@ pub enum RuntimeCommand {
         control_root: PathBuf,
         #[arg(long)]
         operation: airk_core::identity::Incarnation,
-        /// Present only for a sealed legacy upgrade; omitted for fresh genesis.
+        /// Refused (catalog_upgrade_unsupported): only a removed in-place
+        /// legacy upgrade supplied it; fresh Genesis omits it.
         #[arg(long)]
         native_host: Option<airk_core::identity::Sha256Digest>,
         #[arg(long)]
         nonce: airk_core::identity::Incarnation,
     },
-    /// Native owner for an already admitted installer migration. Leaves admission
-    /// fenced for imports/readiness; never initializes or activates a catalog.
+    /// Refused (catalog_upgrade_unsupported): the in-place catalog upgrade was removed.
     #[command(hide = true)]
     CatalogUpgradeMigrate {
         #[arg(long)]

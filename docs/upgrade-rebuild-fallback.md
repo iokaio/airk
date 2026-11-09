@@ -37,6 +37,12 @@ decisions Q1 and Q3, 9 November 2026):
   `clean_break_predecessor_catalog_upgrade_pending`. Nothing changes; the
   guidance is to finish that upgrade with the previous AIRK version, then run
   setup again.
+- **In-place catalog upgrades are gone.** This binary never begins or resumes
+  the old in-place registry-to-catalog upgrade (P5). An ordinary update over a
+  registry without an index catalog is refused with `catalog_upgrade_unsupported`.
+  The legacy-retirement, catalog-upgrade probe and migrate commands, and
+  `catalog-authority-probe --native-host`, refuse with the same code before
+  touching any state. Fresh Genesis and the clean-break rebuild are unchanged.
 - **Standalone saved indexes are never adopted.** Their original agent entries
   stay unchanged for review, and new `adopt-legacy-index(es)` operations are
   refused with `standalone_adoption_unsupported`.

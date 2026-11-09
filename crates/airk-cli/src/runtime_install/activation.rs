@@ -445,76 +445,25 @@ async fn rollback(root: &Path, intent: &Intent) -> Result<()> {
     finish(root)
 }
 
-/// Caller holds the installation lock. Every durable phase can be repeated after
-/// process death; a committed public selection is never silently undone.
+/// Caller holds the installation lock. Only an accepted fresh Genesis activation
+/// resumes before lifecycle settlement; no in-place catalog upgrade can resume.
 pub(super) async fn resume_catalog_before_lifecycle(
     root: &Path,
     expected: Option<&str>,
 ) -> Result<bool> {
-    if !airk_store::service::registry::catalog::upgrade::PRODUCTION_ACTIVATION_ENABLED {
-        return Ok(false);
-    }
     let Some(intent) = pending(root)? else {
         return Ok(false);
     };
-    if intent.phase == Phase::Probe && intent.prior.is_none() {
-        intent.validate(root)?;
-        ensure!(
-            expected.is_none_or(|candidate| candidate == intent.candidate),
-            "another candidate owns the pending fresh activation"
-        );
-        resume(root).await?;
-        return Ok(true);
-    }
-    if intent.phase != Phase::Probe || selection(root)? != Some(intent.selected()) {
+    if intent.phase != Phase::Probe || intent.prior.is_some() {
         return Ok(false);
     }
-    let control = match layout::control(root) {
-        Ok(control) => control,
-        Err(error) if error.is::<airk_store::service::registry::catalog::AdmissionPending>() => {
-            catalog_upgrade::control_for_resume(root, &intent)?
-        }
-        Err(error) => return Err(error),
-    };
-    let Some(receipt) = airk_store::service::registry::catalog::upgrade::pending(&control)? else {
-        return Ok(false);
-    };
-    if matches!(
-        receipt.stage,
-        airk_store::service::registry::catalog::upgrade::UpgradeStage::Settled
-            | airk_store::service::registry::catalog::upgrade::UpgradeStage::Restored
-    ) {
-        return Ok(false);
-    }
+    intent.validate(root)?;
     ensure!(
         expected.is_none_or(|candidate| candidate == intent.candidate),
-        "another candidate owns the pending catalog activation"
+        "another candidate owns the pending fresh activation"
     );
     resume(root).await?;
     Ok(true)
-}
-
-/// Read-only binding for explicit legacy retirement before its authorization effect.
-pub(super) fn legacy_retirement_candidate(
-    root: &Path,
-    control: &Path,
-    installer: airk_core::identity::Sha256Digest,
-) -> Result<String> {
-    let intent = pending(root)?.context("legacy activation intent missing")?;
-    intent.validate(root)?;
-    ensure!(
-        intent.phase == Phase::Probe
-            && intent.control == control
-            && (selection(root)? == Some(intent.selected())
-                || (intent.prior.is_none() && selection(root)?.is_none())),
-        "legacy retirement requires its exact saved installer activation"
-    );
-    let (main, approval) = verify_runtime(root, &intent.candidate)?;
-    ensure!(
-        runtime_pair::engine_identity_at_version(&main, &approval.version)? == installer,
-        "pending legacy activation candidate changed"
-    );
-    Ok(intent.candidate)
 }
 
 /// Resume under the same installer ownership, preserving the public selection.
@@ -531,24 +480,14 @@ pub(super) async fn resume(root: &Path) -> Result<()> {
     require_issuer_rotation_settled(root)?;
     let mut intent = pending(root)?.context("no pending activation")?;
     result(root)?;
-    let fresh = intent.phase == Phase::Probe
-        && intent.prior.is_none()
-        && airk_store::service::registry::catalog::upgrade::PRODUCTION_ACTIVATION_ENABLED;
+    let fresh = intent.phase == Phase::Probe && intent.prior.is_none();
     let control = if fresh {
         // Only this accepted fresh installer operation may resume its native
         // initialization before the ordinary registry binding is ready. The
         // Genesis owner rechecks the exact layout/namespace under exclusion.
         layout::initialization_control(root)?
     } else {
-        match layout::control(root) {
-            Ok(control) => control,
-            Err(error)
-                if error.is::<airk_store::service::registry::catalog::AdmissionPending>() =>
-            {
-                catalog_upgrade::control_for_resume(root, &intent)?
-            }
-            Err(error) => return Err(error),
-        }
+        layout::control(root)?
     };
     ensure!(
         control == intent.control,
@@ -614,27 +553,16 @@ pub(super) async fn resume(root: &Path) -> Result<()> {
     checkpoint::stage(root, &intent, checkpoint::Stage::ActivationPrepared)?;
     let (main, approval) = verify_runtime(root, &intent.candidate)?;
     let committed = selection(root)? == Some(intent.selected());
-    if intent.prior.is_none()
-        && airk_store::service::registry::catalog::upgrade::PRODUCTION_ACTIVATION_ENABLED
-    {
+    if intent.prior.is_none() {
         // Fresh Genesis must precede the first ordinary service probe: even a
         // health-only legacy startup records service history and cannot later
         // be adopted as a fresh namespace. Keep the real absent selection until
         // qualified metadata and actual candidate health have both succeeded.
-        ensure!(
-            catalog_upgrade::begin_if_enabled(root, &intent).await?,
-            "fresh catalog activation unavailable"
-        );
+        catalog_upgrade::activate(root, &intent).await?;
         probe(root, &approval, &main, intent.manager).await?;
         if !committed {
             replace_json(root, "selected.json", &intent.selected())?;
         }
-        return complete_selected(root, &intent).await;
-    }
-    // A fenced catalog cannot pass ordinary readiness or legacy directory
-    // lookup. Resume its exact candidate before either of those operations.
-    if committed && catalog_upgrade::resume_if_enabled(root, &intent).await? {
-        probe(root, &approval, &main, intent.manager).await?;
         return complete_selected(root, &intent).await;
     }
     if committed && data_migration::needed(root)? {
@@ -652,9 +580,10 @@ pub(super) async fn resume(root: &Path) -> Result<()> {
                 migrate_selected(root, &intent, &main, &approval).await?;
                 probe(root, &approval, &main, intent.manager).await?;
             }
-            if catalog_upgrade::begin_if_enabled(root, &intent).await? {
-                probe(root, &approval, &main, intent.manager).await?;
-            }
+            // Drain and require the existing catalog; an in-place upgrade of
+            // a registry without one is refused (catalog_upgrade_unsupported).
+            catalog_upgrade::activate(root, &intent).await?;
+            probe(root, &approval, &main, intent.manager).await?;
             complete_selected(root, &intent).await
         }
         Err(error) if committed => {

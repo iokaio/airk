@@ -110,7 +110,7 @@ fn modern_managed_origin_binds_exact_main_without_a_helper() -> Result<()> {
 }
 
 #[test]
-fn initial_layout_reservation_survives_without_policy_and_fences_disabled_start() -> Result<()> {
+fn initial_layout_reservation_survives_without_policy_and_fences_resume() -> Result<()> {
     let (_owner, root, state, policy) = fixture(ManagedLifecycle::UserOnDemand)?;
     let lock = install_lock(&root)?;
     let authority = InstallerAuthority {
@@ -122,7 +122,6 @@ fn initial_layout_reservation_survives_without_policy_and_fences_disabled_start(
     let before = fs::read(root.join("runtime-layout.json"))?;
     assert!(!root.join(POLICY).exists());
     assert!(!reservation.origin.control.exists());
-    assert!(before_start_enabled(&authority, &policy, None, false).is_err());
     let error = resume_before_lifecycle(&authority, None).unwrap_err();
     assert!(
         error
@@ -241,11 +240,7 @@ fn legacy_none_dispositions_do_not_create_catalogs_or_claim_cutover() -> Result<
         layout::initialize(&root, Some(&state), RuntimeChannel::Stable)?;
         let before = fs::read(root.join("runtime-layout.json"))?;
         assert!(matches!(
-            before_start_enabled(&authority, &policy, None, false)?,
-            ManagedCatalogDisposition::Disabled
-        ));
-        assert!(matches!(
-            before_start_enabled(&authority, &policy, None, true)?,
+            before_start(&authority, &policy, None)?,
             ManagedCatalogDisposition::LegacyReadCompatible
         ));
         assert_eq!(fs::read(root.join("runtime-layout.json"))?, before);
@@ -304,7 +299,7 @@ fn some_without_policy_preserves_managed_mode_and_refuses_detach_before_effects(
 }
 
 #[test]
-fn settled_some_checks_current_policy_and_pair_even_with_activation_disabled() -> Result<()> {
+fn settled_some_checks_current_policy_and_pair() -> Result<()> {
     let (_owner, root, state, policy) = fixture(ManagedLifecycle::UserOnDemand)?;
     let lock = install_lock(&root)?;
     let authority = InstallerAuthority {
@@ -315,10 +310,8 @@ fn settled_some_checks_current_policy_and_pair_even_with_activation_disabled() -
     layout::initialize_managed(&root, Some(&state), RuntimeChannel::Stable, &reservation)?;
     settled_format_fixture(&authority, &policy, reservation.origin())?;
     replace_json(&root, POLICY, &policy)?;
-    assert!(matches!(
-        before_start_enabled(&authority, &policy, None, false)?,
-        ManagedCatalogDisposition::Disabled
-    ));
+    verify_origin(&authority, &policy, reservation.origin())?;
+    layout::require_managed_ready(&root)?;
     let mut changed = policy.clone();
     changed.lifecycle = ManagedLifecycle::External;
     replace_json(&root, POLICY, &changed)?;
@@ -326,10 +319,10 @@ fn settled_some_checks_current_policy_and_pair_even_with_activation_disabled() -
         saved_policy(&root).is_err(),
         "changed lifecycle cannot select STOP ownership"
     );
-    assert!(before_start_enabled(&authority, &changed, None, false).is_err());
+    assert!(verify_origin(&authority, &changed, reservation.origin()).is_err());
     replace_json(&root, POLICY, &policy)?;
     fs::write(policy.source.join(main_name()), b"changed main preserved")?;
-    assert!(before_start_enabled(&authority, &policy, None, false).is_err());
+    assert!(verify_origin(&authority, &policy, reservation.origin()).is_err());
     assert_eq!(
         fs::read(policy.source.join(main_name()))?,
         b"changed main preserved"
@@ -429,85 +422,6 @@ fn canonical_policy_identity_does_not_depend_on_policy_file_whitespace() -> Resu
         policy_digest(&saved_policy(&root)?.unwrap())?,
         reservation.origin.policy_sha256
     );
-    Ok(())
-}
-
-#[test]
-fn legacy_p5_active_zero_is_read_compatible_but_readiness_and_inactive_are_not() -> Result<()> {
-    use airk_store::service::registry::catalog::upgrade::{
-        self, CatalogUpgrade, ReadinessEvidence, RuntimeRefusal, UpgradeStage,
-    };
-    let (_owner, root, state, policy) = fixture(ManagedLifecycle::UserOnDemand)?;
-    let lock = install_lock(&root)?;
-    let authority = InstallerAuthority {
-        root: &root,
-        _lock: &lock,
-    };
-    layout::initialize(&root, Some(&state), RuntimeChannel::Stable)?;
-    let control = layout::control(&root)?;
-    local_ipc::prepare_root(&control)?;
-    let lease = ServiceLease::acquire(&control)?;
-    layout::record_control(&lease)?;
-    let instance = Incarnation::from_bytes([147; 16]);
-    drop(airk_store::service::registry::ServiceRegistry::open(
-        &control, instance,
-    )?);
-    layout::record_registry(&lease, instance)?;
-    let owner = CatalogUpgrade::acquire_with_service(lease)?;
-    let admitted = airk_kernel::service_catalog_upgrade::prepare(
-        &owner,
-        runtime_pair::engine_identity_at(&policy.saved_executable())?,
-    )?;
-    owner.migrate()?;
-    let observed = upgrade::observe(
-        &control,
-        admitted.plan.id,
-        Incarnation::from_bytes([148; 16]),
-    )?;
-    let digest = Sha256Digest::from_bytes([149; 32]);
-    let mut receipt = owner.record_readiness(ReadinessEvidence {
-        schema: 1,
-        candidate: observed,
-        predecessor_refusals: vec![RuntimeRefusal {
-            payload_identity: digest,
-            read_refusal_digest: digest,
-            write_refusal_digest: digest,
-            native_provenance: None,
-        }],
-    })?;
-    assert!(
-        before_start_enabled(&authority, &policy, None, true).is_err(),
-        "pending readiness is not legacy startup"
-    );
-    drop(owner);
-    // Physical old-P5 active format only. This does not prove an executed
-    // installer, predecessor refusal, or historical helper completion.
-    let sql = rusqlite::Connection::open(control.join("service-1.4.sqlite3"))?;
-    sql.execute("UPDATE index_catalog_meta SET activated=1", [])?;
-    drop(sql);
-    receipt.stage = UpgradeStage::Settled;
-    fs::write(
-        control.join("index-catalog-upgrade.json"),
-        serde_json::to_vec(&receipt)?,
-    )?;
-    let path = control.join("service-1.4.owner.json");
-    let mut marker: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
-    marker.as_object_mut().unwrap().remove("catalog_upgrade");
-    fs::write(path, serde_json::to_vec(&marker)?)?;
-    assert!(matches!(
-        before_start_enabled(&authority, &policy, None, true)?,
-        ManagedCatalogDisposition::LegacyReadCompatible
-    ));
-    let before = fs::read(control.join("index-catalog-upgrade.json"))?;
-    let sql = rusqlite::Connection::open(control.join("service-1.4.sqlite3"))?;
-    sql.execute("UPDATE index_catalog_meta SET activated=0", [])?;
-    drop(sql);
-    assert!(before_start_enabled(&authority, &policy, None, true).is_err());
-    assert_eq!(
-        fs::read(control.join("index-catalog-upgrade.json"))?,
-        before
-    );
-    assert!(!root.join("selected.json").exists());
     Ok(())
 }
 

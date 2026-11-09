@@ -193,7 +193,7 @@ fn persist(receipt: &GenesisReceipt, initial: bool) -> Result<()> {
 fn no_competing_upgrade(root: &Path) -> Result<()> {
     ensure!(
         !exists(&root.join("index-catalog-upgrade.json"))?,
-        "existing catalog upgrade requires its original recovery path"
+        "catalog_upgrade_unsupported: an in-place catalog upgrade journal exists; AIRK no longer upgrades a registry in place; run the clean break"
     );
     super::super::data_relocation::require_settled(root)
 }

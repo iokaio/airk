@@ -590,7 +590,10 @@ native recovery transaction, not the explicit retirement commands below. See
 the [automatic rebuild policy and acceptance contract](upgrade-rebuild-fallback.md).
 No generic automatic rebuild fallback is currently implemented or qualified.
 
-The explicit legacy-retirement review/resume commands remain administrative
+**9 November 2026:** the in-place catalog upgrade was removed. The
+legacy-retirement commands now refuse with `catalog_upgrade_unsupported`; the
+following paragraph is historical. The explicit legacy-retirement review/resume
+commands were administrative
 recovery for a candidate-owned unavailable predecessor index. They preserve the
 original request and complete receipt, and do not grant evidence access or
 recreate missing source/storage. Use the candidate that owns the saved installer

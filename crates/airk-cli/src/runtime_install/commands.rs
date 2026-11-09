@@ -121,22 +121,19 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             )
             .await?
         }
-        RuntimeCommand::LegacyRetirementCandidates { install_dir, after } => {
-            legacy_retirement::candidates(install_dir, *after)?
-        }
-        RuntimeCommand::LegacyRetirementReview {
-            install_dir,
-            index_id,
-        } => serde_json::to_value(legacy_retirement::review(install_dir, *index_id)?)?,
-        RuntimeCommand::LegacyRetirementAuthorize { install_dir } => {
-            serde_json::to_value(legacy_retirement::authorize(install_dir)?)?
-        }
-        RuntimeCommand::LegacyRetirementReceipt { install_dir } => {
-            legacy_retirement::receipt(install_dir)?
-        }
-        RuntimeCommand::LegacyRetirementResume { install_dir } => {
-            serde_json::to_value(legacy_retirement::resume(install_dir).await?)?
-        }
+        // The in-place P5 catalog upgrade was removed: refuse before reading
+        // stdin, the installation or its control state.
+        RuntimeCommand::LegacyRetirementCandidates { .. }
+        | RuntimeCommand::LegacyRetirementReview { .. }
+        | RuntimeCommand::LegacyRetirementAuthorize { .. }
+        | RuntimeCommand::LegacyRetirementReceipt { .. }
+        | RuntimeCommand::LegacyRetirementResume { .. }
+        | RuntimeCommand::CatalogUpgradeMigrate { .. }
+        | RuntimeCommand::CatalogUpgradeProbe { .. }
+        | RuntimeCommand::CatalogAuthorityProbe {
+            native_host: Some(_),
+            ..
+        } => bail!(CATALOG_UPGRADE_UNSUPPORTED),
         RuntimeCommand::SourceScope {
             install_dir,
             expected_control,
@@ -802,64 +799,18 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             command.args(args);
             return crate::native_process::forward_stdio(command);
         }
-        RuntimeCommand::CatalogUpgradeMigrate {
-            control_root,
-            upgrade_id,
-        } => {
-            ensure!(
-                airk_store::service::registry::catalog::upgrade::pending(control_root)?.is_some(),
-                "catalog admission is not fenced"
-            );
-            let installer = runtime_pair::engine_identity()?;
-            let namespace = airk_store::service::registry::catalog::upgrade::CatalogUpgrade::check_installer_resume(control_root, installer)?;
-            layout::validate_catalog_control(control_root, namespace)?;
-            let exclusion =
-                airk_store::service::registry::catalog::upgrade::PendingCatalogExclusion::acquire(
-                    control_root,
-                )?;
-            ensure!(
-                exclusion.upgrade_id() == *upgrade_id,
-                "catalog migration request differs from the admitted upgrade"
-            );
-            ensure!(
-                exclusion.namespace() == namespace,
-                "catalog namespace changed during native admission"
-            );
-            layout::validate_catalog_control(exclusion.control(), exclusion.namespace())?;
-            let owner = exclusion.into_upgrade(installer)?;
-            serde_json::to_value(owner.migrate()?)?
-        }
-        RuntimeCommand::CatalogUpgradeProbe {
-            control_root,
-            upgrade_id,
-            nonce,
-        } => {
-            let observation = airk_store::service::registry::catalog::upgrade::observe(
-                control_root,
-                *upgrade_id,
-                *nonce,
-            )?;
-            ensure!(
-                runtime_pair::engine_identity()? == observation.installer_identity,
-                "catalog candidate payload identity differs from the admitted installer"
-            );
-            layout::validate_catalog_control(control_root, observation.catalog.namespace)?;
-            serde_json::to_value(observation)?
-        }
         RuntimeCommand::CatalogAuthorityProbe {
             control_root,
             operation,
-            native_host,
+            native_host: None,
             nonce,
         } => {
-            use airk_store::service::registry::catalog::{
-                genesis::activation, upgrade::authority_v1,
-            };
-            let observation = if let Some(host) = native_host {
-                authority_v1::observe_authority_v1(control_root, *operation, *host, *nonce)?
-            } else {
-                activation::observe_authority_v1(control_root, *operation, *nonce)?
-            };
+            let observation =
+                airk_store::service::registry::catalog::genesis::activation::observe_authority_v1(
+                    control_root,
+                    *operation,
+                    *nonce,
+                )?;
             ensure!(
                 runtime_pair::engine_identity()? == observation.installer_identity,
                 "catalog authority candidate differs from the admitted installer"

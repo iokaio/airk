@@ -370,3 +370,85 @@ fn process_death_after_durable_probe_phase_keeps_the_predecessor_public() -> Res
     assert!(startup(&root)?.is_some());
     Ok(())
 }
+
+fn durable_files(root: &Path) -> Result<std::collections::BTreeMap<PathBuf, Vec<u8>>> {
+    fn collect(
+        path: &Path,
+        files: &mut std::collections::BTreeMap<PathBuf, Vec<u8>>,
+    ) -> Result<()> {
+        for entry in fs::read_dir(path)? {
+            let entry = entry?;
+            if entry.file_type()?.is_dir() {
+                collect(&entry.path(), files)?;
+            } else {
+                // Ownership locks are fixed empty files; never read a lock range.
+                let mut bytes = if entry.metadata()?.len() == 0 {
+                    Vec::new()
+                } else {
+                    fs::read(entry.path())?
+                };
+                // The pre-existing drain/quiescence path commits a page-neutral
+                // registry transaction. Normalize only SQLite's header file
+                // change counter (offset 24) and version-valid-for (offset 92);
+                // every page byte, including the rest of the header, must match.
+                if entry.path().extension() == Some("sqlite3".as_ref()) && bytes.len() >= 100 {
+                    bytes[24..28].fill(0);
+                    bytes[92..96].fill(0);
+                }
+                files.insert(entry.path(), bytes);
+            }
+        }
+        Ok(())
+    }
+    let mut files = std::collections::BTreeMap::new();
+    collect(root, &mut files)?;
+    Ok(files)
+}
+
+/// A committed ordinary update drains and requires the existing catalog. A
+/// registry without one is refused instead of being upgraded in place, and
+/// neither outcome changes installation, selection or control state.
+#[tokio::test]
+async fn ordinary_update_refuses_a_registry_without_a_catalog_and_keeps_existing_catalogs()
+-> Result<()> {
+    use airk_core::identity::Incarnation;
+    for catalog in [false, true] {
+        let (_owner, root, mut intent) = fixture()?;
+        let control = layout::control(&root)?;
+        local_ipc::prepare_root(&control)?;
+        let namespace = Incarnation::from_bytes([187; 16]);
+        {
+            let lease = airk_store::service::ServiceLease::acquire(&control)?;
+            layout::record_control(&lease)?;
+            drop(airk_store::service::registry::ServiceRegistry::open(
+                &control, namespace,
+            )?);
+            layout::record_registry(&lease, namespace)?;
+        }
+        if catalog {
+            drop(crate::catalog_test_fixture::authority_one(
+                &control, namespace,
+            )?);
+        }
+        intent.phase = Phase::Probe;
+        replace_json(&root, "selected.json", &intent.selected())?;
+        intent.save(&root)?;
+        // Create the empty ownership lock files first; compare durable bytes only.
+        let observed = quiescent(&root)?;
+        assert_eq!(observed.catalog.is_some(), catalog);
+        drop(observed);
+        let before = durable_files(&root)?;
+        let error = catalog_upgrade::activate(&root, &intent)
+            .await
+            .err()
+            .context("inert fixture candidate cannot complete an ordinary update")?;
+        let unsupported = format!("{error:#}").contains("catalog_upgrade_unsupported");
+        assert_eq!(unsupported, !catalog, "{error:#}");
+        assert_eq!(durable_files(&root)?, before);
+        // Only the catalog fixture's own component settlement left a journal.
+        assert_eq!(control.join("index-catalog-upgrade.json").exists(), catalog);
+        assert!(selection(&root)? == Some(intent.selected()));
+        assert!(pending(&root)?.is_some_and(|saved| saved.phase == Phase::Probe));
+    }
+    Ok(())
+}

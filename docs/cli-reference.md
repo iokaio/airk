@@ -2468,11 +2468,11 @@ Commands:
   reset-startup                 Explicitly clear the on-demand crash circuit after diagnosing a startup failure
   rollback                      Restore the preceding verified selection using the same drain and health transaction
   launch                        Stable launcher: forward arguments and stdio to the selected verified executable
-  legacy-retirement-candidates  Review saved unavailable legacy indexes. No source/data reads or activation
-  legacy-retirement-review      Create one exact retirement review from a saved upgrade index identity
-  legacy-retirement-authorize   Explicitly authorize exact reviewed stdin JSON; activation requires separate Resume
-  legacy-retirement-receipt     Read only the exact saved request on stdin; never authorize/replay/resume
-  legacy-retirement-resume      Explicit continuation of an already accepted exact request on stdin
+  legacy-retirement-candidates  Refused (catalog_upgrade_unsupported): in-place catalog upgrade review was removed; run the clean break
+  legacy-retirement-review      Refused (catalog_upgrade_unsupported): in-place catalog upgrade review was removed; run the clean break
+  legacy-retirement-authorize   Refused (catalog_upgrade_unsupported): in-place catalog upgrade retirement was removed; run the clean break
+  legacy-retirement-receipt     Refused (catalog_upgrade_unsupported): in-place catalog upgrade retirement was removed; run the clean break
+  legacy-retirement-resume      Refused (catalog_upgrade_unsupported): in-place catalog upgrade retirement was removed; run the clean break
   self-test                     Bounded executable/paired-helper self-test, without collection access or inference
   help                          Print this message or the help of the given subcommand(s)
 
@@ -3887,7 +3887,7 @@ Options:
 ## airk runtime legacy-retirement-authorize
 
 ```text
-Explicitly authorize exact reviewed stdin JSON; activation requires separate Resume
+Refused (catalog_upgrade_unsupported): in-place catalog upgrade retirement was removed; run the clean break
 
 Usage: airk runtime legacy-retirement-authorize [OPTIONS] --install-dir <INSTALL_DIR>
 
@@ -3934,7 +3934,7 @@ Options:
 ## airk runtime legacy-retirement-candidates
 
 ```text
-Review saved unavailable legacy indexes. No source/data reads or activation
+Refused (catalog_upgrade_unsupported): in-place catalog upgrade review was removed; run the clean break
 
 Usage: airk runtime legacy-retirement-candidates [OPTIONS] --install-dir <INSTALL_DIR>
 
@@ -3984,7 +3984,7 @@ Options:
 ## airk runtime legacy-retirement-receipt
 
 ```text
-Read only the exact saved request on stdin; never authorize/replay/resume
+Refused (catalog_upgrade_unsupported): in-place catalog upgrade retirement was removed; run the clean break
 
 Usage: airk runtime legacy-retirement-receipt [OPTIONS] --install-dir <INSTALL_DIR>
 
@@ -4031,7 +4031,7 @@ Options:
 ## airk runtime legacy-retirement-resume
 
 ```text
-Explicit continuation of an already accepted exact request on stdin
+Refused (catalog_upgrade_unsupported): in-place catalog upgrade retirement was removed; run the clean break
 
 Usage: airk runtime legacy-retirement-resume [OPTIONS] --install-dir <INSTALL_DIR>
 
@@ -4078,7 +4078,7 @@ Options:
 ## airk runtime legacy-retirement-review
 
 ```text
-Create one exact retirement review from a saved upgrade index identity
+Refused (catalog_upgrade_unsupported): in-place catalog upgrade review was removed; run the clean break
 
 Usage: airk runtime legacy-retirement-review [OPTIONS] --install-dir <INSTALL_DIR> --index-id <INDEX_ID>
 

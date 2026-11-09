@@ -1246,28 +1246,28 @@ const ELSEWHERE: &[(&str, &str, &str)] = &[
     ),
     (
         "runtime legacy-retirement-candidates",
-        "scripts/check-runtime-legacy-retirement.py",
-        "f.admin(\"candidates\")",
+        "crates/airk-cli/tests/catalog_upgrade.rs",
+        "\"legacy-retirement-candidates\",",
     ),
     (
         "runtime legacy-retirement-review",
-        "scripts/check-runtime-legacy-retirement.py",
-        "f.admin(\"review\",",
+        "crates/airk-cli/tests/catalog_upgrade.rs",
+        "\"legacy-retirement-review\",",
     ),
     (
         "runtime legacy-retirement-authorize",
-        "scripts/check-runtime-legacy-retirement.py",
-        "f.admin(\"authorize\",",
+        "crates/airk-cli/tests/catalog_upgrade.rs",
+        "\"legacy-retirement-authorize\",",
     ),
     (
         "runtime legacy-retirement-receipt",
-        "scripts/check-runtime-legacy-retirement.py",
-        "f.admin(\"receipt\",",
+        "crates/airk-cli/tests/catalog_upgrade.rs",
+        "\"legacy-retirement-receipt\",",
     ),
     (
         "runtime legacy-retirement-resume",
-        "scripts/check-runtime-legacy-retirement.py",
-        "f.admin(\"resume\",",
+        "crates/airk-cli/tests/catalog_upgrade.rs",
+        "\"legacy-retirement-resume\",",
     ),
     (
         "runtime lifecycle",

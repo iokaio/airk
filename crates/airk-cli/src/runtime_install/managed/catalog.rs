@@ -152,7 +152,6 @@ fn require_policy_identity(policy: &Managed, origin: &ManagedGenesisOrigin) -> R
 }
 
 pub(in crate::runtime_install) enum ManagedCatalogDisposition {
-    Disabled,
     Settled,
     /// Existing native legacy startup/read gates remain authoritative. This is
     /// not Genesis, upgrade readiness or all-provider-history completion.
@@ -219,77 +218,23 @@ impl std::fmt::Display for ManagementUnavailable {
 }
 impl std::error::Error for ManagementUnavailable {}
 
-/// No catalog reads/probes/writes for ordinary None origins in disabled builds.
-/// An already accepted Some is still fenced when a disabled build encounters it.
+/// A reserved first pin settles its Genesis before ordinary startup. An origin
+/// None installation predates the reservation; its caller still requires the
+/// initialized baseline contract, so in-place catalog lineage is not accepted.
 pub(super) fn before_start(
     authority: &InstallerAuthority<'_>,
     policy: &Managed,
     cancel: Option<&setup::SetupCancellation>,
 ) -> Result<ManagedCatalogDisposition> {
-    before_start_enabled(
-        authority,
-        policy,
-        cancel,
-        airk_store::service::registry::catalog::upgrade::PRODUCTION_ACTIVATION_ENABLED,
-    )
-}
-
-fn before_start_enabled(
-    authority: &InstallerAuthority<'_>,
-    policy: &Managed,
-    cancel: Option<&setup::SetupCancellation>,
-    enabled: bool,
-) -> Result<ManagedCatalogDisposition> {
-    let origin = layout::managed_origin(authority.root)?;
-    if !enabled {
-        if let Some(origin) = &origin {
-            verify_origin(authority, policy, origin)?;
-            layout::require_managed_ready(authority.root)?;
-        }
-        return Ok(ManagedCatalogDisposition::Disabled);
-    }
-    let Some(origin) = origin else {
+    let Some(origin) = layout::managed_origin(authority.root)? else {
         let control = layout::control(authority.root)?;
-        // Preserve supported legacy initialization/read startup, but do not
-        // reinterpret crossed, pending or damaged catalog metadata as legacy.
+        // Do not reinterpret crossed, pending or damaged metadata as legacy.
         lifecycle::inspect(authority.root)?;
-        let mut upgrade_receipt = None;
         if exists(&control)? {
             ensure!(
                 genesis::pending(&control)?.is_none(),
                 ManagementUnavailable("managed_catalog_origin_missing_for_saved_genesis")
             );
-            upgrade_receipt = airk_store::service::registry::catalog::upgrade::pending(&control)?;
-            if let Some(receipt) = &upgrade_receipt {
-                ensure!(
-                    receipt.stage
-                        == airk_store::service::registry::catalog::upgrade::UpgradeStage::Restored
-                        || receipt.stage == airk_store::service::registry::catalog::upgrade::UpgradeStage::Settled,
-                    ManagementUnavailable("managed_catalog_requires_exact_saved_upgrade_owner")
-                );
-            }
-        }
-        if control.join("service-1.4.sqlite3").try_exists()? {
-            let saved = airk_store::service::registry::ServiceRegistry::open_saved(&control)?;
-            if let Some(state) = saved.catalog_state()? {
-                let receipt = upgrade_receipt.as_ref().ok_or(ManagementUnavailable(
-                    "managed_legacy_catalog_lacks_settled_lineage",
-                ))?;
-                ensure!(state.activated && state.authority_contract == 0 && state.policy_contract == 0
-                    && receipt.stage == airk_store::service::registry::catalog::upgrade::UpgradeStage::Settled
-                    && receipt.authority_v1.is_none() && receipt.authority_v1_host.is_none()
-                    && state.namespace == receipt.plan.namespace && state.upgrade_id == receipt.plan.id
-                    && state.legacy_schema_digest == receipt.plan.legacy_schema_digest
-                    && receipt.backups.iter().any(|attempt| attempt.complete && attempt.sha256 == Some(state.backup_digest)),
-                ManagementUnavailable("managed_catalog_origin_does_not_match_existing_catalog")
-                );
-            } else if let Some(receipt) = upgrade_receipt {
-                ensure!(
-                    receipt.stage
-                        == airk_store::service::registry::catalog::upgrade::UpgradeStage::Restored,
-                    ManagementUnavailable("managed_legacy_state_differs_from_saved_catalog")
-                );
-            }
         }
         return Ok(ManagedCatalogDisposition::LegacyReadCompatible);
     };
@@ -387,10 +332,8 @@ pub(in crate::runtime_install) fn resume_before_lifecycle(
     let policy = read(authority.root)?.ok_or(ManagementUnavailable(
         "repeat_same_approved_managed_configure_to_resume",
     ))?;
-    if airk_store::service::registry::catalog::upgrade::PRODUCTION_ACTIVATION_ENABLED {
-        let check = || cancel.map_or(Ok(()), setup::SetupCancellation::checkpoint);
-        policy.verify_inventory_checked(&check)?;
-    }
+    let check = || cancel.map_or(Ok(()), setup::SetupCancellation::checkpoint);
+    policy.verify_inventory_checked(&check)?;
     // Fresh reservations prohibit ordinary startup before settlement, hence no
     // normal lifecycle request can be admitted in this unfinished first pin.
     before_start(authority, &policy, cancel).map(|_| ())
