@@ -1,6 +1,6 @@
 # Working on AIRK
 
-AIRK is an independent Artifact Indexing and Retrieval Kernel. Before changing code, read the affected component's `CONTRACT.md` when one exists, its source, contracts and tests, and the relevant sections of README.md, CONTRIBUTING.md and docs/architecture.md. Do not preload dated history (docs/history, docs/releases, docs/research, docs/reviews, dated phase sections of docs/architecture.md) unless a concrete question needs it. Follow more specific guidance when present. Structural work follows docs/simplify-plan.md and the "Simplification and structural changes" section below.
+AIRK is an independent Artifact Indexing and Retrieval Kernel. Before changing code, read the affected component's `CONTRACT.md` when one exists, its source, contracts and tests, and the relevant sections of README.md, CONTRIBUTING.md and docs/architecture.md. Do not preload dated history (docs/history, docs/releases, docs/research, docs/reviews) unless a concrete question needs it. Follow more specific guidance when present. Structural work follows docs/simplify-plan.md and the "Simplification and structural changes" section below.
 
 - Use parallel agents where independent investigation, implementation or review can accelerate the work. Keep ownership clear and have the primary agent review the combined changes. Parallelize reading, source work and review; serialize builds, tests and platform batches through one owner.
 - Do not apologize. Report the facts, correct the problem and complete the authorized work.

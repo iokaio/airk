@@ -131,6 +131,12 @@ UNRESOLVED_OK = {
     ("site/index.html", "./images/explorer-1.7.1.png"),
 }
 
+# History records added by later reviewed steps rather than moved by this
+# script: published path -> where the content came from. Indexed with the moves.
+ADDED = {
+    "docs/history/architecture-log-2026-11-09.md": "docs/architecture.md (phase log, step D6c)",
+}
+
 LINK_SUFFIXES = {".md", ".html"}
 TEXT_SUFFIXES = {".rs", ".py", ".ts", ".tsx", ".cjs", ".js", ".mjs", ".json", ".toml", ".yml", ".yaml",
                  ".ps1", ".sh", ".txt", ".cfg", ".ini", ".css", ".svg"}
@@ -322,6 +328,13 @@ def render_index(root, moves):
         name = posixpath.basename(new)
         title = title_of(location.read_bytes(), posixpath.splitext(name)[1].lower(), name)
         lines.append(f"| {title} | [{name}]({name}) | `{old}` |")
+    for path, origin in sorted(ADDED.items()):
+        location = root / path
+        if not location.is_file():
+            continue  # check() reports a missing added record in the real tree
+        name = posixpath.basename(path)
+        title = title_of(location.read_bytes(), posixpath.splitext(name)[1].lower(), name)
+        lines.append(f"| {title} | [{name}]({name}) | {origin} |")
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
@@ -352,6 +365,10 @@ def check(root, moves=None, pins=None):
             problems.append(f"old path still tracked: {old}")
         if new not in files or not (root / new).is_file():
             problems.append(f"new path missing: {new}")
+    if pins is None:
+        for path in sorted(ADDED):
+            if path not in files or not (root / path).is_file():
+                problems.append(f"added history record missing: {path}")
     for item in PINNED if pins is None else pins:
         target = root / item.rstrip("/")
         if not (target.is_dir() if item.endswith("/") else target.is_file()):

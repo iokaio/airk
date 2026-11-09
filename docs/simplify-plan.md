@@ -898,6 +898,10 @@ implemented by `scripts/dev/d6_archive_docs.py` and was reviewed on 9 November 2
 (`docs/reviews/`, `docs/issue-analysis/`, `docs/explorer/`) and the generated
 `docs/status.md` are not started.
 
+Step D6c (9 November 2026): `docs/architecture.md` now describes boundaries
+only. Its former phase log is kept unchanged, apart from link updates, in
+`docs/history/architecture-log-2026-11-09.md`.
+
 **D7. Commit and branch authorization.** The checkpoint commit `9337822`
 already exists. Separately authorize:
 
