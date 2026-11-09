@@ -304,5 +304,4 @@ fn observe_repository_at(
 }
 
 #[cfg(test)]
-#[path = "source_observations_tests.rs"]
 mod tests;

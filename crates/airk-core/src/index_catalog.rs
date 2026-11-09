@@ -65,7 +65,6 @@ pub fn encoded_size(value: &impl Serialize, maximum: usize) -> Result<usize> {
 }
 
 #[cfg(test)]
-#[path = "index_catalog_tests.rs"]
 mod tests;
 
 macro_rules! catalog_id {

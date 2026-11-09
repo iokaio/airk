@@ -300,5 +300,4 @@ impl HttpConnectionInfo {
 }
 
 #[cfg(test)]
-#[path = "service_http_tests.rs"]
 mod tests;

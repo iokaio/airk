@@ -365,5 +365,4 @@ enum SettlementPoint {
     AfterReservationRecord,
 }
 #[cfg(test)]
-#[path = "retired_tests.rs"]
 mod tests;

@@ -15,7 +15,6 @@ use std::{
 const MAX_EXECUTABLE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
 #[cfg(test)]
-#[path = "runtime_pair_predecessor_tests.rs"]
 mod predecessor_tests;
 
 /// Bind a maintenance preview to executable behavior and the paired helper's
@@ -446,7 +445,6 @@ pub(crate) fn read_installed_pair(
 }
 
 #[cfg(test)]
-#[path = "runtime_single_tests.rs"]
 mod single_tests;
 
 #[cfg(test)]

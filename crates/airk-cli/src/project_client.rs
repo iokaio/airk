@@ -14,11 +14,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[path = "status_observation.rs"]
 mod status_observation;
 pub(crate) use status_observation::StatusOwner;
 use status_observation::{RequestTicket, RetiredRequest};
-#[path = "project_read_lifetime.rs"]
 mod read_lifetime;
 #[derive(Debug)]
 struct RetrySetup(&'static str);
@@ -557,7 +555,6 @@ impl Connection {
 }
 
 #[cfg(test)]
-#[path = "project_client_read_attempt_tests.rs"]
 mod read_attempt_tests;
 
 #[derive(Default)]
@@ -2465,5 +2462,4 @@ mod source_brokerage_ipc_tests {
 }
 
 #[cfg(test)]
-#[path = "project_client_authority_tests.rs"]
 mod shared_authority_ipc_tests;

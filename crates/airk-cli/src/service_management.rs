@@ -208,7 +208,6 @@ fn finalize_catalog_response(
 }
 
 #[cfg(test)]
-#[path = "service_management_receipt_tests.rs"]
 mod receipt_tests;
 
 impl CatalogRuntime {

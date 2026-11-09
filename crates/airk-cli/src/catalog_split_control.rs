@@ -29,7 +29,6 @@ use std::{
     path::Path,
 };
 #[cfg(test)]
-#[path = "catalog_split_control_tests.rs"]
 pub(crate) mod tests;
 
 #[derive(Debug)]

@@ -51,5 +51,4 @@ impl ReadAttemptBudget {
 }
 
 #[cfg(test)]
-#[path = "read_attempt_tests.rs"]
 mod tests;

@@ -29,7 +29,6 @@ use std::{
     path::Path,
 };
 
-#[path = "journal_lexical.rs"]
 mod fts;
 
 // Generic graph-journal primitives also accept opaque manifests in storage

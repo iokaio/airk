@@ -16,7 +16,6 @@ use rmcp::{
 use std::{borrow::Cow, sync::Mutex};
 
 #[cfg(test)]
-#[path = "lifecycle_tests.rs"]
 mod tests;
 
 #[derive(Clone, Copy, PartialEq, Eq)]

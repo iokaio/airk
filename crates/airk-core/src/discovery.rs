@@ -3,7 +3,6 @@
 use crate::{FactHit, continuity::ContinuityKey, identity::framed_digest};
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
-#[path = "discovery_minimal.rs"]
 mod minimal;
 pub use minimal::{MinimalCandidate, MinimalFact, MinimalFacts, MinimalFile, MinimalProvenance};
 

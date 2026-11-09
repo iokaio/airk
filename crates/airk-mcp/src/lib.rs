@@ -28,7 +28,6 @@ pub mod scope_instructions;
 pub mod unified;
 
 #[cfg(test)]
-#[path = "optimization_tests.rs"]
 mod optimization_tests;
 
 #[cfg(test)]

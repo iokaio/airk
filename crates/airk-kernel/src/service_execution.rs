@@ -15,7 +15,6 @@ use std::{
     },
     time::{Duration, Instant},
 };
-#[path = "service_execution_progress.rs"]
 mod progress;
 struct Owner {
     root: PathBuf,

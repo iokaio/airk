@@ -1805,5 +1805,4 @@ fn file_identity(file: &File) -> Result<String> {
 }
 
 #[cfg(test)]
-#[path = "runtime_legacy_origin_tests.rs"]
 mod tests;

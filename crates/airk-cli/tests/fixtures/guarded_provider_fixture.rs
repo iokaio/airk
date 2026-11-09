@@ -14,7 +14,6 @@ mod embed_pool {
         include!("../../src/embed_pool_retirement.rs");
     }
 }
-#[path = "guarded_provider_gate.rs"]
 mod gate;
 #[path = "guarded_provider_gate_protocol.rs"]
 mod gate_protocol;

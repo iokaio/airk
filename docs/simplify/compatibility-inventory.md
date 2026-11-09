@@ -20,6 +20,11 @@ Method and limits:
   Version ranges for registry schemas are mostly **[I]**: the code identifies
   schema numbers, not releases.
 - Paths are relative to the repository root. Line numbers refer to `43d7005`.
+- **9 November 2026, after S4:** module honesty moved most `#[path]`-mounted
+  files to their canonical module locations (for example
+  `runtime_layout.rs` became `runtime_install/layout.rs`). Paths below still name
+  the `43d7005` files; `git log --follow` or
+  `python scripts/dev/s4_module_honesty.py` maps them.
 
 ## 1. How the boundary is decided
 

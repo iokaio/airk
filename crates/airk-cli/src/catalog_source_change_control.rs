@@ -952,5 +952,4 @@ pub(crate) fn draft_missing_from_event(
 }
 
 #[cfg(test)]
-#[path = "catalog_source_change_control_tests.rs"]
 mod tests;

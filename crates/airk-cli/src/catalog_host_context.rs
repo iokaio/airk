@@ -226,7 +226,6 @@ impl NativeGrantDraftContext for NativeHostContext {
 }
 
 #[cfg(test)]
-#[path = "catalog_legacy_binding_tests.rs"]
 mod legacy_binding_tests;
 
 #[cfg(test)]

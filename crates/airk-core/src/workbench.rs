@@ -251,5 +251,4 @@ pub fn decode_request(value: Value) -> anyhow::Result<Request> {
 }
 
 #[cfg(test)]
-#[path = "workbench_decode_tests.rs"]
 mod decode_tests;

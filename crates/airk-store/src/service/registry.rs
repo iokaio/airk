@@ -1,0 +1,1671 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Bounded service-only registry. It never opens collection indexes or source files.
+use super::ProjectLease;
+use airk_core::{
+    identity::{Incarnation, Sha256Digest, framed_digest},
+    service::{
+        MAX_PROJECT_REGISTRATION_BYTES, ProjectBinding, ProjectPage, ProjectRegistration,
+        RegisteredProject,
+    },
+};
+use anyhow::{Context, Result, ensure};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+use std::{
+    fs,
+    io::{Read, Write},
+    path::{Path, PathBuf},
+    time::Duration,
+};
+
+const APPLICATION: i64 = 0x41535256;
+const MAX_DATABASE_BYTES: u64 = 32 * 1024 * 1024;
+pub const MAX_PROJECTS: usize = 1024;
+
+pub mod catalog;
+
+pub mod checkpoint;
+
+pub mod runtime_contract;
+
+mod source_relationships;
+pub use source_relationships::source_relation;
+
+mod scope;
+pub use scope::{
+    SavedScopeExpired, SavedScopeObservation, SavedScopeResolution, SavedScopeStamp,
+    source_scope_retryable,
+};
+
+/// Only callers that have established a read-only operation may retry this failure.
+/// Corruption, I/O, validation and missing records remain ordinary failures.
+pub fn is_read_contention(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<rusqlite::Error>()
+        .and_then(rusqlite::Error::sqlite_error)
+        .is_some_and(|error| {
+            matches!(
+                error.code,
+                rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+            )
+        })
+}
+
+mod integrity_guard;
+mod jobs;
+pub(crate) mod owner_session;
+pub use integrity_guard::{AuditDrainProof, AuditEvidence, IntegrityAuditState};
+mod progress;
+mod source_isolation;
+pub use source_isolation::SourceBoundary;
+mod watch;
+pub use watch::WatchProject;
+mod events;
+mod freshness;
+mod inspection;
+mod maintenance;
+
+mod provider_drains;
+pub use provider_drains::{
+    MAX_PROVIDER_DRAINS, ProviderBoot, ProviderDrain, ProviderOwnership, SharedHelperContainment,
+    SharedHelperDrain, SharedHelperIdentity, SharedHelperPhase, SharedHelperRole,
+    shared_helper_job_name,
+};
+mod background;
+pub use background::audit::AutomaticAuditContext;
+mod recovery;
+pub use recovery::{
+    HelperRecoveryClear, HelperRecoverySnapshot, RecoveryBudget, RecoveryCondition, WaitingRecovery,
+};
+mod cleanup;
+mod configuration;
+pub mod data_relocation;
+mod lifecycle;
+pub use lifecycle::ExistingLifecycleLedger;
+mod project_removal;
+mod unregistration;
+
+pub struct ServiceRegistry {
+    root: PathBuf,
+    connection: Connection,
+    registration_state: bool,
+    watch_traversal_state: bool,
+}
+
+#[derive(Clone, Copy)]
+enum ExistingWrite {
+    Maintenance(Incarnation),
+    Lifecycle(Incarnation),
+}
+impl ExistingWrite {
+    fn namespace(self) -> Incarnation {
+        match self {
+            Self::Maintenance(namespace) | Self::Lifecycle(namespace) => namespace,
+        }
+    }
+}
+
+impl ServiceRegistry {
+    /// Canonical root of this already opened native registry. Metadata only;
+    /// this path is not an authorization credential or a model provisioning request.
+    pub fn control_root(&self) -> &Path {
+        &self.root
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Owner {
+    format: u32,
+    root: String,
+    incarnation: Incarnation,
+    #[serde(default)]
+    ready: bool,
+    #[serde(default)]
+    digest: Option<Sha256Digest>,
+    /// Admission fence bound to the owned upgrade intent. Old readers reject
+    /// this required field; absence retains the original format-two bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    catalog_upgrade: Option<Incarnation>,
+}
+
+impl Owner {
+    fn checksum(&self) -> Sha256Digest {
+        framed_digest(
+            b"airk/service-registry-owner/2",
+            &[
+                self.root.as_bytes(),
+                self.incarnation.as_bytes(),
+                &[u8::from(self.ready)],
+            ],
+        )
+    }
+
+    fn complete(mut self, root: &Path) -> Result<()> {
+        self.format = 2;
+        self.ready = true;
+        self.digest = Some(self.checksum());
+        let mut temporary = tempfile::NamedTempFile::new_in(root)?;
+        temporary.write_all(&serde_json::to_vec(&self)?)?;
+        temporary.as_file().sync_all()?;
+        temporary.persist(root.join("service-1.4.owner.json"))?;
+        crate::maintenance::sync_parent(root)
+    }
+}
+
+fn owner(root: &Path, existed: bool, incarnation: Incarnation) -> Result<Owner> {
+    let receipt = owner_record(root, existed, incarnation)?;
+    ensure!(receipt.catalog_upgrade.is_none(), catalog::AdmissionPending);
+    Ok(receipt)
+}
+
+fn owner_record(root: &Path, existed: bool, incarnation: Incarnation) -> Result<Owner> {
+    let path = root.join("service-1.4.owner.json");
+    let root_text = root
+        .to_str()
+        .context("service runtime root must be UTF-8")?;
+    ensure!(
+        root_text.len() <= 4096,
+        "service runtime root exceeds budget"
+    );
+    match fs::symlink_metadata(&path) {
+        Ok(metadata) => {
+            ensure!(
+                metadata.is_file() && !metadata.file_type().is_symlink() && metadata.len() <= 16384,
+                "invalid service registry owner"
+            );
+            crate::managed_collection::reject_file_aliases(&path, &metadata)?;
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::MetadataExt;
+                ensure!(
+                    metadata.file_attributes() & 0x400 == 0,
+                    "redirected service registry owner"
+                );
+            }
+            let mut bytes = Vec::new();
+            fs::File::open(path)?.take(16385).read_to_end(&mut bytes)?;
+            ensure!(
+                bytes.len() <= 16384,
+                "service registry owner exceeds budget"
+            );
+            let owner: Owner = serde_json::from_slice(&bytes)?;
+            ensure!(
+                owner.root == root_text
+                    && match owner.format {
+                        1 => !owner.ready && owner.digest.is_none(),
+                        2 => owner.digest == Some(owner.checksum()),
+                        _ => false,
+                    },
+                "foreign service registry owner"
+            );
+            Ok(owner)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            ensure!(!existed, "service registry has no ownership receipt");
+            let mut owner = Owner {
+                format: 2,
+                root: root_text.into(),
+                incarnation,
+                ready: false,
+                digest: None,
+                catalog_upgrade: None,
+            };
+            owner.digest = Some(owner.checksum());
+            let mut temporary = tempfile::NamedTempFile::new_in(root)?;
+            temporary.write_all(&serde_json::to_vec(&owner)?)?;
+            temporary.as_file().sync_all()?;
+            temporary.persist_noclobber(path)?;
+            crate::maintenance::sync_parent(root)?;
+            Ok(owner)
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// Read an already completed namespace without creating or opening a database.
+/// Installed-state receipts use this before any directory/registry recovery.
+pub fn retained_namespace(root: &Path) -> Result<Incarnation> {
+    let root = root.canonicalize()?;
+    let path = root.join("service-1.4.sqlite3");
+    let metadata =
+        fs::symlink_metadata(&path).context("initialized service registry is missing")?;
+    ensure!(
+        metadata.is_file()
+            && !metadata.file_type().is_symlink()
+            && metadata.len() > 0
+            && metadata.len() <= MAX_DATABASE_BYTES,
+        "initialized service registry is unavailable or redirected"
+    );
+    crate::managed_collection::reject_file_aliases(&path, &metadata)?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        ensure!(
+            metadata.file_attributes() & 0x400 == 0,
+            "redirected service registry"
+        );
+    }
+    let receipt = owner(&root, true, Incarnation::from_bytes([0; 16]))?;
+    ensure!(
+        receipt.ready && receipt.format == 2,
+        "service registry initialization is incomplete"
+    );
+    Ok(receipt.incarnation)
+}
+
+// Shared registration transaction: legacy entry points and reviewed catalog
+// reservation retain the same collision, removal, isolation and setup rules.
+enum RegistrationAdmission<'a> {
+    Legacy,
+    Reserved(&'a catalog::setup::IndexSetupReceipt),
+    Split(&'a catalog::split::NativeSplitState),
+}
+
+fn register_project_in(
+    connection: &Connection,
+    runtime: &Path,
+    registration: &ProjectRegistration,
+    setup_watch: Option<bool>,
+    only_if_missing: bool,
+    admission: RegistrationAdmission<'_>,
+) -> Result<()> {
+    let payload = serde_json::to_vec(registration)?;
+    catalog::setup::require_registration_admission(connection, registration, admission)?;
+    source_isolation::validate(connection, runtime, registration, &[])?;
+    let removed: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM service_removed_projects WHERE binding=?1 OR root_identity=?2)",
+        params![registration.binding.to_string(), project_removal::removed_root_identity(&registration.root).to_string()],
+        |row| row.get(0),
+    )?;
+    ensure!(
+        !only_if_missing || !removed,
+        "project_was_removed_refresh_registration"
+    );
+    if !only_if_missing {
+        connection.execute(
+            "DELETE FROM service_removed_projects WHERE binding=?1 OR root_identity=?2",
+            params![
+                registration.binding.to_string(),
+                project_removal::removed_root_identity(&registration.root).to_string()
+            ],
+        )?;
+    }
+    if only_if_missing {
+        let concurrent_owner:bool=connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM projects WHERE binding<>?1 AND json_extract(payload,'$.root')=?2)",
+            params![registration.binding.to_string(),registration.root],|row|row.get(0))?;
+        ensure!(
+            !concurrent_owner,
+            "source_registration_changed_refresh_registration"
+        );
+    }
+    let existing: Option<Vec<u8>> = connection
+        .query_row(
+            "SELECT substr(payload,1,20481) FROM projects WHERE binding=?1",
+            [registration.binding.to_string()],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let mut newly_active = existing.is_none();
+    if let Some(existing) = existing {
+        ensure!(
+            existing == payload,
+            "service registration binding collision"
+        );
+        if only_if_missing {
+            let registered: bool = connection.query_row(
+                "SELECT registered FROM projects WHERE binding=?1",
+                [registration.binding.to_string()],
+                |row| row.get(0),
+            )?;
+            ensure!(registered, "project_was_removed_refresh_registration");
+        }
+        let cleanup: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM service_jobs j JOIN service_configuration c ON c.job=j.id WHERE j.project=?1 AND j.state IN('pending','running') AND json_extract(CAST(c.payload AS TEXT),'$.request.configuration.operation') IN('prepare_derived_cleanup','delete_derived'))",
+            [registration.binding.to_string()], |row| row.get(0))?;
+        ensure!(
+            !cleanup,
+            "derived cleanup is still pending; inspect its native receipt before registering"
+        );
+        let barrier: bool = connection.query_row(
+            "SELECT cleanup_guard IS NOT NULL FROM projects WHERE binding=?1",
+            [registration.binding.to_string()],
+            |row| row.get(0),
+        )?;
+        ensure!(
+            !barrier,
+            "finish the captured derived cleanup before registering this project"
+        );
+        if connection.execute(
+            "UPDATE projects SET registered=1,paused=0 WHERE binding=?1 AND registered=0",
+            [registration.binding.to_string()],
+        )? == 1
+        {
+            newly_active = true;
+            background::audit::automatic::resume(connection, registration.binding)?;
+            bump(connection)?;
+        }
+    } else {
+        let collision: bool = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM projects WHERE json_extract(payload,'$.data_root')=?1 AND json_extract(payload,'$.collection')=?2)",
+            params![registration.data_root,registration.collection], |row| row.get(0),
+        )?;
+        ensure!(
+            !collision,
+            "collection storage is already registered to another source root"
+        );
+        let count: i64 =
+            connection.query_row("SELECT count(*) FROM projects", [], |row| row.get(0))?;
+        ensure!(
+            count >= 0 && count < MAX_PROJECTS as i64,
+            "service project registration capacity exhausted"
+        );
+        connection.execute(
+            "INSERT INTO projects(binding,payload,epoch,paused,registered) VALUES(?1,?2,(SELECT request_epoch FROM service_meta WHERE id=1),0,1)",
+            params![registration.binding.to_string(), payload],
+        )?;
+        bump(connection)?;
+    }
+    if removed && !newly_active {
+        bump(connection)?;
+    }
+    if newly_active && let Some(enabled) = setup_watch {
+        schedule_project_setup(connection, registration.binding, enabled)?;
+    }
+    Ok(())
+}
+
+fn schedule_project_setup(
+    connection: &Connection,
+    binding: ProjectBinding,
+    enabled: bool,
+) -> Result<()> {
+    watch::ensure_row(connection, binding)?;
+    connection.execute("UPDATE service_watch SET enabled=?1,configuration_epoch=configuration_epoch+1,requested=requested+CASE WHEN ?1 THEN 1 ELSE 0 END,attempts=0,next_ms=0,blocked_revision=NULL,backend=CASE WHEN ?1 THEN 'periodic_fallback' ELSE 'disabled' END,native_roots=0 WHERE project=?2",params![enabled,binding.to_string()])?;
+    background::set(
+        connection,
+        binding,
+        airk_core::service::JobKind::ModelSetup,
+        true,
+    )?;
+    // Source evidence remains scheduled even if model preparation fails.
+    background::set(
+        connection,
+        binding,
+        airk_core::service::JobKind::Index,
+        true,
+    )?;
+    Ok(())
+}
+
+fn bump(connection: &Connection) -> Result<()> {
+    let revision: i64 =
+        connection.query_row("SELECT revision FROM service_meta WHERE id=1", [], |row| {
+            row.get(0)
+        })?;
+    let next = revision
+        .checked_add(1)
+        .context("service registry revision exhausted")?;
+    connection.execute("UPDATE service_meta SET revision=?1 WHERE id=1", [next])?;
+    Ok(())
+}
+
+fn project_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<(Vec<u8>, i64, bool)> {
+    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+}
+
+fn decode(bytes: &[u8], epoch: i64, paused: bool) -> Result<RegisteredProject> {
+    ensure!(
+        bytes.len() <= MAX_PROJECT_REGISTRATION_BYTES && epoch >= 0,
+        "invalid service registration record"
+    );
+    let registration: ProjectRegistration = serde_json::from_slice(bytes)?;
+    registration.validate()?;
+    Ok(RegisteredProject {
+        registration,
+        fencing_generation: epoch as u64,
+        paused,
+    })
+}
+
+impl ServiceRegistry {
+    /// Observe only an existing completed registry. Never initialize, migrate,
+    /// prune receipts, or acquire service ownership for down-service diagnostics.
+    pub fn open_saved(root: &Path) -> Result<Self> {
+        Self::open_saved_before(root, None)
+    }
+    pub fn open_saved_before(root: &Path, deadline: Option<std::time::Instant>) -> Result<Self> {
+        Self::open_existing(root, deadline, None)
+    }
+
+    /// Mutate only an existing activated registry while the actual native owner
+    /// exclusion remains borrowed. Never create, migrate, or rewrite its owner.
+    pub fn with_existing_maintenance<T>(
+        lease: &super::ServiceLease,
+        expected_namespace: Incarnation,
+        action: impl FnOnce(&mut Self) -> Result<T>,
+    ) -> Result<T> {
+        let mut registry = Self::open_existing(
+            lease.root(),
+            None,
+            Some(ExistingWrite::Maintenance(expected_namespace)),
+        )?;
+        action(&mut registry)
+    }
+
+    fn open_existing(
+        root: &Path,
+        deadline: Option<std::time::Instant>,
+        writable: Option<ExistingWrite>,
+    ) -> Result<Self> {
+        scope::scope_remaining(deadline)?;
+        let root = root.canonicalize()?;
+        let namespace = retained_namespace(&root)?;
+        if let Some(expected) = writable.map(ExistingWrite::namespace) {
+            ensure!(
+                namespace == expected,
+                "maintenance registry namespace changed"
+            );
+        }
+        let path = root.join("service-1.4.sqlite3");
+        for suffix in ["-wal", "-shm"] {
+            ensure!(
+                !path
+                    .with_file_name(format!("service-1.4.sqlite3{suffix}"))
+                    .try_exists()?,
+                "unexpected service registry overlay"
+            );
+        }
+        #[cfg(test)]
+        scope::record_saved_open();
+        let flags = if writable.is_some() {
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
+        } else {
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+        };
+        let connection = Connection::open_with_flags(&path, flags)?;
+        connection.busy_timeout(scope::scope_remaining(deadline)?)?;
+        if writable.is_none() {
+            connection.execute_batch("PRAGMA query_only=ON;")?;
+        }
+        connection.execute_batch("PRAGMA cache_size=-8192;")?;
+        connection.busy_timeout(scope::scope_remaining(deadline)?)?;
+        let application: i64 =
+            connection.pragma_query_value(None, "application_id", |row| row.get(0))?;
+        connection.busy_timeout(scope::scope_remaining(deadline)?)?;
+        let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
+        ensure!(
+            application == APPLICATION && (2..=13).contains(&version),
+            "unsupported saved service registry format"
+        );
+        ensure!(
+            match writable {
+                None => true,
+                Some(ExistingWrite::Maintenance(_)) => matches!(version, 12 | 13),
+                Some(ExistingWrite::Lifecycle(_)) => matches!(version, 11..=13),
+            },
+            "unsupported_existing_registry_write: lifecycle requires schema 11..13; maintenance requires an activated catalog"
+        );
+        if version == 11 && matches!(writable, Some(ExistingWrite::Lifecycle(_))) {
+            catalog::validate_shape(&connection, 11)?;
+        }
+        if matches!(version, 12 | 13) {
+            catalog::validate_existing(&connection)?;
+            ensure!(
+                catalog::state(&connection)?.activated,
+                catalog::AdmissionPending
+            );
+            connection.execute_batch("PRAGMA foreign_keys=ON;")?;
+        }
+        connection.busy_timeout(scope::scope_remaining(deadline)?)?;
+        background::audit::validate_existing(&connection, version >= 11)?;
+        let registry = Self {
+            root,
+            connection,
+            registration_state: version >= 5,
+            watch_traversal_state: version >= 7,
+        };
+        registry
+            .connection
+            .busy_timeout(scope::scope_remaining(deadline)?)?;
+        ensure!(
+            registry.incarnation()? == namespace,
+            "service registry ownership mismatch"
+        );
+        scope::scope_remaining(deadline)?;
+        Ok(registry)
+    }
+
+    /// Read-only planning fence before a native adapter creates derived storage.
+    /// The authoritative reservation repeats the same checks in its transaction.
+    pub fn preflight_source_isolation(
+        &self,
+        proposed: &ProjectRegistration,
+        additional: &[String],
+    ) -> Result<()> {
+        source_isolation::preflight(&self.connection, &self.root, proposed, additional)
+    }
+
+    /// Native adapter establishes owner-only directory permissions before opening this ledger.
+    /// Incarnation is allocated by the kernel; existing ledgers preserve their saved identity.
+    pub fn open(root: &Path, incarnation: Incarnation) -> Result<Self> {
+        let root = root.canonicalize()?;
+        let _initialization =
+            super::acquire_file_for(&root, "service-1.4.initialize.lock", Duration::from_secs(2))?;
+        let path = root.join("service-1.4.sqlite3");
+        let existed = path.try_exists()?;
+        if let Ok(metadata) = fs::symlink_metadata(&path) {
+            ensure!(
+                metadata.is_file()
+                    && !metadata.file_type().is_symlink()
+                    && metadata.len() <= MAX_DATABASE_BYTES,
+                "invalid service registry file"
+            );
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::MetadataExt;
+                ensure!(
+                    metadata.file_attributes() & 0x400 == 0,
+                    "redirected service registry"
+                );
+            }
+        }
+        for suffix in ["-wal", "-shm"] {
+            ensure!(
+                !path
+                    .with_file_name(format!("service-1.4.sqlite3{suffix}"))
+                    .try_exists()?,
+                "unexpected service registry overlay"
+            );
+        }
+        let owner = owner(&root, existed, incarnation)?;
+        // A format-one receipt cannot prove that an empty database is a crashed
+        // first initialization. Never reuse its namespace after metadata loss.
+        let must_exist = owner.ready || owner.format == 1;
+        ensure!(
+            !must_exist || existed,
+            "initialized service registry is missing"
+        );
+        let mut connection = Connection::open(&path)?;
+        connection.busy_timeout(Duration::from_secs(2))?;
+        let mut initialize = !existed;
+        let mut schema_version = 0;
+        if existed {
+            let application: i64 =
+                connection.pragma_query_value(None, "application_id", |row| row.get(0))?;
+            let version: i64 =
+                connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
+            if application == 0 && version == 0 {
+                ensure!(!must_exist, "initialized service registry is empty");
+                let tables: i64 = connection.query_row(
+                    "SELECT count(*) FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                ensure!(tables == 0, "unsupported uninitialized service registry");
+                initialize = true;
+            } else {
+                ensure!(
+                    application == APPLICATION && (1..=13).contains(&version),
+                    "unsupported service registry format"
+                );
+                if matches!(version, 12 | 13) {
+                    catalog::validate_existing(&connection)?;
+                    ensure!(
+                        catalog::state(&connection)?.activated,
+                        catalog::AdmissionPending
+                    );
+                }
+                schema_version = version;
+                let actual: String = connection.query_row(
+                    "SELECT incarnation FROM service_meta WHERE id=1",
+                    [],
+                    |row| row.get(0),
+                )?;
+                ensure!(
+                    actual.parse::<Incarnation>()? == owner.incarnation,
+                    "service registry ownership mismatch"
+                );
+            }
+        }
+        if schema_version > 0 {
+            background::audit::validate_existing(&connection, schema_version >= 11)?;
+        }
+        let schemas = [
+            jobs::SCHEMA,
+            background::SCHEMA,
+            provider_drains::SCHEMA,
+            watch::SCHEMA,
+            events::SCHEMA,
+            inspection::SCHEMA,
+            maintenance::SCHEMA,
+            progress::SCHEMA,
+            source_isolation::SCHEMA,
+        ];
+        if must_exist || schema_version >= 2 {
+            // These names come only from our compiled schema, never from input.
+            for name in ["service_meta", "projects"].into_iter().chain(
+                schemas
+                    .iter()
+                    .flat_map(|schema| schema.split("CREATE TABLE IF NOT EXISTS ").skip(1))
+                    .map(|tail| tail.split('(').next().unwrap().trim()),
+            ) {
+                let exists: bool = connection.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?1)",
+                    [name],
+                    |row| row.get(0),
+                )?;
+                ensure!(
+                    exists,
+                    "initialized service registry table is missing: {name}"
+                );
+            }
+            if schema_version >= 2 {
+                for name in ["service_lifecycle", "service_lifecycle_state"] {
+                    let exists: bool = connection.query_row(
+                        "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?1)",
+                        [name],
+                        |row| row.get(0),
+                    )?;
+                    ensure!(
+                        exists,
+                        "initialized service registry table is missing: {name}"
+                    );
+                }
+                let _: bool = connection.query_row(
+                    "SELECT stopped FROM service_lifecycle_state WHERE id=1",
+                    [],
+                    |row| row.get(0),
+                )?;
+            }
+            if schema_version >= 3 {
+                let exists: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='service_configuration')", [], |row| row.get(0))?;
+                ensure!(exists, "initialized service configuration table is missing");
+            }
+            if schema_version >= 4 {
+                let invalid: i64 = connection.query_row("SELECT count(*) FROM service_configuration WHERE result IS NULL OR length(result)<>16392", [], |row| row.get(0))?;
+                ensure!(invalid == 0, "invalid configuration result state");
+            }
+            if schema_version >= 5 {
+                let invalid: i64 = connection.query_row(
+                    "SELECT count(*) FROM projects WHERE typeof(registered)<>'integer' OR registered NOT IN(0,1) OR (registered=0 AND paused<>1)",
+                    [], |row| row.get(0))?;
+                ensure!(invalid == 0, "invalid service registration state");
+            }
+            if schema_version >= 6 {
+                let invalid: i64 = connection.query_row("SELECT count(*) FROM projects WHERE cleanup_guard IS NOT NULL AND (typeof(cleanup_guard)<>'text' OR length(cleanup_guard)<>64 OR cleanup_guard GLOB '*[^0-9a-f]*' OR registered<>0)",
+                    [], |row| row.get(0))?;
+                ensure!(invalid == 0, "invalid derived cleanup barrier");
+            }
+        }
+        if schema_version >= 7 {
+            let exists: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='service_watch_traversal')", [], |row| row.get(0))?;
+            ensure!(
+                exists,
+                "initialized service registry table is missing: service_watch_traversal"
+            );
+        }
+        connection.execute_batch(
+            "PRAGMA page_size=4096; PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;
+            PRAGMA max_page_count=8192; PRAGMA cache_size=-8192; PRAGMA foreign_keys=ON;",
+        )?;
+        let page_size: i64 = connection.pragma_query_value(None, "page_size", |row| row.get(0))?;
+        ensure!(page_size == 4096, "unsupported service registry page size");
+        if initialize {
+            let transaction =
+                connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            transaction.execute_batch("CREATE TABLE service_meta(id INTEGER PRIMARY KEY CHECK(id=1), incarnation TEXT NOT NULL,
+                revision INTEGER NOT NULL CHECK(revision>=0), request_epoch INTEGER NOT NULL CHECK(request_epoch>=0));
+                CREATE TABLE projects(binding TEXT PRIMARY KEY, payload BLOB NOT NULL CHECK(length(payload)<=20480),
+                epoch INTEGER NOT NULL CHECK(epoch>=0), paused INTEGER NOT NULL CHECK(paused IN(0,1))) WITHOUT ROWID;")?;
+            transaction.execute(
+                "INSERT INTO service_meta VALUES(1,?1,0,0)",
+                [owner.incarnation.to_string()],
+            )?;
+            transaction.pragma_update(None, "application_id", APPLICATION)?;
+            transaction.pragma_update(None, "user_version", 1)?;
+            transaction.commit()?;
+        }
+        let mut registry = Self {
+            root,
+            connection,
+            registration_state: false,
+            watch_traversal_state: false,
+        };
+        ensure!(
+            registry.incarnation()? == owner.incarnation,
+            "service registry identity disagrees with owner"
+        );
+        for schema in schemas {
+            registry.connection.execute_batch(schema)?;
+        }
+        if schema_version < 2 {
+            let transaction = registry
+                .connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let foreign: bool=transaction.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name IN('service_lifecycle','service_lifecycle_state'))",[],|row|row.get(0))?;
+            ensure!(
+                !foreign,
+                "unexpected lifecycle state in an earlier registry format"
+            );
+            transaction.execute_batch(lifecycle::SCHEMA)?;
+            transaction.pragma_update(None, "user_version", 2)?;
+            transaction.commit()?;
+        }
+        if schema_version < 3 {
+            let transaction = registry
+                .connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let foreign: bool = transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name='service_configuration')",
+                [],
+                |row| row.get(0),
+            )?;
+            ensure!(
+                !foreign,
+                "unexpected configuration state in an earlier registry format"
+            );
+            transaction.execute_batch(configuration::SCHEMA)?;
+            transaction.pragma_update(None, "user_version", 4)?;
+            transaction.commit()?;
+        }
+        if schema_version == 3 {
+            let transaction = registry
+                .connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            configuration::migrate_v3(&transaction)?;
+            transaction.pragma_update(None, "user_version", 4)?;
+            transaction.commit()?;
+        }
+        if schema_version < 5 {
+            let transaction = registry
+                .connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let foreign: bool = transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM pragma_table_info('projects') WHERE name='registered')", [], |row| row.get(0))?;
+            ensure!(
+                !foreign,
+                "unexpected registration state in an earlier registry format"
+            );
+            transaction.execute_batch("ALTER TABLE projects ADD COLUMN registered INTEGER NOT NULL DEFAULT 1 CHECK(registered IN(0,1));")?;
+            transaction.pragma_update(None, "user_version", 5)?;
+            transaction.commit()?;
+        }
+        let invalid: i64 = registry.connection.query_row(
+            "SELECT count(*) FROM projects WHERE registered NOT IN(0,1) OR registered IS NULL",
+            [],
+            |row| row.get(0),
+        )?;
+        ensure!(invalid == 0, "invalid service registration state");
+        registry.registration_state = true;
+        if schema_version < 6 {
+            let transaction = registry
+                .connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let foreign: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('projects') WHERE name='cleanup_guard')", [], |row| row.get(0))?;
+            ensure!(
+                !foreign,
+                "unexpected cleanup state in an earlier registry format"
+            );
+            transaction.execute_batch("ALTER TABLE projects ADD COLUMN cleanup_guard TEXT CHECK(cleanup_guard IS NULL OR length(cleanup_guard)=64);")?;
+            transaction.pragma_update(None, "user_version", 6)?;
+            transaction.commit()?;
+        }
+        if schema_version < 7 {
+            let transaction = registry
+                .connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let existing: Option<String> = transaction.query_row(
+                "SELECT sql FROM sqlite_schema WHERE name='service_watch_traversal' AND type='table'",
+                [],
+                |row| row.get(0),
+            ).optional()?;
+            if let Some(sql) = existing {
+                // Fresh 1.5.3 installations created this exact additive table
+                // without advancing user_version. Preserve their observations.
+                ensure!(
+                    schema_version == 6
+                        && sql == watch::TRAVERSAL_SCHEMA.trim().trim_end_matches(';'),
+                    "unexpected traversal state in an earlier registry format"
+                );
+            } else {
+                transaction.execute_batch(watch::TRAVERSAL_SCHEMA)?;
+            }
+            transaction.pragma_update(None, "user_version", 7)?;
+            transaction.commit()?;
+        }
+        registry.watch_traversal_state = true;
+        {
+            let tx = registry
+                .connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            for schema in [background::SETUP_SCHEMA, recovery::SCHEMA] {
+                for definition in schema.split(';').map(str::trim).filter(|s| !s.is_empty()) {
+                    let tail = definition
+                        .strip_prefix("CREATE TABLE IF NOT EXISTS ")
+                        .context("invalid recovery schema")?;
+                    let name = tail
+                        .split('(')
+                        .next()
+                        .context("invalid recovery table")?
+                        .trim();
+                    let existing: Option<String> = tx
+                        .query_row(
+                            "SELECT sql FROM sqlite_schema WHERE name=?1 AND type='table'",
+                            [name],
+                            |r| r.get(0),
+                        )
+                        .optional()?;
+                    if let Some(sql) = existing {
+                        ensure!(
+                            sql == format!("CREATE TABLE {tail}"),
+                            "unexpected recovery metadata schema"
+                        );
+                    } else {
+                        ensure!(schema_version < 8, "initialized recovery table is missing");
+                        tx.execute_batch(definition)?;
+                    }
+                }
+            }
+            if schema_version < 9 {
+                // 1.6 semantic transition is service-wide, independent of watchers
+                // and open editor windows. Flags persist while a project is paused.
+                let projects = {
+                    let mut statement = tx.prepare("SELECT binding FROM projects WHERE registered=1 AND cleanup_guard IS NULL ORDER BY binding")?;
+                    statement
+                        .query_map([], |r| r.get::<_, String>(0))?
+                        .collect::<rusqlite::Result<Vec<_>>>()?
+                };
+                for project in projects {
+                    background::set(
+                        &tx,
+                        project.parse()?,
+                        airk_core::service::JobKind::ModelSetup,
+                        true,
+                    )?;
+                }
+            }
+            tx.pragma_update(None, "user_version", schema_version.max(9))?;
+            tx.commit()?;
+        }
+        project_removal::migrate(&mut registry.connection, schema_version)?;
+        background::audit::migrate(&mut registry.connection, schema_version)?;
+        if !owner.ready {
+            owner.complete(&registry.root)?;
+        }
+        Ok(registry)
+    }
+
+    pub fn incarnation(&self) -> Result<Incarnation> {
+        let text: String = self.connection.query_row(
+            "SELECT incarnation FROM service_meta WHERE id=1",
+            [],
+            |row| row.get(0),
+        )?;
+        text.parse()
+    }
+
+    pub fn register(&mut self, registration: &ProjectRegistration) -> Result<()> {
+        self.register_with_setup(registration, None)
+    }
+    /// Registration and first setup are one durable intent, even if the client closes.
+    pub fn register_with_setup(
+        &mut self,
+        registration: &ProjectRegistration,
+        setup_watch: Option<bool>,
+    ) -> Result<()> {
+        self.register_project(registration, setup_watch, false)
+    }
+    /// Automatic recovery may create lost state, but cannot reactivate a tombstone.
+    pub fn register_missing_with_setup(
+        &mut self,
+        registration: &ProjectRegistration,
+        setup_watch: Option<bool>,
+    ) -> Result<()> {
+        self.register_project(registration, setup_watch, true)
+    }
+    fn register_project(
+        &mut self,
+        registration: &ProjectRegistration,
+        setup_watch: Option<bool>,
+        only_if_missing: bool,
+    ) -> Result<()> {
+        registration.validate()?;
+        super::data_scope::check(
+            Path::new(&registration.data_root),
+            &self.root,
+            self.incarnation()?,
+        )?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        register_project_in(
+            &transaction,
+            &self.root,
+            registration,
+            setup_watch,
+            only_if_missing,
+            RegistrationAdmission::Legacy,
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn get(&self, binding: ProjectBinding) -> Result<RegisteredProject> {
+        let (bytes, epoch, paused) = self
+            .connection
+            .query_row(
+                if self.registration_state {
+                    "SELECT substr(payload,1,20481),epoch,paused FROM projects WHERE binding=?1 AND registered=1"
+                } else {
+                    "SELECT substr(payload,1,20481),epoch,paused FROM projects WHERE binding=?1"
+                },
+                [binding.to_string()],
+                project_row,
+            )
+            .context("service project is not registered")?;
+        let project = decode(&bytes, epoch, paused)?;
+        ensure!(
+            project.registration.binding == binding,
+            "foreign service registration"
+        );
+        Ok(project)
+    }
+
+    /// Saved pre-unregister registries are observed without migrating their schema.
+    pub fn is_registered(&self, binding: ProjectBinding) -> Result<bool> {
+        self.connection
+            .query_row(
+                if self.registration_state {
+                    "SELECT EXISTS(SELECT 1 FROM projects WHERE binding=?1 AND registered=1)"
+                } else {
+                    "SELECT EXISTS(SELECT 1 FROM projects WHERE binding=?1)"
+                },
+                [binding.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+    }
+
+    /// Administrative retained binding, including unregistered storage owners.
+    pub fn retained_project(&self, binding: ProjectBinding) -> Result<RegisteredProject> {
+        let (bytes, epoch, paused) = self.connection.query_row(
+            "SELECT substr(payload,1,20481),epoch,paused FROM projects WHERE binding=?1",
+            [binding.to_string()],
+            project_row,
+        )?;
+        let project = decode(&bytes, epoch, paused)?;
+        ensure!(
+            project.registration.binding == binding,
+            "foreign retained project binding"
+        );
+        Ok(project)
+    }
+
+    pub fn validate_inactive_worker(&self, lease: &ProjectLease) -> Result<ProjectRegistration> {
+        ensure!(
+            lease.derived,
+            "inactive collection access requires the private cleanup owner"
+        );
+        jobs::worker_epoch(&self.connection, &self.root, lease)?;
+        ensure!(
+            !self.is_registered(lease.binding)?,
+            "derived cleanup requires an unregistered project"
+        );
+        let registration = self.retained_project(lease.binding)?.registration;
+        super::data_scope::check(
+            Path::new(&registration.data_root),
+            &self.root,
+            self.incarnation()?,
+        )?;
+        Ok(registration)
+    }
+
+    /// Bounded identity-only ownership audit, including inactive registrations:
+    /// a crash may have interrupted their actual worker drain.
+    pub fn bindings(&self) -> Result<Vec<ProjectBinding>> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT binding FROM projects ORDER BY binding LIMIT 1025")?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+        let bindings = rows.map(|row| row?.parse()).collect::<Result<Vec<_>>>()?;
+        ensure!(
+            bindings.len() <= MAX_PROJECTS,
+            "service registration capacity exceeded"
+        );
+        Ok(bindings)
+    }
+
+    pub fn list(
+        &mut self,
+        after: Option<ProjectBinding>,
+        expected_revision: Option<u64>,
+        limit: usize,
+    ) -> Result<ProjectPage> {
+        self.list_role(after, expected_revision, limit, false)
+    }
+    pub fn list_inactive(
+        &mut self,
+        after: Option<ProjectBinding>,
+        expected_revision: Option<u64>,
+        limit: usize,
+    ) -> Result<ProjectPage> {
+        self.list_role(after, expected_revision, limit, true)
+    }
+    fn list_role(
+        &mut self,
+        after: Option<ProjectBinding>,
+        expected_revision: Option<u64>,
+        limit: usize,
+        inactive: bool,
+    ) -> Result<ProjectPage> {
+        ensure!(
+            (1..=32).contains(&limit) && (after.is_none() || expected_revision.is_some()),
+            "invalid service registry page request"
+        );
+        let transaction = self.connection.transaction()?;
+        let revision: i64 =
+            transaction.query_row("SELECT revision FROM service_meta WHERE id=1", [], |row| {
+                row.get(0)
+            })?;
+        let revision = u64::try_from(revision).context("invalid service registry revision")?;
+        ensure!(
+            expected_revision.is_none_or(|expected| expected == revision),
+            "service registry cursor expired"
+        );
+        let mut statement = transaction.prepare(if inactive && self.registration_state {
+            "SELECT substr(payload,1,20481),epoch,paused FROM projects WHERE binding>?1 AND registered=0 ORDER BY binding LIMIT ?2"
+        } else if inactive {
+            "SELECT substr(payload,1,20481),epoch,paused FROM projects WHERE 0 AND binding>?1 ORDER BY binding LIMIT ?2"
+        } else if self.registration_state {
+            "SELECT substr(payload,1,20481),epoch,paused FROM projects WHERE binding>?1 AND registered=1 ORDER BY binding LIMIT ?2"
+        } else {
+            "SELECT substr(payload,1,20481),epoch,paused FROM projects WHERE binding>?1 ORDER BY binding LIMIT ?2"
+        })?;
+        let mut rows = statement.query(params![
+            after.map(|id| id.to_string()).unwrap_or_default(),
+            (limit + 1) as i64
+        ])?;
+        let mut projects = Vec::new();
+        let mut bytes = 0usize;
+        let mut more = false;
+        while let Some(row) = rows.next()? {
+            let (payload, epoch, paused) = project_row(row)?;
+            let project = decode(&payload, epoch, paused)?;
+            let encoded = serde_json::to_vec(&project)?.len();
+            if projects.len() == limit || bytes.saturating_add(encoded) > 48 * 1024 {
+                more = true;
+                break;
+            }
+            bytes += encoded;
+            projects.push(project);
+        }
+        let after = if more {
+            Some(
+                projects
+                    .last()
+                    .context("service registration cannot fit page budget")?
+                    .registration
+                    .binding,
+            )
+        } else {
+            None
+        };
+        Ok(ProjectPage {
+            revision,
+            projects,
+            after,
+        })
+    }
+
+    pub fn pause(&mut self, binding: ProjectBinding, paused: bool) -> Result<()> {
+        self.get(binding)?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        ensure!(
+            transaction.execute(
+                "UPDATE projects SET paused=?1 WHERE binding=?2 AND registered=1",
+                params![paused, binding.to_string()]
+            )? == 1,
+            "service project is not registered"
+        );
+        if !paused {
+            background::audit::automatic::resume(&transaction, binding)?;
+        }
+        bump(&transaction)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn admit_worker(&mut self, lease: &mut ProjectLease) -> Result<u64> {
+        self.admit_worker_role(lease, false)
+    }
+    pub fn admit_derived_worker(&mut self, lease: &mut ProjectLease) -> Result<u64> {
+        self.admit_worker_role(lease, true)
+    }
+    fn admit_worker_role(&mut self, lease: &mut ProjectLease, derived: bool) -> Result<u64> {
+        ensure!(
+            lease.root == self.root && lease.epoch.is_none(),
+            "foreign or already admitted service worker lease"
+        );
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let epoch: i64 = transaction.query_row(
+            "SELECT epoch FROM projects WHERE binding=?1 AND registered=?2",
+            params![lease.binding.to_string(), !derived],
+            |row| row.get(0),
+        )?;
+        if derived {
+            let pending: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM service_jobs j JOIN service_configuration c ON c.job=j.id WHERE j.project=?1 AND j.state IN('pending','running') AND json_extract(CAST(c.payload AS TEXT),'$.request.configuration.operation') IN('prepare_derived_cleanup','delete_derived'))",
+                [lease.binding.to_string()], |row| row.get(0))?;
+            ensure!(
+                pending,
+                "no accepted derived cleanup authorizes this worker"
+            );
+        }
+        let next = epoch
+            .checked_add(1)
+            .context("service fencing generation exhausted")?;
+        transaction.execute(
+            "UPDATE projects SET epoch=?1 WHERE binding=?2",
+            params![next, lease.binding.to_string()],
+        )?;
+        bump(&transaction)?;
+        transaction.commit()?;
+        lease.epoch = Some(next as u64);
+        lease.derived = derived;
+        Ok(next as u64)
+    }
+}
+
+impl ServiceRegistry {
+    /// Live service ownership only; this does not certify platform privacy or payload bytes.
+    pub(crate) fn integrity_registration(
+        &self,
+        lease: &ProjectLease,
+        bound: &super::data_scope::BoundDataRoot,
+    ) -> Result<(ProjectRegistration, Incarnation, u64)> {
+        ensure!(
+            !lease.derived,
+            "cleanup worker cannot publish integrity state"
+        );
+        let epoch = jobs::worker_epoch(&self.connection, &self.root, lease)?;
+        ensure!(
+            self.is_registered(lease.binding)?,
+            "integrity worker registration removed"
+        );
+        let registration = self.get(lease.binding)?.registration;
+        let namespace = self.incarnation()?;
+        bound.require_identity(Path::new(&registration.data_root), &self.root, namespace)?;
+        Ok((registration, namespace, epoch))
+    }
+}
+
+#[cfg(test)]
+mod predecessor_schema8_tests;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn automatic_missing_registration_recovery_cannot_reactivate_a_removed_project() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let mut registry =
+            ServiceRegistry::open(directory.path(), Incarnation::from_bytes([4; 16]))?;
+        let p = project("startup-recovery");
+        registry.register_missing_with_setup(&p, Some(true))?;
+        assert!(registry.project_setup_pending(p.binding)?);
+        registry.connection.execute(
+            "UPDATE projects SET registered=0,paused=1 WHERE binding=?1",
+            [p.binding.to_string()],
+        )?;
+        let before = registry.connection.total_changes();
+        assert!(
+            registry
+                .register_missing_with_setup(&p, Some(true))
+                .is_err()
+        );
+        assert_eq!(registry.connection.total_changes(), before);
+        assert!(registry.get(p.binding).is_err());
+        let replacement = ProjectRegistration::new(
+            p.root.clone(),
+            "/derived/new-location".into(),
+            p.collection.clone(),
+        )?;
+        assert!(
+            registry
+                .register_missing_with_setup(&replacement, Some(true))
+                .is_err(),
+            "a new storage binding cannot bypass the source's removal"
+        );
+        assert_eq!(registry.connection.total_changes(), before);
+        // An explicit Add project still has authority to reactivate it.
+        registry.register_with_setup(&p, Some(true))?;
+        assert!(registry.get(p.binding).is_ok());
+        Ok(())
+    }
+
+    #[test]
+    fn int8_upgrade_schedules_closed_and_paused_projects_once() -> Result<()> {
+        use airk_core::service::JobKind;
+        let directory = tempfile::tempdir()?;
+        let namespace = Incarnation::from_bytes([9; 16]);
+        let mut registry = ServiceRegistry::open(directory.path(), namespace)?;
+        let active = project("upgrade-active");
+        let paused = project("upgrade-paused");
+        let removed = project("upgrade-removed");
+        for p in [&active, &paused, &removed] {
+            registry.register(p)?;
+        }
+        registry.pause(paused.binding, true)?;
+        registry.connection.execute(
+            "UPDATE projects SET registered=0,paused=1 WHERE binding=?1",
+            [removed.binding.to_string()],
+        )?;
+        registry.connection.pragma_update(None, "user_version", 8)?;
+        drop(registry);
+        let mut registry = ServiceRegistry::open(directory.path(), namespace)?;
+        assert!(registry.project_setup_pending(active.binding)?);
+        assert!(registry.project_setup_pending(paused.binding)?);
+        assert!(!registry.project_setup_pending(removed.binding)?);
+        let due = registry.due_background_jobs(None, 0, 32)?;
+        assert_eq!(due.len(), 1);
+        assert_eq!((due[0].0, due[0].2), (active.binding, JobKind::ModelSetup));
+        background::set(
+            &registry.connection,
+            active.binding,
+            JobKind::ModelSetup,
+            false,
+        )?;
+        registry.pause(paused.binding, false)?;
+        drop(registry);
+        let registry = ServiceRegistry::open(directory.path(), namespace)?;
+        assert!(!registry.project_setup_pending(active.binding)?);
+        let due = registry.due_background_jobs(None, 0, 32)?;
+        assert_eq!(due.len(), 1);
+        assert_eq!((due[0].0, due[0].2), (paused.binding, JobKind::ModelSetup));
+        Ok(())
+    }
+
+    #[test]
+    fn traversal_migration_preserves_v6_registry_and_saved_reads() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let namespace = Incarnation::from_bytes([7; 16]);
+        let registration = project("traversal-upgrade");
+        let mut registry = ServiceRegistry::open(directory.path(), namespace)?;
+        registry.register(&registration)?;
+        registry.pause(registration.binding, true)?;
+        let revision = registry.saved_request_epoch()?;
+        registry
+            .connection
+            .execute_batch("DROP TABLE service_watch_traversal; PRAGMA user_version=6;")?;
+        drop(registry);
+        let path = directory.path().join("service-1.4.sqlite3");
+        let before = fs::read(&path)?;
+        let saved = ServiceRegistry::open_saved(directory.path())?;
+        assert!(
+            saved
+                .watch(registration.binding)?
+                .observation
+                .traversal
+                .is_none()
+        );
+        assert!(saved.get(registration.binding)?.paused);
+        drop(saved);
+        assert_eq!(fs::read(&path)?, before);
+        let registry = ServiceRegistry::open(directory.path(), Incarnation::from_bytes([8; 16]))?;
+        assert_eq!(registry.saved_request_epoch()?, revision);
+        assert_eq!(registry.incarnation()?, namespace);
+        assert!(registry.get(registration.binding)?.paused);
+        assert!(
+            registry
+                .watch(registration.binding)?
+                .observation
+                .traversal
+                .is_none()
+        );
+        let version: i64 = registry
+            .connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))?;
+        assert_eq!(version, 11);
+        registry
+            .connection
+            .execute_batch("DROP TABLE service_watch_traversal")?;
+        drop(registry);
+        let damaged = fs::read(&path)?;
+        let error = ServiceRegistry::open(directory.path(), namespace)
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("service_watch_traversal"));
+        assert_eq!(fs::read(path)?, damaged);
+        Ok(())
+    }
+
+    #[test]
+    fn fresh_153_additive_table_is_preserved_but_unknown_tables_are_refused() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let namespace = Incarnation::from_bytes([7; 16]);
+        let registry = ServiceRegistry::open(directory.path(), namespace)?;
+        registry.connection.pragma_update(None, "user_version", 6)?;
+        let expected: String = registry.connection.query_row(
+            "SELECT sql FROM sqlite_schema WHERE name='service_watch_traversal'",
+            [],
+            |row| row.get(0),
+        )?;
+        drop(registry);
+        let registry = ServiceRegistry::open(directory.path(), namespace)?;
+        let actual: String = registry.connection.query_row(
+            "SELECT sql FROM sqlite_schema WHERE name='service_watch_traversal'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(actual, expected);
+        registry.connection.execute_batch("DROP TABLE service_watch_traversal; CREATE TABLE service_watch_traversal(unknown TEXT); PRAGMA user_version=6;")?;
+        drop(registry);
+        let path = directory.path().join("service-1.4.sqlite3");
+        let before = fs::read(&path)?;
+        assert!(ServiceRegistry::open(directory.path(), namespace).is_err());
+        assert_eq!(fs::read(path)?, before);
+        Ok(())
+    }
+
+    #[test]
+    fn registration_state_migration_preserves_saved_v4_observation_and_existing_pause() -> Result<()>
+    {
+        let directory = tempfile::tempdir()?;
+        let namespace = Incarnation::from_bytes([7; 16]);
+        let registration = project("registration-state");
+        let mut registry = ServiceRegistry::open(directory.path(), namespace)?;
+        registry.register(&registration)?;
+        registry.pause(registration.binding, true)?;
+        registry
+            .connection
+            .execute_batch("DROP TABLE service_watch_traversal; ALTER TABLE projects DROP COLUMN cleanup_guard; ALTER TABLE projects DROP COLUMN registered; PRAGMA user_version=4;")?;
+        drop(registry);
+        let path = directory.path().join("service-1.4.sqlite3");
+        let before = fs::read(&path)?;
+        let saved = ServiceRegistry::open_saved(directory.path())?;
+        assert!(saved.get(registration.binding)?.paused);
+        assert_eq!(saved.get(registration.binding)?.registration, registration);
+        drop(saved);
+        assert_eq!(
+            fs::read(&path)?,
+            before,
+            "saved inspection cannot migrate v4"
+        );
+        let registry = ServiceRegistry::open(directory.path(), Incarnation::from_bytes([8; 16]))?;
+        assert_eq!(registry.incarnation()?, namespace);
+        assert!(registry.is_registered(registration.binding)?);
+        assert!(registry.get(registration.binding)?.paused);
+        assert_eq!(
+            registry.get(registration.binding)?.registration,
+            registration
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_registration_state_is_rejected_before_registry_mutation() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let namespace = Incarnation::from_bytes([7; 16]);
+        let registration = project("invalid-registration-state");
+        let mut registry = ServiceRegistry::open(directory.path(), namespace)?;
+        registry.register(&registration)?;
+        registry.connection.execute(
+            "UPDATE projects SET registered=0 WHERE binding=?1",
+            [registration.binding.to_string()],
+        )?;
+        drop(registry);
+        let path = directory.path().join("service-1.4.sqlite3");
+        let before = fs::read(&path)?;
+        assert!(ServiceRegistry::open(directory.path(), namespace).is_err());
+        assert_eq!(fs::read(&path)?, before);
+        Ok(())
+    }
+    #[test]
+    fn saved_registry_never_initializes_migrates_or_permits_mutation() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        assert!(ServiceRegistry::open_saved(directory.path()).is_err());
+        assert!(fs::read_dir(directory.path())?.next().is_none());
+        let namespace = Incarnation::from_bytes([7; 16]);
+        let registration = project("saved");
+        let mut writer = ServiceRegistry::open(directory.path(), namespace)?;
+        writer.register(&registration)?;
+        drop(writer);
+        let path = directory.path().join("service-1.4.sqlite3");
+        let before = fs::read(&path)?;
+        let mut reader = ServiceRegistry::open_saved(directory.path())?;
+        assert_eq!(reader.list(None, None, 16)?.projects.len(), 1);
+        assert_eq!(reader.saved_request_epoch()?.0, namespace);
+        assert!(reader.pause(registration.binding, true).is_err());
+        drop(reader);
+        assert_eq!(fs::read(&path)?, before);
+        Connection::open(&path)?.pragma_update(None, "user_version", 1)?;
+        let earlier = fs::read(&path)?;
+        assert!(ServiceRegistry::open_saved(directory.path()).is_err());
+        assert_eq!(fs::read(&path)?, earlier);
+        Ok(())
+    }
+    #[test]
+    fn retained_namespace_is_read_only_and_refuses_linked_ownership() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        assert!(retained_namespace(directory.path()).is_err());
+        assert!(fs::read_dir(directory.path())?.next().is_none());
+        let namespace = Incarnation::from_bytes([9; 16]);
+        drop(ServiceRegistry::open(directory.path(), namespace)?);
+        assert_eq!(retained_namespace(directory.path())?, namespace);
+        let receipt = directory.path().join("service-1.4.owner.json");
+        fs::hard_link(&receipt, directory.path().join("linked-owner"))?;
+        assert!(retained_namespace(directory.path()).is_err());
+        assert!(ServiceRegistry::open(directory.path(), namespace).is_err());
+        Ok(())
+    }
+    fn project(name: &str) -> ProjectRegistration {
+        ProjectRegistration::new(
+            format!("/original/{name}"),
+            "/derived/fixture".into(),
+            name.into(),
+        )
+        .unwrap()
+    }
+    #[test]
+    fn interrupted_owned_initialization_recovers_but_unknown_empty_files_are_preserved()
+    -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let root = directory.path().canonicalize()?;
+        let first = Incarnation::from_bytes([1; 16]);
+        owner(&root, false, first)?;
+        fs::write(root.join("service-1.4.sqlite3"), [])?;
+        let ledger = ServiceRegistry::open(&root, Incarnation::from_bytes([2; 16]))?;
+        assert_eq!(ledger.incarnation()?, first);
+        drop(ledger);
+        let foreign = tempfile::tempdir()?;
+        fs::write(foreign.path().join("service-1.4.sqlite3"), [])?;
+        assert!(ServiceRegistry::open(foreign.path(), first).is_err());
+        assert!(!foreign.path().join("service-1.4.owner.json").exists());
+        assert_eq!(
+            fs::metadata(foreign.path().join("service-1.4.sqlite3"))?.len(),
+            0
+        );
+        Ok(())
+    }
+    #[test]
+    fn completed_registry_loss_is_refused_without_recreating_metadata() -> Result<()> {
+        for damage in ["missing", "empty", "requests", "projects"] {
+            let directory = tempfile::tempdir()?;
+            let instance = Incarnation::from_bytes([3; 16]);
+            let mut registry = ServiceRegistry::open(directory.path(), instance)?;
+            registry.register(&project("retained"))?;
+            drop(registry);
+            let path = directory.path().join("service-1.4.sqlite3");
+            match damage {
+                "missing" => fs::remove_file(&path)?,
+                "empty" => fs::write(&path, [])?,
+                "requests" => {
+                    Connection::open(&path)?.execute_batch("DROP TABLE service_requests")?
+                }
+                "projects" => Connection::open(&path)?.execute_batch("DROP TABLE projects")?,
+                _ => unreachable!(),
+            }
+            let before = fs::read(&path).ok();
+            let receipt = fs::read(directory.path().join("service-1.4.owner.json"))?;
+            assert!(
+                ServiceRegistry::open(directory.path(), instance).is_err(),
+                "{damage}"
+            );
+            assert_eq!(fs::read(&path).ok(), before, "{damage}");
+            assert_eq!(
+                fs::read(directory.path().join("service-1.4.owner.json"))?,
+                receipt
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_owner_upgrades_only_with_complete_database_and_preserves_namespace() -> Result<()> {
+        for complete in [true, false] {
+            let directory = tempfile::tempdir()?;
+            let instance = Incarnation::from_bytes([4; 16]);
+            let mut registry = ServiceRegistry::open(directory.path(), instance)?;
+            registry.register(&project("retained"))?;
+            drop(registry);
+            let root = directory.path().canonicalize()?;
+            fs::write(
+                root.join("service-1.4.owner.json"),
+                serde_json::to_vec(&serde_json::json!({
+                    "format":1,"root":root.to_str().unwrap(),"incarnation":instance,
+                }))?,
+            )?;
+            if !complete {
+                fs::remove_file(root.join("service-1.4.sqlite3"))?;
+            }
+            let result = ServiceRegistry::open(&root, Incarnation::from_bytes([5; 16]));
+            if complete {
+                let registry = result?;
+                assert_eq!(registry.incarnation()?, instance);
+                assert_eq!(
+                    registry.get(project("retained").binding)?.registration,
+                    project("retained")
+                );
+                assert!(owner(&root, true, instance)?.ready);
+            } else {
+                assert!(result.is_err());
+                assert!(!root.join("service-1.4.sqlite3").exists());
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn damaged_initialization_phase_does_not_allow_empty_ledger_recovery() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let instance = Incarnation::from_bytes([6; 16]);
+        drop(ServiceRegistry::open(directory.path(), instance)?);
+        let path = directory.path().join("service-1.4.owner.json");
+        let mut receipt: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
+        receipt["ready"] = false.into();
+        fs::write(&path, serde_json::to_vec(&receipt)?)?;
+        fs::remove_file(directory.path().join("service-1.4.sqlite3"))?;
+        assert!(ServiceRegistry::open(directory.path(), instance).is_err());
+        assert!(!directory.path().join("service-1.4.sqlite3").exists());
+        Ok(())
+    }
+    #[test]
+    fn reopen_preserves_registrations_and_exclusive_ownership_advances_fencing() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let first = Incarnation::from_bytes([1; 16]);
+        let registration = project("one");
+        let mut ledger = ServiceRegistry::open(root.path(), first)?;
+        ledger.register(&registration)?;
+        let mut lease = ProjectLease::acquire(root.path(), registration.binding)?;
+        assert_eq!(ledger.admit_worker(&mut lease)?, 1);
+        assert!(ProjectLease::acquire(root.path(), registration.binding).is_err());
+        assert!(ledger.admit_worker(&mut lease).is_err());
+        drop(lease);
+        drop(ledger);
+        let mut ledger = ServiceRegistry::open(root.path(), Incarnation::from_bytes([2; 16]))?;
+        assert_eq!(ledger.incarnation()?, first);
+        assert_eq!(ledger.get(registration.binding)?.fencing_generation, 1);
+        let mut lease = ProjectLease::acquire(root.path(), registration.binding)?;
+        assert_eq!(ledger.admit_worker(&mut lease)?, 2);
+        Ok(())
+    }
+    #[test]
+    fn paged_registry_expires_on_mutation_and_rejects_rebound_or_foreign_state() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let mut ledger = ServiceRegistry::open(root.path(), Incarnation::from_bytes([1; 16]))?;
+        let one = project("one");
+        let two = project("two");
+        ledger.register(&one)?;
+        ledger.register(&two)?;
+        let page = ledger.list(None, None, 1)?;
+        assert!(page.after.is_some());
+        assert_eq!(
+            ledger
+                .list(page.after, Some(page.revision), 1)?
+                .projects
+                .len(),
+            1
+        );
+        ledger.pause(one.binding, true)?;
+        assert!(ledger.list(page.after, Some(page.revision), 1).is_err());
+        let mut rebound = one.clone();
+        rebound.root = "/another/root".into();
+        assert!(ledger.register(&rebound).is_err());
+        assert_eq!(ledger.get(one.binding)?.registration, one);
+        assert!(ledger.get(one.binding)?.paused);
+        Ok(())
+    }
+    #[test]
+    fn active_registration_clearing_tombstone_must_advance_registry_revision() -> Result<()> {
+        let temporary = tempfile::tempdir()?;
+        let base = temporary.path().canonicalize()?;
+        let control = base.join("control");
+        let source = base.join("source");
+        let first_data = base.join("first-data");
+        let second_data = base.join("second-data");
+        for path in [&control, &source, &first_data, &second_data] {
+            fs::create_dir(path)?;
+        }
+        let mut registry = ServiceRegistry::open(&control, Incarnation::from_bytes([61; 16]))?;
+        let first = ProjectRegistration::new(
+            source.to_str().unwrap().into(),
+            first_data.to_str().unwrap().into(),
+            "first".into(),
+        )?;
+        let second = ProjectRegistration::new(
+            source.to_str().unwrap().into(),
+            second_data.to_str().unwrap().into(),
+            "second".into(),
+        )?;
+        registry.register(&first)?;
+        registry.register(&second)?;
+        let epoch = registry.get(second.binding)?.fencing_generation;
+        // A real source disappearance may be processed for one collection before
+        // its sibling; retirement consumes that source child's fenced observation.
+        fs::remove_dir(&source)?;
+        assert!(registry.retire_missing_source(second.binding, epoch, 0)?);
+        assert!(registry.purge_removed_project_turn(second.binding)?);
+        assert!(registry.source_was_removed(&first.root)?);
+        let before = registry.list(None, None, 1)?.revision;
+        fs::create_dir(&source)?;
+        registry.register(&first)?;
+        assert!(!registry.source_was_removed(&first.root)?);
+        let after = registry.list(None, None, 1)?.revision;
+        assert_eq!(
+            after,
+            before + 1,
+            "removing root tombstone changed negative scope without exactly one revision"
+        );
+        registry.register(&first)?;
+        assert_eq!(
+            registry.list(None, None, 1)?.revision,
+            after,
+            "true idempotent registration must remain a no-op"
+        );
+        Ok(())
+    }
+}

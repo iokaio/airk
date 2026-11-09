@@ -653,5 +653,4 @@ fn compose_inner(
 }
 
 #[cfg(test)]
-#[path = "combined_reads_tests.rs"]
 mod tests;

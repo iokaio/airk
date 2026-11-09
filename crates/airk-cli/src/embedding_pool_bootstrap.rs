@@ -290,5 +290,4 @@ fn accept_windows() -> Result<GuardedBootstrap> {
 }
 
 #[cfg(test)]
-#[path = "embedding_pool_bootstrap_tests.rs"]
 mod tests;

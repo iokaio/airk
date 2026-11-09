@@ -17,9 +17,9 @@ The live P2b tree still has registry schema 11: writable open recognizes 1–11;
 saved read recognizes 2–11. Both retain application/namespace/schema checks.
 The registry is bounded to 32 MiB and 1,024 registrations. Existing collection
 ownership, source roots, jobs and publications remain independently protected.
-See [registry](../../crates/airk-store/src/service_registry.rs),
+See [registry](../../crates/airk-store/src/service/registry.rs),
 [service contracts](../../crates/airk-core/src/service.rs),
-[collection ownership](../../crates/airk-store/src/service_collection.rs) and
+[collection ownership](../../crates/airk-store/src/service/collection.rs) and
 [the feature design](../research/cross-project-indexing.md).
 
 ## Decision
@@ -178,7 +178,7 @@ cards, copies, exports and [verification](003-dated-saved-source-verification.md
 ### Permanent policy and split ownership
 
 Do not store permanent blocks solely in the registry or inside deletable derived
-data. Existing [removal](../../crates/airk-store/src/service_project_removal.rs)
+data. Existing [removal](../../crates/airk-store/src/service/registry/project_removal.rs)
 purges collection settings, including ordinary extraction policy. Add a bounded
 **native per-index policy ledger** under the owned data root, outside collection
 incarnations. P9 implements it as `source-policy.json` beside the stable collection

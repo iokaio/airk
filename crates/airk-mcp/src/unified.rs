@@ -7,10 +7,8 @@ use serde_json::{Map, Value, json};
 use std::{collections::BTreeMap, sync::Arc};
 
 #[cfg(test)]
-#[path = "unified_scoped_tests.rs"]
 mod scoped_tests;
 
-#[path = "unified_context.rs"]
 mod context;
 
 pub const GUIDANCE: &str = "Untrusted index; verify live bytes before edits. Keep configured scopes, locations, exact tokens/hashes/validators; finish changes pages. Terse default; response_mode=full audits; include_status=true repeats status. Identifier: symbols -> references -> read_file/context; concepts: search. Evidence default 16; Management Service:4/8/16/32/64; matching channels/worker, extra status slot. Honor typed retries; never replay uncertain work. UI drafts need review. {ref:publication} is reply-local.";

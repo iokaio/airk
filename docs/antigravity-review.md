@@ -163,7 +163,7 @@ SQLite under Windows frequently encounters URI parser quirks when dealing with e
 While the codebase is exceptionally robust, the following minor areas are surfaced for consideration:
 
 ### 1. Defensive Path Unwraps in Maintenance Routines
-* **Location**: [`maintenance.rs`](../crates/airk-store/src/maintenance.rs#L508-L511), [`maintenance_legacy.rs`](../crates/airk-store/src/maintenance_legacy.rs#L204).
+* **Location**: [`maintenance.rs`](../crates/airk-store/src/maintenance.rs#L508-L511), [`maintenance_legacy.rs`](../crates/airk-store/src/maintenance/legacy.rs#L204).
 * **Observation**: Several helper routines call `.parent().unwrap()` or `path.file_name().unwrap().to_str().unwrap()`.
 * **Detail**: Although paths processed in these functions are constructed from valid internal generation directories, calling `.to_str().unwrap()` on unknown disk entries could theoretically panic if a legacy directory contains non-UTF-8 characters.
 * **Recommendation**: Replace `.to_str().unwrap()` with `.to_string_lossy()` or return `.context("invalid path entry")?` to preserve the zero-panic guarantee on disk anomalies.

@@ -530,7 +530,7 @@ unbounded growth. Saved Project defaults reference member IDs, never result cach
 
 ### Proposed schema boundary
 
-The inspected [registry owner](../../crates/airk-store/src/service_registry.rs)
+The inspected [registry owner](../../crates/airk-store/src/service/registry.rs)
 accepts SQLite `user_version` 1 through 11 on the writable migration path and
 2 through 11 on the read-only saved open path. Both check application/namespace
 ownership as applicable; do not generalize writable acceptance to saved reads.

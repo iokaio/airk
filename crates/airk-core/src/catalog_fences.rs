@@ -593,5 +593,4 @@ pub enum FencePreparation {
 }
 
 #[cfg(test)]
-#[path = "catalog_fences_provider_tests.rs"]
 mod provider_tests;

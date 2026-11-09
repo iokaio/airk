@@ -82,5 +82,4 @@ pub(crate) fn supported(version: &str) -> bool {
 }
 
 #[cfg(test)]
-#[path = "read_attempt_tests.rs"]
 mod tests;

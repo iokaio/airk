@@ -1237,7 +1237,7 @@ associated tests were read, not executed as a new runtime qualification:
   paths at 25. These extension helpers are useful precedent, but need native
   streaming, race-aware capture and canonical transport parity before becoming
   the proposed shared guarantee.
-- [Service freshness](../../crates/airk-store/src/service_freshness.rs) deliberately
+- [Service freshness](../../crates/airk-store/src/service/registry/freshness.rs) deliberately
   emits `live_source_verified: false`. A successful indexing attempt is not a
   live-source verification receipt. Preserve that collection-wide meaning;
   verifying a result subset must not set a global all-files boolean to true.

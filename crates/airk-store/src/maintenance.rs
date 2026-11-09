@@ -18,7 +18,6 @@ use std::{
 const MAX_INTENTS: usize = 256;
 const MAX_RECORD_BYTES: usize = 16 * 1024;
 const MAX_SCAN_ENTRIES: usize = 1_000_000;
-#[path = "maintenance_legacy.rs"]
 mod legacy;
 pub use legacy::LegacyRevision;
 

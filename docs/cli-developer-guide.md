@@ -642,7 +642,7 @@ Usage: airk resume [OPTIONS]
 Usage: airk runtime [OPTIONS] <COMMAND>
 ```
 
-**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install_commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install_tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime).
+**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install/commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install/tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime).
 
 ## airk runtime abandon-lifecycle
 
@@ -654,7 +654,7 @@ Usage: airk runtime [OPTIONS] <COMMAND>
 Usage: airk runtime abandon-lifecycle [OPTIONS] --install-dir <INSTALL_DIR> --request-id <REQUEST_ID>
 ```
 
-**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install_commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install_tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-abandon-lifecycle).
+**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install/commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install/tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-abandon-lifecycle).
 
 ## airk runtime abort-activation
 
@@ -666,7 +666,7 @@ Usage: airk runtime abandon-lifecycle [OPTIONS] --install-dir <INSTALL_DIR> --re
 Usage: airk runtime abort-activation [OPTIONS] --install-dir <INSTALL_DIR>
 ```
 
-**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install_commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install_tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-abort-activation).
+**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install/commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install/tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-abort-activation).
 
 ## airk runtime abort-launcher-repair
 
@@ -678,7 +678,7 @@ Usage: airk runtime abort-activation [OPTIONS] --install-dir <INSTALL_DIR>
 Usage: airk runtime abort-launcher-repair [OPTIONS] --install-dir <INSTALL_DIR>
 ```
 
-**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install_commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install_tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-abort-launcher-repair).
+**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install/commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install/tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-abort-launcher-repair).
 
 ## airk runtime abort-layout
 
@@ -690,7 +690,7 @@ Usage: airk runtime abort-launcher-repair [OPTIONS] --install-dir <INSTALL_DIR>
 Usage: airk runtime abort-layout [OPTIONS] --install-dir <INSTALL_DIR>
 ```
 
-**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install_commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install_tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-abort-layout).
+**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install/commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install/tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-abort-layout).
 
 ## airk runtime abort-stage
 
@@ -702,7 +702,7 @@ Usage: airk runtime abort-layout [OPTIONS] --install-dir <INSTALL_DIR>
 Usage: airk runtime abort-stage [OPTIONS] --install-dir <INSTALL_DIR> --runtime-sha256 <RUNTIME_SHA256>
 ```
 
-**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install_commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install_tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-abort-stage).
+**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install/commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install/tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-abort-stage).
 
 ## airk runtime activate
 
@@ -714,7 +714,7 @@ Usage: airk runtime abort-stage [OPTIONS] --install-dir <INSTALL_DIR> --runtime-
 Usage: airk runtime activate [OPTIONS] --install-dir <INSTALL_DIR> --runtime-sha256 <RUNTIME_SHA256>
 ```
 
-**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install_commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install_tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-activate).
+**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install/commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install/tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-activate).
 
 ## airk runtime container-host
 
@@ -726,7 +726,7 @@ Usage: airk runtime activate [OPTIONS] --install-dir <INSTALL_DIR> --runtime-sha
 Usage: airk runtime container-host [OPTIONS] --source <SOURCE> --approved-sha256 <APPROVED_SHA256>
 ```
 
-**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install_commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install_tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-container-host).
+**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install/commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install/tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-container-host).
 
 ## airk runtime diagnose
 
@@ -738,7 +738,7 @@ Usage: airk runtime container-host [OPTIONS] --source <SOURCE> --approved-sha256
 Usage: airk runtime diagnose [OPTIONS] --install-dir <INSTALL_DIR>
 ```
 
-**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install_commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install_tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-diagnose).
+**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install/commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install/tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-diagnose).
 
 ## airk runtime ensure
 
@@ -750,7 +750,7 @@ Usage: airk runtime diagnose [OPTIONS] --install-dir <INSTALL_DIR>
 Usage: airk runtime ensure [OPTIONS] --install-dir <INSTALL_DIR>
 ```
 
-**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install_commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install_tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-ensure).
+**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install/commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install/tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-ensure).
 
 ## airk runtime foreground
 
@@ -762,7 +762,7 @@ Usage: airk runtime ensure [OPTIONS] --install-dir <INSTALL_DIR>
 Usage: airk runtime foreground [OPTIONS] --install-dir <INSTALL_DIR>
 ```
 
-**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install_commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install_tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-foreground).
+**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install/commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install/tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-foreground).
 
 ## airk runtime inspect
 
@@ -774,7 +774,7 @@ Usage: airk runtime foreground [OPTIONS] --install-dir <INSTALL_DIR>
 Usage: airk runtime inspect [OPTIONS] --install-dir <INSTALL_DIR>
 ```
 
-**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install_commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install_tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-inspect).
+**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install/commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install/tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-inspect).
 
 ## airk runtime inspect-candidate
 
@@ -786,7 +786,7 @@ Usage: airk runtime inspect [OPTIONS] --install-dir <INSTALL_DIR>
 Usage: airk runtime inspect-candidate [OPTIONS] --install-dir <INSTALL_DIR> --runtime-sha256 <RUNTIME_SHA256>
 ```
 
-**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install_commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install_tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-inspect-candidate).
+**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install/commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install/tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-inspect-candidate).
 
 ## airk runtime inventory
 
@@ -798,7 +798,7 @@ Usage: airk runtime inspect-candidate [OPTIONS] --install-dir <INSTALL_DIR> --ru
 Usage: airk runtime inventory [OPTIONS] --install-dir <INSTALL_DIR>
 ```
 
-**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install_commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install_tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-inventory).
+**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install/commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install/tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-inventory).
 
 ## airk runtime launch
 
@@ -810,7 +810,7 @@ Usage: airk runtime inventory [OPTIONS] --install-dir <INSTALL_DIR>
 Usage: airk runtime launch [OPTIONS] --install-dir <INSTALL_DIR> -- <ARGS>...
 ```
 
-**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install_commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install_tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-launch).
+**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install/commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install/tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-launch).
 
 ## airk runtime lifecycle
 
@@ -822,7 +822,7 @@ Usage: airk runtime launch [OPTIONS] --install-dir <INSTALL_DIR> -- <ARGS>...
 Usage: airk runtime lifecycle [OPTIONS] --install-dir <INSTALL_DIR>
 ```
 
-**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install_commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install_tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-lifecycle).
+**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install/commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install/tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-lifecycle).
 
 ## airk runtime location
 
@@ -834,7 +834,7 @@ Usage: airk runtime lifecycle [OPTIONS] --install-dir <INSTALL_DIR>
 Usage: airk runtime location [OPTIONS]
 ```
 
-**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install_commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install_tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-location).
+**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install/commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install/tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-location).
 
 ## airk runtime login
 
@@ -846,7 +846,7 @@ Usage: airk runtime location [OPTIONS]
 Usage: airk runtime login [OPTIONS] --install-dir <INSTALL_DIR> <COMMAND>
 ```
 
-**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install_commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install_tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-login).
+**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install/commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install/tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-login).
 
 ## airk runtime login install
 
@@ -858,7 +858,7 @@ Usage: airk runtime login [OPTIONS] --install-dir <INSTALL_DIR> <COMMAND>
 Usage: airk runtime login --install-dir <INSTALL_DIR> install [OPTIONS]
 ```
 
-**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install_commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install_tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-login-install).
+**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install/commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install/tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-login-install).
 
 ## airk runtime login plan
 
@@ -870,7 +870,7 @@ Usage: airk runtime login --install-dir <INSTALL_DIR> install [OPTIONS]
 Usage: airk runtime login --install-dir <INSTALL_DIR> plan [OPTIONS]
 ```
 
-**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install_commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install_tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-login-plan).
+**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install/commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install/tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-login-plan).
 
 ## airk runtime login start
 
@@ -882,7 +882,7 @@ Usage: airk runtime login --install-dir <INSTALL_DIR> plan [OPTIONS]
 Usage: airk runtime login --install-dir <INSTALL_DIR> start [OPTIONS]
 ```
 
-**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install_commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install_tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-login-start).
+**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install/commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install/tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-login-start).
 
 ## airk runtime login status
 
@@ -894,7 +894,7 @@ Usage: airk runtime login --install-dir <INSTALL_DIR> start [OPTIONS]
 Usage: airk runtime login --install-dir <INSTALL_DIR> status [OPTIONS]
 ```
 
-**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install_commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install_tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-login-status).
+**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install/commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install/tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-login-status).
 
 ## airk runtime login stop
 
@@ -906,7 +906,7 @@ Usage: airk runtime login --install-dir <INSTALL_DIR> status [OPTIONS]
 Usage: airk runtime login --install-dir <INSTALL_DIR> stop [OPTIONS]
 ```
 
-**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install_commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install_tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-login-stop).
+**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install/commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install/tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-login-stop).
 
 ## airk runtime login uninstall
 
@@ -918,7 +918,7 @@ Usage: airk runtime login --install-dir <INSTALL_DIR> stop [OPTIONS]
 Usage: airk runtime login --install-dir <INSTALL_DIR> uninstall [OPTIONS]
 ```
 
-**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install_commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install_tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-login-uninstall).
+**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install/commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install/tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-login-uninstall).
 
 ## airk runtime managed
 
@@ -930,7 +930,7 @@ Usage: airk runtime login --install-dir <INSTALL_DIR> uninstall [OPTIONS]
 Usage: airk runtime managed [OPTIONS] --source <SOURCE> --install-dir <INSTALL_DIR> --approved-sha256 <APPROVED_SHA256> --verification-basis <VERIFICATION_BASIS>
 ```
 
-**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install_commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install_tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-managed).
+**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install/commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install/tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-managed).
 
 ## airk runtime prepare-client
 
@@ -942,7 +942,7 @@ Usage: airk runtime managed [OPTIONS] --source <SOURCE> --install-dir <INSTALL_D
 Usage: airk runtime prepare-client [OPTIONS] --install-dir <INSTALL_DIR>
 ```
 
-**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install_commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install_tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-prepare-client).
+**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install/commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install/tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-prepare-client).
 
 ## airk runtime purge
 
@@ -954,7 +954,7 @@ Usage: airk runtime prepare-client [OPTIONS] --install-dir <INSTALL_DIR>
 Usage: airk runtime purge [OPTIONS] --install-dir <INSTALL_DIR> --select <SELECT>
 ```
 
-**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install_commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install_tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-purge).
+**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install/commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install/tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-purge).
 
 ## airk runtime remove
 
@@ -966,7 +966,7 @@ Usage: airk runtime purge [OPTIONS] --install-dir <INSTALL_DIR> --select <SELECT
 Usage: airk runtime remove [OPTIONS] --install-dir <INSTALL_DIR> --runtime-sha256 <RUNTIME_SHA256>
 ```
 
-**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install_commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install_tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-remove).
+**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install/commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install/tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-remove).
 
 ## airk runtime repair-launcher
 
@@ -978,7 +978,7 @@ Usage: airk runtime remove [OPTIONS] --install-dir <INSTALL_DIR> --runtime-sha25
 Usage: airk runtime repair-launcher [OPTIONS] --install-dir <INSTALL_DIR>
 ```
 
-**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install_commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install_tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-repair-launcher).
+**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install/commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install/tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-repair-launcher).
 
 ## airk runtime repair-payload
 
@@ -990,7 +990,7 @@ Usage: airk runtime repair-launcher [OPTIONS] --install-dir <INSTALL_DIR>
 Usage: airk runtime repair-payload [OPTIONS] --install-dir <INSTALL_DIR> --source <SOURCE> --approved-sha256 <APPROVED_SHA256>
 ```
 
-**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install_commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install_tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-repair-payload).
+**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install/commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install/tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-repair-payload).
 
 ## airk runtime reset-startup
 
@@ -1002,7 +1002,7 @@ Usage: airk runtime repair-payload [OPTIONS] --install-dir <INSTALL_DIR> --sourc
 Usage: airk runtime reset-startup [OPTIONS] --install-dir <INSTALL_DIR>
 ```
 
-**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install_commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install_tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-reset-startup).
+**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install/commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install/tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-reset-startup).
 
 ## airk runtime retire-previous
 
@@ -1014,7 +1014,7 @@ Usage: airk runtime reset-startup [OPTIONS] --install-dir <INSTALL_DIR>
 Usage: airk runtime retire-previous [OPTIONS] --install-dir <INSTALL_DIR> --expected-active <EXPECTED_ACTIVE>
 ```
 
-**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install_commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install_tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-retire-previous).
+**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install/commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install/tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-retire-previous).
 
 ## airk runtime rollback
 
@@ -1026,7 +1026,7 @@ Usage: airk runtime retire-previous [OPTIONS] --install-dir <INSTALL_DIR> --expe
 Usage: airk runtime rollback [OPTIONS] --install-dir <INSTALL_DIR>
 ```
 
-**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install_commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install_tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-rollback).
+**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install/commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install/tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-rollback).
 
 ## airk runtime self-test
 
@@ -1038,7 +1038,7 @@ Usage: airk runtime rollback [OPTIONS] --install-dir <INSTALL_DIR>
 Usage: airk runtime self-test [OPTIONS]
 ```
 
-**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install_commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install_tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-self-test).
+**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install/commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install/tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-self-test).
 
 ## airk runtime snapshot
 
@@ -1050,7 +1050,7 @@ Usage: airk runtime self-test [OPTIONS]
 Usage: airk runtime snapshot [OPTIONS] --install-dir <INSTALL_DIR>
 ```
 
-**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install_commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install_tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-snapshot).
+**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install/commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install/tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-snapshot).
 
 ## airk runtime source-scope
 
@@ -1062,7 +1062,7 @@ Usage: airk runtime snapshot [OPTIONS] --install-dir <INSTALL_DIR>
 Usage: airk runtime source-scope [OPTIONS] --install-dir <INSTALL_DIR> --expected-control <EXPECTED_CONTROL> --expected-runtime <EXPECTED_RUNTIME> --source-root <SOURCE_ROOT>
 ```
 
-**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install_commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install_tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-source-scope).
+**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install/commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install/tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-source-scope).
 
 ## airk runtime stage
 
@@ -1074,7 +1074,7 @@ Usage: airk runtime source-scope [OPTIONS] --install-dir <INSTALL_DIR> --expecte
 Usage: airk runtime stage [OPTIONS] --source <SOURCE> --install-dir <INSTALL_DIR> --approved-sha256 <APPROVED_SHA256> --verification-basis <VERIFICATION_BASIS>
 ```
 
-**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install_commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install_tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-stage).
+**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install/commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install/tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-stage).
 
 ## airk runtime start
 
@@ -1086,7 +1086,7 @@ Usage: airk runtime stage [OPTIONS] --source <SOURCE> --install-dir <INSTALL_DIR
 Usage: airk runtime start [OPTIONS] --install-dir <INSTALL_DIR>
 ```
 
-**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install_commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install_tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-start).
+**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install/commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install/tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-start).
 
 ## airk runtime uninstall
 
@@ -1098,7 +1098,7 @@ Usage: airk runtime start [OPTIONS] --install-dir <INSTALL_DIR>
 Usage: airk runtime uninstall [OPTIONS] --install-dir <INSTALL_DIR>
 ```
 
-**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install_commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install_tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-uninstall).
+**Implementation:** [runtime_install_commands.rs](../crates/airk-cli/src/runtime_install/commands.rs). **Regression/contract evidence:** [runtime_install_tests.rs](../crates/airk-cli/src/runtime_install/tests.rs). Full options: [parser reference](cli-reference.md#airk-runtime-uninstall).
 
 ## airk search
 

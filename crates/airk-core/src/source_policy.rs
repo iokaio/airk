@@ -14,16 +14,13 @@ use std::collections::BTreeSet;
 pub const POLICY_SCHEMA: &str = "airk.source-policy/1";
 pub const MAX_POLICY_BYTES: usize = 1024 * 1024;
 
-#[path = "source_policy_mutation.rs"]
 mod mutation;
 pub use mutation::{PolicyChange, PolicyChangePreview};
 
-#[path = "source_policy_split.rs"]
 mod split;
 pub use split::{SplitDestination, SplitPolicyPlan};
 
 #[cfg(test)]
-#[path = "source_policy_tests.rs"]
 mod tests;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

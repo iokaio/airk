@@ -17,7 +17,6 @@ use std::{
 
 const MAX_CONFIG: u64 = 128 * 1024;
 #[cfg(test)]
-#[path = "service_manager_direct_tests.rs"]
 mod direct_tests;
 #[cfg(target_os = "linux")]
 #[path = "service_manager_linux.rs"]

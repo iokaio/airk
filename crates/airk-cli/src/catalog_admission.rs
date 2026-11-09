@@ -2239,5 +2239,4 @@ impl NativeCatalogAdmission {
 }
 
 #[cfg(test)]
-#[path = "catalog_admission_tests.rs"]
 mod tests;

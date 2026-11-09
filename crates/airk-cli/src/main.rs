@@ -1210,7 +1210,6 @@ fn bounded(input: impl Read, limit: u64) -> Result<Vec<u8>> {
 const CLI_STACK_BYTES: usize = 8 << 20;
 
 #[cfg(test)]
-#[path = "cli_help_stack_tests.rs"]
 mod cli_help_stack_tests;
 
 #[cfg(test)]
@@ -2796,11 +2795,9 @@ fn http_configuration(
     ))
 }
 #[cfg(test)]
-#[path = "main_http_setup_tests.rs"]
 mod http_setup_tests;
 
 #[cfg(test)]
-#[path = "main_standalone_setup_tests.rs"]
 mod standalone_setup_tests;
 
 #[cfg(test)]

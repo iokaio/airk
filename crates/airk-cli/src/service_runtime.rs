@@ -15,9 +15,7 @@ use tokio::{
     sync::{Notify, Semaphore},
     task::JoinSet,
 };
-#[path = "service_runtime_checkpoint.rs"]
 pub(crate) mod checkpoint;
-#[path = "service_runtime_http.rs"]
 mod http;
 
 fn connection_failure_code<'a>(error: &anyhow::Error, fallback: &'a str) -> &'a str {
@@ -855,7 +853,6 @@ async fn request_once(
 }
 
 #[cfg(test)]
-#[path = "service_runtime_registry_retry_tests.rs"]
 mod registry_retry_tests;
 
 #[cfg(test)]

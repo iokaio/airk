@@ -99,11 +99,8 @@ use tokio::{
     task::JoinSet,
 };
 
-#[path = "project_worker_admin.rs"]
 mod admin;
-#[path = "project_worker_admission.rs"]
 mod admission;
-#[path = "project_worker_scopes.rs"]
 mod scopes;
 
 struct State {
@@ -1817,10 +1814,8 @@ pub async fn run() -> Result<()> {
 }
 
 #[cfg(test)]
-#[path = "project_worker_response_tests.rs"]
 mod response_tests;
 
-#[path = "project_worker_source_configuration.rs"]
 mod source_configuration;
 
 #[cfg(test)]

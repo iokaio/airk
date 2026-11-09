@@ -23,7 +23,6 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-#[path = "combined_frontend_cursor.rs"]
 mod cursor;
 
 // A canonical body is bounded separately from its public MCP presentation.
@@ -1451,7 +1450,6 @@ impl Backend {
 }
 
 #[cfg(test)]
-#[path = "combined_frontend_tests.rs"]
 mod tests;
 
 #[derive(Serialize, Deserialize)]

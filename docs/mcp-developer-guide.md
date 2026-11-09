@@ -152,7 +152,7 @@ Deadline cancellation of setup admission retains its typed expiry through the sh
 }
 ```
 
-**Implementation:** [status_observation.rs](../crates/airk-cli/src/status_observation.rs). **Contract/regression evidence:** [unified.rs](../crates/airk-mcp/src/unified.rs).
+**Implementation:** [status_observation.rs](../crates/airk-cli/src/project_client/status_observation.rs). **Contract/regression evidence:** [unified.rs](../crates/airk-mcp/src/unified.rs).
 
 ## diagnostics
 

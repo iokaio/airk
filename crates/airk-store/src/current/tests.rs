@@ -19,15 +19,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[path = "grants_tests.rs"]
 mod grants_tests;
-#[path = "legacy_adoption_archive_tests.rs"]
 mod legacy_adoption_archive_tests;
-#[path = "postings_tests.rs"]
 mod postings_tests;
-#[path = "recent_tests.rs"]
 mod recent_tests;
-#[path = "service_publication_tests.rs"]
 mod service_publication_tests;
 
 const CAPACITY: u64 = 8 * 1024 * 1024;
@@ -2540,8 +2535,6 @@ fn killed_capacity_growth_keeps_old_or_new_bound_and_releases_only_orphans() -> 
     Ok(())
 }
 
-#[path = "native_projection_tests.rs"]
 mod native_projection_tests;
 
-#[path = "query_projection_tests.rs"]
 mod query_projection_tests;

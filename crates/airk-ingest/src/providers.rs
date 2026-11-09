@@ -11,7 +11,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[path = "providers_lsp.rs"]
 mod lsp;
 pub use lsp::run_lsp;
 

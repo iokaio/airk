@@ -1017,7 +1017,7 @@ const ELSEWHERE: &[(&str, &str, &str)] = &[
     ),
     (
         "runtime source-scope",
-        "crates/airk-cli/src/runtime_install_commands.rs",
+        "crates/airk-cli/src/runtime_install/commands.rs",
         "source_scope_authenticates_digest_control_and_missing_state_without_creation",
     ),
     (
@@ -1067,7 +1067,7 @@ const ELSEWHERE: &[(&str, &str, &str)] = &[
     ),
     (
         "host",
-        "crates/airk-cli/src/runtime_install_commands.rs",
+        "crates/airk-cli/src/runtime_install/commands.rs",
         "Host",
     ),
     (
@@ -1136,7 +1136,7 @@ const ELSEWHERE: &[(&str, &str, &str)] = &[
     ),
     (
         "service legacy forget",
-        "crates/airk-cli/src/legacy_startup_tests.rs",
+        "crates/airk-cli/src/legacy_startup/tests.rs",
         ".forget(approval)",
     ),
     (
@@ -1176,7 +1176,7 @@ const ELSEWHERE: &[(&str, &str, &str)] = &[
     ),
     (
         "runtime abandon-lifecycle",
-        "crates/airk-cli/src/runtime_lifecycle.rs",
+        "crates/airk-cli/src/runtime_install/lifecycle.rs",
         "abandon",
     ),
     (
@@ -1186,17 +1186,17 @@ const ELSEWHERE: &[(&str, &str, &str)] = &[
     ),
     (
         "runtime abort-launcher-repair",
-        "crates/airk-cli/src/runtime_launcher_repair.rs",
+        "crates/airk-cli/src/runtime_install/launcher_repair.rs",
         "abort",
     ),
     (
         "runtime abort-layout",
-        "crates/airk-cli/src/runtime_layout.rs",
+        "crates/airk-cli/src/runtime_install/layout.rs",
         "abort",
     ),
     (
         "runtime abort-stage",
-        "crates/airk-cli/src/runtime_staging.rs",
+        "crates/airk-cli/src/runtime_install/staging.rs",
         "abort",
     ),
     (
@@ -1221,7 +1221,7 @@ const ELSEWHERE: &[(&str, &str, &str)] = &[
     ),
     (
         "runtime foreground",
-        "crates/airk-cli/src/runtime_install_commands.rs",
+        "crates/airk-cli/src/runtime_install/commands.rs",
         "Foreground",
     ),
     (
@@ -1236,7 +1236,7 @@ const ELSEWHERE: &[(&str, &str, &str)] = &[
     ),
     (
         "runtime inventory",
-        "crates/airk-cli/src/runtime_inventory.rs",
+        "crates/airk-cli/src/runtime_install/inventory.rs",
         "fn measurement_is_bounded",
     ),
     (
@@ -1271,7 +1271,7 @@ const ELSEWHERE: &[(&str, &str, &str)] = &[
     ),
     (
         "runtime lifecycle",
-        "crates/airk-cli/src/runtime_managed_tests.rs",
+        "crates/airk-cli/src/runtime_install/managed/tests.rs",
         "lifecycle",
     ),
     (
@@ -1311,7 +1311,7 @@ const ELSEWHERE: &[(&str, &str, &str)] = &[
     ),
     (
         "runtime managed",
-        "crates/airk-cli/src/runtime_managed_tests.rs",
+        "crates/airk-cli/src/runtime_install/managed/tests.rs",
         "managed",
     ),
     (
@@ -1321,7 +1321,7 @@ const ELSEWHERE: &[(&str, &str, &str)] = &[
     ),
     (
         "runtime purge",
-        "crates/airk-cli/src/runtime_inventory.rs",
+        "crates/airk-cli/src/runtime_install/inventory.rs",
         "fn purge_contents_keeps",
     ),
     (
@@ -1336,7 +1336,7 @@ const ELSEWHERE: &[(&str, &str, &str)] = &[
     ),
     (
         "runtime repair-payload",
-        "crates/airk-cli/src/runtime_payload_repair.rs",
+        "crates/airk-cli/src/runtime_install/payload_repair.rs",
         "fn ",
     ),
     (
@@ -1351,7 +1351,7 @@ const ELSEWHERE: &[(&str, &str, &str)] = &[
     ),
     (
         "runtime rollback",
-        "crates/airk-cli/src/runtime_activation.rs",
+        "crates/airk-cli/src/runtime_install/activation.rs",
         "rollback",
     ),
     (
@@ -1366,7 +1366,7 @@ const ELSEWHERE: &[(&str, &str, &str)] = &[
     ),
     (
         "runtime stage",
-        "crates/airk-cli/src/runtime_staging_tests.rs",
+        "crates/airk-cli/src/runtime_install/staging/tests.rs",
         "stage",
     ),
     ("runtime start", "scripts/check-service-install.py", "start"),

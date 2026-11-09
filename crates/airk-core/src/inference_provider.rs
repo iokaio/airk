@@ -218,5 +218,4 @@ impl CompletionObservation {
 }
 
 #[cfg(test)]
-#[path = "inference_provider_tests.rs"]
 mod tests;

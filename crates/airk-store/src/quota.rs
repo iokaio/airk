@@ -2146,5 +2146,4 @@ mod tests {
 }
 
 #[cfg(test)]
-#[path = "quota/namespaces_tests.rs"]
 mod namespaces_tests;

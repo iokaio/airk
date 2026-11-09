@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 #[cfg(test)]
-#[path = "response_identity_tests.rs"]
 mod identity_tests;
 use std::sync::Mutex;
 

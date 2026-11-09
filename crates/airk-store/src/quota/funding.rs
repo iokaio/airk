@@ -17,7 +17,6 @@ const MAX_OPERATIONS: usize = 64;
 const MAX_CHILDREN: usize = 64;
 
 #[cfg(test)]
-#[path = "funding_tests.rs"]
 mod tests;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -2470,7 +2469,6 @@ impl Quota {
     }
 }
 
-#[path = "funding_retired.rs"]
 mod retired;
 pub(super) use retired::RetiredCurrentInventory;
 pub(super) use retired::clean_break_inventory;

@@ -11,17 +11,13 @@ use rmcp::{
 };
 use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 
-#[path = "remote_http.rs"]
 pub mod http;
 
 #[cfg(test)]
-#[path = "remote_combined_tests.rs"]
 mod combined_tests;
 #[cfg(test)]
-#[path = "remote_envelope_tests.rs"]
 mod envelope_tests;
 #[cfg(test)]
-#[path = "remote_scoped_tests.rs"]
 mod scoped_tests;
 
 /// Complete public tool envelopes include both text and structured forms.

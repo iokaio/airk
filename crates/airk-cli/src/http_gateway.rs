@@ -38,7 +38,6 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 #[cfg(test)]
-#[path = "http_gateway_tests.rs"]
 pub(crate) mod tests;
 
 /// Revalidates the exact live native selection on every request. Returned

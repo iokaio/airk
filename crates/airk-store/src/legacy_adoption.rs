@@ -23,11 +23,8 @@ use std::{
 };
 const PARTS: &str = ".airk-legacy-copy-parts";
 
-#[path = "legacy_adoption_current.rs"]
 mod current_archive;
-#[path = "legacy_adoption_artifact.rs"]
 mod historical_artifact;
-#[path = "legacy_adoption_catalog.rs"]
 mod historical_catalog;
 pub use current_archive::OriginalCurrentPublication;
 pub use historical_catalog::OriginalCatalogPublication;
@@ -687,10 +684,8 @@ impl VerifiedLegacyArchive {
 }
 
 #[cfg(test)]
-#[path = "legacy_adoption_tests.rs"]
 mod tests;
 
-#[path = "legacy_adoption_publication.rs"]
 pub mod publication;
 pub use publication::{
     AdoptionResource, LegacyCompatibility, VerifiedLegacyPublication, verify_publication,

@@ -29,62 +29,38 @@ fn exists(path: &Path) -> Result<bool> {
     }
 }
 
-#[path = "runtime_activation.rs"]
 mod activation;
 pub(crate) use activation::verify_admission_release;
-#[path = "runtime_setup.rs"]
 mod setup;
 pub(crate) use setup::{SetupAdmission, SetupCancellation, installed_control_cooperative};
-#[path = "runtime_clean_break_background.rs"]
 pub(crate) mod clean_break_background;
-#[path = "runtime_clean_break_cleanup.rs"]
 mod clean_break_cleanup;
-#[path = "runtime_data_migration.rs"]
 mod data_migration;
-#[path = "runtime_http_cleanup.rs"]
 mod http_cleanup;
-#[path = "runtime_inventory.rs"]
 mod inventory;
-#[path = "runtime_launcher_repair.rs"]
 mod launcher_repair;
-#[path = "runtime_layout.rs"]
 mod layout;
-#[path = "runtime_managed.rs"]
 mod managed;
-#[path = "runtime_state_contract.rs"]
 mod state_contract;
 pub(crate) use state_contract::InitializedProbe;
-#[path = "runtime_upgrade_stop.rs"]
 mod upgrade_stop;
 pub use managed::ManagedLifecycle;
-#[path = "runtime_http_rotation.rs"]
 mod http_rotation;
-#[path = "runtime_issuer_lifecycle.rs"]
 mod issuer_lifecycle;
-#[path = "runtime_legacy_cache_retirement.rs"]
 mod legacy_caches;
-#[path = "runtime_legacy_index_adoption.rs"]
 mod legacy_index_adoption;
-#[path = "runtime_legacy_launchers.rs"]
 mod legacy_launchers;
-#[path = "runtime_legacy_maintenance.rs"]
 mod legacy_maintenance;
-#[path = "runtime_legacy_retirement.rs"]
 mod legacy_retirement;
-#[path = "runtime_lifecycle.rs"]
 mod lifecycle;
 #[cfg(any(target_os = "macos", test))]
 #[path = "runtime_macos_login.rs"]
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) mod macos_login;
-#[path = "runtime_payload_repair.rs"]
 mod payload_repair;
-#[path = "runtime_retirement.rs"]
 mod retirement;
 pub(crate) use retirement::uninstall as uninstall_receipt;
-#[path = "runtime_snapshot.rs"]
 mod snapshot;
-#[path = "runtime_staging.rs"]
 mod staging;
 
 const MAX_MANIFEST: u64 = 512 * 1024;
@@ -2535,22 +2511,16 @@ async fn activate_with_expected(
     activation::begin(root, identity).await
 }
 
-#[path = "runtime_install_commands.rs"]
 mod commands;
-#[path = "runtime_http_commands.rs"]
 mod http_commands;
 pub use http_commands::existing_connection as existing_http_connection;
 pub use http_commands::setup as setup_http_connection;
-#[path = "runtime_http_legacy.rs"]
 pub(crate) mod http_legacy;
-#[path = "runtime_managed_service.rs"]
 mod managed_service;
 pub use commands::run;
 
 #[cfg(test)]
-#[path = "runtime_install_tests.rs"]
 mod tests;
 
 #[cfg(test)]
-#[path = "runtime_install_native_tests.rs"]
 mod native_connection_tests;

@@ -25,7 +25,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[path = "standalone_setup_launch.rs"]
 mod launch;
 pub use launch::{launch_client, launch_instructions};
 
@@ -1211,5 +1210,4 @@ fn parse_choice(
 }
 
 #[cfg(test)]
-#[path = "standalone_setup_tests.rs"]
 mod tests;

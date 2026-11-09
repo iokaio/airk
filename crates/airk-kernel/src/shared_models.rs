@@ -8,7 +8,6 @@ use anyhow::{Context, Result, ensure};
 use std::{path::Path, sync::Arc};
 
 #[cfg(test)]
-#[path = "shared_models_embedded_tests.rs"]
 mod embedded_tests;
 
 /// An old ONNX publication is retained evidence, not a compatible vector space.

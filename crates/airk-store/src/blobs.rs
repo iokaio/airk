@@ -15,7 +15,6 @@ const MAX_ARTIFACT_BYTES: u64 = airk_core::extraction::MAX_PAYLOAD_BYTES as u64;
 type SourceObserver<'a> = &'a mut dyn FnMut(&[u8]) -> Result<()>;
 pub const MAX_CATALOG_BYTES: u64 = airk_core::publication::MAX_INVENTORY_BYTES as u64;
 
-#[path = "legacy_saved.rs"]
 mod legacy_saved;
 
 /// A missing derived source/extraction object. This typed context is attached

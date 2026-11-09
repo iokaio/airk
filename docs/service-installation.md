@@ -469,9 +469,9 @@ An internal AIRK HTTPS check does not qualify that external host. Client formats
 protected VS Code input resolution, remote/container limits and actual connection
 checks are documented in [agent integration](agent-integration.md).
 
-The source owners are [HTTP setup](../crates/airk-cli/src/runtime_http_commands.rs),
+The source owners are [HTTP setup](../crates/airk-cli/src/runtime_install/http_commands.rs),
 [private identity/credential storage](../crates/airk-cli/src/http_endpoint.rs) and
-[owned trust](../crates/airk-cli/src/http_endpoint_trust.rs).
+[owned trust](../crates/airk-cli/src/http_endpoint/trust.rs).
 Issuer replacement uses an explicit receipt-backed prepare/trust/commit/finalize
 transaction, with prepared-only abort and an ordinary 24-hour overlap. Expiry
 does not remove trust automatically. See [issuer rotation](local-https-api.md#explicit-issuer-rotation)
@@ -508,8 +508,8 @@ completion. Original request keys, publications and source bytes remain intact.
 
 Resume and rollback use the same operation/selection fences and actual durable
 outcome; they do not submit an uncertain mutation again. The implementation is in
-[checkpointed activation](../crates/airk-cli/src/runtime_checkpoint.rs) and
-[service checkpointing](../crates/airk-cli/src/service_runtime_checkpoint.rs).
+[checkpointed activation](../crates/airk-cli/src/runtime_install/activation/checkpoint.rs) and
+[service checkpointing](../crates/airk-cli/src/service_runtime/checkpoint.rs).
 Actual predecessor/version/OS campaign coverage remains a release gate.
 
 ## Registry 13 and downgrade compatibility
@@ -524,7 +524,7 @@ the current selection and requires a compatible runtime or explicitly validated
 snapshot restoration. Executable rollback does not downgrade metadata.
 
 See [capability declarations](../crates/airk-core/src/index_catalog.rs) and
-[persistent requirements](../crates/airk-store/src/service_runtime_contract.rs).
+[persistent requirements](../crates/airk-store/src/service/registry/runtime_contract.rs).
 An older main may remain diagnostic-only; that is not permission for old
 workers/model semantics to reopen modern state.
 

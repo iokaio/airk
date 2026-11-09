@@ -9,7 +9,6 @@ use crate::{Artifact, Chunk, CodeEvidence, DocumentLocation, Fact};
 use anyhow::{Context, Result, ensure};
 use std::collections::BTreeMap;
 
-#[path = "mapped_body.rs"]
 mod body;
 pub use body::{MAX_MAPPED_BODY_BYTES, MAX_MAPPED_BODY_PROJECTION_BYTES, MappedBodyProjection};
 

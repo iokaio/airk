@@ -98,7 +98,6 @@ impl PreparedIndexSetup {
 pub(crate) fn review(control: &Path, request: &IndexSetupRequest) -> Result<NativeSetupReview> {
     review_inner(control, request, None)
 }
-#[path = "catalog_legacy_adoption.rs"]
 mod legacy_adoption;
 pub(crate) use legacy_adoption::review as review_legacy_adoption;
 pub(crate) use legacy_adoption::validate_origin as validate_legacy_adoption_origin;
@@ -748,5 +747,4 @@ fn file_identity(file: &File) -> Result<(u32, u64, u32)> {
 }
 
 #[cfg(test)]
-#[path = "catalog_index_setup_tests.rs"]
 mod tests;

@@ -236,9 +236,7 @@ impl ReadAttemptContext {
 }
 
 #[cfg(test)]
-#[path = "read_attempt_tests.rs"]
 mod tests;
 
 #[cfg(test)]
-#[path = "read_attempt_lifetime_tests.rs"]
 mod lifetime_tests;

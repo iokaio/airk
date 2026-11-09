@@ -261,5 +261,4 @@ pub fn validate_planned(project: &ProjectRegistration) -> Result<()> {
 }
 
 #[cfg(test)]
-#[path = "service_source_availability_tests.rs"]
 mod tests;

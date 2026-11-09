@@ -563,5 +563,4 @@ pub fn rank_contribution(zero_based_local_rank: usize) -> f64 {
 }
 
 #[cfg(test)]
-#[path = "combined_reads_tests.rs"]
 mod tests;

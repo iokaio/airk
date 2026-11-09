@@ -280,3 +280,54 @@ commit that adds this record; its result is in that commit's message.
 | Q3: pending P5 catalog upgrade | **Explicit refusal** with a typed error and manual guidance. P5 upgrade-recovery code becomes an S2 deletion candidate once a refusal regression proves the original state is preserved. |
 | D5: contract generation | **Fixtures first.** No type generation. Each operation gets reviewed `fixtures/wire` bytes or decision cases, and the hand-written validators are tested against them. |
 | Next work | All four were authorized, in this order: the `CurrentRead` clock seam with the W3 fix; the R39 repair (D10); S4 module honesty; S2 deletion with proof. T2/T3 installed qualification still needs a separate go-ahead. |
+
+## 11. Follow-up record (after the review)
+
+| Step | Commit | Result |
+|---|---|---|
+| Clock seam + W3 | `faf3060` | `CurrentRead` reads an injected `RequestClock`. F1 is now deterministic, and a deadline regression shows the reader is alive at 119 s and expired at 120 s. `readRetry.ts` refuses non-integer number literals. Store outcomes match the baseline. Mocked extension suite: 1,342 tests, 1,321 pass, 21 skipped, 0 fail. |
+| R39 repair (D10) | `7cd8840` | 15 binding staleness checks plus the HTTP health watch now compare request authority (`sameRuntimeAuthority`), not object identity. A genuine authority change fires the definitions event. The 2 former `todo` reproductions pass, and 3 cases were added (7/7). **Installed acceptance not rerun.** |
+| S4 module honesty | this commit | The committed script `scripts/dev/s4_module_honesty.py` made 339 file moves. Non-platform `#[path]` mounts went from 361 to 32. Test identities are unchanged: 69 binaries / 3,374 tests, the only difference being the deadline test from `faf3060`. Library outcomes equal the baseline except the expected additions and deletions. Python: 931 OK. Clippy is clean in both configurations. |
+
+**S4: what stays, and why** (each is listed by `--plan`):
+
+- 20 thin platform switches.
+- Children of a file that keeps a platform `#[path]`. rustc resolves these
+  beside that file, as it does for `mod.rs`.
+- Children of integration-test roots in `tests/`. Their canonical location,
+  `tests/x.rs`, is a new Cargo test target.
+- Files reached from more than one declaration.
+- The `../` mount of `kernel/src/reconciliation.rs` from a test.
+- `remote_onnx.rs`, the feature-switched alternative to `onnx.rs`.
+- The `include!` embed-pool scheme (17 uses). Replacing it needs per-feature
+  runtime builds, which is T2, so it is a separate step.
+
+Two defects were caught and fixed before any compile was accepted:
+
+1. The first plan moved test-root children into `tests/` and would have
+   created new test binaries.
+2. `include_str!` paths were mapped only for moved files.
+
+**S2 plan** (approved scope, not started). Native adoption is still called by
+the extension's agent-migration flow (`migrateAgentConnections` →
+`adoptStandaloneConfigurations`). A native-only refusal would therefore turn
+those migrations into hard failures without deciding what happens to the
+standalone client configurations. The proposed order, one reviewed step each:
+
+1. **Behavior (Q1).**
+   - Native `adopt-legacy-index(es)` and adoption preparation refuse with a
+     typed `standalone_adoption_unsupported` error.
+   - The extension stops offering adoption. Standalone client declarations
+     stay for review through the existing clean-break client capture (C4).
+   - Regressions on both sides.
+2. **Behavior (Q3).**
+   - The clean break refuses a pending P5 upgrade (`AdmissionPending`) with a
+     typed error and manual guidance.
+   - A regression proves the original state is preserved.
+3. **Deletion.** Remove the native adoption operations: CLI `legacy_*`
+   adoption, Store `legacy_adoption*`, Kernel and Core adoption. Keep the
+   adopted-layout **reader** and `ArtifactRef.legacy_origin`, because existing
+   `airk-state/1` installations may hold them and changing that needs D8.
+4. **Deletion.** Remove P5 upgrade recovery, keeping the Genesis helpers that
+   inventory §4 marks MIXED.
+5. **Deletion.** Remove the extension adoption and P5 recovery paths.

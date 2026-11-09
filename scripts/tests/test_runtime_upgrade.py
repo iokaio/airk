@@ -474,7 +474,7 @@ class UpgradeFixtureOwnershipTests(unittest.TestCase):
                 for value in re.findall(r"^    ([A-Z][A-Za-z]+)\s*(?:\{|,)", runtime, re.MULTILINE)}
             self.assertIn("lifecycle", commands)
             self.assertNotIn("stop", commands)
-            lifecycle = (native / "runtime_lifecycle.rs").read_text(encoding="utf-8").split("pub(super) struct Input {", 1)[1].split("\n}", 1)[0]
+            lifecycle = (native / "runtime_install" / "lifecycle.rs").read_text(encoding="utf-8").split("pub(super) struct Input {", 1)[1].split("\n}", 1)[0]
             fields = set(re.findall(r"^    ([a-z_]+):", lifecycle, re.MULTILINE))
             self.assertEqual(fields, {"caller", "key", "action", "expected_instance", "runtime", "force"})
             calls = []

@@ -24,12 +24,9 @@ use std::{
 };
 
 #[cfg(any(not(feature = "local-inference"), test))]
-#[path = "embedding_pool_owned.rs"]
 mod owned;
 #[cfg(any(not(feature = "local-inference"), test))]
-#[path = "embedding_pool_retirement.rs"]
 mod retirement;
-#[path = "embedding_pool_shared.rs"]
 pub(crate) mod shared;
 #[cfg(any(not(feature = "local-inference"), test))]
 pub use protocol::ProviderDrainTicket;

@@ -743,5 +743,4 @@ fn preserve_saved_configuration(
 }
 
 #[cfg(test)]
-#[path = "legacy_adoption_tests.rs"]
 mod tests;

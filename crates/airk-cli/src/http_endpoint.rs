@@ -12,13 +12,9 @@ use std::{
     path::Path,
 };
 
-#[path = "http_endpoint_metadata.rs"]
 mod metadata;
-#[path = "http_endpoint_store.rs"]
 mod store;
-#[path = "http_endpoint_tls.rs"]
 mod tls;
-#[path = "http_endpoint_trust.rs"]
 pub mod trust;
 pub use metadata::{
     load_descriptor, publish_descriptor, read_registration_file, read_registrations_file,
@@ -30,7 +26,6 @@ pub use store::{
     IssuedCredential, authority_digest, read_client_token,
 };
 pub use tls::{TlsBundleIdentity, TlsIdentity};
-#[path = "http_endpoint_rotation.rs"]
 pub mod rotation;
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -184,5 +179,4 @@ fn write_private(root: &Path, name: &str, bytes: &[u8], limit: usize, replace: b
 }
 
 #[cfg(test)]
-#[path = "http_endpoint_tests.rs"]
 mod tests;

@@ -41,19 +41,19 @@ For each open folder, in order ([serviceExtension.ts:851-882](../../packages/vsc
 1. A missing folder is logged and skipped.
 2. `ServiceWorkspace.reconcileStartup` looks for an active native project whose root equals the folder's `realpath`. If exactly one matches, or the saved choice selects one, the folder is bound to it ([serviceWorkspace.ts:93-121](../../packages/vscode/src/serviceWorkspace.ts#L93-L121)). An inactive (removed) match yields `removed`, which is respected.
 3. A folder declined during the first-use review is skipped. A **home folder or filesystem/volume root** is skipped unless it was approved ([serviceExtension.ts:564-568](../../packages/vscode/src/serviceExtension.ts#L564-L568)).
-4. Otherwise the folder is registered with collection `collectionId(canonical)`. That is `project-` plus the first 24 hex digits of SHA-256 of the canonical path, lower-cased only on Windows ([model.ts:22-25](../../packages/vscode/src/model.ts#L22-L25)). Registration also enables automatic watching and schedules model setup and indexing ([service_registry.rs:795-811](../../crates/airk-store/src/service_registry.rs#L795-L811)).
+4. Otherwise the folder is registered with collection `collectionId(canonical)`. That is `project-` plus the first 24 hex digits of SHA-256 of the canonical path, lower-cased only on Windows ([model.ts:22-25](../../packages/vscode/src/model.ts#L22-L25)). Registration also enables automatic watching and schedules model setup and indexing ([service_registry.rs:795-811](../../crates/airk-store/src/service/registry.rs#L795-L811)).
 
 Manual **Add Project** (`registerWorkspace`) uses the same path with a modal review of source, storage and collection, plus a choice between automatic watching and manual indexing ([serviceExtension.ts:297-317](../../packages/vscode/src/serviceExtension.ts#L297-L317)).
 
 ### What the native registry checks
 
-`register_project` validates canonical identity, the data scope and source isolation ([service_registry.rs:682-791](../../crates/airk-store/src/service_registry.rs#L682-L791)). `service_source_isolation::validate` requires every proposed source to be disjoint from:
+`register_project` validates canonical identity, the data scope and source isolation ([service_registry.rs:682-791](../../crates/airk-store/src/service/registry.rs#L682-L791)). `service_source_isolation::validate` requires every proposed source to be disjoint from:
 
 - service control and installer-private paths;
 - its own data root;
 - every registered project's **data** root.
 
-It also requires the proposed data root to be disjoint from every registered project's sources ([service_source_isolation.rs:169-219](../../crates/airk-store/src/service_source_isolation.rs#L169-L219)).
+It also requires the proposed data root to be disjoint from every registered project's sources ([service_source_isolation.rs:169-219](../../crates/airk-store/src/service/registry/source_isolation.rs#L169-L219)).
 
 **Source-to-source overlap between projects is not checked.** The only other refusals are reuse of the same data root and collection pair, and the 1,024-project capacity. Overlap checks exist only *within* one collection's additional-root aliases ([roots.rs:170](../../crates/airk-store/src/roots.rs#L170), limit of 16 aliases at [roots.rs:12](../../crates/airk-store/src/roots.rs#L12)).
 

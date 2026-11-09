@@ -7,19 +7,13 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
-#[path = "service_data_scope.rs"]
 pub mod data_scope;
 
-#[path = "service_collection.rs"]
 pub mod collection;
-#[path = "service_embedded_model.rs"]
 pub mod embedded_model;
 #[cfg(test)]
-#[path = "service_inference_admission_tests.rs"]
 mod inference_admission_tests;
-#[path = "service_model_files.rs"]
 pub mod model_files;
-#[path = "service_registry.rs"]
 pub mod registry;
 #[cfg(unix)]
 #[path = "service_shared_helper_lease.rs"]

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Service inference ownership, independent of predecessor process recovery.
 #[cfg(test)]
-#[path = "service_inference_tests.rs"]
 mod tests;
 /// Native lease exclusion for an earlier in-process provider. This is never a
 /// process-reap receipt and is valid only for a trusted InProcess obligation.

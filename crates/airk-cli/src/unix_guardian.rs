@@ -24,9 +24,7 @@ use std::{
     sync::{Arc, OnceLock},
     time::Duration,
 };
-#[path = "unix_guardian_native.rs"]
 mod native;
-#[path = "unix_guardian_shared.rs"]
 pub(crate) mod shared;
 
 pub fn serve_shared() -> Result<()> {

@@ -62,7 +62,7 @@ Its scope is limited on purpose, and that limit is part of the design:
   source files. Discovery, extraction, verification and every provider path read
   source files without following links and never write to them. The LSP client
   even refuses `workspace/applyEdit`
-  ([`providers_lsp.rs`](../crates/airk-ingest/src/providers_lsp.rs)).
+  ([`providers_lsp.rs`](../crates/airk-ingest/src/providers/lsp.rs)).
 - **No claim of understanding.** Calls, references and imports are reported as
   *written candidates*. AIRK does not claim resolved references, a complete
   understanding of any language, or semantic search in the
@@ -856,7 +856,7 @@ service, which is then recovered by its OS manager.
 ### 12.2 TLS identity
 
 Each installation creates its own private CA
-([`http_endpoint_tls.rs`](../crates/airk-cli/src/http_endpoint_tls.rs)):
+([`http_endpoint_tls.rs`](../crates/airk-cli/src/http_endpoint/tls.rs)):
 
 | Certificate | Key and lifetime | Constraints |
 | --- | --- | --- |
@@ -874,7 +874,7 @@ roots stay in place**. Nothing ever disables validation.
 
 | Client | Mechanism | Evidence |
 | --- | --- | --- |
-| VS Code / Copilot | Per-user OS trust, installed by **AIRK: Trust Local HTTPS Issuer**: Windows `CurrentUser\Root` or the macOS login keychain ([`http_endpoint_trust.rs`](../crates/airk-cli/src/http_endpoint_trust.rs)) | The r25 Code run failed TLS on the extra-CA path. The OS-trust path is approved for one owned Windows run but **not yet exercised** |
+| VS Code / Copilot | Per-user OS trust, installed by **AIRK: Trust Local HTTPS Issuer**: Windows `CurrentUser\Root` or the macOS login keychain ([`http_endpoint_trust.rs`](../crates/airk-cli/src/http_endpoint/trust.rs)) | The r25 Code run failed TLS on the extra-CA path. The OS-trust path is approved for one owned Windows run but **not yet exercised** |
 | Claude Code | Additive `NODE_EXTRA_CA_CERTS` bundle | Claude 2.1.118 passed scoped reads, reconnect, additive trust and wrong-issuer rejection on Windows debug |
 | Codex | `CODEX_CA_CERTIFICATE` bundle and `bearer_token_env_var` | A real Codex experiment confirmed the local CA is trusted and an untrusted issuer is rejected before HTTP |
 | Linux OS trust | Unsupported in 1.8.14; needs an administrator | Documented limitation |
@@ -887,7 +887,7 @@ mis-issues a certificate for `127.0.0.1` falls outside this guarantee.
 
 ### 12.4 Credentials
 
-[`http_endpoint_store.rs`](../crates/airk-cli/src/http_endpoint_store.rs):
+[`http_endpoint_store.rs`](../crates/airk-cli/src/http_endpoint/store.rs):
 
 - **One bearer credential per reviewed client connection.** It is random, at
   least 256 bits, in the form `airk1.<connection_id>.<64 hex>`, and can be revoked
@@ -943,7 +943,7 @@ mis-issues a certificate for `127.0.0.1` falls outside this guarantee.
 ### 12.7 Issuer rotation
 
 Rotation is a phased, receipt-backed migration
-([`http_endpoint_rotation.rs`](../crates/airk-cli/src/http_endpoint_rotation.rs)):
+([`http_endpoint_rotation.rs`](../crates/airk-cli/src/http_endpoint/rotation.rs)):
 
 1. prepare, which starts a 24-hour overlap;
 2. publish bundles;
@@ -987,7 +987,7 @@ An upgrade stages, quiesces, checkpoints, stops, replaces and restarts the
 service. It does not do a live cutover.
 
 - **Upgrade journal** (`upgrade-journal.json`,
-  [`runtime_checkpoint.rs`](../crates/airk-cli/src/runtime_checkpoint.rs)). It is
+  [`runtime_checkpoint.rs`](../crates/airk-cli/src/runtime_install/activation/checkpoint.rs)). It is
   digest-chained and saved with compare-and-set. Its stages are:
   1. `StagedVerified`
   2. `Quiescing`

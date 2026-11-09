@@ -26,7 +26,6 @@ use std::{
     },
     time::{Duration, Instant},
 };
-#[path = "source_supervisor_checkpoint.rs"]
 mod checkpoint;
 pub(crate) use checkpoint::SourceCheckpointObservation;
 
@@ -1459,7 +1458,6 @@ fn retry_unavailable_configuration(
 }
 
 #[cfg(test)]
-#[path = "source_supervisor_retry_tests.rs"]
 mod retry_tests;
 
 #[cfg(test)]

@@ -542,7 +542,6 @@ impl LocalTools {
 }
 
 #[cfg(test)]
-#[path = "native_scoped_settings_tests.rs"]
 mod native_scoped_settings_tests;
 
 /// Native settings/report reads use the same typed contention contract as MCP
@@ -575,7 +574,6 @@ fn retry_native_read<T>(
 }
 
 #[cfg(test)]
-#[path = "rebuild_parity_tests.rs"]
 mod rebuild_parity_tests;
 
 #[cfg(test)]

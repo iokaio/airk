@@ -73,7 +73,7 @@ unverified; historical stdio formats do not qualify those fields.
 
 Source owners are the [extension client catalog and serializers](../packages/vscode/src/model.ts),
 [native setup serializer](../crates/airk-cli/src/main.rs),
-[native setup contract tests](../crates/airk-cli/src/main_http_setup_tests.rs),
+[native setup contract tests](../crates/airk-cli/src/http_setup_tests.rs),
 [owned configuration locations](../packages/vscode/src/agentMigration.ts),
 [Codex project configuration](../packages/vscode/src/agentConnections.ts) and
 [Claude project configuration](../packages/vscode/src/agentConfig.ts).

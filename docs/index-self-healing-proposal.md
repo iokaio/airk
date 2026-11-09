@@ -10,7 +10,7 @@ The native service already owns durable jobs, request keys, source/semantic cont
 
 The 1.5.6 work adds durable initial setup, model preparation before semantic enablement, and automatic cached-inspection refresh after successful publication work. These address incomplete setup and stale displayed state. They do not make every native failure self-healing.
 
-The remaining gap is visible in the implementation: [project supervision](../crates/airk-cli/src/project_supervisor.rs) keeps worker/helper retry counters in memory and stops automatic startup after three failures. [Background continuations](../crates/airk-store/src/service_background.rs) persist the next phase, but do not explain or repair every exhausted prerequisite. [Source watching](../crates/airk-store/src/service_watch.rs) separately preserves exhausted and canceled source revisions. Extend these contracts together rather than creating a competing recovery mechanism. The reported remote startup failure's underlying cause remains unknown.
+The remaining gap is visible in the implementation: [project supervision](../crates/airk-cli/src/project_supervisor.rs) keeps worker/helper retry counters in memory and stops automatic startup after three failures. [Background continuations](../crates/airk-store/src/service/registry/background.rs) persist the next phase, but do not explain or repair every exhausted prerequisite. [Source watching](../crates/airk-store/src/service/registry/watch.rs) separately preserves exhausted and canceled source revisions. Extend these contracts together rather than creating a competing recovery mechanism. The reported remote startup failure's underlying cause remains unknown.
 
 ## Remember the requested result
 

@@ -67,7 +67,6 @@ fn install_policy_observation(
 }
 
 #[cfg(test)]
-#[path = "source_worker_policy_tests.rs"]
 mod policy_tests;
 
 fn reply(reply: &Reply) -> Result<()> {

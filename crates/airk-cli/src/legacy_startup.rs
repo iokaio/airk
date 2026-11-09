@@ -12,7 +12,6 @@ use std::{
     time::UNIX_EPOCH,
 };
 
-#[path = "legacy_startup_journal.rs"]
 mod journal;
 use journal::{Intent, Journal, Phase};
 
@@ -537,5 +536,4 @@ pub fn run(command: &LegacyCommand) -> Result<()> {
 }
 
 #[cfg(test)]
-#[path = "legacy_startup_tests.rs"]
 mod tests;

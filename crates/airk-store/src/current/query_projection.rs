@@ -14,7 +14,6 @@ use airk_core::{
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 
-#[path = "query_projection_selectors.rs"]
 mod selectors;
 use super::native_projection::bounded_encoding;
 pub use selectors::SelectedPath;

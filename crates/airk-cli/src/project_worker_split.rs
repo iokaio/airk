@@ -111,7 +111,6 @@ pub(crate) fn execute(
 }
 
 #[cfg(test)]
-#[path = "project_worker_split_ignore_fixture.rs"]
 mod ignore_fixture;
 
 #[cfg(test)]

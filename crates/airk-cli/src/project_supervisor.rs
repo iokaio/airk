@@ -25,27 +25,20 @@ use std::{
 };
 use tokio::sync::oneshot;
 
-#[path = "helper_recovery.rs"]
 mod helper_recovery;
 use helper_recovery::PoolRecovery;
 #[cfg(all(test, feature = "local-inference"))]
 pub(crate) use helper_recovery::PoolRecovery as TestPoolRecovery;
-#[path = "worker_resource_drains.rs"]
 mod worker_resource_drains;
 use worker_resource_drains::{DrainProgress, WorkerResourceDrains};
-#[path = "worker_read_settlement.rs"]
 mod worker_read_settlement;
 use worker_read_settlement::ReadSettlement;
-#[path = "catalog_control.rs"]
 mod catalog;
 #[cfg(all(test, any(feature = "embedding-worker", feature = "local-inference")))]
-#[path = "project_supervisor_guarded_qualification_tests.rs"]
 mod guarded_qualification_tests;
 #[cfg(test)]
-#[path = "project_supervisor_pool_tests.rs"]
 mod pool_tests;
 #[cfg(test)]
-#[path = "worker_exit_capacity_tests.rs"]
 mod worker_exit_capacity_tests;
 pub(crate) use catalog::{
     AdministrativeKey, CatalogControlHandle, NativeAdministrativeConnection,

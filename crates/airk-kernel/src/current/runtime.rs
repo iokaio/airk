@@ -700,9 +700,7 @@ impl Kernel {
 }
 
 #[cfg(test)]
-#[path = "range_preparation_tests.rs"]
 mod range_preparation_tests;
 
 #[cfg(test)]
-#[path = "projected_consumer_tests.rs"]
 mod projected_consumer_tests;

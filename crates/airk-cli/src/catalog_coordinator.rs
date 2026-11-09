@@ -861,5 +861,4 @@ impl<C: CatalogControl> CatalogCoordinator<C> {
 }
 
 #[cfg(test)]
-#[path = "catalog_coordinator_tests.rs"]
 mod tests;

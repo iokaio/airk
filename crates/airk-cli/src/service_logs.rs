@@ -49,7 +49,6 @@ const LOW_WATER_BYTES: u64 = 100_000_000;
 const RECORD_BYTES: usize = 768;
 const READ_BYTES: usize = 64 << 10;
 
-#[path = "service_raw_logs.rs"]
 mod raw;
 pub use raw::export as export_raw;
 pub use raw::export_to as export_raw_to;
@@ -585,5 +584,4 @@ pub fn render(page: &LogPage) -> Result<String> {
 }
 
 #[cfg(test)]
-#[path = "service_logs_tests.rs"]
 mod tests;

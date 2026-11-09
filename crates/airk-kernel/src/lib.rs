@@ -1291,7 +1291,6 @@ impl Kernel {
     }
 }
 
-#[path = "split.rs"]
 pub mod split;
 mod split_execution;
 pub use split::SplitWitnessLimits;

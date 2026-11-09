@@ -937,5 +937,4 @@ fn directory_error(error: &std::io::Error) -> &'static str {
 }
 
 #[cfg(test)]
-#[path = "source_watch_tests.rs"]
 mod tests;

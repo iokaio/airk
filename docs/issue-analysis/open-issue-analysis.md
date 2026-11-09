@@ -287,7 +287,7 @@ start failure at
 [line 988](../../crates/airk-cli/src/project_supervisor.rs#L988) and control
 renewal failure at
 [line 1112](../../crates/airk-cli/src/project_supervisor.rs#L1112)) calls
-[`ServiceRegistry::recovery_failed("helper", …)`](../../crates/airk-store/src/service_recovery.rs#L532-L557),
+[`ServiceRegistry::recovery_failed("helper", …)`](../../crates/airk-store/src/service/registry/recovery.rs#L532-L557),
 which persists `failures = min(failures + 1, 3)` and a bounded delay of 1 to 8
 seconds. While no pool exists, the loop reloads that row every iteration
 ([line 770](../../crates/airk-cli/src/project_supervisor.rs#L770)) so the cap
@@ -369,7 +369,7 @@ worker read boundary or the marker type has to move to `airk-core`.
 
 **5. Management keeps a stale "retrying" row and the Service summary does not
 mention the helper.**
-[`recovery_observations`](../../crates/airk-store/src/service_recovery.rs#L667-L750)
+[`recovery_observations`](../../crates/airk-store/src/service/registry/recovery.rs#L667-L750)
 always emits the persisted `helper` budget row with state `retrying` while
 `failures < 3`, regardless of whether a pool is currently running. Nothing
 writes that row on a successful start, so after the 20:04 restart the report
@@ -385,7 +385,7 @@ informational while semantic search is actually unavailable.
 
 **Working as designed, but worth clarifying:** the vectors job that "failed"
 at 19:25:28 was in fact deferred and retained pending by
-[`defer_job_failure`](../../crates/airk-store/src/service_recovery.rs#L571-L642);
+[`defer_job_failure`](../../crates/airk-store/src/service/registry/recovery.rs#L571-L642);
 it resumed on the same receipt at attempt 2 once a pool existed. The process
 log still records it as `job_failed`, which is what the tester read. The
 22-minute wait is entirely explained by item 1: `check_recovery_conditions`
@@ -515,11 +515,11 @@ After each turn the worker sets `semantic_pending` while readiness is
 `Pending` or `Partial`
 ([project_worker.rs:1150-1160](../../crates/airk-cli/src/project_worker.rs#L1150-L1160)).
 The supervisor loop (250 ms cadence) then calls
-[`due_background_jobs`](../../crates/airk-store/src/service_background.rs#L121-L140)
+[`due_background_jobs`](../../crates/airk-store/src/service/registry/background.rs#L121-L140)
 and enqueues the next vectors continuation
 ([project_supervisor.rs:1371-1382](../../crates/airk-cli/src/project_supervisor.rs#L1371-L1382)),
 and only afterwards calls
-[`due_source_projects`](../../crates/airk-store/src/service_watch.rs#L150-L166)
+[`due_source_projects`](../../crates/airk-store/src/service/registry/watch.rs#L150-L166)
 to enqueue source reconciliation
 ([lines 1388-1397](../../crates/airk-cli/src/project_supervisor.rs#L1388-L1397)).
 Both queries admit a project only when it has no pending or running job
@@ -542,7 +542,7 @@ can take the next turn" describes that legacy path and does not hold for the
 service.
 
 **Job ordering offers no priority.**
-[`next_pending_job`](../../crates/airk-store/src/service_jobs.rs#L212-L224)
+[`next_pending_job`](../../crates/airk-store/src/service/registry/jobs.rs#L212-L224)
 orders by sequence; even if a reconcile were queued behind a continuation it
 would wait for it.
 
