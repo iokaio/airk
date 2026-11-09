@@ -429,4 +429,31 @@ mod tests {
             }
         }
     }
+
+    /// Reviewed cases shared with the TypeScript mirror (`readRetry.ts`), see
+    /// `fixtures/wire/read_retry_decisions.py`. `expected` is the native decision.
+    #[test]
+    fn shared_decision_cases_match_reviewed_fixture() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../../fixtures/wire/read_retry_decisions.json"
+        ))
+        .unwrap();
+        assert_eq!(
+            fixture["schema"],
+            "airk.wire-fixture.read-retry-decisions/1"
+        );
+        let cases = fixture["cases"].as_array().unwrap();
+        assert!(!cases.is_empty(), "zero selected decision cases");
+        for case in cases {
+            let expected: Option<SingleRequiredMemberRetry> =
+                serde_json::from_value(case["expected"].clone()).unwrap();
+            assert_eq!(
+                validated_retry(&case["input"]),
+                expected,
+                "{}: {}",
+                case["name"],
+                case["rule"]
+            );
+        }
+    }
 }

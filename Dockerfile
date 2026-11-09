@@ -49,6 +49,8 @@ COPY third_party/licenses ./third_party/licenses
 # Exact external test inputs are reviewed in scripts/container-inputs.json.
 COPY docs/cli-reference.md ./docs/cli-reference.md
 COPY docs/research/contracts-v190/fixtures.json ./docs/research/contracts-v190/fixtures.json
+COPY fixtures/wire/catalog_receipt.json ./fixtures/wire/catalog_receipt.json
+COPY fixtures/wire/read_retry_decisions.json ./fixtures/wire/read_retry_decisions.json
 COPY packages/vscode/src/test/diagnosticLogs.test.ts ./packages/vscode/src/test/diagnosticLogs.test.ts
 COPY packages/vscode/src/test/extensionUninstall.test.ts ./packages/vscode/src/test/extensionUninstall.test.ts
 COPY packages/vscode/src/test/serviceBootstrap.test.ts ./packages/vscode/src/test/serviceBootstrap.test.ts

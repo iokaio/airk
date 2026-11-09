@@ -17,6 +17,8 @@
     "THIRD_PARTY_NOTICES.md",
     "docs/cli-reference.md",
     "docs/research/contracts-v190/fixtures.json",
+    "fixtures/wire/catalog_receipt.json",
+    "fixtures/wire/read_retry_decisions.json",
     "packages/vscode/src/test/diagnosticLogs.test.ts",
     "packages/vscode/src/test/extensionUninstall.test.ts",
     "packages/vscode/src/test/fixtures/httpAuthorityDigest.json",

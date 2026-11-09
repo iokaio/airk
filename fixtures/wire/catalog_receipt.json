@@ -1,0 +1,126 @@
+{
+ "accepted_variants": [
+  {
+   "canonical": "{\"status\":\"catalog_receipt\",\"receipt\":null}",
+   "json": "{\"status\":\"catalog_receipt\"}",
+   "kind": "control_response",
+   "name": "response_receipt_field_absent",
+   "note": "serde treats a missing Option field as null; the TypeScript client refuses an absent receipt (see the pilot report)"
+  }
+ ],
+ "operation": "ControlMethod::CatalogReceipt / ControlResponse::CatalogReceipt; persisted index_operation_receipts.payload",
+ "receipts": [
+  {
+   "control_request": "{\"protocol\":1,\"method\":{\"catalog_receipt\":{\"caller\":\"11111111111111111111111111111111\",\"key\":{\"namespace\":\"12121212121212121212121212121212\",\"epoch\":3,\"nonce\":\"13131313131313131313131313131313\"}}}}",
+   "inputs": {
+    "authority_fence_required": false,
+    "caller": "11111111111111111111111111111111",
+    "catalog_revision": 7,
+    "key": {
+     "epoch": 3,
+     "namespace": "12121212121212121212121212121212",
+     "nonce": "13131313131313131313131313131313"
+    },
+    "request_digest": "1414141414141414141414141414141414141414141414141414141414141414"
+   },
+   "name": "small_revision",
+   "operation_id": "505fbd9cb44664597a14d8593ef39705",
+   "persisted": "{\"schema\":1,\"operation_id\":\"505fbd9cb44664597a14d8593ef39705\",\"caller\":\"11111111111111111111111111111111\",\"key\":{\"namespace\":\"12121212121212121212121212121212\",\"epoch\":3,\"nonce\":\"13131313131313131313131313131313\"},\"request_digest\":\"1414141414141414141414141414141414141414141414141414141414141414\",\"catalog_revision\":7,\"authority_fence_required\":false}",
+   "response": "{\"status\":\"catalog_receipt\",\"receipt\":{\"schema\":1,\"operation_id\":\"505fbd9cb44664597a14d8593ef39705\",\"caller\":\"11111111111111111111111111111111\",\"key\":{\"namespace\":\"12121212121212121212121212121212\",\"epoch\":3,\"nonce\":\"13131313131313131313131313131313\"},\"request_digest\":\"1414141414141414141414141414141414141414141414141414141414141414\",\"catalog_revision\":7,\"authority_fence_required\":false}}"
+  },
+  {
+   "control_request": "{\"protocol\":1,\"method\":{\"catalog_receipt\":{\"caller\":\"11111111111111111111111111111111\",\"key\":{\"namespace\":\"12121212121212121212121212121212\",\"epoch\":9007199254740993,\"nonce\":\"13131313131313131313131313131313\"}}}}",
+   "inputs": {
+    "authority_fence_required": false,
+    "caller": "11111111111111111111111111111111",
+    "catalog_revision": 9007199254740993,
+    "key": {
+     "epoch": 9007199254740993,
+     "namespace": "12121212121212121212121212121212",
+     "nonce": "13131313131313131313131313131313"
+    },
+    "request_digest": "1414141414141414141414141414141414141414141414141414141414141414"
+   },
+   "name": "above_safe_integer",
+   "operation_id": "6746a90e32a03c7dbaa19decc031ae0b",
+   "persisted": "{\"schema\":1,\"operation_id\":\"6746a90e32a03c7dbaa19decc031ae0b\",\"caller\":\"11111111111111111111111111111111\",\"key\":{\"namespace\":\"12121212121212121212121212121212\",\"epoch\":9007199254740993,\"nonce\":\"13131313131313131313131313131313\"},\"request_digest\":\"1414141414141414141414141414141414141414141414141414141414141414\",\"catalog_revision\":9007199254740993,\"authority_fence_required\":false}",
+   "response": "{\"status\":\"catalog_receipt\",\"receipt\":{\"schema\":1,\"operation_id\":\"6746a90e32a03c7dbaa19decc031ae0b\",\"caller\":\"11111111111111111111111111111111\",\"key\":{\"namespace\":\"12121212121212121212121212121212\",\"epoch\":9007199254740993,\"nonce\":\"13131313131313131313131313131313\"},\"request_digest\":\"1414141414141414141414141414141414141414141414141414141414141414\",\"catalog_revision\":9007199254740993,\"authority_fence_required\":false}}"
+  }
+ ],
+ "rejected": [
+  {
+   "json": "{\"schema\":1,\"operation_id\":\"15151515151515151515151515151515\",\"caller\":\"11111111111111111111111111111111\",\"key\":{\"namespace\":\"12121212121212121212121212121212\",\"epoch\":3,\"nonce\":\"13131313131313131313131313131313\"},\"request_digest\":\"1414141414141414141414141414141414141414141414141414141414141414\",\"catalog_revision\":7,\"authority_fence_required\":false,\"extra\":1}",
+   "kind": "catalog_receipt",
+   "name": "receipt_unknown_field",
+   "reason": "deny_unknown_fields"
+  },
+  {
+   "json": "{\"schema\":1,\"operation_id\":\"ABABABABABABABABABABABABABABABAB\",\"caller\":\"11111111111111111111111111111111\",\"key\":{\"namespace\":\"12121212121212121212121212121212\",\"epoch\":3,\"nonce\":\"13131313131313131313131313131313\"},\"request_digest\":\"1414141414141414141414141414141414141414141414141414141414141414\",\"catalog_revision\":7,\"authority_fence_required\":false}",
+   "kind": "catalog_receipt",
+   "name": "receipt_uppercase_operation_id",
+   "reason": "identities are lowercase hex only"
+  },
+  {
+   "json": "{\"schema\":1,\"operation_id\":\"15151515151515151515151515151515\",\"caller\":\"11111111111111111111111111111111\",\"key\":{\"namespace\":\"12121212121212121212121212121212\",\"epoch\":3,\"nonce\":\"13131313131313131313131313131313\"},\"request_digest\":\"14141414141414141414141414141414141414141414141414141414141414\",\"catalog_revision\":7,\"authority_fence_required\":false}",
+   "kind": "catalog_receipt",
+   "name": "receipt_short_request_digest",
+   "reason": "digests are exactly 64 hex characters"
+  },
+  {
+   "json": "{\"schema\":1,\"operation_id\":\"15151515151515151515151515151515\",\"caller\":\"11111111111111111111111111111111\",\"key\":{\"namespace\":\"12121212121212121212121212121212\",\"epoch\":3,\"nonce\":\"13131313131313131313131313131313\"},\"request_digest\":\"1414141414141414141414141414141414141414141414141414141414141414\",\"catalog_revision\":0,\"authority_fence_required\":false}",
+   "kind": "catalog_receipt",
+   "name": "receipt_revision_zero",
+   "reason": "catalog revisions are 1..=i64::MAX"
+  },
+  {
+   "json": "{\"schema\":1,\"operation_id\":\"15151515151515151515151515151515\",\"caller\":\"11111111111111111111111111111111\",\"key\":{\"namespace\":\"12121212121212121212121212121212\",\"epoch\":3,\"nonce\":\"13131313131313131313131313131313\"},\"request_digest\":\"1414141414141414141414141414141414141414141414141414141414141414\",\"catalog_revision\":9223372036854775808,\"authority_fence_required\":false}",
+   "kind": "catalog_receipt",
+   "name": "receipt_revision_above_i64",
+   "reason": "catalog revisions are 1..=i64::MAX"
+  },
+  {
+   "json": "{\"schema\":1,\"operation_id\":\"15151515151515151515151515151515\",\"caller\":\"11111111111111111111111111111111\",\"request_digest\":\"1414141414141414141414141414141414141414141414141414141414141414\",\"catalog_revision\":7,\"authority_fence_required\":false}",
+   "kind": "catalog_receipt",
+   "name": "receipt_missing_key",
+   "reason": "every field is required"
+  },
+  {
+   "json": "{\"schema\":1,\"operation_id\":\"15151515151515151515151515151515\",\"caller\":\"11111111111111111111111111111111\",\"key\":{\"namespace\":\"12121212121212121212121212121212\",\"epoch\":-1,\"nonce\":\"13131313131313131313131313131313\"},\"request_digest\":\"1414141414141414141414141414141414141414141414141414141414141414\",\"catalog_revision\":7,\"authority_fence_required\":false}",
+   "kind": "catalog_receipt",
+   "name": "receipt_negative_epoch",
+   "reason": "epochs are u64"
+  },
+  {
+   "json": "{\"schema\":1,\"operation_id\":\"15151515151515151515151515151515\",\"caller\":\"11111111111111111111111111111111\",\"key\":{\"namespace\":\"12121212121212121212121212121212\",\"epoch\":1.0,\"nonce\":\"13131313131313131313131313131313\"},\"request_digest\":\"1414141414141414141414141414141414141414141414141414141414141414\",\"catalog_revision\":7,\"authority_fence_required\":false}",
+   "kind": "catalog_receipt",
+   "name": "receipt_float_epoch",
+   "reason": "integers must be JSON integers"
+  },
+  {
+   "json": "{\"protocol\":1,\"method\":\"catalog_receipt\"}",
+   "kind": "control_request",
+   "name": "request_unit_method",
+   "reason": "catalog_receipt carries caller and key"
+  },
+  {
+   "json": "{\"protocol\":1,\"method\":{\"catalog_receipt\":{\"caller\":\"11111111111111111111111111111111\",\"key\":{\"namespace\":\"12121212121212121212121212121212\",\"epoch\":3,\"nonce\":\"13131313131313131313131313131313\"},\"extra\":1}}}",
+   "kind": "control_request",
+   "name": "request_unknown_method_field",
+   "reason": "deny_unknown_fields"
+  },
+  {
+   "json": "{\"protocol\":1,\"method\":{\"catalog_receipt\":{\"caller\":\"11111111111111111111111111111111\",\"key\":{\"namespace\":\"12121212121212121212121212121212\",\"epoch\":3,\"nonce\":\"13131313131313131313131313131313\"}}},\"extra\":1}",
+   "kind": "control_request",
+   "name": "request_unknown_top_field",
+   "reason": "deny_unknown_fields"
+  },
+  {
+   "json": "{\"status\":\"catalog_receipt\",\"receipt\":null,\"extra\":1}",
+   "kind": "control_response",
+   "name": "response_unknown_field",
+   "reason": "deny_unknown_fields"
+  }
+ ],
+ "response_absent": "{\"status\":\"catalog_receipt\",\"receipt\":null}",
+ "schema": "airk.wire-fixture.catalog-receipt/1"
+}

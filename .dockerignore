@@ -9,6 +9,8 @@
 crates/**
 !docs/
 docs/**
+!fixtures/
+fixtures/**
 !packages/
 packages/**
 !scripts/
@@ -19,6 +21,8 @@ third_party/**
 tools/**
 !docs/research/
 docs/research/**
+!fixtures/wire/
+fixtures/wire/**
 !packages/vscode/
 packages/vscode/**
 !third_party/licenses/
@@ -50,6 +54,8 @@ packages/vscode/src/test/fixtures/**
 !THIRD_PARTY_NOTICES.md
 !docs/cli-reference.md
 !docs/research/contracts-v190/fixtures.json
+!fixtures/wire/catalog_receipt.json
+!fixtures/wire/read_retry_decisions.json
 !packages/vscode/src/test/diagnosticLogs.test.ts
 !packages/vscode/src/test/extensionUninstall.test.ts
 !packages/vscode/src/test/fixtures/httpAuthorityDigest.json

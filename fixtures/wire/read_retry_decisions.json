@@ -1,0 +1,2844 @@
+{
+ "schema": "airk.wire-fixture.read-retry-decisions/1",
+ "rust": "airk_core::combined_reads::read_retry::validated_retry",
+ "typescript": "packages/vscode/src/readRetry.ts singleRequiredMemberRetry",
+ "generator": "fixtures/wire/read_retry_decisions.py",
+ "cases": [
+  {
+   "name": "structured_selection_busy",
+   "rule": "canonical storage busy hint inside MCP structured content",
+   "input": {
+    "schema": "airk.combined-read/1",
+    "selection": {
+     "project_ids": [
+      "prj_02020202020202020202020202020202"
+     ],
+     "index_ids": [
+      "idx_01010101010101010101010101010101"
+     ],
+     "grant_id": "grt_03030303030303030303030303030303",
+     "grant_revision": 1,
+     "member_availability": "require",
+     "identity": "0404040404040404040404040404040404040404040404040404040404040404"
+    },
+    "publication_vector": {
+     "authority": "0505050505050505050505050505050505050505050505050505050505050505",
+     "observed_from_unix_ms": 1,
+     "observed_to_unix_ms": 2,
+     "members": [
+      {
+       "index_id": "idx_01010101010101010101010101010101",
+       "publication": null
+      }
+     ]
+    },
+    "members": [
+     {
+      "index_id": "idx_01010101010101010101010101010101",
+      "is_error": true,
+      "outcome": "failed",
+      "allocation": {
+       "index_id": "idx_01010101010101010101010101010101",
+       "limit": 1,
+       "max_bytes": 4096,
+       "deadline_ms": 2000,
+       "verification_max_sources": 1,
+       "verification_max_bytes": 4096,
+       "verification_deadline_ms": 2000
+      },
+      "result": {
+       "isError": true,
+       "content": [
+        {
+         "type": "text",
+         "text": "{\"status\":\"retry\",\"code\":\"selection_busy\",\"retryable\":true,\"action\":\"repeat_same_request\",\"retry_after_ms\":25}"
+        }
+       ],
+       "structuredContent": {
+        "status": "retry",
+        "code": "selection_busy",
+        "retryable": true,
+        "action": "repeat_same_request",
+        "retry_after_ms": 25
+       }
+      }
+     }
+    ],
+    "ranking": [],
+    "partial": true,
+    "truncated": false,
+    "error": {
+     "code": "member_unavailable",
+     "retryable": false,
+     "failed_members": [
+      "idx_01010101010101010101010101010101"
+     ]
+    },
+    "read_retry": {
+     "schema": 1,
+     "scope": "same_single_required_member",
+     "index_id": "idx_01010101010101010101010101010101",
+     "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+     "action": "repeat_same_request",
+     "query_replay_safe": true,
+     "result_pointer": "/members/0/result/structuredContent",
+     "code": "selection_busy",
+     "retry_after_ms": 25,
+     "fresh_brokerage_required": false
+    }
+   },
+   "expected": {
+    "schema": 1,
+    "scope": "same_single_required_member",
+    "index_id": "idx_01010101010101010101010101010101",
+    "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+    "action": "repeat_same_request",
+    "query_replay_safe": true,
+    "result_pointer": "/members/0/result/structuredContent",
+    "code": "selection_busy",
+    "retry_after_ms": 25,
+    "fresh_brokerage_required": false
+   }
+  },
+  {
+   "name": "structured_publication_busy",
+   "rule": "publication_busy is the other storage busy code",
+   "input": {
+    "schema": "airk.combined-read/1",
+    "selection": {
+     "project_ids": [
+      "prj_02020202020202020202020202020202"
+     ],
+     "index_ids": [
+      "idx_01010101010101010101010101010101"
+     ],
+     "grant_id": "grt_03030303030303030303030303030303",
+     "grant_revision": 1,
+     "member_availability": "require",
+     "identity": "0404040404040404040404040404040404040404040404040404040404040404"
+    },
+    "publication_vector": {
+     "authority": "0505050505050505050505050505050505050505050505050505050505050505",
+     "observed_from_unix_ms": 1,
+     "observed_to_unix_ms": 2,
+     "members": [
+      {
+       "index_id": "idx_01010101010101010101010101010101",
+       "publication": null
+      }
+     ]
+    },
+    "members": [
+     {
+      "index_id": "idx_01010101010101010101010101010101",
+      "is_error": true,
+      "outcome": "failed",
+      "allocation": {
+       "index_id": "idx_01010101010101010101010101010101",
+       "limit": 1,
+       "max_bytes": 4096,
+       "deadline_ms": 2000,
+       "verification_max_sources": 1,
+       "verification_max_bytes": 4096,
+       "verification_deadline_ms": 2000
+      },
+      "result": {
+       "isError": true,
+       "content": [
+        {
+         "type": "text",
+         "text": "{\"status\":\"retry\",\"code\":\"publication_busy\",\"retryable\":true,\"action\":\"repeat_same_request\",\"retry_after_ms\":25}"
+        }
+       ],
+       "structuredContent": {
+        "status": "retry",
+        "code": "publication_busy",
+        "retryable": true,
+        "action": "repeat_same_request",
+        "retry_after_ms": 25
+       }
+      }
+     }
+    ],
+    "ranking": [],
+    "partial": true,
+    "truncated": false,
+    "error": {
+     "code": "member_unavailable",
+     "retryable": false,
+     "failed_members": [
+      "idx_01010101010101010101010101010101"
+     ]
+    },
+    "read_retry": {
+     "schema": 1,
+     "scope": "same_single_required_member",
+     "index_id": "idx_01010101010101010101010101010101",
+     "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+     "action": "repeat_same_request",
+     "query_replay_safe": true,
+     "result_pointer": "/members/0/result/structuredContent",
+     "code": "publication_busy",
+     "retry_after_ms": 25,
+     "fresh_brokerage_required": false
+    }
+   },
+   "expected": {
+    "schema": 1,
+    "scope": "same_single_required_member",
+    "index_id": "idx_01010101010101010101010101010101",
+    "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+    "action": "repeat_same_request",
+    "query_replay_safe": true,
+    "result_pointer": "/members/0/result/structuredContent",
+    "code": "publication_busy",
+    "retry_after_ms": 25,
+    "fresh_brokerage_required": false
+   }
+  },
+  {
+   "name": "bare_storage_hint",
+   "rule": "a bare native envelope points at the result itself",
+   "input": {
+    "schema": "airk.combined-read/1",
+    "selection": {
+     "project_ids": [
+      "prj_02020202020202020202020202020202"
+     ],
+     "index_ids": [
+      "idx_01010101010101010101010101010101"
+     ],
+     "grant_id": "grt_03030303030303030303030303030303",
+     "grant_revision": 1,
+     "member_availability": "require",
+     "identity": "0404040404040404040404040404040404040404040404040404040404040404"
+    },
+    "publication_vector": {
+     "authority": "0505050505050505050505050505050505050505050505050505050505050505",
+     "observed_from_unix_ms": 1,
+     "observed_to_unix_ms": 2,
+     "members": [
+      {
+       "index_id": "idx_01010101010101010101010101010101",
+       "publication": null
+      }
+     ]
+    },
+    "members": [
+     {
+      "index_id": "idx_01010101010101010101010101010101",
+      "is_error": true,
+      "outcome": "failed",
+      "allocation": {
+       "index_id": "idx_01010101010101010101010101010101",
+       "limit": 1,
+       "max_bytes": 4096,
+       "deadline_ms": 2000,
+       "verification_max_sources": 1,
+       "verification_max_bytes": 4096,
+       "verification_deadline_ms": 2000
+      },
+      "result": {
+       "status": "retry",
+       "code": "selection_busy",
+       "retryable": true,
+       "action": "repeat_same_request",
+       "retry_after_ms": 25
+      }
+     }
+    ],
+    "ranking": [],
+    "partial": true,
+    "truncated": false,
+    "error": {
+     "code": "member_unavailable",
+     "retryable": false,
+     "failed_members": [
+      "idx_01010101010101010101010101010101"
+     ]
+    },
+    "read_retry": {
+     "schema": 1,
+     "scope": "same_single_required_member",
+     "index_id": "idx_01010101010101010101010101010101",
+     "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+     "action": "repeat_same_request",
+     "query_replay_safe": true,
+     "result_pointer": "/members/0/result",
+     "code": "selection_busy",
+     "retry_after_ms": 25,
+     "fresh_brokerage_required": false
+    }
+   },
+   "expected": {
+    "schema": 1,
+    "scope": "same_single_required_member",
+    "index_id": "idx_01010101010101010101010101010101",
+    "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+    "action": "repeat_same_request",
+    "query_replay_safe": true,
+    "result_pointer": "/members/0/result",
+    "code": "selection_busy",
+    "retry_after_ms": 25,
+    "fresh_brokerage_required": false
+   }
+  },
+  {
+   "name": "undeclared",
+   "rule": "an inner busy hint alone is not an outer replay instruction",
+   "input": {
+    "schema": "airk.combined-read/1",
+    "selection": {
+     "project_ids": [
+      "prj_02020202020202020202020202020202"
+     ],
+     "index_ids": [
+      "idx_01010101010101010101010101010101"
+     ],
+     "grant_id": "grt_03030303030303030303030303030303",
+     "grant_revision": 1,
+     "member_availability": "require",
+     "identity": "0404040404040404040404040404040404040404040404040404040404040404"
+    },
+    "publication_vector": {
+     "authority": "0505050505050505050505050505050505050505050505050505050505050505",
+     "observed_from_unix_ms": 1,
+     "observed_to_unix_ms": 2,
+     "members": [
+      {
+       "index_id": "idx_01010101010101010101010101010101",
+       "publication": null
+      }
+     ]
+    },
+    "members": [
+     {
+      "index_id": "idx_01010101010101010101010101010101",
+      "is_error": true,
+      "outcome": "failed",
+      "allocation": {
+       "index_id": "idx_01010101010101010101010101010101",
+       "limit": 1,
+       "max_bytes": 4096,
+       "deadline_ms": 2000,
+       "verification_max_sources": 1,
+       "verification_max_bytes": 4096,
+       "verification_deadline_ms": 2000
+      },
+      "result": {
+       "isError": true,
+       "content": [
+        {
+         "type": "text",
+         "text": "{\"status\":\"retry\",\"code\":\"selection_busy\",\"retryable\":true,\"action\":\"repeat_same_request\",\"retry_after_ms\":25}"
+        }
+       ],
+       "structuredContent": {
+        "status": "retry",
+        "code": "selection_busy",
+        "retryable": true,
+        "action": "repeat_same_request",
+        "retry_after_ms": 25
+       }
+      }
+     }
+    ],
+    "ranking": [],
+    "partial": true,
+    "truncated": false,
+    "error": {
+     "code": "member_unavailable",
+     "retryable": false,
+     "failed_members": [
+      "idx_01010101010101010101010101010101"
+     ]
+    }
+   },
+   "expected": null
+  },
+  {
+   "name": "declared_differs",
+   "rule": "declared metadata must equal the proposal exactly",
+   "input": {
+    "schema": "airk.combined-read/1",
+    "selection": {
+     "project_ids": [
+      "prj_02020202020202020202020202020202"
+     ],
+     "index_ids": [
+      "idx_01010101010101010101010101010101"
+     ],
+     "grant_id": "grt_03030303030303030303030303030303",
+     "grant_revision": 1,
+     "member_availability": "require",
+     "identity": "0404040404040404040404040404040404040404040404040404040404040404"
+    },
+    "publication_vector": {
+     "authority": "0505050505050505050505050505050505050505050505050505050505050505",
+     "observed_from_unix_ms": 1,
+     "observed_to_unix_ms": 2,
+     "members": [
+      {
+       "index_id": "idx_01010101010101010101010101010101",
+       "publication": null
+      }
+     ]
+    },
+    "members": [
+     {
+      "index_id": "idx_01010101010101010101010101010101",
+      "is_error": true,
+      "outcome": "failed",
+      "allocation": {
+       "index_id": "idx_01010101010101010101010101010101",
+       "limit": 1,
+       "max_bytes": 4096,
+       "deadline_ms": 2000,
+       "verification_max_sources": 1,
+       "verification_max_bytes": 4096,
+       "verification_deadline_ms": 2000
+      },
+      "result": {
+       "isError": true,
+       "content": [
+        {
+         "type": "text",
+         "text": "{\"status\":\"retry\",\"code\":\"selection_busy\",\"retryable\":true,\"action\":\"repeat_same_request\",\"retry_after_ms\":25}"
+        }
+       ],
+       "structuredContent": {
+        "status": "retry",
+        "code": "selection_busy",
+        "retryable": true,
+        "action": "repeat_same_request",
+        "retry_after_ms": 25
+       }
+      }
+     }
+    ],
+    "ranking": [],
+    "partial": true,
+    "truncated": false,
+    "error": {
+     "code": "member_unavailable",
+     "retryable": false,
+     "failed_members": [
+      "idx_01010101010101010101010101010101"
+     ]
+    },
+    "read_retry": {
+     "schema": 1,
+     "scope": "same_single_required_member",
+     "index_id": "idx_01010101010101010101010101010101",
+     "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+     "action": "repeat_same_request",
+     "query_replay_safe": true,
+     "result_pointer": "/members/0/result/structuredContent",
+     "code": "selection_busy",
+     "retry_after_ms": 26,
+     "fresh_brokerage_required": false
+    }
+   },
+   "expected": null
+  },
+  {
+   "name": "direct_admission_busy",
+   "rule": "unsubmitted busy admission keeps the brokerage",
+   "input": {
+    "schema": "airk.combined-read/1",
+    "selection": {
+     "project_ids": [
+      "prj_02020202020202020202020202020202"
+     ],
+     "index_ids": [
+      "idx_01010101010101010101010101010101"
+     ],
+     "grant_id": "grt_03030303030303030303030303030303",
+     "grant_revision": 1,
+     "member_availability": "require",
+     "identity": "0404040404040404040404040404040404040404040404040404040404040404"
+    },
+    "publication_vector": {
+     "authority": "0505050505050505050505050505050505050505050505050505050505050505",
+     "observed_from_unix_ms": 1,
+     "observed_to_unix_ms": 2,
+     "members": [
+      {
+       "index_id": "idx_01010101010101010101010101010101",
+       "publication": null
+      }
+     ]
+    },
+    "members": [
+     {
+      "index_id": "idx_01010101010101010101010101010101",
+      "is_error": true,
+      "outcome": "failed",
+      "allocation": {
+       "index_id": "idx_01010101010101010101010101010101",
+       "limit": 1,
+       "max_bytes": 4096,
+       "deadline_ms": 2000,
+       "verification_max_sources": 1,
+       "verification_max_bytes": 4096,
+       "verification_deadline_ms": 2000
+      },
+      "result": {
+       "isError": true,
+       "content": [
+        {
+         "type": "text",
+         "text": "{\"error\":{\"code\":\"direct_query_admission\",\"reason\":\"busy\",\"query_submitted\":false,\"retryable\":true,\"retry_after_ms\":40,\"fresh_brokerage_required\":false}}"
+        }
+       ],
+       "structuredContent": {
+        "error": {
+         "code": "direct_query_admission",
+         "reason": "busy",
+         "query_submitted": false,
+         "retryable": true,
+         "retry_after_ms": 40,
+         "fresh_brokerage_required": false
+        }
+       }
+      }
+     }
+    ],
+    "ranking": [],
+    "partial": true,
+    "truncated": false,
+    "error": {
+     "code": "member_unavailable",
+     "retryable": false,
+     "failed_members": [
+      "idx_01010101010101010101010101010101"
+     ]
+    },
+    "read_retry": {
+     "schema": 1,
+     "scope": "same_single_required_member",
+     "index_id": "idx_01010101010101010101010101010101",
+     "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+     "action": "repeat_same_request",
+     "query_replay_safe": true,
+     "result_pointer": "/members/0/result/structuredContent",
+     "code": "direct_query_admission",
+     "retry_after_ms": 40,
+     "fresh_brokerage_required": false
+    }
+   },
+   "expected": {
+    "schema": 1,
+    "scope": "same_single_required_member",
+    "index_id": "idx_01010101010101010101010101010101",
+    "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+    "action": "repeat_same_request",
+    "query_replay_safe": true,
+    "result_pointer": "/members/0/result/structuredContent",
+    "code": "direct_query_admission",
+    "retry_after_ms": 40,
+    "fresh_brokerage_required": false
+   }
+  },
+  {
+   "name": "direct_setup_busy",
+   "rule": "busy setup requires fresh brokerage",
+   "input": {
+    "schema": "airk.combined-read/1",
+    "selection": {
+     "project_ids": [
+      "prj_02020202020202020202020202020202"
+     ],
+     "index_ids": [
+      "idx_01010101010101010101010101010101"
+     ],
+     "grant_id": "grt_03030303030303030303030303030303",
+     "grant_revision": 1,
+     "member_availability": "require",
+     "identity": "0404040404040404040404040404040404040404040404040404040404040404"
+    },
+    "publication_vector": {
+     "authority": "0505050505050505050505050505050505050505050505050505050505050505",
+     "observed_from_unix_ms": 1,
+     "observed_to_unix_ms": 2,
+     "members": [
+      {
+       "index_id": "idx_01010101010101010101010101010101",
+       "publication": null
+      }
+     ]
+    },
+    "members": [
+     {
+      "index_id": "idx_01010101010101010101010101010101",
+      "is_error": true,
+      "outcome": "failed",
+      "allocation": {
+       "index_id": "idx_01010101010101010101010101010101",
+       "limit": 1,
+       "max_bytes": 4096,
+       "deadline_ms": 2000,
+       "verification_max_sources": 1,
+       "verification_max_bytes": 4096,
+       "verification_deadline_ms": 2000
+      },
+      "result": {
+       "isError": true,
+       "content": [
+        {
+         "type": "text",
+         "text": "{\"error\":{\"code\":\"direct_query_setup\",\"reason\":\"busy\",\"query_submitted\":false,\"retryable\":true,\"retry_after_ms\":40,\"fresh_brokerage_required\":true}}"
+        }
+       ],
+       "structuredContent": {
+        "error": {
+         "code": "direct_query_setup",
+         "reason": "busy",
+         "query_submitted": false,
+         "retryable": true,
+         "retry_after_ms": 40,
+         "fresh_brokerage_required": true
+        }
+       }
+      }
+     }
+    ],
+    "ranking": [],
+    "partial": true,
+    "truncated": false,
+    "error": {
+     "code": "member_unavailable",
+     "retryable": false,
+     "failed_members": [
+      "idx_01010101010101010101010101010101"
+     ]
+    },
+    "read_retry": {
+     "schema": 1,
+     "scope": "same_single_required_member",
+     "index_id": "idx_01010101010101010101010101010101",
+     "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+     "action": "repeat_same_request",
+     "query_replay_safe": true,
+     "result_pointer": "/members/0/result/structuredContent",
+     "code": "direct_query_setup",
+     "retry_after_ms": 40,
+     "fresh_brokerage_required": true
+    }
+   },
+   "expected": {
+    "schema": 1,
+    "scope": "same_single_required_member",
+    "index_id": "idx_01010101010101010101010101010101",
+    "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+    "action": "repeat_same_request",
+    "query_replay_safe": true,
+    "result_pointer": "/members/0/result/structuredContent",
+    "code": "direct_query_setup",
+    "retry_after_ms": 40,
+    "fresh_brokerage_required": true
+   }
+  },
+  {
+   "name": "direct_setup_without_fresh_brokerage",
+   "rule": "setup must declare fresh brokerage",
+   "input": {
+    "schema": "airk.combined-read/1",
+    "selection": {
+     "project_ids": [
+      "prj_02020202020202020202020202020202"
+     ],
+     "index_ids": [
+      "idx_01010101010101010101010101010101"
+     ],
+     "grant_id": "grt_03030303030303030303030303030303",
+     "grant_revision": 1,
+     "member_availability": "require",
+     "identity": "0404040404040404040404040404040404040404040404040404040404040404"
+    },
+    "publication_vector": {
+     "authority": "0505050505050505050505050505050505050505050505050505050505050505",
+     "observed_from_unix_ms": 1,
+     "observed_to_unix_ms": 2,
+     "members": [
+      {
+       "index_id": "idx_01010101010101010101010101010101",
+       "publication": null
+      }
+     ]
+    },
+    "members": [
+     {
+      "index_id": "idx_01010101010101010101010101010101",
+      "is_error": true,
+      "outcome": "failed",
+      "allocation": {
+       "index_id": "idx_01010101010101010101010101010101",
+       "limit": 1,
+       "max_bytes": 4096,
+       "deadline_ms": 2000,
+       "verification_max_sources": 1,
+       "verification_max_bytes": 4096,
+       "verification_deadline_ms": 2000
+      },
+      "result": {
+       "isError": true,
+       "content": [
+        {
+         "type": "text",
+         "text": "{\"error\":{\"code\":\"direct_query_setup\",\"reason\":\"busy\",\"query_submitted\":false,\"retryable\":true,\"retry_after_ms\":40,\"fresh_brokerage_required\":false}}"
+        }
+       ],
+       "structuredContent": {
+        "error": {
+         "code": "direct_query_setup",
+         "reason": "busy",
+         "query_submitted": false,
+         "retryable": true,
+         "retry_after_ms": 40,
+         "fresh_brokerage_required": false
+        }
+       }
+      }
+     }
+    ],
+    "ranking": [],
+    "partial": true,
+    "truncated": false,
+    "error": {
+     "code": "member_unavailable",
+     "retryable": false,
+     "failed_members": [
+      "idx_01010101010101010101010101010101"
+     ]
+    },
+    "read_retry": {
+     "schema": 1,
+     "scope": "same_single_required_member",
+     "index_id": "idx_01010101010101010101010101010101",
+     "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+     "action": "repeat_same_request",
+     "query_replay_safe": true,
+     "result_pointer": "/members/0/result/structuredContent",
+     "code": "selection_busy",
+     "retry_after_ms": 25,
+     "fresh_brokerage_required": false
+    }
+   },
+   "expected": null
+  },
+  {
+   "name": "direct_submitted",
+   "rule": "a submitted query is never replayed",
+   "input": {
+    "schema": "airk.combined-read/1",
+    "selection": {
+     "project_ids": [
+      "prj_02020202020202020202020202020202"
+     ],
+     "index_ids": [
+      "idx_01010101010101010101010101010101"
+     ],
+     "grant_id": "grt_03030303030303030303030303030303",
+     "grant_revision": 1,
+     "member_availability": "require",
+     "identity": "0404040404040404040404040404040404040404040404040404040404040404"
+    },
+    "publication_vector": {
+     "authority": "0505050505050505050505050505050505050505050505050505050505050505",
+     "observed_from_unix_ms": 1,
+     "observed_to_unix_ms": 2,
+     "members": [
+      {
+       "index_id": "idx_01010101010101010101010101010101",
+       "publication": null
+      }
+     ]
+    },
+    "members": [
+     {
+      "index_id": "idx_01010101010101010101010101010101",
+      "is_error": true,
+      "outcome": "failed",
+      "allocation": {
+       "index_id": "idx_01010101010101010101010101010101",
+       "limit": 1,
+       "max_bytes": 4096,
+       "deadline_ms": 2000,
+       "verification_max_sources": 1,
+       "verification_max_bytes": 4096,
+       "verification_deadline_ms": 2000
+      },
+      "result": {
+       "isError": true,
+       "content": [
+        {
+         "type": "text",
+         "text": "{\"error\":{\"code\":\"direct_query_admission\",\"reason\":\"busy\",\"query_submitted\":true,\"retryable\":true,\"retry_after_ms\":40,\"fresh_brokerage_required\":false}}"
+        }
+       ],
+       "structuredContent": {
+        "error": {
+         "code": "direct_query_admission",
+         "reason": "busy",
+         "query_submitted": true,
+         "retryable": true,
+         "retry_after_ms": 40,
+         "fresh_brokerage_required": false
+        }
+       }
+      }
+     }
+    ],
+    "ranking": [],
+    "partial": true,
+    "truncated": false,
+    "error": {
+     "code": "member_unavailable",
+     "retryable": false,
+     "failed_members": [
+      "idx_01010101010101010101010101010101"
+     ]
+    },
+    "read_retry": {
+     "schema": 1,
+     "scope": "same_single_required_member",
+     "index_id": "idx_01010101010101010101010101010101",
+     "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+     "action": "repeat_same_request",
+     "query_replay_safe": true,
+     "result_pointer": "/members/0/result/structuredContent",
+     "code": "selection_busy",
+     "retry_after_ms": 25,
+     "fresh_brokerage_required": false
+    }
+   },
+   "expected": null
+  },
+  {
+   "name": "delay_zero",
+   "rule": "delay must be 1..=1000 ms",
+   "input": {
+    "schema": "airk.combined-read/1",
+    "selection": {
+     "project_ids": [
+      "prj_02020202020202020202020202020202"
+     ],
+     "index_ids": [
+      "idx_01010101010101010101010101010101"
+     ],
+     "grant_id": "grt_03030303030303030303030303030303",
+     "grant_revision": 1,
+     "member_availability": "require",
+     "identity": "0404040404040404040404040404040404040404040404040404040404040404"
+    },
+    "publication_vector": {
+     "authority": "0505050505050505050505050505050505050505050505050505050505050505",
+     "observed_from_unix_ms": 1,
+     "observed_to_unix_ms": 2,
+     "members": [
+      {
+       "index_id": "idx_01010101010101010101010101010101",
+       "publication": null
+      }
+     ]
+    },
+    "members": [
+     {
+      "index_id": "idx_01010101010101010101010101010101",
+      "is_error": true,
+      "outcome": "failed",
+      "allocation": {
+       "index_id": "idx_01010101010101010101010101010101",
+       "limit": 1,
+       "max_bytes": 4096,
+       "deadline_ms": 2000,
+       "verification_max_sources": 1,
+       "verification_max_bytes": 4096,
+       "verification_deadline_ms": 2000
+      },
+      "result": {
+       "isError": true,
+       "content": [
+        {
+         "type": "text",
+         "text": "{\"status\":\"retry\",\"code\":\"selection_busy\",\"retryable\":true,\"action\":\"repeat_same_request\",\"retry_after_ms\":0}"
+        }
+       ],
+       "structuredContent": {
+        "status": "retry",
+        "code": "selection_busy",
+        "retryable": true,
+        "action": "repeat_same_request",
+        "retry_after_ms": 0
+       }
+      }
+     }
+    ],
+    "ranking": [],
+    "partial": true,
+    "truncated": false,
+    "error": {
+     "code": "member_unavailable",
+     "retryable": false,
+     "failed_members": [
+      "idx_01010101010101010101010101010101"
+     ]
+    },
+    "read_retry": {
+     "schema": 1,
+     "scope": "same_single_required_member",
+     "index_id": "idx_01010101010101010101010101010101",
+     "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+     "action": "repeat_same_request",
+     "query_replay_safe": true,
+     "result_pointer": "/members/0/result/structuredContent",
+     "code": "selection_busy",
+     "retry_after_ms": 25,
+     "fresh_brokerage_required": false
+    }
+   },
+   "expected": null
+  },
+  {
+   "name": "delay_maximum",
+   "rule": "1000 ms is the inclusive bound",
+   "input": {
+    "schema": "airk.combined-read/1",
+    "selection": {
+     "project_ids": [
+      "prj_02020202020202020202020202020202"
+     ],
+     "index_ids": [
+      "idx_01010101010101010101010101010101"
+     ],
+     "grant_id": "grt_03030303030303030303030303030303",
+     "grant_revision": 1,
+     "member_availability": "require",
+     "identity": "0404040404040404040404040404040404040404040404040404040404040404"
+    },
+    "publication_vector": {
+     "authority": "0505050505050505050505050505050505050505050505050505050505050505",
+     "observed_from_unix_ms": 1,
+     "observed_to_unix_ms": 2,
+     "members": [
+      {
+       "index_id": "idx_01010101010101010101010101010101",
+       "publication": null
+      }
+     ]
+    },
+    "members": [
+     {
+      "index_id": "idx_01010101010101010101010101010101",
+      "is_error": true,
+      "outcome": "failed",
+      "allocation": {
+       "index_id": "idx_01010101010101010101010101010101",
+       "limit": 1,
+       "max_bytes": 4096,
+       "deadline_ms": 2000,
+       "verification_max_sources": 1,
+       "verification_max_bytes": 4096,
+       "verification_deadline_ms": 2000
+      },
+      "result": {
+       "isError": true,
+       "content": [
+        {
+         "type": "text",
+         "text": "{\"status\":\"retry\",\"code\":\"selection_busy\",\"retryable\":true,\"action\":\"repeat_same_request\",\"retry_after_ms\":1000}"
+        }
+       ],
+       "structuredContent": {
+        "status": "retry",
+        "code": "selection_busy",
+        "retryable": true,
+        "action": "repeat_same_request",
+        "retry_after_ms": 1000
+       }
+      }
+     }
+    ],
+    "ranking": [],
+    "partial": true,
+    "truncated": false,
+    "error": {
+     "code": "member_unavailable",
+     "retryable": false,
+     "failed_members": [
+      "idx_01010101010101010101010101010101"
+     ]
+    },
+    "read_retry": {
+     "schema": 1,
+     "scope": "same_single_required_member",
+     "index_id": "idx_01010101010101010101010101010101",
+     "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+     "action": "repeat_same_request",
+     "query_replay_safe": true,
+     "result_pointer": "/members/0/result/structuredContent",
+     "code": "selection_busy",
+     "retry_after_ms": 1000,
+     "fresh_brokerage_required": false
+    }
+   },
+   "expected": {
+    "schema": 1,
+    "scope": "same_single_required_member",
+    "index_id": "idx_01010101010101010101010101010101",
+    "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+    "action": "repeat_same_request",
+    "query_replay_safe": true,
+    "result_pointer": "/members/0/result/structuredContent",
+    "code": "selection_busy",
+    "retry_after_ms": 1000,
+    "fresh_brokerage_required": false
+   }
+  },
+  {
+   "name": "delay_above_maximum",
+   "rule": "delay must be 1..=1000 ms",
+   "input": {
+    "schema": "airk.combined-read/1",
+    "selection": {
+     "project_ids": [
+      "prj_02020202020202020202020202020202"
+     ],
+     "index_ids": [
+      "idx_01010101010101010101010101010101"
+     ],
+     "grant_id": "grt_03030303030303030303030303030303",
+     "grant_revision": 1,
+     "member_availability": "require",
+     "identity": "0404040404040404040404040404040404040404040404040404040404040404"
+    },
+    "publication_vector": {
+     "authority": "0505050505050505050505050505050505050505050505050505050505050505",
+     "observed_from_unix_ms": 1,
+     "observed_to_unix_ms": 2,
+     "members": [
+      {
+       "index_id": "idx_01010101010101010101010101010101",
+       "publication": null
+      }
+     ]
+    },
+    "members": [
+     {
+      "index_id": "idx_01010101010101010101010101010101",
+      "is_error": true,
+      "outcome": "failed",
+      "allocation": {
+       "index_id": "idx_01010101010101010101010101010101",
+       "limit": 1,
+       "max_bytes": 4096,
+       "deadline_ms": 2000,
+       "verification_max_sources": 1,
+       "verification_max_bytes": 4096,
+       "verification_deadline_ms": 2000
+      },
+      "result": {
+       "isError": true,
+       "content": [
+        {
+         "type": "text",
+         "text": "{\"status\":\"retry\",\"code\":\"selection_busy\",\"retryable\":true,\"action\":\"repeat_same_request\",\"retry_after_ms\":1001}"
+        }
+       ],
+       "structuredContent": {
+        "status": "retry",
+        "code": "selection_busy",
+        "retryable": true,
+        "action": "repeat_same_request",
+        "retry_after_ms": 1001
+       }
+      }
+     }
+    ],
+    "ranking": [],
+    "partial": true,
+    "truncated": false,
+    "error": {
+     "code": "member_unavailable",
+     "retryable": false,
+     "failed_members": [
+      "idx_01010101010101010101010101010101"
+     ]
+    },
+    "read_retry": {
+     "schema": 1,
+     "scope": "same_single_required_member",
+     "index_id": "idx_01010101010101010101010101010101",
+     "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+     "action": "repeat_same_request",
+     "query_replay_safe": true,
+     "result_pointer": "/members/0/result/structuredContent",
+     "code": "selection_busy",
+     "retry_after_ms": 25,
+     "fresh_brokerage_required": false
+    }
+   },
+   "expected": null
+  },
+  {
+   "name": "truncated",
+   "rule": "a truncated composition is never replayed",
+   "input": {
+    "schema": "airk.combined-read/1",
+    "selection": {
+     "project_ids": [
+      "prj_02020202020202020202020202020202"
+     ],
+     "index_ids": [
+      "idx_01010101010101010101010101010101"
+     ],
+     "grant_id": "grt_03030303030303030303030303030303",
+     "grant_revision": 1,
+     "member_availability": "require",
+     "identity": "0404040404040404040404040404040404040404040404040404040404040404"
+    },
+    "publication_vector": {
+     "authority": "0505050505050505050505050505050505050505050505050505050505050505",
+     "observed_from_unix_ms": 1,
+     "observed_to_unix_ms": 2,
+     "members": [
+      {
+       "index_id": "idx_01010101010101010101010101010101",
+       "publication": null
+      }
+     ]
+    },
+    "members": [
+     {
+      "index_id": "idx_01010101010101010101010101010101",
+      "is_error": true,
+      "outcome": "failed",
+      "allocation": {
+       "index_id": "idx_01010101010101010101010101010101",
+       "limit": 1,
+       "max_bytes": 4096,
+       "deadline_ms": 2000,
+       "verification_max_sources": 1,
+       "verification_max_bytes": 4096,
+       "verification_deadline_ms": 2000
+      },
+      "result": {
+       "isError": true,
+       "content": [
+        {
+         "type": "text",
+         "text": "{\"status\":\"retry\",\"code\":\"selection_busy\",\"retryable\":true,\"action\":\"repeat_same_request\",\"retry_after_ms\":25}"
+        }
+       ],
+       "structuredContent": {
+        "status": "retry",
+        "code": "selection_busy",
+        "retryable": true,
+        "action": "repeat_same_request",
+        "retry_after_ms": 25
+       }
+      }
+     }
+    ],
+    "ranking": [],
+    "partial": true,
+    "truncated": true,
+    "error": {
+     "code": "member_unavailable",
+     "retryable": false,
+     "failed_members": [
+      "idx_01010101010101010101010101010101"
+     ]
+    },
+    "read_retry": {
+     "schema": 1,
+     "scope": "same_single_required_member",
+     "index_id": "idx_01010101010101010101010101010101",
+     "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+     "action": "repeat_same_request",
+     "query_replay_safe": true,
+     "result_pointer": "/members/0/result/structuredContent",
+     "code": "selection_busy",
+     "retry_after_ms": 25,
+     "fresh_brokerage_required": false
+    }
+   },
+   "expected": null
+  },
+  {
+   "name": "not_partial",
+   "rule": "only a partial composition can carry a member failure",
+   "input": {
+    "schema": "airk.combined-read/1",
+    "selection": {
+     "project_ids": [
+      "prj_02020202020202020202020202020202"
+     ],
+     "index_ids": [
+      "idx_01010101010101010101010101010101"
+     ],
+     "grant_id": "grt_03030303030303030303030303030303",
+     "grant_revision": 1,
+     "member_availability": "require",
+     "identity": "0404040404040404040404040404040404040404040404040404040404040404"
+    },
+    "publication_vector": {
+     "authority": "0505050505050505050505050505050505050505050505050505050505050505",
+     "observed_from_unix_ms": 1,
+     "observed_to_unix_ms": 2,
+     "members": [
+      {
+       "index_id": "idx_01010101010101010101010101010101",
+       "publication": null
+      }
+     ]
+    },
+    "members": [
+     {
+      "index_id": "idx_01010101010101010101010101010101",
+      "is_error": true,
+      "outcome": "failed",
+      "allocation": {
+       "index_id": "idx_01010101010101010101010101010101",
+       "limit": 1,
+       "max_bytes": 4096,
+       "deadline_ms": 2000,
+       "verification_max_sources": 1,
+       "verification_max_bytes": 4096,
+       "verification_deadline_ms": 2000
+      },
+      "result": {
+       "isError": true,
+       "content": [
+        {
+         "type": "text",
+         "text": "{\"status\":\"retry\",\"code\":\"selection_busy\",\"retryable\":true,\"action\":\"repeat_same_request\",\"retry_after_ms\":25}"
+        }
+       ],
+       "structuredContent": {
+        "status": "retry",
+        "code": "selection_busy",
+        "retryable": true,
+        "action": "repeat_same_request",
+        "retry_after_ms": 25
+       }
+      }
+     }
+    ],
+    "ranking": [],
+    "partial": false,
+    "truncated": false,
+    "error": {
+     "code": "member_unavailable",
+     "retryable": false,
+     "failed_members": [
+      "idx_01010101010101010101010101010101"
+     ]
+    },
+    "read_retry": {
+     "schema": 1,
+     "scope": "same_single_required_member",
+     "index_id": "idx_01010101010101010101010101010101",
+     "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+     "action": "repeat_same_request",
+     "query_replay_safe": true,
+     "result_pointer": "/members/0/result/structuredContent",
+     "code": "selection_busy",
+     "retry_after_ms": 25,
+     "fresh_brokerage_required": false
+    }
+   },
+   "expected": null
+  },
+  {
+   "name": "ranked",
+   "rule": "a non-empty ranking means results were delivered",
+   "input": {
+    "schema": "airk.combined-read/1",
+    "selection": {
+     "project_ids": [
+      "prj_02020202020202020202020202020202"
+     ],
+     "index_ids": [
+      "idx_01010101010101010101010101010101"
+     ],
+     "grant_id": "grt_03030303030303030303030303030303",
+     "grant_revision": 1,
+     "member_availability": "require",
+     "identity": "0404040404040404040404040404040404040404040404040404040404040404"
+    },
+    "publication_vector": {
+     "authority": "0505050505050505050505050505050505050505050505050505050505050505",
+     "observed_from_unix_ms": 1,
+     "observed_to_unix_ms": 2,
+     "members": [
+      {
+       "index_id": "idx_01010101010101010101010101010101",
+       "publication": null
+      }
+     ]
+    },
+    "members": [
+     {
+      "index_id": "idx_01010101010101010101010101010101",
+      "is_error": true,
+      "outcome": "failed",
+      "allocation": {
+       "index_id": "idx_01010101010101010101010101010101",
+       "limit": 1,
+       "max_bytes": 4096,
+       "deadline_ms": 2000,
+       "verification_max_sources": 1,
+       "verification_max_bytes": 4096,
+       "verification_deadline_ms": 2000
+      },
+      "result": {
+       "isError": true,
+       "content": [
+        {
+         "type": "text",
+         "text": "{\"status\":\"retry\",\"code\":\"selection_busy\",\"retryable\":true,\"action\":\"repeat_same_request\",\"retry_after_ms\":25}"
+        }
+       ],
+       "structuredContent": {
+        "status": "retry",
+        "code": "selection_busy",
+        "retryable": true,
+        "action": "repeat_same_request",
+        "retry_after_ms": 25
+       }
+      }
+     }
+    ],
+    "ranking": [
+     "x"
+    ],
+    "partial": true,
+    "truncated": false,
+    "error": {
+     "code": "member_unavailable",
+     "retryable": false,
+     "failed_members": [
+      "idx_01010101010101010101010101010101"
+     ]
+    },
+    "read_retry": {
+     "schema": 1,
+     "scope": "same_single_required_member",
+     "index_id": "idx_01010101010101010101010101010101",
+     "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+     "action": "repeat_same_request",
+     "query_replay_safe": true,
+     "result_pointer": "/members/0/result/structuredContent",
+     "code": "selection_busy",
+     "retry_after_ms": 25,
+     "fresh_brokerage_required": false
+    }
+   },
+   "expected": null
+  },
+  {
+   "name": "shared_values_present",
+   "rule": "shared values mean results were delivered",
+   "input": {
+    "schema": "airk.combined-read/1",
+    "selection": {
+     "project_ids": [
+      "prj_02020202020202020202020202020202"
+     ],
+     "index_ids": [
+      "idx_01010101010101010101010101010101"
+     ],
+     "grant_id": "grt_03030303030303030303030303030303",
+     "grant_revision": 1,
+     "member_availability": "require",
+     "identity": "0404040404040404040404040404040404040404040404040404040404040404"
+    },
+    "publication_vector": {
+     "authority": "0505050505050505050505050505050505050505050505050505050505050505",
+     "observed_from_unix_ms": 1,
+     "observed_to_unix_ms": 2,
+     "members": [
+      {
+       "index_id": "idx_01010101010101010101010101010101",
+       "publication": null
+      }
+     ]
+    },
+    "members": [
+     {
+      "index_id": "idx_01010101010101010101010101010101",
+      "is_error": true,
+      "outcome": "failed",
+      "allocation": {
+       "index_id": "idx_01010101010101010101010101010101",
+       "limit": 1,
+       "max_bytes": 4096,
+       "deadline_ms": 2000,
+       "verification_max_sources": 1,
+       "verification_max_bytes": 4096,
+       "verification_deadline_ms": 2000
+      },
+      "result": {
+       "isError": true,
+       "content": [
+        {
+         "type": "text",
+         "text": "{\"status\":\"retry\",\"code\":\"selection_busy\",\"retryable\":true,\"action\":\"repeat_same_request\",\"retry_after_ms\":25}"
+        }
+       ],
+       "structuredContent": {
+        "status": "retry",
+        "code": "selection_busy",
+        "retryable": true,
+        "action": "repeat_same_request",
+        "retry_after_ms": 25
+       }
+      }
+     }
+    ],
+    "ranking": [],
+    "partial": true,
+    "truncated": false,
+    "error": {
+     "code": "member_unavailable",
+     "retryable": false,
+     "failed_members": [
+      "idx_01010101010101010101010101010101"
+     ]
+    },
+    "read_retry": {
+     "schema": 1,
+     "scope": "same_single_required_member",
+     "index_id": "idx_01010101010101010101010101010101",
+     "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+     "action": "repeat_same_request",
+     "query_replay_safe": true,
+     "result_pointer": "/members/0/result/structuredContent",
+     "code": "selection_busy",
+     "retry_after_ms": 25,
+     "fresh_brokerage_required": false
+    },
+    "shared_values": {}
+   },
+   "expected": null
+  },
+  {
+   "name": "member_succeeded",
+   "rule": "only a failed member can be retried",
+   "input": {
+    "schema": "airk.combined-read/1",
+    "selection": {
+     "project_ids": [
+      "prj_02020202020202020202020202020202"
+     ],
+     "index_ids": [
+      "idx_01010101010101010101010101010101"
+     ],
+     "grant_id": "grt_03030303030303030303030303030303",
+     "grant_revision": 1,
+     "member_availability": "require",
+     "identity": "0404040404040404040404040404040404040404040404040404040404040404"
+    },
+    "publication_vector": {
+     "authority": "0505050505050505050505050505050505050505050505050505050505050505",
+     "observed_from_unix_ms": 1,
+     "observed_to_unix_ms": 2,
+     "members": [
+      {
+       "index_id": "idx_01010101010101010101010101010101",
+       "publication": null
+      }
+     ]
+    },
+    "members": [
+     {
+      "index_id": "idx_01010101010101010101010101010101",
+      "is_error": true,
+      "outcome": "succeeded",
+      "allocation": {
+       "index_id": "idx_01010101010101010101010101010101",
+       "limit": 1,
+       "max_bytes": 4096,
+       "deadline_ms": 2000,
+       "verification_max_sources": 1,
+       "verification_max_bytes": 4096,
+       "verification_deadline_ms": 2000
+      },
+      "result": {
+       "isError": true,
+       "content": [
+        {
+         "type": "text",
+         "text": "{\"status\":\"retry\",\"code\":\"selection_busy\",\"retryable\":true,\"action\":\"repeat_same_request\",\"retry_after_ms\":25}"
+        }
+       ],
+       "structuredContent": {
+        "status": "retry",
+        "code": "selection_busy",
+        "retryable": true,
+        "action": "repeat_same_request",
+        "retry_after_ms": 25
+       }
+      }
+     }
+    ],
+    "ranking": [],
+    "partial": true,
+    "truncated": false,
+    "error": {
+     "code": "member_unavailable",
+     "retryable": false,
+     "failed_members": [
+      "idx_01010101010101010101010101010101"
+     ]
+    },
+    "read_retry": {
+     "schema": 1,
+     "scope": "same_single_required_member",
+     "index_id": "idx_01010101010101010101010101010101",
+     "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+     "action": "repeat_same_request",
+     "query_replay_safe": true,
+     "result_pointer": "/members/0/result/structuredContent",
+     "code": "selection_busy",
+     "retry_after_ms": 25,
+     "fresh_brokerage_required": false
+    }
+   },
+   "expected": null
+  },
+  {
+   "name": "member_cutoff",
+   "rule": "a cut-off member is not a busy refusal",
+   "input": {
+    "schema": "airk.combined-read/1",
+    "selection": {
+     "project_ids": [
+      "prj_02020202020202020202020202020202"
+     ],
+     "index_ids": [
+      "idx_01010101010101010101010101010101"
+     ],
+     "grant_id": "grt_03030303030303030303030303030303",
+     "grant_revision": 1,
+     "member_availability": "require",
+     "identity": "0404040404040404040404040404040404040404040404040404040404040404"
+    },
+    "publication_vector": {
+     "authority": "0505050505050505050505050505050505050505050505050505050505050505",
+     "observed_from_unix_ms": 1,
+     "observed_to_unix_ms": 2,
+     "members": [
+      {
+       "index_id": "idx_01010101010101010101010101010101",
+       "publication": null
+      }
+     ]
+    },
+    "members": [
+     {
+      "index_id": "idx_01010101010101010101010101010101",
+      "is_error": true,
+      "outcome": "failed",
+      "allocation": {
+       "index_id": "idx_01010101010101010101010101010101",
+       "limit": 1,
+       "max_bytes": 4096,
+       "deadline_ms": 2000,
+       "verification_max_sources": 1,
+       "verification_max_bytes": 4096,
+       "verification_deadline_ms": 2000
+      },
+      "result": {
+       "isError": true,
+       "content": [
+        {
+         "type": "text",
+         "text": "{\"status\":\"retry\",\"code\":\"selection_busy\",\"retryable\":true,\"action\":\"repeat_same_request\",\"retry_after_ms\":25}"
+        }
+       ],
+       "structuredContent": {
+        "status": "retry",
+        "code": "selection_busy",
+        "retryable": true,
+        "action": "repeat_same_request",
+        "retry_after_ms": 25
+       }
+      },
+      "cutoff": "deadline"
+     }
+    ],
+    "ranking": [],
+    "partial": true,
+    "truncated": false,
+    "error": {
+     "code": "member_unavailable",
+     "retryable": false,
+     "failed_members": [
+      "idx_01010101010101010101010101010101"
+     ]
+    },
+    "read_retry": {
+     "schema": 1,
+     "scope": "same_single_required_member",
+     "index_id": "idx_01010101010101010101010101010101",
+     "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+     "action": "repeat_same_request",
+     "query_replay_safe": true,
+     "result_pointer": "/members/0/result/structuredContent",
+     "code": "selection_busy",
+     "retry_after_ms": 25,
+     "fresh_brokerage_required": false
+    }
+   },
+   "expected": null
+  },
+  {
+   "name": "outer_error_retryable",
+   "rule": "the outer composition error itself must not be retryable",
+   "input": {
+    "schema": "airk.combined-read/1",
+    "selection": {
+     "project_ids": [
+      "prj_02020202020202020202020202020202"
+     ],
+     "index_ids": [
+      "idx_01010101010101010101010101010101"
+     ],
+     "grant_id": "grt_03030303030303030303030303030303",
+     "grant_revision": 1,
+     "member_availability": "require",
+     "identity": "0404040404040404040404040404040404040404040404040404040404040404"
+    },
+    "publication_vector": {
+     "authority": "0505050505050505050505050505050505050505050505050505050505050505",
+     "observed_from_unix_ms": 1,
+     "observed_to_unix_ms": 2,
+     "members": [
+      {
+       "index_id": "idx_01010101010101010101010101010101",
+       "publication": null
+      }
+     ]
+    },
+    "members": [
+     {
+      "index_id": "idx_01010101010101010101010101010101",
+      "is_error": true,
+      "outcome": "failed",
+      "allocation": {
+       "index_id": "idx_01010101010101010101010101010101",
+       "limit": 1,
+       "max_bytes": 4096,
+       "deadline_ms": 2000,
+       "verification_max_sources": 1,
+       "verification_max_bytes": 4096,
+       "verification_deadline_ms": 2000
+      },
+      "result": {
+       "isError": true,
+       "content": [
+        {
+         "type": "text",
+         "text": "{\"status\":\"retry\",\"code\":\"selection_busy\",\"retryable\":true,\"action\":\"repeat_same_request\",\"retry_after_ms\":25}"
+        }
+       ],
+       "structuredContent": {
+        "status": "retry",
+        "code": "selection_busy",
+        "retryable": true,
+        "action": "repeat_same_request",
+        "retry_after_ms": 25
+       }
+      }
+     }
+    ],
+    "ranking": [],
+    "partial": true,
+    "truncated": false,
+    "error": {
+     "code": "member_unavailable",
+     "retryable": true,
+     "failed_members": [
+      "idx_01010101010101010101010101010101"
+     ]
+    },
+    "read_retry": {
+     "schema": 1,
+     "scope": "same_single_required_member",
+     "index_id": "idx_01010101010101010101010101010101",
+     "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+     "action": "repeat_same_request",
+     "query_replay_safe": true,
+     "result_pointer": "/members/0/result/structuredContent",
+     "code": "selection_busy",
+     "retry_after_ms": 25,
+     "fresh_brokerage_required": false
+    }
+   },
+   "expected": null
+  },
+  {
+   "name": "publication_observed",
+   "rule": "a member with an observed publication is not unavailable",
+   "input": {
+    "schema": "airk.combined-read/1",
+    "selection": {
+     "project_ids": [
+      "prj_02020202020202020202020202020202"
+     ],
+     "index_ids": [
+      "idx_01010101010101010101010101010101"
+     ],
+     "grant_id": "grt_03030303030303030303030303030303",
+     "grant_revision": 1,
+     "member_availability": "require",
+     "identity": "0404040404040404040404040404040404040404040404040404040404040404"
+    },
+    "publication_vector": {
+     "authority": "0505050505050505050505050505050505050505050505050505050505050505",
+     "observed_from_unix_ms": 1,
+     "observed_to_unix_ms": 2,
+     "members": [
+      {
+       "index_id": "idx_01010101010101010101010101010101",
+       "publication": "airk-r1:fixture:1:0"
+      }
+     ]
+    },
+    "members": [
+     {
+      "index_id": "idx_01010101010101010101010101010101",
+      "is_error": true,
+      "outcome": "failed",
+      "allocation": {
+       "index_id": "idx_01010101010101010101010101010101",
+       "limit": 1,
+       "max_bytes": 4096,
+       "deadline_ms": 2000,
+       "verification_max_sources": 1,
+       "verification_max_bytes": 4096,
+       "verification_deadline_ms": 2000
+      },
+      "result": {
+       "isError": true,
+       "content": [
+        {
+         "type": "text",
+         "text": "{\"status\":\"retry\",\"code\":\"selection_busy\",\"retryable\":true,\"action\":\"repeat_same_request\",\"retry_after_ms\":25}"
+        }
+       ],
+       "structuredContent": {
+        "status": "retry",
+        "code": "selection_busy",
+        "retryable": true,
+        "action": "repeat_same_request",
+        "retry_after_ms": 25
+       }
+      }
+     }
+    ],
+    "ranking": [],
+    "partial": true,
+    "truncated": false,
+    "error": {
+     "code": "member_unavailable",
+     "retryable": false,
+     "failed_members": [
+      "idx_01010101010101010101010101010101"
+     ]
+    },
+    "read_retry": {
+     "schema": 1,
+     "scope": "same_single_required_member",
+     "index_id": "idx_01010101010101010101010101010101",
+     "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+     "action": "repeat_same_request",
+     "query_replay_safe": true,
+     "result_pointer": "/members/0/result/structuredContent",
+     "code": "selection_busy",
+     "retry_after_ms": 25,
+     "fresh_brokerage_required": false
+    }
+   },
+   "expected": null
+  },
+  {
+   "name": "text_disagrees_with_structured_content",
+   "rule": "text and structured content must agree",
+   "input": {
+    "schema": "airk.combined-read/1",
+    "selection": {
+     "project_ids": [
+      "prj_02020202020202020202020202020202"
+     ],
+     "index_ids": [
+      "idx_01010101010101010101010101010101"
+     ],
+     "grant_id": "grt_03030303030303030303030303030303",
+     "grant_revision": 1,
+     "member_availability": "require",
+     "identity": "0404040404040404040404040404040404040404040404040404040404040404"
+    },
+    "publication_vector": {
+     "authority": "0505050505050505050505050505050505050505050505050505050505050505",
+     "observed_from_unix_ms": 1,
+     "observed_to_unix_ms": 2,
+     "members": [
+      {
+       "index_id": "idx_01010101010101010101010101010101",
+       "publication": null
+      }
+     ]
+    },
+    "members": [
+     {
+      "index_id": "idx_01010101010101010101010101010101",
+      "is_error": true,
+      "outcome": "failed",
+      "allocation": {
+       "index_id": "idx_01010101010101010101010101010101",
+       "limit": 1,
+       "max_bytes": 4096,
+       "deadline_ms": 2000,
+       "verification_max_sources": 1,
+       "verification_max_bytes": 4096,
+       "verification_deadline_ms": 2000
+      },
+      "result": {
+       "isError": true,
+       "content": [
+        {
+         "type": "text",
+         "text": "{\"status\":\"retry\",\"code\":\"selection_busy\",\"retryable\":true,\"action\":\"repeat_same_request\",\"retry_after_ms\":30}"
+        }
+       ],
+       "structuredContent": {
+        "status": "retry",
+        "code": "selection_busy",
+        "retryable": true,
+        "action": "repeat_same_request",
+        "retry_after_ms": 25
+       }
+      }
+     }
+    ],
+    "ranking": [],
+    "partial": true,
+    "truncated": false,
+    "error": {
+     "code": "member_unavailable",
+     "retryable": false,
+     "failed_members": [
+      "idx_01010101010101010101010101010101"
+     ]
+    },
+    "read_retry": {
+     "schema": 1,
+     "scope": "same_single_required_member",
+     "index_id": "idx_01010101010101010101010101010101",
+     "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+     "action": "repeat_same_request",
+     "query_replay_safe": true,
+     "result_pointer": "/members/0/result/structuredContent",
+     "code": "selection_busy",
+     "retry_after_ms": 25,
+     "fresh_brokerage_required": false
+    }
+   },
+   "expected": null
+  },
+  {
+   "name": "storage_hint_submitted",
+   "rule": "query_submitted must be false when present",
+   "input": {
+    "schema": "airk.combined-read/1",
+    "selection": {
+     "project_ids": [
+      "prj_02020202020202020202020202020202"
+     ],
+     "index_ids": [
+      "idx_01010101010101010101010101010101"
+     ],
+     "grant_id": "grt_03030303030303030303030303030303",
+     "grant_revision": 1,
+     "member_availability": "require",
+     "identity": "0404040404040404040404040404040404040404040404040404040404040404"
+    },
+    "publication_vector": {
+     "authority": "0505050505050505050505050505050505050505050505050505050505050505",
+     "observed_from_unix_ms": 1,
+     "observed_to_unix_ms": 2,
+     "members": [
+      {
+       "index_id": "idx_01010101010101010101010101010101",
+       "publication": null
+      }
+     ]
+    },
+    "members": [
+     {
+      "index_id": "idx_01010101010101010101010101010101",
+      "is_error": true,
+      "outcome": "failed",
+      "allocation": {
+       "index_id": "idx_01010101010101010101010101010101",
+       "limit": 1,
+       "max_bytes": 4096,
+       "deadline_ms": 2000,
+       "verification_max_sources": 1,
+       "verification_max_bytes": 4096,
+       "verification_deadline_ms": 2000
+      },
+      "result": {
+       "isError": true,
+       "content": [
+        {
+         "type": "text",
+         "text": "{\"status\":\"retry\",\"code\":\"selection_busy\",\"retryable\":true,\"action\":\"repeat_same_request\",\"retry_after_ms\":25,\"query_submitted\":true}"
+        }
+       ],
+       "structuredContent": {
+        "status": "retry",
+        "code": "selection_busy",
+        "retryable": true,
+        "action": "repeat_same_request",
+        "retry_after_ms": 25,
+        "query_submitted": true
+       }
+      }
+     }
+    ],
+    "ranking": [],
+    "partial": true,
+    "truncated": false,
+    "error": {
+     "code": "member_unavailable",
+     "retryable": false,
+     "failed_members": [
+      "idx_01010101010101010101010101010101"
+     ]
+    },
+    "read_retry": {
+     "schema": 1,
+     "scope": "same_single_required_member",
+     "index_id": "idx_01010101010101010101010101010101",
+     "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+     "action": "repeat_same_request",
+     "query_replay_safe": true,
+     "result_pointer": "/members/0/result/structuredContent",
+     "code": "selection_busy",
+     "retry_after_ms": 25,
+     "fresh_brokerage_required": false
+    }
+   },
+   "expected": null
+  },
+  {
+   "name": "storage_hint_unknown_field",
+   "rule": "hint fields are a closed set",
+   "input": {
+    "schema": "airk.combined-read/1",
+    "selection": {
+     "project_ids": [
+      "prj_02020202020202020202020202020202"
+     ],
+     "index_ids": [
+      "idx_01010101010101010101010101010101"
+     ],
+     "grant_id": "grt_03030303030303030303030303030303",
+     "grant_revision": 1,
+     "member_availability": "require",
+     "identity": "0404040404040404040404040404040404040404040404040404040404040404"
+    },
+    "publication_vector": {
+     "authority": "0505050505050505050505050505050505050505050505050505050505050505",
+     "observed_from_unix_ms": 1,
+     "observed_to_unix_ms": 2,
+     "members": [
+      {
+       "index_id": "idx_01010101010101010101010101010101",
+       "publication": null
+      }
+     ]
+    },
+    "members": [
+     {
+      "index_id": "idx_01010101010101010101010101010101",
+      "is_error": true,
+      "outcome": "failed",
+      "allocation": {
+       "index_id": "idx_01010101010101010101010101010101",
+       "limit": 1,
+       "max_bytes": 4096,
+       "deadline_ms": 2000,
+       "verification_max_sources": 1,
+       "verification_max_bytes": 4096,
+       "verification_deadline_ms": 2000
+      },
+      "result": {
+       "isError": true,
+       "content": [
+        {
+         "type": "text",
+         "text": "{\"status\":\"retry\",\"code\":\"selection_busy\",\"retryable\":true,\"action\":\"repeat_same_request\",\"retry_after_ms\":25,\"note\":\"fixture\"}"
+        }
+       ],
+       "structuredContent": {
+        "status": "retry",
+        "code": "selection_busy",
+        "retryable": true,
+        "action": "repeat_same_request",
+        "retry_after_ms": 25,
+        "note": "fixture"
+       }
+      }
+     }
+    ],
+    "ranking": [],
+    "partial": true,
+    "truncated": false,
+    "error": {
+     "code": "member_unavailable",
+     "retryable": false,
+     "failed_members": [
+      "idx_01010101010101010101010101010101"
+     ]
+    },
+    "read_retry": {
+     "schema": 1,
+     "scope": "same_single_required_member",
+     "index_id": "idx_01010101010101010101010101010101",
+     "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+     "action": "repeat_same_request",
+     "query_replay_safe": true,
+     "result_pointer": "/members/0/result/structuredContent",
+     "code": "selection_busy",
+     "retry_after_ms": 25,
+     "fresh_brokerage_required": false
+    }
+   },
+   "expected": null
+  },
+  {
+   "name": "storage_hint_other_code",
+   "rule": "only publication_busy and selection_busy are storage busy codes",
+   "input": {
+    "schema": "airk.combined-read/1",
+    "selection": {
+     "project_ids": [
+      "prj_02020202020202020202020202020202"
+     ],
+     "index_ids": [
+      "idx_01010101010101010101010101010101"
+     ],
+     "grant_id": "grt_03030303030303030303030303030303",
+     "grant_revision": 1,
+     "member_availability": "require",
+     "identity": "0404040404040404040404040404040404040404040404040404040404040404"
+    },
+    "publication_vector": {
+     "authority": "0505050505050505050505050505050505050505050505050505050505050505",
+     "observed_from_unix_ms": 1,
+     "observed_to_unix_ms": 2,
+     "members": [
+      {
+       "index_id": "idx_01010101010101010101010101010101",
+       "publication": null
+      }
+     ]
+    },
+    "members": [
+     {
+      "index_id": "idx_01010101010101010101010101010101",
+      "is_error": true,
+      "outcome": "failed",
+      "allocation": {
+       "index_id": "idx_01010101010101010101010101010101",
+       "limit": 1,
+       "max_bytes": 4096,
+       "deadline_ms": 2000,
+       "verification_max_sources": 1,
+       "verification_max_bytes": 4096,
+       "verification_deadline_ms": 2000
+      },
+      "result": {
+       "isError": true,
+       "content": [
+        {
+         "type": "text",
+         "text": "{\"status\":\"retry\",\"code\":\"index_busy\",\"retryable\":true,\"action\":\"repeat_same_request\",\"retry_after_ms\":25}"
+        }
+       ],
+       "structuredContent": {
+        "status": "retry",
+        "code": "index_busy",
+        "retryable": true,
+        "action": "repeat_same_request",
+        "retry_after_ms": 25
+       }
+      }
+     }
+    ],
+    "ranking": [],
+    "partial": true,
+    "truncated": false,
+    "error": {
+     "code": "member_unavailable",
+     "retryable": false,
+     "failed_members": [
+      "idx_01010101010101010101010101010101"
+     ]
+    },
+    "read_retry": {
+     "schema": 1,
+     "scope": "same_single_required_member",
+     "index_id": "idx_01010101010101010101010101010101",
+     "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+     "action": "repeat_same_request",
+     "query_replay_safe": true,
+     "result_pointer": "/members/0/result/structuredContent",
+     "code": "selection_busy",
+     "retry_after_ms": 25,
+     "fresh_brokerage_required": false
+    }
+   },
+   "expected": null
+  },
+  {
+   "name": "request_id_128_bytes",
+   "rule": "request_id may be up to 128 bytes",
+   "input": {
+    "schema": "airk.combined-read/1",
+    "selection": {
+     "project_ids": [
+      "prj_02020202020202020202020202020202"
+     ],
+     "index_ids": [
+      "idx_01010101010101010101010101010101"
+     ],
+     "grant_id": "grt_03030303030303030303030303030303",
+     "grant_revision": 1,
+     "member_availability": "require",
+     "identity": "0404040404040404040404040404040404040404040404040404040404040404"
+    },
+    "publication_vector": {
+     "authority": "0505050505050505050505050505050505050505050505050505050505050505",
+     "observed_from_unix_ms": 1,
+     "observed_to_unix_ms": 2,
+     "members": [
+      {
+       "index_id": "idx_01010101010101010101010101010101",
+       "publication": null
+      }
+     ]
+    },
+    "members": [
+     {
+      "index_id": "idx_01010101010101010101010101010101",
+      "is_error": true,
+      "outcome": "failed",
+      "allocation": {
+       "index_id": "idx_01010101010101010101010101010101",
+       "limit": 1,
+       "max_bytes": 4096,
+       "deadline_ms": 2000,
+       "verification_max_sources": 1,
+       "verification_max_bytes": 4096,
+       "verification_deadline_ms": 2000
+      },
+      "result": {
+       "isError": true,
+       "content": [
+        {
+         "type": "text",
+         "text": "{\"status\":\"retry\",\"code\":\"selection_busy\",\"retryable\":true,\"action\":\"repeat_same_request\",\"retry_after_ms\":25,\"request_id\":\"rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr\"}"
+        }
+       ],
+       "structuredContent": {
+        "status": "retry",
+        "code": "selection_busy",
+        "retryable": true,
+        "action": "repeat_same_request",
+        "retry_after_ms": 25,
+        "request_id": "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"
+       }
+      }
+     }
+    ],
+    "ranking": [],
+    "partial": true,
+    "truncated": false,
+    "error": {
+     "code": "member_unavailable",
+     "retryable": false,
+     "failed_members": [
+      "idx_01010101010101010101010101010101"
+     ]
+    },
+    "read_retry": {
+     "schema": 1,
+     "scope": "same_single_required_member",
+     "index_id": "idx_01010101010101010101010101010101",
+     "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+     "action": "repeat_same_request",
+     "query_replay_safe": true,
+     "result_pointer": "/members/0/result/structuredContent",
+     "code": "selection_busy",
+     "retry_after_ms": 25,
+     "fresh_brokerage_required": false
+    }
+   },
+   "expected": {
+    "schema": 1,
+    "scope": "same_single_required_member",
+    "index_id": "idx_01010101010101010101010101010101",
+    "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+    "action": "repeat_same_request",
+    "query_replay_safe": true,
+    "result_pointer": "/members/0/result/structuredContent",
+    "code": "selection_busy",
+    "retry_after_ms": 25,
+    "fresh_brokerage_required": false
+   }
+  },
+  {
+   "name": "request_id_129_bytes",
+   "rule": "request_id may be up to 128 bytes",
+   "input": {
+    "schema": "airk.combined-read/1",
+    "selection": {
+     "project_ids": [
+      "prj_02020202020202020202020202020202"
+     ],
+     "index_ids": [
+      "idx_01010101010101010101010101010101"
+     ],
+     "grant_id": "grt_03030303030303030303030303030303",
+     "grant_revision": 1,
+     "member_availability": "require",
+     "identity": "0404040404040404040404040404040404040404040404040404040404040404"
+    },
+    "publication_vector": {
+     "authority": "0505050505050505050505050505050505050505050505050505050505050505",
+     "observed_from_unix_ms": 1,
+     "observed_to_unix_ms": 2,
+     "members": [
+      {
+       "index_id": "idx_01010101010101010101010101010101",
+       "publication": null
+      }
+     ]
+    },
+    "members": [
+     {
+      "index_id": "idx_01010101010101010101010101010101",
+      "is_error": true,
+      "outcome": "failed",
+      "allocation": {
+       "index_id": "idx_01010101010101010101010101010101",
+       "limit": 1,
+       "max_bytes": 4096,
+       "deadline_ms": 2000,
+       "verification_max_sources": 1,
+       "verification_max_bytes": 4096,
+       "verification_deadline_ms": 2000
+      },
+      "result": {
+       "isError": true,
+       "content": [
+        {
+         "type": "text",
+         "text": "{\"status\":\"retry\",\"code\":\"selection_busy\",\"retryable\":true,\"action\":\"repeat_same_request\",\"retry_after_ms\":25,\"request_id\":\"rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr\"}"
+        }
+       ],
+       "structuredContent": {
+        "status": "retry",
+        "code": "selection_busy",
+        "retryable": true,
+        "action": "repeat_same_request",
+        "retry_after_ms": 25,
+        "request_id": "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"
+       }
+      }
+     }
+    ],
+    "ranking": [],
+    "partial": true,
+    "truncated": false,
+    "error": {
+     "code": "member_unavailable",
+     "retryable": false,
+     "failed_members": [
+      "idx_01010101010101010101010101010101"
+     ]
+    },
+    "read_retry": {
+     "schema": 1,
+     "scope": "same_single_required_member",
+     "index_id": "idx_01010101010101010101010101010101",
+     "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+     "action": "repeat_same_request",
+     "query_replay_safe": true,
+     "result_pointer": "/members/0/result/structuredContent",
+     "code": "selection_busy",
+     "retry_after_ms": 25,
+     "fresh_brokerage_required": false
+    }
+   },
+   "expected": null
+  },
+  {
+   "name": "two_projects",
+   "rule": "several distinct projects may share one index selection",
+   "input": {
+    "schema": "airk.combined-read/1",
+    "selection": {
+     "project_ids": [
+      "prj_02020202020202020202020202020202",
+      "prj_0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
+     ],
+     "index_ids": [
+      "idx_01010101010101010101010101010101"
+     ],
+     "grant_id": "grt_03030303030303030303030303030303",
+     "grant_revision": 1,
+     "member_availability": "require",
+     "identity": "0404040404040404040404040404040404040404040404040404040404040404"
+    },
+    "publication_vector": {
+     "authority": "0505050505050505050505050505050505050505050505050505050505050505",
+     "observed_from_unix_ms": 1,
+     "observed_to_unix_ms": 2,
+     "members": [
+      {
+       "index_id": "idx_01010101010101010101010101010101",
+       "publication": null
+      }
+     ]
+    },
+    "members": [
+     {
+      "index_id": "idx_01010101010101010101010101010101",
+      "is_error": true,
+      "outcome": "failed",
+      "allocation": {
+       "index_id": "idx_01010101010101010101010101010101",
+       "limit": 1,
+       "max_bytes": 4096,
+       "deadline_ms": 2000,
+       "verification_max_sources": 1,
+       "verification_max_bytes": 4096,
+       "verification_deadline_ms": 2000
+      },
+      "result": {
+       "isError": true,
+       "content": [
+        {
+         "type": "text",
+         "text": "{\"status\":\"retry\",\"code\":\"selection_busy\",\"retryable\":true,\"action\":\"repeat_same_request\",\"retry_after_ms\":25}"
+        }
+       ],
+       "structuredContent": {
+        "status": "retry",
+        "code": "selection_busy",
+        "retryable": true,
+        "action": "repeat_same_request",
+        "retry_after_ms": 25
+       }
+      }
+     }
+    ],
+    "ranking": [],
+    "partial": true,
+    "truncated": false,
+    "error": {
+     "code": "member_unavailable",
+     "retryable": false,
+     "failed_members": [
+      "idx_01010101010101010101010101010101"
+     ]
+    },
+    "read_retry": {
+     "schema": 1,
+     "scope": "same_single_required_member",
+     "index_id": "idx_01010101010101010101010101010101",
+     "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+     "action": "repeat_same_request",
+     "query_replay_safe": true,
+     "result_pointer": "/members/0/result/structuredContent",
+     "code": "selection_busy",
+     "retry_after_ms": 25,
+     "fresh_brokerage_required": false
+    }
+   },
+   "expected": {
+    "schema": 1,
+    "scope": "same_single_required_member",
+    "index_id": "idx_01010101010101010101010101010101",
+    "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+    "action": "repeat_same_request",
+    "query_replay_safe": true,
+    "result_pointer": "/members/0/result/structuredContent",
+    "code": "selection_busy",
+    "retry_after_ms": 25,
+    "fresh_brokerage_required": false
+   }
+  },
+  {
+   "name": "duplicate_projects",
+   "rule": "project ids must be unique",
+   "input": {
+    "schema": "airk.combined-read/1",
+    "selection": {
+     "project_ids": [
+      "prj_02020202020202020202020202020202",
+      "prj_02020202020202020202020202020202"
+     ],
+     "index_ids": [
+      "idx_01010101010101010101010101010101"
+     ],
+     "grant_id": "grt_03030303030303030303030303030303",
+     "grant_revision": 1,
+     "member_availability": "require",
+     "identity": "0404040404040404040404040404040404040404040404040404040404040404"
+    },
+    "publication_vector": {
+     "authority": "0505050505050505050505050505050505050505050505050505050505050505",
+     "observed_from_unix_ms": 1,
+     "observed_to_unix_ms": 2,
+     "members": [
+      {
+       "index_id": "idx_01010101010101010101010101010101",
+       "publication": null
+      }
+     ]
+    },
+    "members": [
+     {
+      "index_id": "idx_01010101010101010101010101010101",
+      "is_error": true,
+      "outcome": "failed",
+      "allocation": {
+       "index_id": "idx_01010101010101010101010101010101",
+       "limit": 1,
+       "max_bytes": 4096,
+       "deadline_ms": 2000,
+       "verification_max_sources": 1,
+       "verification_max_bytes": 4096,
+       "verification_deadline_ms": 2000
+      },
+      "result": {
+       "isError": true,
+       "content": [
+        {
+         "type": "text",
+         "text": "{\"status\":\"retry\",\"code\":\"selection_busy\",\"retryable\":true,\"action\":\"repeat_same_request\",\"retry_after_ms\":25}"
+        }
+       ],
+       "structuredContent": {
+        "status": "retry",
+        "code": "selection_busy",
+        "retryable": true,
+        "action": "repeat_same_request",
+        "retry_after_ms": 25
+       }
+      }
+     }
+    ],
+    "ranking": [],
+    "partial": true,
+    "truncated": false,
+    "error": {
+     "code": "member_unavailable",
+     "retryable": false,
+     "failed_members": [
+      "idx_01010101010101010101010101010101"
+     ]
+    },
+    "read_retry": {
+     "schema": 1,
+     "scope": "same_single_required_member",
+     "index_id": "idx_01010101010101010101010101010101",
+     "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+     "action": "repeat_same_request",
+     "query_replay_safe": true,
+     "result_pointer": "/members/0/result/structuredContent",
+     "code": "selection_busy",
+     "retry_after_ms": 25,
+     "fresh_brokerage_required": false
+    }
+   },
+   "expected": null
+  },
+  {
+   "name": "two_indexes",
+   "rule": "only a single required member can be retried",
+   "input": {
+    "schema": "airk.combined-read/1",
+    "selection": {
+     "project_ids": [
+      "prj_02020202020202020202020202020202"
+     ],
+     "index_ids": [
+      "idx_01010101010101010101010101010101",
+      "idx_0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
+     ],
+     "grant_id": "grt_03030303030303030303030303030303",
+     "grant_revision": 1,
+     "member_availability": "require",
+     "identity": "0404040404040404040404040404040404040404040404040404040404040404"
+    },
+    "publication_vector": {
+     "authority": "0505050505050505050505050505050505050505050505050505050505050505",
+     "observed_from_unix_ms": 1,
+     "observed_to_unix_ms": 2,
+     "members": [
+      {
+       "index_id": "idx_01010101010101010101010101010101",
+       "publication": null
+      }
+     ]
+    },
+    "members": [
+     {
+      "index_id": "idx_01010101010101010101010101010101",
+      "is_error": true,
+      "outcome": "failed",
+      "allocation": {
+       "index_id": "idx_01010101010101010101010101010101",
+       "limit": 1,
+       "max_bytes": 4096,
+       "deadline_ms": 2000,
+       "verification_max_sources": 1,
+       "verification_max_bytes": 4096,
+       "verification_deadline_ms": 2000
+      },
+      "result": {
+       "isError": true,
+       "content": [
+        {
+         "type": "text",
+         "text": "{\"status\":\"retry\",\"code\":\"selection_busy\",\"retryable\":true,\"action\":\"repeat_same_request\",\"retry_after_ms\":25}"
+        }
+       ],
+       "structuredContent": {
+        "status": "retry",
+        "code": "selection_busy",
+        "retryable": true,
+        "action": "repeat_same_request",
+        "retry_after_ms": 25
+       }
+      }
+     }
+    ],
+    "ranking": [],
+    "partial": true,
+    "truncated": false,
+    "error": {
+     "code": "member_unavailable",
+     "retryable": false,
+     "failed_members": [
+      "idx_01010101010101010101010101010101"
+     ]
+    },
+    "read_retry": {
+     "schema": 1,
+     "scope": "same_single_required_member",
+     "index_id": "idx_01010101010101010101010101010101",
+     "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+     "action": "repeat_same_request",
+     "query_replay_safe": true,
+     "result_pointer": "/members/0/result/structuredContent",
+     "code": "selection_busy",
+     "retry_after_ms": 25,
+     "fresh_brokerage_required": false
+    }
+   },
+   "expected": null
+  },
+  {
+   "name": "optional_members",
+   "rule": "member_availability must be require",
+   "input": {
+    "schema": "airk.combined-read/1",
+    "selection": {
+     "project_ids": [
+      "prj_02020202020202020202020202020202"
+     ],
+     "index_ids": [
+      "idx_01010101010101010101010101010101"
+     ],
+     "grant_id": "grt_03030303030303030303030303030303",
+     "grant_revision": 1,
+     "member_availability": "best_effort",
+     "identity": "0404040404040404040404040404040404040404040404040404040404040404"
+    },
+    "publication_vector": {
+     "authority": "0505050505050505050505050505050505050505050505050505050505050505",
+     "observed_from_unix_ms": 1,
+     "observed_to_unix_ms": 2,
+     "members": [
+      {
+       "index_id": "idx_01010101010101010101010101010101",
+       "publication": null
+      }
+     ]
+    },
+    "members": [
+     {
+      "index_id": "idx_01010101010101010101010101010101",
+      "is_error": true,
+      "outcome": "failed",
+      "allocation": {
+       "index_id": "idx_01010101010101010101010101010101",
+       "limit": 1,
+       "max_bytes": 4096,
+       "deadline_ms": 2000,
+       "verification_max_sources": 1,
+       "verification_max_bytes": 4096,
+       "verification_deadline_ms": 2000
+      },
+      "result": {
+       "isError": true,
+       "content": [
+        {
+         "type": "text",
+         "text": "{\"status\":\"retry\",\"code\":\"selection_busy\",\"retryable\":true,\"action\":\"repeat_same_request\",\"retry_after_ms\":25}"
+        }
+       ],
+       "structuredContent": {
+        "status": "retry",
+        "code": "selection_busy",
+        "retryable": true,
+        "action": "repeat_same_request",
+        "retry_after_ms": 25
+       }
+      }
+     }
+    ],
+    "ranking": [],
+    "partial": true,
+    "truncated": false,
+    "error": {
+     "code": "member_unavailable",
+     "retryable": false,
+     "failed_members": [
+      "idx_01010101010101010101010101010101"
+     ]
+    },
+    "read_retry": {
+     "schema": 1,
+     "scope": "same_single_required_member",
+     "index_id": "idx_01010101010101010101010101010101",
+     "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+     "action": "repeat_same_request",
+     "query_replay_safe": true,
+     "result_pointer": "/members/0/result/structuredContent",
+     "code": "selection_busy",
+     "retry_after_ms": 25,
+     "fresh_brokerage_required": false
+    }
+   },
+   "expected": null
+  },
+  {
+   "name": "grant_revision_above_safe_integer",
+   "rule": "catalog revisions are 1..=i64::MAX; the value does not enter the retry record",
+   "input": {
+    "schema": "airk.combined-read/1",
+    "selection": {
+     "project_ids": [
+      "prj_02020202020202020202020202020202"
+     ],
+     "index_ids": [
+      "idx_01010101010101010101010101010101"
+     ],
+     "grant_id": "grt_03030303030303030303030303030303",
+     "grant_revision": 9007199254740993,
+     "member_availability": "require",
+     "identity": "0404040404040404040404040404040404040404040404040404040404040404"
+    },
+    "publication_vector": {
+     "authority": "0505050505050505050505050505050505050505050505050505050505050505",
+     "observed_from_unix_ms": 1,
+     "observed_to_unix_ms": 2,
+     "members": [
+      {
+       "index_id": "idx_01010101010101010101010101010101",
+       "publication": null
+      }
+     ]
+    },
+    "members": [
+     {
+      "index_id": "idx_01010101010101010101010101010101",
+      "is_error": true,
+      "outcome": "failed",
+      "allocation": {
+       "index_id": "idx_01010101010101010101010101010101",
+       "limit": 1,
+       "max_bytes": 4096,
+       "deadline_ms": 2000,
+       "verification_max_sources": 1,
+       "verification_max_bytes": 4096,
+       "verification_deadline_ms": 2000
+      },
+      "result": {
+       "isError": true,
+       "content": [
+        {
+         "type": "text",
+         "text": "{\"status\":\"retry\",\"code\":\"selection_busy\",\"retryable\":true,\"action\":\"repeat_same_request\",\"retry_after_ms\":25}"
+        }
+       ],
+       "structuredContent": {
+        "status": "retry",
+        "code": "selection_busy",
+        "retryable": true,
+        "action": "repeat_same_request",
+        "retry_after_ms": 25
+       }
+      }
+     }
+    ],
+    "ranking": [],
+    "partial": true,
+    "truncated": false,
+    "error": {
+     "code": "member_unavailable",
+     "retryable": false,
+     "failed_members": [
+      "idx_01010101010101010101010101010101"
+     ]
+    },
+    "read_retry": {
+     "schema": 1,
+     "scope": "same_single_required_member",
+     "index_id": "idx_01010101010101010101010101010101",
+     "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+     "action": "repeat_same_request",
+     "query_replay_safe": true,
+     "result_pointer": "/members/0/result/structuredContent",
+     "code": "selection_busy",
+     "retry_after_ms": 25,
+     "fresh_brokerage_required": false
+    }
+   },
+   "expected": {
+    "schema": 1,
+    "scope": "same_single_required_member",
+    "index_id": "idx_01010101010101010101010101010101",
+    "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+    "action": "repeat_same_request",
+    "query_replay_safe": true,
+    "result_pointer": "/members/0/result/structuredContent",
+    "code": "selection_busy",
+    "retry_after_ms": 25,
+    "fresh_brokerage_required": false
+   },
+   "expected_ts": null,
+   "divergence": "TypeScript parses JSON numbers as doubles and refuses non-safe integers; native accepts revisions up to i64::MAX. Conservative refusal (no replay)."
+  },
+  {
+   "name": "integral_float_delay",
+   "rule": "retry_after_ms must be a JSON integer",
+   "input": {
+    "schema": "airk.combined-read/1",
+    "selection": {
+     "project_ids": [
+      "prj_02020202020202020202020202020202"
+     ],
+     "index_ids": [
+      "idx_01010101010101010101010101010101"
+     ],
+     "grant_id": "grt_03030303030303030303030303030303",
+     "grant_revision": 1,
+     "member_availability": "require",
+     "identity": "0404040404040404040404040404040404040404040404040404040404040404"
+    },
+    "publication_vector": {
+     "authority": "0505050505050505050505050505050505050505050505050505050505050505",
+     "observed_from_unix_ms": 1,
+     "observed_to_unix_ms": 2,
+     "members": [
+      {
+       "index_id": "idx_01010101010101010101010101010101",
+       "publication": null
+      }
+     ]
+    },
+    "members": [
+     {
+      "index_id": "idx_01010101010101010101010101010101",
+      "is_error": true,
+      "outcome": "failed",
+      "allocation": {
+       "index_id": "idx_01010101010101010101010101010101",
+       "limit": 1,
+       "max_bytes": 4096,
+       "deadline_ms": 2000,
+       "verification_max_sources": 1,
+       "verification_max_bytes": 4096,
+       "verification_deadline_ms": 2000
+      },
+      "result": {
+       "isError": true,
+       "content": [
+        {
+         "type": "text",
+         "text": "{\"status\":\"retry\",\"code\":\"selection_busy\",\"retryable\":true,\"action\":\"repeat_same_request\",\"retry_after_ms\":25.0}"
+        }
+       ],
+       "structuredContent": {
+        "status": "retry",
+        "code": "selection_busy",
+        "retryable": true,
+        "action": "repeat_same_request",
+        "retry_after_ms": 25.0
+       }
+      }
+     }
+    ],
+    "ranking": [],
+    "partial": true,
+    "truncated": false,
+    "error": {
+     "code": "member_unavailable",
+     "retryable": false,
+     "failed_members": [
+      "idx_01010101010101010101010101010101"
+     ]
+    },
+    "read_retry": {
+     "schema": 1,
+     "scope": "same_single_required_member",
+     "index_id": "idx_01010101010101010101010101010101",
+     "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+     "action": "repeat_same_request",
+     "query_replay_safe": true,
+     "result_pointer": "/members/0/result/structuredContent",
+     "code": "selection_busy",
+     "retry_after_ms": 25,
+     "fresh_brokerage_required": false
+    }
+   },
+   "expected": null,
+   "expected_ts": {
+    "schema": 1,
+    "scope": "same_single_required_member",
+    "index_id": "idx_01010101010101010101010101010101",
+    "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
+    "action": "repeat_same_request",
+    "query_replay_safe": true,
+    "result_pointer": "/members/0/result/structuredContent",
+    "code": "selection_busy",
+    "retry_after_ms": 25,
+    "fresh_brokerage_required": false
+   },
+   "divergence": "JSON.parse maps 25.0 to the integer 25, so the TypeScript mirror accepts a value native refuses. Permissive: it could authorize a replay native would not declare (native never emits 25.0 itself)."
+  }
+ ]
+}
