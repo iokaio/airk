@@ -16,6 +16,11 @@ is recorded; manual acceptance and broader platform qualification remain separat
 index configuration is still available. The installer otherwise fails closed;
 it does not grant access to an unknown old index or treat it as an empty source.
 
+**9 November 2026:** this recovery, its native commands and the VS Code command
+named below were removed with the in-place catalog upgrade; the native commands
+now refuse with `catalog_upgrade_unsupported`. See [current
+guidance](../service-installation.md#unavailable-legacy-index-during-upgrade).
+
 In VS Code, run **AIRK: Review unavailable legacy upgrade index retirement**.
 Choose the saved unavailable index and inspect its complete native review: exact
 source/storage registration, accepting candidate, original backup and affected

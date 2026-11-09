@@ -30,7 +30,6 @@
     "scripts/check-macos-direct-runtime.py",
     "scripts/check-managed-runtime.py",
     "scripts/check-runtime-activation.py",
-    "scripts/check-runtime-legacy-retirement.py",
     "scripts/check-service-clients.py",
     "scripts/check-service-install.py",
     "scripts/check-tokenizer-calibration.py",

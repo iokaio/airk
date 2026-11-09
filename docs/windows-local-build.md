@@ -275,6 +275,15 @@ The fixture creates both roots required by `register`, lets the stable launcher 
 
 ### Installed-editor legacy configuration evidence
 
+**9 November 2026:** the native in-place catalog upgrade (P5) was removed. The
+legacy scenario below, its producer `scripts/prepare-native-editor-legacy.py`
+and the indexed-upgrade branch of `scripts/check-vsix-upgrade-editor.cjs` still
+expect that upgrade's native roster (`index-catalog-upgrade.json`) and imported
+legacy scope, so they cannot produce or qualify a fixture against the current
+runtime. Redesigning them around the clean break is part of the stopped
+installed-editor work and awaits authorization; the description below is
+historical.
+
 `AIRK_EDITOR_LEGACY_FIXTURE`, required when the legacy scenario is selected,
 names an actual native managed-upgrade
 receipt under the owned artifact directory. The harness verifies every retained

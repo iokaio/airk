@@ -361,10 +361,6 @@
     },
     "commands": [
       {
-        "command": "airk.reviewLegacyUpgrade",
-        "title": "AIRK: Review unavailable legacy upgrade index retirement"
-      },
-      {
         "command": "airk.explorer.open",
         "title": "Open Explorer",
         "category": "AIRK",

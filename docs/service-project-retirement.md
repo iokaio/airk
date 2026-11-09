@@ -75,9 +75,11 @@ and other indexes sharing the data root. Releasing selected credit still require
 its actual writer advisory and retained native custody. Unknown or changed native
 state keeps cleanup pending; missing ownership is not permission to adopt it.
 
-A fresh upgrade from 1.8.7 can require a different preactivation recovery when an
-old index's source configuration is unavailable. See [explicit legacy upgrade
-retirement](service-installation.md#unavailable-legacy-index-during-upgrade).
+An unavailable old index source during an upgrade from an older installation is
+handled by the clean break, not by this retirement path. The explicit legacy
+upgrade retirement commands and the extension's review command were removed on
+9 November 2026; see [unavailable legacy index during the clean
+break](service-installation.md#unavailable-legacy-index-during-upgrade).
 
 ## Historical 1.6.4 removal contract
 

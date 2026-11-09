@@ -12,7 +12,6 @@ import {inventoryGlobalAgentConfigs,globalConfigDeclarations,transformGlobalCont
 import { setupAgent, AgentSetupHost } from './agentSetup';
 import { launchArgs, LaunchSpec, McpVerification, unifiedEntry, ServerEntry, UNIFIED_TOOLS } from './model';
 import { probeMcp, runText } from './native';
-import { LegacyRetirementSession, retirementJson, retirementMarkdown } from './runtimeLegacyRetirement';
 import { automaticUpgrade, BootstrapObservation, nativeRunner, RuntimeBinding, RuntimeHost, runtimeBindingIdentity, sameRuntimeAuthority, type LegacyOriginLocator } from './serviceBootstrap';
 import { ConsoleRuntime, ServiceConsole, serviceRuntimeOptions } from './serviceConsole';
 import { identifier, record, ServiceError, type RecordValue } from './serviceClient';
@@ -113,7 +112,6 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     private readonly status=vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left,40);
     private readonly workspace:ServiceWorkspace;
     private host?:RuntimeHost;
-    private legacyRetirement?:LegacyRetirementSession;
     private rebuildNotices?:RebuildNotices;
     private uninstallDirectory?:string;
     private binding?:RuntimeBinding;
@@ -2080,81 +2078,6 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     }
     /** Read-only inventory first; logs/caches are purged only after a reviewed plan digest,
      * and project indexes go through Management's own unregister confirmation. */
-    /** Runtime administration remains separate from evidence tools and SessionStore. */
-    async reviewLegacyUpgrade():Promise<void>{
-        this.trusted();const generation=this.generation;let stopped=false;
-        const current=()=>{this.trusted();if(stopped||generation!==this.generation)throw new ServiceError('legacy_retirement_review_stopped');};
-        const session=this.legacyRetirement??=new LegacyRetirementSession(this.runtime(),()=>{
-            try{this.trusted();return generation===this.generation;}catch{return false;}
-        });
-        return vscode.window.withProgress({location:vscode.ProgressLocation.Notification,title:'AIRK legacy upgrade retirement',cancellable:true},async(_progress,token)=>{
-        const cancellation=token.onCancellationRequested(()=>{stopped=true;session.stop();});
-        try{
-        if(!session.last){
-            let after:string|undefined;
-            for(;;){
-            const candidates=await session.candidates(after);current();
-            if(!Array.isArray(candidates.items))throw new ServiceError('invalid_legacy_retirement_candidates');
-            const items:{label:string;description:string;row:Record<string,unknown>;saved?:unknown;next?:string}[]=candidates.items.map(value=>{
-                const row=record(value),registration=record(row.registration);
-                return {label:String(registration.root),description:row.observation===null?String(row.index_id):'Check saved native retirement receipt',row,saved:row.observation??undefined};
-            });
-            if(typeof candidates.continuation==='string'){
-                items.push({label:'Next page',description:'Explicitly retrieve the next bounded subset of saved pending-metadata indexes',row:{},next:candidates.continuation});
-            }
-            const selected=await vscode.window.showQuickPick(items,{title:'AIRK: Review unavailable legacy index retirement',
-                placeHolder:`${candidates.items.length} shown of ${candidates.total_eligible} saved pending-metadata indexes. Sources and physical storage are preserved.`});
-            current();if(!selected){session.stop();return;}
-            if(selected.next){after=selected.next;continue;}
-            if(selected.saved)session.restore(selected.saved);else await session.prepare(String(selected.row.index_id));current();
-            break;
-            }
-        }
-        for(;;){
-            current();const reply=session.last;if(!reply)throw new ServiceError('legacy_retirement_review_missing');
-            const actions=['Show complete details','Copy JSON','Copy Markdown','Export JSON','Export Markdown'];
-            if(!session.uncertainOrAccepted)actions.push('Authorize reviewed retirement');
-            else actions.push('Check exact receipt');
-            if(['authorized','applied'].includes(String(reply.status)))actions.push('Resume accepted same-candidate activation');
-            actions.push('Stop');
-            const action=await vscode.window.showQuickPick(actions,{title:`AIRK legacy retirement: ${reply.status}`,
-                placeHolder:'Logical retirement, physical cleanup and activation readiness are separate. Recovery data stays in memory only.'});
-            current();if(!action||action==='Stop'){session.stop();return;}
-            if(action==='Show complete details'){
-                const document=await vscode.workspace.openTextDocument({language:'json',content:retirementJson(reply)});current();
-                await vscode.window.showTextDocument(document);continue;
-            }
-            if(action==='Copy JSON'||action==='Copy Markdown'){
-                await vscode.env.clipboard.writeText(action==='Copy JSON'?retirementJson(reply):retirementMarkdown(reply));continue;
-            }
-            if(action==='Export JSON'||action==='Export Markdown'){
-                const target=await vscode.window.showSaveDialog({title:'Export complete native legacy retirement receipt',
-                    filters:action==='Export JSON'?{JSON:['json']}:{Markdown:['md']}});current();
-                if(target)await vscode.workspace.fs.writeFile(target,Buffer.from(action==='Export JSON'?retirementJson(reply):retirementMarkdown(reply)));
-                continue;
-            }
-            try{
-                if(action==='Authorize reviewed retirement'){
-                    const yes=await vscode.window.showWarningMessage('Retire only this reviewed unavailable legacy index and cancel its exact accepted work?',
-                        {modal:true,detail:'Saves this exact native authorization only. Sources and physical storage are preserved. Physical cleanup remains pending. Resume is a separate explicit action; this confirmation does not start activation.'},'Authorize retirement');
-                    current();if(yes!=='Authorize retirement')continue;
-                    await session.authorize(reply);current();
-                }else if(action==='Check exact receipt'){
-                    const saved=await session.reconcile();current();
-                    if(saved===null)await vscode.window.showWarningMessage('The exact receipt is unavailable. The previous full observation is retained; no authorization or job was replayed.');
-                }else if(action==='Resume accepted same-candidate activation'){
-                    const yes=await vscode.window.showWarningMessage('Resume this already accepted retirement through the same verified candidate?',
-                        {modal:true,detail:'This continues native activation. It creates no new retirement authorization and does not infer readiness from the logical receipt.'},'Resume accepted activation');
-                    current();if(yes==='Resume accepted activation'){await session.resume();current();}
-                }
-            }catch(error){
-                current();this.output.appendLine(String(error));
-                await vscode.window.showWarningMessage('The native outcome may be incomplete or unknown. Check the exact saved receipt; authorization is never replayed automatically.');
-            }
-        }
-        }finally{cancellation.dispose();}
-        });
-    }
     async reviewData(run=nativeRunner):Promise<void>{
         this.trusted();const binding=await this.runtime().ensure();this.trusted();
         const main=(await this.runtime().discover()).bundle.main;this.trusted();
@@ -2753,8 +2676,8 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         if(nativeExecutionAllowed()){this.status.text='AIRK';this.status.command='airk.explorer.open';this.status.tooltip=undefined;}
         this.reset();this.definitions.fire();void this.start();
     }
-    reset():void{this.closeHttpEndpointWatcher();this.localScopeEpoch++;this.legacyRetirement?.stop();this.legacyRetirement=undefined;this.generation++;this.windowContextValue=undefined;this.publishNativeCommandAvailability();this.host=undefined;this.selectedEligible=undefined;this.selectedScope=undefined;this.specs=[];this.binding=undefined;this.checks.clear();this.checking=undefined;this.connectionCheck=undefined;this.console.reset();void this.refresh();}
-    dispose():void{if(this.disposed)return;this.localScopeEpoch++;this.legacyRetirement?.stop();this.legacyRetirement=undefined;this.host=undefined;this.disposed=true;this.closeHttpEndpointWatcher();clearTimeout(this.httpRefreshTimer);this.httpRefreshTimer=undefined;this.generation++;this.windowContextValue=undefined;this.publishNativeCommandAvailability();this.windowContextChanges.dispose();this.assistanceGeneration++;this.assistanceHost?.dispose();this.assistanceDefinitions.dispose();void this.explorer?.then(explorer=>explorer.dispose(),()=>undefined);this.console.dispose();this.status.dispose();this.definitions.dispose();this.treeChanges.dispose();this.output.dispose();}
+    reset():void{this.closeHttpEndpointWatcher();this.localScopeEpoch++;this.generation++;this.windowContextValue=undefined;this.publishNativeCommandAvailability();this.host=undefined;this.selectedEligible=undefined;this.selectedScope=undefined;this.specs=[];this.binding=undefined;this.checks.clear();this.checking=undefined;this.connectionCheck=undefined;this.console.reset();void this.refresh();}
+    dispose():void{if(this.disposed)return;this.localScopeEpoch++;this.host=undefined;this.disposed=true;this.closeHttpEndpointWatcher();clearTimeout(this.httpRefreshTimer);this.httpRefreshTimer=undefined;this.generation++;this.windowContextValue=undefined;this.publishNativeCommandAvailability();this.windowContextChanges.dispose();this.assistanceGeneration++;this.assistanceHost?.dispose();this.assistanceDefinitions.dispose();void this.explorer?.then(explorer=>explorer.dispose(),()=>undefined);this.console.dispose();this.status.dispose();this.definitions.dispose();this.treeChanges.dispose();this.output.dispose();}
 }
 
 let active:ServiceExtension|undefined;
@@ -2813,7 +2736,6 @@ export async function activate(context:vscode.ExtensionContext):Promise<{getServ
     commands.removeTerminalCommand=()=>controller.removeTerminalCommand();
     commands.showLastUninstallResult=()=>controller.showLastUninstallResult();
     commands.reviewData=()=>controller.reviewData();
-    commands.reviewLegacyUpgrade=()=>controller.reviewLegacyUpgrade();
     commands.retryUpdate=()=>controller.retryUpdate();
     commands.reloadUpdatedExtension=()=>controller.reloadUpdatedExtension();
     commands.openTools=()=>controller.openTools();

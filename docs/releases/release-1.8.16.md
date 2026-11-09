@@ -40,6 +40,13 @@ The [clean-break contract](../upgrade-rebuild-fallback.md) supersedes optional
 pre-baseline migration/rebuild choices. Implementation and installed acceptance
 of the new policy remain incomplete.
 
+**Later on 9 November 2026 (simplification S2):** the native in-place catalog
+upgrade and standalone-index adoption were removed; their CLI commands remain as
+typed refusals (`catalog_upgrade_unsupported`, `standalone_adoption_unsupported`).
+The extension no longer contributes **AIRK: Review unavailable legacy upgrade
+index retirement**, and the obsolete `check-runtime-legacy-retirement` and
+`check-standalone-adoption-failure` qualification scripts were deleted.
+
 The selected control root's `airk-state-contract.json` records schema 1,
 `state_contract: "airk-state/1"`, baseline 1.8.16 and exact installation/control/
 namespace binding, atomically qualified through native fresh Genesis. Saved

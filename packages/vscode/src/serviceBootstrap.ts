@@ -7,7 +7,6 @@ import * as path from 'node:path';
 import { runText } from './native';
 import { NativeControlTransport, ServiceClient, ServiceError, record, RecordValue, identifier, count, ProjectConfigurationRequest, validateConfigurationRequest } from './serviceClient';
 import type { LifecycleIntent } from './serviceIntents';
-import { validateRetirementReply } from './runtimeLegacyRetirement';
 import {validateNativeLegacyBinding} from './indexingCatalog';
 import {IssuerRotationAction,IssuerRotationStatus,validateIssuerRotation} from './httpIssuerRotation';
 import { NativeRebuildObservation, validateRebuildObservation, runtimeCleanBreakRequired, RuntimeCleanBreakPolicy, validateCleanBreakPolicy } from './runtimeRebuild';
@@ -592,30 +591,6 @@ export class RuntimeHost {
         if(value.schema!==1||value.metadata_only!==true||value.payload_verified!==false)throw new ServiceError('invalid_bootstrap_snapshot');
         return value;
     }
-    private async legacyAdmin(action:string,input?:RecordValue,index?:string,admit?:()=>void,after?:string):Promise<RecordValue|null>{
-        this.active();admit?.();const bundle=await this.verified();this.active();admit?.();
-        const location=await this.invoke(bundle.main,['runtime','location','--channel',this.options.channel]);
-        const install=this.options.installDir??safePath(location.install_dir);
-        const args=['runtime',`legacy-retirement-${action}`,'--install-dir',install];
-        if(index){if(!/^idx_[0-9a-f]{32}$/.test(index))throw new ServiceError('invalid_legacy_retirement_index');args.push('--index-id',index);}
-        if(after){if(!/^idx_[0-9a-f]{32}$/.test(after))throw new ServiceError('invalid_legacy_retirement_continuation');args.push('--after',after);}
-        // Use the paired verified bundled candidate, never an older selected predecessor.
-        // Native admission must independently match the saved installer identity.
-        this.active();admit?.(); // No await between the session's final Stop/trust check and dispatch.
-        const result=await this.run(bundle.main,args,180000,input?JSON.stringify(input):undefined);this.active();
-        if(action==='receipt'){
-            if(result.schema!==1||!Object.hasOwn(result,'observation'))throw new ServiceError('invalid_legacy_retirement_observation');
-            return result.observation===null?null:validateRetirementReply(result.observation);
-        }
-        return action==='candidates'?record(result):validateRetirementReply(result);
-    }
-    async legacyRetirementCandidates(after?:string):Promise<RecordValue>{return record(await this.legacyAdmin('candidates',undefined,undefined,undefined,after));}
-    async legacyRetirementReview(index:string):Promise<RecordValue>{return record(await this.legacyAdmin('review',undefined,index));}
-    async legacyRetirementAuthorize(review:RecordValue,admit:()=>void):Promise<RecordValue>{
-        return record(await this.legacyAdmin('authorize',{preview:review.preview,review_digest:review.review_digest},undefined,admit));
-    }
-    async legacyRetirementReceipt(request:RecordValue):Promise<RecordValue|null>{return this.legacyAdmin('receipt',request);}
-    async legacyRetirementResume(request:RecordValue,admit:()=>void):Promise<RecordValue>{return record(await this.legacyAdmin('resume',request,undefined,admit));}
     async repair(binding:RuntimeBinding,preview?:string):Promise<RecordValue>{
         this.active();
         if(binding.lifecycle!=='on-demand')throw new ServiceError('runtime_payload_managed_externally');

@@ -103,9 +103,12 @@ remaining platform gates are in the working-build record.
 **Setup and uninstall:** Successful setup or reconnection clears obsolete failure warnings. Current setup failures remain visible, and uninstall removes empty shell startup files that AIRK created. See [setup and uninstall guidance](vscode-extension.md) and the [branch review](reviews/branch-v190-review-2026-11-06.md).
 
 **Missing sources and storage:** the working source adds [reviewed index
-retirement and cleanup](service-project-retirement.md) for removed files or folders and separate
-[unavailable legacy-index upgrade recovery](service-installation.md#unavailable-legacy-index-during-upgrade). Healthy indexes keep
-their independent evidence; old grants are never silently narrowed. Post-P14
+retirement and cleanup](service-project-retirement.md) for removed files or folders.
+The separate explicit legacy-index upgrade recovery and its **AIRK: Review
+unavailable legacy upgrade index retirement** command were removed on
+9 November 2026 with the in-place catalog upgrade; an older installation takes
+the [clean break](service-installation.md#unavailable-legacy-index-during-upgrade)
+instead. Healthy indexes keep their independent evidence; old grants are never silently narrowed. Post-P14
 recovery has selected Windows native/process and Mac portable validation. Full
 workspace and final installer qualification remain separate; see the working-build
 record for current results and earlier failures.
@@ -121,7 +124,7 @@ record for current results and earlier failures.
 | [Combined Project reads](combined-reads.md) | Unique-index composition, scope and complete member results |
 | [Recommendations](recommendations.md) | Bounded metadata advice and separately reviewed defaults |
 | [Guarded index retirement](service-project-retirement.md) | Missing files/storage, current-reference cleanup and independent indexes |
-| [Unavailable legacy-index upgrade](service-installation.md#unavailable-legacy-index-during-upgrade) | Explicit same-candidate retirement before activation; complete native receipts |
+| [Unavailable legacy index during the clean break](service-installation.md#unavailable-legacy-index-during-upgrade) | Reported unavailable sources; the explicit retirement commands were removed on 9 November 2026 |
 
 The [1.8.8 working-build record](releases/release-1.8.8.md) and
 [implementation ledger](research/implementation-v190.md) retain exact source/runtime

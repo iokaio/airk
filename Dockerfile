@@ -58,7 +58,6 @@ COPY scripts/check-container.py ./scripts/check-container.py
 COPY scripts/check-macos-direct-runtime.py ./scripts/check-macos-direct-runtime.py
 COPY scripts/check-managed-runtime.py ./scripts/check-managed-runtime.py
 COPY scripts/check-runtime-activation.py ./scripts/check-runtime-activation.py
-COPY scripts/check-runtime-legacy-retirement.py ./scripts/check-runtime-legacy-retirement.py
 COPY scripts/check-service-clients.py ./scripts/check-service-clients.py
 COPY scripts/check-service-install.py ./scripts/check-service-install.py
 COPY scripts/check-tokenizer-calibration.py ./scripts/check-tokenizer-calibration.py

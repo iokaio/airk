@@ -8,7 +8,6 @@ import * as path from 'node:path';
 import { automaticUpgrade, NativeRunner, RuntimeHost, RuntimeOptions, validateRuntimeInstallDirectory, verifyBundledRuntime, nativeRunner } from '../serviceBootstrap';
 import { RecordValue, ServiceClient, ServiceError, record } from '../serviceClient';
 import { nativePayloadDirectory } from './nativeServiceFixture';
-import { LegacyRetirementSession } from '../runtimeLegacyRetirement';
 import { httpAuthorityDigest } from '../serviceHttp';
 import { ConsoleHost, ServiceConsoleController } from '../serviceConsoleController';
 import { managementView, panelDetails } from '../explorerManagement';
@@ -870,31 +869,6 @@ test('connection waiters share mandatory work until the last health completes ev
         release[1].resolve();await second;
         await f.host.discover();assert.equal(f.count('inspect'),2);assert.equal(f.count('diagnose'),2);
     }finally{release.forEach(gate=>gate.resolve());await Promise.allSettled([first,second,third]);await f.cleanup();}
-});
-
-test('legacy retirement Stop during RuntimeHost location preparation prevents later authorize or resume dispatch',async()=>{
-    for(const action of ['authorize','resume']){
-        const f=await fixture(),entered=lazySignal<void>(),release=lazySignal<void>();let held=false,mutations=0;
-        const hash='ab'.repeat(32),index='idx_'+'cd'.repeat(16),who='ef'.repeat(16);
-        const preview={schema:1,request_digest:hash,original_backup_digest:hash,original_legacy_data_digest:hash,
-            source_configuration:'pending_metadata',effect:'retire_and_cancel_with_cleanup_pending',affected_work:{jobs:0,job_ids_digest:hash},
-            request:{schema:1,caller:who,key:{namespace:who,epoch:0,nonce:who},upgrade_id:who,plan_digest:hash,installer_identity:hash,index_id:index,
-                registration:{binding:hash,root:'/fictional/source',data_root:'/fictional/private',collection:'a'},expected_authorizations_digest:hash}};
-        const review={status:'review',preview,review_digest:hash};
-        const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable'},async(_command,args)=>{
-            if(args[1]==='location'){if(held){entered.resolve();await release.promise;}return {protocol:1,install_dir:path.join(f.root,'install')};}
-            if(args[1]==='legacy-retirement-review')return review;
-            mutations++;throw new Error('mutation must not dispatch after Stop');
-        });
-        const session=new LegacyRetirementSession(host,()=>true);let pending:Promise<unknown>|undefined;
-        try{
-            if(action==='authorize')await session.prepare(index);
-            else session.restore({status:'authorized',authorization:{preview,review_digest:hash}});
-            held=true;pending=action==='authorize'?session.authorize(review):session.resume();
-            await entered.promise;session.stop();release.resolve();
-            await assert.rejects(pending,/review_stopped/);assert.equal(mutations,0);
-        }finally{release.resolve();await Promise.allSettled([pending]);await f.cleanup();}
-    }
 });
 
 
