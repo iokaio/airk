@@ -1,5 +1,10 @@
 # Shared embedding runtime contract, protocol 1
 
+> **Note, 9 November 2026:** since 1.8.14 AIRK is a single executable. Offline
+> MiniLM inference runs inside the service, and the separate `airk-embed`
+> helper that this contract describes is neither built nor started. See
+> [architecture](architecture.md). The text below is otherwise unchanged.
+
 This is the native inference pool used by the default 1.4.0 extension/CLI service. Resource and platform qualification remain tracked separately from implemented behavior. Inactive cleanup owners receive no pool access and do not start the helper.
 
 Temporary capacity, selection, native-lock and publication exclusion do not create durable semantic failure. The native vector turn retains its accepted job and charged grant during a thirty-second retry window, with 25 ms backoff and pause/cancel/lease checkpoints. A publication witness distinguishes an uncommitted turn from a committed batch whose following report was busy; after commit, only observation repeats. Exhaustion reports `semantic_contention_retry_exhausted` and requires explicit retry. Corruption, permission failures and cancellation are never reclassified as temporary. Deferred attempts with no committed report do not invent failed extraction work or duplicate completed index accounting.

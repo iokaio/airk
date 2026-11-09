@@ -32,7 +32,7 @@ Use the separate **Copy complete JSON**, **Open complete JSON** or **Export comp
 
 ## Processes on this machine
 
-A user-owned installation uses `airk-service` for the shared service, `airk-index` for project workers, `airk-source` for source watching and `airk-embed` for inference (`.exe` on Windows). Agents and Explorer can each have a separate MCP frontend and launcher. Two VS Code windows do not imply only two AIRK processes. MCP processes follow their client lifetime; background indexing can continue after an editor closes. An idle, connected agent remains connected.
+A user-owned installation uses `airk-service` for the shared service, `airk-index` for project workers and `airk-source` for source watching (`.exe` on Windows). Since 1.8.14, offline inference runs inside the service; installations before 1.8.14 also ran an `airk-embed` helper. Agents and Explorer can each have a separate MCP frontend and launcher. Two VS Code windows do not imply only two AIRK processes. MCP processes follow their client lifetime; background indexing can continue after an editor closes. An idle, connected agent remains connected.
 
 The installer creates the role names from one downloaded engine. Organization-managed read-only payloads and development builds retain their original executable names.
 

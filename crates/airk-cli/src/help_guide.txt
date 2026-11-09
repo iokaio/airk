@@ -2,9 +2,9 @@ HOW AIRK WORKS
   AIRK indexes local source code and documents and answers bounded, cited,
   read-only queries. One native service per control directory owns a registry
   of projects, a durable job queue and resource admission. The service starts
-  project workers (indexing and queries), a source watcher and the embedding
-  helper (airk-embed) itself; you start only the service, CLI commands and MCP
-  frontends. Every command prints JSON on stdout. Errors exit non-zero with a
+  project workers (indexing and queries) and a source watcher itself, and runs
+  offline MiniLM inference in-process; you start only the service, CLI
+  commands and MCP frontends. Every command prints JSON on stdout. Errors exit non-zero with a
   message on stderr; set AIRK_ERROR_FORMAT=json for a structured error.
 
 SELECTING A SERVICE AND PROJECT

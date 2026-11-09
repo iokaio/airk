@@ -1,5 +1,10 @@
 # AIRK processes and ownership
 
+> **Note, 9 November 2026:** since 1.8.14 AIRK is a single executable. Offline
+> MiniLM inference runs inside the service, and the separate `airk-embed`
+> helper that this page describes is neither built nor started. See
+> [architecture](architecture.md). The text below is otherwise unchanged.
+
 AIRK uses one elected service per user/machine installation and independent collections. That does not mean one executable process per VS Code window. Agents, Explorer, native workers and Windows launchers have different owners and lifetimes.
 
 ## What each process does

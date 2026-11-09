@@ -187,7 +187,7 @@ Original sources remain read-only. Extraction budgets, ignored files, file-size 
     Topic {
         id: "models",
         title: "Offline models and inference",
-        text: r#"The runtime pair separates lightweight airk from airk-embed, which contains the offline MiniLM inference payload. Compatible projects share verified model assets and loaded sessions. Opening a read-only connection does not itself load a model.
+        text: r#"The service runs offline MiniLM inference in-process through one shared, bounded model owner; since 1.8.14 there is no separate airk-embed helper. Compatible projects share verified model assets and loaded sessions. Opening a read-only connection does not itself load a model.
 Model setup, source discovery and semantic embedding are separate work. Vector opt-out keeps lexical evidence available. An explicit vector query fails honestly when the required model/index is unavailable. Querying does not download or install models.
 Custom models require supported local manifests and verified assets. Use the reviewed project configuration path; do not point a workspace setting at an arbitrary executable. AIRK Explorer > Management exposes bundled-model installation and owned helper controls.
 Use airk_status semantic_readiness/local_model_ready and runtime/work observations, then airk_capabilities for adapter limits. Ask command=model-catalog and command=configure for current CLI help."#,
@@ -195,7 +195,7 @@ Use airk_status semantic_readiness/local_model_ready and runtime/work observatio
     Topic {
         id: "service",
         title: "Native service and process ownership",
-        text: r#"One per-user native service hosts independent registered collections. It owns metadata, admission and work scheduling; project workers own indexes and directly serve evidence. The shared inference helper receives model inputs directly from workers.
+        text: r#"One per-user native service hosts independent registered collections. It owns metadata, admission and work scheduling; project workers own indexes and directly serve evidence. Its shared in-process inference owner receives model inputs from workers.
 Health confirms responsiveness and the observed service identity. It does not prove source freshness, complete semantics or ongoing progress. Watcher availability, inference readiness, cached inspection and work observations are independent signals.
 On-demand lifecycle differs from optional OS login registration or an organization-managed supervisor. Explicit Stop persists and reconnect cannot undo it. Start is the action that clears the stop preference. Restart/drain controls bind exact observed ownership; never guess a process to kill from its name or PID alone.
 Ask command=runtime, command=service, topic=resources and topic=troubleshooting. Reading help performs none of these management actions."#,
