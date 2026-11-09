@@ -13,7 +13,6 @@ use std::{
 };
 pub mod blobs;
 pub mod capacity;
-pub mod catalog_experiment;
 pub mod checkpoints;
 pub mod compression;
 pub mod current;
@@ -38,7 +37,6 @@ mod sqlite;
 pub mod usage;
 pub mod vector_cache;
 pub mod vector_policy;
-pub mod vector_registry;
 mod verified_cache;
 
 #[derive(Clone, Debug)]

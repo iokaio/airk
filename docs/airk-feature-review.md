@@ -144,7 +144,7 @@ Evidence reads accept these options:
 The kernel computes a separate validator for each representation. It covers the
 payload, evidence, profile, root, path, selection and representation options.
 When `if_evidence` still matches, the payload is left out and the status is
-`NotModified` ([`conditional.rs`](../crates/airk-kernel/src/conditional.rs)).
+`NotModified` ([`current/conditional.rs`](../crates/airk-kernel/src/current/conditional.rs)).
 The other read statuses are `MoveCandidate`, `RemovedFromIndex`, `Ambiguous`,
 `HistoryUnavailable` and `Unknown`.
 

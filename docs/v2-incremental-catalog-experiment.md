@@ -1,6 +1,8 @@
 # Incremental catalog experiment
 
-Decision: retain full catalog builds in production. The isolated O2a prototype is available in `airk-store::catalog_experiment`, but no publication path calls it. It demonstrates a possible sparse-edit improvement, not a qualified replacement writer.
+Decision: retain full catalog builds in production. The isolated O2a prototype was `airk-store::catalog_experiment`; no publication path called it. It demonstrated a possible sparse-edit improvement, not a qualified replacement writer.
+
+**9 November 2026:** the prototype module and its differential test (`crates/airk-store/tests/catalog_experiment.rs`) were removed under Track R2 of the [simplification plan](simplify-plan.md), because nothing outside that test called it. This page remains the historical record of the experiment; recover the code from Git history (commit `43d7005` and earlier) if the approach is revisited.
 
 ## Contract and correctness
 
