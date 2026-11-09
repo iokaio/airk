@@ -82,10 +82,7 @@ fn semantic_preference_accepted_while_paused_prepares_itself_and_publishes() -> 
         root.path().join("file.txt"),
         "Native durable semantic preference\n",
     )?;
-    #[cfg(feature = "local-inference")]
     let service = common::Service::reviewed(root.path(), data.path(), "desired-semantic");
-    #[cfg(not(feature = "local-inference"))]
-    let service = common::Service::with_helper(root.path(), data.path(), "desired-semantic");
     service.configure(airk_cli::service_configuration::Draft::Vectors { enabled: false });
     service.job(JobKind::Index);
     service.request(Method::Pause {
@@ -283,14 +280,7 @@ fn setup_without_editor(helper: bool) -> Result<()> {
     let service = common::Service::reviewed(source.path(), data.path(), "existing");
     #[cfg(not(feature = "local-inference"))]
     let service = if helper {
-        #[cfg(feature = "embedding-worker")]
-        {
-            common::Service::with_helper(source.path(), data.path(), "existing")
-        }
-        #[cfg(not(feature = "embedding-worker"))]
-        {
-            unreachable!("helper scenario requires embedding-worker")
-        }
+        unreachable!("the semantic setup scenario requires local-inference")
     } else {
         common::Service::start(source.path(), data.path(), "existing")
     };

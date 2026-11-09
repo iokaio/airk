@@ -1280,7 +1280,6 @@ async fn require_semantic_ready(stream: &mut local_ipc::Stream) -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "embedding-worker")]
 mod split_tests;
 
 #[cfg(feature = "local-inference")]

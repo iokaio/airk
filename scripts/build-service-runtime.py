@@ -450,19 +450,16 @@ def main():
         raise SystemExit("Destination already exists; select a fresh runtime directory")
     destination.parent.mkdir(parents=True, exist_ok=True)
     version = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"]
+    if not single_image_version(version):
+        # This tree no longer contains the airk-embed helper target. Historical
+        # pair payloads are built from their tagged sources and build scripts.
+        raise SystemExit(f"Version {version} needs a historical runtime pair; build it from its tagged source")
     source = source_identity()
     load_script("int8-policy").catalog()
-    static_inputs = verify_static_inputs() if single_image_version(version) else None
-    if not single_image_version(version):
-        check_lightweight_dependencies()
+    static_inputs = verify_static_inputs()
     with tempfile.TemporaryDirectory(prefix=".airk-runtime-stage-", dir=destination.parent) as temporary:
         staging = Path(temporary)
-        # Copy helper before the separate feature-minimal main build. Cargo unifies
-        # features within one invocation, so a workspace build cannot establish this boundary.
-        if not single_image_version(version):
-            helper = cargo_binary("airk-embed", args.profile, "embedding-worker")
-            shutil.copy2(helper, staging / helper.name)
-        main_binary = cargo_binary("airk", args.profile, "local-inference" if single_image_version(version) else None)
+        main_binary = cargo_binary("airk", args.profile, "local-inference")
         shutil.copy2(main_binary, staging / main_binary.name)
         operating_system = {"Windows": "windows", "Darwin": "macos", "Linux": "linux"}.get(platform.system())
         architecture = {"amd64": "x86_64", "x86_64": "x86_64", "arm64": "aarch64", "aarch64": "aarch64"}.get(platform.machine().lower())
@@ -470,27 +467,23 @@ def main():
             raise RuntimeError("Unsupported host runtime pair target")
         if operating_system == "macos":
             arrange_macos_bundle(staging, version)
-        if not single_image_version(version):
-            stage_inference_runtime(staging, operating_system, architecture)
         verify_embedded_models(staging, operating_system, version)
         if source_identity() != source:
             raise RuntimeError("Native source changed during the runtime build; staging was not published")
         if operating_system == "macos":
             sign_development_macos_bundle(staging)
-        imports = verify_static_imports(staging / runtime_executables(operating_system, version)[0], operating_system) if single_image_version(version) else None
-        model_smoke = verify_model_smoke(staging, operating_system, version) if single_image_version(version) else None
-        if single_image_version(version):
-            if verify_static_inputs() != static_inputs:
-                raise RuntimeError("Static ORT compiled inputs changed during the build")
-            stage_static_notices(staging, static_inputs)
+        imports = verify_static_imports(staging / runtime_executables(operating_system, version)[0], operating_system)
+        model_smoke = verify_model_smoke(staging, operating_system, version)
+        if verify_static_inputs() != static_inputs:
+            raise RuntimeError("Static ORT compiled inputs changed during the build")
+        stage_static_notices(staging, static_inputs)
         manifest = write_pair_metadata(staging, version, operating_system, architecture)
         if source_identity() != source:
             raise RuntimeError("Native source changed during the paired build; staging was not published")
         receipt = {"schema": 1, "source": source, "profile": args.profile,
                    "runtime": manifest, "rustc": subprocess.check_output(
-                       ["rustc", "--version", "--verbose"], text=True, encoding="utf-8").strip()}
-        if single_image_version(version):
-            receipt.update(static_ort=static_inputs, static_imports=imports, embedded_model_smoke=model_smoke)
+                       ["rustc", "--version", "--verbose"], text=True, encoding="utf-8").strip(),
+                   "static_ort": static_inputs, "static_imports": imports, "embedded_model_smoke": model_smoke}
         receipt_text = json.dumps(receipt, indent=2) + "\n"
         if len(receipt_text.encode("utf-8")) > 16_384:
             raise RuntimeError("Complete build receipt exceeds the native metadata bound")

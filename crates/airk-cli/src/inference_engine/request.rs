@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Canonical helper request execution shared by the native helper and its
-//! explicit instrumented qualification test image.
+//! Canonical model request execution for the in-process inference pool.
 use airk_retrieval::{
     embedding_worker::{ModelLocation, PROTOCOL, Request, Response},
     model::{EmbeddingCacheContext, EmbeddingCacheStats, EmbeddingModel, MAX_INPUT_BYTES},

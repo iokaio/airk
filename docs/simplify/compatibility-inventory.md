@@ -39,6 +39,17 @@ Method and limits:
   - **Q9** (the `airk-embed` helper) is answered in
     [s6-s7-plan.md](s6-s7-plan.md).
   - The rows themselves are kept as reviewed at `43d7005`.
+- **9 November 2026, S4 embed-pool step:** following the Q9 answer, the
+  `embedding-worker` feature, the `airk-embed` binary target, the
+  `guarded_provider_fixture` test target and the helper-only sources and
+  tests were deleted. This retires row `embed_pool_legacy_{context,entry}.rs`.
+  The remaining single-instantiation `include!` sources are ordinary modules
+  under `crates/airk-cli/src/inference_engine/` (`embed_pool_retirement.rs`
+  is now `inference_engine/pool/retirement.rs`). The P9 consumer duties
+  (`runtime_pair` pair recognition and `verify_helper`, the legacy launchers
+  and `quiesce_for_maintenance`) and the no-`local-inference` helper-spawn
+  path were kept. The runtime and container builders now refuse pair
+  versions instead of building the helper.
 
 ## 1. How the boundary is decided
 

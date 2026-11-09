@@ -169,19 +169,18 @@ def main():
     args = parser.parse_args()
     if platform.system() != "Linux":
         raise SystemExit("Container runtime pairs must be built and checked on Linux")
+    version = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"]
+    if not builder.single_image_version(version):
+        # This tree no longer contains the airk-embed helper target. Historical
+        # pair payloads are built from their tagged sources and build scripts.
+        raise SystemExit(f"Version {version} needs a historical runtime pair; build it from its tagged source")
     destination = args.destination.resolve()
     destination.mkdir(parents=True, exist_ok=False)
     runtime = destination / "runtime"
     runtime.mkdir()
-    version = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"]
-    modern = builder.single_image_version(version)
     source = container_source_identity()
-    inputs = builder.verify_static_inputs() if modern else None
-    if not modern:
-        builder.check_lightweight_dependencies()
-        helper = builder.cargo_binary("airk-embed", args.profile, "embedding-worker")
-        shutil.copy2(helper, runtime / "airk-embed")
-    main_binary = builder.cargo_binary("airk", args.profile, "local-inference" if modern else None)
+    inputs = builder.verify_static_inputs()
+    main_binary = builder.cargo_binary("airk", args.profile, "local-inference")
     shutil.copy2(main_binary, runtime / "airk")
     if args.profile == "debug":
         # DWARF can exceed a gigabyte for the pair and dominates approval hashing.
@@ -191,31 +190,24 @@ def main():
     architecture = {"x86_64": "x86_64", "aarch64": "aarch64"}.get(platform.machine().lower())
     if not architecture:
         raise SystemExit("Unsupported Linux container architecture")
-    if not modern:
-        builder.stage_inference_runtime(runtime, "linux", architecture)
     builder.verify_embedded_models(runtime, "linux", version)
-    imports = builder.verify_static_imports(runtime / "airk", "linux") if modern else None
-    smoke = builder.verify_model_smoke(runtime, "linux", version) if modern else None
-    if modern:
-        if builder.verify_static_inputs() != inputs:
-            raise RuntimeError("Static ORT compiled inputs changed during container build")
-        builder.stage_static_notices(runtime, inputs)
+    imports = builder.verify_static_imports(runtime / "airk", "linux")
+    smoke = builder.verify_model_smoke(runtime, "linux", version)
+    if builder.verify_static_inputs() != inputs:
+        raise RuntimeError("Static ORT compiled inputs changed during container build")
+    builder.stage_static_notices(runtime, inputs)
     metadata = builder.write_pair_metadata(runtime, version, "linux", architecture)
     receipt = {
         "schema": 1, "kind": "airk-container-build", "version": version,
         "cargo_lock_sha256": builder.digest(ROOT / "Cargo.lock"),
-        "main_features": ["local-inference"] if modern else [],
+        "main_features": ["local-inference"],
+        "static_ort": inputs, "static_imports": imports, "embedded_model_smoke": smoke,
     }
-    if modern:
-        receipt.update(static_ort=inputs, static_imports=imports, embedded_model_smoke=smoke)
-    else:
-        receipt["helper_features"] = ["embedding-worker"]
     (runtime / "airk-container-build.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
     build_receipt = {"schema": 1, "source": source, "profile": args.profile, "runtime": metadata,
         "rustc": subprocess.check_output(["rustc", "--version", "--verbose"], text=True, encoding="utf-8").strip(),
-        "source_basis": "actual-public-container-copy-inputs/1"}
-    if modern:
-        build_receipt.update(static_ort=inputs, static_imports=imports, embedded_model_smoke=smoke)
+        "source_basis": "actual-public-container-copy-inputs/1",
+        "static_ort": inputs, "static_imports": imports, "embedded_model_smoke": smoke}
     encoded = json.dumps(build_receipt, indent=2) + "\n"
     if len(encoded.encode("utf-8")) > 16_384:
         raise ValueError("Container build receipt exceeds native metadata bound")

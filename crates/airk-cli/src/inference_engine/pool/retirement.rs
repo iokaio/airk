@@ -213,3 +213,5 @@ impl Retirements {
         }
     }
 }
+#[cfg(test)]
+mod tests;

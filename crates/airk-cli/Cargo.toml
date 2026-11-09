@@ -13,27 +13,11 @@ publish.workspace = true
 default = []
 local-inference = ["airk-kernel/local-inference", "airk-retrieval/local-inference", "bundled-model"]
 bundled-model = []
-embedding-worker = ["local-inference", "bundled-model"]
 parser-training = []
 
 [[bin]]
 name = "airk"
 path = "src/main.rs"
-
-[[bin]]
-name = "airk-embed"
-path = "src/embed_main.rs"
-required-features = ["embedding-worker"]
-
-# An explicit instrumented qualification image, never a default test run,
-# cargo-install executable, or release runtime payload.
-[[test]]
-name = "guarded_provider_fixture"
-path = "tests/fixtures/guarded_provider_fixture.rs"
-harness = false
-test = false
-bench = false
-required-features = ["embedding-worker"]
 
 [dependencies]
 airk-core.workspace = true

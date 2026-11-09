@@ -239,15 +239,8 @@ impl Service {
         )
     }
     pub fn start(root: &Path, data: &Path, collection: &str) -> Arc<Self> {
-        Self::start_inner(root, data, collection, false)
-    }
-    #[cfg(feature = "embedding-worker")]
-    pub fn with_helper(root: &Path, data: &Path, collection: &str) -> Arc<Self> {
-        Self::start_inner(root, data, collection, true)
-    }
-    fn start_inner(root: &Path, data: &Path, collection: &str, helper: bool) -> Arc<Self> {
         let owner = tempfile::tempdir().unwrap();
-        Self::start_owned(root, data, collection, helper, owner)
+        Self::start_owned(root, data, collection, owner)
     }
     pub fn in_owner(
         root: &Path,
@@ -255,13 +248,12 @@ impl Service {
         collection: &str,
         owner: tempfile::TempDir,
     ) -> Arc<Self> {
-        Self::start_owned(root, data, collection, false, owner)
+        Self::start_owned(root, data, collection, owner)
     }
     fn start_owned(
         root: &Path,
         data: &Path,
         collection: &str,
-        helper: bool,
         owner: tempfile::TempDir,
     ) -> Arc<Self> {
         let control = owner.path().join("control");
@@ -269,38 +261,6 @@ impl Service {
         let log = std::fs::File::create(owner.path().join("stderr")).unwrap();
         let diagnostics = std::env::var_os("AIRK_PROCESS_DIAGNOSTICS").is_some();
         let mut command = native_command();
-        if helper {
-            #[cfg(feature = "embedding-worker")]
-            {
-                let payload = owner.path().join("pair");
-                std::fs::create_dir(&payload).unwrap();
-                let main = airk_cli::install_files::main_name();
-                let embed = Path::new(main).with_file_name(if cfg!(windows) {
-                    "airk-embed.exe"
-                } else {
-                    "airk-embed"
-                });
-                std::fs::create_dir_all(payload.join(main).parent().unwrap()).unwrap();
-                std::fs::copy(env!("CARGO_BIN_EXE_airk"), payload.join(main)).unwrap();
-                std::fs::copy(env!("CARGO_BIN_EXE_airk-embed"), payload.join(&embed)).unwrap();
-                let pair = serde_json::json!({"schema":1,"version":env!("CARGO_PKG_VERSION"),"os":std::env::consts::OS,"arch":std::env::consts::ARCH,
-                    "airk_sha256":airk_cli::runtime_pair::digest_file(&payload.join(main)).unwrap(),
-                    "embed_sha256":airk_cli::runtime_pair::digest_file(&payload.join(&embed)).unwrap()});
-                std::fs::write(
-                    payload.join("airk-runtime.json"),
-                    serde_json::to_vec(&pair).unwrap(),
-                )
-                .unwrap();
-                command = Command::new(payload.join(main));
-                #[cfg(windows)]
-                {
-                    use std::os::windows::process::CommandExt;
-                    command.creation_flags(0x08000000);
-                }
-            }
-            #[cfg(not(feature = "embedding-worker"))]
-            panic!("helper fixture requires embedding-worker feature");
-        }
         diagnostic("service process starting");
         command
             .arg("serve")

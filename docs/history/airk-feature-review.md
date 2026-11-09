@@ -795,7 +795,7 @@ Linux x64, macOS ARM64 and macOS x64.
 
 ### 11.3 In-process inference with honest completion proofs
 
-[`InferenceOwner`](../../crates/airk-cli/src/inference_owner.rs) runs:
+[`InferenceOwner`](https://github.com/iokaio/airk/blob/f54fb4d048a55f80b0ac2e980260a8f849cfa82c/crates/airk-cli/src/inference_owner.rs) runs:
 
 - one owner thread with a local IPC listener (64 slots);
 - a separate compute thread, configurable from 1 to 4 threads.

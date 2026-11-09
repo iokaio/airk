@@ -4017,7 +4017,3 @@ fn trusted_console_pipe_and_stdin_rpc_preserve_closed_projects_and_frame_bounds(
     );
     Ok(())
 }
-
-#[cfg(feature = "embedding-worker")]
-#[path = "common/f12_held_helper.rs"]
-mod f12_held_helper;

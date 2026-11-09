@@ -746,7 +746,7 @@ pub(crate) fn split_cutover(
 
 // Private unit fixture executes the actual accepted work in this test process.
 // It cannot attest installed image identity or live provider/process drains.
-#[cfg(all(test, feature = "embedding-worker"))]
+#[cfg(all(test, feature = "local-inference"))]
 pub(crate) fn split_cutover_for_native_fixture(
     registry: &mut ServiceRegistry,
     control: &Path,

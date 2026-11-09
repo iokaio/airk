@@ -2,7 +2,6 @@
 //! Private, bounded qualification latch. Its messages are observations, never
 //! authority, and the actual helper engine supplies every entered correlation.
 use super::*;
-#[path = "../../../tests/fixtures/guarded_provider_gate_protocol.rs"]
 mod wire;
 
 struct Arm {

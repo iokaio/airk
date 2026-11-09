@@ -327,14 +327,14 @@ worth testing:
   treats any reply other than `Renewed` within 3 seconds as failure, and the
   supervisor then drops a possibly healthy helper. The helper answers
   `Failed` when it has no live, unexpired grant for that exact worker
-  ([embed_pool.rs:647-650](../../crates/airk-cli/src/embed_pool.rs#L647-L650)). Worker
+  ([embed_pool.rs:647-650](https://github.com/iokaio/airk/blob/v1.8.7/crates/airk-cli/src/embed_pool.rs#L647-L650)). Worker
   replacement (the tester saw worker IDs change on their own) and the helper's
   one-second grant sweep are the obvious ways to reach that state.
 - *Fatal error in the helper's main loop.* A listener accept error other than
   `PeerRejected`, or a stdout frame write failure, returns from the loop and
   ends the process
-  ([embed_pool.rs:673](../../crates/airk-cli/src/embed_pool.rs#L673),
-  [line 670](../../crates/airk-cli/src/embed_pool.rs#L670)).
+  ([embed_pool.rs:673](https://github.com/iokaio/airk/blob/v1.8.7/crates/airk-cli/src/embed_pool.rs#L673),
+  [line 670](https://github.com/iokaio/airk/blob/v1.8.7/crates/airk-cli/src/embed_pool.rs#L670)).
 - *External termination* (antivirus, job-object cleanup when a worker exits).
   Only an exit status in the log can distinguish this from the above.
 

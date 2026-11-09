@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-// Canonical inference-only pool implementation included by the production
-// wrapper and explicit instrumented fixture. Unit harness modules live in the wrapper.
+// Canonical in-process inference pool. The service-owned `InferenceOwner`
+// drives it; this library owns the native in-process completion barrier.
 use airk_cli::{
     embedding_pool_protocol as protocol,
     local_ipc::{self, Stream},
@@ -23,10 +23,10 @@ use std::{
     },
     time::{Duration, Instant},
 };
-mod accounting {
-    include!("embed_pool_accounting.rs");
-    provider_context!(define_provider_accounting, shared_tests);
-}
+mod accounting;
+mod owner;
+mod retirement;
+pub(crate) use owner::{InferenceOwner, NativeCompletionWitness};
 use tokio::sync::{mpsc, oneshot};
 
 #[derive(Clone)]
@@ -546,170 +546,158 @@ impl Engine {
     }
 }
 
-macro_rules! define_provider_work {
-    ($owner_cfg:meta) => {
-        enum Work {
-            Sweep,
-            #[$owner_cfg]
-            #[cfg(test)]
-            ComputeHook {
-                hook: ComputeHook,
-                reply: oneshot::Sender<()>,
-            },
-            Request {
-                grant: Box<protocol::Grant>,
-                envelope: Box<protocol::Envelope>,
-                alive: Arc<AtomicBool>,
-                worker_alive: Arc<AtomicBool>,
-                reply: oneshot::Sender<protocol::ResultEnvelope>,
-                charge: Option<accounting::ComputeCharge>,
-                authorization: Option<Arc<State>>,
-                #[cfg(test)]
-                native_worker: Option<airk_core::service::WorkerIdentity>,
-            },
-            Release {
-                worker: Incarnation,
-                owner: Option<Weak<AtomicBool>>,
-            },
-            DrainRelease {
-                worker: Incarnation,
-                completed: Arc<AtomicBool>,
-            },
-            #[$owner_cfg]
-            CloseEngine {
-                accounting: Arc<accounting::Accounting>,
-            },
-            #[$owner_cfg]
-            StopEngine {
-                reply: oneshot::Sender<()>,
-            },
+enum Work {
+    Sweep,
+    #[cfg(test)]
+    ComputeHook {
+        hook: ComputeHook,
+        reply: oneshot::Sender<()>,
+    },
+    Request {
+        grant: Box<protocol::Grant>,
+        envelope: Box<protocol::Envelope>,
+        alive: Arc<AtomicBool>,
+        worker_alive: Arc<AtomicBool>,
+        reply: oneshot::Sender<protocol::ResultEnvelope>,
+        charge: Option<accounting::ComputeCharge>,
+        authorization: Option<Arc<State>>,
+        #[cfg(test)]
+        native_worker: Option<airk_core::service::WorkerIdentity>,
+    },
+    Release {
+        worker: Incarnation,
+        owner: Option<Weak<AtomicBool>>,
+    },
+    DrainRelease {
+        worker: Incarnation,
+        completed: Arc<AtomicBool>,
+    },
+    CloseEngine {
+        accounting: Arc<accounting::Accounting>,
+    },
+    StopEngine {
+        reply: oneshot::Sender<()>,
+    },
+}
+fn process_work(engine: &mut Engine, work: Work, closing: &AtomicBool) {
+    match work {
+        #[cfg(test)]
+        Work::ComputeHook { hook, reply } => {
+            engine.before_compute = Some(hook);
+            let _ = reply.send(());
         }
-        fn process_work(engine: &mut Engine, work: Work, closing: &AtomicBool) {
-            match work {
-                #[$owner_cfg]
-                #[cfg(test)]
-                Work::ComputeHook { hook, reply } => {
-                    engine.before_compute = Some(hook);
-                    let _ = reply.send(());
-                }
-                Work::Sweep => {
-                    engine.retire_disconnected();
-                    if engine.sessions.is_empty() && engine.used.elapsed() > Duration::from_secs(60)
-                    {
-                        engine.model = None;
-                        engine.model_lease = None;
-                        engine.model_key = None;
-                        engine.tokenizer = None;
-                        engine.tokenizer_path = None;
-                    }
-                }
-                Work::Request {
-                    grant,
-                    envelope,
-                    alive,
-                    worker_alive,
-                    reply,
-                    mut charge,
-                    authorization,
-                    #[cfg(test)]
-                    native_worker,
-                } => {
-                    if let Some(charge) = charge.as_mut() {
-                        charge.running();
-                    }
-                    let envelope = *envelope;
-                    #[cfg(test)]
-                    {
-                        engine.compute_context = Some(ComputeContext {
-                            worker: native_worker,
-                            helper: grant.pool,
-                            request_id: envelope.request_id,
-                            session: envelope.session,
-                        });
-                    }
-                    let response = (|| {
-                        let request_owner = RequestOwner {
-                            connection: &alive,
-                            worker: &worker_alive,
-                            closing,
-                            authorization: authorization
-                                .as_ref()
-                                .map(|state| (state.as_ref(), grant.as_ref())),
-                        };
-                        require_live(Some(request_owner))?;
-                        ensure!(
-                            alive.load(Ordering::Acquire)
-                                && worker_alive.load(Ordering::Acquire)
-                                && !closing.load(Ordering::Acquire),
-                            "pool request canceled"
-                        );
-                        engine.admit_owner(grant.worker, &alive)?;
-                        // Queue-waiting work retains both exact connection and native
-                        // worker fences. No inference starts after its Release barrier.
-                        ensure!(
-                            alive.load(Ordering::Acquire)
-                                && worker_alive.load(Ordering::Acquire)
-                                && !closing.load(Ordering::Acquire),
-                            "pool request canceled"
-                        );
-                        match envelope.operation {
-                            protocol::Operation::Call { request } => engine.request_guarded(
-                                &grant,
-                                envelope.session,
-                                *request,
-                                Some(request_owner),
-                            ),
-                            protocol::Operation::Close => {
-                                engine.sessions.remove(&(grant.worker, envelope.session));
-                                Ok(Response::Peak { bytes: 0 })
-                            }
-                        }
-                    })()
-                    .unwrap_or(Response::Failed {
-                        reason: "pool request rejected or verified model unavailable".into(),
-                    });
-                    // Result errors must not leak this call's observation into later
-                    // work. This is instrumentation only, never an admission decision.
-                    #[cfg(test)]
-                    {
-                        engine.compute_context = None;
-                    }
-                    let _ = reply.send(protocol::ResultEnvelope {
-                        project: envelope.project,
-                        worker: envelope.worker,
-                        session: envelope.session,
-                        request_id: envelope.request_id,
-                        input_digest: envelope.input_digest,
-                        response,
-                    });
-                }
-                Work::Release { worker, owner } => engine.release_owner(worker, owner.as_ref()),
-                Work::DrainRelease { worker, completed } => {
-                    engine.release_owner(worker, None);
-                    // Only the actual engine queue, after earlier compute completes,
-                    // can publish this exact generation's provider completion witness.
-                    completed.store(true, Ordering::Release);
-                }
-                #[$owner_cfg]
-                Work::CloseEngine { accounting } => {
-                    engine.sessions.clear();
-                    engine.owners.clear();
-                    engine.model = None;
-                    engine.model_lease = None;
-                    engine.model_key = None;
-                    engine.tokenizer = None;
-                    engine.tokenizer_path = None;
-                    accounting.mark_engine_barrier();
-                }
-                #[$owner_cfg]
-                Work::StopEngine { reply } => {
-                    let _ = reply.send(());
-                }
+        Work::Sweep => {
+            engine.retire_disconnected();
+            if engine.sessions.is_empty() && engine.used.elapsed() > Duration::from_secs(60) {
+                engine.model = None;
+                engine.model_lease = None;
+                engine.model_key = None;
+                engine.tokenizer = None;
+                engine.tokenizer_path = None;
             }
         }
-    };
+        Work::Request {
+            grant,
+            envelope,
+            alive,
+            worker_alive,
+            reply,
+            mut charge,
+            authorization,
+            #[cfg(test)]
+            native_worker,
+        } => {
+            if let Some(charge) = charge.as_mut() {
+                charge.running();
+            }
+            let envelope = *envelope;
+            #[cfg(test)]
+            {
+                engine.compute_context = Some(ComputeContext {
+                    worker: native_worker,
+                    helper: grant.pool,
+                    request_id: envelope.request_id,
+                    session: envelope.session,
+                });
+            }
+            let response = (|| {
+                let request_owner = RequestOwner {
+                    connection: &alive,
+                    worker: &worker_alive,
+                    closing,
+                    authorization: authorization
+                        .as_ref()
+                        .map(|state| (state.as_ref(), grant.as_ref())),
+                };
+                require_live(Some(request_owner))?;
+                ensure!(
+                    alive.load(Ordering::Acquire)
+                        && worker_alive.load(Ordering::Acquire)
+                        && !closing.load(Ordering::Acquire),
+                    "pool request canceled"
+                );
+                engine.admit_owner(grant.worker, &alive)?;
+                // Queue-waiting work retains both exact connection and native
+                // worker fences. No inference starts after its Release barrier.
+                ensure!(
+                    alive.load(Ordering::Acquire)
+                        && worker_alive.load(Ordering::Acquire)
+                        && !closing.load(Ordering::Acquire),
+                    "pool request canceled"
+                );
+                match envelope.operation {
+                    protocol::Operation::Call { request } => engine.request_guarded(
+                        &grant,
+                        envelope.session,
+                        *request,
+                        Some(request_owner),
+                    ),
+                    protocol::Operation::Close => {
+                        engine.sessions.remove(&(grant.worker, envelope.session));
+                        Ok(Response::Peak { bytes: 0 })
+                    }
+                }
+            })()
+            .unwrap_or(Response::Failed {
+                reason: "pool request rejected or verified model unavailable".into(),
+            });
+            // Result errors must not leak this call's observation into later
+            // work. This is instrumentation only, never an admission decision.
+            #[cfg(test)]
+            {
+                engine.compute_context = None;
+            }
+            let _ = reply.send(protocol::ResultEnvelope {
+                project: envelope.project,
+                worker: envelope.worker,
+                session: envelope.session,
+                request_id: envelope.request_id,
+                input_digest: envelope.input_digest,
+                response,
+            });
+        }
+        Work::Release { worker, owner } => engine.release_owner(worker, owner.as_ref()),
+        Work::DrainRelease { worker, completed } => {
+            engine.release_owner(worker, None);
+            // Only the actual engine queue, after earlier compute completes,
+            // can publish this exact generation's provider completion witness.
+            completed.store(true, Ordering::Release);
+        }
+        Work::CloseEngine { accounting } => {
+            engine.sessions.clear();
+            engine.owners.clear();
+            engine.model = None;
+            engine.model_lease = None;
+            engine.model_key = None;
+            engine.tokenizer = None;
+            engine.tokenizer_path = None;
+            accounting.mark_engine_barrier();
+        }
+        Work::StopEngine { reply } => {
+            let _ = reply.send(());
+        }
+    }
 }
-provider_context!(define_provider_work);
 
 struct Authorization {
     grant: protocol::Grant,
@@ -957,3 +945,16 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
     });
     result
 }
+#[cfg(test)]
+impl Engine {
+    fn request(
+        &mut self,
+        grant: &protocol::Grant,
+        session: Incarnation,
+        request: Request,
+    ) -> Result<Response> {
+        self.request_guarded(grant, session, request, None)
+    }
+}
+#[cfg(test)]
+mod tests;

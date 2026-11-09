@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-// Included beside the canonical engine. No child process or synthetic PID.
+// The service-owned driver of the canonical engine. No child process or synthetic PID.
+use super::*;
 use airk_core::inference_provider::{CompletionObservation, CompletionState, ProviderIdentity};
 use airk_core::service::WorkerIdentity;
 use tokio::{sync::Semaphore, task::JoinSet};
@@ -464,3 +465,5 @@ impl Drop for InferenceOwner {
         }
     }
 }
+#[cfg(test)]
+mod tests;

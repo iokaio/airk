@@ -34,7 +34,7 @@ use worker_resource_drains::{DrainProgress, WorkerResourceDrains};
 mod worker_read_settlement;
 use worker_read_settlement::ReadSettlement;
 mod catalog;
-#[cfg(all(test, any(feature = "embedding-worker", feature = "local-inference")))]
+#[cfg(all(test, feature = "local-inference"))]
 mod guarded_qualification_tests;
 #[cfg(test)]
 mod pool_tests;

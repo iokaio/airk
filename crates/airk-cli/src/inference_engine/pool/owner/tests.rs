@@ -29,7 +29,12 @@ fn held_inference_keeps_native_status_responsive_and_checkpoint_charged() -> Res
             input_digest: protocol::input_digest(&operation)?,
             operation,
         };
-        let (charge, delivery) = owner.state.accounting.as_ref().unwrap().admit(worker.worker)?;
+        let (charge, delivery) = owner
+            .state
+            .accounting
+            .as_ref()
+            .unwrap()
+            .admit(worker.worker)?;
         let (reply, response) = oneshot::channel();
         owner
             .state
@@ -56,7 +61,8 @@ fn held_inference_keeps_native_status_responsive_and_checkpoint_charged() -> Res
     let namespace = registry.incarnation()?;
     let lease = Arc::new(airk_store::service::ServiceLease::acquire(&root)?);
     let owner = InferenceOwner::start(lease.clone(), service, 1)?;
-    let (mut grant, location, identity) = super::tests::fixture(fixture.path(), "held", "held model")?;
+    let (mut grant, location, identity) =
+        super::super::tests::fixture(fixture.path(), "held", "held model")?;
     grant.service = service;
     grant.pool = owner.generation();
     let worker = WorkerIdentity {
@@ -95,7 +101,7 @@ fn held_inference_keeps_native_status_responsive_and_checkpoint_charged() -> Res
         worker,
         session,
         &alive,
-        super::tests::open(location, identity),
+        super::super::tests::open(location, identity),
     )?;
     let opened = opened.blocking_recv()?;
     assert!(
@@ -143,7 +149,10 @@ fn held_inference_keeps_native_status_responsive_and_checkpoint_charged() -> Res
     assert_eq!(status.callback_outstanding, 1);
     assert_eq!(status.delivery_outstanding, 1);
     assert!(status.model_references_outstanding >= 1);
-    assert!(matches!(owner.status()?, protocol::Observation::Status { .. }));
+    assert!(matches!(
+        owner.status()?,
+        protocol::Observation::Status { .. }
+    ));
 
     struct Status(Arc<Mutex<InferenceOwner>>);
     impl airk_mcp::remote::RemoteTools for Status {
@@ -153,7 +162,10 @@ fn held_inference_keeps_native_status_responsive_and_checkpoint_charged() -> Res
             _args: serde_json::Map<String, serde_json::Value>,
         ) -> airk_mcp::remote::RemoteFuture<'_> {
             Box::pin(async move {
-                ensure!(matches!(name.as_str(), "status" | "airk_status"), "unexpected native status operation: {name}");
+                ensure!(
+                    matches!(name.as_str(), "status" | "airk_status"),
+                    "unexpected native status operation: {name}"
+                );
                 let owner = self.0.lock().unwrap();
                 Ok(serde_json::json!({
                     "content": [],
@@ -183,9 +195,20 @@ fn held_inference_keeps_native_status_responsive_and_checkpoint_charged() -> Res
     assert_eq!(pending.captured_workers, vec![worker]);
     assert!(!owner.provider_status()?.admission_open);
     assert!(owner.register(grant.clone(), worker).is_err());
-    assert!(owner.state.accounting.as_ref().unwrap().admit(worker.worker).is_err());
+    assert!(
+        owner
+            .state
+            .accounting
+            .as_ref()
+            .unwrap()
+            .admit(worker.worker)
+            .is_err()
+    );
     assert!(!owner.worker_settled(worker.worker)?);
-    assert!(!owner.stop()?, "held compute must not manufacture native exit");
+    assert!(
+        !owner.stop()?,
+        "held compute must not manufacture native exit"
+    );
     assert!(owner.completion().is_none());
     assert!(airk_store::service::ServiceLease::acquire(&root).is_err());
 
@@ -200,7 +223,10 @@ fn held_inference_keeps_native_status_responsive_and_checkpoint_charged() -> Res
     drop(delivery);
     let deadline = Instant::now() + Duration::from_secs(5);
     while !owner.stop()? {
-        ensure!(Instant::now() < deadline, "native owner did not settle after release");
+        ensure!(
+            Instant::now() < deadline,
+            "native owner did not settle after release"
+        );
         std::thread::yield_now();
     }
     let witness = owner
@@ -231,7 +257,10 @@ fn held_inference_keeps_native_status_responsive_and_checkpoint_charged() -> Res
         local_ipc::write_message(&mut stream, &grant, Duration::from_secs(2)).await?;
         let response: Option<protocol::Observation> =
             local_ipc::read_message(&mut stream, Duration::from_secs(2)).await?;
-        ensure!(response.is_none(), "restarted owner accepted an old engine grant");
+        ensure!(
+            response.is_none(),
+            "restarted owner accepted an old engine grant"
+        );
         Ok::<_, anyhow::Error>(())
     })?;
     Ok(())

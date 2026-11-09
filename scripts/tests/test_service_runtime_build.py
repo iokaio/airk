@@ -348,6 +348,24 @@ int main(int argc, char **argv) {
             self.assertEqual(main.read_bytes(), b"Original main build fixture.")
             self.assertEqual(helper.read_bytes(), b"Original inference build fixture.")
 
+    def test_pair_versions_are_refused_without_building_a_helper(self):
+        script = Path(__file__).resolve().parents[1] / "build-service-runtime.py"
+        specification = importlib.util.spec_from_file_location("pair_refusal_builder", script)
+        builder = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(builder)
+        with tempfile.TemporaryDirectory(prefix="airk-pair-refusal-") as temporary:
+            root = Path(temporary)
+            (root / "Cargo.toml").write_text('[workspace.package]\nversion="1.8.13"\n', encoding="utf-8")
+            destination = root / "runtime"
+            with (mock.patch.object(builder, "ROOT", root),
+                  mock.patch.object(builder, "cargo_binary", side_effect=AssertionError("no Cargo build")),
+                  mock.patch.object(builder, "source_identity", side_effect=AssertionError("no source capture")),
+                  mock.patch.dict(builder.os.environ, {"MACOSX_DEPLOYMENT_TARGET": "13.3"}),
+                  mock.patch.object(sys, "argv", [str(script), "--destination", str(destination)])):
+                with self.assertRaisesRegex(SystemExit, "historical runtime pair"):
+                    builder.main()
+            self.assertFalse(destination.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

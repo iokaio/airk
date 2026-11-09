@@ -244,13 +244,6 @@
   "module_honesty": [
     {
       "kind": "path",
-      "file": "crates/airk-cli/src/inference_engine.rs",
-      "value": "embed_request.rs",
-      "reason_class": "multi-declaration",
-      "reason": "The file is reached from more than one module declaration, so it has no single canonical location."
-    },
-    {
-      "kind": "path",
       "file": "crates/airk-cli/src/local_ipc_windows.rs",
       "value": "local_ipc_windows_job.rs",
       "reason_class": "platform-switch-child",
@@ -262,13 +255,6 @@
       "value": "local_ipc_windows_path_tests.rs",
       "reason_class": "platform-switch-child",
       "reason": "Declared by a file loaded through a kept platform-switch mount; its canonical location follows the switch, so it moves only with that switch."
-    },
-    {
-      "kind": "path",
-      "file": "crates/airk-cli/src/project_supervisor/guarded_qualification_tests/engine_gate.rs",
-      "value": "../../../tests/fixtures/guarded_provider_gate_protocol.rs",
-      "reason_class": "parent-dir-mount",
-      "reason": "A ../ mount that leaves its directory or Cargo target (shared test protocol or source)."
     },
     {
       "kind": "path",
@@ -356,20 +342,6 @@
     },
     {
       "kind": "path",
-      "file": "crates/airk-cli/tests/fixtures/guarded_provider_fixture.rs",
-      "value": "../../src/embed_request.rs",
-      "reason_class": "parent-dir-mount",
-      "reason": "A ../ mount that leaves its directory or Cargo target (shared test protocol or source)."
-    },
-    {
-      "kind": "path",
-      "file": "crates/airk-cli/tests/fixtures/guarded_provider_fixture.rs",
-      "value": "guarded_provider_gate_protocol.rs",
-      "reason_class": "multi-declaration",
-      "reason": "The file is reached from more than one module declaration, so it has no single canonical location."
-    },
-    {
-      "kind": "path",
       "file": "crates/airk-cli/tests/helper_outage_reads.rs",
       "value": "mcp/source_runtime.rs",
       "reason_class": "multi-declaration",
@@ -386,13 +358,6 @@
       "kind": "path",
       "file": "crates/airk-cli/tests/mcp.rs",
       "value": "support/current_recovery.rs",
-      "reason_class": "integration-test-root-child",
-      "reason": "Declared by an integration-test, bench or example root; at its canonical location beside the root it would become another Cargo target."
-    },
-    {
-      "kind": "path",
-      "file": "crates/airk-cli/tests/service_runtime.rs",
-      "value": "common/f12_held_helper.rs",
       "reason_class": "integration-test-root-child",
       "reason": "Declared by an integration-test, bench or example root; at its canonical location beside the root it would become another Cargo target."
     },
@@ -465,125 +430,6 @@
       "value": "service_data_scope_clean_break_replay_tests.rs",
       "reason_class": "platform-switch-child",
       "reason": "Declared by a file loaded through a kept platform-switch mount; its canonical location follows the switch, so it moves only with that switch."
-    },
-    {
-      "kind": "include",
-      "file": "crates/airk-cli/src/embed_pool.rs",
-      "value": "embed_pool_core.rs",
-      "reason_class": "embed-pool-include",
-      "reason": "Part of the embed-pool include! scheme; replacing it needs feature-build checks (docs/simplify-plan.md S4)."
-    },
-    {
-      "kind": "include",
-      "file": "crates/airk-cli/src/embed_pool.rs",
-      "value": "embed_pool_legacy_context.rs",
-      "reason_class": "embed-pool-include",
-      "reason": "Part of the embed-pool include! scheme; replacing it needs feature-build checks (docs/simplify-plan.md S4)."
-    },
-    {
-      "kind": "include",
-      "file": "crates/airk-cli/src/embed_pool.rs",
-      "value": "embed_pool_legacy_entry.rs",
-      "reason_class": "embed-pool-include",
-      "reason": "Part of the embed-pool include! scheme; replacing it needs feature-build checks (docs/simplify-plan.md S4)."
-    },
-    {
-      "kind": "include",
-      "file": "crates/airk-cli/src/embed_pool.rs",
-      "value": "embed_pool_retirement.rs",
-      "reason_class": "embed-pool-include",
-      "reason": "Part of the embed-pool include! scheme; replacing it needs feature-build checks (docs/simplify-plan.md S4)."
-    },
-    {
-      "kind": "include",
-      "file": "crates/airk-cli/src/embed_pool.rs",
-      "value": "embed_pool_retirement_tests.rs",
-      "reason_class": "embed-pool-include",
-      "reason": "Part of the embed-pool include! scheme; replacing it needs feature-build checks (docs/simplify-plan.md S4)."
-    },
-    {
-      "kind": "include",
-      "file": "crates/airk-cli/src/embed_pool.rs",
-      "value": "embed_pool_tests.rs",
-      "reason_class": "embed-pool-include",
-      "reason": "Part of the embed-pool include! scheme; replacing it needs feature-build checks (docs/simplify-plan.md S4)."
-    },
-    {
-      "kind": "include",
-      "file": "crates/airk-cli/src/embed_pool_core.rs",
-      "value": "embed_pool_accounting.rs",
-      "reason_class": "embed-pool-include",
-      "reason": "Part of the embed-pool include! scheme; replacing it needs feature-build checks (docs/simplify-plan.md S4)."
-    },
-    {
-      "kind": "include",
-      "file": "crates/airk-cli/src/inference_engine.rs",
-      "value": "embed_pool_core.rs",
-      "reason_class": "embed-pool-include",
-      "reason": "Part of the embed-pool include! scheme; replacing it needs feature-build checks (docs/simplify-plan.md S4)."
-    },
-    {
-      "kind": "include",
-      "file": "crates/airk-cli/src/inference_engine.rs",
-      "value": "embed_pool_retirement.rs",
-      "reason_class": "embed-pool-include",
-      "reason": "Part of the embed-pool include! scheme; replacing it needs feature-build checks (docs/simplify-plan.md S4)."
-    },
-    {
-      "kind": "include",
-      "file": "crates/airk-cli/src/inference_engine.rs",
-      "value": "embed_pool_retirement_tests.rs",
-      "reason_class": "embed-pool-include",
-      "reason": "Part of the embed-pool include! scheme; replacing it needs feature-build checks (docs/simplify-plan.md S4)."
-    },
-    {
-      "kind": "include",
-      "file": "crates/airk-cli/src/inference_engine.rs",
-      "value": "embed_pool_tests.rs",
-      "reason_class": "embed-pool-include",
-      "reason": "Part of the embed-pool include! scheme; replacing it needs feature-build checks (docs/simplify-plan.md S4)."
-    },
-    {
-      "kind": "include",
-      "file": "crates/airk-cli/src/inference_engine.rs",
-      "value": "inference_owner.rs",
-      "reason_class": "embed-pool-include",
-      "reason": "Part of the embed-pool include! scheme; replacing it needs feature-build checks (docs/simplify-plan.md S4)."
-    },
-    {
-      "kind": "include",
-      "file": "crates/airk-cli/src/inference_engine.rs",
-      "value": "inference_owner_tests.rs",
-      "reason_class": "embed-pool-include",
-      "reason": "Part of the embed-pool include! scheme; replacing it needs feature-build checks (docs/simplify-plan.md S4)."
-    },
-    {
-      "kind": "include",
-      "file": "crates/airk-cli/tests/fixtures/guarded_provider_fixture.rs",
-      "value": "../../src/embed_pool_core.rs",
-      "reason_class": "embed-pool-include",
-      "reason": "Part of the embed-pool include! scheme; replacing it needs feature-build checks (docs/simplify-plan.md S4)."
-    },
-    {
-      "kind": "include",
-      "file": "crates/airk-cli/tests/fixtures/guarded_provider_fixture.rs",
-      "value": "../../src/embed_pool_legacy_context.rs",
-      "reason_class": "embed-pool-include",
-      "reason": "Part of the embed-pool include! scheme; replacing it needs feature-build checks (docs/simplify-plan.md S4)."
-    },
-    {
-      "kind": "include",
-      "file": "crates/airk-cli/tests/fixtures/guarded_provider_fixture.rs",
-      "value": "../../src/embed_pool_legacy_entry.rs",
-      "reason_class": "embed-pool-include",
-      "reason": "Part of the embed-pool include! scheme; replacing it needs feature-build checks (docs/simplify-plan.md S4)."
-    },
-    {
-      "kind": "include",
-      "file": "crates/airk-cli/tests/fixtures/guarded_provider_fixture.rs",
-      "value": "../../src/embed_pool_retirement.rs",
-      "reason_class": "embed-pool-include",
-      "reason": "Part of the embed-pool include! scheme; replacing it needs feature-build checks (docs/simplify-plan.md S4)."
     }
   ],
   "reason_classes": {

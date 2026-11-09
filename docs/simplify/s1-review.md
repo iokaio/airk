@@ -573,3 +573,53 @@ removed in the same commit.
 - Several kept items still live in modules named `upgrade`, `settlement`,
   `current_archive` and `historical_catalog`. Renaming them is a separate
   structural step.
+
+### S4 completion: embed-pool `include!` scheme removed by deleting `airk-embed`
+
+The evidence for this step is the answer to inventory question Q9 in
+[s6-s7-plan.md](s6-s7-plan.md): no build path for version 1.8.14 or later
+produces the helper. Implemented by a delegated agent and reviewed here.
+
+**Removed:**
+
+- the `embedding-worker` feature, the `airk-embed` binary and the guarded
+  provider fixture target;
+- the helper-only entry and context sources;
+- two integration-test binaries and the helper plumbing in the test common
+  module.
+
+**Converted:** the remaining pool and inference sources became ordinary
+modules under `inference_engine/`, moved with `git mv`. The macro unwrap is
+`scripts/dev/s4_unwrap_embed_macros.py`. `include!` of Rust source dropped
+from 17 to 0, and `#[path]` mounts from 52 to 47.
+
+**Re-gated:** `split_tests` and the split cutover fixture never used the
+helper, so they move from `embedding-worker` to `local-inference`. They still
+run under `--all-features`.
+
+**Builders:** the runtime and container builders refuse versions below 1.8.14
+before building anything. Historical pairs are built from their tagged
+sources. Recognition of historical pair payloads stays.
+
+**Evidence (this host):**
+
+- Test identities with no default features: 3,251 tests on both sides; 0
+  removed, 0 added, 0 outcome changes. The helper's two integration binaries
+  compiled to 0 tests in that configuration.
+- Clippy is clean for the workspace with all features, for `airk-cli` with no
+  default features, and for `airk-cli` with `local-inference`.
+- `cargo check` with no default features passes.
+- CLI library: 806 passed plus the 4 known host failures.
+- Scripts suite: 921 OK.
+- `boundary_check` passes, with its baseline down from 49 to 27 exceptions.
+
+**Not run here:** linking or running `local-inference`, including the moved
+pool and owner tests. That waits for the full ladder.
+
+**Dead-code candidates left for a later evidence step:**
+
+- the guarded bootstrap acceptance used only by the helper;
+- the guarded-pair qualification tests;
+- the no-`local-inference` helper-spawn path.
+
+The help text that still names the helper is corrected separately.

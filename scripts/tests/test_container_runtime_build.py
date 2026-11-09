@@ -4,8 +4,10 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import sys
 import tempfile
 import unittest
+from unittest import mock
 
 SPEC = importlib.util.spec_from_file_location("container_runtime_build", Path(__file__).parents[1] / "build-service-container.py")
 BUILD = importlib.util.module_from_spec(SPEC)
@@ -217,6 +219,19 @@ class ContainerSourceSealTests(unittest.TestCase):
             (root / "Dockerfile").write_text(original.replace("Dockerfile .dockerignore ", ""))
             with self.assertRaisesRegex(ValueError, "incomplete"):
                 BUILD.container_source_identity(root)
+
+    def test_pair_versions_are_refused_before_any_build_or_destination(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "Cargo.toml").write_text('[workspace.package]\nversion="1.8.13"\n', encoding="utf-8")
+            destination = root / "container"
+            with (mock.patch.object(BUILD, "ROOT", root),
+                  mock.patch.object(BUILD.platform, "system", return_value="Linux"),
+                  mock.patch.object(BUILD.builder, "cargo_binary", side_effect=AssertionError("no Cargo build")),
+                  mock.patch.object(sys, "argv", ["build-service-container.py", "--destination", str(destination)])):
+                with self.assertRaisesRegex(SystemExit, "historical runtime pair"):
+                    BUILD.main()
+            self.assertFalse(destination.exists())
 
 
 if __name__ == "__main__":
