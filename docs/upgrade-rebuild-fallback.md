@@ -28,6 +28,19 @@ installation or namespace cannot qualify the selected state. Future format
 changes require explicit compatibility or another rebuild boundary; the numeric
 application version is not sufficient authority.
 
+Two predecessor states are refused rather than converted (simplification S2,
+decisions Q1 and Q3, 9 November 2026):
+
+- **Pending index-catalog upgrade.** Before any reset step, the clean break
+  refuses a predecessor whose index catalog was never activated (an unfinished
+  catalog upgrade). The error is the typed
+  `clean_break_predecessor_catalog_upgrade_pending`. Nothing changes; the
+  guidance is to finish that upgrade with the previous AIRK version, then run
+  setup again.
+- **Standalone saved indexes are never adopted.** Their original agent entries
+  stay unchanged for review, and new `adopt-legacy-index(es)` operations are
+  refused with `standalone_adoption_unsupported`.
+
 The extension, standalone CLI and native installer must use the same native
 boundary decision. Native lifecycle management remains authenticated local IPC;
 read-only HTTPS/MCP does not gain reset or deletion authority. Equivalent status,

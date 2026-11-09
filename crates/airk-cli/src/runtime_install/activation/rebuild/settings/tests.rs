@@ -543,3 +543,69 @@ fn clean_break_capture_enumerates_two_catalog_indexes_and_all_raw_roots_without_
     );
     Ok(())
 }
+
+/// Every file under `root`, with its SHA-256, for exact preservation checks.
+fn tree_digest(root: &Path) -> Result<BTreeMap<std::path::PathBuf, String>> {
+    use sha2::Digest as _;
+    let mut files = BTreeMap::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(&directory)? {
+            let path = entry?.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                files.insert(
+                    path.strip_prefix(root)?.to_path_buf(),
+                    format!("{:x}", sha2::Sha256::digest(fs::read(&path)?)),
+                );
+            }
+        }
+    }
+    Ok(files)
+}
+
+#[test]
+fn clean_break_refuses_a_predecessor_with_an_unfinished_catalog_upgrade_without_changes()
+-> Result<()> {
+    use airk_store::service::{ServiceLease, registry::catalog::genesis::CatalogGenesis};
+    // S2 decision Q3: a catalog that exists but was never activated (the
+    // pending-upgrade state) is refused with a typed code and guidance.
+    let owner = tempfile::tempdir()?;
+    let base = owner.path().canonicalize()?;
+    let control = base.join("control");
+    crate::local_ipc::prepare_root(&control)?;
+    let mut genesis = CatalogGenesis::begin(
+        ServiceLease::acquire(&control)?,
+        Sha256Digest::from_bytes([121; 32]),
+        Incarnation::from_bytes([122; 16]),
+    )?;
+    genesis.backup()?;
+    genesis.migrate()?;
+    drop(genesis);
+    let before = tree_digest(&base)?;
+    for result in [
+        preflight_clean_break(&control).map(|_| ()),
+        capture_clean_break(&control).map(|_| ()),
+    ] {
+        let error = result.expect_err("an unfinished catalog upgrade must refuse the clean break");
+        assert!(
+            error
+                .to_string()
+                .starts_with("clean_break_predecessor_catalog_upgrade_pending:"),
+            "{error:#}"
+        );
+        assert!(
+            error
+                .chain()
+                .any(|cause| cause.is::<airk_store::service::registry::catalog::AdmissionPending>()),
+            "the original pending-admission cause is retained: {error:#}"
+        );
+    }
+    assert_eq!(
+        tree_digest(&base)?,
+        before,
+        "refusal changes no predecessor file"
+    );
+    Ok(())
+}

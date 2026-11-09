@@ -492,7 +492,11 @@ pub(in crate::runtime_install) async fn activate(
     require_candidate(root, candidate)?;
     verify_runtime(root, &prior.active)?;
     let old_control = layout::control(root)?;
-    let mut registry = ServiceRegistry::open_saved(&old_control)?;
+    let mut registry = if clean_break {
+        settings::open_predecessor(&old_control)?
+    } else {
+        ServiceRegistry::open_saved(&old_control)?
+    };
     let predecessor_stopped = registry.service_explicitly_stopped()?;
     let predecessor_lifecycle_sequence = registry.lifecycle_sequence()?;
     if !clean_break {

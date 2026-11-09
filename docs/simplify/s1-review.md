@@ -377,3 +377,29 @@ standalone client configurations. The proposed order, one reviewed step each:
 **Left for later:** `scripts/check-standalone-adoption*.py` exercise new
 adoption end to end. They are now obsolete qualification harnesses and are
 candidates for removal in step 3.
+
+### S2 step 2 (Q3: pending catalog upgrade)
+
+**Behavior:**
+
+- Clean-break activation, preflight and capture open the predecessor registry
+  through `settings::open_predecessor`.
+- That helper maps exactly `catalog::AdmissionPending` to the typed refusal
+  `clean_break_predecessor_catalog_upgrade_pending`, with manual guidance. The
+  original error is kept as the cause.
+- Every step before that open is read-only, so the refusal precedes any reset
+  step.
+
+**Regression:**
+`clean_break_refuses_a_predecessor_with_an_unfinished_catalog_upgrade_without_changes`.
+
+- A Genesis catalog that was migrated but never activated is refused by both
+  preflight and capture.
+- Every file under the fixture is byte-identical afterwards.
+- The `rebuild` test module passes (34 tests), and Clippy is clean in both
+  configurations.
+
+**Consequence for S2 step 4:** the clean break no longer needs the P5 recovery
+code. Ordinary activation still calls `catalog_upgrade::begin_if_enabled` and
+`resume_if_enabled` for the selected installation's own upgrade (inventory Q7).
+Confirm those are no-ops on `airk-state/1` before deleting that path.

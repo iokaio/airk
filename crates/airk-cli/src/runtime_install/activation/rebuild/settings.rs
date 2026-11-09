@@ -302,8 +302,25 @@ pub(super) fn capture(control: &Path) -> Result<SavedRoster> {
 /// Capture all active saved index selections for the 1.8.16 clean break. This
 /// reads registry metadata and optional preference envelopes, never an old
 /// publication. Historical jobs, grants and index identities are not restored.
+/// Typed refusal for simplification S2, decision Q3. The clean break never
+/// settles a predecessor's unfinished index-catalog upgrade; the previous
+/// version owns it. The refusal happens before any reset step.
+pub(super) const CATALOG_UPGRADE_PENDING: &str = "clean_break_predecessor_catalog_upgrade_pending: the previous AIRK installation has an unfinished index-catalog upgrade. Nothing was changed; original sources, indexes and state are preserved. Finish that upgrade with the previous AIRK version, then run setup again";
+
+/// Open the predecessor registry for a clean break, mapping only a pending
+/// catalog upgrade to the typed refusal (the original error stays as cause).
+pub(super) fn open_predecessor(control: &Path) -> Result<ServiceRegistry> {
+    ServiceRegistry::open_saved(control).map_err(|error| {
+        if error.is::<airk_store::service::registry::catalog::AdmissionPending>() {
+            error.context(CATALOG_UPGRADE_PENDING)
+        } else {
+            error
+        }
+    })
+}
+
 pub(super) fn preflight_clean_break(control: &Path) -> Result<usize> {
-    let mut registry = ServiceRegistry::open_saved(control)?;
+    let mut registry = open_predecessor(control)?;
     let catalog = registry.catalog_state()?;
     let mut catalog_bindings = BTreeSet::new();
     if let Some(catalog) = &catalog {
@@ -358,7 +375,7 @@ pub(super) fn preflight_clean_break(control: &Path) -> Result<usize> {
 /// Final supported preference capture after the installer proves old-owner exit.
 pub(super) fn capture_clean_break(control: &Path) -> Result<SavedRoster> {
     let control = control.canonicalize()?;
-    let mut registry = ServiceRegistry::open_saved(&control)?;
+    let mut registry = open_predecessor(&control)?;
     let namespace = registry.incarnation()?;
     let catalog = registry.catalog_state()?;
     let mut catalog_sources = match &catalog {
