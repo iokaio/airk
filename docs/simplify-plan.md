@@ -4,6 +4,13 @@
 produce it. It authorizes no repair, build, commit, merge or publication. Work
 starts only after the decisions in [section 9](#9-decisions-for-the-user).
 
+**Execution note, 9 November 2026:** at the user's request, Track R items
+R1–R4 and Milestone S1 were implemented on `feat/simplify` with the
+recommended options of D1, D2, D8 and D11. The D10 repair was not resumed.
+Results, gate records and corrections to this revision's Appendix A and §8
+baselines are in the [S1 review record](simplify/s1-review.md). Milestone S2
+waits for that review. The text below is revision 3, unchanged.
+
 **Revision history:**
 
 | Revision | Change |

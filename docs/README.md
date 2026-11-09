@@ -5,6 +5,16 @@ records the unfinished 1.8.16 checkpoint, retained evidence and remaining
 definition-read cancellation. The package-verified VSIX failed installed acceptance;
 qualification is stopped, and no release or PR is being prepared.
 
+**Simplification, 9 November 2026:** the [simplification plan](simplify-plan.md)
+separates release stabilization (Track R) from restructuring (Track S).
+Milestone S1 is implemented on `feat/simplify` and awaits review; see the
+[S1 review record](simplify/s1-review.md). It covers the
+[compatibility inventory](simplify/compatibility-inventory.md), the
+[contract-generation pilot](simplify/contract-generation-pilot.md) and the first
+component contract,
+[`install_files`](../crates/airk-cli/src/install_files/CONTRACT.md). No
+version, wire format or persisted state changed.
+
 The [1.8.16 working record](releases/release-1.8.16.md) tracks the authorized
 clean-break baseline: every pre-1.8.16 installation rebuilds indexes in fresh
 AIRK state, preserving only reviewed source selections and supported preferences.

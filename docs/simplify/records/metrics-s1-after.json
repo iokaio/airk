@@ -1,0 +1,733 @@
+{
+ "captured": "after R2b, S1.2-S1.4 (working tree of commit 1ddba83)",
+ "metrics": {
+  "catalogs": {
+   "files_with_8_or_more_read_tool_names": [
+    "crates/airk-cli/src/combined_frontend.rs",
+    "crates/airk-cli/src/main.rs",
+    "crates/airk-kernel/src/workbench.rs",
+    "crates/airk-kernel/src/workbench/combined.rs",
+    "crates/airk-kernel/src/workbench/natural.rs",
+    "crates/airk-mcp/src/combined.rs",
+    "crates/airk-mcp/src/lib.rs",
+    "crates/airk-mcp/src/local.rs",
+    "crates/airk-mcp/src/unified.rs",
+    "crates/airk-mcp/src/workbench.rs",
+    "crates/airk-retrieval/src/intent.rs",
+    "packages/vscode/src/explorerController.ts",
+    "packages/vscode/src/explorerEvidence.ts",
+    "packages/vscode/src/explorerStrategies.ts",
+    "packages/vscode/src/explorerStrategyRunner.ts",
+    "packages/vscode/src/model.ts",
+    "packages/vscode/src/native.ts",
+    "packages/vscode/src/referenceRefresh.ts",
+    "packages/vscode/src/usageReport.ts",
+    "packages/vscode/src/workbenchContracts.ts"
+   ],
+   "read_tools": 19
+  },
+  "coupling": {
+   "cli_service_registry_open_calls": 134,
+   "cli_service_registry_open_files": 54
+  },
+  "determinism": {
+   "extension_date_now_production": 87,
+   "extension_timeouts_tests": 62,
+   "mutable_statics_production": 51,
+   "mutable_statics_tests": 6,
+   "sleeps_production": 110,
+   "sleeps_tests": 207,
+   "thread_local_production": 8,
+   "thread_local_tests": 2,
+   "time_reads_production": 759,
+   "time_reads_tests": 536
+  },
+  "harness": {
+   "artifacts_script_files": 11100,
+   "unreadable_directories": 68
+  },
+  "history": {
+   "component_definition": "crates/<name>, packages/<name>, else top-level directory; root files are one component",
+   "files_per_commit_last_100_mean": 50.9,
+   "files_per_commit_last_100_median": 18.0,
+   "share_3_plus_components": 0.62,
+   "share_5_plus_components": 0.36,
+   "window_commits": 200
+  },
+  "module_graph": {
+   "airk-cli": {
+    "cycles": [
+     [
+      "process_roles",
+      "runtime_pair"
+     ],
+     [
+      "catalog_admission",
+      "catalog_coordinator",
+      "catalog_index_setup",
+      "catalog_index_setup_control",
+      "catalog_source_change_control",
+      "catalog_split_control",
+      "combined_frontend",
+      "console_client",
+      "embedding_pool_bootstrap",
+      "embedding_pool_process",
+      "explorer_assistance",
+      "http_backend",
+      "http_endpoint",
+      "http_gateway",
+      "legacy_startup",
+      "native_admin_connections",
+      "native_process",
+      "project_client",
+      "project_protocol",
+      "project_supervisor",
+      "reference_refresh_control",
+      "runtime_install",
+      "runtime_legacy_authority",
+      "runtime_metadata",
+      "service_frontend",
+      "service_inference",
+      "service_logs",
+      "service_management",
+      "service_manager",
+      "service_registration",
+      "service_runtime",
+      "source_supervisor",
+      "unified_mcp",
+      "universal_launcher",
+      "unix_guardian",
+      "usage_client"
+     ],
+     [
+      "client_requests",
+      "service_configuration"
+     ]
+    ],
+    "cyclic_components": 3,
+    "edges": 284,
+    "fan_in_top": [
+     {
+      "files": 36,
+      "module": "local_ipc",
+      "modules": 25
+     },
+     {
+      "files": 24,
+      "module": "runtime_install",
+      "modules": 18
+     },
+     {
+      "files": 19,
+      "module": "runtime_pair",
+      "modules": 17
+     },
+     {
+      "files": 14,
+      "module": "service_ipc",
+      "modules": 14
+     },
+     {
+      "files": 15,
+      "module": "install_files",
+      "modules": 12
+     },
+     {
+      "files": 11,
+      "module": "service_runtime",
+      "modules": 11
+     },
+     {
+      "files": 11,
+      "module": "native_process",
+      "modules": 9
+     },
+     {
+      "files": 17,
+      "module": "user_paths",
+      "modules": 8
+     }
+    ],
+    "largest_cycle": 36,
+    "modules_in_cycles": 40,
+    "top_level_modules": 66
+   },
+   "airk-core": {
+    "cycles": [
+     [
+      "changes",
+      "evidence"
+     ],
+     [
+      "continuity",
+      "extraction",
+      "location",
+      "retention"
+     ],
+     [
+      "binding",
+      "mapped_binding"
+     ],
+     [
+      "catalog_fences",
+      "catalog_host",
+      "catalog_legacy_adoption",
+      "catalog_legacy_authority",
+      "catalog_management",
+      "catalog_policy",
+      "catalog_refresh",
+      "catalog_setup",
+      "catalog_source_change",
+      "catalog_source_draft",
+      "catalog_split",
+      "catalog_split_draft",
+      "combined_reads",
+      "grant_provenance",
+      "index_catalog",
+      "inference_provider",
+      "native_reads",
+      "scoped_reads",
+      "service",
+      "service_checkpoint",
+      "service_configuration",
+      "service_console",
+      "service_events",
+      "service_http",
+      "service_inspection",
+      "service_maintenance",
+      "service_progress",
+      "service_resources",
+      "source_policy",
+      "verification",
+      "workbench"
+     ]
+    ],
+    "cyclic_components": 4,
+    "edges": 244,
+    "fan_in_top": [
+     {
+      "files": 62,
+      "module": "identity",
+      "modules": 56
+     },
+     {
+      "files": 25,
+      "module": "service",
+      "modules": 25
+     },
+     {
+      "files": 33,
+      "module": "index_catalog",
+      "modules": 24
+     },
+     {
+      "files": 13,
+      "module": "extraction",
+      "modules": 12
+     },
+     {
+      "files": 11,
+      "module": "catalog_management",
+      "modules": 11
+     },
+     {
+      "files": 9,
+      "module": "source_policy",
+      "modules": 9
+     },
+     {
+      "files": 6,
+      "module": "retention",
+      "modules": 6
+     },
+     {
+      "files": 7,
+      "module": "evidence",
+      "modules": 6
+     }
+    ],
+    "largest_cycle": 31,
+    "modules_in_cycles": 39,
+    "top_level_modules": 72
+   },
+   "airk-ingest": {
+    "cycles": [
+     [
+      "actions",
+      "adapters",
+      "build_cmake",
+      "build_facts",
+      "build_make",
+      "compose",
+      "composite",
+      "continuity",
+      "documents",
+      "header_context",
+      "host_components",
+      "host_html",
+      "host_prose",
+      "languages_a",
+      "languages_b_data",
+      "languages_b_functional",
+      "languages_b_r_perl_groovy",
+      "msbuild",
+      "notebook",
+      "ocr",
+      "pdf_worker",
+      "project_build",
+      "project_schemas",
+      "providers",
+      "razor",
+      "repository_binding",
+      "retention",
+      "scss",
+      "specialist_business",
+      "specialist_gpu",
+      "specialist_hardware",
+      "specialist_vendor",
+      "spreadsheets",
+      "structured_view",
+      "structured_yaml",
+      "syntax",
+      "syntax_repairs",
+      "tables"
+     ],
+     [
+      "permanent_policy",
+      "policy_ignore"
+     ]
+    ],
+    "cyclic_components": 2,
+    "edges": 151,
+    "fan_in_top": [
+     {
+      "files": 23,
+      "module": "build_facts",
+      "modules": 23
+     },
+     {
+      "files": 22,
+      "module": "syntax",
+      "modules": 21
+     },
+     {
+      "files": 9,
+      "module": "adapters",
+      "modules": 9
+     },
+     {
+      "files": 8,
+      "module": "documents",
+      "modules": 8
+     },
+     {
+      "files": 5,
+      "module": "semantic_projection",
+      "modules": 5
+     },
+     {
+      "files": 4,
+      "module": "host_html",
+      "modules": 4
+     },
+     {
+      "files": 4,
+      "module": "native_name_boundary",
+      "modules": 4
+     },
+     {
+      "files": 4,
+      "module": "structured_yaml",
+      "modules": 4
+     }
+    ],
+    "largest_cycle": 38,
+    "modules_in_cycles": 40,
+    "top_level_modules": 57
+   },
+   "airk-kernel": {
+    "cycles": [
+     [
+      "execution",
+      "limits",
+      "service_execution"
+     ],
+     [
+      "continuity",
+      "current",
+      "diagnostics",
+      "extraction",
+      "legacy_adoption",
+      "source_policy"
+     ],
+     [
+      "remote_tokenization",
+      "tokenization",
+      "usage"
+     ]
+    ],
+    "cyclic_components": 3,
+    "edges": 63,
+    "fan_in_top": [
+     {
+      "files": 16,
+      "module": "current",
+      "modules": 16
+     },
+     {
+      "files": 14,
+      "module": "service_execution",
+      "modules": 12
+     },
+     {
+      "files": 7,
+      "module": "execution",
+      "modules": 6
+     },
+     {
+      "files": 5,
+      "module": "limits",
+      "modules": 5
+     },
+     {
+      "files": 3,
+      "module": "usage",
+      "modules": 3
+     },
+     {
+      "files": 3,
+      "module": "extraction",
+      "modules": 3
+     },
+     {
+      "files": 3,
+      "module": "service_broker",
+      "modules": 3
+     },
+     {
+      "files": 4,
+      "module": "shared_models",
+      "modules": 1
+     }
+    ],
+    "largest_cycle": 6,
+    "modules_in_cycles": 12,
+    "top_level_modules": 53
+   },
+   "airk-mcp": {
+    "cycles": [
+     [
+      "combined",
+      "unified"
+     ]
+    ],
+    "cyclic_components": 1,
+    "edges": 24,
+    "fan_in_top": [
+     {
+      "files": 6,
+      "module": "local",
+      "modules": 5
+     },
+     {
+      "files": 6,
+      "module": "response",
+      "modules": 5
+     },
+     {
+      "files": 6,
+      "module": "read_attempt",
+      "modules": 4
+     },
+     {
+      "files": 3,
+      "module": "help",
+      "modules": 3
+     },
+     {
+      "files": 2,
+      "module": "combined",
+      "modules": 2
+     },
+     {
+      "files": 2,
+      "module": "remote",
+      "modules": 1
+     },
+     {
+      "files": 1,
+      "module": "execution",
+      "modules": 1
+     },
+     {
+      "files": 1,
+      "module": "lifecycle",
+      "modules": 1
+     }
+    ],
+    "largest_cycle": 2,
+    "modules_in_cycles": 2,
+    "top_level_modules": 13
+   },
+   "airk-process": {
+    "cycles": [],
+    "cyclic_components": 0,
+    "edges": 0,
+    "fan_in_top": [],
+    "largest_cycle": 0,
+    "modules_in_cycles": 0,
+    "top_level_modules": 3
+   },
+   "airk-retrieval": {
+    "cycles": [
+     [
+      "embedding_batch",
+      "embedding_worker",
+      "model",
+      "model_catalog",
+      "onnx",
+      "remote_model",
+      "vector"
+     ]
+    ],
+    "cyclic_components": 1,
+    "edges": 22,
+    "fan_in_top": [
+     {
+      "files": 8,
+      "module": "model",
+      "modules": 7
+     },
+     {
+      "files": 5,
+      "module": "embedding_batch",
+      "modules": 4
+     },
+     {
+      "files": 3,
+      "module": "model_catalog",
+      "modules": 2
+     },
+     {
+      "files": 2,
+      "module": "vector",
+      "modules": 2
+     },
+     {
+      "files": 2,
+      "module": "embedding_worker",
+      "modules": 2
+     },
+     {
+      "files": 2,
+      "module": "native_inference",
+      "modules": 2
+     },
+     {
+      "files": 1,
+      "module": "onnx",
+      "modules": 1
+     },
+     {
+      "files": 1,
+      "module": "bounded",
+      "modules": 1
+     }
+    ],
+    "largest_cycle": 7,
+    "modules_in_cycles": 7,
+    "top_level_modules": 11
+   },
+   "airk-store": {
+    "cycles": [
+     [
+      "blobs",
+      "capacity",
+      "checkpoints",
+      "compression",
+      "current",
+      "diagnostics",
+      "durability",
+      "extraction_policy",
+      "history",
+      "history_policy",
+      "legacy_adoption",
+      "maintenance",
+      "model_objects",
+      "quota",
+      "reset",
+      "retention",
+      "roots",
+      "scheduler",
+      "service",
+      "sqlite",
+      "usage",
+      "vector_cache"
+     ]
+    ],
+    "cyclic_components": 1,
+    "edges": 117,
+    "fan_in_top": [
+     {
+      "files": 47,
+      "module": "quota",
+      "modules": 19
+     },
+     {
+      "files": 12,
+      "module": "sqlite",
+      "modules": 11
+     },
+     {
+      "files": 30,
+      "module": "maintenance",
+      "modules": 11
+     },
+     {
+      "files": 16,
+      "module": "blobs",
+      "modules": 11
+     },
+     {
+      "files": 7,
+      "module": "history",
+      "modules": 7
+     },
+     {
+      "files": 17,
+      "module": "service",
+      "modules": 6
+     },
+     {
+      "files": 18,
+      "module": "current",
+      "modules": 5
+     },
+     {
+      "files": 5,
+      "module": "history_policy",
+      "modules": 5
+     }
+    ],
+    "largest_cycle": 22,
+    "modules_in_cycles": 22,
+    "top_level_modules": 29
+   }
+  },
+  "module_honesty": {
+   "include_rs": 17,
+   "orphan_files": 0,
+   "orphan_lines": 0,
+   "orphans": [],
+   "path_mounts_by_crate": {
+    "airk-cli": 173,
+    "airk-core": 14,
+    "airk-ingest": 1,
+    "airk-kernel": 14,
+    "airk-mcp": 14,
+    "airk-process": 1,
+    "airk-retrieval": 1,
+    "airk-store": 143
+   },
+   "path_mounts_non_platform": 361,
+   "path_mounts_platform": 20
+  },
+  "size": {
+   "crates_over_20k_non_test_lines": [
+    "airk-cli",
+    "airk-core",
+    "airk-ingest",
+    "airk-kernel",
+    "airk-store"
+   ],
+   "files_over_2000_lines": 19,
+   "functions_over_150_lines": 190,
+   "functions_over_300_lines": 37,
+   "longest_functions": [
+    {
+     "file": "crates/airk-cli/src/project_supervisor.rs",
+     "line": 1317,
+     "lines": 1257,
+     "name": "start"
+    },
+    {
+     "file": "crates/airk-cli/src/project_worker.rs",
+     "line": 631,
+     "lines": 1187,
+     "name": "run"
+    },
+    {
+     "file": "crates/airk-store/src/service_collection_verify.rs",
+     "line": 1457,
+     "lines": 901,
+     "name": "verify_turn_inner"
+    },
+    {
+     "file": "crates/airk-cli/src/runtime_install_commands.rs",
+     "line": 5,
+     "lines": 887,
+     "name": "run"
+    },
+    {
+     "file": "crates/airk-kernel/src/workbench.rs",
+     "line": 1931,
+     "lines": 836,
+     "name": "evidence_plan_with_reader_inner"
+    },
+    {
+     "file": "crates/airk-kernel/src/current/indexing.rs",
+     "line": 679,
+     "lines": 763,
+     "name": "index_current_once"
+    },
+    {
+     "file": "crates/airk-kernel/src/verification.rs",
+     "line": 312,
+     "lines": 646,
+     "name": "verify_returned_sources_allocated_before"
+    },
+    {
+     "file": "crates/airk-kernel/src/current/update.rs",
+     "line": 429,
+     "lines": 624,
+     "name": "apply_resources_observed"
+    },
+    {
+     "file": "crates/airk-kernel/src/workbench/combined.rs",
+     "line": 318,
+     "lines": 597,
+     "name": "execute"
+    },
+    {
+     "file": "crates/airk-cli/src/main.rs",
+     "line": 1314,
+     "lines": 585,
+     "name": "run"
+    }
+   ],
+   "non_test_file_lines_by_crate": {
+    "airk-cli": 96538,
+    "airk-core": 28945,
+    "airk-ingest": 35933,
+    "airk-kernel": 38800,
+    "airk-mcp": 12524,
+    "airk-process": 1616,
+    "airk-retrieval": 7006,
+    "airk-store": 108691
+   },
+   "pub_mod_declarations": 272,
+   "rust_lines_by_crate": {
+    "airk-cli": 164471,
+    "airk-core": 31720,
+    "airk-ingest": 38030,
+    "airk-kernel": 63381,
+    "airk-mcp": 17911,
+    "airk-process": 2257,
+    "airk-retrieval": 7687,
+    "airk-store": 151592
+   },
+   "rust_lines_over_200_chars": 814
+  }
+ },
+ "schema": "airk-simplify-metrics/1"
+}
