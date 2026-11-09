@@ -1607,6 +1607,8 @@ type ClockTestSender = hyper::client::conn::http1::SendRequest<Full<Bytes>>;
 
 /// A real CA-validated HTTPS exchange against the supplied native status owner.
 /// Callers hold their inference lane separately; this helper owns only ingress.
+/// Its only caller (`inference_owner_tests`) exists with `local-inference`.
+#[cfg(feature = "local-inference")]
 pub(crate) async fn live_https_status(
     backend: Arc<dyn RemoteTools>,
 ) -> anyhow::Result<serde_json::Value> {
