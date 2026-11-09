@@ -8,7 +8,7 @@ import {test} from 'node:test';
 import {strict as assert} from 'node:assert';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import {singleRequiredMemberRetry} from '../readRetry';
+import {readRetryDelay,singleRequiredMemberRetry} from '../readRetry';
 import {ServiceClient} from '../serviceClient';
 import type {CatalogRequest} from '../indexingCatalog';
 
@@ -28,6 +28,13 @@ for(const item of decisions.cases){
         assert.deepEqual(singleRequiredMemberRetry(structuredClone(item.input))??null,expected,item.rule);
     });
 }
+
+test('readRetryDelay refuses a non-integer number literal in the native envelope text',()=>{
+    const envelope=(delay:string)=>({isError:true,content:[{type:'text',
+        text:`{"status":"retry","code":"selection_busy","retryable":true,"action":"repeat_same_request","retry_after_ms":${delay}}`}]});
+    assert.equal(readRetryDelay(envelope('25')),25);
+    for(const delay of ['25.0','2.5e1','25e0'])assert.equal(readRetryDelay(envelope(delay)),undefined,delay);
+});
 
 // Catalog receipt control read. Native bytes come from the reviewed Rust golden
 // (crates/airk-core/src/wire_fixture_tests.rs). The extension speaks the console

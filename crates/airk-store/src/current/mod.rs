@@ -2,6 +2,7 @@
 //! Qualified single-current-index storage foundation. Runtime adoption is separate.
 pub mod analysis;
 pub mod audit_witness;
+pub(crate) mod clock;
 pub mod collection;
 mod database;
 pub(crate) use database::discover_scope as discover_owned_scope_for_disposal;

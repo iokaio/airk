@@ -271,3 +271,12 @@ Nothing here qualifies another platform.
 
 `pwsh -NoProfile -File scripts/check-repo.ps1` was run on the tree of the
 commit that adds this record; its result is in that commit's message.
+
+## 10. Review decisions (user, 9 November 2026)
+
+| Question | Decision |
+|---|---|
+| Q1: P2 standalone adoption on `airk-state/1` | **Refuse.** Adoption is not supported on 1.8.16 and later installations. Adoption code becomes an S2 deletion candidate once a refusal and the surviving duties are proven. |
+| Q3: pending P5 catalog upgrade | **Explicit refusal** with a typed error and manual guidance. P5 upgrade-recovery code becomes an S2 deletion candidate once a refusal regression proves the original state is preserved. |
+| D5: contract generation | **Fixtures first.** No type generation. Each operation gets reviewed `fixtures/wire` bytes or decision cases, and the hand-written validators are tested against them. |
+| Next work | All four were authorized, in this order: the `CurrentRead` clock seam with the W3 fix; the R39 repair (D10); S4 module honesty; S2 deletion with proof. T2/T3 installed qualification still needs a separate go-ahead. |

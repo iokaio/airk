@@ -4,6 +4,21 @@
 import { isDeepStrictEqual } from 'node:util';
 import { validateCatalogSession } from './catalogSession';
 
+/** Parse native retry JSON text, refusing any number literal that is not an
+ * integer. Every numeric field in native retry metadata is integer-typed, and
+ * native refuses `25.0`, but plain JSON.parse turns it into 25. This uses
+ * JSON.parse source-text access; a runtime without it falls back to plain parsing. */
+function parseIntegralJson(text: string): unknown {
+    let integral = true;
+    const reviver = function (_key: string, item: unknown, context?: { source?: string }) {
+        if (typeof item === 'number' && typeof context?.source === 'string' && !/^-?(?:0|[1-9][0-9]*)$/.test(context.source)) { integral = false; }
+        return item;
+    };
+    const value: unknown = JSON.parse(text, reviver as (this: unknown, key: string, value: unknown) => unknown);
+    if (!integral) { throw new Error('non-integer number in native retry metadata'); }
+    return value;
+}
+
 /**
  * Accept only the native "safe to repeat this exact read" replies (publication or
  * selection busy, or an unsubmitted busy admission). Anything else is a real result.
@@ -53,7 +68,7 @@ export function singleRequiredMemberRetry(combined: Record<string, any>): Record
         if(Object.hasOwn(result,'structuredContent')){
             if(result.isError!==true||!Array.isArray(result.content)||result.content.length!==1
                 ||result.content[0]?.type!=='text'||typeof result.content[0]?.text!=='string')return;
-            if(!isDeepStrictEqual(JSON.parse(result.content[0].text),result.structuredContent))return;
+            if(!isDeepStrictEqual(parseIntegralJson(result.content[0].text),result.structuredContent))return;
             body=result.structuredContent;suffix='/structuredContent';
         }else if(Object.hasOwn(result,'content'))return;
         if(!object(body)||Object.hasOwn(body,'query_replay_safe')&&body.query_replay_safe!==true
@@ -106,7 +121,7 @@ export function readRetryDelay(envelope: unknown, expectedScope?: unknown): numb
     const value = envelope as Record<string, unknown>, content = value.content;
     if (value.isError !== true || !Array.isArray(content) || content.length !== 1 || content[0]?.type !== 'text' || typeof content[0]?.text !== 'string') { return; }
     let hint: Record<string, any>;
-    try { hint = JSON.parse(content[0].text); } catch { return; }
+    try { hint = parseIntegralJson(content[0].text) as Record<string, any>; } catch { return; }
     if (!hint || typeof hint !== 'object') { return; }
     if(value.structuredContent!==undefined&&!isDeepStrictEqual(value.structuredContent,hint))return;
     let delay: unknown;

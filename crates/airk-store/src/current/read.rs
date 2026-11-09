@@ -99,6 +99,7 @@ pub(super) fn scoped_import_test_reader(
         lexical_path: store.directory().join("unused-import-test.sqlite3"),
         lexical_verified: Default::default(),
         deadline: None,
+        clock: super::clock::system(),
         writer_active: None,
         _gate: Gate::shared(store)?,
     })
@@ -124,6 +125,8 @@ pub struct CurrentRead {
     pub(super) lexical_path: std::path::PathBuf,
     pub(super) lexical_verified: std::sync::OnceLock<()>,
     deadline: Option<std::time::Instant>,
+    /// Time source for `deadline`; injected so deadline decisions are testable.
+    clock: Arc<dyn super::clock::RequestClock>,
     writer_active: Option<Arc<std::sync::atomic::AtomicBool>>,
     _gate: Gate,
 }
@@ -178,7 +181,7 @@ impl CurrentRead {
 
     #[cfg(all(test, windows))]
     pub(crate) fn expire_request_for_test(&mut self) {
-        self.deadline = Some(std::time::Instant::now());
+        self.deadline = Some(self.clock.now());
     }
 
     /// Re-resolve the authenticated pointer under this read gate before loading
@@ -433,7 +436,7 @@ impl CurrentRead {
         );
         if self
             .deadline
-            .is_some_and(|deadline| std::time::Instant::now() >= deadline)
+            .is_some_and(|deadline| self.clock.now() >= deadline)
         {
             return Err(anyhow::Error::new(CurrentRequestExpired));
         }
@@ -502,7 +505,23 @@ impl FileStore {
     }
 
     pub fn current_read(&self, scope: &CurrentScope) -> Result<Arc<CurrentRead>> {
-        super::admission::admit_open(|| self.current_read_once(scope, None).map_err(read_error))
+        let clock = super::clock::system();
+        super::admission::admit_open(|| {
+            self.current_read_once(scope, None, clock.clone())
+                .map_err(read_error)
+        })
+    }
+    /// A request reader whose deadline follows `clock` (tests only).
+    #[cfg(test)]
+    pub(crate) fn current_read_with_clock(
+        &self,
+        scope: &CurrentScope,
+        clock: Arc<dyn super::clock::RequestClock>,
+    ) -> Result<Arc<CurrentRead>> {
+        super::admission::admit_open(|| {
+            self.current_read_once(scope, None, clock.clone())
+                .map_err(read_error)
+        })
     }
     /// A publication build pins its exact base while the matching collection writer
     /// is held. Query deadlines do not limit inference/graph construction. This
@@ -515,7 +534,7 @@ impl FileStore {
     ) -> Result<Arc<CurrentRead>> {
         super::gate::check_writer(self, writer)?;
         super::admission::admit_open(|| {
-            self.current_read_once(scope, Some(writer.active.clone()))
+            self.current_read_once(scope, Some(writer.active.clone()), super::clock::system())
                 .map_err(read_error)
         })
     }
@@ -523,6 +542,7 @@ impl FileStore {
         &self,
         scope: &CurrentScope,
         writer_active: Option<Arc<std::sync::atomic::AtomicBool>>,
+        clock: Arc<dyn super::clock::RequestClock>,
     ) -> Result<Arc<CurrentRead>> {
         crate::service::collection::validate_split_store_access(self)?;
         scope.validate()?;
@@ -532,7 +552,7 @@ impl FileStore {
         );
         let gate = Gate::shared(self)?;
         let deadline = (writer_active.is_none() && super::wal::enabled(self.directory()))
-            .then(|| std::time::Instant::now() + std::time::Duration::from_secs(120));
+            .then(|| clock.now() + std::time::Duration::from_secs(120));
         database::reject_legacy_collection(self.directory())?;
         self.ensure_index_ready()?;
         let (capacity, query_projection_version) =
@@ -562,8 +582,8 @@ impl FileStore {
             database::open_reader_budget(&self.directory().join("current.sqlite3"), legacy_budget)
                 .map_err(read_error)?;
         if let Some(deadline) = deadline {
-            connection
-                .progress_handler(1000, Some(move || std::time::Instant::now() >= deadline))?;
+            let handler_clock = clock.clone();
+            connection.progress_handler(1000, Some(move || handler_clock.now() >= deadline))?;
         }
         let (phase, bytes): (String, Vec<u8>) = connection
             .query_row(
@@ -595,6 +615,7 @@ impl FileStore {
             lexical_path: self.directory().join("current.sqlite3"),
             lexical_verified: std::sync::OnceLock::new(),
             deadline,
+            clock,
             writer_active,
             _gate: gate,
         }))
@@ -715,6 +736,7 @@ mod scope_tests {
             lexical_path: store.directory().join("fixture.sqlite3"),
             lexical_verified: Default::default(),
             deadline: None,
+            clock: crate::current::clock::system(),
             writer_active: None,
             _gate: Gate::shared(&store)?,
         };

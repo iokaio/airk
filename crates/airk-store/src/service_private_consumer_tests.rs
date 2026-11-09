@@ -138,10 +138,18 @@ fn fixture_mode(
 fn private_native_imported_fact_pages_preserve_complete_cursor_and_representation_parity()
 -> Result<()> {
     let mut fixture = fixture(true)?;
-    let strict = fixture.store.current_read(&fixture.scope)?;
-    let private = fixture
-        .owner
-        .attach_read(fixture.store.current_read(&fixture.scope)?)?;
+    // Up to 1,500 paged reads share two readers. A manual clock keeps the 120 s
+    // request deadline out of this parity check, which host load could otherwise
+    // exceed; `request_deadline_follows_the_injected_clock` covers expiry.
+    let clock = crate::current::clock::ManualClock::new();
+    let strict = fixture
+        .store
+        .current_read_with_clock(&fixture.scope, clock.clone())?;
+    let private = fixture.owner.attach_read(
+        fixture
+            .store
+            .current_read_with_clock(&fixture.scope, clock.clone())?,
+    )?;
     assert!(private.private_query_eligible()?);
     for (compact, minimal, max_bytes) in [
         (false, false, 65536),
@@ -182,6 +190,29 @@ fn private_native_imported_fact_pages_preserve_complete_cursor_and_representatio
     fixture
         .owner
         .settle_after_owned_drain(&mut fixture.registry)?;
+    Ok(())
+}
+
+#[test]
+fn request_deadline_follows_the_injected_clock() -> Result<()> {
+    let fixture = fixture(false)?;
+    let clock = crate::current::clock::ManualClock::new();
+    let read = fixture
+        .store
+        .current_read_with_clock(&fixture.scope, clock.clone())?;
+    read.query_projection_version()?;
+    clock.advance(std::time::Duration::from_secs(119));
+    read.query_projection_version()?;
+    clock.advance(std::time::Duration::from_secs(1));
+    let error = read
+        .query_projection_version()
+        .expect_err("a reader past its 120 s request deadline must refuse");
+    assert!(
+        error
+            .downcast_ref::<crate::current::CurrentRequestExpired>()
+            .is_some(),
+        "{error:#}"
+    );
     Ok(())
 }
 

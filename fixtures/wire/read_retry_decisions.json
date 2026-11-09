@@ -2825,20 +2825,7 @@
      "fresh_brokerage_required": false
     }
    },
-   "expected": null,
-   "expected_ts": {
-    "schema": 1,
-    "scope": "same_single_required_member",
-    "index_id": "idx_01010101010101010101010101010101",
-    "selection_identity": "0404040404040404040404040404040404040404040404040404040404040404",
-    "action": "repeat_same_request",
-    "query_replay_safe": true,
-    "result_pointer": "/members/0/result/structuredContent",
-    "code": "selection_busy",
-    "retry_after_ms": 25,
-    "fresh_brokerage_required": false
-   },
-   "divergence": "JSON.parse maps 25.0 to the integer 25, so the TypeScript mirror accepts a value native refuses. Permissive: it could authorize a replay native would not declare (native never emits 25.0 itself)."
+   "expected": null
   }
  ]
 }

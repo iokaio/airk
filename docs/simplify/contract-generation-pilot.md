@@ -41,11 +41,13 @@ None is fixed in S1.
 |---|---|---|---|---|
 | W1 | `grant_revision` or `catalog_revision` above 2^53 | Accepted (`CatalogRevision` is 1..=i64::MAX) | Refused (`Number.isSafeInteger`) | Conservative: no replay, a refused receipt. Unreachable at realistic revision counts. |
 | W2 | Request-key `epoch` above 2^53 | Exact | `JSON.parse` rounds it, so an echoed key names a different epoch | The rounded key would cross the request. Epochs are counters, so this is unreachable in practice. Still unguarded. |
-| W3 | `retry_after_ms: 25.0` (an integral float) | Refused (`as_u64`) | Accepted as `25` | **Permissive.** TypeScript would authorize a replay that native refuses. Native never emits `25.0`, so this is latent. |
+| W3 | `retry_after_ms: 25.0` (an integral float) | Refused (`as_u64`) | Accepted as `25` until the follow-up. **Fixed after the S1 review:** `readRetry.ts` now refuses non-integer number literals in the native text via `JSON.parse` source-text access, and the fixture case is no longer a divergence | Was permissive: TypeScript could authorize a replay that native refuses. Native never emits `25.0`. |
 | W4 | `catalog_receipt` response with the `receipt` field absent | Read as `null` (serde treats a missing `Option` field as `None`) | Refused (`response.receipt !== null` takes the receipt branch) | Conservative. Shows that "absent versus `null`" is not specified in one place. |
 
-W3 is the only permissive gap. Deciding whether to tighten
-`readRetry.ts` (a behavior change) belongs to a later approved step, not to S1.
+W3 was the only permissive gap. After the S1 review the user approved the
+fix (s1-review §10). The refusal applies wherever native text is available:
+each member's `content[0].text` and the outer envelope text that
+`readRetryDelay` parses.
 
 ## Generator comparison (pilot, outside the workspace)
 

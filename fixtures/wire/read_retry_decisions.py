@@ -173,12 +173,10 @@ def cases():
                expected_ts=None,
                divergence="TypeScript parses JSON numbers as doubles and refuses non-safe integers; "
                           "native accepts revisions up to i64::MAX. Conservative refusal (no replay).")
+    # Formerly divergence W3: the TypeScript mirror now refuses non-integer
+    # number literals in the native text (JSON.parse source-text access).
     yield case("integral_float_delay", "retry_after_ms must be a JSON integer",
-               structured(storage_hint(retry_after_ms=25.0)), None,
-               expected_ts=retry(),
-               divergence="JSON.parse maps 25.0 to the integer 25, so the TypeScript mirror accepts a "
-                          "value native refuses. Permissive: it could authorize a replay native would not "
-                          "declare (native never emits 25.0 itself).")
+               structured(storage_hint(retry_after_ms=25.0)), None)
 
 
 def render():
