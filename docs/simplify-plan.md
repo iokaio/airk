@@ -867,13 +867,16 @@ is not success.
 §3.1. Approve the compatibility inventory as the prerequisite for removing
 any predecessor or migration code. Line counts are estimates only.
 
-**D3. Governance changes**, after S1. These edits to CLAUDE.md and AGENTS.md
-are proposed only after S1 has shown which rules help:
+**D3. Governance changes.** Enacted early, on 9 November 2026, at the
+user's request. CLAUDE.md and AGENTS.md (kept byte-identical) now include:
 
-- `CONTRACT.md` per component;
-- a shorter required reading list;
-- task cards, step size and contract-first rules;
-- the boundary gates.
+- a "Simplification and structural changes" section;
+- the shorter, contract-first reading guidance;
+- crate extraction only by the §4.1 criteria with user approval;
+- this plan's §9 decisions among the frozen decisions.
+
+Revisit the wording at the S1 review, based on which rules helped. The
+boundary gates themselves (S5) still need their own approval.
 
 **D4. Untracked `artifacts/` harnesses.** Approve promoting or deleting them.
 They are untracked, so deletion cannot be undone from the repository.
