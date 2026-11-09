@@ -27,26 +27,6 @@ impl Metadata {
     pub(crate) fn from_request(control: &Path, request: &IndexSetupRequest) -> Result<Self> {
         Self::format_request(control, request, false)
     }
-    pub(crate) fn saved_adoption(
-        control: &Path,
-        receipt: &IndexSetupReceipt,
-        plan: &airk_core::catalog_legacy_adoption::LegacyAdoptionPlan,
-    ) -> Result<Self> {
-        plan.validate()?;
-        receipt.validate()?;
-        anyhow::ensure!(
-            receipt.request == plan.setup && receipt.legacy_adoption == Some(plan.identity()?),
-            "saved adoption metadata differs from exact native reservation"
-        );
-        Self::format_request(control, &receipt.request, true)
-    }
-    pub(crate) fn saved_plan(
-        control: &Path,
-        plan: &airk_core::catalog_legacy_adoption::LegacyAdoptionPlan,
-    ) -> Result<Self> {
-        plan.validate()?;
-        Self::format_request(control, &plan.setup, true)
-    }
     pub(super) fn format_request(
         control: &Path,
         request: &IndexSetupRequest,

@@ -4,66 +4,6 @@
 use super::*;
 use std::ffi::OsStr;
 
-/// Exact owner-defined nonterminal ancestors of an actual saved adoption
-/// receipt. Callers must match their retained checkpoint's complete payload
-/// digest, not merely an operation ID or a familiar stage name.
-pub fn legacy_adoption_checkpoint_history(
-    receipt: &IndexSetupReceipt,
-) -> Result<Vec<IndexSetupReceipt>> {
-    receipt.validate()?;
-    ensure!(
-        receipt.legacy_adoption.is_some(),
-        "ordinary setup has no adoption checkpoint history"
-    );
-    let mut reserved = receipt.clone();
-    reserved.stage = SetupStage::Reserved;
-    reserved.catalog_revision = receipt.request.expected_catalog_revision.next()?;
-    reserved.source_revision = CatalogRevision::INITIAL;
-    reserved.preparation = None;
-    reserved.completion = None;
-    reserved.validate()?;
-    let mut history = vec![reserved.clone()];
-    if let Some(preparation) = &receipt.preparation {
-        ensure!(
-            preparation.legacy_adoption == receipt.legacy_adoption
-                && preparation.review.expected_source_revision == CatalogRevision::INITIAL
-                && preparation.review.expected_catalog_revision.get()
-                    >= reserved.catalog_revision.get(),
-            "adoption checkpoint preparation has impossible prior revisions"
-        );
-        let mut prepared = reserved;
-        prepared.stage = SetupStage::Prepared;
-        prepared.preparation = Some(preparation.clone());
-        prepared.validate()?;
-        history.push(prepared);
-    }
-    match receipt.stage {
-        SetupStage::Reserved | SetupStage::Prepared => ensure!(
-            history.last() == Some(receipt),
-            "adoption checkpoint receipt differs from owner transition"
-        ),
-        SetupStage::Ready => {
-            let completion = receipt
-                .completion
-                .as_ref()
-                .context("ready adoption completion missing")?;
-            let preparation = receipt
-                .preparation
-                .as_ref()
-                .context("ready adoption preparation missing")?;
-            ensure!(
-                completion.expected_source_revision == CatalogRevision::INITIAL
-                    && receipt.source_revision == completion.expected_source_revision.next()?
-                    && completion.expected_catalog_revision.get()
-                        >= preparation.review.expected_catalog_revision.get()
-                    && receipt.catalog_revision == completion.expected_catalog_revision.next()?,
-                "ready adoption checkpoint has impossible prior revisions"
-            );
-        }
-    }
-    Ok(history)
-}
-
 pub(crate) fn uninitialized_legacy_adoption(
     registry: &ServiceRegistry,
     registration: &ProjectRegistration,

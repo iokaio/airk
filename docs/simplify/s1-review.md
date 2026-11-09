@@ -376,7 +376,8 @@ standalone client configurations. The proposed order, one reviewed step each:
 
 **Left for later:** `scripts/check-standalone-adoption*.py` exercise new
 adoption end to end. They are now obsolete qualification harnesses and are
-candidates for removal in step 3.
+candidates for removal in step 3. (Removed later: the failure variant in
+`dfeb3e8`, the main script and its test with the S2 step 4b wave.)
 
 ### S2 step 2 (Q3: pending catalog upgrade)
 
@@ -486,8 +487,8 @@ possible and deleted otherwise to keep an uninterrupted flow".
 - Persisted and wire shapes (`catalog_upgrade` owner field,
   `AuthorityV1Basis::LegacyUpgrade`, `RuntimeRefusal`).
 - The extension's `runtimeLegacyRetirement.ts`. It now receives the typed
-  refusal.
-- `scripts/check-runtime-legacy-retirement.*`, which now fail as obsolete.
+  refusal. (Removed in `dfeb3e8`, with
+  `scripts/check-runtime-legacy-retirement.*`.)
 
 **Evidence:**
 
@@ -503,3 +504,72 @@ possible and deleted otherwise to keep an uninterrupted flow".
 - The new regression
   `ordinary_update_refuses_a_registry_without_a_catalog_and_keeps_existing_catalogs`
   checks that no file changes either way.
+
+### S2 step 4b (P5 and adoption writers: Store, Kernel and Core)
+
+Implemented by a delegated agent and reviewed here. There is no behavior
+change on any admitted path: step 4a had already stopped P5 from beginning
+or resuming, and step 3 had removed every caller of the adoption writers.
+
+**Fixture migration (tests only):**
+
+- `catalog_test_fixture::authority_one` keeps its signature. It now builds
+  authority 1 through Genesis (`begin`, `backup`, `migrate`,
+  `promote_authority_v1`, readiness, `settle_authority_v1`).
+- A new `reviewed_index` helper creates the index and project that P5 used to
+  import, through the real setup reserve/record/complete calls.
+- A Genesis catalog starts at revision 2, where P5 started at 1. Expected
+  revisions are therefore read from the live catalog, not hard-coded. No
+  assertion's meaning changed.
+- The `catalog_upgrade` integration test now builds its authority-0 state
+  from Genesis `migrate` plus the same manual activation it had before.
+
+**Deleted:**
+
+| Crate | Removed |
+|---|---|
+| Store | `CatalogUpgrade` and its plan, backfill, receipt, stage, recovery, import and activation modules; the adoption writers (`NativeLegacyAdoptionCompletion`, standalone authority, archive verification and historical readers reachable only from them); `backup::restore`; the saved-adoption setup storage path |
+| Kernel | `service_catalog_upgrade` and its prepared adoption evidence; `bootstrap_legacy_adoption` |
+| Core | `catalog_upgrade_recovery` |
+
+Also removed: the store `PRODUCTION_ACTIVATION_ENABLED` constant. It was
+already `true`, and `capabilities()` still reports
+`production_activation_enabled: true`, so the wire value is unchanged.
+
+**Kept:** every persisted or wire shape, copied byte for byte. That covers:
+
+- `LegacyPublicationIdentity`, `OriginalCurrentPublication`,
+  `OriginalCatalogPublication`, `SavedFile`, `AdoptionResource` and
+  `LegacyCompatibility`;
+- `RuntimeRefusal`, the `catalog_upgrade` owner field and
+  `AuthorityV1Basis::LegacyUpgrade`;
+- the Genesis guard on `index-catalog-upgrade.json`;
+- the registry validation and recovery that Genesis calls;
+- the adopted-standalone readers that still serve
+  `legacy_compatibility_snapshot`.
+
+The last script pair, `scripts/check-standalone-adoption.py` and its test, is
+removed in the same commit.
+
+**Evidence:**
+
+- Test identities: 3,345 before, 3,251 after. 94 removed (each tested a
+  deleted writer or reader), 0 added, 0 outcome changes.
+- Library tests:
+  - Core 173/0 failed;
+  - Kernel 219/0 failed;
+  - Store 793 passed plus the 2 known host failures;
+  - CLI 806 passed plus the 4 known host failures.
+- Integration tests: `combined_reads` 32/32 before and after; `catalog_upgrade`
+  2/2 after the fixture correction.
+- Clippy is clean, workspace with all features and each crate in scope.
+  Formatting and whitespace checks are clean.
+
+**Residual:**
+
+- The kept adopted-standalone readers and the `LegacyPublicationIdentity`
+  serde round-trip have no remaining tests. Their tests were among the
+  removed writer tests.
+- Several kept items still live in modules named `upgrade`, `settlement`,
+  `current_archive` and `historical_catalog`. Renaming them is a separate
+  structural step.

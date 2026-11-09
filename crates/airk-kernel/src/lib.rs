@@ -40,7 +40,6 @@ pub mod roots;
 pub mod scheduler;
 pub mod scoped_reads;
 pub mod service_broker;
-pub mod service_catalog_upgrade;
 pub mod service_configuration;
 mod service_enrichment;
 pub mod service_execution;

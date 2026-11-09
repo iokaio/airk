@@ -150,6 +150,47 @@ struct Fixture {
     indexes: Vec<IndexId>,
     projects: Vec<QueryProjectId>,
 }
+/// Isolated fresh installation: the empty-registry Genesis has no predecessor.
+fn settle_genesis(control: &Path, installer: Sha256Digest) -> Result<()> {
+    use airk_store::service::{
+        ServiceLease,
+        registry::catalog::genesis::{
+            CatalogGenesis,
+            activation::{
+                AuthorityV1CandidateObservation, AuthorityV1NativeQualification,
+                AuthorityV1ReadinessProducer,
+            },
+        },
+    };
+    struct FreshInstallation;
+    impl AuthorityV1ReadinessProducer for FreshInstallation {
+        fn required_predecessor_identities(&self) -> Result<Vec<Sha256Digest>> {
+            Ok(Vec::new())
+        }
+        fn qualify(
+            &self,
+            expected: &AuthorityV1CandidateObservation,
+        ) -> Result<AuthorityV1NativeQualification> {
+            Ok(AuthorityV1NativeQualification {
+                candidate: expected.clone(),
+                predecessor_refusals: Vec::new(),
+            })
+        }
+    }
+    let mut genesis = CatalogGenesis::begin(
+        ServiceLease::acquire(control)?,
+        installer,
+        Incarnation::from_bytes([111; 16]),
+    )?;
+    genesis.backup()?;
+    genesis.migrate()?;
+    genesis.promote_authority_v1()?;
+    genesis
+        .record_authority_v1_readiness(Incarnation::from_bytes([112; 16]), &FreshInstallation)?;
+    genesis.settle_authority_v1()?;
+    Ok(())
+}
+
 impl Fixture {
     fn new(dedicated_is_indexed: bool) -> Result<Self> {
         Self::with_indexes(dedicated_is_indexed, 3)
@@ -207,32 +248,12 @@ impl Fixture {
         airk_cli::local_ipc::prepare_root(&control)?;
         let namespace = Incarnation::from_bytes([110; 16]);
         drop(ServiceRegistry::open(&control, namespace)?);
-        let upgrade =
-            airk_store::service::registry::catalog::upgrade::CatalogUpgrade::acquire(&control)?;
-        airk_kernel::service_catalog_upgrade::prepare(
-            &upgrade,
+        // Empty authority-1 catalog through the real owned Genesis adapter.
+        // Projects, indexes and grants below are physical-format fixtures.
+        settle_genesis(
+            &control,
             airk_cli::runtime_pair::engine_identity_at(&candidate)?,
         )?;
-        upgrade.migrate()?;
-        drop(upgrade);
-        // Same complete physical-format setup as catalog_test_fixture: apply
-        // the real DDL, never just its version marker. No activation proof is
-        // manufactured or passed to a production Genesis/upgrade entrypoint.
-        let sql = Connection::open(control.join("service-1.4.sqlite3"))?;
-        let tx = sql.unchecked_transaction()?;
-        tx.execute_batch(include_str!(
-            "../../airk-store/src/service_catalog_authority_v1.sql"
-        ))?;
-        tx.execute(
-            "UPDATE index_catalog_meta SET activated=1,authority_contract=1",
-            [],
-        )?;
-        tx.commit()?;
-        drop(sql);
-        let marker = control.join("service-1.4.owner.json");
-        let mut record: Value = serde_json::from_slice(&fs::read(&marker)?)?;
-        record.as_object_mut().unwrap().remove("catalog_upgrade");
-        fs::write(marker, serde_json::to_vec(&record)?)?;
 
         let projects = (0..3)
             .map(|n| QueryProjectId::from_identity(Incarnation::from_bytes([20 + n; 16])))

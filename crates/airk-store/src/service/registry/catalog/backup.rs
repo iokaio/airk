@@ -197,59 +197,6 @@ pub(super) fn integrity(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn restore(
-    root: &Path,
-    upgrade: Incarnation,
-    attempt: &BackupAttempt,
-    expected_rows: Sha256Digest,
-) -> Result<()> {
-    let snapshot = validate(root, upgrade, attempt)?;
-    let source = Connection::open_with_flags(snapshot, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-    ensure!(
-        legacy_data_digest(&source)? == expected_rows,
-        "catalog restore snapshot rows changed"
-    );
-    crate::capacity::require_growth(root, MAX_BYTES * 2)?;
-    let path = super::upgrade::validate_registry_files(root)?;
-    let mut destination = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
-    destination.busy_timeout(Duration::from_millis(100))?;
-    destination.execute_batch(
-        "PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA max_page_count=8192;",
-    )?;
-    let deadline = Instant::now() + Duration::from_secs(30);
-    {
-        let backup = Backup::new(&source, &mut destination)?;
-        loop {
-            ensure!(
-                Instant::now() < deadline,
-                "catalog restore deadline exceeded; owned operation retained"
-            );
-            match backup.step(64)? {
-                StepResult::Done => break,
-                StepResult::More => {}
-                StepResult::Busy | StepResult::Locked => {
-                    anyhow::bail!("catalog restore is busy; resume the owned operation")
-                }
-                _ => anyhow::bail!("unsupported SQLite restore outcome"),
-            }
-        }
-    }
-    super::validate_shape(&destination, 11)?;
-    integrity(&destination)?;
-    ensure!(
-        legacy_data_digest(&destination)? == expected_rows,
-        "catalog restore changed legacy rows"
-    );
-    drop(destination);
-    OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(path)?
-        .sync_all()?;
-    crate::maintenance::sync_parent(root)?;
-    Ok(())
-}
-
 /// Whole legacy registry rows only, used offline to prove preservation through
 /// SQLite checkpoint/backup and additive migration. Never on a retrieval path.
 pub(super) fn legacy_data_digest(connection: &Connection) -> Result<Sha256Digest> {

@@ -344,11 +344,11 @@ fn imported_native_handler_preserves_full_snapshot_and_refuses_changed_authority
             }
             _ => {}
         }
-        let observation = legacy_binding(
-            &mut registry,
-            registration.binding,
-            Some(CatalogRevision::INITIAL),
-        )?;
+        let revision = registry
+            .catalog_state()?
+            .context("fixture catalog absent")?
+            .revision;
+        let observation = legacy_binding(&mut registry, registration.binding, Some(revision))?;
         if change == "none" {
             #[derive(serde::Serialize)]
             #[serde(tag = "kind", rename_all = "snake_case")]

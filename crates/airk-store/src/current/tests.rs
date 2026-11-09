@@ -20,7 +20,6 @@ use std::{
 };
 
 mod grants_tests;
-mod legacy_adoption_archive_tests;
 mod postings_tests;
 mod recent_tests;
 mod service_publication_tests;

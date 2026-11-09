@@ -1,97 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Native authority for an actual adopted standalone snapshot, never a reviewed
-//! grant or a fabricated managed-upgrade import.
+//! Readers of native authority for a standalone snapshot adopted by an earlier
+//! release; never a reviewed grant or a fabricated managed-upgrade import.
 use super::*;
 use airk_core::{
     catalog_legacy_adoption::LegacyAdoptionReceipt,
-    catalog_legacy_authority::{StandaloneAdoptionProvenance, StandaloneConfigurationClaim},
+    catalog_legacy_authority::StandaloneAdoptionProvenance,
     grant_provenance::{GrantProvenance, PersistedGrant, native_imported_grant_id},
     index_catalog::{
         GrantedMembership, Membership, PathScope, QueryProjectId, ReviewedGrant, ScopeAtom,
     },
 };
-use rusqlite::{TransactionBehavior, params};
-
-/// The caller retains the actual origin capability as well as this actual
-/// Current pin until the transaction commits. There is no wire constructor.
-pub struct NativeStandaloneAuthority {
-    native: setup::NativeLegacyAdoptionCompletion,
-    receipt: LegacyAdoptionReceipt,
-    provenance: StandaloneAdoptionProvenance,
-}
-impl NativeStandaloneAuthority {
-    /// Metadata-only convenience for isolated tests; production supplies real claims.
-    #[cfg(test)]
-    pub fn from_completed_adoption(
-        native: setup::NativeLegacyAdoptionCompletion,
-        receipt: LegacyAdoptionReceipt,
-        original_server: String,
-        no_default_project: bool,
-    ) -> Result<Self> {
-        let plan = native.plan();
-        let claims = vec![StandaloneConfigurationClaim {
-            schema: 1,
-            origin_sha256: plan.origin_sha256,
-            config_sha256: plan.config_sha256,
-            executable_sha256: plan.executable_sha256,
-            selected_entry_sha256: Sha256Digest::from_bytes([99; 32]),
-            container_path: vec!["mcp_servers".into()],
-            original_server,
-            no_default_project,
-        }];
-        Self::from_completed_adoption_claims(native, receipt, claims)
-    }
-    pub fn from_completed_adoption_claims(
-        native: setup::NativeLegacyAdoptionCompletion,
-        receipt: LegacyAdoptionReceipt,
-        mut configuration_claims: Vec<StandaloneConfigurationClaim>,
-    ) -> Result<Self> {
-        receipt.validate()?;
-        native.revalidate()?;
-        ensure!(
-            receipt.plan_digest == native.plan().identity()?
-                && receipt.setup.request == native.plan().setup
-                && receipt
-                    .setup
-                    .completion
-                    .as_ref()
-                    .and_then(|c| c.legacy_adoption.as_ref())
-                    == Some(native.publication()),
-            "standalone authority requires its exact native completed adoption"
-        );
-        configuration_claims.sort_by_key(|c| c.origin_sha256);
-        let primary = configuration_claims
-            .iter()
-            .find(|c| c.origin_sha256 == native.plan().origin_sha256)
-            .context("native primary configuration claim missing")?;
-        let original_server = primary.original_server.clone();
-        let no_default_project = primary.no_default_project;
-        let provenance = StandaloneAdoptionProvenance {
-            schema: 1,
-            operation_id: receipt.setup.operation_id,
-            plan: Box::new(native.plan().clone()),
-            publication: native.publication().clone(),
-            original_server,
-            no_default_project,
-            configuration_claims,
-        };
-        provenance.validate()?;
-        Ok(Self {
-            native,
-            receipt,
-            provenance,
-        })
-    }
-    pub fn provenance(&self) -> &StandaloneAdoptionProvenance {
-        &self.provenance
-    }
-    fn revalidate(&self) -> Result<()> {
-        self.native.revalidate()?;
-        self.receipt.validate()?;
-        self.provenance.validate()?;
-        Ok(())
-    }
-}
+use rusqlite::params;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -346,154 +265,6 @@ pub(super) fn validate_snapshot(
     Ok(())
 }
 
-impl ServiceRegistry {
-    pub fn import_standalone_authority_checked(
-        &mut self,
-        native: &NativeStandaloneAuthority,
-        host: Sha256Digest,
-        check_origin: &mut dyn FnMut() -> Result<()>,
-    ) -> Result<PersistedGrant> {
-        check_origin()?;
-        native.revalidate()?;
-        let proof = AuthorityRecord {
-            schema: 1,
-            provenance: native.provenance.clone(),
-            receipt: native.receipt.clone(),
-            project_id: project_id(&native.provenance)?,
-        };
-        let grant = expected_grant(&proof, host)?;
-        let tx = self
-            .connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        super::validate_existing(&tx)?;
-        let state = super::state(&tx)?;
-        ensure!(
-            state.activated
-                && state.authority_contract == 1
-                && state.namespace == native.provenance.plan.setup.key.namespace,
-            "standalone authority requires its active native catalog"
-        );
-        require_adopted_index(&tx, &proof)?;
-        super::super::lifecycle::require_catalog_admission(&tx)?;
-        super::apply_adopted_authority_layout(&tx)?;
-        if tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM index_adopted_authorities WHERE operation_id=?1)",
-            [proof.provenance.operation_id.to_string()],
-            |row| row.get::<_, bool>(0),
-        )? {
-            let saved = super::operations::read_persisted_grant(&tx, grant.grant.id)?;
-            validate_snapshot(
-                &tx,
-                &saved,
-                proof.provenance.plan.setup.registration.binding,
-                host,
-            )?;
-            ensure!(
-                record(&tx, saved.grant.id)? == proof,
-                "standalone import retry changed original evidence"
-            );
-            native.revalidate()?;
-            check_origin()?;
-            tx.commit()?;
-            return Ok(saved);
-        }
-        let next = state.revision.next()?;
-        // Preflight the actual public frozen selector before creating authority.
-        airk_core::service_http::NativeImportedHttpSelection {
-            namespace: state.namespace,
-            expected_catalog_revision: next,
-            registration: proof.provenance.plan.setup.registration.clone(),
-            grant: grant.clone(),
-            configuration_receipt: proof.provenance.plan.config_sha256,
-        }
-        .validate()?;
-        let m = &grant.grant.memberships[0];
-        tx.execute(
-            "INSERT INTO query_projects VALUES(?1,?2,1,1,1)",
-            params![
-                proof.project_id.to_string(),
-                format!(
-                    "Imported {}",
-                    proof.provenance.plan.original_registration.collection
-                )
-            ],
-        )?;
-        tx.execute(
-            "INSERT INTO project_index_memberships VALUES(?1,?2,1)",
-            params![
-                proof.project_id.to_string(),
-                proof.receipt.setup.index_id.to_string()
-            ],
-        )?;
-        tx.execute("INSERT INTO index_access_grants(id,host,revision,revoked,provenance_kind) VALUES(?1,?2,1,0,'imported_standalone_adoption')",params![grant.grant.id.to_string(),host.to_string()])?;
-        tx.execute(
-            "INSERT INTO index_access_memberships VALUES(?1,?2,?3,1,?4,0,NULL)",
-            params![
-                grant.grant.id.to_string(),
-                proof.project_id.to_string(),
-                proof.receipt.setup.index_id.to_string(),
-                i64::try_from(m.source_revision.get())?
-            ],
-        )?;
-        for atom in &m.membership.scope {
-            tx.execute(
-                "INSERT INTO project_index_scopes VALUES(?1,?2,?3,'subtree','')",
-                params![
-                    proof.project_id.to_string(),
-                    proof.receipt.setup.index_id.to_string(),
-                    atom.source_root_id.to_string()
-                ],
-            )?;
-            tx.execute(
-                "INSERT INTO index_access_scopes VALUES(?1,?2,?3,?4,'subtree','')",
-                params![
-                    grant.grant.id.to_string(),
-                    proof.project_id.to_string(),
-                    proof.receipt.setup.index_id.to_string(),
-                    atom.source_root_id.to_string()
-                ],
-            )?;
-        }
-        tx.execute(
-            "INSERT INTO index_adopted_authorities VALUES(?1,?2,?3,?4,?5,?6)",
-            params![
-                grant.grant.id.to_string(),
-                proof.provenance.operation_id.to_string(),
-                proof.provenance.plan.setup.registration.binding.to_string(),
-                proof
-                    .provenance
-                    .plan
-                    .original_registration
-                    .binding
-                    .to_string(),
-                proof.provenance.plan.config_sha256.to_string(),
-                serde_json::to_vec(&proof)?
-            ],
-        )?;
-        for claim in &proof.provenance.configuration_claims {
-            tx.execute(
-                "INSERT INTO index_adopted_configuration_claims VALUES(?1,?2,?3)",
-                params![
-                    grant.grant.id.to_string(),
-                    claim.origin_sha256.to_string(),
-                    claim.config_sha256.to_string()
-                ],
-            )?;
-        }
-        ensure!(tx.execute("UPDATE index_catalog_meta SET revision=?1,accepted_new_writes=1 WHERE id=1 AND revision=?2",params![i64::try_from(next.get())?,i64::try_from(state.revision.get())?])?==1,"standalone authority catalog CAS changed");
-        native.revalidate()?;
-        validate_snapshot(
-            &tx,
-            &grant,
-            proof.provenance.plan.setup.registration.binding,
-            host,
-        )?;
-        check_origin()?;
-        tx.commit()?;
-        Ok(grant)
-    }
-}
-
 fn has_adopted_layout(db: &Connection) -> Result<bool> {
     Ok(db.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='index_adopted_authorities')",[],|r|r.get(0))?)
 }
@@ -573,6 +344,3 @@ impl ServiceRegistry {
         Ok(Some(registration))
     }
 }
-
-#[cfg(test)]
-mod tests;

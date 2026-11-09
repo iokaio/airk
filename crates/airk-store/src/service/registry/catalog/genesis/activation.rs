@@ -583,10 +583,6 @@ impl CatalogGenesis {
         Ok(receipt)
     }
     pub fn settle_authority_v1(&self) -> Result<GenesisReceipt> {
-        ensure!(
-            upgrade::PRODUCTION_ACTIVATION_ENABLED,
-            "catalog activation remains disabled"
-        );
         self.settle_authority_v1_at(|_| Ok(()))
     }
     fn settle_authority_v1_at(

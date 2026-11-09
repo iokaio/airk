@@ -25,6 +25,20 @@ Method and limits:
   `runtime_layout.rs` became `runtime_install/layout.rs`). Paths below still name
   the `43d7005` files; `git log --follow` or
   `python scripts/dev/s4_module_honesty.py` maps them.
+- **9 November 2026, after S2:** the review decisions in
+  [s1-review.md](s1-review.md) §10–§11 settled the open rows:
+  - **P8 / Q3:** a pending in-place catalog upgrade is refused with
+    `clean_break_predecessor_catalog_upgrade_pending`.
+  - **P2 / Q1:** standalone adoption is refused, and interrupted adoptions are
+    settled on encounter.
+  - **P5:** the in-place upgrade is removed; ordinary updates require an
+    existing catalog.
+  - The P5 and adoption writer code these rows name was then deleted (S2
+    steps 1–4b). The persisted and wire shapes the rows mark as `airk-state/1`
+    format were kept.
+  - **Q9** (the `airk-embed` helper) is answered in
+    [s6-s7-plan.md](s6-s7-plan.md).
+  - The rows themselves are kept as reviewed at `43d7005`.
 
 ## 1. How the boundary is decided
 

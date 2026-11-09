@@ -249,9 +249,6 @@ pub(super) fn schema8(
 
 #[test]
 fn authentic_managed_schema8_migrates_before_catalog_admission() -> Result<()> {
-    use super::catalog::upgrade::{BackfillIndex, CatalogUpgrade, UpgradePlan, UpgradeStage};
-    use airk_core::index_catalog::{IndexId, QueryProjectId, SourceImportState, SourceRootId};
-    use airk_core::source_policy::SourceRoot;
     let directory = tempfile::tempdir()?;
     let control = directory.path().join("control");
     fs::create_dir(&control)?;
@@ -324,44 +321,5 @@ fn authentic_managed_schema8_migrates_before_catalog_admission() -> Result<()> {
         fs::read(control.join("service-1.4.owner.json"))?,
         owner_before
     );
-    let owner = CatalogUpgrade::acquire(&control)?;
-    let plan = UpgradePlan {
-        schema: 1,
-        id: Incarnation::from_bytes([43; 16]),
-        control: owner.control().into(),
-        namespace,
-        installer_identity: Sha256Digest::from_bytes([44; 32]),
-        legacy_schema_digest: owner.source_schema_digest()?,
-        registrations_digest: owner.registration_digest()?,
-        indexes: vec![BackfillIndex {
-            registration: registration.clone(),
-            index_id: IndexId::from_identity(Incarnation::from_bytes([45; 16])),
-            project_id: QueryProjectId::from_identity(Incarnation::from_bytes([46; 16])),
-            sources: vec![SourceRoot {
-                id: SourceRootId::from_identity(Incarnation::from_bytes([47; 16])),
-                canonical_path: registration.root.clone(),
-                aliases: vec![],
-                owner: true,
-            }],
-            source_import: SourceImportState::PendingMetadata,
-            configuration_digest: None,
-        }],
-    };
-    let admitted = owner.admit(plan.clone())?;
-    assert_eq!(admitted.stage, UpgradeStage::Admission);
-    let migrated = owner.migrate()?;
-    assert_eq!(migrated.stage, UpgradeStage::Imports);
-    assert_eq!(migrated.plan, plan);
-    assert_eq!(migrated.plan.namespace, namespace);
-    assert!(migrated.legacy_data_digest.is_some());
-    // Catalog migration itself is not import/readiness or authority-1 acceptance.
-    assert!(ServiceRegistry::open_saved(&control).is_err());
-    owner.restore()?;
-    let restored = ServiceRegistry::open_saved(&control)?;
-    assert_eq!(
-        restored.get(registration.binding)?.registration,
-        registration
-    );
-    assert!(restored.get(registration.binding)?.paused);
     Ok(())
 }

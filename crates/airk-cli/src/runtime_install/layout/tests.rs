@@ -17,7 +17,7 @@ fn catalog_validation_preserves_the_independent_namespace_pin_and_normal_admissi
         ServiceLease,
         registry::{
             ServiceRegistry,
-            catalog::{AdmissionPending, upgrade::CatalogUpgrade},
+            catalog::{AdmissionPending, genesis::CatalogGenesis},
         },
     };
     let (_temporary, root, state) = fixture()?;
@@ -29,16 +29,15 @@ fn catalog_validation_preserves_the_independent_namespace_pin_and_normal_admissi
     let namespace = Incarnation::from_bytes([181; 16]);
     drop(ServiceRegistry::open(&control, namespace)?);
     record_registry(&lease, namespace)?;
-    let owner = CatalogUpgrade::acquire_with_service(lease)?;
-    let installer = Sha256Digest::from_bytes([182; 32]);
-    airk_kernel::service_catalog_upgrade::prepare(&owner, installer)?;
+    // An admitted owned catalog operation holds the native admission fence.
+    let _owner = CatalogGenesis::begin(
+        lease,
+        Sha256Digest::from_bytes([182; 32]),
+        Incarnation::from_bytes([184; 16]),
+    )?;
     let database = control.join("service-1.4.sqlite3");
     let before = fs::read(&database)?;
     assert!(super::control(&root).unwrap_err().is::<AdmissionPending>());
-    assert_eq!(
-        CatalogUpgrade::check_installer_resume(&control, installer)?,
-        namespace
-    );
     validate_catalog_control(&control, namespace)?;
     assert!(validate_catalog_control(&control, Incarnation::from_bytes([183; 16])).is_err());
     let pin = state.join(registry_binding::PIN);

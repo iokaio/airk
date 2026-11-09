@@ -373,7 +373,10 @@ fn fixture() -> Result<(
             epoch,
             nonce: Incarnation::from_bytes([4; 16]),
         },
-        expected_catalog_revision: CatalogRevision::INITIAL,
+        expected_catalog_revision: registry
+            .catalog_state()?
+            .context("fixture catalog absent")?
+            .revision,
         operation: CatalogOperation::CreateProject {
             id: project,
             name: "Native coordinator fixture".into(),

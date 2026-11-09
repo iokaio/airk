@@ -26,7 +26,6 @@ pub(crate) struct NativeSetupReview {
     storage_action: SetupStorageAction,
     metadata_plan: Sha256Digest,
     legacy_adoption: Option<Sha256Digest>,
-    saved_adoption: Option<airk_store::service::registry::catalog::setup::SavedAdoptionSources>,
 }
 impl NativeSetupReview {
     pub(crate) fn storage_action(&self) -> SetupStorageAction {
@@ -278,7 +277,6 @@ fn review_filesystem(
         storage_action,
         metadata_plan,
         legacy_adoption: None,
-        saved_adoption: None,
     })
 }
 
@@ -325,16 +323,9 @@ pub(crate) fn prepare(
             .collect();
         airk_store::service::registry::catalog::setup::storage::NativeSetupPins::from_native_review_with_ancestors(review.parent.file,data,sources,ancestors)
     };
-    let storage = match review.saved_adoption {
-        Some(saved) => {
-            airk_store::service::registry::catalog::setup::storage::prepare_saved_adoption_storage(
-                registry, control, &receipt, pins, saved,
-            )?
-        }
-        None => airk_store::service::registry::catalog::setup::storage::prepare_index_storage(
-            registry, control, &receipt, pins,
-        )?,
-    };
+    let storage = airk_store::service::registry::catalog::setup::storage::prepare_index_storage(
+        registry, control, &receipt, pins,
+    )?;
     Ok(PreparedIndexSetup::Anchored(storage))
 }
 

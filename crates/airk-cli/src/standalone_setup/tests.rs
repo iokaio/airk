@@ -126,13 +126,11 @@ fn fixture() -> Result<(
     let data = base.join("data");
     std::fs::create_dir(&data)?;
     let namespace = Incarnation::from_bytes([121; 16]);
-    let mut registry = ServiceRegistry::open(&control, namespace)?;
     let registration = airk_core::service::ProjectRegistration::new(
         source.to_str().unwrap().into(),
         data.to_str().unwrap().into(),
         "fixture".into(),
     )?;
-    registry.register(&registration)?;
     airk_store::service::data_scope::bind(&data, &control, namespace)?;
     let collection = Collection::initialize(
         &data,
@@ -141,8 +139,17 @@ fn fixture() -> Result<(
         Incarnation::from_bytes([122; 16]),
     )?;
     drop(collection.selected_store()?.lock()?);
-    drop(registry);
     let mut registry = crate::catalog_test_fixture::authority_one(&control, namespace)?;
+    crate::catalog_test_fixture::reviewed_index(
+        &mut registry,
+        &registration,
+        vec![airk_core::catalog_setup::SetupSource {
+            canonical_path: registration.root.clone(),
+            aliases: Vec::new(),
+            owner: true,
+        }],
+        230,
+    )?;
     let page = registry.catalog_page(&CatalogPageRequest {
         kind: CatalogKind::Projects,
         index_id: None,

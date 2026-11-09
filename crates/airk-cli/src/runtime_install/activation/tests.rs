@@ -304,20 +304,12 @@ async fn failed_initial_probe_preserves_recovery_without_a_public_selection_or_s
     assert!(resume(&root).await.is_err());
     assert!(selection(&root)?.is_none());
     assert_eq!(fs::read(main)?, original);
-    if airk_store::service::registry::catalog::upgrade::PRODUCTION_ACTIVATION_ENABLED {
-        let retained = pending(&root)?.context("failed fresh qualification lost its operation")?;
-        assert_eq!(retained.candidate, intent.candidate);
-        assert_eq!(retained.control, intent.control);
-        assert!(retained.prior.is_none());
-        assert!(retained.phase == Phase::Probe);
-        assert!(result(&root)?.is_none());
-    } else {
-        assert!(pending(&root)?.is_none());
-        assert!(matches!(
-            result(&root)?.unwrap().outcome,
-            Outcome::AbortedOrFailed
-        ));
-    }
+    let retained = pending(&root)?.context("failed fresh qualification lost its operation")?;
+    assert_eq!(retained.candidate, intent.candidate);
+    assert_eq!(retained.control, intent.control);
+    assert!(retained.prior.is_none());
+    assert!(retained.phase == Phase::Probe);
+    assert!(result(&root)?.is_none());
     Ok(())
 }
 
@@ -445,8 +437,9 @@ async fn ordinary_update_refuses_a_registry_without_a_catalog_and_keeps_existing
         let unsupported = format!("{error:#}").contains("catalog_upgrade_unsupported");
         assert_eq!(unsupported, !catalog, "{error:#}");
         assert_eq!(durable_files(&root)?, before);
-        // Only the catalog fixture's own component settlement left a journal.
-        assert_eq!(control.join("index-catalog-upgrade.json").exists(), catalog);
+        // Only the catalog fixture's own Genesis settlement left a journal.
+        assert_eq!(control.join("index-catalog-genesis.json").exists(), catalog);
+        assert!(!control.join("index-catalog-upgrade.json").exists());
         assert!(selection(&root)? == Some(intent.selected()));
         assert!(pending(&root)?.is_some_and(|saved| saved.phase == Phase::Probe));
     }

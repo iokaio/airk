@@ -8,10 +8,7 @@ use airk_core::{
     index_catalog::IndexId,
     service::{ControlMethod, ControlResponse, ProjectRegistration},
 };
-use airk_store::service::registry::{
-    ServiceRegistry,
-    catalog::upgrade::{self, CatalogUpgrade},
-};
+use airk_store::service::registry::ServiceRegistry;
 use anyhow::{Context, Result, ensure};
 use rusqlite::{Connection, params};
 use std::{
@@ -143,33 +140,14 @@ fn activated_format_serves_actual_control_and_post_start_writes_refuse_restore()
     let source = source.canonicalize()?;
     let data = data.canonicalize()?;
     fs::write(source.join("sentinel.txt"), b"source remains unchanged")?;
-    seed_registration(
+    drop(ServiceRegistry::open(
         &control,
-        source.to_str().unwrap().into(),
-        data.to_str().unwrap().into(),
-    )?;
-    airk_store::service::data_scope::bind(&data, &control, Incarnation::from_bytes([1; 16]))?;
-    let upgrade = CatalogUpgrade::acquire(&control)?;
-    airk_kernel::service_catalog_upgrade::prepare(
-        &upgrade,
+        Incarnation::from_bytes([1; 16]),
+    )?);
+    activated_authority_zero(
+        &control,
         airk_cli::runtime_pair::engine_identity_at(&candidate())?,
     )?;
-    upgrade.migrate()?;
-    assert!(
-        upgrade.settle().is_err(),
-        "production activation remains disabled"
-    );
-    drop(upgrade);
-    // Format/transport fixture only: Store's actual settlement is exercised by
-    // its boundary tests. This manual seed does not qualify managed activation
-    // or bypass the production gate in the distributed command path.
-    let connection = Connection::open(control.join("service-1.4.sqlite3"))?;
-    connection.execute("UPDATE index_catalog_meta SET activated=1", [])?;
-    drop(connection);
-    let record = control.join("service-1.4.owner.json");
-    let mut metadata: serde_json::Value = serde_json::from_slice(&fs::read(&record)?)?;
-    metadata.as_object_mut().unwrap().remove("catalog_upgrade");
-    fs::write(record, serde_json::to_vec(&metadata)?)?;
     let log = owner.path().join("service.log");
     let mut command = Command::new(candidate());
     command
@@ -231,33 +209,44 @@ fn activated_format_serves_actual_control_and_post_start_writes_refuse_restore()
     drop(service);
     let registry = ServiceRegistry::open_saved(&control)?;
     assert!(registry.catalog_state()?.unwrap().accepted_new_writes);
-    assert!(
-        registry
-            .get(airk_kernel::service_projects::registration(&source, &data, "fixture")?.binding)?
-            .paused
-    );
     drop(registry);
-    let before = fs::read(control.join("service-1.4.sqlite3"))?;
-    let upgrade = CatalogUpgrade::acquire(&control)?;
-    ensure!(
-        upgrade
-            .restore()
-            .unwrap_err()
-            .to_string()
-            .contains("forward repair"),
-        "post-start native writes must fence downgrade"
-    );
-    assert_eq!(fs::read(control.join("service-1.4.sqlite3"))?, before);
     assert_eq!(
         fs::read(source.join("sentinel.txt"))?,
         b"source remains unchanged"
     );
     assert!(
         !data.join("collections-1.4/fixture").exists(),
-        "metadata activation must not rebuild the paused index"
+        "catalog activation must not create index storage"
     );
     Ok(())
 }
+/// Format/transport fixture only: the real owned Genesis migration, then a
+/// manual authority-0 activation with its admission fence cleared, exactly as
+/// the former migration fixture did. This does not qualify managed activation
+/// or bypass the production gate in the distributed command path.
+fn activated_authority_zero(control: &Path, installer: Sha256Digest) -> Result<()> {
+    use airk_store::service::{ServiceLease, registry::catalog::genesis::CatalogGenesis};
+    let mut genesis = CatalogGenesis::begin(
+        ServiceLease::acquire(control)?,
+        installer,
+        Incarnation::from_bytes([2; 16]),
+    )?;
+    genesis.backup()?;
+    genesis.migrate()?;
+    drop(genesis);
+    let connection = Connection::open(control.join("service-1.4.sqlite3"))?;
+    connection.execute("UPDATE index_catalog_meta SET activated=1", [])?;
+    drop(connection);
+    let record = control.join("service-1.4.owner.json");
+    let mut metadata: serde_json::Value = serde_json::from_slice(&fs::read(&record)?)?;
+    metadata
+        .as_object_mut()
+        .context("fixture owner record")?
+        .remove("catalog_upgrade");
+    fs::write(record, serde_json::to_vec(&metadata)?)?;
+    Ok(())
+}
+
 fn candidate() -> PathBuf {
     std::env::var_os("AIRK_CATALOG_CANDIDATE_BINARY")
         .map(PathBuf::from)
@@ -314,37 +303,29 @@ fn in_place_upgrade_commands_are_refused_before_any_state_access() -> Result<()>
             ("catalog-authority-probe --native-host", authority),
         ]
     };
-    // None: no admission. Some(false): admitted and migrated for this exact
-    // candidate (formerly migrated/probed). Some(true): another installer.
-    for admitted in [None, Some(false), Some(true)] {
+    // false: no admission. true: an in-place upgrade journal and its admission
+    // fence retained from a predecessor; no current writer can produce them.
+    for admitted in [false, true] {
         let root = fixture()?;
-        let id = match admitted {
-            None => Incarnation::from_bytes([201; 16]),
-            Some(crossed) => {
-                let owner = CatalogUpgrade::acquire(root.path())?;
-                let identity = if crossed {
-                    Sha256Digest::from_bytes([202; 32])
-                } else {
-                    airk_cli::runtime_pair::engine_identity_at(&binary)?
-                };
-                let receipt = airk_kernel::service_catalog_upgrade::prepare(&owner, identity)?;
-                if !crossed {
-                    owner.migrate()?;
-                }
-                receipt.plan.id
-            }
-        };
-        let stage = upgrade::pending(root.path())?.map(|receipt| receipt.stage);
+        let id = Incarnation::from_bytes([201; 16]);
+        if admitted {
+            // The predecessor's upgrade owner held the service lease.
+            drop(airk_store::service::ServiceLease::acquire(root.path())?);
+            fs::write(
+                root.path().join("index-catalog-upgrade.json"),
+                b"retained predecessor upgrade journal",
+            )?;
+            let record = root.path().join("service-1.4.owner.json");
+            let mut metadata: serde_json::Value = serde_json::from_slice(&fs::read(&record)?)?;
+            metadata["catalog_upgrade"] = serde_json::to_value(id)?;
+            fs::write(record, serde_json::to_vec(&metadata)?)?;
+        }
         let before = files(root.path())?;
         for (name, command) in control_commands(root.path(), id) {
             refused(&run(&command)?, name)?;
             assert!(files(root.path())? == before, "{name} changed state");
         }
-        assert_eq!(
-            upgrade::pending(root.path())?.map(|receipt| receipt.stage),
-            stage
-        );
-        if admitted.is_some() {
+        if admitted {
             // The Store admission fence remains authoritative for ordinary
             // readers and service startup over a retained upgrade journal.
             let ordinary = run(&requests(&binary, root.path(), false))?;

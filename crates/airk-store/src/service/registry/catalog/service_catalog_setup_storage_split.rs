@@ -162,7 +162,7 @@ pub fn prepare_split_storage(
     pins: NativeSetupPins,
 ) -> Result<PreparedSplitStorage> {
     let context = format_context(state)?;
-    let storage = prepare_authorized(registry, control, &context, pins, Some(state), None, || {})?;
+    let storage = prepare_authorized(registry, control, &context, pins, Some(state), || {})?;
     Ok(PreparedSplitStorage { storage })
 }
 #[cfg(test)]
@@ -343,7 +343,6 @@ mod tests {
             &context,
             captured,
             Some(&state),
-            None,
             || {
                 std::fs::rename(root, &retained).unwrap();
                 std::fs::create_dir(root).unwrap();

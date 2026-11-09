@@ -21,6 +21,19 @@ fn assert_wrong_file_change_flag_refused(draft: &SourceMutationDraft) -> Result<
     Ok(())
 }
 
+/// The catalog sources of the reviewed collection, in canonical setup form.
+fn setup_sources(review: &IndexReview) -> Vec<airk_core::catalog_setup::SetupSource> {
+    review
+        .sources
+        .iter()
+        .map(|source| airk_core::catalog_setup::SetupSource {
+            canonical_path: source.canonical_path.clone(),
+            aliases: source.aliases.clone(),
+            owner: source.owner,
+        })
+        .collect()
+}
+
 fn policy_registry_fixture() -> Result<(
     tempfile::TempDir,
     PathBuf,
@@ -28,32 +41,15 @@ fn policy_registry_fixture() -> Result<(
     IndexDefinition,
     CatalogSource,
 )> {
-    use airk_store::service::registry::catalog::upgrade::CatalogUpgrade;
     let (owner, control, review) = fixture()?;
     let instance = Incarnation::from_bytes([1; 16]);
-    let mut registry = ServiceRegistry::open(&control, instance)?;
-    registry.register(&review.index.backing)?;
-    drop(registry);
-    let upgrade = CatalogUpgrade::acquire(&control)?;
-    airk_kernel::service_catalog_upgrade::prepare(&upgrade, Sha256Digest::from_bytes([2; 32]))?;
-    upgrade.migrate()?;
-    drop(upgrade);
-    let sql = rusqlite::Connection::open(control.join("service-1.4.sqlite3"))?;
-    let tx = sql.unchecked_transaction()?;
-    tx.execute_batch(include_str!(
-        "../../../airk-store/src/service_catalog_authority_v1.sql"
-    ))?;
-    tx.execute(
-        "UPDATE index_catalog_meta SET activated=1,authority_contract=1",
-        [],
+    let mut registry = crate::catalog_test_fixture::authority_one(&control, instance)?;
+    crate::catalog_test_fixture::reviewed_index(
+        &mut registry,
+        &review.index.backing,
+        setup_sources(&review),
+        230,
     )?;
-    tx.commit()?;
-    drop(sql);
-    let owner_path = control.join("service-1.4.owner.json");
-    let mut record: serde_json::Value = serde_json::from_slice(&std::fs::read(&owner_path)?)?;
-    record.as_object_mut().unwrap().remove("catalog_upgrade");
-    std::fs::write(owner_path, serde_json::to_vec(&record)?)?;
-    let mut registry = ServiceRegistry::open(&control, instance)?;
     let page = registry.catalog_page(&CatalogPageRequest {
         kind: CatalogKind::Indexes,
         index_id: None,
@@ -298,33 +294,16 @@ fn native_trim_rule_identity_is_stable_and_does_not_accept_frontend_rule_ids() -
 fn complete_native_trim_draft_binds_canonical_policy_configuration_and_review_without_writes()
 -> Result<()> {
     use airk_core::{index_catalog::PathScope, service::RequestKey};
-    use airk_store::service::registry::catalog::upgrade::CatalogUpgrade;
     let (_owner, control, review) = fixture()?;
     let instance = Incarnation::from_bytes([1; 16]);
     let engine = Sha256Digest::from_bytes([2; 32]);
-    let mut registry = ServiceRegistry::open(&control, instance)?;
-    registry.register(&review.index.backing)?;
-    drop(registry);
-    let upgrade = CatalogUpgrade::acquire(&control)?;
-    airk_kernel::service_catalog_upgrade::prepare(&upgrade, engine)?;
-    upgrade.migrate()?;
-    drop(upgrade);
-    let sql = rusqlite::Connection::open(control.join("service-1.4.sqlite3"))?;
-    let tx = sql.unchecked_transaction()?;
-    tx.execute_batch(include_str!(
-        "../../../airk-store/src/service_catalog_authority_v1.sql"
-    ))?;
-    tx.execute(
-        "UPDATE index_catalog_meta SET activated=1,authority_contract=1",
-        [],
+    let mut registry = crate::catalog_test_fixture::authority_one(&control, instance)?;
+    crate::catalog_test_fixture::reviewed_index(
+        &mut registry,
+        &review.index.backing,
+        setup_sources(&review),
+        230,
     )?;
-    tx.commit()?;
-    drop(sql);
-    let owner_path = control.join("service-1.4.owner.json");
-    let mut owner: serde_json::Value = serde_json::from_slice(&std::fs::read(&owner_path)?)?;
-    owner.as_object_mut().unwrap().remove("catalog_upgrade");
-    std::fs::write(owner_path, serde_json::to_vec(&owner)?)?;
-    let mut registry = ServiceRegistry::open(&control, instance)?;
     let page = registry.catalog_page(&CatalogPageRequest {
         kind: CatalogKind::Indexes,
         index_id: None,
@@ -469,32 +448,15 @@ fn native_retirement_draft_remains_available_after_accepted_source_change() -> R
         catalog_fences::{FencePlan, FencePreparation},
         service::RequestKey,
     };
-    use airk_store::service::registry::catalog::upgrade::CatalogUpgrade;
     let (_owner, control, review) = fixture()?;
     let instance = Incarnation::from_bytes([1; 16]);
-    let mut registry = ServiceRegistry::open(&control, instance)?;
-    registry.register(&review.index.backing)?;
-    drop(registry);
-    let upgrade = CatalogUpgrade::acquire(&control)?;
-    airk_kernel::service_catalog_upgrade::prepare(&upgrade, Sha256Digest::from_bytes([2; 32]))?;
-    upgrade.migrate()?;
-    drop(upgrade);
-    let sql = rusqlite::Connection::open(control.join("service-1.4.sqlite3"))?;
-    let tx = sql.unchecked_transaction()?;
-    tx.execute_batch(include_str!(
-        "../../../airk-store/src/service_catalog_authority_v1.sql"
-    ))?;
-    tx.execute(
-        "UPDATE index_catalog_meta SET activated=1,authority_contract=1",
-        [],
+    let mut registry = crate::catalog_test_fixture::authority_one(&control, instance)?;
+    crate::catalog_test_fixture::reviewed_index(
+        &mut registry,
+        &review.index.backing,
+        setup_sources(&review),
+        230,
     )?;
-    tx.commit()?;
-    drop(sql);
-    let owner_path = control.join("service-1.4.owner.json");
-    let mut record: serde_json::Value = serde_json::from_slice(&std::fs::read(&owner_path)?)?;
-    record.as_object_mut().unwrap().remove("catalog_upgrade");
-    std::fs::write(owner_path, serde_json::to_vec(&record)?)?;
-    let mut registry = ServiceRegistry::open(&control, instance)?;
     let page = registry.catalog_page(&CatalogPageRequest {
         kind: CatalogKind::Indexes,
         index_id: None,
@@ -563,7 +525,7 @@ fn native_retirement_draft_remains_available_after_accepted_source_change() -> R
     assert!(!retirement.preview.file_data_changes);
     assert_wrong_file_change_flag_refused(&retirement)?;
     assert!(
-        matches!(retirement.request.operation,CatalogOperation::RetireIndex {expected_source_revision,..} if expected_source_revision==CatalogRevision::INITIAL.next()?)
+        matches!(retirement.request.operation,CatalogOperation::RetireIndex {expected_source_revision,..} if expected_source_revision==index.source_revision.next()?)
     );
     assert!(
         read_index(&mut registry, &selection)?.sources.is_empty(),

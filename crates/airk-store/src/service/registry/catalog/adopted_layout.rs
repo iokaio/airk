@@ -87,31 +87,3 @@ pub(super) fn recognize(objects: &[SchemaObject]) -> Result<Option<CatalogLayout
     }
     Ok(None)
 }
-pub(super) fn apply_adopted_authority_layout(db: &Connection) -> Result<()> {
-    ensure!(
-        !db.is_autocommit(),
-        "adoption authority layout requires native transaction"
-    );
-    let layout = validate_catalog_layout(db)?;
-    super::super::runtime_contract::arm_in_transaction(db)?;
-    if recognize(&schema_objects(db)?)?.is_some() {
-        return Ok(());
-    }
-    ensure!(LAYOUTS.contains(&layout), "adoption requires authority one");
-    apply_raw(db, layout)?;
-    ensure!(
-        schema_objects(db)? == *expected_adopted(layout)?,
-        "adoption layout differs from compiled identity"
-    );
-    let foreign_key_failure: bool = db
-        .prepare("PRAGMA foreign_key_check")?
-        .query([])?
-        .next()?
-        .is_some();
-    ensure!(
-        !foreign_key_failure,
-        "adoption authority foreign key validation failed"
-    );
-    validate_catalog_layout(db)?;
-    Ok(())
-}

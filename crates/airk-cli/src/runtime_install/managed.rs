@@ -280,11 +280,7 @@ pub(super) async fn configure(
             "managed runtime policy is already pinned; an explicit transition is required"
         );
     }
-    let enabled = airk_store::service::registry::catalog::upgrade::PRODUCTION_ACTIVATION_ENABLED;
-    if reserved.is_some() && !enabled {
-        layout::require_managed_ready(root)?;
-    }
-    let reservation = if enabled && (prior.is_none() || reserved.is_some()) {
+    let reservation = if prior.is_none() || reserved.is_some() {
         // Positive first-pin checks precede the INITIAL layout intent. An
         // existing reservation resumes those facts; absent policy alone cannot.
         if reserved.is_none() {

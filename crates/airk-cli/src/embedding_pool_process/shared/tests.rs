@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Real native object observations plus isolated catalog-format fixtures. SQL
-//! activation here does not qualify managed activation or the guarded child.
+//! Real native object observations plus isolated Genesis catalog fixtures.
+//! These do not qualify managed activation or the guarded child.
 use super::*;
-use airk_core::identity::Sha256Digest;
+use airk_store::service::ServiceLease;
 #[cfg(unix)]
 use airk_store::service::registry::{ProviderBoot, SharedHelperContainment};
-use airk_store::service::{ServiceLease, registry::catalog::upgrade::CatalogUpgrade};
 mod native;
 
 const OLD: Incarnation = Incarnation::from_bytes([31; 16]);
@@ -23,29 +22,7 @@ impl Fixture {
         let root = directory.path().join("runtime");
         crate::local_ipc::prepare_root(&root)?;
         let root = root.canonicalize()?;
-        drop(ServiceRegistry::open(&root, OLD)?);
-        let upgrade = CatalogUpgrade::acquire(&root)?;
-        airk_kernel::service_catalog_upgrade::prepare(&upgrade, Sha256Digest::from_bytes([2; 32]))?;
-        upgrade.migrate()?;
-        drop(upgrade);
-        let sql = rusqlite::Connection::open(root.join("service-1.4.sqlite3"))?;
-        let tx = sql.unchecked_transaction()?;
-        tx.execute_batch(include_str!(
-            "../../../../airk-store/src/service_catalog_authority_v1.sql"
-        ))?;
-        tx.execute(
-            "UPDATE index_catalog_meta SET activated=1,authority_contract=1",
-            [],
-        )?;
-        tx.commit()?;
-        drop(sql);
-        let owner_path = root.join("service-1.4.owner.json");
-        let mut owner: serde_json::Value = serde_json::from_slice(&std::fs::read(&owner_path)?)?;
-        owner
-            .as_object_mut()
-            .context("fixture owner")?
-            .remove("catalog_upgrade");
-        std::fs::write(owner_path, serde_json::to_vec(&owner)?)?;
+        drop(crate::catalog_test_fixture::authority_one(&root, OLD)?);
         let lease = ServiceLease::acquire(&root)?;
         registry(&root)?.record_service_instance(&lease, OLD)?;
         Ok(Self {

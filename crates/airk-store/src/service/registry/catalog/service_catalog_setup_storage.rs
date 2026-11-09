@@ -101,7 +101,6 @@ pub struct PreparedStorage {
     configuration: Sha256Digest,
     split: Option<crate::service::registry::catalog::split::NativeSplitState>,
     split_seal: Option<crate::service::registry::catalog::split::NativeSplitState>,
-    saved_adoption: Option<super::SavedAdoptionSources>,
     _project: ProjectLease,
     _claim: File,
     _writer: File,
@@ -220,13 +219,9 @@ impl PreparedStorage {
                 == self.slot.identity()?,
             "native setup selected incarnation changed"
         );
-        let format = if let Some(saved) = &self.saved_adoption {
-            Metadata::saved_adoption(&self.control, &self.receipt, saved.plan())?
-        } else {
-            match &self.split_seal {
-                Some(state) => Metadata::new_split(&self.control, &self.receipt, state)?,
-                None => Metadata::new(&self.control, &self.receipt)?,
-            }
+        let format = match &self.split_seal {
+            Some(state) => Metadata::new_split(&self.control, &self.receipt, state)?,
+            None => Metadata::new(&self.control, &self.receipt)?,
         };
         validate_collection(&self.collection, &format, true)
     }
@@ -242,24 +237,6 @@ pub fn prepare_index_storage(
 ) -> Result<PreparedStorage> {
     prepare_with_hook(registry, control, receipt, pins, || {})
 }
-pub fn prepare_saved_adoption_storage(
-    registry: &ServiceRegistry,
-    control: &Path,
-    receipt: &IndexSetupReceipt,
-    pins: NativeSetupPins,
-    saved: super::SavedAdoptionSources,
-) -> Result<PreparedStorage> {
-    ensure!(
-        saved.plan().setup == receipt.request
-            && receipt.legacy_adoption == Some(saved.plan().identity()?),
-        "saved adoption storage differs from native archive intent"
-    );
-    ensure!(
-        pins.sources.is_empty(),
-        "saved adoption cannot claim live source ownership"
-    );
-    prepare_authorized(registry, control, receipt, pins, None, Some(saved), || {})
-}
 fn prepare_with_hook(
     registry: &ServiceRegistry,
     control: &Path,
@@ -267,7 +244,7 @@ fn prepare_with_hook(
     pins: NativeSetupPins,
     before_effects: impl FnOnce(),
 ) -> Result<PreparedStorage> {
-    prepare_authorized(registry, control, receipt, pins, None, None, before_effects)
+    prepare_authorized(registry, control, receipt, pins, None, before_effects)
 }
 fn prepare_authorized(
     registry: &ServiceRegistry,
@@ -275,14 +252,9 @@ fn prepare_authorized(
     receipt: &IndexSetupReceipt,
     pins: NativeSetupPins,
     split: Option<&crate::service::registry::catalog::split::NativeSplitState>,
-    saved_adoption: Option<super::SavedAdoptionSources>,
     before_effects: impl FnOnce(),
 ) -> Result<PreparedStorage> {
     receipt.validate()?;
-    ensure!(
-        split.is_none() || saved_adoption.is_none(),
-        "saved adoption cannot reuse split authority"
-    );
     let control = control.canonicalize()?;
     ensure!(
         registry.root.canonicalize()? == control,
@@ -320,11 +292,7 @@ fn prepare_authorized(
     let data_path = Path::new(&request.registration.data_root);
     check_named_pin(&parent, data_path.parent().context("setup parent missing")?)?;
     ensure!(
-        if saved_adoption.is_some() {
-            pins.sources.is_empty()
-        } else {
-            pins.sources.len() == request.sources.len()
-        },
+        pins.sources.len() == request.sources.len(),
         "native setup source pin capacity mismatch"
     );
     let sources = pins
@@ -338,13 +306,9 @@ fn prepare_authorized(
     let split_seal = split
         .map(|state| split::initial_seal_state(registry, state))
         .transpose()?;
-    let metadata = if let Some(saved) = &saved_adoption {
-        Metadata::saved_adoption(&control, receipt, saved.plan())?
-    } else {
-        match &split_seal {
-            Some(state) => Metadata::new_split(&control, receipt, state)?,
-            None => Metadata::new(&control, receipt)?,
-        }
+    let metadata = match &split_seal {
+        Some(state) => Metadata::new_split(&control, receipt, state)?,
+        None => Metadata::new(&control, receipt)?,
     };
     parent.require_growth(metadata.encoded_bytes()?)?;
     let stage_name = OsString::from(format!(".airk-setup-{}.part", receipt.operation_id));
@@ -471,7 +435,6 @@ fn prepare_authorized(
         configuration: metadata.configuration,
         split: split.cloned(),
         split_seal,
-        saved_adoption,
         _project: project,
         _claim: claim,
         _writer: writer,

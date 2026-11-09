@@ -22,15 +22,10 @@ use std::path::Path;
 const KIND: &str = "catalog_index_setup";
 
 mod checkpoint;
+#[cfg(test)]
 mod legacy_adoption;
 mod metadata;
-pub use checkpoint::legacy_adoption_checkpoint_history;
 pub(crate) use checkpoint::uninitialized_legacy_adoption;
-pub use legacy_adoption::{NativeLegacyAdoptionCompletion, SavedAdoptionSources};
-#[cfg(test)]
-pub(in crate::service::registry::catalog) use legacy_adoption::{
-    complete_metadata_authority_fixture, completed_authority_fixture,
-};
 
 /// Read-only native encoding preflight. Its digest binds actual defaults and
 /// individual native format budgets; syntax alone is not filesystem authority.
@@ -39,12 +34,6 @@ pub fn validate_setup_metadata_plan(
     request: &IndexSetupRequest,
 ) -> Result<Sha256Digest> {
     metadata::Metadata::from_request(control, request)?.digest(request)
-}
-pub fn validate_saved_adoption_metadata_plan(
-    control: &Path,
-    saved: &SavedAdoptionSources,
-) -> Result<Sha256Digest> {
-    metadata::Metadata::saved_plan(control, saved.plan())?.digest(&saved.plan().setup)
 }
 
 pub(crate) fn native_setup_scratch_name(name: &str, bytes: &[u8]) -> String {
@@ -574,7 +563,7 @@ impl ServiceRegistry {
             completion.legacy_adoption.is_none(),
             "ordinary setup cannot supply a legacy adoption publication"
         );
-        self.complete_setup_inner(caller, key, request_digest, completion, None)
+        self.complete_setup_inner(caller, key, request_digest, completion)
     }
 
     fn complete_setup_inner(
@@ -583,7 +572,6 @@ impl ServiceRegistry {
         key: &RequestKey,
         request_digest: Sha256Digest,
         completion: &SetupCompletion,
-        adoption: Option<&NativeLegacyAdoptionCompletion>,
     ) -> Result<IndexSetupReceipt> {
         let tx = self
             .connection
@@ -598,16 +586,13 @@ impl ServiceRegistry {
             before.request_digest == request_digest,
             "index setup request digest changed"
         );
-        match adoption {
-            None => ensure!(
-                before
-                    .preparation
-                    .as_ref()
-                    .is_none_or(|p| p.legacy_adoption.is_none()),
-                "legacy adoption requires its native publication completion"
-            ),
-            Some(native) => native.check(&before, completion)?,
-        }
+        ensure!(
+            before
+                .preparation
+                .as_ref()
+                .is_none_or(|p| p.legacy_adoption.is_none()),
+            "legacy adoption requires its native publication completion"
+        );
         if let Some(previous) = &before.completion {
             ensure!(
                 previous == completion,
@@ -647,13 +632,11 @@ impl ServiceRegistry {
             "UPDATE index_sources SET enabled=1 WHERE index_id=?1",
             [after.index_id.to_string()],
         )?;
-        if adoption.is_none() {
-            super::super::schedule_project_setup(
-                &tx,
-                before.request.registration.binding,
-                before.request.setup_watch,
-            )?;
-        }
+        super::super::schedule_project_setup(
+            &tx,
+            before.request.registration.binding,
+            before.request.setup_watch,
+        )?;
         replace(&tx, &before, &after)?;
         ensure!(
             tx.execute(

@@ -66,30 +66,17 @@ pub(crate) fn native_fixture_with_retention(
         kernel.index()?;
     }
     drop(kernel);
-    let mut registry = ServiceRegistry::open(&control, namespace)?;
-    registry.register(&original)?;
-    drop(registry);
-    let upgrade =
-        airk_store::service::registry::catalog::upgrade::CatalogUpgrade::acquire(&control)?;
-    airk_kernel::service_catalog_upgrade::prepare(&upgrade, Sha256Digest::from_bytes([92; 32]))?;
-    upgrade.migrate()?;
-    drop(upgrade);
-    let sql = rusqlite::Connection::open(control.join("service-1.4.sqlite3"))?;
-    let tx = sql.unchecked_transaction()?;
-    tx.execute_batch(include_str!(
-        "../../../airk-store/src/service_catalog_authority_v1.sql"
-    ))?;
-    tx.execute(
-        "UPDATE index_catalog_meta SET activated=1,authority_contract=1",
-        [],
+    let mut registry = crate::catalog_test_fixture::authority_one(&control, namespace)?;
+    crate::catalog_test_fixture::reviewed_index(
+        &mut registry,
+        &original,
+        vec![airk_core::catalog_setup::SetupSource {
+            canonical_path: original.root.clone(),
+            aliases: Vec::new(),
+            owner: true,
+        }],
+        230,
     )?;
-    tx.commit()?;
-    drop(sql);
-    let marker = control.join("service-1.4.owner.json");
-    let mut owner: serde_json::Value = serde_json::from_slice(&fs::read(&marker)?)?;
-    owner.as_object_mut().unwrap().remove("catalog_upgrade");
-    fs::write(marker, serde_json::to_vec(&owner)?)?;
-    let mut registry = ServiceRegistry::open(&control, namespace)?;
     let page = registry.catalog_page(&CatalogPageRequest {
         kind: CatalogKind::Indexes,
         index_id: None,

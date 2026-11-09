@@ -40,7 +40,8 @@ pub fn capabilities() -> airk_core::index_catalog::CatalogCapabilities {
         authority_contract: SUPPORTED_AUTHORITY_CONTRACT,
         policy_contract: SUPPORTED_POLICY_CONTRACT,
         reference_refresh_contract: Some(1),
-        production_activation_enabled: upgrade::PRODUCTION_ACTIVATION_ENABLED,
+        // Wire field: catalog activation is always available to this runtime.
+        production_activation_enabled: true,
     }
 }
 
@@ -58,7 +59,6 @@ pub mod split;
 
 pub mod adopted_authority;
 mod adopted_layout;
-use adopted_layout::apply_adopted_authority_layout;
 
 pub mod operations;
 

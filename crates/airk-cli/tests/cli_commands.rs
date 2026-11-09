@@ -206,7 +206,6 @@ fn installed_query_scope_calls_and_shell_retain_canonical_authority() -> Result<
             ])
             .output()?;
         // A fresh reviewed grant cannot be inferred from registration alone.
-        // Imported legacy grants use this route in check-standalone-adoption.py.
         let installed = service
             .installed_command(source.path(), data.path(), "scope-cli")
             .args(["tools", "call", alias, "--args", r#"{"view":"projects"}"#])
@@ -537,8 +536,8 @@ fn native_http_commands_preserve_private_selection_and_revocation() -> Result<()
 }
 
 /// Public migration commands must not bootstrap an installation from untrusted
-/// paths. Positive conversion/retirement is separately exercised by the native
-/// legacy tests and check-standalone-adoption.py against authentic predecessors.
+/// paths. Standalone adoption is refused (standalone_adoption_unsupported); the
+/// remaining legacy cache maintenance is covered by the runtime_install tests.
 #[test]
 fn legacy_runtime_commands_require_an_existing_owned_installation() -> Result<()> {
     let owner = tempfile::tempdir()?;
