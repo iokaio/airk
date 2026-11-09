@@ -1,6 +1,6 @@
 # AIRK 1.1.4
 
-Version 1.1.4 includes the [code-review improvements](../airkimprovements.md), complete-source usage comparisons, collection vector controls, local model preparation, batched embedding work, and the shared CLI/MCP tool console. Native and extension manifests and lockfiles use the same version.
+Version 1.1.4 includes the [code-review improvements](../history/airkimprovements.md), complete-source usage comparisons, collection vector controls, local model preparation, batched embedding work, and the shared CLI/MCP tool console. Native and extension manifests and lockfiles use the same version.
 
 ## Retrieval and discovery
 

@@ -44,7 +44,7 @@ All seven documents assume the public AIRK 1.3.1 release (commit `05938a9`, tagg
   - **Views:** a `Dashboard` webview (`airk.dashboard`, built by `dashboardView.ts` and `sidebar.ts`), a `Service Console` webview (`airk.service`) and a `Workspace Projects` tree (`airk.collectionsView`).
   - **Other contributions:** 37 commands, the `airk.gettingStarted` walkthrough and one MCP server definition provider (`airk.collections`).
   - The 1.3.1 file map in the prototype's "Codex implementation map" tab and in requirements §11 (`dashboardView.ts`, `sidebar.ts`, `diagnosticsView.ts` and so on) is only partly current.
-- **The service contract the review asked for (issue C1) now exists:** [docs/airkservice-architecture.md](../airkservice-architecture.md). It covers process ownership, the `airk`/`airk-embed` split, publication, transport and discovery, and MCP privilege separation. Read it before any service-facing design.
+- **The service contract the review asked for (issue C1) now exists:** [docs/airkservice-architecture.md](../history/airkservice-architecture.md). It covers process ownership, the `airk`/`airk-embed` split, publication, transport and discovery, and MCP privilege separation. Read it before any service-facing design.
 - **Gaps every document leaves open.** None of them covers DiskANN or the one-container-per-user model, and none has checked:
   - publication-token fields
   - cursors and pagination
@@ -201,7 +201,7 @@ All seven documents assume the public AIRK 1.3.1 release (commit `05938a9`, tagg
 - keeping the K1–K6 backend enhancements out of the baseline
 
 **Critical issues C1–C8:**
-- **C1:** no 1.4 service contract. This is now largely answered by [docs/airkservice-architecture.md](../airkservice-architecture.md).
+- **C1:** no 1.4 service contract. This is now largely answered by [docs/airkservice-architecture.md](../history/airkservice-architecture.md).
 - **C2:** no tie-break when the checkout contradicts the target.
 - **C3:** the Assistance MCP launch path is unstable. It proposes a stable launcher shim in `globalStorageUri` and `ELECTRON_RUN_AS_NODE`.
 - **C4:** the host cannot prove a physical click, so the native save dialog or a modal should be the consent gate.

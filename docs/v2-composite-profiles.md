@@ -14,4 +14,4 @@ SCSS uses pinned `cortexkit-tree-sitter-scss` 1.0.1 (MIT, ABI 14, C scanner). It
 
 Razor uses `tree-sitter-razor` 0.1.0 (MIT included in its archive, ABI 14, C11 parser/scanner), upstream revision `ecc86b71b1252a5d788cf5f319a805664825aaee`. Both new grammars use the existing Tree-sitter 0.25.10 runtime and compiled on Windows and in the local Linux container. Generated notices cover 438 dependencies, retaining the four pre-existing separate-license-text review flags.
 
-Qualification receipts are recorded in the [ledger](architecture-v2-ledger.md). Final packaging, clean build/size comparisons, macOS, installed clients and real-agent trials remain phase 12 work. H2/model-sharing are separate packages, not implied by composite extraction.
+Qualification receipts are recorded in the [ledger](history/architecture-v2-ledger.md). Final packaging, clean build/size comparisons, macOS, installed clients and real-agent trials remain phase 12 work. H2/model-sharing are separate packages, not implied by composite extraction.

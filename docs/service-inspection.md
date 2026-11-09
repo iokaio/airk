@@ -1,6 +1,6 @@
 # Cached project inspection for the service console
 
-This is the native inspection path for the [1.4 service plan](airkservice-architecture.md), integrated with the default 1.4.0 service console and guarded maintenance plans. Final installed-platform/editor qualification remains tracked separately.
+This is the native inspection path for the [1.4 service plan](history/airkservice-architecture.md), integrated with the default 1.4.0 service console and guarded maintenance plans. Final installed-platform/editor qualification remains tracked separately.
 
 An explicit trusted `inspect` job selects and pins the registered project's current incarnation, observes its readable revision and saved-settings digest, and records bounded discovery/semantic summaries. Root-location availability is separate from retained-index availability. A missing source can therefore report an unavailable location alongside a readable committed index. Location checks do not establish permission to read every source file or current extraction coverage.
 

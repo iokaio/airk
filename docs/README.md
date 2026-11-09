@@ -17,6 +17,12 @@ component contract,
 [`install_files`](../crates/airk-cli/src/install_files/CONTRACT.md). No
 version, wire format or persisted state changed.
 
+**Documentation history:** dated reviews, superseded plans, phase logs, spikes
+and experiments moved to [docs/history](history/README.md) in step D6a of the
+simplification plan. They are kept unchanged apart from link updates and are
+not current guidance. `python scripts/dev/d6_archive_docs.py --check` verifies
+the moves, links and generated index.
+
 The [1.8.16 working record](releases/release-1.8.16.md) tracks the authorized
 clean-break baseline: every pre-1.8.16 installation rebuilds indexes in fresh
 AIRK state, preserving only reviewed source selections and supported preferences.
@@ -154,7 +160,7 @@ Unreleased developer workflow: [native build reuse and Darwin failure diagnostic
 
 Developer references: [MCP tools](mcp-developer-guide.md) covers all 29 public tools with inputs, examples, evidence limits and implementation/test links. [CLI commands](cli-developer-guide.md) covers each command, its purpose, native ownership and guarded workflows. CLI `tools list/help/call/shell` and public MCP share the 29-tool unified catalog; the 19 native evidence/help/plan/scope operations are an internal subset. Separate administrative and offline Explorer commands retain their own authority and workflow.
 
-The [CLI/MCP/Workbench parity audit](read-interface-parity.md) maps every native read, complete response/input contracts, conditional/continuity options and full versus selected exports. [Installed MCP checks](mcp-improvements-test-results.md#installed-187-acceptance--november-1-2026) record the 78-check Windows campaign, its permitted retry and the remaining navigation limits. Earlier 20-scenario investigations remain explicitly historical.
+The [CLI/MCP/Workbench parity audit](read-interface-parity.md) maps every native read, complete response/input contracts, conditional/continuity options and full versus selected exports. [Installed MCP checks](history/mcp-improvements-test-results.md#installed-187-acceptance--november-1-2026) record the 78-check Windows campaign, its permitted retry and the remaining navigation limits. Earlier 20-scenario investigations remain explicitly historical.
 
 [Release records](releases/README.md) retains the consolidated 1.8.7 notes and dated development candidates. The [release workflow](release-workflow.md) describes exact-main CI, native signing, Marketplace promotion and published-output verification.
 
@@ -174,7 +180,7 @@ Workbench opens once after successful trusted setup. Its compact header provides
 
 See [process counts, launcher overhead and ownership](process-model.md) for why one editor window can show multiple AIRK processes and how to distinguish live connections from lifecycle failures.
 
-The [startup and tool optimization plan](optimizations.md) records the 1.7.6 status-timeout reproduction, cache/read inventories and return-preparation reviews of all 28 public MCP tools. Its phased execution ledger targets **1.8.0** on `feat/optimizations`, with local test/review/commit gates and AIRK/BigDotNetProject corpus comparisons. The target private-owner model moves deep integrity checks to publication and bounded maintenance; a final human-review section covers data reduction. Consult the ledger for implemented work; proposed targets are not performance guarantees.
+The [startup and tool optimization plan](history/optimizations.md) records the 1.7.6 status-timeout reproduction, cache/read inventories and return-preparation reviews of all 28 public MCP tools. Its phased execution ledger targets **1.8.0** on `feat/optimizations`, with local test/review/commit gates and AIRK/BigDotNetProject corpus comparisons. The target private-owner model moves deep integrity checks to publication and bounded maintenance; a final human-review section covers data reduction. Consult the ledger for implemented work; proposed targets are not performance guarantees.
 
 The historical 1.6.4 catalog exposed 27 tools; the current catalog has 29. In the unpublished 1.8.14 implementation, CLI `tools list/help/call/shell` and public HTTPS share this catalog. `status` is a lightweight readiness check; `diagnostics` provides detailed runtime, job and watcher observations. Cold MCP verification survives individual status timeouts, so later polls reuse the same authenticated setup. CLI request-epoch preparation uses a bounded wait for explicit busy/uncertain registry responses and retains failure codes. macOS inference shutdown releases the owned ONNX environment after sessions drain, before native library cleanup. Agent connections follow their configured source folders across index replacement. Explorer bounds status polling, keeps local log actions responsive and reconciles uncertain requests internally without replaying them. Installation migrates registered historical default index roots to `index-v1`, preserving publications and settings; custom roots stay in place. See the [1.6.4 release notes](releases/release-1.6.4.md).
 
@@ -194,7 +200,7 @@ Published 1.6.4 uses [one unified MCP connection](unified-mcp.md), with 27 disti
 
 The [1.5.9 compatibility record](releases/release-1.5.9.md) covers discovery/fallback and independent simultaneous agent connections. The [1.5.8 update lifecycle record](releases/release-1.5.8.md) describes the single-action reload notice, explicit runtime installation stages and quiet success. [1.5.7](releases/release-1.5.7.md) retains its original candidate validation.
 
-Published release: **1.7.6**. Management uses horizontal tabs, captured diagnostic report open/copy/save and full retained service log export. Completed runtime setup reopens quietly. Recovery checks the unfinished runtime marker, resumes outstanding source work after successful recovery and preserves failure budgets across new source hints; see the [1.5.7 development record](releases/release-1.5.7.md), [index management](index-management.md) and [automatic indexing recovery](index-self-healing.md). The [original recovery proposal](index-self-healing-proposal.md), [1.5.6 record](releases/release-1.5.6.md), [1.5.5 record](releases/release-1.5.5.md), [published 1.5.4 record](releases/release-1.5.4.md) and earlier records retain their original design, evidence and publication scope.
+Published release: **1.7.6**. Management uses horizontal tabs, captured diagnostic report open/copy/save and full retained service log export. Completed runtime setup reopens quietly. Recovery checks the unfinished runtime marker, resumes outstanding source work after successful recovery and preserves failure budgets across new source hints; see the [1.5.7 development record](releases/release-1.5.7.md), [index management](index-management.md) and [automatic indexing recovery](index-self-healing.md). The [original recovery proposal](history/index-self-healing-proposal.md), [1.5.6 record](releases/release-1.5.6.md), [1.5.5 record](releases/release-1.5.5.md), [published 1.5.4 record](releases/release-1.5.4.md) and earlier records retain their original design, evidence and publication scope.
 
 The 1.5.0 local Explorer candidate includes fourteen Assistance tools, paired project setup, a unified offline Help search, four role guides, purpose/format-based indexing guidance and About/community links. See [the extension guide](vscode-extension.md), [implementation receipts](explorer/code-review-action-plan.md), [role guidance](../packages/vscode/src/explorerHelp/role-developer.md), [indexing choices](../packages/vscode/src/explorerHelp/indexing-choices.md) and [document types](../packages/vscode/src/explorerHelp/document-types.md). These articles and the native engine guidance are also available directly in Explorer Help and through Assistance help tools.
 
@@ -204,7 +210,7 @@ The historical 1.4.4 follow-up corrects Unix cleanup ordering for naturally exit
 
 1.4.4 also creates staged Windows runtime directories with explicit current-user ownership and owner-only access, including nested payload directories, so elevated installations satisfy the same strict ownership checks. Installed macOS runtime validation, self-test and retirement read the complete app payload from its outer root. Cold service starts coordinate registration-metadata setup before source watching.
 
-1.4.4 scales WAL/shared-memory allowances with admitted database capacity, preserves preceding-budget reads during recovery, and sizes growth using logical SQLite pages. See the [release record](releases/release-1.4.4.md) and [reliability review, including Turso and other embedded engines](storage-reliability.md).
+1.4.4 scales WAL/shared-memory allowances with admitted database capacity, preserves preceding-budget reads during recovery, and sizes growth using logical SQLite pages. See the [release record](releases/release-1.4.4.md) and [reliability review, including Turso and other embedded engines](history/storage-reliability.md).
 
 Installation and upgrades now display a VS Code progress notification with the current stage: version and payload checks, staging, native activation, agent connection updates, workspace setup and cleanup. Progress uses actual stages without an invented percentage. On Windows and Linux, an admitted upgrade hard-stops verified preceding AIRK processes and disconnects their clients; success and failure remain explicit. VS Code owns the earlier VSIX installation UI, before AIRK can activate.
 
@@ -234,7 +240,7 @@ integration; external terminal applications may need restarting.
 
 **AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents**
 
-The **1.4.4 release** corrects WAL admission and logical database sizing. Earlier 1.4.0/1.4.1/1.4.2 qualification remains historical. Start with the [historical 1.4.4 release record](releases/release-1.4.4.md), [service plan](airkservice-architecture.md), [completion checklist](service-implementation-checklist.md), [project setup](service-project-setup.md) and [client adapters](service-client-adapters.md). That historical record did not qualify native Mac or the complete installed-platform/signing/policy matrix; current P6 evidence is recorded in the implementation ledger.
+The **1.4.4 release** corrects WAL admission and logical database sizing. Earlier 1.4.0/1.4.1/1.4.2 qualification remains historical. Start with the [historical 1.4.4 release record](releases/release-1.4.4.md), [service plan](history/airkservice-architecture.md), [completion checklist](history/service-implementation-checklist.md), [project setup](service-project-setup.md) and [client adapters](service-client-adapters.md). That historical record did not qualify native Mac or the complete installed-platform/signing/policy matrix; current P6 evidence is recorded in the implementation ledger.
 
 The 1.3.x/1.2.x release records and former direct-helper/window-scheduler guides are historical references. They do not describe the 1.4 default lifecycle or authorize opening legacy stores through the service. Native and extension source/lockfile versions are synchronized at **1.8.16 for the local upgrade correction**. Earlier tested builds retain their original identity. Packaging, manual acceptance, later promotion and publication require their own evidence.
 
@@ -246,7 +252,7 @@ The [Windows build/editor guide](windows-local-build.md) describes pair builds, 
 - [Historical unpublished 1.6.1–1.6.3 candidate evidence](releases/release-1.6.3.md)
 - [Architecture and code boundaries](architecture.md)
 - [AIRK Explorer design inputs and approved 1.5.0 design](explorer/README.md): historical design records for the shipped workbench. Current native evidence and optional Explorer assistance share the [unified MCP endpoint](unified-mcp.md).
-- [AIRK 1.4.0 local service architecture and implementation plan](airkservice-architecture.md)
+- [AIRK 1.4.0 local service architecture and implementation plan](history/airkservice-architecture.md)
 - [1.5.9 MCP compatibility record](releases/release-1.5.9.md)
 - [1.5.8 update and management record](releases/release-1.5.8.md)
 - [Earlier 1.5.6 development record](releases/release-1.5.6.md)
@@ -256,22 +262,22 @@ The [Windows build/editor guide](windows-local-build.md) describes pair builds, 
 - [1.5.0 Explorer release record](releases/release-1.5.0.md)
 - [Previous 1.4.4 release record](releases/release-1.4.4.md)
 - [Historical 1.4.3 storage-recovery candidate](releases/release-1.4.3.md)
-- [Storage reliability and embedded engine review](storage-reliability.md)
+- [Storage reliability and embedded engine review](history/storage-reliability.md)
 - [Historical 1.4.2 resource-policy candidate](releases/release-1.4.2.md)
 - [Historical 1.4.1 upgrade candidate](releases/release-1.4.1.md)
 - [Versioning from local install through CI and publication](versioning.md)
 - [Historical 1.4.0 candidate and qualification limits](releases/release-1.4.0.md)
 - [Offline service installation, resumable activation, managed payloads and startup ownership](service-installation.md) Shutdown ownership checks also cover damaged payload files, and initialization receipts prevent silent registry replacement after control loss.
 - [Reviewed runtime upgrades, rollback, saved activation and version pins](service-runtime-transitions.md)
-- [Mac signed service bundle, optional login ownership and qualification limits](service-macos-login.md)
+- [Mac signed service bundle, optional login ownership and qualification limits](history/service-macos-login.md)
 - [Reviewed project setup, reserved storage and stable-launcher MCP bindings](service-project-setup.md)
 - [Explicit legacy agent-entry review, startup removal and old derived-file retirement](service-legacy-transition.md)
 - [Project removal, automatic cleanup and historical retirement contracts](service-project-retirement.md)
 - [Direct service client adapters and durable CLI request recovery](service-client-adapters.md)
 - [Direct usage/settings reads, scan-limit reset and guarded project management](service-native-management.md)
-- [Default-cutover development qualification and remaining gates](service-cutover-qualification.md)
-- [Service implementation completion checklist](service-implementation-checklist.md)
-- [Complete service-plan requirements review and qualification boundaries](service-requirements-review.md)
+- [Default-cutover development qualification and remaining gates](history/service-cutover-qualification.md)
+- [Service implementation completion checklist](history/service-implementation-checklist.md)
+- [Complete service-plan requirements review and qualification boundaries](history/service-requirements-review.md)
 - [Service publication, admitted sidecar lifetimes and bounded readers](service-publication.md)
 - [Service worker ownership, source/semantic phases and durable continuations](service-jobs.md)
 - [Guarded service project configuration, bounded results and uncertain-outcome recovery](service-configuration.md)
@@ -292,26 +298,26 @@ The [Windows build/editor guide](windows-local-build.md) describes pair builds, 
 - [Fenced cached service source freshness](service-freshness.md) Includes unavailable-source reasons and retained reads.
 - [Service-owned saved-source watching and reconciliation](service-source-watching.md)
 - [Shared embedding runtime, global offline model/calibration inputs and resource bounds](service-embedding.md)
-- [October 22 service publication mechanism spike](service-publication-spike.md)
-- [Historical architecture v2 implementation plan](architecture-v2.md)
-- [Proposed change tracing and bounded development indexes](change-tracing-plan.md)
+- [October 22 service publication mechanism spike](history/service-publication-spike.md)
+- [Historical architecture v2 implementation plan](history/architecture-v2.md)
+- [Proposed change tracing and bounded development indexes](history/change-tracing-plan.md)
 - [Decision 001: focused local retrieval](decisions/001-local-retrieval-kernel.md)
 - [Design inspiration and independent implementation](inspiration.md)
 - [Implemented format support](formats.md)
 - [Ingestion limits, machine sizing and index detail](ingestion-limits.md)
 - [Per-collection extraction policy](extraction-policy.md)
 - [Measured scale and performance qualification](scale-qualification.md)
-- [October 21 indexing feedback review, implementation and measurement](indexing-speed-review-2026-10-21.md)
-- [October 21 follow-up: durable rebuilds, exact completion reports and guarded lexical cache](indexing-follow-up-2026-10-21.md)
-- [Historical 1.2 indexing optimization and qualification record](indexingenhancements.md)
-- [Current-index sharding, Tantivy-to-FTS5 rationale and storage alternatives](index-sharding-review.md)
+- [October 21 indexing feedback review, implementation and measurement](history/indexing-speed-review-2026-10-21.md)
+- [October 21 follow-up: durable rebuilds, exact completion reports and guarded lexical cache](history/indexing-follow-up-2026-10-21.md)
+- [Historical 1.2 indexing optimization and qualification record](history/indexingenhancements.md)
+- [Current-index sharding, Tantivy-to-FTS5 rationale and storage alternatives](history/index-sharding-review.md)
 - [Document requirements, dates and design indexing](document-indexing.md)
 - [Code-indexing recommendations and optional semantic-provider review](code-indexing-options.md)
 - [Implemented SQLite code facts, relationships and SCIP imports](code-facts-and-relationships.md)
 - [Collections and selected DiskANN architecture](collections.md)
 - [Shared storage quotas and reservation limits](storage-quotas.md)
 - [Current-object cleanup and retired history controls](retention.md)
-- [Historical v2 design: content and checkpoints, not available in 1.2](v2-history-controls.md)
+- [Historical v2 design: content and checkpoints, not available in 1.2](history/v2-history-controls.md)
 - [Transactional storage relocation and recovery](storage-relocation.md)
 - [Additional source folders and revision-bound aliases](source-roots.md)
 - [Explicit local model assets and vector/hybrid retrieval](local-models.md)
@@ -323,9 +329,9 @@ The [Windows build/editor guide](windows-local-build.md) describes pair builds, 
 - [1.3.2 empty-index progressive publication fix and validation](releases/release-1.3.2.md)
 - [1.3.0 changes and qualification limits](releases/release-1.3.0.md)
 - [Historical 1.2.5 local candidate and dated validation](releases/release-1.2.5.md)
-- [MCP tool retirement in 1.3.0](unreleased-mcp-tool-retirement.md)
+- [MCP tool retirement in 1.3.0](history/unreleased-mcp-tool-retirement.md)
 - [Request execution, bounded admission and verification costs](request-execution.md)
-- [Code review findings and 1.1.4 implementation record](airkimprovements.md)
+- [Code review findings and 1.1.4 implementation record](history/airkimprovements.md)
 - [Source, parser and provider hardening](ingest-hardening.md)
 - [Resumable inventory/fact discovery and compact outlines](discovery.md)
 - [Coding-agent setup compatibility research](agent-integration.md)
@@ -336,9 +342,9 @@ The [Windows build/editor guide](windows-local-build.md) describes pair builds, 
 - [AIRK 1.9.0 implementation ledger — phase status, baseline identities and observed validation](research/implementation-v190.md)
 - [Projects, shared indexes and cross-project queries — feature design and upgrade path, 2 November 2026](research/cross-project-indexing.md)
 - [Google Antigravity manual MCP setup](antigravity-mcp.md)
-- [Coding-agent tool alignment and online documentation review](agent-tool-alignment.md)
-- [Agent Lean index modes and MCP efficiency plan](mcp-prioritization.md)
-- [2026-11-01 agent-side MCP investigation: query log, admission, ranking and tool-description recommendations](mcp-recommendations.md)
+- [Coding-agent tool alignment and online documentation review](history/agent-tool-alignment.md)
+- [Agent Lean index modes and MCP efficiency plan](history/mcp-prioritization.md)
+- [2026-11-01 agent-side MCP investigation: query log, admission, ranking and tool-description recommendations](history/mcp-recommendations.md)
 - [1.2.4 diagnostics, structured contention retries, helper identity and bounded batch recovery](releases/release-1.2.4.md)
 - [1.2.3 Agent Lean default and indexing fix](releases/release-1.2.3.md)
 - [1.2.2 semantic indexing fix](releases/release-1.2.2.md)
@@ -346,7 +352,7 @@ The [Windows build/editor guide](windows-local-build.md) describes pair builds, 
 - [1.2.0 current-index, Agent Lean and compression behavior](releases/release-1.2.0.md)
 - [Workspace indexing coverage and clickable footer](index-coverage.md)
 - [Native VS Code extension and limits](vscode-extension.md)
-- [Extension listing content, agent integration copy and illustrations](extension-content.md)
+- [Extension listing content, agent integration copy and illustrations](history/extension-content.md)
 - [1.0.0 stable release notes and publication checklist](releases/release-1.0.0.md)
 - [Sidebar PNG renderings](ui/README.md)
 - [Usage & Savings PNG previews for 1.1.3](ui/usage-reporting.md)
@@ -358,7 +364,7 @@ The [Windows build/editor guide](windows-local-build.md) describes pair builds, 
 - [1.1.1 implementation and qualification: dashboard, storage and recovery](releases/release-1.1.1.md)
 - [1.1.0 implementation and qualification: workstation sizing](releases/release-1.1.0.md)
 - [Historical 0.1.0 release review and test checklist](releases/release-checklist-0.1.0.md)
-- [0.1.0 implementation review and remaining roadmap work](review-0.1.0.md)
+- [0.1.0 implementation review and remaining roadmap work](history/review-0.1.0.md)
 - [Main branch protection and manual extension publication](release-workflow.md)
 - [Build and review Windows app/extension locally](windows-local-build.md)
 - [Actual Explorer hot-update, singleton and dismissal qualification](reviews/explorer-hot-update-qualification.md)
@@ -367,8 +373,8 @@ The [Windows build/editor guide](windows-local-build.md) describes pair builds, 
 - [Operations and recovery](operations.md)
 - [Native macOS build and release instructions](macos-build.md)
 - [Implementation roadmap](roadmap.md)
-- [Language popularity and remaining native adapter gaps — 27 October 2026 research](language-gaps.html)
-- [Observed validation and historical receipts](validation.md)
+- [Language popularity and remaining native adapter gaps — 27 October 2026 research](history/language-gaps.html)
+- [Observed validation and historical receipts](history/validation.md)
 - [Local usage, performance and estimated context reduction](usage-reporting.md)
 
 Contributor guidance and offline-first bootstrap: [CONTRIBUTING.md](../CONTRIBUTING.md).

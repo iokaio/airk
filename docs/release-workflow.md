@@ -74,7 +74,7 @@ The **native-signing** and **github-releases** environments must allow only the 
 
 Only signing and Pages deployment jobs receive OIDC permission, and only the release publishing job receives repository content write permission. The website deployment receives Pages write permission. Neither ordinary PR CI nor the build jobs receive signing credentials. Release assembly and contract tests require Python 3.11+, matching the pinned hosted Python.
 
-GitHub documents [release creation and draft uploads](https://cli.github.com/manual/gh_release_create). Review the installed editor, supported host matrix and dependency notices for this candidate alongside the [1.2 qualification record](indexingenhancements.md#final-12-qualification). A successful workflow establishes its recorded checks, not completion of every manual review.
+GitHub documents [release creation and draft uploads](https://cli.github.com/manual/gh_release_create). Review the installed editor, supported host matrix and dependency notices for this candidate alongside the [1.2 qualification record](history/indexingenhancements.md#final-12-qualification). A successful workflow establishes its recorded checks, not completion of every manual review.
 
 ## Pinned 1.4.4 release-tool repair
 
@@ -178,7 +178,7 @@ preflight record, rerun all of these inexpensive jobs with the same signed
 producer instead of starting another native build or accepting a foreign record.
 Identity-only verification remains separate and needs no signed producer.
 
-Ordinary CI, local packaging and release dispatchers default to stable packages. Preview packaging remains an explicit option for a distinct future preview version; do not publish the same version in both channels. The source version/display name are never silently edited by a publishing job; review them before selecting a channel. See the [1.5.5 release notes](releases/release-1.5.5.md); the [1.2 qualification record](indexingenhancements.md#final-12-qualification) remains historical.
+Ordinary CI, local packaging and release dispatchers default to stable packages. Preview packaging remains an explicit option for a distinct future preview version; do not publish the same version in both channels. The source version/display name are never silently edited by a publishing job; review them before selecting a channel. See the [1.5.5 release notes](releases/release-1.5.5.md); the [1.2 qualification record](history/indexingenhancements.md#final-12-qualification) remains historical.
 
 ## Configure publication once
 

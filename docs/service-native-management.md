@@ -1,6 +1,6 @@
 # Native project management clients
 
-Current 1.4 development guidance. Final packaging, platform qualification and release review remain open in the [completion checklist](service-implementation-checklist.md). No service VSIX has been built.
+Current 1.4 development guidance. Final packaging, platform qualification and release review remain open in the [completion checklist](history/service-implementation-checklist.md). No service VSIX has been built.
 
 Reports and settings travel directly to the registered project worker. The broker carries identity, admission and job metadata. The MCP inventory remains sixteen read-only evidence tools; native management reads add no hidden tools or usage observations for panel refreshes.
 

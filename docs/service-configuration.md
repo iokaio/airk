@@ -1,6 +1,6 @@
 # Guarded project configuration
 
-This is the implemented development contract for the [1.4 service plan](airkservice-architecture.md). Native and extension versions are 1.4.0. These controls do not qualify an installed editor or release a VSIX.
+This is the implemented development contract for the [1.4 service plan](history/airkservice-architecture.md). Native and extension versions are 1.4.0. These controls do not qualify an installed editor or release a VSIX.
 
 The trusted Service Console's **Project settings** action supports vectors, extraction detail, semantic selection rules, additional source roots, explicit offline custom-model selection, explicit return to the bundled model, usage recording policy and local tokenizer calibration. Inspect the project first. Host-owned pickers and dialogs collect the choices; webview messages carry only a fixed action and a visible project identity. Trust is checked again after each asynchronous preparation step.
 

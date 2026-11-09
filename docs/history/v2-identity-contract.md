@@ -1,9 +1,9 @@
 # V2 identity and change contract 1
 
-> Historical 1.1 implementation record. AIRK 1.2 production uses the [single-current-index contract](current-index-runtime.md). Retained historical reads, checkpoint/retention administration and receipt-backed generations below are not current capabilities. Old primitive storage tests remain separate from production routing.
+> Historical 1.1 implementation record. AIRK 1.2 production uses the [single-current-index contract](../current-index-runtime.md). Retained historical reads, checkpoint/retention administration and receipt-backed generations below are not current capabilities. Old primitive storage tests remain separate from production routing.
 
 
-These pure primitives live in [identity.rs](../crates/airk-core/src/identity.rs), [changes.rs](../crates/airk-core/src/changes.rs) and [continuity.rs](../crates/airk-core/src/continuity.rs). Kernel/store implement allocation, reconciliation and publication. The [publication contract](v2-publication-contract.md) defines activation and legacy compatibility.
+These pure primitives live in [identity.rs](../../crates/airk-core/src/identity.rs), [changes.rs](../../crates/airk-core/src/changes.rs) and [continuity.rs](../../crates/airk-core/src/continuity.rs). Kernel/store implement allocation, reconciliation and publication. The [publication contract](v2-publication-contract.md) defines activation and legacy compatibility.
 
 The active versions are independent:
 
@@ -57,7 +57,7 @@ Binding validation rejects changed target/filter/baseline, future change positio
 
 ## Neutral embedding cache contract
 
-[embedding.rs](../crates/airk-core/src/embedding.rs) defines contract version 1 without inference or storage activation. `EmbeddingDescriptor` binds full immutable model assets, tokenizer assets/options, preprocessing, pooling, normalization and inference/runtime/options through independently supplied SHA256 digests, plus dimensions. Implementations must digest complete canonical settings and referenced bytes; a display name, file path or model name is insufficient. An absent stage still has an explicit digest for its versioned no-op specification. Descriptor identity uses fixed binary field ordering and domain `embedding-descriptor/1`.
+[embedding.rs](../../crates/airk-core/src/embedding.rs) defines contract version 1 without inference or storage activation. `EmbeddingDescriptor` binds full immutable model assets, tokenizer assets/options, preprocessing, pooling, normalization and inference/runtime/options through independently supplied SHA256 digests, plus dimensions. Implementations must digest complete canonical settings and referenced bytes; a display name, file path or model name is insufficient. An absent stage still has an explicit digest for its versioned no-op specification. Descriptor identity uses fixed binary field ordering and domain `embedding-descriptor/1`.
 
 `embedding_key` hashes the descriptor identity and exact model input bytes under `embedding-input/1`. Input means final chunk formatting/prefix/context bytes before tokenization, not merely source text or a source digest. Inputs are at most 4 MiB; dimensions are 1 through 2048, matching current retrieval ceilings. `CachedEmbedding` binds the key and vector checksum. Checksum domain `embedding-vector/1` hashes key plus IEEE754 f32 bits in big-endian order. Validation rejects wrong keys/versions/dimensions, nonfinite values, values beyond the existing retrieval magnitude bound of `1e10`, and changed vector checksums. JSON decoding has a 128 KiB pre-deserialization bound, then complete validation; adapters using another encoding must enforce an equivalent bounded read. Signed zero bits remain distinct; validation does not silently normalize vectors.
 

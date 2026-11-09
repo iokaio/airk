@@ -33,7 +33,7 @@ Both packages contain the lightweight main and inference helper under
 to the stable launcher location. Copying the app's main image after sealing the
 outer app is not the supported standalone-launcher path. The helper and its
 library remain in the approved app layout; non-code ONNX notices live under
-`Contents/Resources/onnxruntime`. See [Mac login and ownership](../service-macos-login.md).
+`Contents/Resources/onnxruntime`. See [Mac login and ownership](../history/service-macos-login.md).
 
 ## Build and exercise a local candidate
 

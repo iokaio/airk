@@ -4,13 +4,13 @@ Phase 0 inventory, 14 October 2026. Prerequisite: schema 3 and `native-facts/7`.
 
 ## Source evidence
 
-**S** is [syntax.rs](../crates/airk-ingest/src/syntax.rs): `profile` is the exhaustive grammar selection table; `analyze`, `call_kind`, `call_target`, `code_evidence` and `symbol_id` define bounded facts and identities. **D** is [documents.rs](../crates/airk-ingest/src/documents.rs): `extract` is the exhaustive document/format dispatch; `xml_facts`, `line_facts` and `delimited_facts` supply structural adapters. **P** is [prose.rs](../crates/airk-ingest/src/prose.rs), [tables.rs](../crates/airk-ingest/src/tables.rs) and [spreadsheets.rs](../crates/airk-ingest/src/spreadsheets.rs).
+**S** is [syntax.rs](../../crates/airk-ingest/src/syntax.rs): `profile` is the exhaustive grammar selection table; `analyze`, `call_kind`, `call_target`, `code_evidence` and `symbol_id` define bounded facts and identities. **D** is [documents.rs](../../crates/airk-ingest/src/documents.rs): `extract` is the exhaustive document/format dispatch; `xml_facts`, `line_facts` and `delimited_facts` supply structural adapters. **P** is [prose.rs](../../crates/airk-ingest/src/prose.rs), [tables.rs](../../crates/airk-ingest/src/tables.rs) and [spreadsheets.rs](../../crates/airk-ingest/src/spreadsheets.rs).
 
-[lib.rs](../crates/airk-ingest/src/lib.rs) reads/hashes sources, reuses same-path hashes under the global extractor version, and partitions source text into 40-line chunks. [inventory.rs](../crates/airk-ingest/src/inventory.rs) owns coverage discovery. Current selection lowercases ordinary extensions; there are no effective profile overrides, path-free native payloads, composite maps or continuity handles. Syntax IDs contain path, byte bounds and node kind. Code producer metadata uses `native-facts/4`, separately from global extraction cache version `native-facts/7`; migration must preserve or explicitly version both identities.
+[lib.rs](../../crates/airk-ingest/src/lib.rs) reads/hashes sources, reuses same-path hashes under the global extractor version, and partitions source text into 40-line chunks. [inventory.rs](../../crates/airk-ingest/src/inventory.rs) owns coverage discovery. Current selection lowercases ordinary extensions; there are no effective profile overrides, path-free native payloads, composite maps or continuity handles. Syntax IDs contain path, byte bounds and node kind. Code producer metadata uses `native-facts/4`, separately from global extraction cache version `native-facts/7`; migration must preserve or explicitly version both identities.
 
 ## Existing adapters to preserve
 
-There are 23 grammar branches from 22 grammar packages: TS and TSX are separate languages in one package. [Formats](formats.md) remains the public selected-fact/suffix matrix.
+There are 23 grammar branches from 22 grammar packages: TS and TSX are separate languages in one package. [Formats](../formats.md) remains the public selected-fact/suffix matrix.
 
 | Family | Current implementation | Boundary |
 |---|---|---|
@@ -30,13 +30,13 @@ There are 23 grammar branches from 22 grammar packages: TS and TSX are separate 
 | PPTX | D: presentation-order slides/title context | No notes/charts/image extraction |
 | Other UTF-8 | D/S/P: lexical chunks and conservative prose | Not language admission; binary/NUL/invalid UTF-8 rejected |
 
-[semantic.rs](../crates/airk-ingest/src/semantic.rs), [providers.rs](../crates/airk-ingest/src/providers.rs), [providers_lsp.rs](../crates/airk-ingest/src/providers/lsp.rs), [provider_process.rs](../crates/airk-ingest/src/provider_process.rs) and [ocr.rs](../crates/airk-ingest/src/ocr.rs) retain separate explicit SCIP/LSP/Ctags/OCR producer domains and source/build/model binding. They are not native resolution or automatic fallback.
+[semantic.rs](../../crates/airk-ingest/src/semantic.rs), [providers.rs](../../crates/airk-ingest/src/providers.rs), [providers_lsp.rs](../../crates/airk-ingest/src/providers/lsp.rs), [provider_process.rs](../../crates/airk-ingest/src/provider_process.rs) and [ocr.rs](../../crates/airk-ingest/src/ocr.rs) retain separate explicit SCIP/LSP/Ctags/OCR producer domains and source/build/model binding. They are not native resolution or automatic fallback.
 
-Syntax visits at most 500,000 nodes and emits at most 10,000 facts per file. Error-containing declarations are suppressed; tree errors report partial syntax. Preserve all [ingestion](ingestion-limits.md) and [format](formats.md) limits, including 32 MiB extracted text and the 4 MiB structured-source parsing budget, document-unit caps, per-file omission versus pass failure, and original page/block/sheet/slide locations. New child regions must share host budgets.
+Syntax visits at most 500,000 nodes and emits at most 10,000 facts per file. Error-containing declarations are suppressed; tree errors report partial syntax. Preserve all [ingestion](../ingestion-limits.md) and [format](../formats.md) limits, including 32 MiB extracted text and the 4 MiB structured-source parsing budget, document-unit caps, per-file omission versus pass failure, and original page/block/sheet/slide locations. New child regions must share host budgets.
 
 ## Dependency and legal baseline
 
-[Ingest Cargo.toml](../crates/airk-ingest/Cargo.toml) declares direct pins; [Cargo.lock](../Cargo.lock) records exact transitive versions/checksums. Native grammars compile into the binary; there are no runtime grammar downloads.
+[Ingest Cargo.toml](../../crates/airk-ingest/Cargo.toml) declares direct pins; [Cargo.lock](../../Cargo.lock) records exact transitive versions/checksums. Native grammars compile into the binary; there are no runtime grammar downloads.
 
 | Dependency | Direct pin/constraint |
 |---|---|
@@ -54,7 +54,7 @@ Syntax visits at most 500,000 nodes and emits at most 10,000 facts per file. Err
 | scip / protobuf / url / tempfile | Workspace constraints: producer formats/URIs/process staging |
 | libc / windows-sys | Workspace target constraints: native process isolation/Windows Job Objects |
 
-[Third-party notices](../THIRD_PARTY_NOTICES.md), [pinned legal sources](../third_party/licenses/sources.json) and [license-notices.py](../scripts/license-notices.py) record package/version/license/source evidence and copied legal texts/SBOM. PDF-Extract, Adobe-CMap-Parser, Type1-Encoding-Parser and htmlescape remain flagged for release review because separate legal texts are unavailable; do not invent replacements. Existing legal records are not release approval.
+[Third-party notices](../../THIRD_PARTY_NOTICES.md), [pinned legal sources](../../third_party/licenses/sources.json) and [license-notices.py](../../scripts/license-notices.py) record package/version/license/source evidence and copied legal texts/SBOM. PDF-Extract, Adobe-CMap-Parser, Type1-Encoding-Parser and htmlescape remain flagged for release review because separate legal texts are unavailable; do not invent replacements. Existing legal records are not release approval.
 
 No new dependency is selected here. Each new grammar needs primary upstream/license/scanner/build evidence, exact pin, Tree-sitter ABI admission and native architecture tests under plan section 5.4. Existing runtime-loading tests do not establish every architecture or dialect. No maintenance-status or upstream-compatibility claim is inferred without that work.
 

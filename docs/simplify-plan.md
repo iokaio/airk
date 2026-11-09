@@ -893,6 +893,11 @@ two tools.
 
 **D6. Documentation archive** and a generated `docs/status.md`.
 
+Step D6a (archive of top-level dated records into `docs/history/`) is
+implemented by `scripts/dev/d6_archive_docs.py` and was reviewed on 9 November 2026. Step D6b
+(`docs/reviews/`, `docs/issue-analysis/`, `docs/explorer/`) and the generated
+`docs/status.md` are not started.
+
 **D7. Commit and branch authorization.** The checkpoint commit `9337822`
 already exists. Separately authorize:
 

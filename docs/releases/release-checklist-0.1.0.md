@@ -140,7 +140,7 @@ For each client, record exact version, configuration scope, startup/tool-list/st
 
 - [ ] Confirm workspace trust prevents native execution and MCP registration until granted; revoked/changed scopes cannot expose another folder's collection.
 - [ ] Verify pause, coverage, usage, collection controls, storage selection and guided setup in light/dark themes and with keyboard navigation.
-- [ ] Review the [extension content specification](../extension-content.md), actual listing, alt text and original illustrations against implemented behavior. Add genuine sanitized screenshots from public fixtures.
+- [ ] Review the [extension content specification](../history/extension-content.md), actual listing, alt text and original illustrations against implemented behavior. Add genuine sanitized screenshots from public fixtures.
 - [ ] Verify client-specific routes against current official documentation. VS Code provider registration must not be described as configuring all agents.
 - [ ] Explain derived-state privacy and that the selected agent can send returned evidence to its provider.
 

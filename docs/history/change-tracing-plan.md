@@ -8,9 +8,9 @@ The supplied versioning/lineage proposal provides the starting direction. This p
 
 ## 1. Architectural direction
 
-Keep immutable published revisions, atomic pointer commits, content-addressed retained objects, native extraction, Tantivy, exact-fact SQLite and the selected disk-backed DiskANN implementation. Preserve the [crate dependency direction](architecture.md), one host per user/machine, independent collections and read-only source roots. No new crate, external database, cloud provider, agent orchestration or automatic model/provider invocation is required.
+Keep immutable published revisions, atomic pointer commits, content-addressed retained objects, native extraction, Tantivy, exact-fact SQLite and the selected disk-backed DiskANN implementation. Preserve the [crate dependency direction](../architecture.md), one host per user/machine, independent collections and read-only source roots. No new crate, external database, cloud provider, agent orchestration or automatic model/provider invocation is required.
 
-The [inspiration record](inspiration.md) describes ideas reviewed from Munarium and VCP, not imported implementations. The changes below replace AIRK's own current policies and assumptions; they do not require either reference project or access to private reference material.
+The [inspiration record](../inspiration.md) describes ideas reviewed from Munarium and VCP, not imported implementations. The changes below replace AIRK's own current policies and assumptions; they do not require either reference project or access to private reference material.
 
 | Current assumption to retire | Replacement |
 |---|---|
@@ -30,15 +30,15 @@ The following observations come from this checkout, rather than assuming every s
 
 | Component | Current behavior and implementation consequence |
 |---|---|
-| [Core contracts](../crates/airk-core/src/lib.rs) | Schema 3, extractor `native-facts/7`, compact `Snapshot` inventories and `ArtifactRef` objects. There is no publication lineage or incarnation in these contracts. |
-| [Ingest scan](../crates/airk-ingest/src/lib.rs) | Reuse compares the same path's source hash and extractor version. Sources are read and hashed even on a reuse pass. Extraction failures can omit individual files; discovery/read/pass-budget failures preserve the previous publication. Absence therefore does not necessarily mean deletion. |
-| [Kernel publication](../crates/airk-kernel/src/lib.rs) | Ordinary indexing, initialization and SCIP import publish revisions. [OCR and local provider operations](../crates/airk-kernel/src/analysis.rs) also publish. All these paths must use the new lineage finalizer. |
+| [Core contracts](../../crates/airk-core/src/lib.rs) | Schema 3, extractor `native-facts/7`, compact `Snapshot` inventories and `ArtifactRef` objects. There is no publication lineage or incarnation in these contracts. |
+| [Ingest scan](../../crates/airk-ingest/src/lib.rs) | Reuse compares the same path's source hash and extractor version. Sources are read and hashed even on a reuse pass. Extraction failures can omit individual files; discovery/read/pass-budget failures preserve the previous publication. Absence therefore does not necessarily mean deletion. |
+| [Kernel publication](../../crates/airk-kernel/src/lib.rs) | Ordinary indexing, initialization and SCIP import publish revisions. [OCR and local provider operations](../../crates/airk-kernel/src/analysis.rs) also publish. All these paths must use the new lineage finalizer. |
 | [Persistent retrieval](https://github.com/iokaio/airk/blob/f9aa5168829dc8794d241644fb8483715c2dd58a/crates/airk-retrieval/src/persistent.rs) | A build writes complete Tantivy, optional DiskANN/model, inventory and exact-fact components. Every chunk is offered to the embedding model. Revision identity hashes the engine specification and serialized inventory. |
-| [Retained objects](../crates/airk-store/src/blobs.rs) | Sources and extractions are verified content-addressed objects. Extractions contain their path; retained-object loading checks that path against the inventory. `catalog()` verifies and parses the compact inventory for each opening. |
-| [SQLite storage](../crates/airk-store/src/sqlite.rs) | Exact facts and relationships already use immutable per-generation databases and pinned reads. Add file/change indexes here; do not create an unrelated database service. |
-| [Retention](../crates/airk-store/src/retention.rs) | Explicit pruning protects active/leased generations, then marks objects from surviving inventories. Interrupted `removing-*` directories require operator recovery. There is no history-only representation. |
-| [Scheduler](../crates/airk-store/src/scheduler.rs) | A read-only status path already exposes requested/completed/running work, pause, block and failure state. Queue watermarks are not index generation numbers. |
-| [Syntax evidence](../crates/airk-ingest/src/syntax.rs) | Native symbol IDs contain path and byte offsets. [Code contracts](../crates/airk-core/src/code.rs) distinguish syntax candidates from producer assertions. Neither becomes compiler identity through change matching. |
+| [Retained objects](../../crates/airk-store/src/blobs.rs) | Sources and extractions are verified content-addressed objects. Extractions contain their path; retained-object loading checks that path against the inventory. `catalog()` verifies and parses the compact inventory for each opening. |
+| [SQLite storage](../../crates/airk-store/src/sqlite.rs) | Exact facts and relationships already use immutable per-generation databases and pinned reads. Add file/change indexes here; do not create an unrelated database service. |
+| [Retention](../../crates/airk-store/src/retention.rs) | Explicit pruning protects active/leased generations, then marks objects from surviving inventories. Interrupted `removing-*` directories require operator recovery. There is no history-only representation. |
+| [Scheduler](../../crates/airk-store/src/scheduler.rs) | A read-only status path already exposes requested/completed/running work, pause, block and failure state. Queue watermarks are not index generation numbers. |
+| [Syntax evidence](../../crates/airk-ingest/src/syntax.rs) | Native symbol IDs contain path and byte offsets. [Code contracts](../../crates/airk-core/src/code.rs) distinguish syntax candidates from producer assertions. Neither becomes compiler identity through change matching. |
 
 The quota ledger accounts for logical storage; the usage ledger records activity. Neither should become a source-history ledger. Search components are already persistent Tantivy and disk-backed DiskANN in this checkout; the legacy lexical/SQLite snapshot adapter remains compatibility machinery.
 
@@ -246,7 +246,7 @@ Implement a validated per-collection `retention.json`, visible in CLI/extension 
 
 Recent/hourly selections form a union before applying caps. Protect checkpoints, then favor the newest unpinned history. Count each history-exclusive retained object once by content-addressed identity, plus history metadata, rather than once per revision. Active/searchable dependencies remain in total quota accounting. A shared object's transition into history-only ownership can increase history bytes even with no new object. Leases/checkpoints can leave policy targets exceeded; display the reason and actual retained bytes.
 
-Automatic retention changes the documented manual-only behavior. Update [collections](collections.md), [operations](operations.md), [quotas](storage-quotas.md), extension controls and security guidance in the implementation phase that activates it. Do not silently apply a new eviction policy to existing installations. Manual mode continues to require explicit pruning; pressure in manual mode yields a useful failure, not an implicit policy change.
+Automatic retention changes the documented manual-only behavior. Update [collections](../collections.md), [operations](../operations.md), [quotas](../storage-quotas.md), extension controls and security guidance in the implementation phase that activates it. Do not silently apply a new eviction policy to existing installations. Manual mode continues to require explicit pruning; pressure in manual mode yields a useful failure, not an implicit policy change.
 
 Checkpoints are CLI/extension mutations pinning an already committed revision. They do not read Git or capture unindexed edits. Do not install hooks or services as a side effect. Checkpoint names are bounded labels, never filesystem paths. Changing policy cannot silently revoke checkpoints.
 
@@ -278,7 +278,7 @@ Persist a bounded last-maintenance summary: committed publication, demoted/remov
 
 History retains deleted content; lineage retains old paths/hashes. Add a separate preview/apply purge operation for historical content and, when requested, lineage metadata. Clearing lineage publishes a new revision with advanced completeness floors; it cannot edit an immutable inventory in place. Clearing checkpoint protection must be explicit. Active evidence and live leases remain protected, with deferred deletions reported.
 
-Purge is logical removal of unreferenced AIRK state, not secure erasure of SSD blocks, backups, old relocated roots or external copies. Removing history cannot erase a secret still present in the active indexed source. Document this in [SECURITY.md](../SECURITY.md), including the need to remove/reindex current content and address retained roots separately. Do not claim purge succeeded while protected copies remain.
+Purge is logical removal of unreferenced AIRK state, not secure erasure of SSD blocks, backups, old relocated roots or external copies. Removing history cannot erase a secret still present in the active indexed source. Document this in [SECURITY.md](../../SECURITY.md), including the need to remove/reindex current content and address retained roots separately. Do not claim purge succeeded while protected copies remain.
 
 ## 10. Publication-cost optimization
 
@@ -341,7 +341,7 @@ Cover every mutation path in the migration inventory: initialization, ordinary/f
 
 ## 13. Acceptance and measurement
 
-Use original synthetic/public fixtures, never private indexed material or reference repositories. Extend existing [kernel persistence](../crates/airk-kernel/tests/integration/persistent.rs), [streaming](../crates/airk-kernel/tests/integration/streaming.rs), [root](../crates/airk-kernel/tests/integration/roots.rs), [scheduler](../crates/airk-kernel/tests/integration/scheduler.rs) and [code graph](../crates/airk-kernel/tests/integration/code_graph.rs) tests, plus store and MCP contract tests.
+Use original synthetic/public fixtures, never private indexed material or reference repositories. Extend existing [kernel persistence](../../crates/airk-kernel/tests/integration/persistent.rs), [streaming](../../crates/airk-kernel/tests/integration/streaming.rs), [root](../../crates/airk-kernel/tests/integration/roots.rs), [scheduler](../../crates/airk-kernel/tests/integration/scheduler.rs) and [code graph](../../crates/airk-kernel/tests/integration/code_graph.rs) tests, plus store and MCP contract tests.
 
 | Area | Required evidence |
 |---|---|
@@ -354,15 +354,15 @@ Use original synthetic/public fixtures, never private indexed material or refere
 | Isolation | Same path/hash in different collections, recreated collection, restored/forked state and relocated root; no cross-scope forwarding or GC |
 | Optimization | Full versus optimized exact/lexical results, vector recall/citations, cache collision/corruption handling, model/options invalidation and parser invocation counts |
 
-Extend [scale benchmarking](../scripts/benchmark-scale.py) and [code benchmarking](../scripts/benchmark-code.py) with 200 successful small-edit publications, 300-file moves, a large branch-like replacement, mixed code/documents, repeated boilerplate, and lexical/optional local-model modes. Run within configured ingestion limits; report any selected larger profile explicitly.
+Extend [scale benchmarking](../../scripts/benchmark-scale.py) and [code benchmarking](../../scripts/benchmark-code.py) with 200 successful small-edit publications, 300-file moves, a large branch-like replacement, mixed code/documents, repeated boilerplate, and lexical/optional local-model modes. Run within configured ingestion limits; report any selected larger profile explicitly.
 
 Measure cold/warm p50/p95 read latency, publish latency, source bytes read, parser and inference calls, cache hits, component writes, logical retained/staging bytes, available process RSS/CPU/I/O and cleanup duration. Distinguish OS transfer counters from physical I/O. Report machines, corpus/fixture hashes, model/configuration, policy, measurement method and unavailable counters.
 
 Initial acceptance is structural and comparative: warm metadata lookups avoid full inventory parsing; identical embedding inputs avoid inference; compatible moved content avoids extraction; unpinned retained storage reaches a policy-bounded plateau; optimized retrieval preserves qualified results. Set absolute latency/size targets after phase 0 measurements, rather than inventing performance promises.
 
-Run paired Claude Code and Codex tasks for session resumption, edit/index/revalidate, stale-path recovery, document requirement changes and concurrent edits. Record success, tool round trips and serialized evidence bytes using [usage reporting](usage-reporting.md). Token/billing reductions require separately supplied calibrated evidence; fewer bytes alone do not prove billed savings. Record the real client versions and tool-selection behavior.
+Run paired Claude Code and Codex tasks for session resumption, edit/index/revalidate, stale-path recovery, document requirement changes and concurrent edits. Record success, tool round trips and serialized evidence bytes using [usage reporting](../usage-reporting.md). Token/billing reductions require separately supplied calibrated evidence; fewer bytes alone do not prove billed savings. Record the real client versions and tool-selection behavior.
 
-For every implementation phase, run the checks in [CONTRIBUTING.md](../CONTRIBUTING.md): workspace build, formatting, clippy, workspace tests, repository checks, license notices, Python contract tests and whitespace checks. Add extension tests when changing extension behavior and container checks where available. Qualify Windows, macOS and Linux independently, especially leases, rename/recovery and filesystem case behavior. Unsupported/network filesystems and unperformed power-loss campaigns remain unqualified.
+For every implementation phase, run the checks in [CONTRIBUTING.md](../../CONTRIBUTING.md): workspace build, formatting, clippy, workspace tests, repository checks, license notices, Python contract tests and whitespace checks. Add extension tests when changing extension behavior and container checks where available. Qualify Windows, macOS and Linux independently, especially leases, rename/recovery and filesystem case behavior. Unsupported/network filesystems and unperformed power-loss campaigns remain unqualified.
 
 ## 14. Deferred scope and completion criteria
 

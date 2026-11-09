@@ -154,7 +154,7 @@ same name or team must fail until reviewed. Do not bypass the pin during rotatio
 
 Once the workflow change is merged to `main` and environment secrets are configured, use **Actions → Signed macOS candidates → Run workflow** on `main`. A failed signing or notarization step prevents candidate upload. Download `airk-signed-native-…` and `airk-signed-vsix-…` from that run; the native manifest includes the verified signature and Apple's submission ID. A local signing result does not establish that the hosted workflow has passed.
 
-The environment, main-only deployment policy and four secrets were configured on 14 October 2026. See the [validation record](validation.md) for the accepted local Apple Silicon notarization and hosted-run limitations.
+The environment, main-only deployment policy and four secrets were configured on 14 October 2026. See the [validation record](history/validation.md) for the accepted local Apple Silicon notarization and hosted-run limitations.
 
 ## Hosted Windows signing through Azure
 

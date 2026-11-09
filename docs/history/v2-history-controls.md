@@ -1,6 +1,6 @@
 # Local history and checkpoint controls
 
-> Historical 1.1 implementation record. AIRK 1.2 production uses the [single-current-index contract](current-index-runtime.md). Retained historical reads, checkpoint/retention administration and receipt-backed generations below are not current capabilities. Old primitive storage tests remain separate from production routing.
+> Historical 1.1 implementation record. AIRK 1.2 production uses the [single-current-index contract](../current-index-runtime.md). Retained historical reads, checkpoint/retention administration and receipt-backed generations below are not current capabilities. Old primitive storage tests remain separate from production routing.
 
 
 Exact historical evidence is available through `--revision TOKEN` on CLI file-info/read-file/context/outline requests and the corresponding MCP tools' `revision` field. Responses identify the served publication, current publication, historical status and original source root. Only retained committed bytes are read; a missing revision returns `history_unavailable`, and corrupt retained bytes fail verification. Historical search and move-following are unsupported. Representation validators continue to bind the selected evidence and response shape.

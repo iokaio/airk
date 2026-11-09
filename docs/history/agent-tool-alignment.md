@@ -10,7 +10,7 @@ legacy-to-modern and modern-to-modern updates. The selected runtime, sources,
 indexes and settings remain intact. Other client formats in the
 dated matrix below remain unverified for this transport; they must not fall back
 to generating modern stdio/launcher declarations. Preserve their configuration
-and report incomplete setup. See [current setup](agent-integration.md).
+and report incomplete setup. See [current setup](../agent-integration.md).
 
 ## Common tasks and the current tools
 
@@ -29,7 +29,7 @@ and report incomplete setup. See [current setup](agent-integration.md).
 
 The sixteen tools in the unreleased source cover focused discovery and evidence tasks shared by coding agents. Editing, shell commands, builds, tests, Git operations and resolved language navigation remain the agent's existing tools. AIRK does not duplicate these. Local vector similarity and native coverage are implemented, with the model/readiness and inventory limits documented separately. A complete resolved caller graph, repository enumeration through pagination and actual provider-token accounting remain unavailable. Changes pagination does not provide repository enumeration. Those limitations apply to every client.
 
-Tool and parameter descriptions name the task, selection criteria and limits near the beginning: exact symbols versus lexical search, literal prefixes versus globs, snapshot reads versus current files, textual references versus semantic navigation, and extracted lines versus page/slide numbers. Initialization instructions describe a common workflow in fewer than 512 characters. The unreleased source retires `airk_history` after 1.2 removed retained revisions; other tool names and permissions remain. [Changes and conditional reads](changes.md) describes exact tokens, bounded validation, cursor expiry and legacy reads without tokens. [Document indexing](document-indexing.md) describes document candidates and their limits.
+Tool and parameter descriptions name the task, selection criteria and limits near the beginning: exact symbols versus lexical search, literal prefixes versus globs, snapshot reads versus current files, textual references versus semantic navigation, and extracted lines versus page/slide numbers. Initialization instructions describe a common workflow in fewer than 512 characters. The unreleased source retires `airk_history` after 1.2 removed retained revisions; other tool names and permissions remain. [Changes and conditional reads](../changes.md) describes exact tokens, bounded validation, cursor expiry and legacy reads without tokens. [Document indexing](../document-indexing.md) describes document candidates and their limits.
 
 ## Client-specific behavior to accommodate
 
@@ -55,7 +55,7 @@ These clients discover standard MCP tool definitions. Their displayed/namespaced
 
 Choose `airk_search` for conceptual discovery and `airk_code_facts`/`airk_outline` for declarations and written signatures. In Agent Lean, code/document facts default to compact records; request `compact: false` only when the richer indexed metadata is useful. Use `airk_capabilities` with an exact `adapter` for focused coverage rather than expanding the complete rich catalog. Original spans and hashes remain evidence validators; verify live source before editing.
 
-Selecting Agent Lean changes collection evidence through an explicit index publication. It does not change client tool permissions or enable missing facts. Rich Structure (`balanced`) and Search Only (`essential`) retain their stored identities. [1.2.3](releases/release-1.2.3.md) made Agent Lean the new-collection default. The later unreleased source removes the unsupported history tool; broader task-quality qualification remains separate follow-up work.
+Selecting Agent Lean changes collection evidence through an explicit index publication. It does not change client tool permissions or enable missing facts. Rich Structure (`balanced`) and Search Only (`essential`) retain their stored identities. [1.2.3](../releases/release-1.2.3.md) made Agent Lean the new-collection default. The later unreleased source removes the unsupported history tool; broader task-quality qualification remains separate follow-up work.
 
 ## Guidance and verification
 
@@ -65,4 +65,4 @@ Avoid a mandatory capabilities/status call before every request. Check them when
 
 Before claiming a client is qualified, connect it and exercise orientation, exact-definition lookup, lexical discovery, document facts, bounded context, textual usages, not-ready/error behavior and a changed generation. Check that disabled tools remain unavailable and the agent does not misinterpret coordinates or freshness. AIRK's native MCP tests and isolated VS Code extension-host smoke establish server behavior; they do not establish model tool selection or live compatibility for all clients. Local usage reports expose aggregate tool activity without retaining query/source text; paired task evaluations are needed to establish practical savings or usefulness.
 
-See [setup routes](agent-integration.md), [MCP contracts](mcp.md) and [usage reporting](usage-reporting.md) for implementation boundaries and remaining work.
+See [setup routes](../agent-integration.md), [MCP contracts](../mcp.md) and [usage reporting](../usage-reporting.md) for implementation boundaries and remaining work.

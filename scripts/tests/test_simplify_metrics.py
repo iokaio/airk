@@ -149,6 +149,35 @@ class FunctionLengths(unittest.TestCase):
         )
 
 
+class ContextSize(unittest.TestCase):
+    def test_estimates_tokens_from_bytes_and_reports_missing_files(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "CLAUDE.md").write_bytes(b"a" * 8)
+            (root / "README.md").write_bytes(b"b" * 9)
+            (root / "docs").mkdir()
+            (root / "docs" / "architecture.md").write_bytes(b"c\r\n" * 4)
+            context = METRICS.context_size(root)
+            self.assertEqual(context["files"]["CLAUDE.md"], {"bytes": 8, "estimated_tokens": 2})
+            self.assertEqual(context["files"]["README.md"], {"bytes": 9, "estimated_tokens": 3})
+            self.assertEqual(context["files"]["docs/architecture.md"], {"bytes": 12, "estimated_tokens": 3})
+            self.assertEqual(context["missing"], ["CONTRIBUTING.md"])
+            self.assertEqual((context["total_bytes"], context["estimated_tokens"]), (29, 8))
+            self.assertEqual(context["target_tokens"], 25000)
+            self.assertIn("bytes / 4", context["method"])
+
+    def test_report_includes_the_ungated_context_row(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "README.md").write_bytes(b"x" * 400)
+            report = METRICS.collect(root, history=False, harness=False)
+            self.assertEqual(report["metrics"]["context_size"]["estimated_tokens"], 100)
+            rendered = METRICS.render(report)
+            self.assertIn("Context size, estimated tokens", rendered)
+            self.assertIn("| 100 (400 bytes); missing CLAUDE.md, CONTRIBUTING.md, docs/architecture.md |", rendered)
+            self.assertIn("never pass/fail gates", rendered)
+
+
 class Cycles(unittest.TestCase):
     def test_strongly_connected_components(self):
         graph = {"a": {"b"}, "b": {"c"}, "c": {"a"}, "d": {"a"}, "e": set()}

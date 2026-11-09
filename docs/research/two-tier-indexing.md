@@ -521,7 +521,7 @@ Links refer to the reviewed worktree. Existing dated research remains historical
 [S4]: ../../crates/airk-mcp/src/lib.rs
 [S5]: ../../crates/airk-mcp/src/response.rs
 [S6]: ../extraction-policy.md
-[S7]: ../mcp-prioritization.md
+[S7]: ../history/mcp-prioritization.md
 [S8]: ../../crates/airk-ingest/src/project_schemas/manifests.rs
 [S9]: ../../crates/airk-ingest/src/prose.rs
 [S10]: ../../crates/airk-ingest/src/tables.rs

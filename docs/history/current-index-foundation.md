@@ -1,8 +1,8 @@
 # Current-index storage foundation
 
-> Historical 1.2.0 foundation record. Version 1.3.0 replaces the Tantivy adapter and its private lexical forks with FTS5 in the current SQLite transaction (format 126). See [current operation](current-index-runtime.md) and the [replacement rationale](index-sharding-review.md#decision-replace-tantivy-with-sqlite-fts5). The stage descriptions below retain their original implementation context.
+> Historical 1.2.0 foundation record. Version 1.3.0 replaces the Tantivy adapter and its private lexical forks with FTS5 in the current SQLite transaction (format 126). See [current operation](../current-index-runtime.md) and the [replacement rationale](index-sharding-review.md#decision-replace-tantivy-with-sqlite-fts5). The stage descriptions below retain their original implementation context.
 
-This records the storage foundation developed in S7 and integrated into production in S8 of the [indexing optimization plan](indexingenhancements.md). The normal kernel, CLI and MCP routes now use it. See [the current runtime contract](current-index-runtime.md) for the complete 1.2 behavior and rebuild boundary. These APIs do not read or convert an older index. Earlier format numbers below describe development steps; the adopted database format is `user_version=120`.
+This records the storage foundation developed in S7 and integrated into production in S8 of the [indexing optimization plan](indexingenhancements.md). The normal kernel, CLI and MCP routes now use it. See [the current runtime contract](../current-index-runtime.md) for the complete 1.2 behavior and rebuild boundary. These APIs do not read or convert an older index. Earlier format numbers below describe development steps; the adopted database format is `user_version=120`.
 
 ## Ownership and data
 
@@ -50,7 +50,7 @@ Every committed graph record is authenticated through a 32-level sparse Merkle t
 
 DiskANN prepares updates in a private quota-backed SQLite overlay. Base reads verify committed proofs; private dirty records have scoped checksums. Repeated neighbor writes coalesce to one final afterimage per ID. Sealing propagates only those final records through their authentication paths, bounds the streamed descriptor, and drops the base read handle. It does not buffer or copy the complete graph. Any failed mutation, read limit or panic poisons the candidate. A poisoned candidate cannot be published.
 
-The low-level default overlay ceiling is 256 MiB and one million dirty records. Production indexing selects a quota-backed capacity of one quarter of its remaining preparation allowance, up to the 4 GiB hard ceiling. Graph operations and cumulative logical reads are saturating diagnostic counters without transaction-wide cutoffs: repeated neighbor visits do not themselves grow resident memory or retained storage. Logical read counters include proof bytes and are not measurements of physical device traffic. Per-insert/search read budgets, exact record validation and quota-backed SQLite capacity remain enforced. S10 evaluates caching after this correctness baseline. See [runtime capacity](current-index-runtime.md) for coordinated file, mapping and cache allowances.
+The low-level default overlay ceiling is 256 MiB and one million dirty records. Production indexing selects a quota-backed capacity of one quarter of its remaining preparation allowance, up to the 4 GiB hard ceiling. Graph operations and cumulative logical reads are saturating diagnostic counters without transaction-wide cutoffs: repeated neighbor visits do not themselves grow resident memory or retained storage. Logical read counters include proof bytes and are not measurements of physical device traffic. Per-insert/search read budgets, exact record validation and quota-backed SQLite capacity remain enforced. S10 evaluates caching after this correctness baseline. See [runtime capacity](../current-index-runtime.md) for coordinated file, mapping and cache allowances.
 
 ## Readers, writers and recovery
 
@@ -80,7 +80,7 @@ Metadata replacement synchronizes the file and, on Unix, its parent directory. O
 
 ## S8 runtime adoption
 
-The 1.2 runtime uses authenticated per-artifact catalog and exact-key/live-occurrence mappings, incremental Tantivy commits, captured replay, admitted database growth, request-scoped readers, retained-input ownership and bounded reclamation. Historical reads, checkpoints and rollback are unsupported. Old exact tokens and cursors expire explicitly. The fresh `collections-1.2` namespace never adopts 1.1 indexes or per-collection settings; sources and externally selected workspace/storage paths remain unchanged. Implementation and qualification limits are recorded in [the runtime contract](current-index-runtime.md).
+The 1.2 runtime uses authenticated per-artifact catalog and exact-key/live-occurrence mappings, incremental Tantivy commits, captured replay, admitted database growth, request-scoped readers, retained-input ownership and bounded reclamation. Historical reads, checkpoints and rollback are unsupported. Old exact tokens and cursors expire explicitly. The fresh `collections-1.2` namespace never adopts 1.1 indexes or per-collection settings; sources and externally selected workspace/storage paths remain unchanged. Implementation and qualification limits are recorded in [the runtime contract](../current-index-runtime.md).
 
 ## Current native discovery
 

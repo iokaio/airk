@@ -6,8 +6,8 @@ changes. It is not a release record.
 
 It combines three sources:
 
-- [One AIRK](one-airk.md) and the [One AIRK completion plan](one-airk-completion-plan.md);
-- the current [architecture](architecture.md), [README](../README.md) and the
+- [One AIRK](../one-airk.md) and the [One AIRK completion plan](../one-airk-completion-plan.md);
+- the current [architecture](../architecture.md), [README](../../README.md) and the
   feature references linked below;
 - a direct reading of the source in `crates/` and `packages/vscode/`.
 
@@ -29,7 +29,7 @@ This review does the same. Each feature carries one of these labels:
 | Label | Meaning |
 | --- | --- |
 | **Implemented** | Production code and unit or integration tests exist in the working tree |
-| **Locally checked** | Also passed a recorded local gate, cited from the [implementation ledger](research/one-airk-implementation.md) or a release record |
+| **Locally checked** | Also passed a recorded local gate, cited from the [implementation ledger](../research/one-airk-implementation.md) or a release record |
 | **Unqualified** | Implemented, but installed-platform, client or release acceptance is still pending |
 | **Library only** | Implemented and tested in a crate, but not reachable from the current CLI, MCP or extension |
 | **Planned / partial** | Designed or scaffolded, with limits the code itself declares |
@@ -62,7 +62,7 @@ Its scope is limited on purpose, and that limit is part of the design:
   source files. Discovery, extraction, verification and every provider path read
   source files without following links and never write to them. The LSP client
   even refuses `workspace/applyEdit`
-  ([`providers_lsp.rs`](../crates/airk-ingest/src/providers/lsp.rs)).
+  ([`providers_lsp.rs`](../../crates/airk-ingest/src/providers/lsp.rs)).
 - **No claim of understanding.** Calls, references and imports are reported as
   *written candidates*. AIRK does not claim resolved references, a complete
   understanding of any language, or semantic search in the
@@ -109,7 +109,7 @@ This section describes AIRK's central contract. Most later features depend on it
 
 Every published index state has a `RevisionToken` of the form
 `airk-r1:<incarnation>:<generation>:<sha256>`
-([`identity.rs:76`](../crates/airk-core/src/identity.rs)).
+([`identity.rs:76`](../../crates/airk-core/src/identity.rs)).
 
 - **Parsing is strict.** A token is at most 126 bytes, and the generation must be
   written in canonical decimal.
@@ -123,7 +123,7 @@ Every published index state has a `RevisionToken` of the form
   lexical commit, graph head) hashes to a `CurrentToken`.
 - **Stale tokens fail.** A read that names an old token is refused with "current
   revision expired; repeat the request"
-  ([`current/read.rs`](../crates/airk-store/src/current/read.rs)). There is no
+  ([`current/read.rs`](../../crates/airk-store/src/current/read.rs)). There is no
   silent fallback to whatever happens to be current.
 
 All identities use one domain-separated hash, `framed_digest`. It is SHA-256 over
@@ -144,7 +144,7 @@ Evidence reads accept these options:
 The kernel computes a separate validator for each representation. It covers the
 payload, evidence, profile, root, path, selection and representation options.
 When `if_evidence` still matches, the payload is left out and the status is
-`NotModified` ([`current/conditional.rs`](../crates/airk-kernel/src/current/conditional.rs)).
+`NotModified` ([`current/conditional.rs`](../../crates/airk-kernel/src/current/conditional.rs)).
 The other read statuses are `MoveCandidate`, `RemovedFromIndex`, `Ambiguous`,
 `HistoryUnavailable` and `Unknown`.
 
@@ -157,7 +157,7 @@ never confuse "the file is the same" with "the extracted evidence is the same".
 
 Every evidence read accepts a `verification` mode (`off`, `report` by default, or
 `require`) and three budgets
-([`airk-core/src/verification.rs`](../crates/airk-core/src/verification.rs)):
+([`airk-core/src/verification.rs`](../../crates/airk-core/src/verification.rs)):
 
 | Budget | Default | Maximum |
 | --- | --- | --- |
@@ -167,7 +167,7 @@ Every evidence read accepts a `verification` mode (`off`, `report` by default, o
 
 The method, `sha256-full-saved-source/1`, re-hashes the saved bytes behind each
 cited file. It does this read-only and without following links
-([`airk-ingest/src/source_read.rs`](../crates/airk-ingest/src/source_read.rs)).
+([`airk-ingest/src/source_read.rs`](../../crates/airk-ingest/src/source_read.rs)).
 
 Each file gets one of these states:
 
@@ -205,9 +205,9 @@ A continuation token only works for the exact request that produced it.
 
 - Discovery cursors (`airk-d1:`) bind the revision, the tool and a digest of the
   filters, and carry a checksum
-  ([`discovery.rs`](../crates/airk-core/src/discovery.rs)).
+  ([`discovery.rs`](../../crates/airk-core/src/discovery.rs)).
 - Change cursors bind the target and baseline tokens, the request digest and a
-  staged position ([`changes.rs`](../crates/airk-core/src/changes.rs)).
+  staged position ([`changes.rs`](../../crates/airk-core/src/changes.rs)).
 
 Changing a filter, the representation or the head expires the cursor. The code
 describes cursors as "consistency selectors, not authorization tokens", so a
@@ -223,8 +223,8 @@ Every read that fails returns a typed receipt:
 - **Uncertain catalog writes** are reported with the note "Missing observation is
   not evidence that no effects occurred".
 
-Results can also carry [evidence guidance](evidence-guidance.md)
-([`guidance.rs`](../crates/airk-core/src/guidance.rs)). This is inert advice built
+Results can also carry [evidence guidance](../evidence-guidance.md)
+([`guidance.rs`](../../crates/airk-core/src/guidance.rs)). This is inert advice built
 only from metadata already in the response, at most eight observations. Each
 observation has a reason, a subject, a basis, a message and a suggested next read.
 
@@ -242,7 +242,7 @@ The MCP server instructions start with "Untrusted index; verify live bytes befor
 edits". `AGENTS.md`, `CLAUDE.md` and `.github/copilot-instructions.md` have their
 own adapter. It records written constraints as *untrusted* cues, and never follows
 the instructions or the literal paths they mention
-([`instruction_documents.rs`](../crates/airk-ingest/src/instruction_documents.rs)).
+([`instruction_documents.rs`](../../crates/airk-ingest/src/instruction_documents.rs)).
 
 ---
 
@@ -251,23 +251,23 @@ the instructions or the literal paths they mention
 **Status: implemented.**
 
 - **Ignore rules.** Discovery uses the `ignore` crate with `follow_links(false)`
-  ([`source_scope.rs`](../crates/airk-ingest/src/source_scope.rs)). It honours
+  ([`source_scope.rs`](../../crates/airk-ingest/src/source_scope.rs)). It honours
   `.gitignore`, `.ignore`, `.airkignore`, `.git/info/exclude` and the Git
   global/system exclude files.
 - **Ignore files are read like sources.** They go through the same protected
   no-follow reader, with bounds of 64 KiB per file, 1 MiB per snapshot and 32,768
   cached directories. A control file that is ambiguous or redirected is refused
   rather than guessed
-  ([`policy_ignore.rs`](../crates/airk-ingest/src/policy_ignore.rs)).
+  ([`policy_ignore.rs`](../../crates/airk-ingest/src/policy_ignore.rs)).
 - **Hard exclusions** apply to every path component and cannot be re-included
-  ([`lib.rs` `excluded`](../crates/airk-ingest/src/lib.rs)): `.git`, `.airk`,
+  ([`lib.rs` `excluded`](../../crates/airk-ingest/src/lib.rs)): `.git`, `.airk`,
   `node_modules`, `target`, `.venv`, `__pycache__`, `.aws`, `.ssh`, `.env`,
   `.env.*`, `*.pem` and `*.key`.
 - **Credential defaults** can be re-included with `!` in `.airkignore`: `.npmrc`,
   `.netrc`, SSH private keys, `*.pfx`, `*.jks`, kubeconfig, `*.tfstate`,
   `.docker/config.json` and others. The code calls this "a convenience default,
   not secret detection".
-- **[Permanent exclusions](source-policy.md)** are deny rules owned by one index.
+- **[Permanent exclusions](../source-policy.md)** are deny rules owned by one index.
   - They take precedence over includes, ignore negation and grants.
   - On Windows and macOS, any uncertainty about Unicode or case-folded names
     counts as a refusal ("Unknown Unicode collation is never proof of disjoint
@@ -280,7 +280,7 @@ the instructions or the literal paths they mention
 - **Priority ordering.** Agent-relevant files are processed first: README,
   `AGENTS.md`, `CLAUDE.md`, docs, then manifests. Vendor, generated and fixture
   files come last. Every eligible file is still visited
-  ([`priority.rs`](../crates/airk-ingest/src/priority.rs)).
+  ([`priority.rs`](../../crates/airk-ingest/src/priority.rs)).
 - **Watching.** File-system notifications are treated only as *hints*. Durable
   intents and periodic reconciliation decide what is indexed. A separate
   supervised source-watcher process isolates stalls in the file system.
@@ -293,9 +293,9 @@ recorded separately in the [v2 ledger](architecture-v2-ledger.md).
 ### 5.1 The adapter registry
 
 Extraction is built on **tree-sitter 0.25.10 with 56 grammar crates pinned to
-exact versions** ([`airk-ingest/Cargo.toml`](../crates/airk-ingest/Cargo.toml)),
+exact versions** ([`airk-ingest/Cargo.toml`](../../crates/airk-ingest/Cargo.toml)),
 plus custom parsers where no suitable grammar exists. The baseline registry
-([`adapters/registry.rs`](../crates/airk-ingest/src/adapters/registry.rs)) has
+([`adapters/registry.rs`](../../crates/airk-ingest/src/adapters/registry.rs)) has
 about 80 grammar-backed adapter IDs and about two dozen custom ones.
 
 Each adapter records:
@@ -306,7 +306,7 @@ Each adapter records:
 - its written limitations.
 
 The adapter and dialect choice are part of the file's effective profile identity.
-The full matrix is in [formats](formats.md).
+The full matrix is in [formats](../formats.md).
 
 ### 5.2 Coverage
 
@@ -335,14 +335,14 @@ The full matrix is in [formats](formats.md).
 - **Ambiguity is settled by evidence or refused.**
   - `.h` files default to C. C++ is chosen only from an explicit `-x c++` in a
     declared `compile_commands.json`, and conflicting entries are refused
-    ([`header_context.rs`](../crates/airk-ingest/src/header_context.rs)).
+    ([`header_context.rs`](../../crates/airk-ingest/src/header_context.rs)).
   - Objective-C headers are recognised from a masked 4 KiB prefix.
   - `.cls`, `.v` and `.pl` need a strong visible marker or an explicit policy.
 - **Composite documents keep their original coordinates.** Child regions, such as
   the script in a Vue file or a cell in a notebook, are parsed with their own
   grammar. Their facts map back to `DocumentLocation::Mapped` spans in the host
   file, and child budgets cannot reset the host's shared budget
-  ([`composite.rs`](../crates/airk-ingest/src/composite.rs)).
+  ([`composite.rs`](../../crates/airk-ingest/src/composite.rs)).
 - **Damaged syntax is suppressed, not guessed.** A node that contains a parse
   error never becomes a fact, and the file is marked `partial-syntax`. PHP, Ruby
   and SQL get conservative repairs over the same tree.
@@ -354,11 +354,11 @@ The full matrix is in [formats](formats.md).
 
 - **PDF parsing runs in a separate worker.** The AIRK binary re-executes itself
   with a private argument, and the worker runs `pdf-extract` on a temporary copy
-  ([`pdf_worker.rs`](../crates/airk-ingest/src/pdf_worker.rs)). Its limits are
+  ([`pdf_worker.rs`](../../crates/airk-ingest/src/pdf_worker.rs)). Its limits are
   512 MiB of memory, 10 CPU-seconds, a 15 s wall clock and 64 MiB of output. On
   Windows it is contained by a Job Object; on Unix by a private process group with
   `RLIMIT_AS` and `RLIMIT_CPU`.
-- **Default limits** ([`ScanLimits`](../crates/airk-ingest/src/lib.rs)):
+- **Default limits** ([`ScanLimits`](../../crates/airk-ingest/src/lib.rs)):
 
   | Limit | Default |
   | --- | --- |
@@ -386,12 +386,12 @@ Collections choose one of four levels of retained detail:
 - **Rich Structure** (`balanced`)
 - **Detailed**
 
-[Retention profiles](retention.md) choose which fact families are kept per file
+[Retention profiles](../retention.md) choose which fact families are kept per file
 type. The semantic-unit projection is separate from the retained detail, so a
 lean index can still embed well-bounded declaration and heading units.
 
 **Opt-in per-file family reporting**
-([profile families](profile-family-reporting.md)) reports 18 fact families. For
+([profile families](../profile-family-reporting.md)) reports 18 fact families. For
 each one it gives three values: whether the adapter supports it, whether it was
 retained, and whether it was included in this reply. It does not rescan the
 source.
@@ -402,14 +402,14 @@ source.
 
 - **Fact kinds.** `definition`, `import`, `key`, `call` (the written call-target
   text), `exception_handler` and `inherits`
-  ([`syntax.rs`](../crates/airk-ingest/src/syntax.rs)). Qualified names, scopes,
+  ([`syntax.rs`](../../crates/airk-ingest/src/syntax.rs)). Qualified names, scopes,
   signatures, modifiers and comments are kept, each capped at 1 KiB.
 - **Relationships.** Call and inheritance edges are exposed as
   `syntax_candidate`. Written targets such as `db.query` are never resolved to a
   symbol ID.
 - **References** are textual FTS5 occurrence candidates. They are paged at 100 per
   page under a 250 ms cooperative budget and tied to one publication
-  ([`references.rs`](../crates/airk-kernel/src/references.rs)).
+  ([`references.rs`](../../crates/airk-kernel/src/references.rs)).
 - **Framework cues** are fixed rules for:
   - route registration;
   - JS test registration;
@@ -419,7 +419,7 @@ source.
   Each cue is labelled `StructuralRule` with the coverage text "framework binding,
   security and runtime behavior unverified".
 - **Document facts** come from keyword and pattern rules in
-  [`prose.rs`](../crates/airk-ingest/src/prose.rs):
+  [`prose.rs`](../../crates/airk-ingest/src/prose.rs):
   - sections, both explicit and heuristic headings;
   - dates, normalised to ISO;
   - requirements, from modal verbs, ID labels and numeric bounds with units;
@@ -428,8 +428,8 @@ source.
   - given/when/then acceptance criteria.
 
   The module states: "Classification never proves an obligation or design."
-- **Continuity across edits** ([`continuity/`](../crates/airk-ingest/src/continuity),
-  [`reconciliation.rs`](../crates/airk-kernel/src/reconciliation.rs)):
+- **Continuity across edits** ([`continuity/`](../../crates/airk-ingest/src/continuity),
+  [`reconciliation.rs`](../../crates/airk-kernel/src/reconciliation.rs)):
   - **Files** are matched by source hash, profile and size. A move is claimed only
     when the match is unique; ambiguous content stays `Unknown`.
   - **Declarations and document statements** are matched in passes: explicit
@@ -440,8 +440,8 @@ source.
     assign identity".
 
 **Library only.** The kernel has three more paths, all integration-tested in
-[`code_graph.rs`](../crates/airk-kernel/tests/integration/code_graph.rs) and
-[`limits.rs`](../crates/airk-kernel/tests/integration/limits.rs):
+[`code_graph.rs`](../../crates/airk-kernel/tests/integration/code_graph.rs) and
+[`limits.rs`](../../crates/airk-kernel/tests/integration/limits.rs):
 
 - **SCIP import** (`Kernel::import_scip`), labelled "hash-bound, not
   compiler-certified";
@@ -463,7 +463,7 @@ Nothing in `airk-cli` or `airk-mcp` calls any of them today (see
 - **One current head per collection.** The head binds three things: the artifact
   map, the SQLite FTS5 lexical commit, and the DiskANN graph head.
 - **Journaled publication**
-  ([`current/journal.rs`](../crates/airk-store/src/current/journal.rs)). The
+  ([`current/journal.rs`](../../crates/airk-store/src/current/journal.rs)). The
   journal moves through `Ready`, `Prepared` and `Applying`.
   - **Prepare** applies the captured lexical changes inside a transaction, seals
     the FTS5 shadow rows, and rolls back.
@@ -477,11 +477,11 @@ Nothing in `airk-cli` or `airk-mcp` calls any of them today (see
   snapshots). A prepared publication leaves the previous head readable.
 - **Atomic file replacement.** The file is fsynced, renamed (on Windows with
   `MoveFileExW` `REPLACE_EXISTING | WRITE_THROUGH`), and then the parent directory
-  is synced ([`durability.rs`](../crates/airk-store/src/durability.rs)).
+  is synced ([`durability.rs`](../../crates/airk-store/src/durability.rs)).
 - **Space accounting.** Quotas are logical reservations that survive a process
   crash; they are not OS quotas. WAL and shared-memory allowances scale with the
   admitted database image.
-- **[Storage formats](storage-formats.md)** carry their own version identities,
+- **[Storage formats](../storage-formats.md)** carry their own version identities,
   independent of release versions. A new format is adopted by rebuilding derived
   state, never by silently migrating old evidence.
 - **Integrity checks.** The store verifies authenticated FTS5 shadow tables, runs
@@ -499,7 +499,7 @@ Nothing in `airk-cli` or `airk-mcp` calls any of them today (see
 **Status: implemented.**
 
 - **Engine.** `sqlite-fts5/current-lexical-1` with `detail=none` and
-  `columnsize=0` ([`current/lexical.rs`](../crates/airk-store/src/current/lexical.rs)).
+  `columnsize=0` ([`current/lexical.rs`](../../crates/airk-store/src/current/lexical.rs)).
   It replaced Tantivy in 1.3.0
   ([decision](index-sharding-review.md#decision-replace-tantivy-with-sqlite-fts5)).
 - **Query terms.** A query term expands to the whole identifier plus its
@@ -518,7 +518,7 @@ SQL before the limit, and every candidate's identity and citation are re-checked
 **Status: implemented; this is the production vector path.**
 
 - **Provider.** `MutableDiskIndex`
-  ([`vector/mutable.rs`](../crates/airk-retrieval/src/vector/mutable.rs)) runs
+  ([`vector/mutable.rs`](../../crates/airk-retrieval/src/vector/mutable.rs)) runs
   `diskann` 0.59.0 over graph records that the store authenticates. The kernel
   reports its backend as `microsoft-diskann-0.59.0/airk-current-provider`.
 - **Features:**
@@ -540,14 +540,14 @@ Windows debug r26 build. Native INT8 platform qualification is pending.
 - **Two bundled models.** Both are all-MiniLM-L6-v2 exported to INT8 ONNX, with
   384 dimensions, 256 tokens, mean pooling and L2 normalisation. SHA-256 is pinned
   for model, tokenizer and license
-  ([`model_catalog.json`](../crates/airk-retrieval/src/model_catalog.json)).
+  ([`model_catalog.json`](../../crates/airk-retrieval/src/model_catalog.json)).
 - **CPU-based selection.** Unsigned INT8 (`minilm-l6-v2-u8-v1`) is used on x64
   without VNNI. Signed INT8 (`-s8-v1`) is used on x64 with VNNI and on ARM64.
 - **One text per forward pass.** Dynamic quantisation therefore never depends on
   unrelated texts in a batch, which keeps exact-input caching sound.
 - **Separate identities.** Model and pipeline digest, approved execution identity
   and provider incarnation are kept distinct
-  ([One AIRK §6.1](one-airk.md#61-separate-model-identity-execution-identity-and-runtime-ownership)).
+  ([One AIRK §6.1](../one-airk.md#61-separate-model-identity-execution-identity-and-runtime-ownership)).
   Vectors are reused only when the full model, tokenizer, preprocessing,
   quantisation and dimensions all match.
 - **No fallback vectors.** No vector is invented for unknown text, and nothing is
@@ -560,7 +560,7 @@ Windows debug r26 build. Native INT8 platform qualification is pending.
 - **Fusion.** Hybrid search fuses lexical and vector branches with equal-weight
   reciprocal rank fusion, `airk.rank-fusion.rrf-equal/1`, scoring each item
   `1 / (61 + zero_based_rank)`. It deliberately ignores raw scores from either
-  backend ([`combined_reads.rs`](../crates/airk-core/src/combined_reads.rs)). A
+  backend ([`combined_reads.rs`](../../crates/airk-core/src/combined_reads.rs)). A
   passage that spans several chunks is emitted once.
 - **Readiness states.** Semantic readiness is `Unavailable`, `Disabled`,
   `Pending`, `Partial`, `Ready` or `Failed`.
@@ -570,16 +570,16 @@ Windows debug r26 build. Native INT8 platform qualification is pending.
   - `RequireComplete`.
 - **Disclosure.** Every search records the requested mode, the mode actually
   served, and any `IncompleteReason` (helper unavailable, coverage incomplete,
-  upgrade pending) ([search execution](search-execution.md)). A Default search can
+  upgrade pending) ([search execution](../search-execution.md)). A Default search can
   fall back to lexical during an inference outage and says so. An explicit vector
   or hybrid search, or `RequireComplete`, refuses instead.
-- **[Vector selection](vector-selection.md)** rules keep lockfiles and minified
+- **[Vector selection](../vector-selection.md)** rules keep lockfiles and minified
   assets out of the vector index while keeping their lexical and fact evidence.
 
 ### 8.5 Combined reads across indexes
 
 **Status: implemented and locally checked (P7).** See
-[combined reads](combined-reads.md).
+[combined reads](../combined-reads.md).
 
 - **Selection.** A reviewed grant can select up to 32 indexes. Each unique index
   runs once, even when several selected projects contain it.
@@ -601,10 +601,10 @@ Windows debug r26 build. Native INT8 platform qualification is pending.
 
 ### 9.1 The 29 tools
 
-The catalog is built in [`unified.rs`](../crates/airk-mcp/src/unified.rs).
+The catalog is built in [`unified.rs`](../../crates/airk-mcp/src/unified.rs).
 
 - **19 native tools** (`#[tool]` handlers in
-  [`lib.rs`](../crates/airk-mcp/src/lib.rs)):
+  [`lib.rs`](../../crates/airk-mcp/src/lib.rs)):
   - status and help: `status`, `diagnostics`, `capabilities`, `help`;
   - scope and planning: `query_scope`, `parse`;
   - discovery: `search`, `list_files`, `file_info`;
@@ -634,8 +634,8 @@ Explorer's dropdown.
 
 ### 9.2 Response shaping that never changes what is indexed
 
-These options are described in [response modes](mcp-response-modes.md) and
-[reply detail](reply-detail.md).
+These options are described in [response modes](../mcp-response-modes.md) and
+[reply detail](../reply-detail.md).
 
 - **Terse** (the default) sends status and readiness once per connection, and
   again only when they change or `include_status=true`. It replaces repeated
@@ -652,7 +652,7 @@ These options are described in [response modes](mcp-response-modes.md) and
 
 ### 9.3 `parse`: a bounded, read-only evidence planner
 
-[`parse`](../crates/airk-mcp/src/lib.rs) (`airk.parse.request/1`) runs in
+[`parse`](../../crates/airk-mcp/src/lib.rs) (`airk.parse.request/1`) runs in
 `prepare` or `execute` mode. It takes exactly one of `text`, `recipe` or `plan`.
 
 - **Plan limits.** A plan has at most 6 steps, 12 reads, a 30 s budget and
@@ -665,10 +665,10 @@ These options are described in [response modes](mcp-response-modes.md) and
   `readiness`.
 - **Deterministic text parsing** handles slash commands and anchored English
   templates. These "neither answer questions nor infer runtime behavior"
-  ([`workbench/natural.rs`](../crates/airk-kernel/src/workbench/natural.rs)).
+  ([`workbench/natural.rs`](../../crates/airk-kernel/src/workbench/natural.rs)).
 - **Learned fallback.** When deterministic parsing gives up, a fixed **linear
   intent classifier** proposes a plan
-  ([`intent.rs`](../crates/airk-retrieval/src/intent.rs)):
+  ([`intent.rs`](../../crates/airk-retrieval/src/intent.rs)):
   - 65,536 hashed buckets × 13 labels with int8 weights, about an 850 KB embedded
     asset;
   - features from word n-grams, character 3–5-grams and identifier-shape flags;
@@ -677,8 +677,8 @@ These options are described in [response modes](mcp-response-modes.md) and
 
   **A learned proposal never runs without an explicit plan submission.** A test
   enforces this. Training data, its catalog, attribution and a byte-identical
-  replay receipt are public under [`tools/parser-train`](../tools/parser-train)
-  ([parser training](parser-training.md)).
+  replay receipt are public under [`tools/parser-train`](../../tools/parser-train)
+  ([parser training](../parser-training.md)).
 - **Never** writes, runs commands or nests plans.
 
 ### 9.4 Drafts for review, not actions
@@ -705,20 +705,20 @@ attached, trusted Explorer window. Nothing runs until the user applies it.
 - **Shared, configurable capacity.** Evidence concurrency is **4, 8, 16, 32 or
   64** (default 16), plus one reserved status/control slot. All sessions, CLI
   channels and project workers share it
-  ([`service_resources.rs`](../crates/airk-core/src/service_resources.rs)).
+  ([`service_resources.rs`](../../crates/airk-core/src/service_resources.rs)).
 - **Permits outlive cancellation.** An accepted request keeps its permit through
   transport cancellation until the native work really finishes.
 - **One 50 ms retry.** A typed `selection_busy` refusal gets exactly one internal
   retry, at one canonical owner, within the original deadline. After the wait the
   original authority is re-checked
-  ([`read_attempt.rs`](../crates/airk-mcp/src/read_attempt.rs)). Mutations,
+  ([`read_attempt.rs`](../../crates/airk-mcp/src/read_attempt.rs)). Mutations,
   uncertain exchanges and `publication_busy` are never replayed, and retries are
   not stacked across layers.
 
 ## 10. Parity across CLI, Workbench, MCP and HTTPS
 
 **Status: implemented.** Full transport parity across installed hosts is
-unqualified. The contract is in [read-interface parity](read-interface-parity.md).
+unqualified. The contract is in [read-interface parity](../read-interface-parity.md).
 
 AIRK treats parity as a compatibility requirement, not a convenience. The
 mechanism:
@@ -726,7 +726,7 @@ mechanism:
 - `LocalTools` runs the real MCP server over an in-memory duplex transport. CLI
   convenience commands and `airk tools call/shell` therefore use the same
   handlers and schemas as stdio and HTTPS
-  ([`local.rs`](../crates/airk-mcp/src/local.rs)).
+  ([`local.rs`](../../crates/airk-mcp/src/local.rs)).
 - The Workbench planner's read operations call those same handlers inside the
   planner's admitted lifetime.
 - The `/api/v1/tools` catalog is derived from the canonical catalog, not
@@ -735,9 +735,9 @@ mechanism:
   keep the full native result, and selected-evidence exports say that they are a
   subset.
 - Regression tests compare complete results across paths (for example
-  [`tests/combined_reads.rs`](../crates/airk-cli/tests/combined_reads.rs)
+  [`tests/combined_reads.rs`](../../crates/airk-cli/tests/combined_reads.rs)
   `assert_parity`, and `cli_tool_calls_keep_all_fields_and_share_mcp_capacity_observations`
-  in [`tools.rs`](../crates/airk-cli/src/tools.rs)). Only documented transport
+  in [`tools.rs`](../../crates/airk-cli/src/tools.rs)). Only documented transport
   identities and timing are excluded from the comparison, and unknown fields are
   never stripped to make results match.
 
@@ -757,8 +757,8 @@ Linux x64, macOS ARM64 and macOS x64.
 
 - **What is embedded.** The executable embeds the target's MiniLM weights,
   tokenizer and configuration, checked by digest at build time
-  ([`build.rs`](../crates/airk-cli/build.rs),
-  [`bundled_assets.rs`](../crates/airk-cli/src/bundled_assets.rs)). It also links
+  ([`build.rs`](../../crates/airk-cli/build.rs),
+  [`bundled_assets.rs`](../../crates/airk-cli/src/bundled_assets.rs)). It also links
   ONNX Runtime CPU 1.22.1 statically.
 - **What is gone.** There is no `airk-embed` helper, no separately deployed ORT
   library and no launcher.
@@ -768,7 +768,7 @@ Linux x64, macOS ARM64 and macOS x64.
 - **Role copies are historical.** Copied role executables (`airk-service`,
   `airk-index`, `airk-source`) belong only to predecessor two-image payloads; the
   schema-2 single image refuses alias files
-  ([`process_roles.rs`](../crates/airk-cli/src/process_roles.rs)).
+  ([`process_roles.rs`](../../crates/airk-cli/src/process_roles.rs)).
 - **macOS.** The main executable stays inside its sealed, signed `AIRK.app`
   bundle and is never copied out of it, which preserves the fixes for issues #66
   and #67.
@@ -782,7 +782,7 @@ Linux x64, macOS ARM64 and macOS x64.
 - **Metadata actor.** A bounded actor keeps registry I/O off the health handlers.
   Evidence does not queue behind it: HTTP reads go through scoped native worker
   connection pools.
-- **Containment** ([`airk-process`](../crates/airk-process)):
+- **Containment** ([`airk-process`](../../crates/airk-process)):
   - **Windows.** Job Objects with `KILL_ON_JOB_CLOSE`, never requesting breakaway.
   - **Unix.** Private process groups. The group leader is never reaped early, so
     its PID cannot be reused while AIRK still refers to it.
@@ -795,7 +795,7 @@ Linux x64, macOS ARM64 and macOS x64.
 
 ### 11.3 In-process inference with honest completion proofs
 
-[`InferenceOwner`](../crates/airk-cli/src/inference_owner.rs) runs:
+[`InferenceOwner`](../../crates/airk-cli/src/inference_owner.rs) runs:
 
 - one owner thread with a local IPC listener (64 slots);
 - a separate compute thread, configurable from 1 to 4 threads.
@@ -814,7 +814,7 @@ What is distinctive is that **proofs cannot be faked**:
   forge one.
 - The code states that "an in-process barrier can never manufacture a
   process-reap fact"
-  ([`service_inference.rs`](../crates/airk-cli/src/service_inference.rs)).
+  ([`service_inference.rs`](../../crates/airk-cli/src/service_inference.rs)).
 - Old helper drain tickets can still be decoded for migration, but are never
   accepted as in-process proofs.
 - A caller that times out does not abort an FFI computation. Capacity stays
@@ -827,14 +827,14 @@ service, which is then recovered by its OS manager.
 
 **Status: implemented.** Actual client and platform qualification is incomplete
 ([§18](#18-qualification-state-and-known-gaps)). See the
-[local HTTPS API](local-https-api.md).
+[local HTTPS API](../local-https-api.md).
 
 ### 12.1 Endpoint and relocation
 
 - **Address.** The listener binds IPv4 loopback only, at
   `https://127.0.0.1:57421/mcp` by default
-  ([`service_http.rs`](../crates/airk-core/src/service_http.rs),
-  [`http_endpoint.rs`](../crates/airk-cli/src/http_endpoint.rs)). It never binds
+  ([`service_http.rs`](../../crates/airk-core/src/service_http.rs),
+  [`http_endpoint.rs`](../../crates/airk-cli/src/http_endpoint.rs)). It never binds
   `0.0.0.0`, `::` or a hostname. IPv6 is off.
 - **When the port is taken.** If the preferred or saved port returns
   `AddrInUse`, the service binds port 0 and **keeps that socket** through TLS
@@ -856,7 +856,7 @@ service, which is then recovered by its OS manager.
 ### 12.2 TLS identity
 
 Each installation creates its own private CA
-([`http_endpoint_tls.rs`](../crates/airk-cli/src/http_endpoint/tls.rs)):
+([`http_endpoint_tls.rs`](../../crates/airk-cli/src/http_endpoint/tls.rs)):
 
 | Certificate | Key and lifetime | Constraints |
 | --- | --- | --- |
@@ -874,7 +874,7 @@ roots stay in place**. Nothing ever disables validation.
 
 | Client | Mechanism | Evidence |
 | --- | --- | --- |
-| VS Code / Copilot | Per-user OS trust, installed by **AIRK: Trust Local HTTPS Issuer**: Windows `CurrentUser\Root` or the macOS login keychain ([`http_endpoint_trust.rs`](../crates/airk-cli/src/http_endpoint/trust.rs)) | The r25 Code run failed TLS on the extra-CA path. The OS-trust path is approved for one owned Windows run but **not yet exercised** |
+| VS Code / Copilot | Per-user OS trust, installed by **AIRK: Trust Local HTTPS Issuer**: Windows `CurrentUser\Root` or the macOS login keychain ([`http_endpoint_trust.rs`](../../crates/airk-cli/src/http_endpoint/trust.rs)) | The r25 Code run failed TLS on the extra-CA path. The OS-trust path is approved for one owned Windows run but **not yet exercised** |
 | Claude Code | Additive `NODE_EXTRA_CA_CERTS` bundle | Claude 2.1.118 passed scoped reads, reconnect, additive trust and wrong-issuer rejection on Windows debug |
 | Codex | `CODEX_CA_CERTIFICATE` bundle and `bearer_token_env_var` | A real Codex experiment confirmed the local CA is trusted and an untrusted issuer is rejected before HTTP |
 | Linux OS trust | Unsupported in 1.8.14; needs an administrator | Documented limitation |
@@ -887,7 +887,7 @@ mis-issues a certificate for `127.0.0.1` falls outside this guarantee.
 
 ### 12.4 Credentials
 
-[`http_endpoint_store.rs`](../crates/airk-cli/src/http_endpoint/store.rs):
+[`http_endpoint_store.rs`](../../crates/airk-cli/src/http_endpoint/store.rs):
 
 - **One bearer credential per reviewed client connection.** It is random, at
   least 256 bits, in the form `airk1.<connection_id>.<64 hex>`, and can be revoked
@@ -905,7 +905,7 @@ mis-issues a certificate for `127.0.0.1` falls outside this guarantee.
 
 ### 12.5 Gateway defences
 
-[`http_gateway.rs`](../crates/airk-cli/src/http_gateway.rs):
+[`http_gateway.rs`](../../crates/airk-cli/src/http_gateway.rs):
 
 - **Host.** The Host header must be exactly the allowed value. A missing,
   duplicated or wrong Host gets `host_refused`, which blocks DNS rebinding.
@@ -943,7 +943,7 @@ mis-issues a certificate for `127.0.0.1` falls outside this guarantee.
 ### 12.7 Issuer rotation
 
 Rotation is a phased, receipt-backed migration
-([`http_endpoint_rotation.rs`](../crates/airk-cli/src/http_endpoint/rotation.rs)):
+([`http_endpoint_rotation.rs`](../../crates/airk-cli/src/http_endpoint/rotation.rs)):
 
 1. prepare, which starts a 24-hour overlap;
 2. publish bundles;
@@ -965,18 +965,18 @@ lifecycle qualification is pending.
 
 The OS manager starts the approved image directly. No launcher, foreground
 wrapper or shell sits in between
-([`service_manager.rs`](../crates/airk-cli/src/service_manager.rs)).
+([`service_manager.rs`](../../crates/airk-cli/src/service_manager.rs)).
 
 - **Windows.** A user-owned Task Scheduler entry, with no administrator service.
 - **Linux.** A `systemctl --user` unit. libsystemd is loaded only from protected
   OS paths.
 - **macOS.** The signed `SMAppService` login-item adapter
-  ([`service_manager_macos.m`](../crates/airk-cli/src/service_manager_macos.m)).
+  ([`service_manager_macos.m`](../../crates/airk-cli/src/service_manager_macos.m)).
   `RequiresApproval`, revoked approval and unverifiable jobs are reported as
   separate states.
 - **IPC peer checks.** On Unix the peer UID must equal `geteuid()`. On Windows the
   pipe ACL is user-only and the token SID is checked. Both happen **before** any
-  request is decoded ([`local_ipc*.rs`](../crates/airk-cli/src)).
+  request is decoded ([`local_ipc*.rs`](../../crates/airk-cli/src)).
 - **Stop and crash are different.** An explicit Stop stays stopped. Reconnecting
   cannot clear it, and crash restart policy treats a crash differently from a
   Stop or an upgrade.
@@ -987,7 +987,7 @@ An upgrade stages, quiesces, checkpoints, stops, replaces and restarts the
 service. It does not do a live cutover.
 
 - **Upgrade journal** (`upgrade-journal.json`,
-  [`runtime_checkpoint.rs`](../crates/airk-cli/src/runtime_install/activation/checkpoint.rs)). It is
+  [`runtime_checkpoint.rs`](../../crates/airk-cli/src/runtime_install/activation/checkpoint.rs)). It is
   digest-chained and saved with compare-and-set. Its stages are:
   1. `StagedVerified`
   2. `Quiescing`
@@ -1019,7 +1019,7 @@ service. It does not do a live cutover.
 
 ### 13.3 Predecessor migration and mandatory cleanup
 
-This is described in [One AIRK §10](one-airk.md#10-upgrade-path-for-older-multi-process-installations).
+This is described in [One AIRK §10](../one-airk.md#10-upgrade-path-for-older-multi-process-installations).
 
 - **Starting points.** Upgrades come directly from any earlier official version,
   without intermediate installs. Adapters are chosen by validated state format,
@@ -1050,7 +1050,7 @@ cross-platform qualification are recorded separately.
 
 - **Typed catalog.** Projects (`prj_`, shown in the UI as **Index sets**), indexes
   (`idx_`), source roots (`src_`) and grants (`grt_`)
-  ([`index_catalog.rs`](../crates/airk-core/src/index_catalog.rs)). Registry
+  ([`index_catalog.rs`](../../crates/airk-core/src/index_catalog.rs)). Registry
   contract 13.
 - **Grants.** A reviewed grant pins memberships to a policy epoch and digest, so
   relaxing a policy later cannot widen an existing grant. An empty scope means
@@ -1062,7 +1062,7 @@ cross-platform qualification are recorded separately.
 - **Two-phase writes.** Every catalog mutation is prepared, reviewed and then
   applied against a `preview_digest`. An unknown outcome is reconciled by looking
   up its receipt, never by replaying the request.
-- **[Index splitting](index-splitting.md).** Part of one index can be moved into a
+- **[Index splitting](../index-splitting.md).** Part of one index can be moved into a
   new independent index. The flow:
   - a full census of the projects affected;
   - a sealed destination build;
@@ -1071,18 +1071,18 @@ cross-platform qualification are recorded separately.
 
   Cancellation before the fence restores the original. After the fence, recovery
   completes the restriction.
-- **[Permanent exclusions](source-policy.md)** and reviewed
-  [retirement](service-project-retirement.md) (**Delete index**) keep sources
+- **[Permanent exclusions](../source-policy.md)** and reviewed
+  [retirement](../service-project-retirement.md) (**Delete index**) keep sources
   intact and show logical and physical cleanup separately. A missing source root
   is retired only after two confirmed observations at least 10 s apart.
-- **[Recommendations](recommendations.md)** (`query_scope` view). This is
+- **[Recommendations](../recommendations.md)** (`query_scope` view). This is
   metadata-only advice: "Help me choose indexes". It runs no evidence query, no
   source scan and no model load. Coverage, overlap and cost that have not been
   observed are reported as **unknown**.
-- **[Explicit reference refresh](source-verification.md#explicit-reference-refresh)**
+- **[Explicit reference refresh](../source-verification.md#explicit-reference-refresh)**
   re-indexes up to 64 selected source locators through a reviewed native
   Configure job.
-- **[Self-healing](index-self-healing.md).** The service owns recovery. Accepted
+- **[Self-healing](../index-self-healing.md).** The service owns recovery. Accepted
   settings finish without the editor, temporary source or storage failures wait
   for conditions to recover, and retry budgets survive restarts. Stalls are
   detected from real progress.
@@ -1112,7 +1112,7 @@ pending.**
 - **Organisation-approved runtimes.** `airk.service.managedSource`,
   `managedSha256` and `managedLifecycle` support a read-only managed runtime.
 - **Explorer routes** form a closed set
-  ([`explorerRoutes.ts`](../packages/vscode/src/explorerRoutes.ts)):
+  ([`explorerRoutes.ts`](../../packages/vscode/src/explorerRoutes.ts)):
   - Overview;
   - Search;
   - Code: Symbols, References, Outline;
@@ -1130,7 +1130,7 @@ pending.**
 - **Review** joins the editor's Git changes with indexed facts and builds
   candidate impact and test checklists. It never runs tests.
 - **Workbench**
-  ([Workbench implementation](workbench/implementation.md)):
+  ([Workbench implementation](../workbench/implementation.md)):
   - slash commands for the read tools;
   - 18 tool forms;
   - recipes;
@@ -1143,7 +1143,7 @@ pending.**
 ### 15.2 Distinctive engineering
 
 - **Updates without reloading the window**
-  ([`extensionUpdateLoader.ts`](../packages/vscode/src/extensionUpdateLoader.ts)).
+  ([`extensionUpdateLoader.ts`](../../packages/vscode/src/extensionUpdateLoader.ts)).
   - **Checks.** A sealed `airk-update.json` inventory is checked file by file:
     - SHA-256 for every file;
     - a name allow-list;
@@ -1158,7 +1158,7 @@ pending.**
     restored. The Explorer panel sits outside the replaceable module graph, so
     exactly one panel survives.
 - **Native runtime bootstrap**
-  ([`serviceBootstrap.ts`](../packages/vscode/src/serviceBootstrap.ts)). The
+  ([`serviceBootstrap.ts`](../../packages/vscode/src/serviceBootstrap.ts)). The
   installed VSIX is the trust source.
   - The manifest's schema, version and target are checked, along with an
     inventory hash and a bounded walk of the payload. Symlinks, hard links and
@@ -1178,8 +1178,8 @@ pending.**
     connection.
   - Resolving re-checks the generation and the scope.
 - **Editing agent configuration safely**
-  ([`agentConfig.ts`](../packages/vscode/src/agentConfig.ts),
-  [`agentSetup.ts`](../packages/vscode/src/agentSetup.ts)).
+  ([`agentConfig.ts`](../../packages/vscode/src/agentConfig.ts),
+  [`agentSetup.ts`](../../packages/vscode/src/agentSetup.ts)).
   - Only a regular, unlinked, strict UTF-8 file of at most 1 MiB is accepted, and
     the inode must not change between check and open.
   - A merge only inserts missing entries. A conflicting server of the same name
@@ -1202,7 +1202,7 @@ pending.**
   A stale reply fails with `REQUEST_SUPERSEDED` or `STALE_BINDING`, so it cannot
   overwrite the results of a newer selection.
 - **Error classification**
-  ([`explorerErrors.ts`](../packages/vscode/src/explorerErrors.ts)). Each error
+  ([`explorerErrors.ts`](../../packages/vscode/src/explorerErrors.ts)). Each error
   code belongs to one plane: assistance, host, service or webview. Native codes
   are passed through only if they match `^[a-z0-9_]{1,128}$`. Unknown outcomes are
   shown as "do not assume the action had no effect".
@@ -1217,7 +1217,7 @@ pending.**
 
 ## 16. Usage reporting and observability
 
-**Status: implemented.** See [usage reporting](usage-reporting.md).
+**Status: implemented.** See [usage reporting](../usage-reporting.md).
 
 - **Content-free daily aggregates per collection by default.** There is no query
   or source content, no network telemetry and no external database. Modes are
@@ -1245,8 +1245,8 @@ pending.**
 
 ## 17. Engineering process as a product property
 
-Several practices in [`CLAUDE.md`/`AGENTS.md`](../CLAUDE.md) and the
-[completion plan](one-airk-completion-plan.md) directly shape the product's
+Several practices in [`CLAUDE.md`/`AGENTS.md`](../../CLAUDE.md) and the
+[completion plan](../one-airk-completion-plan.md) directly shape the product's
 trustworthiness:
 
 - **Cost-tiered testing.** T0 tests take seconds, T1 1–2 minutes, T2 2–12 minutes
@@ -1310,7 +1310,7 @@ Taken from the completion plan and the latest ledger entries, 8 November 2026.
   Developer ID / notarised artifacts, and publication.
 
 The local finish line is defined in
-[§8 of the completion plan](one-airk-completion-plan.md#8-completion-and-handoff).
+[§8 of the completion plan](../one-airk-completion-plan.md#8-completion-and-handoff).
 Commits, pushes, PRs and publication remain unauthorised.
 
 ## 19. Inconsistencies found during this review
@@ -1318,21 +1318,21 @@ Commits, pushes, PRs and publication remain unauthorised.
 These are observations only. No source or documentation outside this file was
 changed.
 
-1. [`explorerWebview/manage.tsx:467`](../packages/vscode/src/explorerWebview/manage.tsx)
+1. [`explorerWebview/manage.tsx:467`](../../packages/vscode/src/explorerWebview/manage.tsx)
    says "One connection provides 27 tools". The unified catalog and the README
    have 29.
 2. Two doc comments still say DiskANN's mutable provider is "not selected by the
    normal indexing/search runtime yet":
-   [`vector/mutable.rs:3`](../crates/airk-retrieval/src/vector/mutable.rs) and
-   [`vector.rs:32`](../crates/airk-retrieval/src/vector.rs). The kernel's search
+   [`vector/mutable.rs:3`](../../crates/airk-retrieval/src/vector/mutable.rs) and
+   [`vector.rs:32`](../../crates/airk-retrieval/src/vector.rs). The kernel's search
    and update paths do use it.
-3. [`code-facts-and-relationships.md`](code-facts-and-relationships.md) documents
-   `airk analysis prepare`, and [formats](formats.md) describes explicit local
+3. [`code-facts-and-relationships.md`](../code-facts-and-relationships.md) documents
+   `airk analysis prepare`, and [formats](../formats.md) describes explicit local
    OCR. The kernel entry points (`import_scip`, `run_provider`, `extract_ocr`)
    have no callers in `airk-cli` or `airk-mcp` today.
-4. [`process-model.md`](process-model.md) still describes `airk-embed` as a live
+4. [`process-model.md`](../process-model.md) still describes `airk-embed` as a live
    process. The README and the 1.8.14 single-image runtime say it is gone.
-5. [`agent-integration.md:53`](agent-integration.md) still says no actual Claude
+5. [`agent-integration.md:53`](../agent-integration.md) still says no actual Claude
    TLS or scoped-read acceptance is retained. The completion plan already
    schedules that fix for its final documentation pass.
 6. One AIRK §4.1 says to "validate Origin when present". The gateway refuses
@@ -1343,13 +1343,13 @@ changed.
 
 | Area | Primary owners |
 | --- | --- |
-| Contracts (identity, verification, guidance, catalog, combined reads, service, HTTP) | [`crates/airk-core/src`](../crates/airk-core/src) |
-| Discovery, extraction, adapters, continuity, PDF worker | [`crates/airk-ingest/src`](../crates/airk-ingest/src) |
-| Storage, FTS5, journal, quotas, catalog SQL, integrity | [`crates/airk-store/src`](../crates/airk-store/src) |
-| DiskANN provider, ONNX inference, model catalog, intent classifier | [`crates/airk-retrieval/src`](../crates/airk-retrieval/src) |
-| Publication, search, conditional reads, Workbench planner, policy | [`crates/airk-kernel/src`](../crates/airk-kernel/src) |
-| MCP handlers, unified catalog, HTTPS adapter, response shaping | [`crates/airk-mcp/src`](../crates/airk-mcp/src) |
-| Service runtime, gateway, TLS, credentials, inference owner, installers, OS managers | [`crates/airk-cli/src`](../crates/airk-cli/src) |
-| Process containment | [`crates/airk-process/src`](../crates/airk-process/src) |
-| VS Code extension, Explorer, Workbench | [`packages/vscode/src`](../packages/vscode/src) |
-| Parser training data and tools | [`tools/parser-train`](../tools/parser-train) |
+| Contracts (identity, verification, guidance, catalog, combined reads, service, HTTP) | [`crates/airk-core/src`](../../crates/airk-core/src) |
+| Discovery, extraction, adapters, continuity, PDF worker | [`crates/airk-ingest/src`](../../crates/airk-ingest/src) |
+| Storage, FTS5, journal, quotas, catalog SQL, integrity | [`crates/airk-store/src`](../../crates/airk-store/src) |
+| DiskANN provider, ONNX inference, model catalog, intent classifier | [`crates/airk-retrieval/src`](../../crates/airk-retrieval/src) |
+| Publication, search, conditional reads, Workbench planner, policy | [`crates/airk-kernel/src`](../../crates/airk-kernel/src) |
+| MCP handlers, unified catalog, HTTPS adapter, response shaping | [`crates/airk-mcp/src`](../../crates/airk-mcp/src) |
+| Service runtime, gateway, TLS, credentials, inference owner, installers, OS managers | [`crates/airk-cli/src`](../../crates/airk-cli/src) |
+| Process containment | [`crates/airk-process/src`](../../crates/airk-process/src) |
+| VS Code extension, Explorer, Workbench | [`packages/vscode/src`](../../packages/vscode/src) |
+| Parser training data and tools | [`tools/parser-train`](../../tools/parser-train) |

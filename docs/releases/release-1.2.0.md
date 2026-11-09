@@ -1,6 +1,6 @@
 # AIRK 1.2.0
 
-This release replaces searchable generations with one authenticated current index per collection. A fresh 1.2 collection is required; source files remain untouched. See [current-index operation and recovery](../current-index-runtime.md) for the rebuild boundary and [the optimization ledger](../indexingenhancements.md) for implementation and qualification evidence.
+This release replaces searchable generations with one authenticated current index per collection. A fresh 1.2 collection is required; source files remain untouched. See [current-index operation and recovery](../current-index-runtime.md) for the rebuild boundary and [the optimization ledger](../history/indexingenhancements.md) for implementation and qualification evidence.
 
 ## Agent evidence modes
 

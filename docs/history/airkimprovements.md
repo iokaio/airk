@@ -12,14 +12,14 @@ The user authorized implementation, validation, documentation, PR merge and publ
 | F02 / F03 | Private candidates retain immutable chunk ordinals; fusion precedes final text materialization and byte budgets. | Padding invariance and multiple chunks on one source line. Existing persisted indexes remain compatible. |
 | F04 | Sparse scoped vector queries compare bounded matching disk records directly through the DiskANN adapter. | Alias/sparse-prefix/tie tests; 4,096 scoped candidates maximum with explicit truncation on exhaustion. |
 | F05 | Profile writes use bounded handle reads, no-follow/identity checks and hardlink rejection. | Hardlink, oversized, redirected-ancestor and deterministic replacement fixtures. |
-| F06 | Full request lifecycle runs on bounded blocking workers; reserved control capacity, explicit overload and shutdown drain. | Admission, cancellation, exact serialized bytes and once-only success/failure/panic accounting. See [execution](request-execution.md). |
+| F06 | Full request lifecycle runs on bounded blocking workers; reserved control capacity, explicit overload and shutdown drain. | Admission, cancellation, exact serialized bytes and once-only success/failure/panic accounting. See [execution](../request-execution.md). |
 | F07 | Usage comparisons authenticate the receipt-bound catalog projection without rehashing unused graph/model components. | Catalog/sidecar tamper tests and logical-byte/time measurements. Whole-catalog hashing remains; no unsafe cross-request cache or claimed full context reuse. |
-| F08 | Revision/filter/representation-bound keyset cursors and compact outlines across CLI/MCP. | Enumeration, duplicates, tiny budgets, oversized records, tampering, changed publication, retained/expired history and conditional validators. See [discovery](discovery.md). |
-| F09 / F10 | PDF worker isolation with preflight and platform resource controls; protected source traversal; suspended Windows provider startup. | Adversarial parser/source/process fixtures. See [ingest hardening](ingest-hardening.md) for exact platform assumptions and limits. |
+| F08 | Revision/filter/representation-bound keyset cursors and compact outlines across CLI/MCP. | Enumeration, duplicates, tiny budgets, oversized records, tampering, changed publication, retained/expired history and conditional validators. See [discovery](../discovery.md). |
+| F09 / F10 | PDF worker isolation with preflight and platform resource controls; protected source traversal; suspended Windows provider startup. | Adversarial parser/source/process fixtures. See [ingest hardening](../ingest-hardening.md) for exact platform assumptions and limits. |
 | F11 | Private retrieval candidate, SQLite query/usage/publication, kernel discovery, MCP execution, extension view/tree/setup modules. | Public command identities and legacy response defaults preserved; existing suites check behavior. Broader history/maintenance restructuring is deferred to avoid unrelated churn. |
 | F12 | Binary/source-bound persistent retrieval qualification receipts run in all native CI jobs. | Fixed judgments, latency, process counters, usage modes and worker concurrency. Real models, installed-editor lifecycle, physical full-disk/power-loss and production relevance need separate evidence; publication does not certify them. |
 
-Final local checks and hosted release provenance are recorded in [1.1.4 release notes](releases/release-1.1.4.md). Original review probes have become regression tests; qualification boundaries remain explicit.
+Final local checks and hosted release provenance are recorded in [1.1.4 release notes](../releases/release-1.1.4.md). Original review probes have become regression tests; qualification boundaries remain explicit.
 
 ## Original review assessment
 
@@ -46,8 +46,8 @@ Live SHA-256 values matched AIRK citations for the inspected retrieval, kernel, 
 | Evidence | Source SHA-256 / read validator |
 |---|---|
 | [persistent.rs](https://github.com/iokaio/airk/blob/f9aa5168829dc8794d241644fb8483715c2dd58a/crates/airk-retrieval/src/persistent.rs), read lines 1146–1291 | Source `0f1f18f255e05ed68ea86aaf5320482317d39a88544af590fbfaebb6cf71344e`; validator `d2f27c0732091665688f42106e1f6097512c8e2d655ff17418062dd8176d5b6e` |
-| [kernel lib.rs](../crates/airk-kernel/src/lib.rs), read lines 661–824 | Source `9d185281f08c5ac8b3c05f4857e29eb3bfba1e2950ccaf4a44783699379b034c`; validator `1959dfdcce9fd662d5a7e297aa0e6cc28817395e36b39dfc7cf5880bc8443476` |
-| [sqlite.rs](../crates/airk-store/src/sqlite.rs), read lines 288–363 | Source `fd12c33153fb9411de58343a38db9d9ee44880190b1c0b48792834dca7bb34d5`; validator `20776cf1866c9f9002945b6e705776d87690a6be4111c19f94dd6c92ca4320a3` |
+| [kernel lib.rs](../../crates/airk-kernel/src/lib.rs), read lines 661–824 | Source `9d185281f08c5ac8b3c05f4857e29eb3bfba1e2950ccaf4a44783699379b034c`; validator `1959dfdcce9fd662d5a7e297aa0e6cc28817395e36b39dfc7cf5880bc8443476` |
+| [sqlite.rs](../../crates/airk-store/src/sqlite.rs), read lines 288–363 | Source `fd12c33153fb9411de58343a38db9d9ee44880190b1c0b48792834dca7bb34d5`; validator `20776cf1866c9f9002945b6e705776d87690a6be4111c19f94dd6c92ca4320a3` |
 
 Line numbers below describe this working tree and may move after implementation. All corruption experiments used newly generated fictional fixtures in isolated temporary directories, with usage recording disabled to isolate retrieval behavior; existing workspace/index data was not modified.
 
@@ -57,7 +57,7 @@ P1 means fix before the next candidate release. P2 means correctness, reliabilit
 
 ### F01 — P1: Bind warm vector reads to the authenticated generation
 
-**Reproduced.** [Kernel cache reuse](../crates/airk-kernel/src/lib.rs#L729) returns an existing `PersistentIndex` when the header identity matches. [Warm verification](https://github.com/iokaio/airk/blob/f9aa5168829dc8794d241644fb8483715c2dd58a/crates/airk-retrieval/src/persistent.rs#L1295) authenticates the manifest, while [vector search](https://github.com/iokaio/airk/blob/f9aa5168829dc8794d241644fb8483715c2dd58a/crates/airk-retrieval/src/persistent.rs#L1223) reopens `vectors.bin`. It does not rebind those newly opened bytes to the manifest's component digest. [Per-record checksums](../crates/airk-retrieval/src/vector.rs#L309) detect damaged records but do not bind a valid record to its original slot or publication.
+**Reproduced.** [Kernel cache reuse](../../crates/airk-kernel/src/lib.rs#L729) returns an existing `PersistentIndex` when the header identity matches. [Warm verification](https://github.com/iokaio/airk/blob/f9aa5168829dc8794d241644fb8483715c2dd58a/crates/airk-retrieval/src/persistent.rs#L1295) authenticates the manifest, while [vector search](https://github.com/iokaio/airk/blob/f9aa5168829dc8794d241644fb8483715c2dd58a/crates/airk-retrieval/src/persistent.rs#L1223) reopens `vectors.bin`. It does not rebind those newly opened bytes to the manifest's component digest. [Per-record checksums](../../crates/airk-retrieval/src/vector.rs#L309) detect damaged records but do not bind a valid record to its original slot or publication.
 
 Experiment: index `a.txt = authenticate` and `b.txt = banana` with an original two-dimensional word-vector model; warm an MCP vector query for `login`; exchange complete graph records 1 and 2 without changing their valid checksums or the file length; repeat in the same connection. The top result changed from `a.txt` to `b.txt`, `isError` remained false, and the publication token was identical. A fresh CLI search exited 1 with `v2 generation component checksum mismatch`.
 
@@ -79,7 +79,7 @@ Experiment: eight long lexical matches, eight long vector-only matches, a short 
 
 ### F03 — P2: Do not identify chunks solely by path and line range
 
-**Reproduced.** The [hybrid merge key](https://github.com/iokaio/airk/blob/f9aa5168829dc8794d241644fb8483715c2dd58a/crates/airk-retrieval/src/persistent.rs#L1263) is `(path, start_line, end_line)`. [Byte-bounded chunking](../crates/airk-ingest/src/chunking.rs#L50) can create multiple chunks on the same source line, so that tuple is not unique.
+**Reproduced.** The [hybrid merge key](https://github.com/iokaio/airk/blob/f9aa5168829dc8794d241644fb8483715c2dd58a/crates/airk-retrieval/src/persistent.rs#L1263) is `(path, start_line, end_line)`. [Byte-bounded chunking](../../crates/airk-ingest/src/chunking.rs#L50) can create multiple chunks on the same source line, so that tuple is not unique.
 
 Experiment: one text file containing `needle FIRST`, padded to 8,192 bytes, followed by `needle SECOND`, without a newline. Lexical search returned two hits. Hybrid search returned one, omitted `SECOND`, and reported `truncated: false`. The merger also adds scores from distinct chunks as if they were duplicate retrievals of one chunk.
 
@@ -101,7 +101,7 @@ Experiment: 200 distinct nearby out-of-scope vectors and one more distant docume
 
 ### F05 — P2: Refuse hard-linked shell profiles during CLI setup
 
-**Reproduced.** [appendProfile](../packages/vscode/src/cliInstall.ts#L43) rejects symlinks and non-files but accepts regular files with multiple hard links, then appends through the path. The existing [agent-config installer](../packages/vscode/src/agentConfig.ts#L64) already rejects `nlink !== 1`.
+**Reproduced.** [appendProfile](../../packages/vscode/src/cliInstall.ts#L43) rejects symlinks and non-files but accepts regular files with multiple hard links, then appends through the path. The existing [agent-config installer](../../packages/vscode/src/agentConfig.ts#L64) already rejects `nlink !== 1`.
 
 Experiment: hard-link a temporary `.profile` to a separate temporary text file and invoke the exported `configureShellPath` with an isolated home and a POSIX-style CLI directory. It returned no errors and appended the AIRK PATH block to the other file. This exercised the function on Windows; it does not qualify an installed Linux/macOS shell workflow.
 
@@ -111,7 +111,7 @@ Experiment: hard-link a temporary `.profile` to a separate temporary text file a
 
 ### F06 — P2: Keep usage I/O off async MCP executor threads
 
-**Code-backed improvement.** MCP handlers move retrieval into `spawn_blocking`, but [usage-span setup](../crates/airk-mcp/src/lib.rs#L351) runs before that dispatch and [render](../crates/airk-mcp/src/lib.rs#L809) calls `finish_usage` synchronously afterward. [Usage setup/finalization](../crates/airk-kernel/src/usage.rs#L169) opens state, validates binding, calculates baselines, and writes SQLite. The [baseline path](../crates/airk-store/src/sqlite.rs#L1785) can authenticate a generation before reading compact size rows.
+**Code-backed improvement.** MCP handlers move retrieval into `spawn_blocking`, but [usage-span setup](../../crates/airk-mcp/src/lib.rs#L351) runs before that dispatch and [render](../../crates/airk-mcp/src/lib.rs#L809) calls `finish_usage` synchronously afterward. [Usage setup/finalization](../../crates/airk-kernel/src/usage.rs#L169) opens state, validates binding, calculates baselines, and writes SQLite. The [baseline path](../../crates/airk-store/src/sqlite.rs#L1785) can authenticate a generation before reading compact size rows.
 
 **Impact:** slow storage and usage-lock contention can occupy runtime threads and delay unrelated protocol requests. `spawn_blocking` around retrieval alone does not isolate the whole blocking operation. This review did not measure executor starvation under sustained load.
 
@@ -121,7 +121,7 @@ Experiment: hard-link a temporary `.profile` to a separate temporary text file a
 
 ### F07 — P2: Measure and reduce repeated integrity-verification work safely
 
-**Code-backed improvement.** [Exact-fact transactions](../crates/airk-store/src/sqlite.rs#L292) call `verify_v2_for_query`. [That verifier](../crates/airk-store/src/blobs.rs#L568) rehashes component bytes even on a semantic-validation cache hit. [Usage size lookup](../crates/airk-store/src/sqlite.rs#L1840) invokes the same verification again. Model-bearing generations are excluded from the [semantic-validation cache](../crates/airk-store/src/verified_cache.rs#L35), retaining additional full validation work.
+**Code-backed improvement.** [Exact-fact transactions](../../crates/airk-store/src/sqlite.rs#L292) call `verify_v2_for_query`. [That verifier](../../crates/airk-store/src/blobs.rs#L568) rehashes component bytes even on a semantic-validation cache hit. [Usage size lookup](../../crates/airk-store/src/sqlite.rs#L1840) invokes the same verification again. Model-bearing generations are excluded from the [semantic-validation cache](../../crates/airk-store/src/verified_cache.rs#L35), retaining additional full validation work.
 
 **Impact:** a small result can require work proportional to generation/model size, potentially more than once per outer request. The 250 ms SQL progress deadline starts after verification and does not bound those reads. Compact source-size rows improve baseline payload work but do not remove component authentication costs.
 
@@ -131,7 +131,7 @@ Experiment: hard-link a temporary `.profile` to a separate temporary text file a
 
 ### F08 — P2: Add resumable inventory/fact discovery and compact outlines
 
-**Code-backed and observed API limitation.** [File listing](../crates/airk-kernel/src/lib.rs#L843) always returns the first bounded matching paths; [MCP list/outline arguments](../crates/airk-mcp/src/lib.rs#L137) have no continuation selector. Fact responses can consume most of their budget on rich metadata. During this review, broad outlines of large modules contained only early imports/declarations before truncation.
+**Code-backed and observed API limitation.** [File listing](../../crates/airk-kernel/src/lib.rs#L843) always returns the first bounded matching paths; [MCP list/outline arguments](../../crates/airk-mcp/src/lib.rs#L137) have no continuation selector. Fact responses can consume most of their budget on rich metadata. During this review, broad outlines of large modules contained only early imports/declarations before truncation.
 
 **Impact:** agents must guess narrower prefixes or switch to direct filesystem discovery. A file with many definitions cannot be fully traversed through its outline alone. Truncation is disclosed, but it is not resumable.
 
@@ -141,7 +141,7 @@ Experiment: hard-link a temporary `.profile` to a separate temporary text file a
 
 ### F09 — P2: Put resource limits around parser execution, not only its output
 
-**Documented hardening gap.** [PDF extraction](../crates/airk-ingest/src/documents.rs#L71) calls the in-process extractor before checking page count and before `from_blocks` checks aggregate text. Input/output ceilings therefore do not establish a peak-allocation or hard time bound. [SECURITY.md](../SECURITY.md) already acknowledges this; it is not a newly established exploit.
+**Documented hardening gap.** [PDF extraction](../../crates/airk-ingest/src/documents.rs#L71) calls the in-process extractor before checking page count and before `from_blocks` checks aggregate text. Input/output ceilings therefore do not establish a peak-allocation or hard time bound. [SECURITY.md](../../SECURITY.md) already acknowledges this; it is not a newly established exploit.
 
 **Implementation:** add bounded preflight checks where the parser supports them and evaluate a local child-process extraction mode for risky document formats, owned by ingest with lifecycle dispatch in the existing CLI. Apply platform memory/time/process limits and preserve structured failure reporting. Start with PDF and measured adversarial fixtures rather than replacing every parser. Keep source mounts/read handles read-only and do not add remote extraction.
 
@@ -149,7 +149,7 @@ Experiment: hard-link a temporary `.profile` to a separate temporary text file a
 
 ### F10 — P2: Strengthen filesystem and subprocess race boundaries
 
-**Documented hardening gap.** [Source reads](../crates/airk-ingest/src/lib.rs#L988) validate pathname metadata/canonicalization before and after `File::open`, but do not establish identity through the opened handle and protected traversal. A replace-and-restore race is outside those checks. [Windows provider startup](../crates/airk-ingest/src/provider_process.rs#L83) starts the process before attaching its job object, leaving a startup interval before descendant containment. Neither race was reproduced here; concurrent hostile filesystem mutation is explicitly unqualified.
+**Documented hardening gap.** [Source reads](../../crates/airk-ingest/src/lib.rs#L988) validate pathname metadata/canonicalization before and after `File::open`, but do not establish identity through the opened handle and protected traversal. A replace-and-restore race is outside those checks. [Windows provider startup](../../crates/airk-ingest/src/provider_process.rs#L83) starts the process before attaching its job object, leaving a startup interval before descendant containment. Neither race was reproduced here; concurrent hostile filesystem mutation is explicitly unqualified.
 
 **Implementation:** define the supported race model, then use platform handle-relative/no-follow opening and verify file identity through the handle. For Windows providers, investigate suspended creation, job assignment, and resume, with complete cleanup on failure. Keep platform adapters in ingest and preserve the existing local trusted-provider boundary.
 
@@ -157,7 +157,7 @@ Experiment: hard-link a temporary `.profile` to a separate temporary text file a
 
 ### F11 — P3: Split large modules along existing responsibilities
 
-**Maintainability improvement.** The reviewed tree has 250 Rust files, 37 extension TypeScript files, and 53 Python scripts/tests. Large modules include [SQLite storage](../crates/airk-store/src/sqlite.rs) at 2,640 lines, [history](../crates/airk-store/src/history.rs) at 2,271, [maintenance](../crates/airk-store/src/maintenance.rs) at 1,972, and the [extension controller](../packages/vscode/src/extension.ts) at 1,123. Line count is a navigation signal, not proof of defects.
+**Maintainability improvement.** The reviewed tree has 250 Rust files, 37 extension TypeScript files, and 53 Python scripts/tests. Large modules include [SQLite storage](../../crates/airk-store/src/sqlite.rs) at 2,640 lines, [history](../../crates/airk-store/src/history.rs) at 2,271, [maintenance](../../crates/airk-store/src/maintenance.rs) at 1,972, and the [extension controller](../../packages/vscode/src/extension.ts) at 1,123. Line count is a navigation signal, not proof of defects.
 
 **Implementation:** extract SQLite publication, query, and usage-size operations into private modules; separate extension collection lifecycle, setup, and dashboard commands. Consolidate repeated request validation/dispatch only where doing so preserves tool-specific contracts. Keep public APIs stable during the split and do not add crates without an independent dependency purpose.
 
@@ -165,7 +165,7 @@ Experiment: hard-link a temporary `.profile` to a separate temporary text file a
 
 ### F12 — P2: Turn qualification gaps into explicit release evidence
 
-**Existing qualification gap.** Cross-platform CI is configured, but this review ran locally on Windows. Several real-model tests require explicitly provisioned assets and are ignored by default. Existing [validation](validation.md), [scale evidence](scale-qualification.md), and [roadmap](roadmap.md) correctly distinguish historical results from unqualified workloads. Notice generation still reports four upstream standalone legal-text review items.
+**Existing qualification gap.** Cross-platform CI is configured, but this review ran locally on Windows. Several real-model tests require explicitly provisioned assets and are ignored by default. Existing [validation](validation.md), [scale evidence](../scale-qualification.md), and [roadmap](../roadmap.md) correctly distinguish historical results from unqualified workloads. Notice generation still reports four upstream standalone legal-text review items.
 
 **Implementation:** require binary/source-revision-bound receipts for the targeted warm-reader, ranking, sparse-filter, native shell, model, and fault scenarios. Add a held-out retrieval set with code, prose, long/minified files, aliases, multilingual text, and sparse path filters. Record recall/ranking metrics, latency distributions, RSS, and failures. Complete installed extension/helper upgrade/rollback, service lifecycle, and durability campaigns before making broader claims. Resolve the reported notice items through the existing release-review process.
 

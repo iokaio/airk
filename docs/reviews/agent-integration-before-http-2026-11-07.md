@@ -38,7 +38,7 @@ Reviewed against official client documentation on **13 October 2026**. This is a
 
 The common launch is one native binary with explicit --root, --data-dir and --collection followed by mcp. The container alternative is docker exec -i airk airk followed by the same scope arguments. No agent-specific retrieval server is needed, but registration and configuration formats differ.
 
-[The tool-alignment review](../agent-tool-alignment.md) checks common agent tasks, server instructions, tool discovery/namespaces, allowlists and configuration versions against the official online sources. Client-specific setup is necessary; client-specific retrieval semantics are not.
+[The tool-alignment review](../history/agent-tool-alignment.md) checks common agent tasks, server instructions, tool discovery/namespaces, allowlists and configuration versions against the official online sources. Client-specific setup is necessary; client-specific retrieval semantics are not.
 
 To share a workspace index between agents, reuse its root, data directory and collection ID in every client's launch. Client/server display names are independent of collection identity. Each client opens its own MCP connection; [concurrent reads and generation publication](../collections.md#multiple-agents-sharing-one-collection) require no separate agent-specific collection.
 

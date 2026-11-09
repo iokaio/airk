@@ -56,7 +56,7 @@ Review in this order: [phase schedule](#implementation-path-on-the-current-branc
 | 4. Returned-reference verification | [Fourth research area in this plan](#fourth-research-area-verifying-returned-references-against-saved-sources) |
 | 5. Projects/indexes and combined queries | [Feature design](cross-project-indexing.md), summarized within folders/workspaces below |
 
-The [1 November MCP investigation](../mcp-recommendations.md) is supplementary
+The [1 November MCP investigation](../history/mcp-recommendations.md) is supplementary
 evidence; its implementation backlog is reconciled below rather than treated as
 a competing delivery plan.
 
@@ -942,7 +942,7 @@ resource thresholds before candidate runs; keep held-out queries out of tuning.
   balanced)** identifiable in compatibility UI/help, retaining `balanced` semantics;
   it is not an alias for the new Rich profile. Detailed remains a distinct legacy
   policy. T2b/T3 update labels/catalogs and migration review together, including
-  [the earlier efficiency plan](../mcp-prioritization.md).
+  [the earlier efficiency plan](../history/mcp-prioritization.md).
 - Define family availability before profile migration. Retain `essential`,
   `agent_lean`, `balanced` and `detailed` with their original semantics until an
   explicit migration; do not silently equate Balanced and Detailed continuity.
@@ -1049,7 +1049,7 @@ the extension guide now; fixture implementation remains X0 work.
 
 ### Reconcile the 1 November MCP implementation backlog
 
-The [earlier implementation plan](../mcp-recommendations.md#implementation-plan)
+The [earlier implementation plan](../history/mcp-recommendations.md#implementation-plan)
 retains its dated observations. Its old four-request discussion is not current
 capacity guidance: 1.8.7 exposes configurable 4/8/16/32/64 concurrency. Audit the
 live catalog/callers before treating any proposed item as missing work.

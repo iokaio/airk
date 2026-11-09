@@ -47,7 +47,7 @@ Local Windows x64 results, 2026-10-30, on this branch:
 
 macOS was not run locally. On Linux (WSL Ubuntu), workspace clippy was clean. A partial run of the `airk-store`, `airk-kernel`, `airk-cli` and `airk-mcp` tests was interrupted before it finished. It showed no storage-privacy failures; its only failures were model-dependent tests that need the provisioned embedding model, which that environment lacks. Complete macOS and Linux results come from CI.
 
-Open checks, not performed for this record (procedures in [validation](../validation.md)):
+Open checks, not performed for this record (procedures in [validation](../history/validation.md)):
 
 - the Unix two-account storage disclosure check;
 - the Windows two-account Assistance descriptor check;

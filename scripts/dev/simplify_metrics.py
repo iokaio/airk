@@ -425,6 +425,29 @@ def read_tool_names(root):
     return names
 
 
+CONTEXT_FILES = ("CLAUDE.md", "README.md", "CONTRIBUTING.md", "docs/architecture.md")
+CONTEXT_METHOD = "estimated tokens = ceil(bytes / 4) per file, summed; an approximation, not a tokenizer count"
+CONTEXT_TARGET_TOKENS = 25000
+
+
+def context_size(root):
+    """Report-only estimate of the standing agent context (plan section 4.5, decision D9)."""
+    files = {}
+    for name in CONTEXT_FILES:
+        path = root / name
+        size = path.stat().st_size if path.is_file() else None
+        files[name] = {"bytes": size, "estimated_tokens": None if size is None else (size + 3) // 4}
+    present = [entry for entry in files.values() if entry["bytes"] is not None]
+    return {
+        "method": CONTEXT_METHOD,
+        "files": files,
+        "missing": [name for name, entry in files.items() if entry["bytes"] is None],
+        "total_bytes": sum(entry["bytes"] for entry in present),
+        "estimated_tokens": sum(entry["estimated_tokens"] for entry in present),
+        "target_tokens": CONTEXT_TARGET_TOKENS,
+    }
+
+
 def collect(root, history=True, harness=True):
     crates = discover_crates(root)
     report = {"schema": SCHEMA, "root": str(root), "metrics": {}}
@@ -597,6 +620,8 @@ def collect(root, history=True, harness=True):
                         tables.append(relative)
     metrics["catalogs"] = {"read_tools": len(tools), "files_with_8_or_more_read_tool_names": sorted(tables)}
 
+    metrics["context_size"] = context_size(root)
+
     if history:
         commits = commit_spans(root, 200)
         if commits is not None:
@@ -640,6 +665,12 @@ def render(report):
         ("CLI `ServiceRegistry::open*` calls (files)", f"{coupling['cli_service_registry_open_calls']} ({coupling['cli_service_registry_open_files']})"),
         ("`#[tool]` read tools / non-test files quoting 8+ of their names", f"{m['catalogs']['read_tools']} / {len(m['catalogs']['files_with_8_or_more_read_tool_names'])}"),
     ]
+    if "context_size" in m:
+        context = m["context_size"]
+        rows.append((
+            f"Context size, estimated tokens over {', '.join(CONTEXT_FILES)} ({context['method']}; target about {context['target_tokens']:,})",
+            f"{context['estimated_tokens']:,} ({context['total_bytes']:,} bytes)" + (f"; missing {', '.join(context['missing'])}" if context["missing"] else ""),
+        ))
     if "history" in m:
         h = m["history"]
         rows.append(("Commits spanning 3+ / 5+ components (last 200)", f"{h['share_3_plus_components']:.1%} / {h['share_5_plus_components']:.1%}"))

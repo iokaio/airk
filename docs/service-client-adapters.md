@@ -1,9 +1,9 @@
 # Service client adapters and request recovery
 
-**Development checkpoint before the 1.4 default cutover (2026-10-24).** The artifact identities and 1.3.2 development versions below remain historical evidence. The current source/lockfiles are 1.4.0 and the extension/public CLI now use service defaults; see the [current completion checklist](service-implementation-checklist.md).
+**Development checkpoint before the 1.4 default cutover (2026-10-24).** The artifact identities and 1.3.2 development versions below remain historical evidence. The current source/lockfiles are 1.4.0 and the extension/public CLI now use service defaults; see the [current completion checklist](history/service-implementation-checklist.md).
 
 
-This records current adapter behavior for the [1.4 plan](airkservice-architecture.md). The package activates `serviceExtension.ts`; extension and public CLI defaults use native service ownership at 1.4.0. The dated evidence below predates that cutover. Final artifact and installed-platform qualification remain separate gates.
+This records current adapter behavior for the [1.4 plan](history/airkservice-architecture.md). The package activates `serviceExtension.ts`; extension and public CLI defaults use native service ownership at 1.4.0. The dated evidence below predates that cutover. Final artifact and installed-platform qualification remain separate gates.
 
 ## Direct native clients
 

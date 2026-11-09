@@ -1,6 +1,6 @@
 # Local ingestion and setup boundaries
 
-Version 1.1.4 strengthens the F05, F09 and F10 boundaries from the [review](airkimprovements.md). These mechanisms protect local source reads and bound the built-in PDF worker; explicitly provisioned providers remain trusted executables.
+Version 1.1.4 strengthens the F05, F09 and F10 boundaries from the [review](history/airkimprovements.md). These mechanisms protect local source reads and bound the built-in PDF worker; explicitly provisioned providers remain trusted executables.
 
 ## Source handles
 

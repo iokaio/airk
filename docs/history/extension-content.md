@@ -1,15 +1,15 @@
 # VS Code extension content and illustrations
 
-Current 1.7.6 listing: [packages/vscode/README.md](../packages/vscode/README.md) leads with local code/document retrieval, direct Workbench use and coding-agent setup. The listing retains absolute HTTPS screenshot URLs because Marketplace serves the README separately from bundled media. The packager still bundles the explicitly allowlisted PNGs and rejects relative/non-HTTPS image URLs in the final VSIX README. Version 1.7.2 rewrote these URLs to local paths, which broke the installed extension details page despite the PNGs being present. The downloads-site builder includes the same screenshots, and GitHub release notes pin them to the source commit. This 1.7.3 follow-up is not published.
+Current 1.7.6 listing: [packages/vscode/README.md](../../packages/vscode/README.md) leads with local code/document retrieval, direct Workbench use and coding-agent setup. The listing retains absolute HTTPS screenshot URLs because Marketplace serves the README separately from bundled media. The packager still bundles the explicitly allowlisted PNGs and rejects relative/non-HTTPS image URLs in the final VSIX README. Version 1.7.2 rewrote these URLs to local paths, which broke the installed extension details page despite the PNGs being present. The downloads-site builder includes the same screenshots, and GitHub release notes pin them to the source commit. This 1.7.3 follow-up is not published.
 
 The Marketplace display name is **AIRK: Local Search for Coding Agents**. The stable extension identity remains `iokaio.airk`; Artifact Indexing and Retrieval Kernel remains the project expansion. Workbench uses the original **Facet** icon family selected for 1.7.1, with angular outlines and a restrained chevron accent. The earlier specification below remains historical.
 
 
-This is a historical content specification prepared for the 1.1.2 stable candidate. Its retained-generation examples and checklist are not current 1.2 instructions. The current shipped listing source is [packages/vscode/README.md](../packages/vscode/README.md), the command/settings source is [package.json](../packages/vscode/package.json), and the current behavior is described in the [1.2 release notes](releases/release-1.2.0.md) and [extension guide](vscode-extension.md).
+This is a historical content specification prepared for the 1.1.2 stable candidate. Its retained-generation examples and checklist are not current 1.2 instructions. The current shipped listing source is [packages/vscode/README.md](../../packages/vscode/README.md), the command/settings source is [package.json](../../packages/vscode/package.json), and the current behavior is described in the [1.2 release notes](../releases/release-1.2.0.md) and [extension guide](../vscode-extension.md).
 
 The historical 1.1.2 specification proposed local bundled illustration links. That approach did not make gallery-served images render in the installed extension details page. Current 1.7.6 packaging retains HTTPS listing URLs and separately verifies the bundled PNG digests.
 
-The Marketplace icon is [icon.png](../packages/vscode/images/icon.png), a 256×256 transparent PNG rendered from the website's [SVG mark](../site/favicon.svg). The site header, favicon and Marketplace listing share the AIRK mark in Ioka's navy, warm white and gold palette. The separate monochrome activity-bar icon follows the editor theme. The packager explicitly includes both extension icons in its verified payload.
+The Marketplace icon is [icon.png](../../packages/vscode/images/icon.png), a 256×256 transparent PNG rendered from the website's [SVG mark](../../site/favicon.svg). The site header, favicon and Marketplace listing share the AIRK mark in Ioka's navy, warm white and gold palette. The separate monochrome activity-bar icon follows the editor theme. The packager explicitly includes both extension icons in its verified payload.
 
 ## Lead with the purpose
 
@@ -19,7 +19,7 @@ The Marketplace icon is [icon.png](../packages/vscode/images/icon.png), a 256×2
 
 Explain the benefit in practical terms: an agent can find a definition, inspect the surrounding lines, or retrieve a requirement from a document without first receiving an entire repository or document. AIRK makes the returned evidence inspectable and constrains each response. This is a capability statement; do not turn it into an unmeasured promise of lower bills, better answers or complete language understanding.
 
-![Diagram: workspace code and documents feed AIRK's isolated local collection, which provides cited evidence to Claude Code, Codex, Gemini CLI/Antigravity and other MCP clients.](images/local-evidence.png)
+![Diagram: workspace code and documents feed AIRK's isolated local collection, which provides cited evidence to Claude Code, Codex, Gemini CLI/Antigravity and other MCP clients.](../images/local-evidence.png)
 
 Caption: **One collection, several independently configured agents.** Each client launches its own collection-scoped stdio MCP worker using the same root, data directory and collection ID. Display names can differ without creating separate indexes. AIRK's local operation does not prevent the selected agent from sending returned evidence to its model provider under that agent's policies.
 
@@ -35,9 +35,9 @@ Use three short examples beside the overview:
 
 Explain code relationships as syntax candidates unless an optional source/build-bound SCIP or live LSP provider supplied an assertion. Ctags declarations remain syntax evidence. The CLI can deliberately run these separately provisioned local providers; the extension has no automatic provider invocation or dedicated provider-setup UI. LSP call edges require actual call-hierarchy evidence, and selected symbol queries do not establish complete resolution.
 
-Describe default-on hybrid search with a collection opt-out in the panel, using digest-bound local static word vectors or the implemented CPU ONNX transformer/WordPiece adapter. Link the [pinned model recipe and numerical qualification](onnx-models.md). State that the small real-model fixture does not qualify production semantic quality, and retain a clear not-ready state without provisioned assets. The trusted extension installs the pinned MiniLM assets embedded in its native helper on first setup, without network access. The bundled manifest must match the helper catalog. Native/MCP reads never install assets or use remote inference.
+Describe default-on hybrid search with a collection opt-out in the panel, using digest-bound local static word vectors or the implemented CPU ONNX transformer/WordPiece adapter. Link the [pinned model recipe and numerical qualification](../onnx-models.md). State that the small real-model fixture does not qualify production semantic quality, and retain a clear not-ready state without provisioned assets. The trusted extension installs the pinned MiniLM assets embedded in its native helper on first setup, without network access. The bundled manifest must match the helper catalog. Native/MCP reads never install assets or use remote inference.
 
-Show a requirements-table example: **Requirements!B14** contains “The API must respond in at most 200 ms,” beside **A14: REQ-9**. AIRK preserves the worksheet, row, addresses and header mapping with the requirement candidate. DOCX tables similarly retain table/row/column context. State that spreadsheet formulas are not evaluated and cached values may be stale; merged cells and candidate headers remain labeled. Link [document indexing](document-indexing.md) for the extraction contract.
+Show a requirements-table example: **Requirements!B14** contains “The API must respond in at most 200 ms,” beside **A14: REQ-9**. AIRK preserves the worksheet, row, addresses and header mapping with the requirement candidate. DOCX tables similarly retain table/row/column context. State that spreadsheet formulas are not evaluated and cached values may be stale; merged cells and candidate headers remain labeled. Link [document indexing](../document-indexing.md) for the extraction contract.
 
 Explain explicit local OCR as a native CLI option: separately provisioned Tesseract and local language assets recognize selected PDF pages (with Poppler) or PNG/JPEG/BMP images, preserving the original source hash, page and executable/model provenance. Recognition and reading order can be wrong; unselected pages remain unknown. Native text-layer indexing does not automatically invoke OCR, and the extension does not offer an OCR configuration command.
 
@@ -49,13 +49,13 @@ Explain explicit local OCR as a native CLI option: separately provisioned Tesser
 4. Run **AIRK: Connect Coding Agent…**. Explain the selected client's configuration location and show its scoped launch specification.
 5. Enable/approve the server in that client, then ask for evidence from a small known fixture. **Check AIRK MCP Helper** proves AIRK's handshake and tools, while a client-side request proves that particular agent is connected.
 
-![Diagram: save files, coalesced indexing, publication of a complete collection revision, then bounded retrieval. Coverage, controls and traceability explain the user's choices.](images/index-to-context.png)
+![Diagram: save files, coalesced indexing, publication of a complete collection revision, then bounded retrieval. Coverage, controls and traceability explain the user's choices.](../images/index-to-context.png)
 
 Caption: **Saved edits become evidence through indexing.** Coverage describes a measured inventory at a point in time. Unsaved buffers, failed extraction, incomplete scans and pending work must remain visible. A complete inventory does not establish retrieval quality.
 
 ## Agent integration copy
 
-The bundled listing's **Coding agent setup** section contains the complete manual instructions for every setup-picker client, including the dedicated Antigravity route. Users can read the merge location, schema, approval/reload steps and connection checks in the installed extension's Details page. The walkthrough points to that section. Keep these instructions synchronized with the version-sensitive matrix in [agent integration](agent-integration.md), with client testing recorded separately.
+The bundled listing's **Coding agent setup** section contains the complete manual instructions for every setup-picker client, including the dedicated Antigravity route. Users can read the merge location, schema, approval/reload steps and connection checks in the installed extension's Details page. The walkthrough points to that section. Keep these instructions synchronized with the version-sensitive matrix in [agent integration](../agent-integration.md), with client testing recorded separately.
 
 | Client | What AIRK shows or registers | What the user completes |
 |---|---|---|
@@ -85,13 +85,13 @@ Do not promise an unimplemented command or setting. Keep this specification, the
 
 ## Illustration and screenshot requirements
 
-The two diagrams above are original AIRK illustrations. Their editable source is [render-doc-illustrations.py](../scripts/render-doc-illustrations.py); regenerate with Python and Pillow. They are explanatory diagrams, not fabricated screenshots or measured performance charts. The PNG format is suitable for the extension listing; Microsoft restricts SVG images in extension README content. See [publishing guidance](https://code.visualstudio.com/api/working-with-extensions/publishing-extension).
+The two diagrams above are original AIRK illustrations. Their editable source is [render-doc-illustrations.py](../../scripts/render-doc-illustrations.py); regenerate with Python and Pillow. They are explanatory diagrams, not fabricated screenshots or measured performance charts. The PNG format is suitable for the extension listing; Microsoft restricts SVG images in extension README content. See [publishing guidance](https://code.visualstudio.com/api/working-with-extensions/publishing-extension).
 
 Before publication, add genuine screenshots from the packaged extension using only the public fictional examples: coverage/controls, a selected agent's configuration preview, and cited results. Exclude personal paths, tokens, private code, `temp/`, index contents and unrelated extensions. Provide alt text, readable contrast and equivalent prose. Test both light/dark editor themes and narrow details panes. The agent names are labels, not endorsements or third-party logo assets.
 
 ## Limits shown near installation
 
-State the tested host matrix and current capacity bounds, model readiness, source-read-only behavior, derived-state privacy, remote-host requirement, unsupported browser-only use, signing/publication status and extraction limitations. Link [formats](formats.md), [operations](operations.md), [security](../SECURITY.md) and the current [1.2 release notes](releases/release-1.2.0.md). Clearly separate local runtime behavior from the selected agent's network behavior.
+State the tested host matrix and current capacity bounds, model readiness, source-read-only behavior, derived-state privacy, remote-host requirement, unsupported browser-only use, signing/publication status and extraction limitations. Link [formats](../formats.md), [operations](../operations.md), [security](../../SECURITY.md) and the current [1.2 release notes](../releases/release-1.2.0.md). Clearly separate local runtime behavior from the selected agent's network behavior.
 
 The listing may describe configured native ingestion bounds, shared logical quotas and available-drive checks, while keeping the editor's soft storage setting distinct. Automatic defaults allow up to 256 MiB/source and 100,000 files, with eligible source sized to one eighth of detected memory and capped at 4 GiB. Extracted text gets twice that allowance; unknown memory uses 512 MiB eligible source. Existing explicit policies remain unchanged. Larger limits do not establish scale performance. Remote editor hosts require an actual test on supplied infrastructure; a matching package and local helper test alone do not qualify SSH, WSL, Containers or Codespaces.
 

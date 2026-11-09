@@ -2,7 +2,7 @@
 
 **Repair stopped, 9 November 2026:** 1.8.16 is an unfinished checkpoint. The
 Windows VSIX is package-verified but failed installed-editor acceptance. The
-[stop and handoff](https://github.com/iokaio/airk/blob/feat/finetuning/docs/research/installer-stop-2026-11-09.md)
+[stop and handoff](https://github.com/iokaio/airk/blob/main/docs/research/installer-stop-2026-11-09.md)
 records the changes, unresolved binding cancellation and validation limits. It is not release-ready.
 
 **1.8.16 clean-break baseline:** every installation older than 1.8.16 must use
@@ -14,7 +14,7 @@ through the native reset lifecycle. From 1.8.16 onward, ordinary upgrades requir
 the supported persisted state contract as well as an approved runtime version.
 The development line will be qualified before a public **1.9.0** release; 1.9.0
 is a future release target, not the current package version.
-See the [1.8.16 working record](https://github.com/iokaio/airk/blob/feat/finetuning/docs/releases/release-1.8.16.md). Implementation
+See the [1.8.16 working record](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.16.md). Implementation
 and installed qualification of this revised policy remain incomplete.
 Management → Service → Runtime → **Complete runtime diagnostics** opens, copies
 or exports the full cached native JSON with its capture time. It makes no new
@@ -26,12 +26,12 @@ They do not define the current clean-break path. The authentic two-index
 1.8.11 to 1.8.16 native reset passed within its recorded scope; installed-editor
 and broader release qualification remain separate.
 
-The [clean-break contract](https://github.com/iokaio/airk/blob/feat/finetuning/docs/upgrade-rebuild-fallback.md) replaces the
+The [clean-break contract](https://github.com/iokaio/airk/blob/main/docs/upgrade-rebuild-fallback.md) replaces the
 previous optional rebuild and pre-1.8.16 migration paths. It requires a fresh
 namespace, explicit client reconnection, durable interrupted-reset recovery and
 ownership-checked cleanup. Older candidate evidence remains historical.
 
-[Standalone CLI onboarding](https://github.com/iokaio/airk/blob/feat/finetuning/docs/agent-integration.md#standalone-onboarding-without-vs-code)
+[Standalone CLI onboarding](https://github.com/iokaio/airk/blob/main/docs/agent-integration.md#standalone-onboarding-without-vs-code)
 is implemented on this branch for setup without VS Code: native service
 discovery, reviewed index scope and protected client launch. Scoped CLI tests
 pass; actual client launch and installed acceptance remain pending. Native
@@ -40,7 +40,7 @@ path when no terminal integration is installed.
 Standalone Windows/macOS/Linux installer source installs only the CLI/native
 server; this VS Code extension remains a separate optional distribution.
 Actual installer builds, signing and publication remain pending.
-The [standalone Windows EXE](https://github.com/iokaio/airk/blob/feat/finetuning/installers/windows/README.md) now adds its literal
+The [standalone Windows EXE](https://github.com/iokaio/airk/blob/main/installers/windows/README.md) now adds its literal
 `{app}\runtime` directory to user `PATH` only after native setup succeeds.
 Its pending-to-owned receipt preserves existing raw entries and registry value
 type; uninstall removes only the exact owned literal after confirmation and
@@ -55,10 +55,10 @@ incomplete or unproven cleanup stays visible. Existing terminals need reopening
 to inherit installed CLI PATH changes. If Explorer still runs old extension
 JavaScript, use **Restart Extensions** once to activate the replacement loader.
 Public-release and full-matrix qualification remain incomplete. The
-[working record](https://github.com/iokaio/airk/blob/feat/finetuning/docs/releases/release-1.8.16.md) records exact candidate, package and installed
+[working record](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.16.md) records exact candidate, package and installed
 acceptance scopes and preserves failed evidence.
 
-**1.8.16 source builds on the unpublished 1.8.14 implementation; qualification is stopped and incomplete.** The source versions and generated catalog identify the [One AIRK implementation](https://github.com/iokaio/airk/blob/feat/finetuning/docs/one-airk.md). The single-executable HTTPS runtime is implemented; the [1.8.16 working record](https://github.com/iokaio/airk/blob/feat/finetuning/docs/releases/release-1.8.16.md) tracks current clean-break and installed acceptance. The 1.8.14 record retains historical implementation evidence. Earlier binaries keep their original versions and hashes.
+**1.8.16 source builds on the unpublished 1.8.14 implementation; qualification is stopped and incomplete.** The source versions and generated catalog identify the [One AIRK implementation](https://github.com/iokaio/airk/blob/main/docs/one-airk.md). The single-executable HTTPS runtime is implemented; the [1.8.16 working record](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.16.md) tracks current clean-break and installed acceptance. The 1.8.14 record retains historical implementation evidence. Earlier binaries keep their original versions and hashes.
 
 Before 1.8.16, legacy runtime, launcher and index formats are cleanup inputs,
 not reusable index state. The reset preserves only reviewed sources and supported
@@ -72,7 +72,7 @@ HTTPS uses normal certificate validation with an installation-local CA; clients
 do not ignore certificate errors or discard their existing trusted CAs. Native
 discovery reports the actual bound port, including an alternate when the preferred
 port is occupied. Owned connection configuration can be refreshed, while external
-clients may still require reconnection. See the [local HTTPS API](https://github.com/iokaio/airk/blob/feat/finetuning/docs/local-https-api.md)
+clients may still require reconnection. See the [local HTTPS API](https://github.com/iokaio/airk/blob/main/docs/local-https-api.md)
 for trust, credentials, endpoint discovery and local-tool examples.
 
 Credential lifecycle corrections reclaim bounded active-ledger capacity after
@@ -82,7 +82,7 @@ Validation and remaining client/platform gates are recorded in the working recor
 
 **Explorer notices and updates:** dismiss update, connection and action-outcome notices with **×**. Dismissals are saved for the workspace and stay hidden across screens, Explorer reopen and window reload. Once the new loader is running, later detected AIRK extension replacements reload AIRK automatically and reopen its single Explorer panel when it was open. For the first transition from an older loaded extension, use **Restart Extensions** in VS Code’s Extensions pane to activate the new version. Installed-editor acceptance is recorded separately.
 
-**Inherited 1.8.12 behavior:** Indexing has three tabs: **Search scope** selects local indexes and index sets with checkboxes; **Index library** creates and manages indexes, including **Delete index**; **Index sets** organizes reusable search groups. Choose indexes or sets and apply the selection; access details are handled internally. See the [historical 1.8.12 working-build record](https://github.com/iokaio/airk/blob/feat/finetuning/docs/releases/release-1.8.12.md) for behavior and validation. The earlier 1.8.11, 1.8.10 and 1.8.9 records retain their dated evidence.
+**Inherited 1.8.12 behavior:** Indexing has three tabs: **Search scope** selects local indexes and index sets with checkboxes; **Index library** creates and manages indexes, including **Delete index**; **Index sets** organizes reusable search groups. Choose indexes or sets and apply the selection; access details are handled internally. See the [historical 1.8.12 working-build record](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.12.md) for behavior and validation. The earlier 1.8.11, 1.8.10 and 1.8.9 records retain their dated evidence.
 
 **MCP QA follow-up:** the working source preserves structured read failures, discloses unobserved filters and relationship limits, and aligns context inputs across interfaces. Terse capability replies summarize operation schemas; Full retains them. Validation results and remaining limits are recorded in the [QA evaluation](https://github.com/iokaio/airk/blob/main/docs/reviews/mcp-qa-1.8.9.md).
 
@@ -173,7 +173,7 @@ One AIRK MCP endpoint gives independently configured clients access to the same 
 | Codex | Implemented scoped HTTPS TOML configuration and the client’s MCP controls. |
 | Other clients, including Gemini, Antigravity, Cursor, Cline, Roo and Junie | Automatic HTTPS configuration and migration are unsupported. Manual compatibility must be verified against that client's TLS, credential and scope requirements. |
 
-These are implemented adapter routes, not completed installed-client/platform qualification. Use the built-in setup guide and [integration documentation](https://github.com/iokaio/airk/blob/feat/finetuning/docs/agent-integration.md). AIRK’s connection check verifies its authenticated scoped HTTPS path; the external client still needs its own trust, credential provisioning, reconnection and successful scoped request. Local tools can use the [documented HTTPS API](https://github.com/iokaio/airk/blob/feat/finetuning/docs/local-https-api.md); that generic API does not establish compatibility with another client's configuration format.
+These are implemented adapter routes, not completed installed-client/platform qualification. Use the built-in setup guide and [integration documentation](https://github.com/iokaio/airk/blob/main/docs/agent-integration.md). AIRK’s connection check verifies its authenticated scoped HTTPS path; the external client still needs its own trust, credential provisioning, reconnection and successful scoped request. Local tools can use the [documented HTTPS API](https://github.com/iokaio/airk/blob/main/docs/local-https-api.md); that generic API does not establish compatibility with another client's configuration format.
 
 ## Local control and transparent limits
 
@@ -183,7 +183,7 @@ AIRK does not use a remote inference service. If you give retrieved evidence to 
 
 Usage reporting can help inspect retrieval activity and supplied measurement scenarios. Context, token or cost savings depend on the task and agent; AIRK does not promise a universal reduction in tokens, time or bills.
 
-Developer references: [MCP tools](https://github.com/iokaio/airk/blob/feat/finetuning/docs/mcp-developer-guide.md) and [CLI commands](https://github.com/iokaio/airk/blob/feat/finetuning/docs/cli-developer-guide.md) explain purpose, examples and implementation ownership. Current CLI `tools list/help/call/shell` and public HTTPS share the 29-tool unified catalog; its 19 native evidence/help/plan/scope operations remain a backend subset.
+Developer references: [MCP tools](https://github.com/iokaio/airk/blob/main/docs/mcp-developer-guide.md) and [CLI commands](https://github.com/iokaio/airk/blob/main/docs/cli-developer-guide.md) explain purpose, examples and implementation ownership. Current CLI `tools list/help/call/shell` and public HTTPS share the 29-tool unified catalog; its 19 native evidence/help/plan/scope operations remain a backend subset.
 
 ## Version and setup notes
 

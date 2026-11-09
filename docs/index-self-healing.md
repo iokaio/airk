@@ -48,6 +48,6 @@ Recovery-stage, SQLite and filesystem codes retain known causes without storing 
 
 ## Limits
 
-Full rebuilds, destructive cleanup, changed source boundaries, corrupt/custom model assets and unknown failures still require an explicit decision. The optional artifact-quarantine idea in the [original proposal](index-self-healing-proposal.md) remains a separate design: ordinary attributable extraction skips already allow other files to progress, while an unattributed worker crash must not silently exclude a file.
+Full rebuilds, destructive cleanup, changed source boundaries, corrupt/custom model assets and unknown failures still require an explicit decision. The optional artifact-quarantine idea in the [original proposal](history/index-self-healing-proposal.md) remains a separate design: ordinary attributable extraction skips already allow other files to progress, while an unattributed worker crash must not silently exclude a file.
 
 Advanced configuration preparation still has its bounded client wait; the three everyday indexing preferences do not depend on that inspection window. Native source, helper and storage probes are local observations, not guarantees about future admission. Windows test evidence does not establish Linux/macOS or installed-editor qualification. The repeated-recovery marker bug is reproduced locally; the original other-machine two-second operation failure remains unattributed because its 1.5.6 logs did not retain the underlying cause. Quota contention is a separately reproduced failure path, not proof of that remote cause.

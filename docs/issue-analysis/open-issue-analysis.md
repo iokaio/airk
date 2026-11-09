@@ -89,7 +89,7 @@ cleared ([lines 205-217](../../scripts/build-service-runtime.py#L205-L217)),
 which is why the Marketplace copy survives being moved. The exact point at
 which macOS 26.4.1 enforces this (versus earlier versions) is not established
 by the repository; what is established is that the signed-copy tests in
-[docs/validation.md](../validation.md) line 78 ran without actual OS signing,
+[docs/validation.md](../history/validation.md) line 78 ran without actual OS signing,
 and [docs/release-verification.md](../release-verification.md) line 52 records
 macOS packages and installed-editor behavior as "not verified".
 

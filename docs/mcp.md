@@ -27,7 +27,7 @@ complete/selected exports retain applicable reasons without additional reads.
 
 For the purpose, inputs, examples and implementation/tests of every tool, read the [MCP developer guide](mcp-developer-guide.md). Its companion [CLI developer guide](cli-developer-guide.md) maps terminal commands: CLI tools and MCP share the unified public catalog, while native prefixed handlers remain an internal subset and compatibility aliases. This page retains the native transport and evidence contracts.
 
-AIRK 1.8.7 includes the response preparation work that reduces repeated response preparation without changing tool schemas, returned evidence or byte-budget semantics: status shares scalar metadata within one authorized read, inventory counts exact encoded path sizes, help avoids temporary content copies during complete-reply sizing, and immutable built-in catalogs are reused. Dynamic project authority remains per request. See the [implementation and validation ledger](optimizations.md).
+AIRK 1.8.7 includes the response preparation work that reduces repeated response preparation without changing tool schemas, returned evidence or byte-budget semantics: status shares scalar metadata within one authorized read, inventory counts exact encoded path sizes, help avoids temporary content copies during complete-reply sizing, and immutable built-in catalogs are reused. Dynamic project authority remains per request. See the [implementation and validation ledger](history/optimizations.md).
 
 `parse` prepares or executes finite read-only evidence plans with schema `airk.parse.request/1`, one of text/recipe/plan and mode prepare/execute. It shares the Workbench native runner, exact publication checks, scope and aggregate budgets. See [examples, limits and qualification](workbench/implementation.md). It works without Explorer and never writes sources, indexes or invokes an agent.
 
@@ -145,7 +145,7 @@ historical outline behavior.
 
 Agent Lean fact replies include bounded discovery and independent scheduler-freshness observations when the reply publication can still be matched. Observation time does not establish live-source equality. Existing Rich Structure/Search Only evidence reply shapes remain compatible. Status exposes applied indexing mode, execution admission and freshness independently of readiness. These reads do not scan live files or start work.
 
-The former `airk_history` endpoint is absent from the 1.3.0 source catalog because AIRK 1.2 retains only one current index; the published 1.2.4 helper still lists it but returns an unsupported error. Capabilities advertise historical reads/checkpoints as unsupported. Use source control for source history. See [tool retirement](unreleased-mcp-tool-retirement.md).
+The former `airk_history` endpoint is absent from the 1.3.0 source catalog because AIRK 1.2 retains only one current index; the published 1.2.4 helper still lists it but returns an unsupported error. Capabilities advertise historical reads/checkpoints as unsupported. Use source control for source history. See [tool retirement](history/unreleased-mcp-tool-retirement.md).
 
 Search returns a focused excerpt of at most 768 UTF-8 bytes per hit by default, with adjusted indexed line coordinates and the original source hash/location. `full_chunks: true` requests the prior complete-chunk behavior within the existing response budget. A snippet or byte-budget cut sets truncation; use `read_file` or `context` for a wider selected passage. Mixed code/document results indicate relevance, not proof that an application uses a configuration described in prose. Use `path_prefix` for a known project or component and inspect code evidence before claiming behavior.
 
@@ -238,7 +238,7 @@ A grammar-derived definition is a syntax fact, not runtime behavior or a resolve
 
 [Agent integration](agent-integration.md) describes configuration and client approval/setup. [Collections](collections.md) defines the persisted scope. Run airk index after changes; workers reopen the active generation on each operation.
 
-[The online tool-alignment review](agent-tool-alignment.md) maps common coding tasks to these tools and records client discovery/configuration differences. Keep one shared tool contract; client adapters handle setup and optional guidance. Status/list counts describe indexed snapshots, not live [workspace coverage](index-coverage.md).
+[The online tool-alignment review](history/agent-tool-alignment.md) maps common coding tasks to these tools and records client discovery/configuration differences. Keep one shared tool contract; client adapters handle setup and optional guidance. Status/list counts describe indexed snapshots, not live [workspace coverage](index-coverage.md).
 
 ## Suggested agent guidance
 

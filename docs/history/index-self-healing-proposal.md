@@ -1,6 +1,6 @@
 # Proposal: bounded automatic recovery for indexing
 
-27 October 2026. Original design proposal, retained as design history. The user subsequently authorized implementation in 1.5.6 on the same branch. See [implemented automatic recovery](index-self-healing.md) for the actual contracts, limits and validation links; the optional artifact-quarantine idea remains deferred.
+27 October 2026. Original design proposal, retained as design history. The user subsequently authorized implementation in 1.5.6 on the same branch. See [implemented automatic recovery](../index-self-healing.md) for the actual contracts, limits and validation links; the optional artifact-quarantine idea remains deferred.
 
 AIRK should recover common temporary failures without requiring users to know about workers, helpers or inspection jobs. Recovery belongs to the native service and must continue without VS Code. The default experience should be one status and one useful action, with the last usable publication retained whenever native integrity rules allow it.
 
@@ -10,7 +10,7 @@ The native service already owns durable jobs, request keys, source/semantic cont
 
 The 1.5.6 work adds durable initial setup, model preparation before semantic enablement, and automatic cached-inspection refresh after successful publication work. These address incomplete setup and stale displayed state. They do not make every native failure self-healing.
 
-The remaining gap is visible in the implementation: [project supervision](../crates/airk-cli/src/project_supervisor.rs) keeps worker/helper retry counters in memory and stops automatic startup after three failures. [Background continuations](../crates/airk-store/src/service/registry/background.rs) persist the next phase, but do not explain or repair every exhausted prerequisite. [Source watching](../crates/airk-store/src/service/registry/watch.rs) separately preserves exhausted and canceled source revisions. Extend these contracts together rather than creating a competing recovery mechanism. The reported remote startup failure's underlying cause remains unknown.
+The remaining gap is visible in the implementation: [project supervision](../../crates/airk-cli/src/project_supervisor.rs) keeps worker/helper retry counters in memory and stops automatic startup after three failures. [Background continuations](../../crates/airk-store/src/service/registry/background.rs) persist the next phase, but do not explain or repair every exhausted prerequisite. [Source watching](../../crates/airk-store/src/service/registry/watch.rs) separately preserves exhausted and canceled source revisions. Extend these contracts together rather than creating a competing recovery mechanism. The reported remote startup failure's underlying cause remains unknown.
 
 ## Remember the requested result
 

@@ -99,16 +99,16 @@ All automated quality gates were executed against the codebase:
 
 ## 1. Architectural Adherence & Dependency Boundaries
 
-AIRK strictly adheres to the layered architecture outlined in [architecture.md](architecture.md):
+AIRK strictly adheres to the layered architecture outlined in [architecture.md](../architecture.md):
 
-* **[`airk-core`](../crates/airk-core/src/lib.rs)**: Strictly pure contracts, schemas, and traits (`serde`, `sha2`, `anyhow`). It remains completely free of parsers, filesystem state, network, or transport implementations.
-* **[`airk-store`](../crates/airk-store/src/lib.rs)**: Manages content-addressed object storage, compact catalogs, generation metadata, SQLite WAL storage, quotas, relocation, and retention. It depends solely on `airk-core`.
-* **[`airk-retrieval`](../crates/airk-retrieval/src/lib.rs)**: Encapsulates Tantivy 0.26.2 lexical indexing, DiskANN 0.59.0 disk-backed vector retrieval, local WordPiece/BERT ONNX inference, and reciprocal rank fusion. It depends solely on `airk-core`.
-* **[`airk-ingest`](../crates/airk-ingest/src/lib.rs)**: Encapsulates file discovery, Tree-sitter parsers, document converters (Markdown, PDF, DOCX, XLSX, PPTX, Notebooks), and budget caps. It depends solely on `airk-core`.
-* **[`airk-kernel`](../crates/airk-kernel/src/lib.rs)**: Orchestrates collection lifecycles, coordinating store, ingestion, retrieval, and maintenance.
-* **[`airk-mcp`](../crates/airk-mcp/src/lib.rs)**: Implements the Model Context Protocol over standard I/O using `rmcp`. It acts strictly as a schema and transport boundary, routing all operations through [`Kernel`](../crates/airk-kernel/src/lib.rs#L47-L58).
-* **[`airk-cli`](../crates/airk-cli/src/main.rs)**: Handles CLI command parsing, service control, and lifecycle operations.
-* **[`packages/vscode`](../packages/vscode/src/extension.ts)**: Implements a thin helper client that respects workspace trust, schedules background indexing requests, and displays status without owning a shadow index.
+* **[`airk-core`](../../crates/airk-core/src/lib.rs)**: Strictly pure contracts, schemas, and traits (`serde`, `sha2`, `anyhow`). It remains completely free of parsers, filesystem state, network, or transport implementations.
+* **[`airk-store`](../../crates/airk-store/src/lib.rs)**: Manages content-addressed object storage, compact catalogs, generation metadata, SQLite WAL storage, quotas, relocation, and retention. It depends solely on `airk-core`.
+* **[`airk-retrieval`](../../crates/airk-retrieval/src/lib.rs)**: Encapsulates Tantivy 0.26.2 lexical indexing, DiskANN 0.59.0 disk-backed vector retrieval, local WordPiece/BERT ONNX inference, and reciprocal rank fusion. It depends solely on `airk-core`.
+* **[`airk-ingest`](../../crates/airk-ingest/src/lib.rs)**: Encapsulates file discovery, Tree-sitter parsers, document converters (Markdown, PDF, DOCX, XLSX, PPTX, Notebooks), and budget caps. It depends solely on `airk-core`.
+* **[`airk-kernel`](../../crates/airk-kernel/src/lib.rs)**: Orchestrates collection lifecycles, coordinating store, ingestion, retrieval, and maintenance.
+* **[`airk-mcp`](../../crates/airk-mcp/src/lib.rs)**: Implements the Model Context Protocol over standard I/O using `rmcp`. It acts strictly as a schema and transport boundary, routing all operations through [`Kernel`](../../crates/airk-kernel/src/lib.rs#L47-L58).
+* **[`airk-cli`](../../crates/airk-cli/src/main.rs)**: Handles CLI command parsing, service control, and lifecycle operations.
+* **[`packages/vscode`](../../packages/vscode/src/extension.ts)**: Implements a thin helper client that respects workspace trust, schedules background indexing requests, and displays status without owning a shadow index.
 
 Dependency directions are strictly acyclic, unidirectional, and conform to repository isolation rules.
 
@@ -118,15 +118,15 @@ Dependency directions are strictly acyclic, unidirectional, and conform to repos
 
 ### Read-Only Source Invariant & TOCTOU Defense
 AIRK treats user workspaces as immutable and authoritative.
-* In [`read_source_with_budget`](../crates/airk-ingest/src/lib.rs#L934-L956), files are verified via `symlink_metadata()` both **before** and **after** reading. AIRK checks that the file is not a symlink and that `after.len() == before.len()`, preventing symlink race conditions and mid-read mutations.
+* In [`read_source_with_budget`](../../crates/airk-ingest/src/lib.rs#L934-L956), files are verified via `symlink_metadata()` both **before** and **after** reading. AIRK checks that the file is not a symlink and that `after.len() == before.len()`, preventing symlink race conditions and mid-read mutations.
 * Canonical workspace containment is asserted with `path.canonicalize()?.starts_with(root)`, preventing path traversal escapes.
 
 ### Path Sanitization & Bounds Checking
-* In [`bind_payload`](../crates/airk-core/src/binding.rs#L17-L40), logical workspace paths are validated to reject null bytes (`\0`), backslashes (`\`), colons (`:`), leading slashes, path lengths over 4096 bytes, and relative segments (`.` or `..`).
-* All string and buffer inputs across MCP and CLI enforce maximum lengths, counts, and byte budgets (e.g. 16 MiB per-file limit, 64 KiB response cap in [`validate_budget`](../crates/airk-core/src/lib.rs#L188-L195)).
+* In [`bind_payload`](../../crates/airk-core/src/binding.rs#L17-L40), logical workspace paths are validated to reject null bytes (`\0`), backslashes (`\`), colons (`:`), leading slashes, path lengths over 4096 bytes, and relative segments (`.` or `..`).
+* All string and buffer inputs across MCP and CLI enforce maximum lengths, counts, and byte budgets (e.g. 16 MiB per-file limit, 64 KiB response cap in [`validate_budget`](../../crates/airk-core/src/lib.rs#L188-L195)).
 
 ### Privacy & Telemetry
-AIRK collects zero remote telemetry. Local usage recording ([`usage.rs`](../crates/airk-kernel/src/usage.rs)) tracks only aggregate operation counters and bytes without persisting search queries or document contents.
+AIRK collects zero remote telemetry. Local usage recording ([`usage.rs`](../../crates/airk-kernel/src/usage.rs)) tracks only aggregate operation counters and bytes without persisting search queries or document contents.
 
 ---
 
@@ -134,13 +134,13 @@ AIRK collects zero remote telemetry. Local usage recording ([`usage.rs`](../crat
 
 ### SQLite Windows Path & URI Encoding
 SQLite under Windows frequently encounters URI parser quirks when dealing with extended path prefixes (`\\?\`) and UNC drives.
-* [`open_immutable_catalog`](../crates/airk-store/src/sqlite.rs#L156-L169) percent-encodes every byte of the native path into the `file:` URI. This bypasses SQLite's URI parser pitfalls without mangling Windows extended paths.
-* [`managed_data_path`](../crates/airk-kernel/src/lib.rs#L64-L96) resolves ancestors to locate the canonical `\\?\` extended prefix without mutating disk on read-only open calls.
+* [`open_immutable_catalog`](../../crates/airk-store/src/sqlite.rs#L156-L169) percent-encodes every byte of the native path into the `file:` URI. This bypasses SQLite's URI parser pitfalls without mangling Windows extended paths.
+* [`managed_data_path`](../../crates/airk-kernel/src/lib.rs#L64-L96) resolves ancestors to locate the canonical `\\?\` extended prefix without mutating disk on read-only open calls.
 
 ### Concurrency, Leases, and Retirement
-* **WAL Mode & Busy Handling**: All SQLite databases use WAL mode with explicit busy timeouts (2s) and query deadlines (250ms progress handler) in [`connect_root_once`](../crates/airk-store/src/sqlite.rs#L209-L234).
-* **Protocol Negotiation**: [`retry_wal_protocol`](../crates/airk-store/src/sqlite.rs#L185-L203) retries reads encountering `SQLITE_PROTOCOL` during concurrent reader connection churn without risking ambiguous mutation replays.
-* **Two-Phase Generation Retirement**: In [`maintenance.rs`](../crates/airk-store/src/maintenance.rs), retired index generations transition through durable SQLite-backed intent stages (`Detached` -> `PhysicalRemovalComplete` -> `IntentComplete`). Interruptions at any boundary are recoverable and idempotent.
+* **WAL Mode & Busy Handling**: All SQLite databases use WAL mode with explicit busy timeouts (2s) and query deadlines (250ms progress handler) in [`connect_root_once`](../../crates/airk-store/src/sqlite.rs#L209-L234).
+* **Protocol Negotiation**: [`retry_wal_protocol`](../../crates/airk-store/src/sqlite.rs#L185-L203) retries reads encountering `SQLITE_PROTOCOL` during concurrent reader connection churn without risking ambiguous mutation replays.
+* **Two-Phase Generation Retirement**: In [`maintenance.rs`](../../crates/airk-store/src/maintenance.rs), retired index generations transition through durable SQLite-backed intent stages (`Detached` -> `PhysicalRemovalComplete` -> `IntentComplete`). Interruptions at any boundary are recoverable and idempotent.
 * **Reader Leases**: Active search queries and catalog readers hold shared OS file locks on generation lease files, ensuring running MCP workers are never stripped of files during background garbage collection.
 
 ---
@@ -148,13 +148,13 @@ SQLite under Windows frequently encounters URI parser quirks when dealing with e
 ## 4. Ingestion, Parsers & Retrieval Engines
 
 ### Streaming & Memory Discipline
-* Ingestion operates in a streaming fashion ([`scan_streaming_profiled`](../crates/airk-ingest/src/lib.rs#L302-L342)), retaining at most one extracted artifact in memory before emitting content-addressed payloads to disk.
-* Chunks conform to an 8 KiB / 160-line ceiling, preserving exact UTF-8 character boundaries and CRLF endings ([`chunking.rs`](../crates/airk-ingest/src/chunking.rs)).
+* Ingestion operates in a streaming fashion ([`scan_streaming_profiled`](../../crates/airk-ingest/src/lib.rs#L302-L342)), retaining at most one extracted artifact in memory before emitting content-addressed payloads to disk.
+* Chunks conform to an 8 KiB / 160-line ceiling, preserving exact UTF-8 character boundaries and CRLF endings ([`chunking.rs`](../../crates/airk-ingest/src/chunking.rs)).
 
 ### Retrieval Fusion & Model Execution
 * Lexical search uses Tantivy with LZ4 compression and mmap postings.
 * Vector search uses DiskANN 0.59.0 for disk-resident graph traversal with bounded record allocations.
-* MCP search dispatches blocking I/O to dedicated worker threads via `tokio::task::spawn_blocking` ([`airk-mcp`](../crates/airk-mcp/src/lib.rs#L355-L379)), ensuring the async JSON-RPC runtime is never blocked by disk I/O.
+* MCP search dispatches blocking I/O to dedicated worker threads via `tokio::task::spawn_blocking` ([`airk-mcp`](../../crates/airk-mcp/src/lib.rs#L355-L379)), ensuring the async JSON-RPC runtime is never blocked by disk I/O.
 
 ---
 
@@ -163,15 +163,15 @@ SQLite under Windows frequently encounters URI parser quirks when dealing with e
 While the codebase is exceptionally robust, the following minor areas are surfaced for consideration:
 
 ### 1. Defensive Path Unwraps in Maintenance Routines
-* **Location**: [`maintenance.rs`](../crates/airk-store/src/maintenance.rs#L508-L511), [`maintenance_legacy.rs`](../crates/airk-store/src/maintenance/legacy.rs#L204).
+* **Location**: [`maintenance.rs`](../../crates/airk-store/src/maintenance.rs#L508-L511), [`maintenance_legacy.rs`](../../crates/airk-store/src/maintenance/legacy.rs#L204).
 * **Observation**: Several helper routines call `.parent().unwrap()` or `path.file_name().unwrap().to_str().unwrap()`.
 * **Detail**: Although paths processed in these functions are constructed from valid internal generation directories, calling `.to_str().unwrap()` on unknown disk entries could theoretically panic if a legacy directory contains non-UTF-8 characters.
 * **Recommendation**: Replace `.to_str().unwrap()` with `.to_string_lossy()` or return `.context("invalid path entry")?` to preserve the zero-panic guarantee on disk anomalies.
 
 ### 2. Lock Poisoning in Retrieval Model Cache
-* **Location**: [`model.rs`](../crates/airk-retrieval/src/model.rs#L623-L626).
+* **Location**: [`model.rs`](../../crates/airk-retrieval/src/model.rs#L623-L626).
 * **Observation**: `self.0.lock().unwrap()` is used on the embedding model cache mutex.
-* **Detail**: In [`Kernel`](../crates/airk-kernel/src/lib.rs#L224-L229), mutex poisoning is gracefully handled via `.map_err(|_| anyhow::anyhow!("... poisoned"))?`. In `model.rs`, a panic on another thread could leave the lock poisoned, causing subsequent calls to panic.
+* **Detail**: In [`Kernel`](../../crates/airk-kernel/src/lib.rs#L224-L229), mutex poisoning is gracefully handled via `.map_err(|_| anyhow::anyhow!("... poisoned"))?`. In `model.rs`, a panic on another thread could leave the lock poisoned, causing subsequent calls to panic.
 * **Recommendation**: Handle poisoned locks by using `.unwrap_or_else(|poisoned| poisoned.into_inner())` or mapping the lock error to an `anyhow::Result`.
 
 ### 3. Third-Party License Notices Audit

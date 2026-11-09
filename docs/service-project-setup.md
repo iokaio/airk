@@ -88,10 +88,10 @@ actual client's initialization, tool list, status and cited read. See
 
 Historical onboarding follow-up (25 October 2026; superseded by P6f): trusted VSIX activation automatically prepares and submits registrations for new workspace folders using native defaults or User storage selection, then queues model setup and indexing with automatic watching. The native canonical-path, reservation, isolation and trust checks below still apply. Existing saved 1.4 bindings are retained without changing their storage, watching or index work. Manual storage changes still show an exact review. The dated checkpoint and artifact results below describe the earlier manual-only setup.
 
-**Development checkpoint before the 1.4 default cutover (2026-10-24).** The artifact identities and 1.3.2 development versions below remain historical evidence. The current source/lockfiles are 1.4.0 and the extension/public CLI now use service defaults; see the [current completion checklist](service-implementation-checklist.md).
+**Development checkpoint before the 1.4 default cutover (2026-10-24).** The artifact identities and 1.3.2 development versions below remain historical evidence. The current source/lockfiles are 1.4.0 and the extension/public CLI now use service defaults; see the [current completion checklist](history/service-implementation-checklist.md).
 
 
-This is the implemented registration adapter for the [1.4 service plan](airkservice-architecture.md). Native and extension source/lockfiles are 1.4.0 and default to service ownership. The dated validation below retains its earlier artifact versions. Final platform/editor qualification and the VSIX gate remain open.
+This is the implemented registration adapter for the [1.4 service plan](history/airkservice-architecture.md). Native and extension source/lockfiles are 1.4.0 and default to service ownership. The dated validation below retains its earlier artifact versions. Final platform/editor qualification and the VSIX gate remain open.
 
 `airk --root <source> --data-dir <storage> --collection <name> service prepare-registration` returns the exact canonical project registration without creating directories. The source must already exist. Storage may be missing: the native adapter resolves its existing ancestor and rejects traversal, unavailable ancestors and overlap with the proposed source. The review identifies source, data, collection, opaque binding and installed runtime scope.
 
