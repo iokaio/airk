@@ -1,5 +1,29 @@
 # AIRK 1.8.14 implementation record
 
+**8 November r28 installed-upgrade failure:** upgrading the user's running
+1.8.11 installation with `airk-1.8.14-win32-x64.vsix` failed with
+`checkpoint_complete_roster_limit: serialized snapshot`. Read-only aggregate
+inspection found registry contract 12 with 991 succeeded jobs and 991 request
+receipts, and no unfinished jobs. The checkpoint duplicated completed history
+already covered by complete table commitments and exceeded its 448 KiB limit.
+
+The correction passed 53 scoped native regressions and shipping-configuration
+Store/CLI Clippy. New schema-2 snapshots retain full table
+counts and authenticated row digests while expanding pending/running jobs and
+their requests; completed records still undergo validation. Limits and retained
+history remain unchanged. Schema-1 reobservation preserves existing immutable
+checkpoint packets and interrupted journals; maintenance separately checks job,
+request and configuration table commitments. Older checkpoint-capable 1.8.14
+predecessors still execute their own capture and can retain the original size
+refusal. Replacement Windows debug **r29** is built and package-verified:
+`artifacts/local/one-airk-1.8.14/windows-debug-vsix-r29/publish/airk-1.8.14-win32-x64.vsix`
+(86,427,333 bytes), SHA-256 `a0ed95d3ba0d008c75cd3bfcb89fb00e9063a1cbb150258ccb2a144fe562cc41`.
+The runtime and package receipts are `completion-runtime-r29-r1.json`,
+`completion-native-package-r29-r1.json` and `completion-vsix-package-r29-r1.json`;
+all consumed native/harness inputs remained unchanged. Installed acceptance,
+full workspace and cross-platform qualification remain pending for this correction.
+The r28 evidence below remains historical.
+
 **8 November local manual-test candidate:** Windows debug **r28** and its VSIX
 are built and package-verified. The local file is
 `artifacts/local/one-airk-1.8.14/windows-debug-vsix-r28/publish/airk-1.8.14-win32-x64.vsix`

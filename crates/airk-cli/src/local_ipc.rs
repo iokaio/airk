@@ -157,7 +157,11 @@ pub(crate) fn cleanup_predecessor_endpoints(root: &Path) -> Result<bool> {
     {
         let directory = unix_socket_root(&root.canonicalize()?)?;
         let mut removed = 0;
-        for entry in std::fs::read_dir(directory)?.take(1024) {
+        for (count, entry) in std::fs::read_dir(directory)?.enumerate() {
+            ensure!(
+                count < 1024,
+                "predecessor endpoint census exceeds complete scan bound"
+            );
             let entry = entry?;
             let name = entry.file_name();
             let Some(name) = name.to_str() else {
@@ -166,11 +170,7 @@ pub(crate) fn cleanup_predecessor_endpoints(root: &Path) -> Result<bool> {
             let Some(role) = name.strip_suffix(".sock") else {
                 continue;
             };
-            let recognized = (role.starts_with("q-") || role.starts_with("e-"))
-                && role.len() == 34
-                && role[2..]
-                    .bytes()
-                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+            let recognized = predecessor_child_role(role);
             if recognized {
                 remove_exited_endpoint(root, role)?;
                 removed += 1;
@@ -186,6 +186,38 @@ pub(crate) fn cleanup_predecessor_endpoints(root: &Path) -> Result<bool> {
         let _ = root;
         Ok(true)
     }
+}
+
+#[cfg(any(unix, test))]
+fn predecessor_child_role(role: &str) -> bool {
+    (role.starts_with("q-") || role.starts_with("e-"))
+        && role.len() == 34
+        && role[2..]
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+/// Retire only the receipt-bound namespace after the old service/children exit.
+/// Unknown entries remain explicit blockers rather than becoming a deletion scope.
+pub(crate) fn retire_endpoint_namespace(lease: &airk_store::service::ServiceLease) -> Result<bool> {
+    if !cleanup_predecessor_endpoints(lease.root())? {
+        return Ok(false);
+    }
+    prepare_control_endpoint(lease)?;
+    #[cfg(unix)]
+    {
+        let directory = unix_socket_root(&lease.root().canonicalize()?)?;
+        let entries = std::fs::read_dir(&directory)?
+            .take(2)
+            .collect::<std::io::Result<Vec<_>>>()?;
+        ensure!(
+            entries.len() == 1 && entries[0].file_name() == "identity",
+            "unrecognized predecessor endpoint entries preserved"
+        );
+        std::fs::remove_file(directory.join("identity"))?;
+        std::fs::remove_dir(directory)?;
+    }
+    Ok(true)
 }
 
 /// The owning adapter must prove actual process exit before invoking this function.
@@ -279,6 +311,26 @@ pub async fn write_message_limited<S: AsyncWrite + Unpin, T: Serialize>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clean_break_endpoint_roles_require_exact_original_child_identity() {
+        for prefix in ["q-", "e-"] {
+            assert!(predecessor_child_role(&format!(
+                "{prefix}{}",
+                "a".repeat(32)
+            )));
+            assert!(!predecessor_child_role(&format!(
+                "{prefix}{}",
+                "a".repeat(31)
+            )));
+            assert!(!predecessor_child_role(&format!(
+                "{prefix}{}",
+                "A".repeat(32)
+            )));
+        }
+        assert!(!predecessor_child_role("control"));
+        assert!(!predecessor_child_role("foreign.sock"));
+    }
 
     #[tokio::test]
     async fn same_user_endpoint_rejects_competing_listener_and_exchanges_bounded_messages()

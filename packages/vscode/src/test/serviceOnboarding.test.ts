@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import {createHash} from 'node:crypto';
+import {createHash,X509Certificate} from 'node:crypto';
+import {rootCertificates} from 'node:tls';
 import * as globalInventory from '../globalAgentInventory';
 const realGlobalInventory=globalInventory.inventoryGlobalAgentConfigs;
 import * as fs from 'node:fs/promises';
@@ -12,7 +13,611 @@ import { ServiceWorkspace } from '../serviceWorkspace';
 import { ServiceError } from '../serviceClient';
 import { httpConfigurationConnectionId, refreshHttpAgentConfig } from '../agentMigration';
 import { httpAuthorityDigest } from '../serviceHttp';
+import { ServiceConsoleController } from '../serviceConsoleController';
 import * as path from 'node:path';
+import {serializeServers} from '../model';
+import {credentialEnvironment} from '../serviceHttp';
+import {AssistanceIpcHost} from '../explorerAssistanceHost';
+import {assistanceDirectory,launchDescriptorPath} from '../explorerAssistanceLaunch';
+import * as assistanceLaunch from '../explorerAssistanceLaunch';
+import {predecessorHttpFixture} from './fixtures/predecessorHttpFixture';
+import {IntentJournal,INTENT_PREFIX,INTENT_LIMIT,INTENT_MAX_TOTAL_BYTES,chargedRecordBytes} from '../serviceIntents';
+
+const scopedJournalIntent=(namespace:string,nonce:string)=>({enqueue:{project:'21'.repeat(32),caller:'22'.repeat(16),kind:'index' as const,key:{namespace,epoch:1,nonce}}});
+
+for(const late of [false,true])test(`published clean-break Genesis discards a full predecessor journal so a new User Stop is durable while indexes build${late?' after a late old-window Memento write':''}`,async context=>{
+    const f=await serviceTestHost(context,{automatic:false,bundledVersion:'1.8.16',runtimeVersion:'1.8.11',installedVersion:'1.8.16'});
+    const controller=f.context.subscriptions.find((value:any)=>typeof value.resolveAgentSpec==='function'),old=new IntentJournal(f.intentStorage,f.binding.controlDir,'34'.repeat(16));
+    try{
+        await old.ready();
+        for(let index=1;index<=INTENT_LIMIT;index++){
+            const nonce=index.toString(16).padStart(32,'0'),key=INTENT_PREFIX+old.scope+'.'+nonce;
+            await f.intentStorage.create!(key,{schema:1,scope:old.scope,title:'Predecessor pending request',intent:scopedJournalIntent('34'.repeat(16),nonce),fixture_padding:'x'.repeat(31500)});
+        }
+        const charged=old.list().reduce((total,item)=>total+chargedRecordBytes(item.value),0);
+        assert.equal(old.list().length,INTENT_LIMIT);assert.ok(charged>INTENT_MAX_TOTAL_BYTES*.95&&charged<=INTENT_MAX_TOTAL_BYTES,'exercise both the complete record count and near-full original byte allowance');
+        const transition=RuntimeHost.prototype.transition,discover=RuntimeHost.prototype.discover;
+        context.mock.method(RuntimeHost.prototype,'transition',async function(this:RuntimeHost,...args:Parameters<RuntimeHost['transition']>){
+            const response=await transition.apply(this,args),observed=f.binding.rebuild!;
+            if(late){const nonce='65'.padStart(32,'0');f.values.set(INTENT_PREFIX+old.scope+'.'+nonce,{schema:1,scope:old.scope,title:'Late predecessor window',intent:scopedJournalIntent('34'.repeat(16),nonce)});}
+            f.binding.rebuild={...observed,stage:'indexing',cleanup:{complete:false,state:'waiting_for_indexes',failure:null,observation:null},indexes:observed.indexes.map(item=>({...item,readiness:'pending',job:{...(item.job as object),state:'pending',outcome:null}}))};return response;
+        });
+        context.mock.method(RuntimeHost.prototype,'discover',async function(this:RuntimeHost,...args:Parameters<RuntimeHost['discover']>){
+            const observed=await discover.apply(this,args);if(f.binding.rebuild){assert.ok(observed.inspection);observed.inspection.registry_namespace=f.binding.rebuild.successor_namespace;}return observed;
+        });
+        const transport=controller.runtime().client(f.binding).transport,request=transport.request.bind(transport);
+        context.mock.method(transport,'request',async(input:unknown)=>{
+            const response=await request(input),name=typeof input==='string'?input:Object.keys(input as object)[0],namespace=f.binding.rebuild?.successor_namespace;
+            if(namespace&&name==='request_epoch')return {...response,namespace};
+            if(namespace&&name==='events')return {...response,page:{...response.page,namespace,tail:{...response.page.tail,namespace}}};
+            return response;
+        });
+        let stops=0;
+        context.mock.method(RuntimeHost.prototype,'lifecycle',async(...[_binding,intent]:Parameters<RuntimeHost['lifecycle']>)=>{
+            stops++;assert.equal(intent.lifecycle.action,'stop');assert.equal(intent.lifecycle.key.namespace,f.binding.rebuild!.successor_namespace);
+            assert.equal(controller.console.intentStorage.keys().filter((key:string)=>key.startsWith(INTENT_PREFIX)).length,1,'the new Stop itself is durable before native dispatch');
+            f.state.stopped=true;return {status:'lifecycle',record:{id:'71'.repeat(32),phase:'complete',request:{...structuredClone(intent.lifecycle),manager:false}}};
+        });
+        await f.commands.get('airk.installCli')!();await controller.console.controller.refresh();await controller.console.run('stop');
+        assert.equal(stops,1,`new Stop must be admitted after old authority is revoked: ${controller.console.controller.state.message??'no refusal detail'}`);
+        assert.equal(f.state.stopped,true);assert.deepEqual(old.list(),[]);
+        assert.equal(f.binding.rebuild!.stage,'indexing');assert.equal(f.values.get(`airk.cleanBreak.complete.1.${f.binding.installDir}`),undefined,'fresh index and physical cleanup completion remain unqualified');
+    }finally{await f.close();}
+});
+
+for(const late of ['foreign','malformed','wrong_namespace'] as const)test(`accepted old-scope cleanup preserves a late ${late} Memento request`,async context=>{
+    const f=await serviceTestHost(context,{automatic:false,registered:false,bundledVersion:'1.8.16',runtimeVersion:'1.8.11',installedVersion:'1.8.16'}),old=new IntentJournal(f.intentStorage,f.binding.controlDir,'34'.repeat(16));
+    try{
+        await old.prepare('Captured old request',scopedJournalIntent('34'.repeat(16),'61'.repeat(16)));
+        const foreign=new IntentJournal(f.intentStorage,f.binding.controlDir,'99'.repeat(16)),scope=late==='foreign'?foreign.scope:old.scope,nonce='62'.repeat(16),key=INTENT_PREFIX+scope+'.'+nonce;
+        const value={schema:1,scope,title:'Late preserved request',intent:late==='malformed'?{shutdown:{}}:scopedJournalIntent('99'.repeat(16),nonce)},transition=RuntimeHost.prototype.transition;
+        context.mock.method(RuntimeHost.prototype,'transition',async function(this:RuntimeHost,...args:Parameters<RuntimeHost['transition']>){const result=await transition.apply(this,args);f.values.set(key,structuredClone(value));return result;});
+        await f.commands.get('airk.installCli')!();assert.deepEqual(f.values.get(key),value,'retired-scope authority never deletes unrelated or malformed request bytes');
+        const controller=f.context.subscriptions.find((item:any)=>typeof item.resolveAgentSpec==='function');
+        if(late==='foreign'){assert.equal(controller.cleanBreakClientResult.complete,true);assert.ok(f.intentStorage.keys().includes(key));}
+        else{assert.equal(controller.cleanBreakClientResult.complete,false);assert.equal(f.values.has(`airk.cleanBreak.complete.1.${f.binding.installDir}`),false);}
+        assert.equal(f.writes.length,0);
+    }finally{await f.close();}
+});
+
+test('accepted clean break retires only its predecessor journal scope and preserves fresh and foreign unknown requests',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,registered:false,bundledVersion:'1.8.16',runtimeVersion:'1.8.11',installedVersion:'1.8.16'});
+    const old=new IntentJournal(f.intentStorage,f.binding.controlDir,'34'.repeat(16)),foreign=new IntentJournal(f.intentStorage,f.binding.controlDir,'99'.repeat(16));
+    const oldNonce='31'.repeat(16),foreignNonce='32'.repeat(16);let fresh:IntentJournal|undefined;
+    try{
+        await old.prepare('Predecessor unknown',scopedJournalIntent('34'.repeat(16),oldNonce));await foreign.prepare('Foreign unknown',scopedJournalIntent('99'.repeat(16),foreignNonce));
+        const foreignBefore=structuredClone(foreign.list()),transition=RuntimeHost.prototype.transition;
+        context.mock.method(RuntimeHost.prototype,'transition',async function(this:RuntimeHost,...args:Parameters<RuntimeHost['transition']>){
+            const response=await transition.apply(this,args);fresh=new IntentJournal(f.intentStorage,f.binding.controlDir,String(f.binding.rebuild!.successor_namespace));await fresh.prepare('Fresh unknown',scopedJournalIntent(String(f.binding.rebuild!.successor_namespace),'33'.repeat(16)));return response;
+        });
+        await f.commands.get('airk.installCli')!();
+        assert.deepEqual(old.list(),[]);assert.deepEqual(foreign.list(),foreignBefore);assert.equal(fresh!.list().length,1);
+        const capture=[...f.values.entries()].find(([name])=>name.startsWith('airk.cleanBreak.clients.1.'))?.[1] as any;
+        assert.equal(capture.result.complete,true);assert.equal(capture.result.journal.complete,true);assert.equal(capture.result.journal.scope,old.scope);assert.equal(capture.result.journal.operation_id,f.binding.rebuild!.operation_id);
+        assert.equal(f.writes.length,0,'retiring predecessor UI metadata never submits or replays an index job');
+    }finally{await f.close();}
+});
+
+for(const changed of ['operation','file'] as const)test(`clean-break journal cleanup preserves captured records after ${changed} changes`,async context=>{
+    const f=await serviceTestHost(context,{automatic:false,registered:false,bundledVersion:'1.8.16',runtimeVersion:'1.8.11',installedVersion:'1.8.16'});
+    const old=new IntentJournal(f.intentStorage,f.binding.controlDir,'34'.repeat(16));
+    try{
+        await old.prepare('Unknown predecessor',scopedJournalIntent('34'.repeat(16),'41'.repeat(16)));const before=structuredClone(old.list()),transition=RuntimeHost.prototype.transition;
+        context.mock.method(RuntimeHost.prototype,'transition',async function(this:RuntimeHost,...args:Parameters<RuntimeHost['transition']>){
+            const response=await transition.apply(this,args),entry=[...f.values.entries()].find(([name])=>name.startsWith('airk.cleanBreak.clients.1.'))!,capture=structuredClone(entry[1]) as any;
+            if(changed==='operation'){capture.operation='42'.repeat(16);f.values.set(entry[0],capture);}
+            else{const file=capture.journal.files.find((item:any)=>item.name.startsWith('b-')).name;await fs.appendFile(path.join(f.context.globalStorageUri.fsPath,'service-intents',file),' ');}
+            return response;
+        });
+        await f.commands.get('airk.installCli')!();assert.deepEqual(old.list(),before,'changed ownership evidence cannot authorize deleting the pending request');
+        const controller=f.context.subscriptions.find((value:any)=>typeof value.resolveAgentSpec==='function');assert.equal(controller.cleanBreakClientResult.complete,false);
+        assert.match(JSON.stringify(controller.cleanBreakClientResult),changed==='operation'?/crossed_native_operation/:/changed|blocked/);
+        assert.equal(f.writes.length,0);
+    }finally{await f.close();}
+});
+
+test('same-contract runtime upgrade retains its current unknown journal requests',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,registered:false,bundledVersion:'1.8.17',runtimeVersion:'1.8.16',installedVersion:'1.8.17'});
+    f.binding.cleanBreak={required:false,baseline_version:'1.8.16',state_contract:'airk-state/1',installed_contract:{schema:1}};
+    const journal=new IntentJournal(f.intentStorage,f.binding.controlDir,'34'.repeat(16));
+    try{
+        await journal.prepare('Current unknown',scopedJournalIntent('34'.repeat(16),'51'.repeat(16)));const before=structuredClone(journal.list());
+        await f.commands.get('airk.installCli')!();assert.equal(f.binding.version,'1.8.17');assert.equal(f.binding.rebuild,undefined);assert.deepEqual(journal.list(),before);
+        assert.equal([...f.values.keys()].some(key=>key.startsWith('airk.cleanBreak.clients.1.')),false);assert.equal(f.writes.length,0);
+    }finally{await f.close();}
+});
+
+async function predecessorHostHttp(f:Awaited<ReturnType<typeof serviceTestHost>>){
+    const controller=f.context.subscriptions.find((value:any)=>typeof value.resolveAgentSpec==='function');
+    const row=[...f.registrations.values()][0],registration={binding:row.binding,root:row.root,data_root:row.data_root,collection:row.collection};
+    // Seed the same authoritative native observation that an earlier editor
+    // session obtained, without bypassing the production prebaseline guard.
+    const info=await controller.runtime().httpLegacyConnection(f.binding,registration,'fixture-selection','19'.repeat(32),'29'.repeat(16),'claude');
+    const filename=path.join(row.root,'.mcp.json');
+    await fs.writeFile(filename,serializeServers('claude',[{key:'airk',label:'AIRK',command:'',args:[],http:info}]));migrationEditor(f);
+    return {controller,info};
+}
+
+test('stopped predecessor cleanup uses expired disposal ownership when old credential and CA files are already absent',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,bundledVersion:'1.8.16',runtimeVersion:'1.8.11',installedVersion:'1.8.16'});
+    const entries=new Map<string,{type:number;value:string}>(),collection=f.context.environmentVariableCollection;
+    collection.get=(name:string)=>entries.get(name);collection.replace=(name:string,value:string)=>entries.set(name,{type:f.stub.EnvironmentVariableMutatorType.Replace,value});collection.delete=(name:string)=>entries.delete(name);
+    const prototype=RuntimeHost.prototype as any,prior=Object.getOwnPropertyDescriptor(prototype,'lookupPredecessorHttpOwnership');
+    try{
+        const {controller,info}=await predecessorHostHttp(f);await controller.provisionHttpInfo(info,'claude',()=>{},f.context.globalStorageUri.fsPath);
+        const memento='airk.http.legacy.1.'+'91'.repeat(32);f.values.set(memento,structuredClone(info));
+        const originalControl=f.binding.controlDir,originalSha=f.binding.runtimeSha256,proof=predecessorHttpFixture(originalControl,originalSha,info.connection_id,'expired');proof.endpoint=structuredClone(info.endpoint);proof.snapshot.endpoint=structuredClone(info.endpoint);
+        Object.defineProperty(prototype,'lookupPredecessorHttpOwnership',{configurable:true,writable:true,value:async(binding:any,id:string,expected:any)=>{
+            assert.equal(id,info.connection_id);assert.equal(expected.predecessor,originalSha);assert.equal(expected.controlDir,originalControl);
+            return {...structuredClone(proof),active:binding.runtimeSha256,operation_id:expected.operationId??null,qualification:{...proof.qualification,source:expected.operationId?'saved_predecessor_snapshot':'current_predecessor_metadata',current_namespace:expected.operationId?'78'.repeat(16):proof.namespace,current_namespace_ownership:expected.operationId?'not_owned':'same_predecessor'}};
+        }});
+        context.mock.method(RuntimeHost.prototype,'lookupHttpConnection',async()=>{throw new Error('ordinary live HTTP lookup is forbidden during predecessor disposal');});
+        await fs.unlink(info.credential_file);await fs.unlink(info.ca_certificate_file);f.state.stopped=true;
+        await f.commands.get('airk.installCli')!();
+        assert.equal(entries.has(credentialEnvironment(info)),false);assert.equal(entries.has('NODE_EXTRA_CA_CERTS'),false);assert.equal(f.values.has(memento),false);
+        const capture=[...f.values.entries()].find(([name])=>name.startsWith('airk.cleanBreak.clients.1.'))?.[1] as any;
+        assert.equal(capture.result.complete,true);assert.equal(JSON.stringify(capture).includes('airk1.'),false);assert.equal(f.state.httpConnections.length,1,'disposal never restarts old authority or enrolls a replacement');
+        assert.equal(f.state.stopped,false,'the predecessor Stop belongs to the discarded namespace, not the new Genesis');
+    }finally{if(prior)Object.defineProperty(prototype,'lookupPredecessorHttpOwnership',prior);else delete prototype.lookupPredecessorHttpOwnership;await f.close();}
+});
+
+test('clean-break completion preserves a new User Stop after selection without ensuring a service',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,registered:false,bundledVersion:'1.8.16',runtimeVersion:'1.8.11',installedVersion:'1.8.16'});
+    const transition=RuntimeHost.prototype.transition;let ensured=0;
+    context.mock.method(RuntimeHost.prototype,'transition',async function(this:RuntimeHost,...args:Parameters<RuntimeHost['transition']>){const result=await transition.apply(this,args);f.state.stopped=true;return result;});
+    context.mock.method(RuntimeHost.prototype,'ensure',async()=>{ensured++;throw new ServiceError('service_explicitly_stopped');});
+    try{
+        await assert.doesNotReject(f.commands.get('airk.installCli')!());assert.equal(f.state.stopped,true);assert.equal(ensured,0,'completion reporting cannot elect or restart a newly stopped service');
+        assert.equal(f.values.get(`airk.cleanBreak.complete.1.${f.binding.installDir}`),f.binding.rebuild!.operation_id);
+    }finally{await f.close();}
+});
+
+test('offline headless completion consumes scoped saved reset metadata without client IPC or ensure',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,registered:false,bundledVersion:'1.8.16',runtimeVersion:'1.8.11',installedVersion:'1.8.16'});
+    try{
+        const controller=f.context.subscriptions.find((value:any)=>typeof value.resolveAgentSpec==='function'),runtime=controller.runtime();await runtime.transition(f.binding,await runtime.reviewTransition(f.binding,'upgrade'));
+        const observation=await runtime.discover();controller.binding=runtime.binding(observation.inspection,observation.installDir);
+        let attempted=0;context.mock.method(RuntimeHost.prototype,'ensure',async()=>{attempted++;throw new ServiceError('service_unavailable');});context.mock.method(RuntimeHost.prototype,'client',()=>{attempted++;throw new Error('Saved completion metadata requires no client IPC');});
+        await assert.doesNotReject(controller.installationComplete(true));assert.equal(attempted,0);
+    }finally{await f.close();}
+});
+
+test('clean break retires a creator-proven old trust copy after its window environment reference was withdrawn',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,bundledVersion:'1.8.16',runtimeVersion:'1.8.11',installedVersion:'1.8.16'});
+    const entries=new Map<string,{type:number;value:string}>(),collection=f.context.environmentVariableCollection;
+    collection.get=(name:string)=>entries.get(name);collection.replace=(name:string,value:string)=>entries.set(name,{type:f.stub.EnvironmentVariableMutatorType.Replace,value});collection.delete=(name:string)=>entries.delete(name);
+    try{
+        const {controller,info}=await predecessorHostHttp(f);await controller.provisionHttpInfo(info,'claude',()=>{},f.context.globalStorageUri.fsPath);const file=entries.get('NODE_EXTRA_CA_CERTS')!.value;
+        entries.clear();await f.commands.get('airk.installCli')!();
+        await assert.rejects(fs.stat(file),{code:'ENOENT'},'a missing environment reference does not discard actual creator/native ownership evidence');
+    }finally{await f.close();}
+});
+
+test('a fresh namespace owning the same HTTP id and URL blocks predecessor configuration and host artifact disposal',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,bundledVersion:'1.8.16',runtimeVersion:'1.8.11',installedVersion:'1.8.16'});
+    const entries=new Map<string,{type:number;value:string}>(),collection=f.context.environmentVariableCollection;
+    collection.get=(name:string)=>entries.get(name);collection.replace=(name:string,value:string)=>entries.set(name,{type:f.stub.EnvironmentVariableMutatorType.Replace,value});collection.delete=(name:string)=>entries.delete(name);
+    try{
+        const {controller,info}=await predecessorHostHttp(f);await controller.provisionHttpInfo(info,'claude',()=>{},f.context.globalStorageUri.fsPath);
+        const file=path.join(f.folders[0].uri.fsPath,'.mcp.json'),before=await fs.readFile(file,'utf8'),trust=entries.get('NODE_EXTRA_CA_CERTS')!.value,lookup=RuntimeHost.prototype.lookupPredecessorHttpOwnership;
+        context.mock.method(RuntimeHost.prototype,'lookupPredecessorHttpOwnership',async function(this:RuntimeHost,binding:Parameters<RuntimeHost['lookupPredecessorHttpOwnership']>[0],id:string,scope:Parameters<RuntimeHost['lookupPredecessorHttpOwnership']>[2]){
+            const value=await lookup.call(this,binding,id,scope);if(!scope.operationId)return value;
+            return {...value,status:'unavailable',ownership:null,credential_sha256:null,ca_certificate_file:null,credential_file:null,qualification:{...value.qualification,current_namespace:'78'.repeat(16),current_namespace_ownership:'owned'}} as any;
+        });
+        await f.commands.get('airk.installCli')!();
+        assert.equal(await fs.readFile(file,'utf8'),before,'same bytes cannot distinguish freshly reenrolled identical selectors');assert.ok(entries.has(credentialEnvironment(info)));assert.ok(await fs.stat(trust));
+        const capture=[...f.values.entries()].find(([name])=>name.startsWith('airk.cleanBreak.clients.1.'))?.[1] as any;
+        assert.equal(capture.result.complete,false);assert.match(JSON.stringify(capture.result.configurations),/clean_break_http_current_authority_unconfirmed/);
+        assert.equal(capture.result.httpRevalidation.queries[0].qualification.current_namespace_ownership,'owned');assert.equal(capture.result.httpRevalidation.snapshot.owners[0].connection_id,info.connection_id);
+    }finally{await f.close();}
+});
+
+test('headless reset cleanup uses its retained predecessor snapshot after original control files disappear',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,bundledVersion:'1.8.16',runtimeVersion:'1.8.11',installedVersion:'1.8.16'});
+    try{
+        const {controller,info}=await predecessorHostHttp(f),originalControl=f.binding.controlDir,sourceFile=path.join(f.folders[0].uri.fsPath,'.mcp.json'),memento='airk.http.legacy.1.'+'92'.repeat(32);
+        f.values.set(memento,structuredClone(info));const runtime=controller.runtime();await runtime.transition(f.binding,await runtime.reviewTransition(f.binding,'upgrade'));
+        assert.equal([...f.values.keys()].some(key=>key.startsWith('airk.cleanBreak.clients.1.')),false,'headless activation has no private editor capture');
+        const metadata=f.binding.cleanBreak!.predecessor_client_metadata as any,candidate=path.join(f.binding.installDir,'runtimes','ef'.repeat(32),'airk');
+        metadata.legacy_launchers.legacy_runtime_images=[{path:candidate,sha256:'af'.repeat(32),runtime_sha256:'ef'.repeat(32)}];
+        const source=JSON.parse(await fs.readFile(sourceFile,'utf8'));source.mcpServers.new_candidate={command:candidate,args:['--root',f.folders[0].uri.fsPath,'--data-dir',f.root,'--collection','new','mcp']};await fs.writeFile(sourceFile,JSON.stringify(source));
+        assert.ok(originalControl.startsWith(f.root+path.sep));await fs.rm(originalControl,{recursive:true,force:true});
+        context.mock.method(RuntimeHost.prototype,'inspectLegacyLaunchers',async()=>{throw new Error('retired predecessor command ownership must come from native saved metadata');});
+        context.mock.method(RuntimeHost.prototype,'lookupHttpConnection',async()=>{throw new Error('headless recovery cannot consult the old live service');});
+        const extension=require('../extension');await extension.deactivate();const replacement=await extension.activate(f.context);await replacement.whenReady();migrationEditor(f);await f.commands.get('airk.installCli')!();
+        const saved=JSON.parse(await fs.readFile(sourceFile,'utf8'));assert.equal(saved.mcpServers.airk,undefined);assert.deepEqual(saved.mcpServers.new_candidate,source.mcpServers.new_candidate,'full legacy inventory never qualifies staged candidate commands for removal');
+        assert.equal(f.values.has(memento),false);assert.equal(f.calls.filter(call=>call==='upgrade-applied').length,1);assert.equal(f.state.httpConnections.length,1);
+        const capture=[...f.values.entries()].find(([name])=>name.startsWith('airk.cleanBreak.clients.1.'))?.[1] as any;
+        assert.equal(capture.operation,f.binding.rebuild!.operation_id);assert.equal(capture.httpOwnership.qualification.source,'saved_predecessor_snapshot');assert.equal(capture.result.complete,true);
+    }finally{await f.close();}
+});
+
+test('headless predecessor executable validation accepts ordinary installation and extended native Windows aliases',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,bundledVersion:'1.8.16',runtimeVersion:'1.8.11',installedVersion:'1.8.16'});
+    try{
+        const row=[...f.registrations.values()][0],file=path.join(row.root,'.mcp.json');
+        await fs.writeFile(file,JSON.stringify({mcpServers:{airk:{command:f.binding.executable,args:['--root',row.root,'--data-dir',row.data_root,'--collection',row.collection,'--service-project',row.binding,'mcp']}}}));migrationEditor(f);
+        const controller=f.context.subscriptions.find((value:any)=>typeof value.resolveAgentSpec==='function'),runtime=controller.runtime();await runtime.transition(f.binding,await runtime.reviewTransition(f.binding,'upgrade'));
+        const metadata=f.binding.cleanBreak!.predecessor_client_metadata as any;
+        if(process.platform==='win32'){
+            metadata.predecessor_executable.path=path.toNamespacedPath(metadata.predecessor_executable.path);
+            for(const image of metadata.command_images)image.path=path.toNamespacedPath(image.path);
+        }
+        const extension=require('../extension');await extension.deactivate();const replacement=await extension.activate(f.context);await replacement.whenReady();await f.commands.get('airk.installCli')!();
+        assert.equal(f.values.get(`airk.cleanBreak.complete.1.${f.binding.installDir}`),f.binding.rebuild!.operation_id,'native extended-path spelling must not invalidate exact approved predecessor executable scope');
+        const scope=require('../runtimeRebuild') as any,sha='ab'.repeat(32),base='D:\\AIRK';
+        assert.equal(scope.predecessorExecutableInRuntime(base,sha,`\\\\?\\D:\\AIRK\\runtimes\\${sha}\\airk.exe`,'win32'),true);
+        assert.equal(scope.predecessorExecutableInRuntime(base,sha,`\\\\?\\D:\\AIRK\\runtimes\\${'cd'.repeat(32)}\\airk.exe`,'win32'),false);
+    }finally{await f.close();}
+});
+
+test('clean break retires an orphan native-owned bare HTTP id memento and preserves an unrelated id',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,bundledVersion:'1.8.16',runtimeVersion:'1.8.11',installedVersion:'1.8.16'});
+    try{
+        const {info}=await predecessorHostHttp(f);await fs.unlink(path.join(f.folders[0].uri.fsPath,'.mcp.json'));
+        const owned='airk.http.connection.1.'+'93'.repeat(32),foreign='airk.http.connection.1.'+'94'.repeat(32);f.values.set(owned,info.connection_id);f.values.set(foreign,'95'.repeat(16));
+        await f.commands.get('airk.installCli')!();
+        assert.equal(f.values.has(owned),false,'a bare managed id requires native disposal lookup even without config, env or full-info references');
+        assert.equal(f.values.get(foreign),'95'.repeat(16));
+    }finally{await f.close();}
+});
+
+test('clean break inventories an unreferenced old CA copy after reload without adopting deletion authority',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,bundledVersion:'1.8.16',runtimeVersion:'1.8.11',installedVersion:'1.8.16'});
+    const entries=new Map<string,{type:number;value:string}>(),collection=f.context.environmentVariableCollection;
+    collection.get=(name:string)=>entries.get(name);collection.replace=(name:string,value:string)=>entries.set(name,{type:f.stub.EnvironmentVariableMutatorType.Replace,value});collection.delete=(name:string)=>entries.delete(name);
+    try{
+        const {controller,info}=await predecessorHostHttp(f);await controller.provisionHttpInfo(info,'claude',()=>{},f.context.globalStorageUri.fsPath);
+        const file=entries.get('NODE_EXTRA_CA_CERTS')!.value,bytes=await fs.readFile(file);entries.clear();await fs.unlink(path.join(f.folders[0].uri.fsPath,'.mcp.json'));
+        const extension=require('../extension');await extension.deactivate();const replacement=await extension.activate(f.context);await replacement.whenReady();await f.commands.get('airk.installCli')!();
+        assert.deepEqual(await fs.readFile(file),bytes,'membership in the old CA set is observation, never creator identity');
+        const capture=[...f.values.entries()].find(([name])=>name.startsWith('airk.cleanBreak.clients.1.'))?.[1] as any;
+        assert.equal(capture.result.complete,false,'a known remaining old CA copy prevents a false all-artifacts-clean completion');
+        assert.match(JSON.stringify(capture.result.hostArtifacts),/clean_break_http_trust_ownership_unproven/);
+    }finally{await f.close();}
+});
+
+for(const limit of ['unsafe','bytes'] as const)test(`managed trust census preserves ${limit} entries and refuses proof before expanding its read scope`,async context=>{
+    const f=await serviceTestHost(context,{automatic:false,bundledVersion:'1.8.16',runtimeVersion:'1.8.11',installedVersion:'1.8.16'});
+    try{
+        const controller=f.context.subscriptions.find((value:any)=>typeof value.resolveAgentSpec==='function'),directory=path.join(f.context.globalStorageUri.fsPath,'http-trust');await fs.mkdir(directory);
+        if(limit==='unsafe'){await fs.mkdir(path.join(directory,'other'));await fs.writeFile(path.join(directory,'other','user-data'),'preserve');}
+        else{await fs.writeFile(path.join(directory,'first'),Buffer.alloc(1048577));await fs.writeFile(path.join(directory,'second'),Buffer.alloc(1048577));}
+        let probes=0;const blockers=await controller.censusPredecessorTrustCopies([],()=>{},async()=>{probes++;throw new Error('No native ownership probe is needed for unsupported read scope');});
+        assert.ok(blockers.some((code:string)=>code.startsWith(limit==='unsafe'?'clean_break_http_trust_inventory_unsafe:':'clean_break_http_trust_inventory_bound:')));assert.equal(probes,0);
+        if(limit==='unsafe')assert.equal(await fs.readFile(path.join(directory,'other','user-data'),'utf8'),'preserve');
+        else{assert.equal((await fs.stat(path.join(directory,'first'))).size,1048577);assert.equal((await fs.stat(path.join(directory,'second'))).size,1048577);}
+    }finally{await f.close();}
+});
+
+test('managed trust census enforces its total byte budget when candidates grow after the outer stat',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,bundledVersion:'1.8.16',runtimeVersion:'1.8.11',installedVersion:'1.8.16'});
+    try{
+        const controller=f.context.subscriptions.find((value:any)=>typeof value.resolveAgentSpec==='function'),directory=path.join(f.context.globalStorageUri.fsPath,'http-trust');await fs.mkdir(directory);
+        const files=new Set([path.join(directory,'first'),path.join(directory,'second')]);for(const file of files)await fs.writeFile(file,'x');
+        const promises=require('node:fs/promises'),lstat=promises.lstat,open=promises.open,grown=new Set<string>();let readBytes=0;
+        context.mock.method(promises,'lstat',async(filename:string,...args:unknown[])=>{
+            const observed=await lstat(filename,...args);
+            if(files.has(filename)&&!grown.has(filename)){grown.add(filename);await fs.writeFile(filename,Buffer.alloc(1048577));}
+            return observed;
+        });
+        context.mock.method(promises,'open',async(filename:string,...args:unknown[])=>{
+            const handle=await open(filename,...args);
+            if(files.has(filename)){const read=handle.read.bind(handle);context.mock.method(handle,'read',async(...input:unknown[])=>{const result=await read(...input);readBytes+=result.bytesRead;return result;});}
+            return handle;
+        });
+        const blockers=await controller.censusPredecessorTrustCopies([],()=>{},async()=>{throw new Error('No CA candidate requires a native proof');});
+        assert.ok(readBytes<=2097152,'the claimed total budget limits actual reads, not stale metadata estimates');
+        assert.ok(blockers.some((code:string)=>/^clean_break_http_trust_inventory_(?:bound|changed):/.test(code)),'growth is an explicit incomplete inventory observation');
+        for(const file of files)assert.ok(await fs.stat(file),'a changing public candidate is preserved');
+    }finally{await f.close();}
+});
+
+test('clean break retires the prior window token and trust environment before explicit fresh-namespace provisioning',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,bundledVersion:'1.8.16',runtimeVersion:'1.8.11',installedVersion:'1.8.16'});
+    const entries=new Map<string,{type:number;value:string}>(),collection=f.context.environmentVariableCollection;
+    collection.get=(name:string)=>entries.get(name);collection.replace=(name:string,value:string)=>entries.set(name,{type:f.stub.EnvironmentVariableMutatorType.Replace,value});collection.delete=(name:string)=>entries.delete(name);
+    try{
+        entries.set('PATH',{type:f.stub.EnvironmentVariableMutatorType.Replace,value:'preserve-existing-cli-path'});
+        // NTFS file IDs can exceed Number.MAX_SAFE_INTEGER. Exercise exact
+        // capture/load/removal on every host, while ordinary reads retain their
+        // real open-handle identity checks.
+        const promises=require('node:fs/promises'),sync=require('node:fs'),lstat=promises.lstat,lstatSync=sync.lstatSync,open=promises.open,large=9007199254740993n;
+        const identity=(filename:unknown,options:any,stat:any)=>options?.bigint&&String(filename).includes(path.sep+'http-trust'+path.sep)?Object.assign(Object.create(Object.getPrototypeOf(stat)),stat,{ino:large}):stat;
+        context.mock.method(promises,'lstat',async(filename:unknown,options:any)=>identity(filename,options,await lstat(filename,options)));
+        context.mock.method(sync,'lstatSync',(filename:unknown,options:any)=>identity(filename,options,lstatSync(filename,options)));
+        context.mock.method(promises,'open',async(filename:unknown,...args:unknown[])=>{
+            const handle=await open(filename,...args);
+            if(String(filename).includes(path.sep+'http-trust'+path.sep)){
+                const stat=handle.stat.bind(handle);
+                context.mock.method(handle,'stat',async(options:any)=>identity(filename,options,await stat(options)));
+            }
+            return handle;
+        });
+        const {controller,info}=await predecessorHostHttp(f);
+        await controller.provisionHttpInfo(info,'claude',()=>{},f.context.globalStorageUri.fsPath);
+        const previousTrust=entries.get('NODE_EXTRA_CA_CERTS')!.value;
+        assert.ok(entries.has(credentialEnvironment(info)));
+        await f.commands.get('airk.installCli')!();
+        assert.equal(entries.has(credentialEnvironment(info)),false,'old native token must stop reaching newly opened terminals');
+        assert.equal(entries.has('NODE_EXTRA_CA_CERTS'),false,'an old owned issuer must not trip the reenrollment rotation guard');
+        assert.equal(entries.get('PATH')!.value,'preserve-existing-cli-path','clean-break HTTP cleanup preserves CLI availability');
+        await assert.rejects(fs.stat(previousTrust),{code:'ENOENT'},'a live-publisher-proven unchanged old public bundle is retired');
+        const capture=[...f.values.entries()].find(([name])=>name.startsWith('airk.cleanBreak.clients.1.'))?.[1];
+        assert.equal(JSON.stringify(capture).includes('airk1.'),false,'persisted recovery proof contains no plaintext token');
+        assert.equal((capture as any).hostArtifacts.bundles[0].ino,large.toString(),'file identity is serialized exactly, without floating-point rounding');
+        const next=structuredClone(info),id='39'.repeat(16),directory=path.join(f.binding.controlDir,'http-1');await fs.mkdir(directory,{recursive:true});
+        next.connection_id=id;next.endpoint.namespace='78'.repeat(16);next.selection.selection.namespace=next.endpoint.namespace;
+        next.ca_certificate_file=path.join(directory,'ca.pem');next.credential_file=path.join(directory,`credential-${id}.token`);
+        next.endpoint.ca_sha256=createHash('sha256').update(new X509Certificate(rootCertificates[0]).raw).digest('hex');
+        await fs.writeFile(next.ca_certificate_file,rootCertificates[0],{mode:0o600});await fs.writeFile(next.credential_file,`airk1.${id}.`+'b'.repeat(64),{mode:0o600});
+        await assert.doesNotReject(controller.provisionHttpInfo(next,'claude',()=>{},f.context.globalStorageUri.fsPath));
+        assert.notEqual(entries.get('NODE_EXTRA_CA_CERTS')!.value,previousTrust);
+        assert.equal(f.state.httpConnections.length,1,'cleanup and provisioning do not automatically enroll a replacement connection');
+    }finally{await f.close();}
+});
+
+test('clean break prunes only native-proven predecessor HTTP mementos and preserves unrelated connection state',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,bundledVersion:'1.8.16',runtimeVersion:'1.8.11',installedVersion:'1.8.16'});
+    try{
+        const {info}=await predecessorHostHttp(f),oldKey='airk.http.legacy.1.'+'49'.repeat(32),foreignKey='airk.http.legacy.1.'+'59'.repeat(32);
+        f.values.set(oldKey,structuredClone(info));
+        const foreign=structuredClone(info);foreign.connection_id='69'.repeat(16);foreign.credential_file=path.join(path.dirname(info.credential_file),`credential-${foreign.connection_id}.token`);foreign.endpoint.namespace='99'.repeat(16);foreign.selection.selection.namespace=foreign.endpoint.namespace;
+        f.values.set(foreignKey,foreign);f.values.set('user.preference',{keep:true});
+        await f.commands.get('airk.installCli')!();
+        assert.equal(f.values.has(oldKey),false,'private old namespace connection metadata must not survive a completed clean break');
+        assert.deepEqual(f.values.get(foreignKey),foreign);assert.deepEqual(f.values.get('user.preference'),{keep:true});
+    }finally{await f.close();}
+});
+
+test('clean break preserves an unproven public trust copy and reports that artifact instead of claiming completion',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,bundledVersion:'1.8.16',runtimeVersion:'1.8.11',installedVersion:'1.8.16'});
+    const entries=new Map<string,{type:number;value:string}>(),collection=f.context.environmentVariableCollection;
+    collection.get=(name:string)=>entries.get(name);collection.delete=(name:string)=>entries.delete(name);
+    try{
+        const {info}=await predecessorHostHttp(f),directory=path.join(f.context.globalStorageUri.fsPath,'http-trust');await fs.mkdir(directory);
+        const bytes=await fs.readFile(info.ca_certificate_file),file=path.join(directory,createHash('sha256').update(bytes).digest('hex')+'.pem');await fs.writeFile(file,bytes);
+        entries.set('NODE_EXTRA_CA_CERTS',{type:f.stub.EnvironmentVariableMutatorType.Replace,value:file});
+        await f.commands.get('airk.installCli')!();
+        assert.deepEqual(await fs.readFile(file),bytes,'native CA bytes and a plausible filename do not prove who published this copy');
+        const capture=[...f.values.entries()].find(([name])=>name.startsWith('airk.cleanBreak.clients.1.'))?.[1] as any;
+        assert.equal(capture.result.complete,false);assert.match(JSON.stringify(capture.result.hostArtifacts),/clean_break_http_trust_ownership_unproven/);
+        assert.equal(f.values.has(`airk.cleanBreak.complete.1.${f.binding.installDir}`),false);
+        await fs.unlink(file);await f.commands.get('airk.installCli')!();
+        const resumed=[...f.values.entries()].find(([name])=>name.startsWith('airk.cleanBreak.clients.1.'))?.[1] as any;
+        assert.equal(resumed.result.complete,true,'an already absent unproven copy no longer blocks the retained cleanup proof');
+    }finally{await f.close();}
+});
+
+test('provisioning an already existing matching trust copy does not acquire clean-break deletion authority',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,bundledVersion:'1.8.16',runtimeVersion:'1.8.11',installedVersion:'1.8.16'});
+    const entries=new Map<string,{type:number;value:string}>(),collection=f.context.environmentVariableCollection;
+    collection.get=(name:string)=>entries.get(name);collection.replace=(name:string,value:string)=>entries.set(name,{type:f.stub.EnvironmentVariableMutatorType.Replace,value});collection.delete=(name:string)=>entries.delete(name);
+    try{
+        const {controller,info}=await predecessorHostHttp(f),directory=path.join(f.context.globalStorageUri.fsPath,'http-trust');await fs.mkdir(directory);
+        const bytes=await fs.readFile(info.ca_certificate_file),file=path.join(directory,createHash('sha256').update(bytes).digest('hex')+'.pem');await fs.writeFile(file,bytes);
+        await controller.provisionHttpInfo(info,'claude',()=>{},f.context.globalStorageUri.fsPath);
+        await f.commands.get('airk.installCli')!();
+        assert.deepEqual(await fs.readFile(file),bytes,'successful reuse never proves exclusive creation of a preexisting copy');
+        const capture=[...f.values.entries()].find(([name])=>name.startsWith('airk.cleanBreak.clients.1.'))?.[1] as any;
+        assert.equal(capture.result.complete,false);assert.match(JSON.stringify(capture.result.hostArtifacts),/clean_break_http_trust_ownership_unproven/);
+    }finally{await f.close();}
+});
+
+test('a same-byte replacement after the exclusive trust link never inherits the original creator identity',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,bundledVersion:'1.8.16',runtimeVersion:'1.8.11',installedVersion:'1.8.16'});
+    const entries=new Map<string,{type:number;value:string}>(),collection=f.context.environmentVariableCollection;
+    collection.get=(name:string)=>entries.get(name);collection.replace=(name:string,value:string)=>entries.set(name,{type:f.stub.EnvironmentVariableMutatorType.Replace,value});collection.delete=(name:string)=>entries.delete(name);
+    try{
+        const {controller,info}=await predecessorHostHttp(f),promises=require('node:fs/promises'),link=promises.link;let replaced:string|undefined;
+        context.mock.method(promises,'link',async(source:string,target:string)=>{
+            await link(source,target);
+            if(path.dirname(target)===path.join(f.context.globalStorageUri.fsPath,'http-trust')){
+                const bytes=await fs.readFile(target);await fs.unlink(target);await fs.writeFile(target,bytes,{mode:0o600});replaced=target;
+                // The original inode still has its live stage link, so this
+                // replacement must have a distinct exact filesystem identity.
+                assert.notEqual((await fs.lstat(source,{bigint:true})).ino,(await fs.lstat(target,{bigint:true})).ino);
+            }
+        });
+        await controller.provisionHttpInfo(info,'claude',()=>{},f.context.globalStorageUri.fsPath);assert.ok(replaced);const bytes=await fs.readFile(replaced!);
+        await f.commands.get('airk.installCli')!();
+        assert.deepEqual(await fs.readFile(replaced!),bytes,'equal bytes do not transfer ownership from the actual created inode');
+        const capture=[...f.values.entries()].find(([name])=>name.startsWith('airk.cleanBreak.clients.1.'))?.[1] as any;
+        assert.equal(capture.result.complete,false);assert.match(JSON.stringify(capture.result.hostArtifacts),/clean_break_http_trust_ownership_unproven/);
+    }finally{await f.close();}
+});
+
+test('clean break preserves a same-path trust publication reassigned to a new namespace after capture',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,bundledVersion:'1.8.16',runtimeVersion:'1.8.11',installedVersion:'1.8.16'});
+    const entries=new Map<string,{type:number;value:string}>(),collection=f.context.environmentVariableCollection;
+    collection.get=(name:string)=>entries.get(name);collection.replace=(name:string,value:string)=>entries.set(name,{type:f.stub.EnvironmentVariableMutatorType.Replace,value});collection.delete=(name:string)=>entries.delete(name);
+    try{
+        const {controller,info}=await predecessorHostHttp(f);await controller.provisionHttpInfo(info,'claude',()=>{},f.context.globalStorageUri.fsPath);
+        const file=entries.get('NODE_EXTRA_CA_CERTS')!.value,bytes=await fs.readFile(file),next=structuredClone(info);next.connection_id='89'.repeat(16);next.endpoint.namespace='99'.repeat(16);next.selection.selection.namespace=next.endpoint.namespace;next.credential_file=path.join(path.dirname(info.credential_file),`credential-${next.connection_id}.token`);
+        await fs.writeFile(next.credential_file,`airk1.${next.connection_id}.`+'c'.repeat(64),{mode:0o600});
+        const transition=RuntimeHost.prototype.transition;
+        context.mock.method(RuntimeHost.prototype,'transition',async function(this:RuntimeHost,...args:Parameters<RuntimeHost['transition']>){await controller.provisionHttpInfo(next,'claude',()=>{},f.context.globalStorageUri.fsPath);return transition.apply(this,args);});
+        await f.commands.get('airk.installCli')!();
+        assert.equal(entries.get('NODE_EXTRA_CA_CERTS')!.value,file);assert.ok(entries.has(credentialEnvironment(next)));assert.deepEqual(await fs.readFile(file),bytes);
+        const capture=[...f.values.entries()].find(([name])=>name.startsWith('airk.cleanBreak.clients.1.'))?.[1] as any;
+        assert.equal(capture.result.complete,false);assert.match(JSON.stringify(capture.result.hostArtifacts),/clean_break_http_environment_namespace_changed/);assert.match(JSON.stringify(capture.result.hostArtifacts),/clean_break_http_trust_current_namespace_reference/);
+        entries.clear();const extension=require('../extension');await extension.deactivate();const replacement=await extension.activate(f.context);await replacement.whenReady();await f.commands.get('airk.installCli')!();
+        assert.deepEqual(await fs.readFile(file),bytes,'losing nonpersistent window references on reload does not authorize removal of a known new-namespace copy');
+        const resumed=[...f.values.entries()].find(([name])=>name.startsWith('airk.cleanBreak.clients.1.'))?.[1] as any;assert.equal(resumed.result.complete,false);
+    }finally{await f.close();}
+});
+
+for(const failure of ['metadata','endpoint'] as const)test(`clean break retries Assistance ${failure} failure before claiming host artifact completion`,async context=>{
+    const f=await serviceTestHost(context,{automatic:false,assistance:true,bundledVersion:'1.8.16',runtimeVersion:'1.8.11',installedVersion:'1.8.16'});
+    try{
+        await fs.mkdir(path.join(f.root,'out'),{recursive:true});await fs.writeFile(path.join(f.root,'out','explorerAssistance.js'),'// current fixture server');
+        const descriptor=launchDescriptorPath(f.context.globalStorageUri.fsPath),stale='{"extension_version":"1.8.11","old_metadata":true}';await fs.writeFile(descriptor,stale);
+        const rejected=failure==='metadata'?context.mock.method(assistanceLaunch,'writeLaunchDescriptor',async()=>{throw new Error('fixture launch write blocked');}):context.mock.method(AssistanceIpcHost,'start',async()=>{throw new Error('fixture endpoint bind blocked');});
+        await f.commands.get('airk.installCli')!();
+        let capture=[...f.values.entries()].find(([name])=>name.startsWith('airk.cleanBreak.clients.1.'))?.[1] as any;
+        assert.equal(capture.result.complete,false,'swallowed optional startup errors must remain explicit clean-break cleanup failures');
+        assert.notEqual(capture.hostArtifacts.assistanceRefreshed,true);assert.match(JSON.stringify(capture.result.hostArtifacts),/clean_break_assistance_refresh_unconfirmed/);
+        rejected.mock.restore();await f.commands.get('airk.installCli')!();
+        capture=[...f.values.entries()].find(([name])=>name.startsWith('airk.cleanBreak.clients.1.'))?.[1] as any;
+        assert.equal(capture.result.complete,true);assert.equal(capture.hostArtifacts.assistanceRefreshed,true);
+        const current=JSON.parse(await fs.readFile(descriptor,'utf8'));assert.equal(current.extension_version,'1.8.16');assert.equal(current.server_sha256,createHash('sha256').update('// current fixture server').digest('hex'));
+    }finally{await f.close();}
+});
+
+for(const limit of ['count','bytes'] as const)test(`clean break refuses an unloadable ${limit} capture before persistence or runtime selection`,async context=>{
+    const f=await serviceTestHost(context,{automatic:false,assistance:true,bundledVersion:'1.8.16',runtimeVersion:'1.8.11',installedVersion:'1.8.16'});
+    try{
+        const controller=f.context.subscriptions.find((value:any)=>typeof value.resolveAgentSpec==='function'),descriptor=controller.assistanceHost.descriptorPath;
+        const invalid=limit==='count'?{mementos:Array.from({length:4097},(_,i)=>({key:'airk.http.connection.1.'+i,sha256:'11'.repeat(32)})),environment:[],bundles:[],blockers:[]}:{mementos:[],environment:[],bundles:[],blockers:Array(2000).fill('x'.repeat(8192))};
+        context.mock.method(controller,'captureCleanBreakHostArtifacts',async()=>invalid);
+        await f.commands.get('airk.installCli')!();
+        assert.equal(f.calls.includes('upgrade-applied'),false,'reject the exact unloadable envelope before the destructive native boundary');
+        assert.equal([...f.values.keys()].some(key=>key.startsWith('airk.cleanBreak.clients.1.')),false,'no permanently invalid recovery plan is persisted');
+        assert.ok(await fs.stat(descriptor),'capture refusal does not invalidate the existing owner descriptor');
+    }finally{await f.close();}
+});
+
+test('clean break preserves token and metadata preimages changed after capture and exposes their cleanup blockers',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,bundledVersion:'1.8.16',runtimeVersion:'1.8.11',installedVersion:'1.8.16'});
+    const entries=new Map<string,{type:number;value:string}>(),collection=f.context.environmentVariableCollection;
+    collection.get=(name:string)=>entries.get(name);collection.replace=(name:string,value:string)=>entries.set(name,{type:f.stub.EnvironmentVariableMutatorType.Replace,value});collection.delete=(name:string)=>entries.delete(name);
+    try{
+        const {controller,info}=await predecessorHostHttp(f),key='airk.http.legacy.1.'+'79'.repeat(32);
+        await controller.provisionHttpInfo(info,'claude',()=>{},f.context.globalStorageUri.fsPath);f.values.set(key,structuredClone(info));
+        const changed=structuredClone(info);changed.endpoint.namespace='99'.repeat(16);changed.selection.selection.namespace=changed.endpoint.namespace;
+        const transition=RuntimeHost.prototype.transition;
+        context.mock.method(RuntimeHost.prototype,'transition',async function(this:RuntimeHost,...args:Parameters<RuntimeHost['transition']>){
+            entries.set(credentialEnvironment(info),{type:f.stub.EnvironmentVariableMutatorType.Replace,value:'new-owner-value'});f.values.set(key,changed);
+            return transition.apply(this,args);
+        });
+        await f.commands.get('airk.installCli')!();
+        assert.equal(entries.get(credentialEnvironment(info))!.value,'new-owner-value');assert.deepEqual(f.values.get(key),changed);
+        const capture=[...f.values.entries()].find(([name])=>name.startsWith('airk.cleanBreak.clients.1.'))?.[1] as any;
+        assert.equal(capture.result.complete,false);assert.match(JSON.stringify(capture.result.hostArtifacts),/clean_break_http_environment_changed/);assert.match(JSON.stringify(capture.result.hostArtifacts),/clean_break_http_memento_changed/);
+    }finally{await f.close();}
+});
+
+test('clean break replaces only its own Assistance credential and retains verified current launch metadata',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,assistance:true,bundledVersion:'1.8.16',runtimeVersion:'1.8.11',installedVersion:'1.8.16'});
+    let other:AssistanceIpcHost|undefined;
+    try{
+        const controller=f.context.subscriptions.find((value:any)=>typeof value.resolveAgentSpec==='function'),own=controller.assistanceHost as AssistanceIpcHost;
+        assert.ok(own?.descriptorPath);const oldPath=own.descriptorPath!,old=JSON.parse(await fs.readFile(oldPath,'utf8'));
+        await fs.mkdir(path.join(f.root,'out'),{recursive:true});await fs.writeFile(path.join(f.root,'out','explorerAssistance.js'),'// current fixture server');
+        other=await AssistanceIpcHost.start({directory:assistanceDirectory(f.context.globalStorageUri.fsPath),version:'1.8.16',roots:[f.folders[0].uri.fsPath],explorerOpen:()=>false});assert.ok(other?.descriptorPath);
+        const otherPath=other.descriptorPath!,otherBytes=await fs.readFile(otherPath,'utf8');
+        await f.commands.get('airk.installCli')!();
+        await assert.rejects(fs.stat(oldPath),{code:'ENOENT'},'the host withdraws the exact descriptor it created before reset');
+        const current=controller.assistanceHost as AssistanceIpcHost;assert.ok(current?.descriptorPath);assert.notEqual(current.descriptorPath,oldPath);
+        const replacement=JSON.parse(await fs.readFile(current.descriptorPath!,'utf8'));assert.notEqual(replacement.credential,old.credential);
+        assert.equal(await fs.readFile(otherPath,'utf8'),otherBytes,'another live editor owns its own descriptor');
+        const launch=JSON.parse(await fs.readFile(launchDescriptorPath(f.context.globalStorageUri.fsPath),'utf8'));
+        assert.equal(launch.extension_version,'1.8.16');assert.equal(launch.server_sha256,createHash('sha256').update('// current fixture server').digest('hex'));
+        assert.equal(f.state.httpConnections.length,0,'Assistance restart does not reenroll native grants');
+    }finally{other?.dispose();await f.close();}
+});
+
+test('prebaseline setup forces a clean break without migration choices and keeps fresh indexing separate from cleanup',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,registered:false,bundledVersion:'1.8.16',runtimeVersion:'1.8.11',installedVersion:'1.8.16'});
+    const policy={required:false,baseline_version:'1.8.16' as const,state_contract:'airk-state/1' as const,installed_contract:{schema:1}};
+    const reset={schema:1 as const,operation_id:'cc'.repeat(16),stage:'indexing' as const,mode:'clean_break',indexes_complete:true,expected_indexes:0,cleanup:{complete:false,state:'waiting_for_indexes',failure:null,observation:null},provenance:'native_rebuild_from_saved_configuration',
+        candidate:f.binding.runtimeSha256,predecessor:f.binding.runtimeSha256,original_namespace:'34'.repeat(16),successor_namespace:'22'.repeat(16),
+        preserved_state:path.join(f.root,'old-state'),preserved_control:f.binding.controlDir,preserved_index_roots:[],successor_state:path.join(f.root,'fresh-state'),successor_control:path.join(f.root,'fresh-control'),
+        original_failure:null,failure:null,index_scope:null,indexes:[]};
+    let transitioned=0;
+    context.mock.method(RuntimeHost.prototype,'transition',async()=>{transitioned++;f.binding.version='1.8.16';f.binding.controlDir=String(reset.successor_control);f.binding.cleanBreak=policy;f.binding.rebuild=reset;return {schema:1,active:f.binding.runtimeSha256};});
+    f.state.pick=()=>{throw new Error('A prebaseline installation must not offer migration/rebuild choices');};
+    try{
+        await startupState(f,'open-clean-break');const enrolled=f.state.httpConnections.length;await f.commands.get('airk.installCli')!();
+        assert.equal(transitioned,1);assert.equal(f.calls.includes('upgrade-reviewed'),true);
+        assert.equal(f.state.httpConnections.length,enrolled,'clean reset cannot enroll or retarget old grants through migration');
+        const panel=f.panels.find(panel=>panel.viewType==='airk.explorer');assert.ok(panel);
+        const snapshot=()=>panel.posted.filter((entry:any)=>entry.type==='state').at(-1)?.state;
+        assert.equal(snapshot().runtimeUpgrade.stage,'rebuilding');assert.equal(snapshot().runtimeUpgrade.cleanBreak,true);
+        assert.match(snapshot().runtimeUpgrade.message,/Original sources are unchanged/);
+        await f.commands.get('airk.installCli')!();assert.equal(transitioned,1,'current native reset observation must resume without reinstalling');
+        f.binding.rebuild={...reset,stage:'ready'};
+        await f.commands.get('airk.installCli')!();assert.equal(snapshot().runtimeUpgrade.stage,'cleaning');
+        f.binding.rebuild={...reset,stage:'ready',cleanup:{complete:true,state:'complete',failure:null,observation:{removed:[]}}};
+        await f.commands.get('airk.installCli')!();assert.equal(snapshot().runtimeUpgrade.stage,'ready');
+        assert.match(snapshot().runtimeUpgrade.message,/owned legacy artifacts were removed/);
+    }finally{await f.close();}
+});
+
+test('clean break captures old ownership before reset, removes that client entry without enrollment, and retains the scoped receipt',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,bundledVersion:'1.8.16',runtimeVersion:'1.8.11',installedVersion:'1.8.16'});
+    const registration=[...f.registrations.values()][0],filename=path.join(registration.root,'.mcp.json');
+    const original={userPreference:'unrelated-SECRET',mcpServers:{old_airk_alias:{command:f.binding.executable,args:['--root',registration.root,'--data-dir',registration.data_root,'--collection',registration.collection,'--service-project',registration.binding,'mcp'],disabled:true},other:{command:'unrelated-tool',args:['keep']}}};
+    await fs.writeFile(filename,JSON.stringify(original));migrationEditor(f);
+    const transition=RuntimeHost.prototype.transition;let capturedBeforeTransition=false;
+    context.mock.method(RuntimeHost.prototype,'transition',async function(this:RuntimeHost,...args:Parameters<RuntimeHost['transition']>){
+        const capture=[...f.values.entries()].find(([key])=>key.startsWith('airk.cleanBreak.clients.1.'))?.[1] as any;
+        assert.ok(capture);assert.equal(capture.predecessor,args[0].runtimeSha256);assert.equal(capture.controlDir,args[0].controlDir);assert.equal(capture.candidate,args[1].target);capturedBeforeTransition=true;
+        return transition.apply(this,args);
+    });
+    try{
+        await f.commands.get('airk.installCli')!();
+        assert.equal(capturedBeforeTransition,true);
+        const saved=JSON.parse(await fs.readFile(filename,'utf8'));assert.equal(saved.mcpServers.old_airk_alias,undefined);
+        assert.deepEqual(saved.mcpServers.other,original.mcpServers.other);assert.equal(saved.userPreference,original.userPreference);
+        assert.equal(f.state.httpConnections.length,0,'the reset removes old declarations and does not issue replacement credentials');
+        const capture=[...f.values.entries()].find(([key])=>key.startsWith('airk.cleanBreak.clients.1.'))?.[1] as any;
+        assert.ok(capture);assert.equal(capture.operation,f.binding.rebuild?.operation_id);assert.equal(capture.result.complete,true);
+        assert.equal(capture.plan.files[0].destination,filename);assert.equal(JSON.stringify(capture).includes(original.userPreference),false,'private capture retains ownership proof rather than unrelated configuration bytes');
+        assert.equal(f.values.get(`airk.cleanBreak.complete.1.${f.binding.installDir}`),capture.operation);
+        assert.equal(f.calls.includes('legacy-caches-retired'),false,'native reset cleanup owns physical artifacts; editor does not run migration finalization');
+    }finally{await f.close();}
+});
+
+test('unproven old client selectors remain unchanged and prevent a clean-install completion claim',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,bundledVersion:'1.8.16',runtimeVersion:'1.8.11',installedVersion:'1.8.16'});
+    const registration=[...f.registrations.values()][0],filename=path.join(registration.root,'.mcp.json');
+    const source=JSON.stringify({mcpServers:{airk:{command:f.binding.executable,args:['--root',registration.root,'--data-dir',registration.data_root,'--collection',registration.collection,'--service-project','ff'.repeat(32),'mcp']}}});
+    await fs.writeFile(filename,source);migrationEditor(f);
+    try{
+        await startupState(f,'open-blocked-clean-break');await f.commands.get('airk.installCli')!();
+        assert.equal(await fs.readFile(filename,'utf8'),source);assert.equal(f.binding.rebuild?.cleanup&&((f.binding.rebuild.cleanup as any).complete),true,'native cleanup and host client cleanup are independent');
+        const panel=f.panels.find(panel=>panel.viewType==='airk.explorer')!,state=panel.posted.filter((entry:any)=>entry.type==='state').at(-1)?.state;
+        assert.equal(state.runtimeUpgrade.stage,'failed');assert.equal(state.runtimeUpgrade.clientCleanup.complete,false);
+        assert.match(JSON.stringify(state.runtimeUpgrade.clientCleanup),/clean_break_client_ownership_unconfirmed/);
+        assert.equal(f.values.has(`airk.cleanBreak.complete.1.${f.binding.installDir}`),false);assert.equal(f.state.httpConnections.length,0);
+    }finally{await f.close();}
+});
+
+test('extension reload resumes persisted pre-reset client proof without rerunning the reset or reading the old ledger',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,bundledVersion:'1.8.16',runtimeVersion:'1.8.11',installedVersion:'1.8.16'});
+    const registration=[...f.registrations.values()][0],filename=path.join(registration.root,'.mcp.json');
+    const before=JSON.stringify({mcpServers:{airk:{command:f.binding.executable,args:['--root',registration.root,'--data-dir',registration.data_root,'--collection',registration.collection,'--service-project',registration.binding,'mcp']},other:{command:'keep'}}});
+    await fs.writeFile(filename,before);migrationEditor(f,true);
+    try{
+        await f.commands.get('airk.installCli')!();assert.equal(f.calls.filter(value=>value==='upgrade-applied').length,1);
+        const captured=[...f.values.entries()].find(([key])=>key.startsWith('airk.cleanBreak.clients.1.'))?.[1] as any;
+        assert.equal(captured.result.complete,false);assert.equal(await fs.readFile(filename,'utf8'),before);
+        f.stub.workspace.textDocuments=[];migrationEditor(f);
+        context.mock.method(RuntimeHost.prototype,'lookupHttpConnection',async()=>{throw new Error('The predecessor ledger is unavailable after reset');});
+        context.mock.method(RuntimeHost.prototype,'lookupPredecessorHttpOwnership',async()=>{throw new Error('Persisted stdio cleanup already captured its complete predecessor metadata');});
+        const extension=require('../extension');await extension.deactivate();const replacement=await extension.activate(f.context);await replacement.whenReady();
+        await f.commands.get('airk.installCli')!();
+        assert.equal(f.calls.filter(value=>value==='upgrade-applied').length,1,'resume must not restart the reset');
+        assert.deepEqual(JSON.parse(await fs.readFile(filename,'utf8')),{mcpServers:{other:{command:'keep'}}});
+        const resumed=[...f.values.entries()].find(([key])=>key.startsWith('airk.cleanBreak.clients.1.'))?.[1] as any;
+        assert.equal(resumed.operation,captured.operation);assert.equal(resumed.result.complete,true);assert.equal(f.state.httpConnections.length,0);
+    }finally{await f.close();}
+});
+
+test('a global inventory blocker without a file destination persists valid proof and can clear on a later clean-break retry',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,registered:false,bundledVersion:'1.8.16',runtimeVersion:'1.8.11',installedVersion:'1.8.16'});let blocked=true;
+    context.mock.method(globalInventory,'inventoryGlobalAgentConfigs',async()=>({files:[],checked:[],blockers:blocked?[{code:'global_inventory_temporarily_unavailable'}]:[]}));
+    try{
+        await f.commands.get('airk.installCli')!();
+        const capture=[...f.values.entries()].find(([key])=>key.startsWith('airk.cleanBreak.clients.1.'))?.[1] as any;
+        assert.ok(capture);assert.equal(capture.result.complete,false);assert.equal(path.isAbsolute(capture.plan.blockers[0].destination),true);
+        blocked=false;await f.commands.get('airk.installCli')!();
+        assert.equal(f.calls.filter(value=>value==='upgrade-applied').length,1);
+        const resumed=[...f.values.entries()].find(([key])=>key.startsWith('airk.cleanBreak.clients.1.'))?.[1] as any;
+        assert.equal(resumed.result.complete,true);assert.equal(resumed.operation,capture.operation);
+    }finally{await f.close();}
+});
 
 async function startupState(f:Awaited<ReturnType<typeof serviceTestHost>>,requestId:string){
     await f.commands.get('airk.explorer.open')!();
@@ -20,6 +625,61 @@ async function startupState(f:Awaited<ReturnType<typeof serviceTestHost>>,reques
     await panel.send({v:1,type:'ready',requestId});
     return panel.posted.filter((entry:any)=>entry.type==='state').at(-1)?.state.startup;
 }
+
+test('setup failure reaches an already open Explorer before a pending early refresh finishes',async context=>{
+    let release!:()=>void,releaseDiscovery!:()=>void;
+    const connectionDiscoveryGate=new Promise<void>(resolve=>{release=resolve;});
+    const discoveryGate=new Promise<void>(resolve=>{releaseDiscovery=resolve;});
+    const f=await serviceTestHost(context,{automatic:true,deferStartup:true,registered:false,connectionDiscoveryGate,discoveryGate});
+    try{
+        f.state.down=true;
+        await startupState(f,'open-before-failure');
+        const panel=f.panels.find(panel=>panel.viewType==='airk.explorer');assert.ok(panel);
+        releaseDiscovery();
+        for(let turns=0;turns<100&&!f.calls.some(value=>value.startsWith('Automatic installation failed:'));turns++)await new Promise(resolve=>setTimeout(resolve,10));
+        assert.ok(f.calls.some(value=>value.startsWith('Automatic installation failed:')));
+        await new Promise(resolve=>setImmediate(resolve));
+        const state=panel.posted.filter((entry:any)=>entry.type==='state').at(-1)?.state;
+        assert.equal(state?.startup?.failed,true,'failure must replace the running timer without reopening Explorer or waiting for discovery');
+        assert.match(state.startup.message,/service_unavailable|needs attention/);
+        assert.notEqual(state.connection,'connecting','known setup failure must not retain a connecting header or overview');
+    }finally{releaseDiscovery();release();await f.api.whenReady();await f.close();}
+});
+
+test('failed setup overrides a busy console connection and its bounded poll releases service controls',async context=>{
+    let release!:()=>void,releaseDiscovery!:()=>void;
+    const consoleGate=new Promise<void>(resolve=>{release=resolve;});
+    const discoveryGate=new Promise<void>(resolve=>{releaseDiscovery=resolve;});
+    const f=await serviceTestHost(context,{automatic:true,deferStartup:true,registered:false,discoveryGate});
+    let controller:ServiceConsoleController|undefined;
+    const refresh=ServiceConsoleController.prototype.refresh;
+    context.mock.method(ServiceConsoleController.prototype,'refresh',function(this:ServiceConsoleController,automatic?:boolean){
+        if(!controller){
+            controller=this;
+            const runtime=(this as any).host.runtime,discover=runtime.discover;
+            runtime.discover=async()=>{await consoleGate;return discover();};
+        }
+        return refresh.call(this,automatic);
+    });
+    context.mock.timers.enable({apis:['setTimeout','Date']});
+    try{
+        f.state.down=true;
+        await f.commands.get('airk.explorer.open')!('#manage/service');
+        const panel=f.panels.find(panel=>panel.viewType==='airk.explorer');assert.ok(panel);
+        await panel.send({v:1,type:'ready',requestId:'busy-console'});
+        await panel.send({v:1,type:'manage.observe',requestId:'observe-busy-console',open:true});
+        assert.ok(controller);assert.equal(controller.state.busy,true);assert.equal(controller.state.health.state,'unavailable');
+        releaseDiscovery();await f.api.whenReady();
+        const failed=panel.posted.filter((entry:any)=>entry.type==='state').at(-1)?.state;
+        assert.equal(failed.startup.failed,true);assert.equal(controller.state.busy,true);
+        assert.equal(failed.connection,'disconnected','terminal setup failure takes precedence over an unrelated pending status poll');
+        context.mock.timers.tick(15001);
+        for(let turns=0;turns<20&&controller.state.busy;turns++)await new Promise(resolve=>setImmediate(resolve));
+        assert.equal(controller.state.busy,false);assert.equal(controller.state.health.code,'status_poll_timed_out');
+        const recovered=panel.posted.filter((entry:any)=>entry.type==='state').at(-1)?.state;
+        assert.equal(recovered.management.enabled.connect,true,'bounded status polling must release reconnect controls');
+    }finally{releaseDiscovery();release();context.mock.timers.reset();await f.api.whenReady();await f.close();}
+});
 
 test('successful explicit setup clears an earlier failed startup without creating indexes',async context=>{
     let release!:()=>void;const discoveryGate=new Promise<void>(resolve=>{release=resolve;});
@@ -267,10 +927,11 @@ test('an unavailable registry never triggers automatic re-registration',async co
 });
 for(const from of ['1.4.4','1.5.12','1.6.0','1.8.7','1.8.8']){
     const to=releaseVersion;
-    test(`activation upgrades ${from} to ${to} before connecting and reopens quietly`,async context=>{
+    test(`activation crosses the clean baseline from ${from} to ${to} once before connecting and reopens quietly`,async context=>{
         const f=await serviceTestHost(context,{automatic:true,runtimeVersion:from,bundledVersion:to});
         try{
             assert.equal(f.binding.version,to);
+            assert.equal(f.binding.cleanBreak?.required,false,'the native fixture must publish the newly initialized state contract');
             assert.equal(f.calls.filter(value=>value==='upgrade-applied').length,1);
             assert.ok(f.calls.indexOf('upgrade-applied')<f.calls.indexOf('Checking selected runtime…'));
             assert.equal(f.calls.some(value=>value.includes('explicit_runtime_upgrade_or_matching_extension_required')),false);
@@ -342,13 +1003,13 @@ test('storage command opens explicit setup without changing the saved location o
 });
 
 
-test('upgrade preserves missing folders as unregistered until an explicit native index setup',async context=>{
+test('clean break reports the new baseline while missing folders remain unregistered until explicit index setup',async context=>{
     const f=await serviceTestHost(context,{automatic:true,registered:false,roots:2,runtimeVersion:'1.6.0',bundledVersion:releaseVersion});
     try{
         assert.equal(f.binding.version,releaseVersion);
         assert.equal(f.registrations.size,0);
         assert.equal(f.state.picks,0);
-        assert.equal(f.notices.length,0);
+        assert.equal(f.notices.length,1);assert.match(f.notices[0].message,/fresh indexes are ready.*native artifacts were removed/);
         assert.equal(f.warnings.length,0);
         const reservations=f.writes.filter(value=>value.reserve_project);
         assert.equal(reservations.length,0);
@@ -909,18 +1570,31 @@ for(const [transientFailures,directoryHint] of [[0,false],[2,false],[0,true]] as
         const row=[...f.registrations.values()][0],destination=path.join(row.root,'.vscode','mcp.json');await fs.mkdir(path.dirname(destination));
         await fs.writeFile(destination,JSON.stringify({servers:{airk:{type:'http',url:info.endpoint.url,headers:{Authorization:'Bearer ${input:airkToken_'+id+'}','X-AIRK-Response-Mode':'full'},disabled:true},other:{command:'keep'}}}));migrationEditor(f);
         const control=(f.views.get('airk.workbench') as any).host.control;
+        const owner=f.context.subscriptions.find((entry:any)=>typeof entry.syncHttpEndpointWatcher==='function');assert.ok(owner);
+        const initialDeadline=Date.now()+3000;
+        while((owner.observedHttpInstance!==info.endpoint.service_instance||owner.httpConfigurationRefresh||owner.httpWatchReading)&&Date.now()<initialDeadline)await new Promise(resolve=>setTimeout(resolve,10));
+        assert.equal(owner.observedHttpInstance,info.endpoint.service_instance,'Initial native owner discovery settles before replacement');
+        assert.equal(owner.httpConfigurationRefresh,undefined);
         if(directoryHint){
             assert.equal((control as any).consumers,0,'No Workbench or Explorer consumer polls the service');
-            const owner=f.context.subscriptions.find((entry:any)=>typeof entry.syncHttpEndpointWatcher==='function');assert.ok(owner);
             await fs.writeFile(path.join(f.binding.controlDir,'http-1','endpoint.json'),'old notification hint');owner.syncHttpEndpointWatcher();
             const limit=Date.now()+3000;while(owner.observedHttpInstance!=='12'.repeat(16)&&Date.now()<limit)await new Promise(resolve=>setTimeout(resolve,10));
             assert.equal(owner.observedHttpInstance,'12'.repeat(16),'Initial authenticated discovery closes the missed-event gap');
         }
         const next={...info,endpoint:{...info.endpoint,url:'https://127.0.0.1:57423/mcp',service_instance:'98'.repeat(16),generation:info.endpoint.generation+1}};
-        let lookups=0;context.mock.method(RuntimeHost.prototype,'lookupHttpConnection',async(binding:typeof f.binding,id:string)=>{lookups++;if(lookups<=transientFailures)throw new ServiceError('native_management_busy',false,{safe_read:true});assert.equal(binding.runtimeSha256,f.binding.runtimeSha256);assert.equal(id,info.connection_id);return {schema:1,active:binding.runtimeSha256,connection_id:id,status:'owned',connection:next};});
+        let lookups=0,interleavedHealthReads=0;context.mock.method(RuntimeHost.prototype,'lookupHttpConnection',async(binding:typeof f.binding,id:string)=>{
+            lookups++;if(lookups<=transientFailures)throw new ServiceError('native_management_busy',false,{safe_read:true});
+            // Force the watcher/console overlap that otherwise depends on the
+            // initial 200 ms notification timer and the speed of this host.
+            if(transientFailures){assert.equal(owner.httpWatchReading,false);await owner.readHttpOwnerHint();interleavedHealthReads++;}
+            assert.equal(binding.runtimeSha256,f.binding.runtimeSha256);assert.equal(id,info.connection_id);return {schema:1,active:binding.runtimeSha256,connection_id:id,status:'owned',connection:next};
+        });
         context.mock.method(RuntimeHost.prototype,'httpConnectionInfo',async()=>next);
         let changes=0;f.providers[0].onDidChangeMcpServerDefinitions(()=>changes++);
         const before=f.state.httpConnections.length,retirements=f.calls.filter(value=>value==='legacy-launchers-retired').length;
+        // Console observations and native watcher reads describe the same
+        // replacement owner, including when a retry overlaps a health read.
+        f.state.nativeInstance=next.endpoint.service_instance;
         if(!directoryHint)control.controller.state.health={state:'live',checkedAt:Date.now(),value:{status:'health',observation:{version:f.binding.version,runtime_sha256:f.binding.runtimeSha256,instance:next.endpoint.service_instance}}};
         const realNow=Date.now.bind(Date);let offset=0;
         if(transientFailures)context.mock.method(Date,'now',()=>realNow()+offset);
@@ -928,7 +1602,7 @@ for(const [transientFailures,directoryHint] of [[0,false],[2,false],[0,true]] as
         const waitFor=async(predicate:()=>boolean)=>{const limit=realNow()+3000;while(!predicate()&&realNow()<limit)await new Promise(resolve=>setTimeout(resolve,10));assert.ok(predicate());};
         const noisyReads=f.nativeMethods.filter(method=>['resources','workers','events','embedding_status','source_status'].includes(method)).length;
         if(directoryHint){
-            f.state.nativeInstance=next.endpoint.service_instance;f.state.nativeHealthFailures=1;
+            f.state.nativeHealthFailures=1;
             const temporary=path.join(f.binding.controlDir,'http-1','endpoint.next');await fs.writeFile(temporary,'invalid descriptor bytes are only a notification hint');
             await fs.rename(temporary,path.join(f.binding.controlDir,'http-1','endpoint.json'));
         }else emit();
@@ -942,7 +1616,8 @@ for(const [transientFailures,directoryHint] of [[0,false],[2,false],[0,true]] as
         }
         const deadline=Date.now()+3000;let actual:any;
         do{actual=JSON.parse(await fs.readFile(destination,'utf8'));if(actual.servers.airk.url===next.endpoint.url&&changes>0)break;await new Promise(resolve=>setTimeout(resolve,10));}while(Date.now()<deadline);
-        assert.equal(actual.servers.airk.url,next.endpoint.url);assert.equal(actual.servers.airk.disabled,true);assert.deepEqual(actual.servers.other,{command:'keep'});
+        assert.equal(actual.servers.airk.url,next.endpoint.url,JSON.stringify({lookups,interleavedHealthReads,nativeInstance:f.state.nativeInstance,latestHttpOwner:owner.latestHttpOwner,retry:owner.httpRefreshRetry,failures:f.calls.filter(value=>value.includes('saved HTTPS connection refresh deferred'))}));assert.equal(actual.servers.airk.disabled,true);assert.deepEqual(actual.servers.other,{command:'keep'});
+        assert.equal(interleavedHealthReads,transientFailures?1:0);
         assert.ok(changes>0);assert.equal(lookups,1+transientFailures);if(transientFailures){assert.equal(actual.recentEdit,transientFailures);assert.equal(f.warnings.filter(value=>value.includes('Some saved HTTPS connections still need refreshing')).length,1);}assert.equal(f.state.httpConnections.length,before,'Port discovery never reenrolls a credential or changes its grant');
         assert.equal(f.calls.filter(value=>value==='legacy-launchers-retired').length,retirements,'Port refresh performs no installer retirement');assert.deepEqual(next.selection,selection);
         if(directoryHint){assert.equal(f.state.nativeHealthFailures,0,'A transient management failure after publication is retried without a second file event');assert.equal((control as any).consumers,0);assert.equal(f.nativeMethods.filter(method=>['resources','workers','events','embedding_status','source_status'].includes(method)).length,noisyReads,'Endpoint observation does not start general console polling');}

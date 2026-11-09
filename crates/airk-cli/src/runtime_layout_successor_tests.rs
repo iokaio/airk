@@ -1,6 +1,74 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
 
+#[test]
+fn clean_break_private_union_refuses_seventeenth_path_before_transition() -> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let state = owner.path().join("successor");
+    let mut paths: Vec<_> = (0..14)
+        .map(|i| owner.path().join(format!("old-{i}")))
+        .collect();
+    require_private_union(&paths, &state)?;
+    paths.push(state.clone());
+    require_private_union(&paths, &state)?; // Exact overlap is counted once.
+    paths.push(owner.path().join("old-14"));
+    assert!(require_private_union(&paths, &state).is_err());
+    assert!(!state.exists());
+    Ok(())
+}
+
+#[test]
+fn clean_break_preflight_refuses_live_older_protection_root_without_mutation() -> Result<()> {
+    let (_owner, root, state, namespace) = fixture()?;
+    let control = state.join("control");
+    let extra = root.join("older-private-state");
+    fs::create_dir(&extra)?;
+    let lease = airk_store::service::ServiceLease::acquire(&control)?;
+    let mut registry = airk_store::service::registry::ServiceRegistry::open(&control, namespace)?;
+    registry.preserve_private_paths(&lease, std::slice::from_ref(&extra))?;
+    drop(registry);
+    drop(lease);
+    let layout = fs::read(root.join(LAYOUT))?;
+    let operation = Incarnation::from_bytes([109; 16]);
+    let error = preflight_clean_break(&root, operation).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("clean_break_retained_root_unsupported")
+    );
+    assert_eq!(fs::read(root.join(LAYOUT))?, layout);
+    assert!(!root.join(receipt_name(operation)).exists());
+    assert!(extra.exists());
+    fs::remove_dir(&extra)?;
+    preflight_clean_break(&root, operation)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn clean_break_preflight_refuses_dangling_retained_symlink() -> Result<()> {
+    let (_owner, root, state, namespace) = fixture()?;
+    let control = state.join("control");
+    let extra = root.join("older-private-state");
+    let lease = airk_store::service::ServiceLease::acquire(&control)?;
+    let mut registry = airk_store::service::registry::ServiceRegistry::open(&control, namespace)?;
+    registry.preserve_private_paths(&lease, std::slice::from_ref(&extra))?;
+    drop(registry);
+    drop(lease);
+    std::os::unix::fs::symlink(root.join("missing-target"), &extra)?;
+    assert!(!extra.try_exists()?);
+    let operation = Incarnation::from_bytes([110; 16]);
+    let error = preflight_clean_break(&root, operation).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("clean_break_retained_root_unsupported")
+    );
+    assert!(fs::symlink_metadata(&extra)?.file_type().is_symlink());
+    assert!(!root.join(receipt_name(operation)).exists());
+    Ok(())
+}
+
 fn fixture() -> Result<(tempfile::TempDir, PathBuf, PathBuf, Incarnation)> {
     let owner = tempfile::tempdir()?;
     let root = owner.path().join("install");

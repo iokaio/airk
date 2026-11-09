@@ -395,6 +395,7 @@ pub(super) async fn ensure_checked(
         );
     }
     catalog::before_start(authority, &policy, cancel)?;
+    state_contract::require_initialized(root, &layout::saved_control(root)?)?;
     after_settlement()?;
     let observation = async {
         match policy.lifecycle {

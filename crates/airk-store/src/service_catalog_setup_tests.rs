@@ -89,6 +89,101 @@ fn completion(receipt: &IndexSetupReceipt, revision: CatalogRevision) -> SetupCo
 }
 
 #[test]
+fn clean_break_source_census_keeps_distinct_indexes_shared_roots_and_excludes_retired_backing()
+-> Result<()> {
+    let (owner, mut registry, mut request) = fixture()?;
+    assert!(
+        registry
+            .catalog_clean_break_sources(request.expected_catalog_revision)
+            .is_err(),
+        "the shared authority-0 metadata fixture must not satisfy the authority-1 census guard"
+    );
+    // This test substitutes only authority-layout activation metadata, as the
+    // shared fixture substitutes native storage preparation below. Install the
+    // canonical complete authority-1 physical layout; do not relabel authority 0
+    // or claim native readiness qualification from this Store-only fixture.
+    let promotion = registry.connection.unchecked_transaction()?;
+    super::super::apply_authority_v1_layout(&promotion)?;
+    promotion.execute("UPDATE index_catalog_meta SET authority_contract=1,revision=revision+1 WHERE id=1 AND authority_contract=0", [])?;
+    promotion.commit()?;
+    request.expected_catalog_revision = registry.catalog_state()?.unwrap().revision;
+    fn complete(registry: &mut ServiceRegistry, request: &IndexSetupRequest) -> Result<()> {
+        let reserved = registry.reserve_index_setup(request)?;
+        let prepared = registry.record_index_preparation(
+            request.caller,
+            &request.key,
+            reserved.request_digest,
+            &native(&reserved, reserved.catalog_revision)?,
+        )?;
+        registry.complete_index_setup(
+            request.caller,
+            &request.key,
+            reserved.request_digest,
+            &completion(&prepared, prepared.catalog_revision),
+        )?;
+        Ok(())
+    }
+    complete(&mut registry, &request)?;
+    let mut second = request.clone();
+    second.key.nonce = Incarnation::from_bytes([91; 16]);
+    second.expected_catalog_revision = registry.catalog_state()?.unwrap().revision;
+    second.name = "Independent index of shared sources".into();
+    second.registration = ProjectRegistration::new(
+        request.registration.root.clone(),
+        owner.path().join("second-storage").to_str().unwrap().into(),
+        "second".into(),
+    )?;
+    second.sources[1].canonical_path = owner.path().join("other").to_str().unwrap().into();
+    second.sources[1].aliases = vec!["other-source".into()];
+    complete(&mut registry, &second)?;
+    let revision = registry.catalog_state()?.unwrap().revision;
+    let sources = registry.catalog_clean_break_sources(revision)?;
+    assert_eq!(sources.len(), 2);
+    assert_ne!(sources[0].0.id, sources[1].0.id);
+    assert_ne!(sources[0].0.backing.binding, sources[1].0.backing.binding);
+    for (index, roots, policy) in &sources {
+        assert_eq!(index.backing.root, request.registration.root);
+        assert_eq!(roots.len(), 2);
+        assert!(policy.is_none());
+        assert!(
+            !Path::new(&index.backing.data_root).exists(),
+            "source census must not create or open historical index storage"
+        );
+    }
+    assert_ne!(
+        sources[0]
+            .1
+            .iter()
+            .find(|root| !root.owner)
+            .unwrap()
+            .canonical_path,
+        sources[1]
+            .1
+            .iter()
+            .find(|root| !root.owner)
+            .unwrap()
+            .canonical_path
+    );
+    registry.connection.execute(
+        "UPDATE index_definitions SET tombstone=1 WHERE active_registration=?1",
+        [second.registration.binding.to_string()],
+    )?;
+    registry.connection.execute(
+        "UPDATE projects SET registered=0 WHERE binding=?1",
+        [second.registration.binding.to_string()],
+    )?;
+    let sources = registry.catalog_clean_break_sources(revision)?;
+    assert_eq!(sources.len(), 1);
+    assert_eq!(sources[0].0.backing, request.registration);
+    assert!(
+        registry
+            .catalog_clean_break_sources(revision.next()?)
+            .is_err()
+    );
+    Ok(())
+}
+
+#[test]
 fn reservation_and_native_preparation_remain_pending_until_exact_once_ready() -> Result<()> {
     let (_temp, mut registry, request) = fixture()?;
     let reserved = registry.reserve_index_setup(&request)?;

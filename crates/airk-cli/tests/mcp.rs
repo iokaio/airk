@@ -1613,6 +1613,54 @@ fn concurrent_mcp_agents_share_one_index_and_refresh_after_publication() -> anyh
 #[test]
 fn client_setup_formats_preserve_reviewed_https_authority_and_secret_references()
 -> anyhow::Result<()> {
+    fn catalog_authority(service: &common::Service) -> anyhow::Result<Value> {
+        use airk_core::{
+            catalog_management::{CatalogKind, CatalogPageRequest, MAX_PAGE_BYTES},
+            service::{ControlMethod, ControlResponse},
+        };
+        let mut snapshot = serde_json::Map::new();
+        for kind in [
+            CatalogKind::Projects,
+            CatalogKind::Indexes,
+            CatalogKind::Memberships,
+            CatalogKind::Contexts,
+            CatalogKind::Grants,
+        ] {
+            let mut after = None;
+            let mut revision = None;
+            let mut items = Vec::new();
+            loop {
+                let response = service.request(ControlMethod::CatalogPage {
+                    request: CatalogPageRequest {
+                        kind,
+                        index_id: None,
+                        project_id: None,
+                        after,
+                        expected_catalog_revision: revision,
+                        limit: 32,
+                        max_bytes: MAX_PAGE_BYTES,
+                    },
+                });
+                let ControlResponse::CatalogPage { page, .. } = response else {
+                    anyhow::bail!(
+                        "canonical setup authority snapshot failed: {}",
+                        serde_json::to_string(&response)?
+                    );
+                };
+                revision = Some(page.revision);
+                items.extend(page.items);
+                match page.continuation {
+                    Some(cursor) => after = Some(cursor),
+                    None => break,
+                }
+            }
+            snapshot.insert(
+                serde_json::to_value(kind)?.as_str().unwrap().into(),
+                serde_json::to_value(items)?,
+            );
+        }
+        Ok(Value::Object(snapshot))
+    }
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
     let service = common::Service::reviewed(root.path(), state.path(), "project-a");
@@ -1656,14 +1704,70 @@ fn client_setup_formats_preserve_reviewed_https_authority_and_secret_references(
                 serde_json::to_value(connection.connection_id)?
             );
         }
+        let unreviewed_id = airk_kernel::service_broker::new_instance_id()?;
+        let binding = airk_cli::http_endpoint::installation_binding(
+            &service.control,
+            service.http_selection().namespace(),
+        )?;
+        let ownership = |id| -> anyhow::Result<airk_cli::http_endpoint::ConnectionOwnership> {
+            let now: u64 = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_millis()
+                .try_into()?;
+            airk_cli::http_endpoint::CredentialStore::read_existing(
+                &service.control.join("http-1"),
+                binding.clone(),
+            )?
+            .ownership(id, now)
+        };
+        assert!(matches!(
+            ownership(unreviewed_id)?,
+            airk_cli::http_endpoint::ConnectionOwnership::NotOwned
+        ));
+        assert!(matches!(
+            ownership(connection.connection_id)?,
+            airk_cli::http_endpoint::ConnectionOwnership::Active
+        ));
+        let authority_before = catalog_authority(&service)?;
         let unreviewed = common::command(root.path(), state.path(), "project-a")
             .args(["setup", "--client", client])
+            .args(["--connection-id", &unreviewed_id.to_string()])
             .output()?;
         assert!(
             !unreviewed.status.success(),
             "setup inferred authority without a reviewed selector"
         );
-        assert!(String::from_utf8_lossy(&unreviewed.stderr).contains("review_required"));
+        let expected = if client == "vscode" {
+            "Error: guided standalone setup supports Claude Code and Codex; the VS Code adapter requires its extension"
+        } else {
+            "Error: interactive setup needs a terminal; supply an explicit scope and --yes"
+        };
+        let stderr = String::from_utf8_lossy(&unreviewed.stderr);
+        assert_eq!(
+            stderr.lines().last(),
+            Some(expected),
+            "unreviewed setup response for {client}: stdout={} stderr={stderr}",
+            String::from_utf8_lossy(&unreviewed.stdout)
+        );
+        assert_eq!(
+            catalog_authority(&service)?,
+            authority_before,
+            "unreviewed {client} setup changed saved scope or grant authority"
+        );
+        assert!(
+            matches!(
+                ownership(unreviewed_id)?,
+                airk_cli::http_endpoint::ConnectionOwnership::NotOwned
+            ),
+            "unreviewed {client} setup created its requested connection"
+        );
+        assert!(
+            matches!(
+                ownership(connection.connection_id)?,
+                airk_cli::http_endpoint::ConnectionOwnership::Active
+            ),
+            "unreviewed {client} setup changed the reviewed connection's authority"
+        );
     }
     for client in ["cursor", "opencode", "opencode-v2", "copilot-cli", "kilo"] {
         let output = common::scoped_command(root.path(), state.path(), "project-a")

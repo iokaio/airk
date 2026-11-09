@@ -4,6 +4,19 @@ import Module from 'node:module';
 import * as path from 'node:path';
 import { test } from 'node:test';
 
+test('complete diagnostic export does not write after trust is revoked during the save dialog',async()=>{
+    const writes:unknown[]=[],target={fsPath:'/selected/runtime-diagnostics.json'};
+    const stub={workspace:{isTrusted:true,fs:{writeFile:async(...args:unknown[])=>{writes.push(args);}}},Uri:{file:(fsPath:string)=>({fsPath})},window:{showSaveDialog:async()=>{stub.workspace.isTrusted=false;return target;}}};
+    const loader=Module as unknown as {_load:(...args:any[])=>any},original=loader._load;
+    loader._load=function(request:string,...args:any[]){return request==='vscode'?stub:original.call(this,request,...args);};
+    try{
+        delete require.cache[require.resolve('../serviceConsole')];
+        const {ServiceConsole}=require('../serviceConsole');
+        const result=await ServiceConsole.prototype.saveDiagnostic.call({disposed:false,output:{appendLine(){}}},'{"complete":"native diagnostic"}','runtime-diagnostics');
+        assert.equal(result,false);assert.deepEqual(writes,[]);
+    }finally{loader._load=original;delete require.cache[require.resolve('../serviceConsole')];}
+});
+
 test('service log opening uses the native 32-record bound and surfaces read failures', async t => {
     const stub = { workspace: { isTrusted: true } };
     const loader = Module as unknown as { _load: (...args: any[]) => any }, original = loader._load;

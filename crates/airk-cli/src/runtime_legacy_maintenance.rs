@@ -383,6 +383,48 @@ fn exact<T: Serialize>(left: &T, right: &T) -> Result<bool> {
     Ok(serde_json::to_vec(left)? == serde_json::to_vec(right)?)
 }
 
+/// Reobserve a retained checkpoint using its original representation. Native
+/// predecessors and interrupted journals may still carry schema-one history.
+fn current_snapshot(journal: &Journal) -> Result<store::CheckpointSnapshot> {
+    let schema = if let Some(saved) = cycle_baseline(journal)? {
+        Some(saved.schema)
+    } else if let Some(observed) = &journal.checkpoint {
+        Some(
+            service_runtime::checkpoint::read_packet(
+                &journal.control,
+                journal.checkpoint_operation,
+                observed
+                    .native_packet_sha256
+                    .context("maintenance checkpoint packet digest missing")?,
+            )?
+            .state
+            .schema,
+        )
+    } else {
+        None
+    };
+    match schema {
+        Some(schema) => store::snapshot_for_schema(&journal.control, schema),
+        None => store::snapshot(&journal.control),
+    }
+}
+
+fn require_job_history_preserved(
+    before: &store::CheckpointSnapshot,
+    after: &store::CheckpointSnapshot,
+) -> Result<()> {
+    // Compact snapshots expand only unfinished jobs and their requests. These
+    // complete table commitments preserve terminal history and configuration.
+    for name in ["service_jobs", "service_requests", "service_configuration"] {
+        ensure!(
+            before.tables.iter().find(|table| table.name == name)
+                == after.tables.iter().find(|table| table.name == name),
+            "saved-index maintenance changed native job history: {name}"
+        );
+    }
+    Ok(())
+}
+
 fn plan_already_bound(
     plans: &[LegacyAdoptionPlan],
     requested: &LegacyAdoptionPlan,
@@ -518,10 +560,12 @@ fn require_preserved(
     ensure!(
         before.complete
             && after.complete
+            && before.schema == after.schema
             && before.control == after.control
             && before.namespace == after.namespace,
         "saved-index maintenance checkpoint scope changed"
     );
+    require_job_history_preserved(before, after)?;
     ensure!(
         exact(&before.jobs, &after.jobs)?
             && before.requests == after.requests
@@ -750,7 +794,7 @@ impl Maintenance {
         }
         let before = baseline(&self.journal)?.context("maintenance baseline is missing")?;
         let index_id = airk_core::catalog_setup::setup_index_id(&plan.setup)?;
-        let current = store::snapshot(&self.journal.control)?;
+        let current = current_snapshot(&self.journal)?;
         let cycle =
             cycle_baseline(&self.journal)?.context("maintenance native cycle baseline missing")?;
         require_preserved(&self.journal, &cycle, &current)?;
@@ -806,7 +850,7 @@ impl Maintenance {
         );
         let cycle =
             cycle_baseline(&self.journal)?.context("maintenance native cycle baseline missing")?;
-        let current = store::snapshot(&self.journal.control)?;
+        let current = current_snapshot(&self.journal)?;
         require_preserved(&self.journal, &cycle, &current)?;
         let namespace = current
             .namespace
@@ -861,7 +905,7 @@ impl Maintenance {
         let manager = crate::service_manager::ServiceManager::for_runtime(&self.journal.install)?;
         manager.require_stopped_for_maintenance()?;
         if let Some(before) = cycle_baseline(&self.journal)? {
-            let after = store::snapshot(&self.journal.control)?;
+            let after = current_snapshot(&self.journal)?;
             require_preserved(&self.journal, &before, &after)?;
             save_snapshot(
                 &self.journal,
@@ -922,7 +966,7 @@ impl Maintenance {
         require_original_recorded_owner(&self.journal)?;
         let manager = crate::service_manager::ServiceManager::for_runtime(&self.journal.install)?;
         manager.require_stopped_for_maintenance()?;
-        let snapshot = store::snapshot(&self.journal.control)?;
+        let snapshot = current_snapshot(&self.journal)?;
         let engine = runtime_pair::engine_identity_at_version(&self.main, &self.approval.version)?;
         snapshot.require_compatible(Some(engine), engine)?;
         let state = snapshot.digest()?;

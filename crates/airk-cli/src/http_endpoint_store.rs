@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
-use super::{InstallationBinding, digest, read_private, write_private};
+use super::{InstallationBinding, digest, private_file, read_private, write_private};
 use airk_core::usage::ClientFamily;
 use airk_core::{
     identity::{Incarnation, Sha256Digest},
     service_http::HttpSelection,
+    service_http_cleanup::{
+        HttpCleanupOwner, HttpCleanupOwnership, MAX_HTTP_CLEANUP_BYTES, MAX_HTTP_CLEANUP_OWNERS,
+    },
 };
 use anyhow::{Result, ensure};
 use ring::rand::{SecureRandom, SystemRandom};
@@ -22,6 +25,7 @@ const MAX_STORE: usize = 1_048_576;
 const MAX_CREDENTIALS: usize = 128;
 const MAX_TOKEN: usize = 103;
 const MAX_RETIRED: usize = 2048;
+const MAX_CLEANUP_DIRECTORY_ENTRIES: usize = 2 * MAX_CREDENTIALS;
 const STORE: &str = "credentials.json";
 const DEFAULT_LIFETIME_MS: u64 = 365 * 86_400_000;
 
@@ -125,6 +129,45 @@ pub enum ConnectionOwnership {
 fn filename(id: Incarnation) -> String {
     format!("credential-{id}.token")
 }
+
+fn cleanup_credential_files(root: &Path) -> Result<Vec<(Incarnation, String, u64)>> {
+    crate::local_ipc::require_existing_root(root)?;
+    let mut files = Vec::new();
+    for (count, entry) in std::fs::read_dir(root)?.enumerate() {
+        ensure!(
+            count < MAX_CLEANUP_DIRECTORY_ENTRIES,
+            "HTTP cleanup directory census exceeds bound"
+        );
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("HTTP cleanup filename is unobserved"))?;
+        if !name.starts_with("credential-") {
+            continue;
+        }
+        let text = name
+            .strip_prefix("credential-")
+            .and_then(|name| name.strip_suffix(".token"))
+            .ok_or_else(|| anyhow::anyhow!("HTTP cleanup credential filename is unobserved"))?;
+        let id: Incarnation = text
+            .parse()
+            .map_err(|_| anyhow::anyhow!("HTTP cleanup credential identity is unobserved"))?;
+        ensure!(
+            filename(id) == name,
+            "HTTP cleanup credential filename is not canonical"
+        );
+        private_file(&entry.path())?;
+        let size = std::fs::symlink_metadata(entry.path())?.len();
+        files.push((id, name.to_owned(), size));
+        ensure!(
+            files.len() <= MAX_HTTP_CLEANUP_OWNERS,
+            "HTTP cleanup inventory exceeds bound"
+        );
+    }
+    files.sort_by_key(|(id, _, _)| *id);
+    Ok(files)
+}
 fn random_token(id: Incarnation) -> Result<String> {
     let mut random = [0u8; 32];
     SystemRandom::new()
@@ -188,6 +231,65 @@ impl CredentialStore {
             .map_err(|_| anyhow::anyhow!("invalid HTTP credential ledger"))?;
         Self::validated(root, binding, ledger)
     }
+    /// Establish the first durable empty ledger only from the actual service
+    /// owner, before publishing an endpoint. This is not a missing-ledger repair
+    /// API: any published endpoint or credential file preserves unknown history.
+    pub fn initialize_empty_owned(
+        &mut self,
+        owner: &airk_store::service::ServiceLease,
+    ) -> Result<()> {
+        let control = owner.root();
+        let root = self.root.canonicalize()?;
+        ensure!(
+            root == control.join("http-1"),
+            "HTTP ledger initializer belongs to another service owner"
+        );
+        let namespace =
+            airk_store::service::registry::ServiceRegistry::open_saved(control)?.incarnation()?;
+        let binding = super::installation_binding(control, namespace)?;
+        ensure!(
+            self.ledger.binding == binding,
+            "HTTP ledger initializer namespace or installation changed"
+        );
+        match std::fs::symlink_metadata(root.join(STORE)) {
+            Ok(_) => {
+                *self = Self::read_existing(&root, binding)?;
+                return Ok(());
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        ensure!(
+            self.ledger.records.is_empty(),
+            "HTTP ledger disappeared after issuance"
+        );
+        ensure!(
+            super::load_descriptor(&root, &binding)?.is_none(),
+            "published HTTP endpoint has an unobserved credential ledger"
+        );
+        ensure!(
+            cleanup_credential_files(&root)?.is_empty(),
+            "HTTP credential history exists without its ledger"
+        );
+        ensure!(
+            std::fs::read_dir(&root)?.next().is_none(),
+            "HTTP initialization history exists without its ledger"
+        );
+        let ledger = Ledger {
+            schema: 1,
+            binding: binding.clone(),
+            records: Vec::new(),
+        };
+        write_private(
+            &root,
+            STORE,
+            &serde_json::to_vec(&ledger)?,
+            MAX_STORE,
+            false,
+        )?;
+        *self = Self::read_existing(&root, binding)?;
+        Ok(())
+    }
     fn validated(root: &Path, binding: InstallationBinding, ledger: Ledger) -> Result<Self> {
         ensure!(
             ledger.schema == 1
@@ -227,6 +329,88 @@ impl CredentialStore {
                 Some(_) => ConnectionOwnership::Active,
             },
         )
+    }
+    /// Complete disposal-only ownership metadata. The caller retains original
+    /// native mutation exclusion through capture. This never reads active token
+    /// bodies, authenticates a credential, creates a ledger or opens a socket.
+    /// A positive ledger record keeps ownership even if its token is missing.
+    pub fn cleanup_owners(&self, now_unix_ms: u64) -> Result<Vec<HttpCleanupOwner>> {
+        let current = Self::read_existing(&self.root, self.ledger.binding.clone())?;
+        let mut owners = std::collections::BTreeMap::new();
+        for record in &current.ledger.records {
+            let ownership = if record.revoked {
+                HttpCleanupOwnership::Revoked
+            } else if record.expires_unix_ms <= now_unix_ms {
+                HttpCleanupOwnership::Expired
+            } else {
+                HttpCleanupOwnership::Active
+            };
+            owners.insert(
+                record.id,
+                HttpCleanupOwner {
+                    connection_id: record.id,
+                    ownership,
+                    credential_sha256: Some(record.verifier),
+                },
+            );
+        }
+        let files = cleanup_credential_files(&current.root)?;
+        for (id, _, size) in &files {
+            if let Some(record) = current
+                .ledger
+                .records
+                .iter()
+                .find(|record| record.id == *id)
+            {
+                if *size == MAX_TOKEN as u64 {
+                    continue; // The existing verifier is sufficient; no secret read.
+                }
+                ensure!(
+                    record.revoked && *size > MAX_TOKEN as u64,
+                    "HTTP cleanup credential file state is unobserved"
+                );
+                ensure!(
+                    current.read_retirement(*id)?.is_some(),
+                    "HTTP cleanup retirement metadata is unobserved"
+                );
+            } else {
+                // Native credentials are exactly 103 bytes. Without a committed
+                // record those bytes are an orphan, never an ownership marker.
+                ensure!(
+                    *size > MAX_TOKEN as u64 && *size <= MAX_RETIRED as u64,
+                    "HTTP cleanup orphan credential ownership is unobserved"
+                );
+                ensure!(
+                    current.read_retirement(*id)?.is_some(),
+                    "HTTP cleanup retirement metadata is unobserved"
+                );
+                owners.insert(
+                    *id,
+                    HttpCleanupOwner {
+                        connection_id: *id,
+                        ownership: HttpCleanupOwnership::Revoked,
+                        credential_sha256: None,
+                    },
+                );
+            }
+            ensure!(
+                owners.len() <= MAX_HTTP_CLEANUP_OWNERS,
+                "HTTP cleanup inventory exceeds bound"
+            );
+        }
+        let checked = Self::read_existing(&self.root, self.ledger.binding.clone())?;
+        ensure!(
+            serde_json::to_vec(&checked.ledger)? == serde_json::to_vec(&current.ledger)?
+                && cleanup_credential_files(&current.root)? == files,
+            "HTTP cleanup ownership changed during capture"
+        );
+        let owners: Vec<_> = owners.into_values().collect();
+        ensure!(
+            owners.len() <= MAX_HTTP_CLEANUP_OWNERS,
+            "HTTP cleanup inventory exceeds bound"
+        );
+        airk_core::index_catalog::encoded_size(&owners, MAX_HTTP_CLEANUP_BYTES)?;
+        Ok(owners)
     }
     fn retired(&self, id: Incarnation) -> Result<bool> {
         Ok(self.read_retirement(id)?.is_some())

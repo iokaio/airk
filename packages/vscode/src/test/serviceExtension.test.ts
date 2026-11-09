@@ -242,7 +242,7 @@ test('service activation advertises reviewed bindings without indexing and prese
                 transition:async(current:any,_review:unknown,report:(message:string,stage:string)=>void)=>{
                     assert.equal(current,previous);calls.push('transition');
                     report('Staging verified runtime files…','staging');
-                    report('Stopping previous AIRK processes and activating runtime…','activating');
+                    report('Checking upgrade prerequisites and activating the selected runtime…','activating');
                     if(failActivation)throw new Error('fixture_activation_failed');
                     active=next;
                 },

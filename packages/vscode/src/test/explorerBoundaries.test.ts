@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import test from 'node:test';
 import * as ts from 'typescript';
+import {build as bundle} from 'esbuild';
 
 // Import boundaries for the AIRK Explorer. The repository has no linter, so this
 // test reads the TypeScript sources directly (out/test → ../../src).
@@ -12,7 +13,7 @@ const compiled = path.resolve(__dirname, '..');
 const CONTRACTS = new Set(['explorerContracts', 'explorerRoutes', 'explorerFeatures', 'explorerErrors', 'explorerStatus', 'explorerStrategies', 'explorerDrafts', 'indexingCatalog', 'indexingSplit', 'catalogSession', 'publications']);
 const WEBVIEW_PACKAGES = new Set(['preact', 'preact/hooks', 'preact/jsx-runtime', 'airk-explorer-help']);
 const ASSISTANCE_BUILTINS = new Set(['node:crypto', 'node:fs', 'node:fs/promises', 'node:net', 'node:os', 'node:path', 'node:process', 'node:readline']);
-const HOST_MARKERS = ['class ServiceClient', 'class NativeControlTransport', 'class IntentJournal', 'function probeMcp', 'class ServiceConsoleController', 'class RuntimeHost'];
+const HOST_MARKERS = ['class ServiceClient', 'class NativeControlTransport', 'class IntentJournal', 'class PrivateIntentStore', 'function probeMcp', 'class ServiceConsoleController', 'class RuntimeHost'];
 
 function sources(directory: string): string[] {
     if (!fs.existsSync(directory)) { return []; }
@@ -31,6 +32,21 @@ function target(from: string, specifier: string): string {
 const relative = (specifier: string) => specifier.startsWith('./') || specifier.startsWith('../');
 const contract = (from: string, specifier: string) => relative(specifier) && CONTRACTS.has(target(from, specifier));
 const within = (from: string, specifier: string, directory: string) => relative(specifier) && target(from, specifier).startsWith(directory + '/');
+
+test('standalone uninstall configuration transforms do not pull in host config discovery',async()=>{
+    const pure=path.join(source,'unifiedAgentConfig.ts');
+    assert.deepEqual(imports(pure).sort(),['./agentToml','./model','jsonc-parser']);
+    const result=await bundle({absWorkingDir:path.dirname(source),entryPoints:['src/uninstallHook.ts'],bundle:true,write:false,metafile:true,
+        platform:'node',format:'cjs',target:'node20',mainFields:['module','main'],logLevel:'silent'});
+    const inputs=Object.keys(result.metafile!.inputs).map(name=>name.replaceAll('\\','/'));
+    assert.ok(inputs.includes('src/unifiedAgentConfig.ts'),'the real uninstall bundle exercises the shared pure transforms');
+    assert.ok(inputs.includes('src/nativeOutcome.ts'),'uninstall retains the shared error class and complete native outcome');
+    assert.deepEqual(imports(path.join(source,'nativeOutcome.ts')),[],'shared error metadata must remain inert and transport-free');
+    for(const forbidden of ['privateIntentStore','serviceIntents','intentAcceptedEvidence','serviceConsoleController'])
+        assert.equal(inputs.includes(`src/${forbidden}.ts`),false,`${forbidden} must not enter the standalone worker`);
+    assert.equal(inputs.includes('src/globalAgentInventory.ts'),false,'host inventory must not become a standalone uninstall dependency');
+    assert.equal(inputs.includes('src/serviceExtension.ts'),false);
+});
 
 test('Explorer contract modules depend only on other contract modules', () => {
     for (const name of CONTRACTS) {

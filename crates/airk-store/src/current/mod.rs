@@ -4,6 +4,7 @@ pub mod analysis;
 pub mod audit_witness;
 pub mod collection;
 mod database;
+pub(crate) use database::discover_scope as discover_owned_scope_for_disposal;
 pub mod discovery;
 pub(crate) mod gate;
 pub mod graph;

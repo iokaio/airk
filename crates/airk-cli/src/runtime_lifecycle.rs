@@ -28,7 +28,18 @@ fn registry(root: &Path) -> Result<ServiceRegistry> {
         control.join("service-1.4.sqlite3").try_exists()?,
         "service_registry_unavailable"
     );
-    ServiceRegistry::open(&control, airk_kernel::service_broker::new_instance_id()?)
+    ServiceRegistry::open_saved(&control)
+}
+
+fn with_lifecycle<T>(
+    authority: &InstallerAuthority<'_>,
+    action: impl FnOnce(&mut airk_store::service::registry::ExistingLifecycleLedger) -> Result<T>,
+) -> Result<T> {
+    let saved = registry(authority.root)?;
+    let control = saved.control_root().to_path_buf();
+    let namespace = saved.incarnation()?;
+    drop(saved);
+    ServiceRegistry::with_existing_lifecycle(&control, namespace, action)
 }
 fn owner(root: &Path) -> Result<bool> {
     if let Some(policy) = managed::saved_policy_for_lifecycle(root)? {
@@ -73,9 +84,9 @@ pub(super) fn require_settled(root: &Path) -> Result<()> {
     Ok(())
 }
 pub(super) fn abandon(root: &Path, identity: Sha256Digest) -> Result<LifecycleRecord> {
-    let _lock = install_lock(root)?;
-    let mut registry = registry(root)?;
-    let record = registry
+    let lock = install_lock(root)?;
+    let authority = InstallerAuthority { root, _lock: &lock };
+    let record = registry(root)?
         .lifecycle_by_id(identity)?
         .context("lifecycle request not found")?;
     if matches!(
@@ -84,7 +95,9 @@ pub(super) fn abandon(root: &Path, identity: Sha256Digest) -> Result<LifecycleRe
     ) {
         return Ok(record);
     }
-    registry.advance_lifecycle(&record, LifecyclePhase::Abandoned)
+    with_lifecycle(&authority, |ledger| {
+        ledger.advance_lifecycle(&record, LifecyclePhase::Abandoned)
+    })
 }
 
 /// Only installed_control's held-lock connection route uses this witness.
@@ -112,13 +125,14 @@ pub(super) fn connection_settlement(root: &Path) -> Result<ConnectionSettlement>
 
 /// Installation lock is held by the caller. A stopped service stays stopped
 /// across automatic bridge reconnects and extension reloads.
-pub(super) async fn settle(root: &Path) -> Result<()> {
+pub(super) async fn settle(authority: &InstallerAuthority<'_>) -> Result<()> {
+    let root = authority.root;
     let control = layout::control(root)?;
     if !control.join("service-1.4.sqlite3").try_exists()? {
         return require_start_allowed(root);
     }
     if let Some(record) = registry(root)?.pending_lifecycle()? {
-        resume(root, record, false).await?;
+        resume(authority, record, false).await?;
     }
     require_start_allowed(root)
 }
@@ -126,21 +140,31 @@ pub(super) async fn explicit_start(root: &Path) -> Result<ServiceHealth> {
     let lock = install_lock(root)?;
     let authority = InstallerAuthority { root, _lock: &lock };
     payload_repair::require_settled(root)?;
+    let reset_required = state_contract::required(root)?;
+    let accepted_reset = activation::rebuild::pending(root)?;
+    ensure!(
+        !reset_required || accepted_reset,
+        "clean_break_required: Install or Repair CLI must accept the fresh baseline before Start"
+    );
     managed::catalog::resume_before_lifecycle(&authority, None)?;
     owner(root)?;
     let control = layout::control(root)?;
     if control.join("service-1.4.sqlite3").try_exists()? {
-        let mut ledger = registry(root)?;
-        if let Some(record) = ledger.pending_lifecycle()? {
-            resume(root, record, false).await?;
+        if let Some(record) = registry(root)?.pending_lifecycle()? {
+            resume(&authority, record, false).await?;
         }
         ensure!(
             managed::read(root)?.is_some() || layout::managed_origin(root)?.is_none(),
             "repeat_same_approved_managed_configure_to_resume"
         );
-        ledger.clear_service_stop()?;
+        with_lifecycle(&authority, |ledger| ledger.clear_service_stop())?;
     } else {
         require_start_allowed(root)?;
+    }
+    if accepted_reset {
+        activation::rebuild::resume(root).await?;
+        let (_, main, approval) = selected(root)?;
+        return activation::start_selected(root, &approval, &main, None).await;
     }
     if managed::read(root)?.is_some() {
         return managed::ensure_checked(&authority, None, || Ok(())).await;
@@ -164,12 +188,17 @@ pub(super) async fn run_with_admission_budget(
     // Launcher admission may briefly own the same installer lock. Wait before
     // accepting lifecycle work; never replay a submitted Stop/Restart operation.
     // Keep this lock through every authority check and the complete operation.
-    let _lock = connection_install_lock(root, budget).await?;
+    let lock = connection_install_lock(root, budget).await?;
+    let authority = InstallerAuthority { root, _lock: &lock };
     activation::require_settled(root)?;
     launcher_repair::require_settled(root)?;
     ensure!(
         !root.join("uninstall.json").try_exists()?,
         "runtime_uninstall_is_pending"
+    );
+    ensure!(
+        input.action != LifecycleAction::Restart || !state_contract::required(root)?,
+        "clean_break_required: Restart cannot reopen predecessor state"
     );
     let manager = owner(root)?;
     let request = LifecycleRequest {
@@ -180,9 +209,10 @@ pub(super) async fn run_with_admission_budget(
         runtime: input.runtime,
         manager,
     };
-    let mut ledger = registry(root)?;
+    let ledger = registry(root)?;
     if let Some(record) = ledger.lifecycle_record(&request)? {
-        return resume(root, record, input.force).await;
+        drop(ledger);
+        return resume(&authority, record, input.force).await;
     }
     let saved = snapshot::identity(root)?;
     ensure!(
@@ -209,8 +239,9 @@ pub(super) async fn run_with_admission_budget(
             );
         }
     }
-    let record = ledger.begin_lifecycle(&request)?;
-    resume(root, record, input.force).await
+    drop(ledger);
+    let record = with_lifecycle(&authority, |ledger| ledger.begin_lifecycle(&request))?;
+    resume(&authority, record, input.force).await
 }
 async fn observation(
     root: &Path,
@@ -233,7 +264,12 @@ async fn observation(
     );
     Ok(*observation)
 }
-async fn resume(root: &Path, mut record: LifecycleRecord, force: bool) -> Result<LifecycleRecord> {
+async fn resume(
+    authority: &InstallerAuthority<'_>,
+    mut record: LifecycleRecord,
+    force: bool,
+) -> Result<LifecycleRecord> {
+    let root = authority.root;
     if matches!(
         record.phase,
         LifecyclePhase::Complete | LifecyclePhase::Abandoned
@@ -307,16 +343,19 @@ async fn resume(root: &Path, mut record: LifecycleRecord, force: bool) -> Result
             manager.require_stopped_for_maintenance()?;
         }
         let _quiescence = quiescent(root)?;
-        let mut ledger = registry(root)?;
         if record.request.action == LifecycleAction::Stop {
-            return ledger.advance_lifecycle(&record, LifecyclePhase::Complete);
+            return with_lifecycle(authority, |ledger| {
+                ledger.advance_lifecycle(&record, LifecyclePhase::Complete)
+            });
         }
         replace_json(
             root,
             &format!("startup-{}.json", approval.manifest_sha256),
             &StartupAttempts::default(),
         )?;
-        record = ledger.advance_lifecycle(&record, LifecyclePhase::Starting)?;
+        record = with_lifecycle(authority, |ledger| {
+            ledger.advance_lifecycle(&record, LifecyclePhase::Starting)
+        })?;
     }
     let healthy =
         activation::start_selected(root, &approval, &main, Some(record.request.manager)).await?;
@@ -335,46 +374,11 @@ async fn resume(root: &Path, mut record: LifecycleRecord, force: bool) -> Result
         matches!(result, ControlResponse::RequestEpoch { .. }),
         "lifecycle_restarted_registry_unavailable"
     );
-    registry(root)?.advance_lifecycle(&record, LifecyclePhase::Complete)
+    with_lifecycle(authority, |ledger| {
+        ledger.advance_lifecycle(&record, LifecyclePhase::Complete)
+    })
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn lifecycle_observation_preserves_an_older_completed_registry_without_migration() -> Result<()>
-    {
-        let owner = tempfile::tempdir()?;
-        let root = owner.path().join("install");
-        local_ipc::prepare_root(&root)?;
-        layout::initialize(
-            &root,
-            Some(&owner.path().join("state")),
-            RuntimeChannel::Stable,
-        )?;
-        let control = layout::control(&root)?;
-        local_ipc::prepare_root(&control)?;
-        let lease = airk_store::service::ServiceLease::acquire(&control)?;
-        layout::record_control(&lease)?;
-        let registry =
-            ServiceRegistry::open(&control, airk_kernel::service_broker::new_instance_id()?)?;
-        let namespace = registry.incarnation()?;
-        layout::record_registry(&lease, namespace)?;
-        drop(registry);
-        let database = control.join("service-1.4.sqlite3");
-        rusqlite::Connection::open(&database)?
-            .execute_batch("DROP TABLE service_configuration; PRAGMA user_version=2;")?;
-        let before = fs::read(&database)?;
-        let observation = inspect(&root)?;
-        assert_eq!(observation["explicitly_stopped"], false);
-        assert_eq!(observation["namespace"], namespace.to_string());
-        assert_eq!(fs::read(&database)?, before);
-        let version: i64 = rusqlite::Connection::open(&database)?.pragma_query_value(
-            None,
-            "user_version",
-            |row| row.get(0),
-        )?;
-        assert_eq!(version, 2);
-        Ok(())
-    }
-}
+#[path = "runtime_lifecycle_tests.rs"]
+mod tests;

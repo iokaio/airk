@@ -17,8 +17,8 @@ use std::{
     path::Path,
 };
 
-const MAX_INDEXES: usize = 1024;
-const MAX_ROSTER_BYTES: usize = 8 << 20;
+const MAX_INDEXES: usize = 64;
+const MAX_ROSTER_BYTES: usize = 128 * 1024;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -37,12 +37,26 @@ pub(super) struct SavedIndex {
     pub roots: BTreeMap<String, String>,
     pub vectors_enabled: bool,
     pub index_detail: IndexDetail,
-    pub incarnation: Incarnation,
+    pub incarnation: Option<Incarnation>,
     pub settings_digest: Sha256Digest,
+    #[serde(
+        default = "preferences_available",
+        skip_serializing_if = "preferences_available_value"
+    )]
+    pub settings_available: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub discarded_preferences: Vec<String>,
     pub default_model: Option<ModelObjectSet>,
     /// Exact original envelope bytes and explicit absence, retained as evidence.
     /// The new native owner reapplies only the validated supported choices.
     pub saved_files: BTreeMap<String, Option<Vec<u8>>>,
+}
+
+fn preferences_available() -> bool {
+    true
+}
+fn preferences_available_value(value: &bool) -> bool {
+    *value
 }
 
 impl SavedRoster {
@@ -71,6 +85,9 @@ impl SavedRoster {
     pub fn check(&self, control: &Path) -> Result<()> {
         self.check_observation(&capture(control)?)
     }
+    pub fn check_clean_break(&self, control: &Path) -> Result<()> {
+        self.check_observation(&capture_clean_break(control)?)
+    }
     fn check_observation(&self, current: &Self) -> Result<()> {
         self.validate()?;
         current.validate()?;
@@ -92,6 +109,21 @@ impl SavedRoster {
 impl SavedIndex {
     pub fn validate(&self) -> Result<()> {
         self.registration.validate()?;
+        ensure!(
+            self.settings_available == self.incarnation.is_some()
+                && self.discarded_preferences.len() <= 16
+                && self
+                    .discarded_preferences
+                    .iter()
+                    .all(|value| !value.is_empty() && value.len() <= 256)
+                && self
+                    .discarded_preferences
+                    .iter()
+                    .collect::<BTreeSet<_>>()
+                    .len()
+                    == self.discarded_preferences.len(),
+            "invalid rebuild saved-preference qualification"
+        );
         ensure!(
             self.roots.len() <= 16,
             "rebuild additional root bound exceeded"
@@ -243,8 +275,10 @@ pub(super) fn capture(control: &Path) -> Result<SavedRoster> {
                 roots: choices.roots,
                 vectors_enabled: choices.vectors_enabled,
                 index_detail: choices.index_detail,
-                incarnation: captured.incarnation(),
+                incarnation: Some(captured.incarnation()),
                 settings_digest: captured.digest(),
+                settings_available: true,
+                discarded_preferences: Vec::new(),
                 default_model: choices.default_model,
                 saved_files,
             });
@@ -263,6 +297,363 @@ pub(super) fn capture(control: &Path) -> Result<SavedRoster> {
     };
     roster.validate()?;
     Ok(roster)
+}
+
+/// Capture all active saved index selections for the 1.8.16 clean break. This
+/// reads registry metadata and optional preference envelopes, never an old
+/// publication. Historical jobs, grants and index identities are not restored.
+pub(super) fn preflight_clean_break(control: &Path) -> Result<usize> {
+    let mut registry = ServiceRegistry::open_saved(control)?;
+    let catalog = registry.catalog_state()?;
+    let mut catalog_bindings = BTreeSet::new();
+    if let Some(catalog) = &catalog {
+        for (index, roots, policy) in registry.catalog_clean_break_sources(catalog.revision)? {
+            ensure!(
+                policy.as_ref().is_none_or(
+                    |policy| policy.positive_includes.is_none() && policy.denies.is_empty()
+                ),
+                "clean-break source selection has include/exclude boundaries requiring explicit reconstruction; original state is preserved"
+            );
+            ensure!(
+                roots.iter().filter(|root| root.owner).count() == 1
+                    && roots.iter().all(|root| if root.owner {
+                        root.canonical_path == index.backing.root && root.aliases.is_empty()
+                    } else {
+                        root.aliases.len() == 1
+                    }),
+                "clean-break cannot reconstruct multiple aliases for one source; review the saved selection before reset"
+            );
+            ensure!(
+                catalog_bindings.insert(index.backing.binding),
+                "duplicate clean-break backing identity"
+            );
+        }
+    }
+    let mut after = None;
+    let mut revision = None;
+    let mut bindings = BTreeSet::new();
+    loop {
+        let page = registry.list(after, revision, 32)?;
+        revision = Some(page.revision);
+        for project in page.projects {
+            ensure!(
+                bindings.len() < MAX_INDEXES && bindings.insert(project.registration.binding),
+                "clean-break complete index roster exceeds 64 indexes or duplicates a binding"
+            );
+        }
+        after = page.after;
+        if after.is_none() {
+            break;
+        }
+    }
+    if catalog.is_some() {
+        ensure!(
+            bindings == catalog_bindings,
+            "clean-break complete source catalog differs from active registrations"
+        );
+    }
+    Ok(bindings.len())
+}
+
+/// Final supported preference capture after the installer proves old-owner exit.
+pub(super) fn capture_clean_break(control: &Path) -> Result<SavedRoster> {
+    let control = control.canonicalize()?;
+    let mut registry = ServiceRegistry::open_saved(&control)?;
+    let namespace = registry.incarnation()?;
+    let catalog = registry.catalog_state()?;
+    let mut catalog_sources = match &catalog {
+        Some(catalog) => registry
+            .catalog_clean_break_sources(catalog.revision)?
+            .into_iter()
+            .map(|(index, roots, policy)| (index.backing.binding, (index, roots, policy)))
+            .collect::<BTreeMap<_, _>>(),
+        None => BTreeMap::new(),
+    };
+    let mut after = None;
+    let mut revision = None;
+    let mut indexes = Vec::new();
+    loop {
+        let page = registry.list(after, revision, 32)?;
+        revision = Some(page.revision);
+        for project in page.projects {
+            ensure!(
+                indexes.len() < MAX_INDEXES,
+                "clean-break complete index roster exceeds 64 indexes"
+            );
+            let registration = project.registration;
+            let watch = registry.watch(registration.binding)?;
+            ensure!(
+                watch.project.registration == registration
+                    && watch.project.paused == project.paused,
+                "clean-break saved registration changed"
+            );
+            let roots = if catalog.is_some() {
+                let (index, sources, policy) =
+                    catalog_sources.remove(&registration.binding).context(
+                        "clean-break active registration lacks a complete catalog source selection",
+                    )?;
+                ensure!(
+                    index.backing == registration,
+                    "clean-break catalog backing differs from registration"
+                );
+                ensure!(
+                    policy.as_ref().is_none_or(
+                        |policy| policy.positive_includes.is_none() && policy.denies.is_empty()
+                    ),
+                    "clean-break source selection has include/exclude boundaries requiring explicit reconstruction; original state is preserved"
+                );
+                let mut roots = BTreeMap::new();
+                let mut owner = false;
+                for source in sources {
+                    if source.owner {
+                        ensure!(
+                            !owner
+                                && source.canonical_path == registration.root
+                                && source.aliases.is_empty(),
+                            "clean-break owner source differs from registration"
+                        );
+                        owner = true;
+                    } else {
+                        ensure!(
+                            !source.aliases.is_empty(),
+                            "clean-break additional source lacks a saved alias"
+                        );
+                        for alias in source.aliases {
+                            ensure!(
+                                roots.insert(alias, source.canonical_path.clone()).is_none(),
+                                "duplicate clean-break source alias"
+                            );
+                        }
+                    }
+                }
+                ensure!(owner, "clean-break owner source is missing");
+                Some(roots)
+            } else {
+                None
+            };
+            let data = Path::new(&registration.data_root);
+            let captured = if data.try_exists()? {
+                ensure!(
+                    airk_store::service::data_scope::has_saved_binding(data, &control, namespace)?,
+                    "clean-break storage lacks its original ownership receipt"
+                );
+                match Collection::existing(data, &registration.root, &registration.collection)
+                    .and_then(|collection| {
+                        collection.capture_clean_break_preferences(roots.is_none())
+                    }) {
+                    Ok(captured) => Some(captured),
+                    Err(error)
+                        if roots.is_some()
+                            && error.downcast_ref::<std::io::Error>().is_some_and(|error| {
+                                error.kind() == std::io::ErrorKind::NotFound
+                            }) =>
+                    {
+                        None
+                    }
+                    Err(error) => return Err(error),
+                }
+            } else {
+                ensure!(
+                    roots.is_some(),
+                    "clean-break legacy source selection is unavailable; review sources before reset"
+                );
+                None
+            };
+            let original_files = captured
+                .as_ref()
+                .map(|captured| {
+                    captured
+                        .files()
+                        .map(|(name, bytes)| (name.to_owned(), bytes.map(<[u8]>::to_vec)))
+                        .collect::<BTreeMap<_, _>>()
+                })
+                .unwrap_or_default();
+            let roots = match roots {
+                Some(roots) => roots,
+                None => clean_break_roots(&original_files, &registration.root)?,
+            };
+            ensure!(
+                roots.values().collect::<BTreeSet<_>>().len() == roots.len(),
+                "clean-break cannot reconstruct multiple aliases for one source; review the saved selection before reset"
+            );
+            let (mut vectors_enabled, index_detail) =
+                clean_break_preferences(&original_files, &registration.root)?;
+            let mut discarded_preferences = clean_break_discarded_preferences(&original_files)?;
+            if captured.is_none() {
+                vectors_enabled = false;
+                discarded_preferences.push("unavailable_saved_preferences".into());
+                discarded_preferences.push("semantic_disabled_until_review".into());
+            }
+            let saved_files = normalized_clean_break_files(
+                &registration.root,
+                &roots,
+                vectors_enabled,
+                index_detail,
+            )?;
+            let settings_digest = match &captured {
+                Some(captured) => captured.digest(),
+                None => airk_core::identity::framed_digest(
+                    b"airk/clean-break-preferences-unavailable/1",
+                    &[registration.binding.as_bytes()],
+                ),
+            };
+            indexes.push(SavedIndex {
+                registration,
+                paused: project.paused,
+                watch: watch.observation.enabled,
+                roots,
+                vectors_enabled,
+                index_detail,
+                incarnation: captured.as_ref().map(|captured| captured.incarnation()),
+                settings_digest,
+                settings_available: captured.is_some(),
+                discarded_preferences,
+                default_model: None,
+                saved_files,
+            });
+        }
+        after = page.after;
+        if after.is_none() {
+            break;
+        }
+    }
+    ensure!(
+        catalog_sources.is_empty(),
+        "clean-break catalog census contains an unobserved active backing"
+    );
+    let revision = revision.context("missing clean-break registry revision")?;
+    registry.list(None, Some(revision), 1)?;
+    if let Some(catalog) = catalog {
+        ensure!(
+            registry
+                .catalog_state()?
+                .is_some_and(|current| current.revision == catalog.revision),
+            "clean-break source catalog changed"
+        );
+    }
+    indexes.sort_by_key(|index| index.registration.binding);
+    let roster = SavedRoster {
+        namespace,
+        revision,
+        indexes,
+    };
+    roster.validate()?;
+    Ok(roster)
+}
+
+fn clean_break_roots(
+    files: &BTreeMap<String, Option<Vec<u8>>>,
+    owner: &str,
+) -> Result<BTreeMap<String, String>> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Roots {
+        schema: u32,
+        owner_root: String,
+        roots: BTreeMap<String, String>,
+    }
+    match files.get("roots.json").and_then(Option::as_deref) {
+        Some(bytes) => {
+            let roots: Roots = serde_json::from_slice(bytes)?;
+            ensure!(
+                roots.schema == 1 && roots.owner_root == owner,
+                "clean-break saved roots differ from registration"
+            );
+            Ok(roots.roots)
+        }
+        None => Ok(BTreeMap::new()),
+    }
+}
+
+fn clean_break_preferences(
+    files: &BTreeMap<String, Option<Vec<u8>>>,
+    owner: &str,
+) -> Result<(bool, IndexDetail)> {
+    let policy = |name: &str| -> Result<Option<serde_json::Value>> {
+        let Some(bytes) = files.get(name).and_then(Option::as_deref) else {
+            return Ok(None);
+        };
+        let value: serde_json::Value = serde_json::from_slice(bytes)?;
+        ensure!(
+            value["version"] == 1 && value["owner_root"] == owner && value["policy"].is_object(),
+            "clean-break saved preference envelope differs from registration"
+        );
+        Ok(Some(value["policy"].clone()))
+    };
+    let vectors = policy("vector-policy.json")?
+        .map(|policy| {
+            policy["enabled"]
+                .as_bool()
+                .context("clean-break vector preference is malformed")
+        })
+        .transpose()?
+        .unwrap_or(true);
+    let detail = policy("extraction-policy.json")?
+        .and_then(|policy| {
+            policy
+                .get("detail")
+                .filter(|detail| !detail.is_null())
+                .cloned()
+        })
+        .map(serde_json::from_value)
+        .transpose()?
+        .unwrap_or_default();
+    Ok((vectors, detail))
+}
+
+fn normalized_clean_break_files(
+    owner: &str,
+    roots: &BTreeMap<String, String>,
+    vectors: bool,
+    detail: IndexDetail,
+) -> Result<BTreeMap<String, Option<Vec<u8>>>> {
+    Ok(BTreeMap::from([
+        (
+            "roots.json".into(),
+            Some(serde_json::to_vec(
+                &serde_json::json!({"schema":1,"owner_root":owner,"roots":roots}),
+            )?),
+        ),
+        (
+            "extraction-policy.json".into(),
+            Some(serde_json::to_vec(
+                &serde_json::json!({"version":1,"owner_root":owner,"policy":{"version":3,"detail":detail,"rules":[]}}),
+            )?),
+        ),
+        (
+            "vector-policy.json".into(),
+            Some(serde_json::to_vec(
+                &serde_json::json!({"version":1,"owner_root":owner,"policy":{"enabled":vectors}}),
+            )?),
+        ),
+        ("compression-policy.json".into(), None),
+        ("scan-limits.json".into(), None),
+    ]))
+}
+
+fn clean_break_discarded_preferences(
+    files: &BTreeMap<String, Option<Vec<u8>>>,
+) -> Result<Vec<String>> {
+    let mut discarded = Vec::new();
+    for (name, fields) in [
+        ("vector-policy.json", &["model", "selection"][..]),
+        (
+            "extraction-policy.json",
+            &["rules", "retained_profile", "legacy_fallback_detail"][..],
+        ),
+    ] {
+        if let Some(bytes) = files.get(name).and_then(Option::as_deref) {
+            let value: serde_json::Value = serde_json::from_slice(bytes)?;
+            for field in fields {
+                if value["policy"].get(field).is_some_and(|value| {
+                    !value.is_null() && !value.as_array().is_some_and(Vec::is_empty)
+                }) {
+                    discarded.push(format!("{name}:{field}"));
+                }
+            }
+        }
+    }
+    Ok(discarded)
 }
 
 fn require_absent(path: &Path, setting: &str) -> Result<()> {

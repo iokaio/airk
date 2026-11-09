@@ -54,6 +54,7 @@ pub mod service_cleanup;
 pub mod service_configuration;
 pub mod service_events;
 pub mod service_http;
+pub mod service_http_cleanup;
 pub mod service_inspection;
 pub mod service_logs;
 pub mod service_maintenance;

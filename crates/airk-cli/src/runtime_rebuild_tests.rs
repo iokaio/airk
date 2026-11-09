@@ -3,6 +3,8 @@
 //! producer substitutes only artifact qualification; installed native acceptance
 //! must still execute the candidate's nonce-bound probe.
 use super::*;
+#[path = "runtime_rebuild_continuation_tests.rs"]
+mod continuation_tests;
 use airk_store::service::registry::catalog::genesis::{
     CatalogGenesis,
     activation::{
@@ -84,7 +86,9 @@ fn fixture(paused: bool) -> Result<(tempfile::TempDir, PathBuf, Journal)> {
         roots: Default::default(),
         vectors_enabled: false,
         index_detail: airk_core::extraction::IndexDetail::Detailed,
-        incarnation: Incarnation::from_bytes([12; 16]),
+        settings_available: true,
+        discarded_preferences: Vec::new(),
+        incarnation: Some(Incarnation::from_bytes([12; 16])),
         settings_digest: Sha256Digest::from_bytes([13; 32]),
         default_model: None,
         saved_files,
@@ -111,6 +115,18 @@ fn fixture(paused: bool) -> Result<(tempfile::TempDir, PathBuf, Journal)> {
             indexes: vec![saved],
         },
         resources: Default::default(),
+        clean_break: false,
+        capture_complete: None,
+        expected_indexes: None,
+        cleanup_complete: false,
+        superseded_activation: None,
+        cleanup_observation: None,
+        cleanup_failure: None,
+        client_registrations: None,
+        client_metadata: None,
+        http_ownership_snapshot: None,
+        predecessor_stopped: None,
+        predecessor_lifecycle_sequence: None,
         layout_sha256: Sha256Digest::from_bytes(
             Sha256::digest(fs::read(root.join("runtime-layout.json"))?).into(),
         ),
@@ -119,6 +135,10 @@ fn fixture(paused: bool) -> Result<(tempfile::TempDir, PathBuf, Journal)> {
             request: None,
             job: None,
             restored: false,
+            preferences_restored: false,
+            completed: None,
+            initial_job: None,
+            failure: None,
         }],
         failure: None,
     };
@@ -127,7 +147,45 @@ fn fixture(paused: bool) -> Result<(tempfile::TempDir, PathBuf, Journal)> {
 }
 
 fn successor_fixture(paused: bool) -> Result<(tempfile::TempDir, PathBuf, Journal)> {
+    successor_fixture_for_input(paused, false)
+}
+
+fn ordinary_input_root(root: &Path) -> Result<PathBuf> {
+    #[cfg(windows)]
+    let input = PathBuf::from(root.to_str().unwrap().strip_prefix(r"\\?\").unwrap());
+    #[cfg(unix)]
+    let input = {
+        let input = root.parent().unwrap().join("install-input-alias");
+        std::os::unix::fs::symlink(root, &input)?;
+        input
+    };
+    #[cfg(not(any(windows, unix)))]
+    let input = root.to_path_buf();
+    Ok(input)
+}
+
+fn successor_fixture_for_input(
+    paused: bool,
+    ordinary_input: bool,
+) -> Result<(tempfile::TempDir, PathBuf, Journal)> {
     let (owner, root, mut journal) = fixture(paused)?;
+    let root = if ordinary_input {
+        let input = ordinary_input_root(&root)?;
+        layout::preflight_clean_break(&input, journal.operation)?;
+        journal.state = rebuild_state(&input, journal.operation)?;
+        journal.save(&input)?;
+        input
+    } else {
+        root
+    };
+    finish_successor_fixture(owner, root, journal)
+}
+
+fn finish_successor_fixture(
+    owner: tempfile::TempDir,
+    root: PathBuf,
+    mut journal: Journal,
+) -> Result<(tempfile::TempDir, PathBuf, Journal)> {
     let exclusion = OldExclusion::acquire(&journal)?;
     layout::admit_successor(
         &root,
@@ -154,6 +212,7 @@ fn successor_fixture(paused: bool) -> Result<(tempfile::TempDir, PathBuf, Journa
     genesis.migrate()?;
     genesis.promote_authority_v1()?;
     genesis.record_authority_v1_readiness(Incarnation::from_bytes([17; 16]), &ComponentProducer)?;
+    state_contract::initialize(&root, &genesis)?;
     genesis.settle_authority_v1()?;
     drop(genesis);
     let lease = ServiceLease::acquire(&journal.control())?;
@@ -180,6 +239,645 @@ fn successor_fixture(paused: bool) -> Result<(tempfile::TempDir, PathBuf, Journa
     journal.phase = Phase::Genesis;
     journal.save(&root)?;
     Ok((owner, root, journal))
+}
+
+/// Reuse actual Genesis/handoff without exposing the private installer journal
+/// or allowing another test to construct its opaque exclusion proof.
+pub(in crate::runtime_install) fn storage_cleanup_fixture(
+    initialize: impl FnOnce(&Path, Incarnation, &[ProjectRegistration]) -> Result<()>,
+) -> Result<(
+    tempfile::TempDir,
+    PathBuf,
+    PathBuf,
+    Incarnation,
+    Vec<ProjectRegistration>,
+)> {
+    let (owner, root, journal) = fixture(false)?;
+    let registrations: Vec<_> = journal
+        .roster
+        .indexes
+        .iter()
+        .map(|index| index.registration.clone())
+        .collect();
+    initialize(
+        &journal.old_control,
+        journal.roster.namespace,
+        &registrations,
+    )?;
+    let old_control = journal.old_control.clone();
+    let namespace = journal.roster.namespace;
+    let (owner, root, _) = finish_successor_fixture(owner, root, journal)?;
+    Ok((owner, root, old_control, namespace, registrations))
+}
+
+#[test]
+fn rebuild_unused_accepted_leaf_reconciles_only_exact_alias_without_read_mutation() -> Result<()> {
+    let (_owner, root, mut journal) = fixture(false)?;
+    let input = ordinary_input_root(&root)?;
+    journal.state = input.join(format!("rebuild-state-{}", journal.operation));
+    let original_operation = journal.operation;
+    let envelope = Envelope {
+        sha256: Sha256Digest::from_bytes(Sha256::digest(serde_json::to_vec(&journal)?).into()),
+        journal: journal.clone(),
+    };
+    replace_json(&root, JOURNAL, &envelope)?;
+    let before = fs::read(root.join(JOURNAL))?;
+    for spelling in [&root, &input] {
+        let observed = read(spelling)?.unwrap();
+        assert_eq!(observed.state, rebuild_state(&root, original_operation)?);
+        assert_eq!(observed.operation, original_operation);
+        assert_eq!(fs::read(root.join(JOURNAL))?, before);
+    }
+    journal.state = root.join("unrelated-state");
+    let envelope = Envelope {
+        sha256: Sha256Digest::from_bytes(Sha256::digest(serde_json::to_vec(&journal)?).into()),
+        journal,
+    };
+    replace_json(&root, JOURNAL, &envelope)?;
+    assert!(read(&input).is_err());
+    Ok(())
+}
+
+fn install_probe_fixture(root: &Path, historical: bool) -> Result<String> {
+    local_ipc::prepare_root(&root.join("runtimes"))?;
+    let stage = root.join(if historical { "probe-old" } else { "probe-new" });
+    local_ipc::prepare_root(&stage)?;
+    let identity = if historical {
+        crate::runtime_install::tests::historical_pair_fixture(&stage)?
+    } else {
+        crate::runtime_install::tests::fixture(&stage)?
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(stage.join("notices"), fs::Permissions::from_mode(0o700))?;
+    }
+    let manifest: InstallManifest =
+        serde_json::from_slice(&fs::read(stage.join("airk-install.json"))?)?;
+    replace_json(
+        &stage,
+        "approval.json",
+        &Approval {
+            schema: 1,
+            manifest_sha256: identity.clone(),
+            version: manifest.version,
+            verification_basis: VerificationBasis::OrganizationDigest,
+        },
+    )?;
+    fs::rename(&stage, root.join("runtimes").join(&identity))?;
+    Ok(identity)
+}
+
+#[tokio::test]
+async fn clean_break_bootstrap_epoch_uses_exact_native_transport_before_selection() -> Result<()> {
+    use airk_core::service::ControlRequest;
+    let (_owner, root, mut journal) = successor_fixture(false)?;
+    journal.prior.active = install_probe_fixture(&root, true)?;
+    journal.candidate = install_probe_fixture(&root, false)?;
+    journal.clean_break = true;
+    journal.capture_complete = Some(true);
+    journal.phase = Phase::Starting;
+    replace_json(&root, "selected.json", &journal.prior)?;
+    journal.save(&root)?;
+    journal.intent().save(&root)?;
+    assert!(state_contract::required(&root)?);
+    let control = journal.control();
+    let error = service_runtime::request(&control, ControlMethod::RequestEpoch)
+        .await
+        .err()
+        .context("ordinary epoch read bypassed baseline")?;
+    assert!(error.to_string().contains("clean_break_required"));
+    let (main, approval) = verify_runtime(&root, &journal.candidate)?;
+    let instance = Incarnation::from_bytes([111; 16]);
+    let permit = state_contract::initialized_probe(
+        &root,
+        &journal.candidate,
+        &approval.version,
+        instance,
+        &runtime_pair::digest_file(&main)?,
+    )?
+    .context("exact bootstrap was not admitted")?;
+    assert!(
+        state_contract::initialized_probe(
+            &root,
+            &"c".repeat(64),
+            &approval.version,
+            instance,
+            &runtime_pair::digest_file(&main)?,
+        )?
+        .is_none()
+    );
+    assert!(
+        state_contract::initialized_probe(
+            &root,
+            &journal.candidate,
+            &approval.version,
+            instance,
+            &"d".repeat(64),
+        )
+        .is_err()
+    );
+    let mut mismatched = journal.intent();
+    mismatched.candidate = "c".repeat(64);
+    mismatched.save(&root)?;
+    assert!(permit.request_identity().is_err());
+    journal.intent().save(&root)?;
+    let mut listener = local_ipc::Listener::bind(&local_ipc::endpoint(&control, "control")?)?;
+    let expected_namespace = ServiceRegistry::open_saved(&control)?.incarnation()?;
+    let service_control = control.clone();
+    let server = tokio::spawn(async move {
+        let mut stream = listener.accept().await?;
+        let request: ControlRequest = local_ipc::read_message(&mut stream, Duration::from_secs(2))
+            .await?
+            .context("missing bootstrap request")?;
+        ensure!(
+            request.protocol == airk_core::service::PROTOCOL_VERSION,
+            "bootstrap changed protocol"
+        );
+        ensure!(
+            request.expected_instance == Some(instance),
+            "bootstrap lost exact instance"
+        );
+        ensure!(
+            matches!(request.method, ControlMethod::RequestEpoch),
+            "bootstrap broadened request"
+        );
+        let mut registry = ServiceRegistry::open(&service_control, expected_namespace)?;
+        let (namespace, epoch) = registry.request_epoch()?;
+        local_ipc::write_message(
+            &mut stream,
+            &ControlResponse::RequestEpoch { namespace, epoch },
+            Duration::from_secs(2),
+        )
+        .await?;
+        Ok::<_, anyhow::Error>(())
+    });
+    let response = service_runtime::request_initialized_probe(&permit).await?;
+    server.await??;
+    assert!(
+        matches!(response, ControlResponse::RequestEpoch { namespace, .. } if namespace == expected_namespace)
+    );
+    assert!(selection_record(&root)? == journal.prior);
+    // No ordinary client is authorized by a valid native bootstrap receipt.
+    assert!(
+        service_runtime::request(&control, ControlMethod::RequestEpoch)
+            .await
+            .is_err()
+    );
+    assert!(
+        service_runtime::request(&control, ControlMethod::HttpEndpoint)
+            .await
+            .is_err()
+    );
+    let marker = control.join("airk-state-contract.json");
+    let marker_bytes = fs::read(&marker)?;
+    fs::remove_file(&marker)?;
+    assert!(
+        service_runtime::request_initialized_probe(&permit)
+            .await
+            .is_err()
+    );
+    fs::write(&marker, marker_bytes)?;
+    journal.phase = Phase::Complete;
+    journal.save(&root)?;
+    assert!(
+        service_runtime::request_initialized_probe(&permit)
+            .await
+            .is_err()
+    );
+    Ok(())
+}
+
+fn predecessor_http_fixture() -> Result<(tempfile::TempDir, PathBuf, Journal, Vec<Incarnation>)> {
+    use airk_core::{
+        index_catalog::{CatalogRevision, GrantId, IndexId, QueryProjectId},
+        service::ScopedConnectRequest,
+        service_http::{EndpointDescriptor, EndpointState, HttpSelection, LoopbackMcpUrl},
+    };
+    let (owner, root, mut journal) = fixture(false)?;
+    drop(install_lock(&root)?);
+    journal.prior.active = install_probe_fixture(&root, true)?;
+    journal.candidate = install_probe_fixture(&root, false)?;
+    replace_json(&root, "selected.json", &journal.prior)?;
+    journal.clean_break = true;
+    journal.capture_complete = Some(true);
+    journal.client_registrations = Some(
+        journal
+            .roster
+            .indexes
+            .iter()
+            .map(|index| index.registration.clone())
+            .collect(),
+    );
+    // The canonical ownership collector also observes saved rebuild protection.
+    // Publish the real fixture identities before it reads that same journal.
+    journal.save(&root)?;
+    journal.client_metadata = Some(capture_client_metadata(
+        &root,
+        &journal.prior.active,
+        &journal.candidate,
+        &journal.old_control,
+        journal.roster.namespace,
+    )?);
+    journal.save(&root)?;
+    let namespace = journal.roster.namespace;
+    let binding = crate::http_endpoint::installation_binding(&journal.old_control, namespace)?;
+    let private = journal.old_control.join("http-1");
+    let mut store = crate::http_endpoint::CredentialStore::open(&private, binding.clone())?;
+    let ids: Vec<_> = (201..205)
+        .map(|byte| Incarnation::from_bytes([byte; 16]))
+        .collect();
+    let selection = HttpSelection::Scoped {
+        selection: ScopedConnectRequest {
+            schema: 1,
+            context_key: Sha256Digest::from_bytes([205; 32]),
+            namespace,
+            expected_catalog_revision: CatalogRevision::INITIAL,
+            grant_id: GrantId::from_identity(ids[0]),
+            expected_grant_revision: CatalogRevision::INITIAL,
+            index_id: IndexId::from_identity(ids[0]),
+            project_ids: vec![QueryProjectId::from_identity(ids[0])],
+        },
+    };
+    let now = unix_ms()?;
+    let issued = store.enroll(ids[0], selection.clone(), now + 3_600_000, now)?;
+    store.enroll(ids[1], selection.clone(), 2, 1)?;
+    store.enroll(ids[2], selection.clone(), now + 3_600_000, now)?;
+    store.revoke(ids[2])?;
+    store.compact_revoked()?;
+    store.enroll(ids[3], selection, now + 3_600_000, now)?;
+    store.revoke(ids[3])?;
+    // Native issuance metadata proves ownership even after a secret is removed.
+    fs::remove_file(issued.credential_file)?;
+    let (main, _) = verify_runtime(&root, &journal.prior.active)?;
+    let endpoint = EndpointDescriptor {
+        schema: 1,
+        installation: binding.installation,
+        user: binding.user.clone(),
+        namespace,
+        generation: 1,
+        service_instance: Incarnation::from_bytes([206; 16]),
+        executable_sha256: runtime_pair::digest_file(&main)?.parse()?,
+        url: LoopbackMcpUrl::new(57421)?,
+        ca_sha256: Sha256Digest::from_bytes([207; 32]),
+        certificate_sha256: Sha256Digest::from_bytes([208; 32]),
+        state: EndpointState::Stopping,
+        predecessor_digest: None,
+    };
+    crate::http_endpoint::publish_descriptor(&private, &binding, &endpoint, None)?;
+    Ok((owner, root, journal, ids))
+}
+
+fn initialize_fixture_http_owner(control: &Path) -> Result<()> {
+    let lease = ServiceLease::acquire(control)?;
+    let namespace = ServiceRegistry::open_saved(control)?.incarnation()?;
+    let binding = crate::http_endpoint::installation_binding(control, namespace)?;
+    let mut store = crate::http_endpoint::CredentialStore::open(&control.join("http-1"), binding)?;
+    store.initialize_empty_owned(&lease)?;
+    Ok(())
+}
+
+#[test]
+fn clean_break_native_http_lookup_owns_stopped_expired_revoked_and_retired_without_tokens()
+-> Result<()> {
+    use airk_core::service_http_cleanup::{HttpCleanupOwnership, PredecessorHttpLookup};
+    let (_owner, root, journal, ids) = predecessor_http_fixture()?;
+    for (index, state) in [
+        HttpCleanupOwnership::Active,
+        HttpCleanupOwnership::Expired,
+        HttpCleanupOwnership::Revoked,
+        HttpCleanupOwnership::Revoked,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let raw = http_cleanup::lookup(
+            &root,
+            &journal.prior.active,
+            &journal.prior.active,
+            ids[index],
+        )?;
+        let lookup: PredecessorHttpLookup = serde_json::from_value(raw)?;
+        lookup.validate()?;
+        assert_eq!(lookup.status, "owned");
+        assert_eq!(lookup.ownership, Some(state));
+        assert!(!lookup.qualification.live_authority);
+        assert_eq!(lookup.operation_id, None);
+        assert_eq!(lookup.snapshot.owners.len(), 4);
+        assert_eq!(lookup.credential_sha256.is_some(), index != 2);
+    }
+    let lookup: PredecessorHttpLookup = serde_json::from_value(http_cleanup::lookup(
+        &root,
+        &journal.prior.active,
+        &journal.prior.active,
+        Incarnation::from_bytes([209; 16]),
+    )?)?;
+    assert_eq!(lookup.status, "not_owned");
+    Ok(())
+}
+
+#[test]
+fn clean_break_http_snapshot_survives_headless_old_control_and_payload_retirement() -> Result<()> {
+    use airk_core::service_http_cleanup::PredecessorHttpLookup;
+    let (owner, root, mut journal, ids) = predecessor_http_fixture()?;
+    let snapshot = http_cleanup::capture(&root, &journal.prior.active, &journal.old_control);
+    snapshot.validate()?;
+    assert!(snapshot.complete);
+    journal.http_ownership_snapshot = Some(snapshot.clone());
+    journal.save(&root)?;
+    let metadata = journal.client_metadata.clone().unwrap();
+    assert!(
+        metadata["command_images"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|image| {
+                !Path::new(image["path"].as_str().unwrap())
+                    .starts_with(root.join("runtimes").join(&journal.candidate))
+            })
+    );
+    let (_owner, root, mut journal) = finish_successor_fixture(owner, root, journal)?;
+    replace_json(&root, "selected.json", &journal.selected())?;
+    journal.phase = Phase::Complete;
+    journal.cleanup_complete = true;
+    journal.save(&root)?;
+    initialize_fixture_http_owner(&journal.control())?;
+    let source = Path::new(&journal.roster.indexes[0].registration.root).join("original.txt");
+    let source_before = fs::read(&source)?;
+    fs::remove_dir_all(&journal.old_control)?;
+    fs::remove_dir_all(root.join("runtimes").join(&journal.prior.active))?;
+    let raw = http_cleanup::lookup(&root, &journal.candidate, &journal.prior.active, ids[2])?;
+    let lookup: PredecessorHttpLookup = serde_json::from_value(raw)?;
+    lookup.validate()?;
+    assert_eq!(lookup.status, "owned");
+    assert_eq!(
+        lookup.qualification.current_namespace_ownership,
+        "not_owned"
+    );
+    assert_eq!(lookup.operation_id, Some(journal.operation));
+    assert_eq!(lookup.snapshot, snapshot);
+    assert_eq!(lookup.control_dir, journal.old_control.to_str().unwrap());
+    assert_eq!(lookup.namespace, Some(journal.roster.namespace));
+    assert_eq!(http_snapshot_report(&root)?, Some(snapshot));
+    assert_eq!(
+        client_metadata(&root)?.unwrap()["predecessor_executable"],
+        metadata["predecessor_executable"]
+    );
+    assert_eq!(fs::read(source)?, source_before);
+    // A fresh namespace may legitimately issue the same explicit ID and URL.
+    // Original ownership must never authorize deleting its newer configuration.
+    let control = journal.control();
+    let namespace = ServiceRegistry::open_saved(&control)?.incarnation()?;
+    let binding = crate::http_endpoint::installation_binding(&control, namespace)?;
+    let mut store =
+        crate::http_endpoint::CredentialStore::read_existing(&control.join("http-1"), binding)?;
+    use airk_core::{
+        index_catalog::{CatalogRevision, GrantId, IndexId, QueryProjectId},
+        service::ScopedConnectRequest,
+        service_http::HttpSelection,
+    };
+    store.enroll_default(
+        ids[2],
+        HttpSelection::Scoped {
+            selection: ScopedConnectRequest {
+                schema: 1,
+                context_key: Sha256Digest::from_bytes([212; 32]),
+                namespace,
+                expected_catalog_revision: CatalogRevision::INITIAL,
+                grant_id: GrantId::from_identity(ids[2]),
+                expected_grant_revision: CatalogRevision::INITIAL,
+                index_id: IndexId::from_identity(ids[2]),
+                project_ids: vec![QueryProjectId::from_identity(ids[2])],
+            },
+        },
+        unix_ms()?,
+    )?;
+    let collision: PredecessorHttpLookup = serde_json::from_value(http_cleanup::lookup(
+        &root,
+        &journal.candidate,
+        &journal.prior.active,
+        ids[2],
+    )?)?;
+    collision.validate()?;
+    assert_eq!(collision.status, "unavailable");
+    assert_eq!(collision.qualification.current_namespace_ownership, "owned");
+    assert!(collision.credential_file.is_none() && collision.ownership.is_none());
+    assert_eq!(collision.snapshot, lookup.snapshot);
+    fs::remove_file(control.join("http-1/credentials.json"))?;
+    let unknown: PredecessorHttpLookup = serde_json::from_value(http_cleanup::lookup(
+        &root,
+        &journal.candidate,
+        &journal.prior.active,
+        ids[2],
+    )?)?;
+    assert_eq!(unknown.status, "unavailable");
+    assert_eq!(
+        unknown.qualification.current_namespace_ownership,
+        "unavailable"
+    );
+    assert!(unknown.qualification.current_namespace_failure.is_some());
+    Ok(())
+}
+
+#[test]
+fn clean_break_native_http_lookup_refuses_missing_foreign_or_orphan_metadata() -> Result<()> {
+    for fault in [
+        "missing_ledger",
+        "wrong_namespace",
+        "wrong_executable",
+        "orphan_token",
+    ] {
+        let (_owner, root, journal, ids) = predecessor_http_fixture()?;
+        let private = journal.old_control.join("http-1");
+        match fault {
+            "missing_ledger" => fs::remove_file(private.join("credentials.json"))?,
+            "wrong_namespace" | "wrong_executable" => {
+                let path = private.join("endpoint.json");
+                let mut endpoint: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
+                if fault == "wrong_namespace" {
+                    endpoint["namespace"] = serde_json::json!(Incarnation::from_bytes([210; 16]));
+                } else {
+                    endpoint["executable_sha256"] =
+                        serde_json::json!(Sha256Digest::from_bytes([210; 32]));
+                }
+                fs::write(path, serde_json::to_vec(&endpoint)?)?;
+            }
+            "orphan_token" => {
+                let path = private.join(format!(
+                    "credential-{}.token",
+                    Incarnation::from_bytes([211; 16])
+                ));
+                fs::write(
+                    &path,
+                    format!(
+                        "airk1.{}.{}",
+                        Incarnation::from_bytes([211; 16]),
+                        "a".repeat(64)
+                    ),
+                )?;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+                }
+            }
+            _ => unreachable!(),
+        }
+        let raw =
+            http_cleanup::lookup(&root, &journal.prior.active, &journal.prior.active, ids[0])?;
+        let lookup: airk_core::service_http_cleanup::PredecessorHttpLookup =
+            serde_json::from_value(raw)?;
+        assert_eq!(lookup.status, "unavailable", "{fault}");
+        assert!(!lookup.snapshot.complete && lookup.snapshot.owners.is_empty());
+        assert!(lookup.ownership.is_none());
+    }
+    Ok(())
+}
+
+#[test]
+fn clean_break_http_disposal_cli_requires_explicit_purpose_and_predecessor() -> Result<()> {
+    use clap::Parser;
+    #[derive(Parser)]
+    struct Arguments {
+        #[command(subcommand)]
+        runtime: RuntimeCommand,
+    }
+    let base = [
+        "airk",
+        "lookup-http-connection",
+        "--install-dir",
+        "fixture",
+        "--expected-active",
+        "current",
+        "--connection-id",
+        "01010101010101010101010101010101",
+    ];
+    assert!(Arguments::try_parse_from(base).is_ok());
+    let mut args = base.to_vec();
+    args.extend(["--purpose", "predecessor-cleanup"]);
+    assert!(Arguments::try_parse_from(&args).is_err());
+    args.extend(["--predecessor", "original"]);
+    assert!(
+        matches!(Arguments::try_parse_from(args)?.runtime, RuntimeCommand::LookupHttpConnection { purpose:Some(purpose), predecessor:Some(predecessor), .. } if purpose == "predecessor-cleanup" && predecessor == "original")
+    );
+    let mut args = base.to_vec();
+    args.extend(["--predecessor", "original"]);
+    assert!(Arguments::try_parse_from(args).is_err());
+    let launchers = [
+        "airk",
+        "inspect-legacy-launchers",
+        "--install-dir",
+        "fixture",
+        "--expected-active",
+        "original",
+    ];
+    assert!(matches!(
+        Arguments::try_parse_from(launchers)?.runtime,
+        RuntimeCommand::InspectLegacyLaunchers { purpose: None, .. }
+    ));
+    let mut args = launchers.to_vec();
+    args.extend(["--purpose", "predecessor-cleanup"]);
+    assert!(
+        matches!(Arguments::try_parse_from(args)?.runtime, RuntimeCommand::InspectLegacyLaunchers { purpose:Some(purpose), .. } if purpose == "predecessor-cleanup")
+    );
+    Ok(())
+}
+
+#[test]
+fn clean_break_explicit_launcher_inspection_qualifies_old_pair_without_relaxing_normal_gate()
+-> Result<()> {
+    let (_owner, root, _journal) = fixture(false)?;
+    drop(install_lock(&root)?);
+    fs::remove_file(root.join(JOURNAL))?;
+    let predecessor = install_probe_fixture(&root, true)?;
+    let candidate = install_probe_fixture(&root, false)?;
+    replace_json(
+        &root,
+        "selected.json",
+        &Selection {
+            schema: 1,
+            active: predecessor.clone(),
+            previous: None,
+        },
+    )?;
+    let bytes = b"Original receipt-owned predecessor launcher.";
+    fs::write(launcher_path(&root), bytes)?;
+    replace_json(
+        &root,
+        "launcher.json",
+        &LauncherReceipt {
+            schema: 1,
+            sha256: format!("{:x}", Sha256::digest(bytes)),
+        },
+    )?;
+    let before = fs::read(root.join("selected.json"))?;
+    assert!(legacy_launchers::inspect(&root, &predecessor).is_err());
+    let observed = legacy_launchers::inspect_predecessor_cleanup(&root, &predecessor)?;
+    assert_eq!(observed["active"], predecessor);
+    assert_eq!(
+        observed["launcher"]["path"],
+        serde_json::to_value(launcher_path(&root))?
+    );
+    assert_eq!(
+        observed["launcher"]["sha256"],
+        format!("{:x}", Sha256::digest(bytes))
+    );
+    assert!(observed.get("legacy_runtime_images").is_some());
+    assert!(legacy_launchers::inspect_predecessor_cleanup(&root, &candidate).is_err());
+    assert_eq!(fs::read(root.join("selected.json"))?, before);
+    assert_eq!(fs::read(launcher_path(&root))?, bytes);
+    Ok(())
+}
+
+#[test]
+fn rebuild_ordinary_input_keeps_canonical_state_through_genesis_and_setup() -> Result<()> {
+    for boundary in [
+        IndexBoundary::RequestSaved,
+        IndexBoundary::SetupComplete,
+        IndexBoundary::IndexSaved,
+    ] {
+        let (_owner, input, mut journal) = successor_fixture_for_input(false, true)?;
+        let canonical = input.canonicalize()?;
+        assert_eq!(journal.state, rebuild_state(&canonical, journal.operation)?);
+        assert_eq!(layout::saved_control(&input)?, journal.control());
+        assert_eq!(read(&canonical)?.unwrap().operation, journal.operation);
+        let namespace = ServiceRegistry::open_saved(&journal.control())?.incarnation()?;
+        let mut registry = ServiceRegistry::open(&journal.control(), namespace)?;
+        let mut observed = 0;
+        assert!(
+            prepare_index_observing(&input, &mut journal, 0, &mut registry, |at| {
+                if at == boundary {
+                    observed += 1;
+                    anyhow::bail!("input spelling interruption");
+                }
+                Ok(())
+            })
+            .is_err()
+        );
+        assert_eq!(observed, 1);
+        let mut saved = read(&canonical)?.unwrap();
+        let accepted = saved.indexes[0].job;
+        prepare_index(&canonical, &mut saved, 0, &mut registry)?;
+        assert!(accepted.is_none_or(|id| saved.indexes[0].job == Some(id)));
+        assert_eq!(read(&input)?.unwrap().operation, journal.operation);
+        assert_eq!(registry.incarnation()?, namespace);
+        assert_eq!(
+            saved.indexes[0]
+                .request
+                .as_ref()
+                .unwrap()
+                .registration
+                .data_root,
+            replacement_data(&canonical, journal.operation, 0)?
+                .to_str()
+                .unwrap()
+        );
+        assert_eq!(
+            successor_default_data(&input)?,
+            successor_default_data(&canonical)?
+        );
+    }
+    Ok(())
 }
 
 #[test]
@@ -487,6 +1185,25 @@ async fn reviewed_plain_activate_resumes_only_the_exact_saved_rebuild() -> Resul
 }
 
 #[test]
+fn only_mandatory_clean_break_infers_unreviewed_saved_predecessor() -> Result<()> {
+    let (_owner, root, mut journal) = fixture(false)?;
+    let before = fs::read(root.join(JOURNAL))?;
+    assert!(activation_predecessor(&root, None).is_err());
+    assert_eq!(fs::read(root.join(JOURNAL))?, before);
+    assert_eq!(
+        activation_predecessor(&root, Some(&journal.prior.active))?,
+        journal.prior.active
+    );
+    journal.clean_break = true;
+    journal.capture_complete = Some(true);
+    journal.save(&root)?;
+    let before = fs::read(root.join(JOURNAL))?;
+    assert_eq!(activation_predecessor(&root, None)?, journal.prior.active);
+    assert_eq!(fs::read(root.join(JOURNAL))?, before);
+    Ok(())
+}
+
+#[test]
 fn pruned_native_rebuild_job_is_unavailable_without_inventing_execution_failure() -> Result<()> {
     let (_owner, root, mut journal) = successor_fixture(false)?;
     let namespace = ServiceRegistry::open_saved(&journal.control())?.incarnation()?;
@@ -610,4 +1327,135 @@ pub(in crate::runtime_install) fn historical_retirement_fixture()
     let mut preserved = vec![original, original_previous];
     preserved.sort();
     Ok((owner, root, preserved, rebuilt, later))
+}
+
+#[test]
+fn clean_break_builds_saved_paused_index_once_before_restoring_preferences() -> Result<()> {
+    let (_owner, root, mut journal) = successor_fixture(true)?;
+    journal.clean_break = true;
+    journal.capture_complete = Some(true);
+    journal.expected_indexes = Some(journal.roster.indexes.len());
+    journal.roster.indexes[0].watch = true;
+    journal.save(&root)?;
+    let namespace = ServiceRegistry::open_saved(&journal.control())?.incarnation()?;
+    let mut registry = ServiceRegistry::open(&journal.control(), namespace)?;
+    prepare_index(&root, &mut journal, 0, &mut registry)?;
+    let request = journal.indexes[0]
+        .request
+        .as_ref()
+        .context("setup missing")?;
+    assert!(!registry.get(request.registration.binding)?.paused);
+    assert!(
+        !registry
+            .watch(request.registration.binding)?
+            .observation
+            .enabled
+    );
+    assert!(journal.roster.indexes[0].paused);
+    assert!(journal.roster.indexes[0].watch);
+    assert_eq!(
+        registry
+            .job(journal.indexes[0].job.context("initial job missing")?)?
+            .kind,
+        JobKind::Index
+    );
+    let observed = observation(&root)?.context("observation missing")?;
+    assert_eq!(
+        observed.mode,
+        Some(airk_core::rebuild::RebuildMode::CleanBreak)
+    );
+    assert!(!observed.cleanup.context("cleanup missing")?.complete);
+    Ok(())
+}
+
+#[test]
+fn clean_break_zero_index_readiness_requires_completed_fresh_genesis_phase() -> Result<()> {
+    let (_owner, root, mut journal) = successor_fixture(false)?;
+    journal.clean_break = true;
+    journal.capture_complete = Some(true);
+    journal.expected_indexes = Some(journal.roster.indexes.len());
+    journal.roster.indexes.clear();
+    journal.indexes.clear();
+    journal.expected_indexes = Some(0);
+    journal.save(&root)?;
+    let preparing = observation(&root)?.context("preparing missing")?;
+    assert_eq!(preparing.stage, RebuildStage::Preparing);
+    assert!(preparing.indexes.is_empty());
+    journal.phase = Phase::Complete;
+    journal.save(&root)?;
+    let ready = observation(&root)?.context("ready missing")?;
+    assert_eq!(ready.stage, RebuildStage::Ready);
+    assert_ne!(ready.successor_namespace, Some(ready.original_namespace));
+    assert!(!ready.cleanup.context("cleanup missing")?.complete);
+    assert_eq!(journal.selected().previous, None);
+    Ok(())
+}
+
+#[test]
+fn clean_break_discards_only_predecessor_stop_and_preserves_new_stop() {
+    assert!(predecessor_stop_allows_reset(true, 10, true, 10));
+    assert!(predecessor_stop_allows_reset(false, 10, false, 10));
+    assert!(!predecessor_stop_allows_reset(false, 10, true, 11));
+    assert!(!predecessor_stop_allows_reset(true, 10, true, 11));
+    assert!(predecessor_stop_allows_reset(true, 10, false, 11));
+}
+
+#[test]
+fn clean_break_failed_setup_retry_is_explicit_and_candidate_bound() -> Result<()> {
+    let (_owner, root, mut journal) = fixture(false)?;
+    journal.clean_break = true;
+    journal.capture_complete = Some(true);
+    journal.phase = Phase::Complete;
+    journal.indexes[0].failure = Some(RebuildFailure {
+        code: "native_rebuild_index_failed".into(),
+        message: "source unavailable before setup acceptance".into(),
+    });
+    assert!(setup_repair_pending(&journal));
+    // A completed reset is never made globally pending: reads and ensure must
+    // not turn a source repair into an implicit service restart.
+    journal.save(&root)?;
+    assert!(!pending(&root)?);
+    assert!(repair_pending(&root, &journal.candidate)?);
+    assert!(!repair_pending(&root, &"c".repeat(64))?);
+    journal.indexes[0].restored = true;
+    assert!(!setup_repair_pending(&journal));
+    journal.indexes[0].restored = false;
+    journal.cleanup_complete = true;
+    assert!(!setup_repair_pending(&journal));
+    Ok(())
+}
+
+#[test]
+fn clean_break_exact_success_clears_only_transient_receipt_failure() -> Result<()> {
+    let (_owner, _root, mut journal) = fixture(false)?;
+    let progress = &mut journal.indexes[0];
+    let job = JobRecord {
+        id: Sha256Digest::from_bytes([91; 32]),
+        project: journal.roster.indexes[0].registration.binding,
+        kind: JobKind::Index,
+        state: JobState::Succeeded,
+        fencing_generation: 0,
+        attempts: 1,
+        outcome: None,
+    };
+    progress.failure = Some(RebuildFailure {
+        code: "clean_break_index_receipt_unavailable".into(),
+        message: "temporary native read failure".into(),
+    });
+    assert!(record_completed_job(progress, job.clone()).is_err());
+    assert!(progress.failure.is_some());
+    progress.job = Some(job.id);
+    record_completed_job(progress, job.clone())?;
+    assert!(progress.failure.is_none());
+    assert!(progress.completed.is_some());
+    progress.failure = Some(RebuildFailure {
+        code: "independent_failure".into(),
+        message: "must remain visible".into(),
+    });
+    record_completed_job(progress, job)?;
+    assert_eq!(
+        progress.failure.as_ref().unwrap().code,
+        "independent_failure"
+    );
+    Ok(())
 }

@@ -46,8 +46,10 @@ fn rebuild_revalidation_allows_only_forward_general_revision_with_identical_save
             roots: BTreeMap::new(),
             vectors_enabled: false,
             index_detail: IndexDetail::Balanced,
-            incarnation: Incarnation::from_bytes([82; 16]),
+            incarnation: Some(Incarnation::from_bytes([82; 16])),
             settings_digest: Sha256Digest::from_bytes([83; 32]),
+            settings_available: true,
+            discarded_preferences: Vec::new(),
             default_model: None,
         }],
     };
@@ -305,6 +307,239 @@ fn rebuild_choices_preserve_inherited_detail_and_reject_custom_vector_and_extrac
             &fixture.registration.root
         )
         .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn clean_break_preferences_keep_supported_choices_and_discard_old_engine_settings() -> Result<()> {
+    let fixture = fixture()?;
+    let store = fixture.collection.selected_store()?;
+    fs::write(
+        store.directory().join("vector-policy.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "version":1,"owner_root":fixture.registration.root,
+            "policy":{"enabled":false,"model":{"old_engine":true},"selection":{"old_choice":true}}
+        }))?,
+    )?;
+    fs::write(
+        store.directory().join("extraction-policy.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "version":1,"owner_root":fixture.registration.root,
+            "policy":{"version":4,"detail":"essential","rules":[{"old_rule":true}],"retained_profile":"private_consumer_v1"}
+        }))?,
+    )?;
+    fs::write(
+        store.directory().join("compression-policy.json"),
+        b"unsupported old bytes",
+    )?;
+    let original = fs::read(Path::new(&fixture.registration.root).join("original.txt"))?;
+    assert!(
+        capture(&fixture.control).is_err(),
+        "strict retained-state rebuild must remain strict"
+    );
+    let roster = capture_clean_break(&fixture.control)?;
+    assert_eq!(roster.indexes.len(), 1);
+    let saved = &roster.indexes[0];
+    assert!(saved.paused && saved.watch && saved.settings_available);
+    assert!(!saved.vectors_enabled);
+    assert_eq!(saved.index_detail, IndexDetail::Essential);
+    assert!(saved.default_model.is_none());
+    assert!(saved.saved_files["compression-policy.json"].is_none());
+    assert!(
+        saved
+            .discarded_preferences
+            .contains(&"vector-policy.json:model".into())
+    );
+    assert!(
+        saved
+            .discarded_preferences
+            .contains(&"extraction-policy.json:rules".into())
+    );
+    roster.check_clean_break(&fixture.control)?;
+    let mut too_many = roster.clone();
+    too_many.indexes = vec![saved.clone(); 65];
+    assert!(
+        too_many.validate().is_err(),
+        "complete roster must refuse over existing 64-index budget"
+    );
+    assert_eq!(
+        fs::read(Path::new(&fixture.registration.root).join("original.txt"))?,
+        original
+    );
+    assert_eq!(
+        fs::read(store.directory().join("compression-policy.json"))?,
+        b"unsupported old bytes"
+    );
+    Ok(())
+}
+
+#[test]
+fn clean_break_capture_enumerates_two_catalog_indexes_and_all_raw_roots_without_old_storage()
+-> Result<()> {
+    use airk_core::catalog_setup::{
+        IndexSetupRequest, SetupCompletion, SetupPreparationReview, SetupSource,
+    };
+    use airk_store::service::{
+        ServiceLease,
+        registry::catalog::{
+            genesis::{
+                CatalogGenesis,
+                activation::{
+                    AuthorityV1CandidateObservation, AuthorityV1NativeQualification,
+                    AuthorityV1ReadinessProducer,
+                },
+            },
+            setup::NativeIndexPreparation,
+        },
+    };
+    struct MetadataProducer;
+    impl AuthorityV1ReadinessProducer for MetadataProducer {
+        fn required_predecessor_identities(&self) -> Result<Vec<Sha256Digest>> {
+            Ok(Vec::new())
+        }
+        fn qualify(
+            &self,
+            expected: &AuthorityV1CandidateObservation,
+        ) -> Result<AuthorityV1NativeQualification> {
+            Ok(AuthorityV1NativeQualification {
+                candidate: expected.clone(),
+                predecessor_refusals: Vec::new(),
+            })
+        }
+    }
+    let owner = tempfile::tempdir()?;
+    let base = owner.path().canonicalize()?;
+    let control = base.join("control");
+    for name in ["control", "source", "first-extra", "second-extra"] {
+        crate::local_ipc::prepare_root(&base.join(name))?;
+    }
+    fs::write(base.join("source/original.txt"), b"Original shared source.")?;
+    let mut genesis = CatalogGenesis::begin(
+        ServiceLease::acquire(&control)?,
+        Sha256Digest::from_bytes([101; 32]),
+        Incarnation::from_bytes([102; 16]),
+    )?;
+    genesis.backup()?;
+    let receipt = genesis.migrate()?;
+    genesis.promote_authority_v1()?;
+    genesis.record_authority_v1_readiness(Incarnation::from_bytes([103; 16]), &MetadataProducer)?;
+    genesis.settle_authority_v1()?;
+    drop(genesis);
+    let mut registry = ServiceRegistry::open(&control, receipt.namespace)?;
+    let mut originals = Vec::new();
+    for position in 0..2 {
+        let registration = ProjectRegistration::new(
+            base.join("source").to_str().unwrap().into(),
+            base.join(format!("missing-storage-{position}"))
+                .to_str()
+                .unwrap()
+                .into(),
+            format!("fixture-{position}"),
+        )?;
+        let request = IndexSetupRequest {
+            caller: Incarnation::from_bytes([104; 16]),
+            key: airk_core::service::RequestKey {
+                namespace: receipt.namespace,
+                epoch: 0,
+                nonce: Incarnation::from_bytes([105 + position as u8; 16]),
+            },
+            expected_catalog_revision: registry.catalog_state()?.unwrap().revision,
+            name: format!("Independent saved index {position}"),
+            registration: registration.clone(),
+            sources: vec![
+                SetupSource {
+                    canonical_path: registration.root.clone(),
+                    aliases: vec![],
+                    owner: true,
+                },
+                SetupSource {
+                    canonical_path: base
+                        .join(if position == 0 {
+                            "first-extra"
+                        } else {
+                            "second-extra"
+                        })
+                        .to_str()
+                        .unwrap()
+                        .into(),
+                    aliases: vec![format!("extra-{position}")],
+                    owner: false,
+                },
+            ],
+            setup_watch: position == 0,
+        };
+        let reserved = registry.reserve_index_setup(&request)?;
+        // Only the physical native preparation proof is substituted in this
+        // metadata unit test. No old publication/storage is created or opened.
+        let native = NativeIndexPreparation::from_validated_native_review(
+            registration.clone(),
+            request.sources.clone(),
+            Sha256Digest::from_bytes([107; 32]),
+            Sha256Digest::from_bytes([108; 32]),
+            SetupPreparationReview {
+                expected_catalog_revision: reserved.catalog_revision,
+                expected_source_revision: reserved.source_revision,
+            },
+        )?;
+        let prepared = registry.record_index_preparation(
+            request.caller,
+            &request.key,
+            reserved.request_digest,
+            &native,
+        )?;
+        registry.complete_index_setup(
+            request.caller,
+            &request.key,
+            reserved.request_digest,
+            &SetupCompletion {
+                legacy_adoption: None,
+                prepared_digest: prepared.preparation.as_ref().unwrap().digest,
+                expected_catalog_revision: prepared.catalog_revision,
+                expected_source_revision: prepared.source_revision,
+            },
+        )?;
+        registry.pause(registration.binding, position == 0)?;
+        originals.push(registration);
+    }
+    assert!(
+        capture(&control).is_err(),
+        "retained-state rebuild must still refuse catalog transfer"
+    );
+    assert_eq!(preflight_clean_break(&control)?, 2);
+    let roster = capture_clean_break(&control)?;
+    assert_eq!(roster.indexes.len(), 2);
+    for registration in &originals {
+        let saved = roster
+            .indexes
+            .iter()
+            .find(|saved| saved.registration.binding == registration.binding)
+            .unwrap();
+        assert_eq!(&saved.registration, registration);
+        assert_eq!(saved.roots.len(), 1);
+        assert!(!saved.settings_available);
+        assert!(
+            !saved.vectors_enabled,
+            "unknown prior vector opt-out must not become implicit semantic enablement"
+        );
+        assert!(saved.incarnation.is_none());
+        assert!(
+            saved
+                .discarded_preferences
+                .contains(&"unavailable_saved_preferences".into())
+        );
+        assert!(!Path::new(&registration.data_root).exists());
+    }
+    assert_eq!(
+        roster.indexes.iter().filter(|saved| saved.paused).count(),
+        1
+    );
+    assert_eq!(roster.indexes.iter().filter(|saved| saved.watch).count(), 1);
+    assert_ne!(roster.indexes[0].roots, roster.indexes[1].roots);
+    roster.check_clean_break(&control)?;
+    assert_eq!(
+        fs::read(base.join("source/original.txt"))?,
+        b"Original shared source."
     );
     Ok(())
 }

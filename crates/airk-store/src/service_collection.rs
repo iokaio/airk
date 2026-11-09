@@ -37,7 +37,7 @@ mod purge;
 #[path = "service_collection_split.rs"]
 mod split;
 pub(crate) use split::{NativeTerminalPublication, TerminalSlot, initial_split_seal};
-pub use split::{SplitBuildPermit, validate_split_store_access};
+pub use split::{SplitBuildPermit, clean_break_retained_source_roots, validate_split_store_access};
 #[path = "service_collection_retention_inheritance.rs"]
 mod retention_inheritance;
 pub use retention_inheritance::{CapturedSplitExtractionPolicy, SavedSplitExtractionPolicy};
@@ -639,6 +639,7 @@ impl Collection {
             let path = entry.path();
             let owned = integrity::owned_scratch(&path, self.binding)
                 || cleanup::owned_scratch(&path, self.binding)
+                || purge::owned_clean_break_scratch(&path, self.binding)
                 || json::<Manifest>(&path)
                     .is_ok_and(|value| value.version == 140 && value.owner == self.binding)
                 || json::<Intent>(&path)

@@ -16,6 +16,76 @@ use std::sync::Arc;
 mod terminal;
 pub(crate) use terminal::{NativeTerminalPublication, TerminalSlot};
 const MAX_SPLIT_STATE: usize = 128 * 1024;
+
+/// Source protection for disposal of a canonically admitted, unpublished split
+/// destination. Ordinary reads still require completed destination metadata.
+pub fn clean_break_retained_source_roots(
+    registry: &crate::service::registry::ServiceRegistry,
+    registration: &ProjectRegistration,
+    namespace: Incarnation,
+    registrations: &[ProjectRegistration],
+) -> Result<Vec<String>> {
+    let unavailable = match registry.retained_source_roots(registration.binding) {
+        Ok(roots) => return Ok(roots),
+        Err(error) => error,
+    };
+    // Only the canonical incomplete-source classification permits the admitted
+    // split fallback. Corrupt watch rows and other observation failures propagate.
+    if unavailable.root_cause().to_string()
+        != "retained source root selection is unavailable; preserve old storage pending source review"
+    {
+        return Err(unavailable);
+    }
+    let state = registry
+        .catalog_active_split_for_binding(registration.binding)?
+        .context("clean-break source roots have no exact admitted split")?;
+    state.validate()?;
+    ensure!(
+        registry.incarnation()? == namespace
+            && state.request.key.namespace == namespace
+            && state.request.destination_registration == *registration
+            && registrations.contains(&state.request.original_registration)
+            && registrations.contains(&state.request.destination_registration)
+            && !matches!(state.receipt.state, SplitRunState::Complete),
+        "clean-break pending source authority differs"
+    );
+    for participant in [
+        &state.request.original_registration,
+        &state.request.destination_registration,
+    ] {
+        ensure!(
+            registry.retained_project(participant.binding)?.registration == *participant,
+            "clean-break split source registration changed"
+        );
+        match fs::symlink_metadata(&participant.data_root) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+            Err(error) => return Err(error.into()),
+            Ok(_) => ensure!(
+                crate::service::data_scope::has_saved_binding(
+                    Path::new(&participant.data_root),
+                    registry.control_root(),
+                    namespace,
+                )?,
+                "clean-break split source data binding differs"
+            ),
+        }
+    }
+    let mut roots = registry
+        .retained_source_roots(state.request.original_registration.binding)?
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>();
+    roots.insert(state.request.source_configuration.primary_root.clone());
+    roots.extend(state.request.source_configuration.aliases.values().cloned());
+    for policy in [
+        &state.baseline,
+        &state.plan.remainder,
+        &state.plan.destination,
+    ] {
+        roots.extend(policy.roots.iter().map(|root| root.canonical_path.clone()));
+    }
+    ensure!(roots.len() <= 17, "clean-break split source root limit");
+    Ok(roots.into_iter().collect())
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct SplitOwnerPointer {
@@ -85,6 +155,34 @@ pub(super) fn validate_capsule_for_retirement(
         permit.validate_store(&FileStore::new(directory))?;
     }
     Ok(())
+}
+
+pub(super) fn validate_capsule_for_clean_break(
+    directory: &Path,
+    pointer: &SplitOwnerPointer,
+    owner: &crate::service::data_scope::CleanBreakNamespaceOwner<'_>,
+) -> Result<()> {
+    let snapshot = capsule(directory, pointer)?.snapshot;
+    ensure!(
+        snapshot.request.key.namespace == owner.namespace(),
+        "foreign clean-break split namespace"
+    );
+    owner.validate_registration(&snapshot.request.original_registration)?;
+    owner.validate_registration(&snapshot.request.destination_registration)
+}
+
+pub(super) fn validate_retained_capsule_for_clean_break(
+    path: &Path,
+    owner: &crate::service::data_scope::CleanBreakNamespaceOwner<'_>,
+) -> Result<()> {
+    validate_retained_capsule_file(path)?;
+    let value: Capsule = json(path)?;
+    ensure!(
+        value.snapshot.request.key.namespace == owner.namespace(),
+        "foreign clean-break retained split namespace"
+    );
+    owner.validate_registration(&value.snapshot.request.original_registration)?;
+    owner.validate_registration(&value.snapshot.request.destination_registration)
 }
 pub(super) fn validate_retained_capsule_file(path: &Path) -> Result<()> {
     let name = path

@@ -9,17 +9,95 @@ import * as path from 'node:path';
 import { parse } from 'jsonc-parser';
 import { LaunchSpec, unifiedEntry, assistanceEntry, serializeServers, RETRIEVAL_TOOLS } from '../model';
 import { launchDescriptorPath } from '../explorerAssistanceLaunch';
-import { LocalAgent, migrateStandaloneHttpEntry, httpConfigurationConnectionId, refreshHttpAgentConfig, hasUnifiedVscodeConfig, migrateAgentConfig, migrateLocalAgents } from '../agentMigration';
+import { LocalAgent, migrateStandaloneHttpEntry, httpConfigurationConnectionId, refreshHttpAgentConfig, hasUnifiedVscodeConfig, migrateAgentConfig, migrateLocalAgents, captureCleanBreakClientCleanup, applyCleanBreakClientCleanup } from '../agentMigration';
 import { httpAuthorityDigest } from '../serviceHttp';
+import {predecessorHttpFixture} from './fixtures/predecessorHttpFixture';
 
 const storage=path.resolve('fixture-storage');
 const spec:LaunchSpec={root:path.resolve('fixture-source'),dataDir:path.resolve('fresh-data'),collection:'project-fixture',name:'fixture',
     command:path.resolve('installed-runtime','airk-launcher'),service:{installDir:path.resolve('installed-runtime'),project:'ab'.repeat(32)}};
 const name='airk-project-fixture';
+
+test('clean break removes expired predecessor HTTP declarations from disposal proof without manufacturing live grants',async()=>{
+    const lookup=predecessorHttpFixture(path.join(spec.service!.installDir,'old-control'),'ab'.repeat(32)),{snapshot,...proof}=lookup;
+    const environment='AIRK_MCP_TOKEN_'+proof.connection_id.toUpperCase(),source=JSON.stringify({mcpServers:{airk:{type:'http',url:proof.endpoint.url,headers:{Authorization:`Bearer \${${environment}}`},disabled:true},other:{type:'http',url:'https://foreign.invalid/mcp'}}});
+    const destination=path.join(spec.root,'.mcp.json');
+    const plan=await captureCleanBreakClientCleanup(spec.service!.installDir,storage,[{agent:'claude',destination,source}],[],()=>{},async()=>proof as any);
+    assert.deepEqual(plan.blockers,[]);assert.equal(plan.files.length,1);assert.equal(JSON.stringify(plan).includes('"selection"'),false);assert.equal(JSON.stringify(plan).includes('"grant"'),false);
+    let current=source;const applied=await applyCleanBreakClientCleanup(plan,spec.service!.installDir,new Set([destination]),()=>{},async()=>current,async(_file,_before,after)=>{current=after;});
+    assert.equal(applied.complete,true);assert.deepEqual(parse(current).mcpServers,{other:{type:'http',url:'https://foreign.invalid/mcp'}});
+});
 const entry={command:path.join(storage,'cli','bin',process.platform==='win32'?'airk.exe':'airk'),
     args:['--root',spec.root,'--data-dir',path.resolve('old-data'),'--collection',spec.collection,'mcp'],env:{AIRK_CLIENT:'codex'},disabled:true};
 function json(agent:LocalAgent,value:unknown=entry):string{return `// Keep this comment\n${JSON.stringify({[agent==='copilot'?'servers':'mcpServers']:{[name]:value,other:{command:'other'}},inputs:[]},null,2)}\n`;}
 function toml(value=entry):string{return `model = "user-model"\n[mcp_servers.${name}]\ncommand = ${JSON.stringify(value.command)}\nargs = ${JSON.stringify(value.args)}\nenabled = false\n[mcp_servers.${name}.env]\nAIRK_CLIENT = "codex"\n[mcp_servers.other]\ncommand = "other"\n`;}
+
+test('clean break removes exact disabled client declarations for multiple original indexes without replacing authority',async()=>{
+    const second:LaunchSpec={...spec,root:path.resolve('second-source'),collection:'second',service:{...spec.service!,project:'cd'.repeat(32)}};
+    const server=(saved:LaunchSpec)=>({...unifiedEntry(saved,launchDescriptorPath(storage)),disabled:true});
+    const source=JSON.stringify({keep:'foreign-setting',mcpServers:{airk:server(spec),'airk-second':server(second),other:{command:'foreign-command',env:{PRIVATE:'do-not-copy'}}}});
+    const destination=path.join(spec.root,'.mcp.json');
+    const plan=await captureCleanBreakClientCleanup(spec.service!.installDir,storage,[{agent:'claude',destination,source}],[spec,second],()=>{});
+    assert.deepEqual(plan.blockers,[]);assert.equal(plan.files.length,1);assert.equal(plan.files[0].removals.length,2);
+    assert.ok(!JSON.stringify(plan).includes('do-not-copy'),'unrelated configuration bytes are not persisted in cleanup plans');
+    let current=source,saves=0;
+    const apply=()=>applyCleanBreakClientCleanup(plan,spec.service!.installDir,new Set([destination]),()=>{},async()=>current,async(_destination,before,after)=>{assert.equal(before,current);saves++;current=after;});
+    assert.equal((await apply()).complete,true);
+    assert.deepEqual(parse(current),{keep:'foreign-setting',mcpServers:{other:{command:'foreign-command',env:{PRIVATE:'do-not-copy'}}}});
+    assert.equal((await apply()).complete,true);assert.equal(saves,1,'recovery verifies the exact saved removal without replay');
+    assert.equal(globalConfigDeclarations('claude',current).some(row=>row.serverKey==='airk'),false);
+});
+
+test('clean break preserves unproven AIRK declarations and changed files with explicit blockers',async()=>{
+    const destination=path.join(spec.root,'.mcp.json'),source=JSON.stringify({mcpServers:{airk:unifiedEntry(spec,launchDescriptorPath(storage)),airk_custom:{command:'user-owned-server'},other:{command:'foreign'}}});
+    const plan=await captureCleanBreakClientCleanup(spec.service!.installDir,storage,[{agent:'claude',destination,source}],[spec],()=>{});
+    assert.equal(plan.blockers[0].code,'clean_break_client_ownership_unconfirmed');
+    const changed=source+'\n';let saves=0;
+    const result=await applyCleanBreakClientCleanup(plan,spec.service!.installDir,new Set([destination]),()=>{},async()=>changed,async()=>{saves++;});
+    assert.equal(result.complete,false);assert.equal(saves,0);assert.ok(result.blockers.some(row=>row.code==='clean_break_client_configuration_changed'));
+    await assert.rejects(applyCleanBreakClientCleanup(plan,spec.service!.installDir,new Set(),()=>{},async()=>source,async()=>{}),/destination_unconfirmed/);
+});
+
+test('clean break rejects modified selectors and launcher names absent from native approval',async()=>{
+    const destination=path.join(spec.root,'.mcp.json');
+    const original={command:spec.command,args:['--root',spec.root,'--data-dir',spec.dataDir,'--collection',spec.collection,'--service-project',spec.service!.project,'mcp']};
+    const capture=async(value:unknown,launchers:readonly string[]=[])=>captureCleanBreakClientCleanup(spec.service!.installDir,storage,[{agent:'claude',destination,source:JSON.stringify({mcpServers:{airk:value}})}],[spec],()=>{},undefined,launchers);
+    assert.equal((await capture(original)).files.length,1);
+    for(const [flag,value] of [['--data-dir',path.resolve('unproven-storage')],['--service-project','ff'.repeat(32)]] as const){
+        const modified=structuredClone(original);modified.args[modified.args.indexOf(flag)+1]=value;
+        const result=await capture(modified);assert.equal(result.files.length,0);assert.equal(result.blockers[0].code,'clean_break_client_ownership_unconfirmed');
+    }
+    const derived=path.join(spec.service!.installDir,process.platform==='win32'?'airk-launcher.exe':'airk-launcher');
+    if(derived!==spec.command){
+        const changed={...original,command:derived};assert.equal((await capture(changed)).files.length,0);
+        assert.equal((await capture(changed,[derived])).files.length,1,'only native-supplied launcher proof enables removal');
+    }
+    const cached={...original,command:path.join(storage,'cli','bin',process.platform==='win32'?'airk.exe':'airk')};
+    assert.equal((await capture(cached)).files.length,0,'historical cache filename alone cannot authorize cleanup');
+});
+
+test('clean break confirms already absent captured keys without overwriting unrelated later edits',async()=>{
+    const destination=path.join(spec.root,'.mcp.json'),source=JSON.stringify({mcpServers:{airk:unifiedEntry(spec,launchDescriptorPath(storage)),other:{command:'foreign'}}});
+    const plan=await captureCleanBreakClientCleanup(spec.service!.installDir,storage,[{agent:'claude',destination,source}],[spec],()=>{});
+    const afterManualRemoval=JSON.stringify({settings:'user-edited',mcpServers:{other:{command:'new-foreign-command'}}});let writes=0;
+    const result=await applyCleanBreakClientCleanup(plan,spec.service!.installDir,new Set([destination]),()=>{},async()=>afterManualRemoval,async()=>{writes++;});
+    assert.equal(result.complete,true);assert.equal(writes,0);assert.deepEqual(result.removed,[destination]);
+});
+
+test('clean break removes only native-owned HTTP credentials and preserves external declarations',async()=>{
+    const original={command:path.resolve('old-helper'),args:['mcp']},raw=JSON.stringify({mcpServers:{saved:original}}),receipt=createHash('sha256').update(raw).digest('hex');
+    const info=adoptedAliasInfo('saved','a'.repeat(32),receipt),source=migrateStandaloneHttpEntry('claude',raw,'saved',original,info,receipt);
+    const destination=path.join(spec.root,'.mcp.json');let lookups=0;
+    const lookup=predecessorHttpFixture(path.join(spec.service!.installDir,'old-control'),'ab'.repeat(32),info.connection_id);lookup.endpoint=info.endpoint;lookup.namespace=info.endpoint.namespace;lookup.snapshot.endpoint=info.endpoint;lookup.snapshot.namespace=info.endpoint.namespace;lookup.qualification.current_namespace=info.endpoint.namespace;
+    const {snapshot,...proof}=lookup;
+    const plan=await captureCleanBreakClientCleanup(spec.service!.installDir,storage,[{agent:'claude',destination,source}],[],()=>{},async(_agent,id)=>{lookups++;assert.equal(id,info.connection_id);return proof as any;});
+    assert.equal(lookups,1);assert.deepEqual(plan.blockers,[]);assert.equal(plan.files[0].removals.length,1);
+    let current=source;
+    const result=await applyCleanBreakClientCleanup(plan,spec.service!.installDir,new Set([destination]),()=>{},async()=>current,async(_destination,_before,after)=>{current=after;});
+    assert.equal(result.complete,true);assert.deepEqual(parse(current).mcpServers,{});assert.equal(lookups,1,'cleanup never enrolls or renews native credentials');
+    const external=await captureCleanBreakClientCleanup(spec.service!.installDir,storage,[{agent:'claude',destination,source}],[],()=>{},async()=>undefined);
+    assert.equal(external.files.length,0);assert.equal(external.blockers[0].code,'clean_break_client_ownership_unconfirmed');
+});
 
 test('startup replaces recognized legacy connections with one endpoint and preserves policy and unrelated servers',()=>{
     for(const agent of ['codex','claude','copilot'] as const){

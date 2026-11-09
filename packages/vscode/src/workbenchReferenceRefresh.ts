@@ -11,7 +11,7 @@ export interface ReferenceRefreshControl {
     referenceRefreshPrepare(selection:Value,members:Value[],mode:'selected_only'|'full_reconcile_reviewed',query:Value,result:Value,host:RefreshFlowHost,valid:()=>boolean):Promise<PreparedWorkbenchRefresh>;
     referenceRefreshFlow(host:RefreshFlowHost,valid:()=>boolean):ReferenceRefreshFlow;
     referenceRefreshReconfirm(selection:Value,valid:()=>boolean):Promise<Value>;
-    referenceRefreshPending(selection:Value):Array<{id:string;latest?:Value;historical?:Value}>;
+    referenceRefreshPending(selection:Value):Array<{id:string;latest?:Value;historical?:Value;terminalHistorical?:Value}>;
 }
 export function sameRefreshAuthority(left:Value,right:Value):boolean {
     const before={...left},after={...right};delete before.expected_catalog_revision;delete after.expected_catalog_revision;

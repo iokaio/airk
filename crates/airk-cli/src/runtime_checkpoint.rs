@@ -387,18 +387,43 @@ pub(super) fn preflight(root: &Path, intent: &Intent) -> Result<()> {
             "captured manager definition changed before quiescence"
         );
     }
-    store::preflight_capacity(&intent.control)?;
+    preflight_live_state(root, intent)
+}
+
+fn preflight_live_state(root: &Path, intent: &Intent) -> Result<()> {
+    let state = store::preflight_snapshot(&intent.control)?;
     if !checkpoint_capable(root, intent)? {
-        let state = store::snapshot(&intent.control)?;
-        require_compatible(root, intent, &state)?;
+        // A legacy owner is still serving here. Observe accepted work without
+        // acquiring its collection publication locks before verified shutdown.
+        require_preflight_compatible(root, intent, &state)?;
     }
     Ok(())
 }
 
 fn require_compatible(root: &Path, intent: &Intent, state: &CheckpointSnapshot) -> Result<()> {
-    let (candidate, approval) = verify_runtime(root, &intent.candidate)?;
-    let candidate_engine = runtime_pair::engine_identity_at_version(&candidate, &approval.version)?;
-    let predecessor_engine = intent
+    let (predecessor, candidate) = compatibility_engines(root, intent)?;
+    state.require_compatible(predecessor, candidate)
+}
+
+fn require_preflight_compatible(
+    root: &Path,
+    intent: &Intent,
+    state: &store::PreflightSnapshot,
+) -> Result<()> {
+    let (predecessor, candidate) = compatibility_engines(root, intent)?;
+    state.require_compatible(predecessor, candidate)
+}
+
+fn compatibility_engines(
+    root: &Path,
+    intent: &Intent,
+) -> Result<(
+    Option<airk_core::identity::Sha256Digest>,
+    airk_core::identity::Sha256Digest,
+)> {
+    let (main, approval) = verify_runtime(root, &intent.candidate)?;
+    let candidate = runtime_pair::engine_identity_at_version(&main, &approval.version)?;
+    let predecessor = intent
         .prior
         .as_ref()
         .map(|prior| {
@@ -406,7 +431,7 @@ fn require_compatible(root: &Path, intent: &Intent, state: &CheckpointSnapshot) 
             runtime_pair::engine_identity_at_version(&main, &approval.version)
         })
         .transpose()?;
-    state.require_compatible(predecessor_engine, candidate_engine)
+    Ok((predecessor, candidate))
 }
 
 fn manifest(
@@ -439,11 +464,10 @@ pub(super) fn capture(root: &Path, intent: &Intent, _guard: &Quiescence) -> Resu
     let mut envelope = read(root)?.context("upgrade journal missing")?;
     binding(&envelope.journal, root, intent)?;
     let path = root.join(name(operation)?);
-    let state = store::snapshot(&intent.control)?;
-    require_compatible(root, intent, &state)?;
     if exists(&path)? {
         let bytes = read_bounded(&path, MAX_CHECKPOINT)?;
         let saved: Manifest = serde_json::from_slice(&bytes)?;
+        let state = store::snapshot_for_schema(&intent.control, saved.state.schema)?;
         ensure!(
             saved.operation == *operation
                 && saved.install == root.canonicalize()?
@@ -465,6 +489,8 @@ pub(super) fn capture(root: &Path, intent: &Intent, _guard: &Quiescence) -> Resu
         );
         envelope.journal.checkpoint_sha256 = Some(sha256);
     } else {
+        let state = store::snapshot(&intent.control)?;
+        require_compatible(root, intent, &state)?;
         ensure!(
             envelope.journal.stage == Stage::Quiescing
                 && envelope.journal.checkpoint_sha256.is_none(),
@@ -548,12 +574,13 @@ pub(super) fn verify(root: &Path, intent: &Intent) -> Result<()> {
             "graceful checkpoint lacks native proof"
         );
     }
-    let state = store::snapshot(&intent.control)?;
+    let state = store::snapshot_for_schema(&intent.control, saved.state.schema)?;
+    require_compatible(root, intent, &state)?;
     ensure!(
         serde_json::to_vec(&saved.state)? == serde_json::to_vec(&state)?,
         "checkpoint canonical state changed before candidate recovery"
     );
-    require_compatible(root, intent, &state)
+    Ok(())
 }
 
 fn checkpoint_capable(root: &Path, intent: &Intent) -> Result<bool> {
@@ -946,6 +973,14 @@ pub(super) fn verify_release(
         expected == Some(selected_inventory),
         "admission release target differs from committed outcome"
     );
+    if let Some(expected) = &journal.checkpoint_sha256 {
+        let data = read_bounded(&root.join(name(&journal.operation)?), MAX_CHECKPOINT)?;
+        ensure!(
+            hash(&data) == *expected,
+            "admission release checkpoint digest changed"
+        );
+        let _saved: Manifest = serde_json::from_slice(&data)?;
+    }
     Ok(())
 }
 

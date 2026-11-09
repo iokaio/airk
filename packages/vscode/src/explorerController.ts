@@ -213,18 +213,21 @@ export class ExplorerController implements vscode.Disposable {
 
     snapshot(): ExplorerViewState {
         const projects = this.host.trusted() ? this.control.projects() : [];
+        const startup=this.host.startup?.();
+        const runtimeUpgrade=this.host.trusted()?this.host.runtimeUpgrade?.():undefined;
+        const connection=this.host.trusted()?this.control.connection():this.host.workspaceTrusted?.()===false?'untrusted':'disconnected';
         return {
             revision: this.revision,
             extensionVersion: this.host.version,
             workbenchVisible: this.host.workbenchVisible?.()??false,
             ...(this.host.extensionUpdate?.() ? { extensionUpdate: this.host.extensionUpdate() } : {}),
             connectionCheck: this.host.connectionCheck?.(),
-            startup: this.host.startup?.(),
-            runtimeUpgrade: this.host.trusted() ? this.host.runtimeUpgrade?.() : undefined,
+            startup,
+            runtimeUpgrade,
             trusted: this.host.trusted(),
             workspaceTrusted: this.host.workspaceTrusted?.(),
             nativeExecutionEnabled: this.host.nativeExecutionEnabled?.(),
-            connection: this.host.trusted()?this.control.connection():this.host.workspaceTrusted?.()===false?'untrusted':'disconnected',
+            connection: connection==='connecting'&&(startup?.failed||runtimeUpgrade?.stage==='failed')?'disconnected':connection,
             projects,
             ...(this.control.observedAt() !== undefined ? { projectsObservedAt: this.control.observedAt() } : {}),
             ...(this.selected ? { selectedProject: this.selected } : {}),

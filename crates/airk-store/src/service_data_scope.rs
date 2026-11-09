@@ -19,6 +19,13 @@ mod setup;
 #[cfg(any(unix, windows))]
 pub(crate) use setup::bound_from_existing_setup;
 pub(crate) use setup::initial_owner_bytes;
+#[cfg(any(unix, windows))]
+#[path = "service_data_scope_clean_break.rs"]
+mod clean_break;
+#[cfg(any(unix, windows))]
+pub use clean_break::{
+    CleanBreakNamespaceOwner, retire_clean_break_storage_turn, validate_clean_break_storage,
+};
 #[derive(Debug, Clone, Copy)]
 pub struct ForeignDataRoot;
 impl std::fmt::Display for ForeignDataRoot {

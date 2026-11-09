@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Process census fixture contracts; these tests never run AIRK or signal a PID."""
 import hashlib
+import copy
 import importlib.util
 import json
 import os
@@ -106,6 +107,72 @@ class CensusTests(unittest.TestCase):
         self.assertTrue(all(owner.closed for owner in self.backend.opened))
         with self.assertRaisesRegex(RuntimeError, "closed census"):
             census.verify_gone()
+
+    def retirement(self):
+        process = lambda scope: {"scope": scope, "remaining": 0, "observations": [], "image_roster": [], "image_exclusions": []}
+        receipt = {"complete": True,
+            "runtimes": {"active": "a"*64, "complete": True, "selected_service_restarted": False,
+                "retired_runtimes": [self.identity], "processes": process("verified_superseded_runtime_images")},
+            "launchers": {"schema": 1, "active": "a"*64, "legacy_launchers_retired": True,
+                "launcher": None, "universal_launcher": None, "processes": process("verified_launcher_images")},
+            "future_complete_native_receipt": {"retained": True}}
+        receipt["runtimes"]["processes"]["image_roster"] = [
+            {"path": str(self.runtime / "airk"), "sha256": digest(self.main)},
+            {"path": str(self.runtime / "airk-embed"), "sha256": digest(self.helper)}]
+        return receipt
+
+    def remove_fixture_payload(self):
+        self.assertTrue(self.runtime.is_relative_to(self.install))
+        for path in self.runtime.iterdir():
+            path.unlink()
+        self.runtime.rmdir()
+
+    def test_clean_break_exit_requires_held_identity_and_original_retirement_after_payload_removal(self):
+        with self.capture() as census:
+            retirement = self.retirement()
+            self.remove_fixture_payload()
+            self.backend.states.clear()  # Missing PID and missing files still do not prove held identity exit.
+            with self.assertRaisesRegex(RuntimeError, "still alive"):
+                census.verify_retired_gone(retirement, timeout=0)
+            self.state["gone"] = True
+            with self.assertRaises(OSError):
+                census.verify_gone(timeout=0)  # Historical rollback-preservation contract remains strict.
+            observed = census.verify_retired_gone(retirement, timeout=0)
+            self.assertTrue(observed["captured_identities_exited"])
+            self.assertEqual(observed["captured_count"], 1)
+            self.assertEqual(observed["signals_sent"], 0)
+            self.assertEqual(observed["after"]["processes"], [])
+            self.assertIs(observed["native_retirement"], retirement)
+            self.assertTrue(observed["native_retirement"]["future_complete_native_receipt"]["retained"])
+
+    def test_clean_break_exit_refuses_wrong_or_incomplete_proof_and_surviving_payload(self):
+        with self.capture() as census:
+            self.state["gone"] = True
+            retirement = self.retirement()
+            with self.assertRaisesRegex(RuntimeError, "left its predecessor payload"):
+                census.verify_retired_gone(retirement, timeout=0)
+            self.remove_fixture_payload()
+            for fault in ("missing", "incomplete", "wrong_predecessor", "same_active", "remaining", "restarted", "launcher"):
+                changed = copy.deepcopy(retirement)
+                if fault == "missing": changed.pop("runtimes")
+                elif fault == "incomplete": changed["complete"] = False
+                elif fault == "wrong_predecessor": changed["runtimes"]["retired_runtimes"] = ["f"*64]
+                elif fault == "same_active": changed["runtimes"]["active"] = self.identity
+                elif fault == "remaining": changed["launchers"]["processes"]["remaining"] = 1
+                elif fault == "restarted": changed["runtimes"]["selected_service_restarted"] = True
+                else: changed["launchers"]["launcher"] = "old-launcher"
+                with self.subTest(fault=fault), self.assertRaises(RuntimeError):
+                    census.verify_retired_gone(changed, timeout=0)
+
+    def test_clean_break_exit_rejects_another_installation_with_identical_distribution_hashes(self):
+        with self.capture() as census:
+            self.state["gone"] = True
+            self.remove_fixture_payload()
+            receipt = self.retirement()
+            for row in receipt["runtimes"]["processes"]["image_roster"]:
+                row["path"] = str(self.install.parent / "other-install" / "runtimes" / self.identity / Path(row["path"]).name)
+            with self.assertRaisesRegex(RuntimeError, "captured image"):
+                census.verify_retired_gone(receipt, timeout=0)
 
     def test_pid_reuse_is_safe_but_new_exact_image_survivors_refuse_success(self):
         with self.capture() as census:

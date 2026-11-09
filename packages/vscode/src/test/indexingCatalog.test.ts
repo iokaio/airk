@@ -7,6 +7,7 @@ import { CatalogApplyIntent, CatalogObject, CatalogRequest, CatalogReview, Windo
 import { CatalogControl, IndexingCatalogController } from '../indexingCatalogController';
 import { IntentJournal, IntentStorage } from '../serviceIntents';
 import { ServiceClient, ServiceError } from '../serviceClient';
+import {isNativeReplyValidationFailure,isLocalTrackingFailure} from '../nativeOutcome';
 import { parseWebviewMessage } from '../explorerContracts';
 import { parseRoute } from '../explorerRoutes';
 import { validateIndexSetupSelection, validateIndexSetupApply, validateNativeIndexSetupDraft, validateIndexSetupReceipt, validateNativeLegacyBinding } from '../indexingCatalog';
@@ -809,7 +810,11 @@ test('catalog fence wrappers bind exact requests and preserve complete native pr
     for(const changed of [{...uncertain,caller:'99'.repeat(16)},{...uncertain,request_digest:'99'.repeat(32)},{...uncertain,key:{...request.key,nonce:'99'.repeat(16)}},
         {...uncertain,observation:{kind:'index_setup',receipt:{}}}]){
         const foreign=new ServiceClient({dispose(){},async request(){return changed;}});
-        await assert.rejects(foreign.submitCatalog(fencedIntent),(error:unknown)=>error instanceof ServiceError&&error.outcomeUnknown&&error.nativeResponse===undefined);
+        await assert.rejects(foreign.submitCatalog(fencedIntent),(error:unknown)=>{
+            assert.ok(error instanceof ServiceError);assert.equal(error.outcomeUnknown,true);
+            assert.equal(error.nativeResponse,changed);assert.equal(isNativeReplyValidationFailure(error),true);
+            assert.equal(isLocalTrackingFailure(error),false);assert.ok(error.cause instanceof Error);return true;
+        });
     }
     for(const mutation of ['request','metadata','digest','method','lease','plan','missing'] as const){
         const altered=structuredClone(applied);

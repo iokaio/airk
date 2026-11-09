@@ -39,9 +39,16 @@ function matchingCredentialInput(value:unknown,wanted:ReturnType<typeof vscodeCr
     return Object.keys(input).sort().join(',')==='args,command,id,type'&&input.id===wanted.id&&input.type===wanted.type&&input.command===wanted.command&&input.args&&typeof input.args==='object'&&!Array.isArray(input.args)&&Object.keys(input.args).join(',')==='connection_id'&&input.args.connection_id===wanted.args.connection_id;
 }
 export function syncVscodeHttpInput(source:string,info:HttpConnectionInfo,remove=false):string{
+    return syncCredentialInput(source,vscodeCredentialInput(info),remove);
+}
+/** Historical credential disposal never manufactures a live HTTP selection. */
+export function removeVscodeHttpInputForId(source:string,id:string):string{
+    return syncCredentialInput(source,vscodeCredentialInputForId(id),true);
+}
+function syncCredentialInput(source:string,wanted:ReturnType<typeof vscodeCredentialInputForId>,remove:boolean):string{
     const tree=configurationTree(source),node=findNodeAtLocation(tree,['inputs']);
     if(node&&node.type!=='array')throw Error('VS Code inputs must be an array; existing configuration preserved.');
-    const inputs:Record<string,unknown>[]=node?getNodeValue(node):[],wanted=vscodeCredentialInput(info),seen=new Set<string>();
+    const inputs:Record<string,unknown>[]=node?getNodeValue(node):[],seen=new Set<string>();
     for(const input of inputs){if(!input||typeof input!=='object'||Array.isArray(input)||typeof input.id!=='string'||seen.has(input.id))throw Error('Ambiguous VS Code inputs; existing configuration preserved.');seen.add(input.id);}
     const existing=inputs.find(input=>input.id===wanted.id);
     if(existing&&!matchingCredentialInput(existing,wanted))throw Error('Conflicting AIRK credential input; existing configuration preserved.');

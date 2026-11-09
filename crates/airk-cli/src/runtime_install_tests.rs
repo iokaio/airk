@@ -1656,7 +1656,7 @@ async fn saved_stop_still_completes_after_close_and_remains_stopped() -> Result<
     let mut settlement = Box::pin(setup::settle_then_checkpoint(
         async {
             released.await?;
-            lifecycle::settle(&root).await
+            lifecycle::settle(&_authority).await
         },
         Some(&cancel),
     ));

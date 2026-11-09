@@ -8,6 +8,53 @@ use airk_core::{
 use anyhow::{Context, Result, ensure};
 use rusqlite::{OptionalExtension, TransactionBehavior, params};
 
+/// Existing lifecycle writes have no general registry, schema or SQL authority.
+/// The native caller retains its installation lock and concrete instance fence.
+pub struct ExistingLifecycleLedger {
+    registry: ServiceRegistry,
+}
+impl ExistingLifecycleLedger {
+    pub fn begin_lifecycle(&mut self, request: &LifecycleRequest) -> Result<LifecycleRecord> {
+        self.registry.begin_lifecycle(request)
+    }
+    pub fn advance_lifecycle(
+        &mut self,
+        record: &LifecycleRecord,
+        next: LifecyclePhase,
+    ) -> Result<LifecycleRecord> {
+        ensure!(
+            record.request.key.namespace == self.registry.incarnation()?,
+            "lifecycle record namespace changed"
+        );
+        self.registry.advance_lifecycle(record, next)
+    }
+    pub fn clear_service_stop(&mut self) -> Result<()> {
+        self.registry.clear_service_stop()
+    }
+}
+
+impl ServiceRegistry {
+    /// The caller holds the installation lock. Opens an authenticated existing
+    /// schema 11..13 only. Opening never creates, migrates or prunes state.
+    /// A live service owner remains held while its exact Stop intent is accepted.
+    pub fn with_existing_lifecycle<T>(
+        root: &std::path::Path,
+        expected_namespace: airk_core::identity::Incarnation,
+        action: impl FnOnce(&mut ExistingLifecycleLedger) -> Result<T>,
+    ) -> Result<T> {
+        let registry = Self::open_existing(
+            root,
+            None,
+            Some(super::ExistingWrite::Lifecycle(expected_namespace)),
+        )?;
+        action(&mut ExistingLifecycleLedger { registry })
+    }
+}
+
+#[cfg(test)]
+#[path = "service_existing_lifecycle_tests.rs"]
+mod existing_tests;
+
 pub(super) const SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS service_lifecycle_state(
         id INTEGER PRIMARY KEY CHECK(id=1), stopped INTEGER NOT NULL CHECK(stopped IN(0,1)),
@@ -65,6 +112,16 @@ pub(super) fn require_catalog_admission(connection: &rusqlite::Connection) -> Re
     Ok(())
 }
 impl ServiceRegistry {
+    /// Accepted lifecycle watermark survives receipt pruning. A newly accepted
+    /// Stop remains distinguishable even if the saved stopped flag was true.
+    pub fn lifecycle_sequence(&self) -> Result<u64> {
+        let sequence: Option<i64> = self.connection.query_row(
+            "SELECT CASE WHEN EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='service_lifecycle') THEN coalesce((SELECT seq FROM sqlite_sequence WHERE name='service_lifecycle'),0) END",
+            [], |row| row.get(0))?;
+        u64::try_from(sequence.context("lifecycle receipt table is unavailable")?)
+            .context("invalid accepted lifecycle watermark")
+    }
+
     pub fn lifecycle_by_id(&self, identity: Sha256Digest) -> Result<Option<LifecycleRecord>> {
         self.connection
             .query_row(
@@ -314,6 +371,42 @@ mod tests {
             runtime: Sha256Digest::from_bytes([4; 32]),
             manager: false,
         })
+    }
+    #[test]
+    fn clean_break_lifecycle_watermark_detects_new_stop_and_survives_receipt_pruning() -> Result<()>
+    {
+        let owner = tempfile::tempdir()?;
+        let mut registry = ServiceRegistry::open(owner.path(), Incarnation::from_bytes([71; 16]))?;
+        assert_eq!(registry.lifecycle_sequence()?, 0);
+        let first = request(&mut registry, 72, LifecycleAction::Stop)?;
+        let accepted = registry.begin_lifecycle(&first)?;
+        let saved = registry.lifecycle_sequence()?;
+        assert!(saved > 0 && registry.service_explicitly_stopped()?);
+        registry.begin_lifecycle(&first)?;
+        assert_eq!(
+            registry.lifecycle_sequence()?,
+            saved,
+            "exact request replay is not a new Stop"
+        );
+        registry.advance_lifecycle(&accepted, LifecyclePhase::Complete)?;
+        let second = request(&mut registry, 73, LifecycleAction::Stop)?;
+        let accepted = registry.begin_lifecycle(&second)?;
+        assert!(registry.service_explicitly_stopped()?);
+        assert!(
+            registry.lifecycle_sequence()? > saved,
+            "new Stop must win while old stopped state remains true"
+        );
+        registry.advance_lifecycle(&accepted, LifecyclePhase::Complete)?;
+        let sequence = registry.lifecycle_sequence()?;
+        registry
+            .connection
+            .execute("DELETE FROM service_lifecycle WHERE phase='complete'", [])?;
+        assert_eq!(
+            registry.lifecycle_sequence()?,
+            sequence,
+            "bounded receipt retirement cannot rewind admission watermark"
+        );
+        Ok(())
     }
     #[test]
     fn accepted_stop_survives_reopen_replays_exactly_and_blocks_automatic_start() -> Result<()> {

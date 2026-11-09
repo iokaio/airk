@@ -1,9 +1,18 @@
 # Native journey fixture compatibility — 8 November 2026
 
-This is a harness contract and evidence record for unpublished 1.8.14. Runtime
-packaging schema identifies executable topology; it does not identify registration
-authority. The installed imported-legacy journey and the reviewed 1.8.12 catalog
-upgrade are separate required cases. Neither substitutes for the other.
+**Historical migration harness contract and evidence record.** The user approved
+mandatory fresh-state reset for every pre-1.8.16 installation later on
+8 November 2026. The imported-legacy and reviewed-catalog preserved-index journeys
+below are prior experiments, not current requirements for transferring old index
+state. Keep their failed fixtures and exact receipts. Current acceptance must
+qualify the [clean-break lifecycle](../upgrade-rebuild-fallback.md): authenticated
+source/preference capture, fresh authority and indexing, source preservation,
+client reconnection and exact ownership-checked cleanup. Compatible-line
+1.8.16+ upgrades retain their separate state-contract tests.
+
+The original unpublished 1.8.14 matrix follows. Packaging schema identifies
+executable topology, not registration authority; those ownership distinctions
+still matter when collecting supported reset inputs or retiring old artifacts.
 
 | Packaging and authority | Transport | Setup owner | Original evidence scope | Expected migration/retrieval authority |
 | --- | --- | --- | --- | --- |

@@ -1104,6 +1104,74 @@ impl ServiceRegistry {
         record(&self.connection, id)
     }
 
+    /// Exact accepted manual-retry lineage. An independent job of the same
+    /// project/kind is not a successor and cannot satisfy an older receipt.
+    pub fn retry_successors(&self, source: Sha256Digest) -> Result<Vec<JobRecord>> {
+        let read = self.connection.unchecked_transaction()?;
+        let original = record(&read, source)?;
+        let mut statement = read.prepare("SELECT DISTINCT q.job FROM service_retry_requests r JOIN service_requests q ON q.namespace=r.namespace AND q.epoch=r.epoch AND q.nonce=r.nonce AND q.caller=r.caller WHERE r.source_job=?1 ORDER BY q.job LIMIT 1025")?;
+        let ids = statement
+            .query_map([source.to_string()], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(statement);
+        ensure!(
+            ids.len() <= MAX_JOBS as usize,
+            "manual retry lineage exceeds complete job roster bound"
+        );
+        let mut result = Vec::with_capacity(ids.len());
+        for id in ids {
+            let job = record(&read, id.parse()?)?;
+            ensure!(
+                job.id != original.id
+                    && job.project == original.project
+                    && job.kind == original.kind,
+                "manual retry lineage crossed its original job authority"
+            );
+            result.push(job);
+        }
+        read.commit()?;
+        Ok(result)
+    }
+
+    /// Latest successful accepted retry in the exact bounded transitive
+    /// lineage. Missing, crossed or cyclic authority remains an error.
+    pub fn successful_retry(&self, source: Sha256Digest) -> Result<Option<JobRecord>> {
+        let read = self.connection.unchecked_transaction()?;
+        let original = record(&read, source)?;
+        let mut statement = read.prepare("WITH RECURSIVE lineage(id) AS (SELECT ?1 UNION SELECT q.job FROM lineage l JOIN service_retry_requests r ON r.source_job=l.id JOIN service_requests q ON q.namespace=r.namespace AND q.epoch=r.epoch AND q.nonce=r.nonce AND q.caller=r.caller LIMIT 1025) SELECT l.id,j.seq,EXISTS(SELECT 1 FROM service_retry_requests r JOIN service_requests q ON q.namespace=r.namespace AND q.epoch=r.epoch AND q.nonce=r.nonce AND q.caller=r.caller LEFT JOIN service_jobs p ON p.id=r.source_job WHERE q.job=l.id AND r.source_job IN(SELECT id FROM lineage) AND (p.seq IS NULL OR p.seq>=j.seq)) FROM lineage l LEFT JOIN service_jobs j ON j.id=l.id ORDER BY j.seq")?;
+        let ids = statement
+            .query_map([source.to_string()], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<i64>>(1)?,
+                    row.get::<_, bool>(2)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(statement);
+        ensure!(
+            ids.len() <= MAX_JOBS as usize,
+            "manual retry lineage exceeds complete job roster bound"
+        );
+        let mut result = None;
+        for (id, sequence, crossed) in ids {
+            ensure!(
+                sequence.is_some() && !crossed,
+                "manual retry lineage is missing or cyclic"
+            );
+            let job = record(&read, id.parse()?)?;
+            ensure!(
+                job.project == original.project && job.kind == original.kind,
+                "manual retry lineage crossed its original job authority"
+            );
+            if job.id != original.id && job.state == JobState::Succeeded {
+                result = Some(job);
+            }
+        }
+        read.commit()?;
+        Ok(result)
+    }
+
     /// Call only after acquiring the project lease and persisting its new fencing generation.
     /// Pure reconciliation may retry; interrupted rebuilds require explicit recovery planning.
     pub fn recover_jobs(&mut self, lease: &ProjectLease) -> Result<()> {

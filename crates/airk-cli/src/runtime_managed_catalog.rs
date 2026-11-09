@@ -298,6 +298,7 @@ fn before_start_enabled(
         && receipt.stage == genesis::GenesisStage::Settled
     {
         genesis::require_managed_settled(&origin.control, &origin)?;
+        state_contract::require_initialized(authority.root, &origin.control)?;
         return Ok(ManagedCatalogDisposition::Settled);
     }
     if let Some(cancel) = cancel {

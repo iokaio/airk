@@ -12,6 +12,25 @@ fn controls(mode: &str) -> Value {
     json!({"verification":mode,"verification_max_sources":25,"verification_max_bytes":16777216,"verification_deadline_ms":2000})
 }
 
+// Typed metadata-only fixture for the exact native delivery serialization.
+// Actual service validation is qualified by the CLI/MCP transport regression.
+fn fixture_delivery_body(mut body: Value) -> Result<Value> {
+    let receipt = airk_core::service::CombinedDeliveryReceipt {
+        schema: 1,
+        service_instance: airk_core::identity::Incarnation::from_bytes([1; 16]),
+        namespace: airk_core::identity::Incarnation::from_bytes([2; 16]),
+        catalog_revision: airk_core::index_catalog::CatalogRevision::INITIAL,
+        scope_identity: airk_core::identity::Sha256Digest::from_bytes([3; 32]),
+        result_digest: airk_core::identity::framed_digest(
+            b"airk/combined-delivery-result/1",
+            &[&serde_json::to_vec(&body)?],
+        ),
+    };
+    body["delivery_observation"] =
+        json!({"receipt":receipt,"digest_basis":"canonical_body_without_delivery_observation"});
+    Ok(body)
+}
+
 #[tokio::test]
 async fn full_capability_catalog_fits_installed_body_budget_without_schema_loss() -> Result<()> {
     let source = tempfile::tempdir()?;
@@ -36,6 +55,273 @@ async fn full_capability_catalog_fits_installed_body_budget_without_schema_loss(
     assert_eq!(
         complete["workbench"]["operations"],
         airk_kernel::workbench::operation_catalog()["operations"]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn actual_combined_capabilities_and_parse_fit_their_public_body_budgets() -> Result<()> {
+    use airk_core::{
+        combined_reads::{MemberAvailability, QuerySelection, SharedBudgets},
+        identity::{Incarnation, Sha256Digest},
+        index_catalog::{
+            CatalogRevision, GrantId, GrantedMembership, IndexId, Membership, PathScope,
+            QueryProjectId, ReviewedGrant, ScopeAtom, SourceRootId,
+        },
+    };
+    use airk_kernel::combined_reads::{CompositionRequest, MemberInput, compose_capabilities};
+
+    let size = |value: &Value| -> Result<usize> { Ok(serde_json::to_vec(value)?.len()) };
+    let identity = Sha256Digest::from_bytes([7; 32]);
+    let project = QueryProjectId::from_identity(Incarnation::from_bytes([1; 16]));
+    let second_project = QueryProjectId::from_identity(Incarnation::from_bytes([2; 16]));
+    let indexes = [1_u8, 2].map(|n| IndexId::from_identity(Incarnation::from_bytes([n; 16])));
+    let grant = ReviewedGrant {
+        id: GrantId::from_identity(Incarnation::from_bytes([1; 16])),
+        host: identity,
+        revision: CatalogRevision::INITIAL,
+        revoked: false,
+        memberships: [
+            (project, 0, "api"),
+            (second_project, 0, "impl"),
+            (project, 1, "api"),
+        ]
+        .into_iter()
+        .map(|(project_id, position, path)| GrantedMembership {
+            membership: Membership {
+                project_id,
+                index_id: indexes[position],
+                revision: CatalogRevision::INITIAL,
+                scope: vec![ScopeAtom {
+                    source_root_id: SourceRootId::from_identity(Incarnation::from_bytes(
+                        [position as u8 + 1; 16],
+                    )),
+                    kind: PathScope::Subtree,
+                    path: path.into(),
+                }],
+            },
+            source_revision: CatalogRevision::INITIAL,
+            policy_epoch: 0,
+            policy_digest: None,
+        })
+        .collect(),
+    };
+    let mut fixtures = Vec::new();
+    for member in 1..=2 {
+        let source = tempfile::tempdir()?;
+        let data = tempfile::tempdir()?;
+        for folder in ["api", "impl"] {
+            std::fs::create_dir(source.path().join(folder))?;
+            std::fs::write(
+                source.path().join(folder).join("member.md"),
+                format!("# Member {member} {folder}\nIndependent indexed source.\n"),
+            )?;
+        }
+        let kernel = Kernel::open(source.path(), Some(data.path().into()))?;
+        kernel.configure_vectors(false)?;
+        kernel.index()?;
+        fixtures.push((source, data, kernel));
+    }
+    let mut native_bodies = Vec::new();
+    for (position, (_, _, kernel)) in fixtures.iter().enumerate() {
+        let backing = airk_core::service::ProjectRegistration::new(
+            kernel
+                .root()
+                .to_str()
+                .context("fixture source path")?
+                .into(),
+            kernel
+                .data_dir()
+                .to_str()
+                .context("fixture data path")?
+                .into(),
+            kernel.collection().into(),
+        )?
+        .binding;
+        let authority = airk_kernel::scoped_reads::ScopedReadAuthority {
+            schema: 1,
+            backing,
+            index_id: indexes[position],
+            project_ids: if position == 0 {
+                vec![project, second_project]
+            } else {
+                vec![project]
+            },
+            provenance: airk_core::grant_provenance::GrantProvenance::UserReviewedProjectGrant,
+            grant: grant.clone(),
+            sources: vec![airk_core::scoped_reads::SourceDescriptor {
+                source_root_id: SourceRootId::from_identity(Incarnation::from_bytes(
+                    [position as u8 + 1; 16],
+                )),
+                original_root: kernel
+                    .root()
+                    .to_str()
+                    .context("fixture source path")?
+                    .into(),
+            }],
+        };
+        let server = AirkServer::new(kernel.with_scoped_reads(authority)?);
+        // The installed combined adapter requests full child status. Actual
+        // independent publications must not be hidden by cloning one member.
+        let reply = server
+            .capabilities(Parameters(serde_json::from_value(json!({
+                "response_mode":"full", "include_status":true
+            }))?))
+            .await;
+        ensure!(
+            !reply.is_error.unwrap_or(false),
+            "actual capabilities failed"
+        );
+        let native = body(&reply)?;
+        eprintln!(
+            "actual scoped indexed member {} capability bytes: full={}, member_workbench={}, scope_observation={}",
+            position + 1,
+            size(&native)?,
+            size(&native["workbench"])?,
+            size(&native["scope_observation"])?
+        );
+        for (field, value) in native.as_object().context("capability body")? {
+            eprintln!(
+                "actual member {} field {field}: {} bytes",
+                position + 1,
+                size(value)?
+            );
+        }
+        native_bodies.push(native);
+    }
+    assert_ne!(
+        native_bodies[0], native_bodies[1],
+        "indexed member observations must be independent"
+    );
+    let combined_catalog = airk_kernel::workbench::combined::operation_catalog();
+    eprintln!(
+        "actual combined_workbench bytes={}",
+        size(&combined_catalog)?
+    );
+    let mut failures = Vec::new();
+    for count in [1_u8, 2] {
+        let indexes = indexes[..usize::from(count)].to_vec();
+        let selection = QuerySelection {
+            project_ids: vec![project, second_project],
+            index_ids: Some(indexes.clone()),
+            member_availability: MemberAvailability::Report,
+        };
+        let request = CompositionRequest {
+            selection: selection.resolve(&grant)?,
+            budgets: SharedBudgets {
+                limit: usize::from(count),
+                max_bytes: airk_core::MAX_RESPONSE_BYTES,
+                deadline_ms: 2000,
+                verification_max_sources: 8,
+                verification_max_bytes: 16384,
+                verification_deadline_ms: 2000,
+            },
+            authority: identity,
+            observed_from_unix_ms: 10,
+            observed_to_unix_ms: 20,
+        };
+        let inputs = indexes
+            .iter()
+            .enumerate()
+            .map(|(position, index)| MemberInput {
+                index_id: *index,
+                result: native_bodies[position].clone(),
+                is_error: false,
+                exhausted: false,
+                sources: vec![],
+            })
+            .collect();
+        let mut combined = serde_json::to_value(compose_capabilities(&request, inputs)?)?;
+        for (position, index) in indexes.into_iter().enumerate() {
+            assert_eq!(
+                airk_core::combined_reads::shared_values::materialize_combined_member_result(
+                    &combined, index
+                )?,
+                native_bodies[position],
+                "complete actual member reply must round-trip"
+            );
+        }
+        let before_catalog = size(&combined)?;
+        // Match the public combined adapter's post-composition catalog addition.
+        combined["workbench"] = combined_catalog.clone();
+        let combined_bytes = size(&combined)?;
+        let delivered_combined = fixture_delivery_body(combined.clone())?;
+        let delivered_bytes = size(&delivered_combined)?;
+        let mut original = delivered_combined.clone();
+        original
+            .as_object_mut()
+            .context("combined body")?
+            .remove("delivery_observation");
+        assert_eq!(
+            original, combined,
+            "delivery adds metadata without changing native data"
+        );
+        let callback_reply = json!({"content":[{"type":"text","text":delivered_combined.to_string()}],
+            "structuredContent":delivered_combined,"isError":false});
+        let parse_request = airk_core::workbench::decode_request(json!({
+            "schema": airk_core::workbench::REQUEST_SCHEMA, "mode":"execute",
+            "plan":{"steps":[{"id":"capabilities","tool":"capabilities","args":{}}]}
+        }))?;
+        let parsed = airk_kernel::workbench::combined::execute(
+            parse_request,
+            selection,
+            identity,
+            |tool, _| {
+                assert_eq!(tool, "capabilities");
+                let reply = callback_reply.clone();
+                async move { Ok(reply) }
+            },
+        )
+        .await?;
+        let parsed_bytes = serde_json::to_vec(&parsed)?.len();
+        eprintln!(
+            "actual {count}-member bytes: composed={before_catalog}, with_combined_catalog={combined_bytes}, callback_envelope={}, parse={parsed_bytes}, parse_output_budget={}",
+            size(&callback_reply)?,
+            parsed.plan.output.max_bytes
+        );
+        if parsed.truncated || parsed.status != "complete" {
+            failures.push(format!(
+                "{count}-member parse status={} truncated={}",
+                parsed.status, parsed.truncated
+            ));
+        }
+        assert_eq!(parsed.steps.len(), 1);
+        assert_eq!(parsed.steps[0].status, "complete");
+        assert_eq!(parsed.steps[0].result, Some(callback_reply.clone()));
+        ensure!(
+            parsed_bytes <= parsed.plan.output.max_bytes,
+            "actual parse exceeds its declared plan output budget"
+        );
+        if combined_bytes > airk_core::MAX_RESPONSE_BYTES
+            || delivered_bytes > airk_core::MAX_RESPONSE_BYTES
+        {
+            failures.push(format!(
+                "{count}-member capabilities pre={combined_bytes} delivered={delivered_bytes}"
+            ));
+        }
+        eprintln!(
+            "actual {count}-member ordinary pre-delivery={combined_bytes}, typed-delivered={delivered_bytes}, receipt-overhead={}, fits={} (max={})",
+            delivered_bytes - combined_bytes,
+            delivered_bytes <= airk_core::MAX_RESPONSE_BYTES,
+            airk_core::MAX_RESPONSE_BYTES
+        );
+        let output_budget = parsed.plan.output.max_bytes;
+        let parsed_body = fixture_delivery_body(serde_json::to_value(parsed)?)?;
+        ensure!(
+            size(&parsed_body)? <= output_budget,
+            "complete parse with typed receipt must fit its declared output budget"
+        );
+        let parsed_reply = json!({"content":[{"type":"text","text":parsed_body.to_string()}],
+            "structuredContent":parsed_body,"isError":false});
+        ensure!(
+            size(&parsed_reply)? <= (3 * output_budget + 4096).min(1024 * 1024 - 2048),
+            "complete parse transport must retain the existing public framing headroom"
+        );
+    }
+    ensure!(
+        failures.is_empty(),
+        "installed public body guard rejects canonical results: {}",
+        failures.join(", ")
     );
     Ok(())
 }

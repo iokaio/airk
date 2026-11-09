@@ -1,25 +1,34 @@
 # One AIRK: executable, MCP endpoint and upgrade lifecycle
 
-**Implementation plan recorded 7 November 2026; status updated 8 November 2026.**
+**Implementation plan recorded 7 November 2026; clean-break policy approved
+8 November 2026.** The current development version is **1.8.16**. The user
+approved a fresh-state/index rebuild for every earlier installation, then normal
+supported upgrades within the explicit 1.8.16+ state contract. The line is to be
+stabilized and qualified before an eventual public **1.9.0** release. Current
+versions and artifact identities remain unchanged until separately authorized.
 
-The single-executable HTTPS runtime is implemented at **1.8.14**. Remaining
-migration corrections, final native and installed-platform acceptance, and
-distribution are incomplete. The [implementation ledger](research/one-airk-implementation.md)
-and [working release record](releases/release-1.8.14.md) distinguish implemented
-contracts, passed checks, failed attempts and outstanding qualification. This
-plan is not a declaration that its complete acceptance matrix has passed.
+The [clean-break contract](upgrade-rebuild-fallback.md) supersedes pre-1.8.16
+index migration, optional rebuild selection and historical accepted-job engine
+adapters. Preserve only reviewed source selections and supported preferences;
+original sources remain read-only. Old grants, credentials, index identities and
+pending operations are not translated into new authority. Native shutdown,
+durable reset recovery and removal of ownership-proven legacy artifacts remain
+mandatory. A copied new binary cannot bypass the persisted state-contract check.
 
-This plan replaces launcher-based MCP connections with a shared local MCP endpoint,
-embeds MiniLM and its inference runtime in the native AIRK executable, and replaces
-live runtime cutover with a controlled checkpoint, shutdown and restart. The
-unpublished working version at planning time was 1.8.12. **The user-requested
-1.8.14 version adjustment is complete in source**, including native, extension
-and lockfile versions. Do not repeat that bump or relabel existing binaries;
-each new candidate retains its actual source and artifact identity.
+The single-executable HTTPS implementation originated at 1.8.14. The
+[implementation ledger](research/one-airk-implementation.md),
+[1.8.16 working record](releases/release-1.8.16.md) and dated
+[1.8.14 record](releases/release-1.8.14.md) distinguish current implementation,
+prior experiments, failed attempts and qualification. This plan is not a claim
+that the acceptance matrix passed. Earlier migration sections are retained where
+they document prior design or compatible-line mechanisms; they do not require
+preserving pre-baseline index state.
 
 ### How to execute this plan
 
-Treat sections 1–11 as acceptance contracts and section 12 as the execution order.
+Use the clean-break policy above for version/state admission. Sections 1–11
+remain acceptance contracts except the explicitly superseded pre-baseline
+migration portions; section 12 retains the historical execution order.
 Proposed type/module names below are design targets, not claims that those APIs
 already exist. Reuse the named native owners and their validation rather than
 creating competing implementations. Keep a task ledger alongside this plan with
@@ -33,8 +42,8 @@ before parallel implementation. Keep one editor for each shared contract and one
 Cargo owner per checkout. Implement and test a vertical slice before deleting its
 predecessor path. Blocking feasibility results must remain explicit; do not trade
 away TLS validation, scope, resource proofs or a supported platform to complete a
-checkbox. The requested 1.8.14 bump is already authorized; no additional version
-bump reminder or increment is needed for the same work.
+checkbox. The requested 1.8.16 version is already authorized; do not increment it again
+for this policy implementation or relabel earlier binaries.
 
 ## 1. Required outcome
 
@@ -57,11 +66,16 @@ bump reminder or increment is needed for the same work.
   results. Using it must not require MCP, Workbench or an AI agent.
 - Run MiniLM inference inside that service with one shared bounded model owner.
   An additional client, window or collection must not load another default model.
-- Upgrade by staging, quiescing, checkpointing, stopping, replacing and restarting
-  the service. Preserve durable indexes, catalog authority, settings and jobs.
-- Migrate recognized older configurations and process chains, with explicit
-  incomplete states for clients that have not reconnected. Do not describe a
-  configuration edit alone as a completed migration.
+- For every pre-1.8.16 installation, perform the required native clean reset,
+  rebuild fresh indexes from reviewed sources and supported preferences, and
+  retire ownership-proven old processes and artifacts. Discard old index IDs,
+  grants, credentials and pending operations; preserve original sources.
+- For supported 1.8.16+ state-contract upgrades, stage, quiesce, checkpoint,
+  replace and restart through the ordinary native owner. Runtime version alone
+  cannot establish state compatibility.
+- Reconnect clients with authority appropriate to the resulting namespace. Keep
+  incomplete client reconnection and cleanup explicit; a configuration edit
+  alone is not successful acceptance.
 - Preserve existing **CLI, Workbench and MCP parity**: equivalent reads expose
   the same supported inputs and complete canonical results. Preserve CLI and
   Workbench management access through authenticated native control; moving MCP
@@ -786,7 +800,38 @@ artifacts. One Neo run is not a substitute for the Intel or downloaded-artifact
 checks. Local TLS keys have no relationship to Developer ID/release-signing
 credentials or CI's temporary signing keychain.
 
-## 8. Checkpointed shutdown and upgrade
+## 8. Version/state boundary, reset and compatible-line upgrade
+
+The current boundary is mandatory: any installed predecessor older than 1.8.16
+uses the [clean-break lifecycle](upgrade-rebuild-fallback.md). No accepted-work
+adapter, old index publication or imported grant bypasses that decision. A
+verified 1.8.16+ runtime and supported persisted state contract are both required
+for the compatible-line checkpoint path below. Fresh creation and interrupted
+reset recovery must establish and verify that contract under the native owner.
+
+Native fresh Genesis atomically qualifies `airk-state-contract.json` in the
+selected control root (schema 1, `state_contract: "airk-state/1"`,
+`baseline_version: "1.8.16"`, installation/control/namespace binding). Metadata-only
+reset capture retains the complete saved selection within 64 indexes/128 KiB;
+unsupported source-policy or alias translation refuses before mutation. Every
+saved index receives one initial build before restoring pause/watch. Independent
+builds proceed if another index is unavailable, while final cleanup waits for
+all required replacement readiness. Native deletion guards include every primary
+and additional source root, including inactive registrations. External client
+configuration/uninstall-receipt cleanup has its own host-owned compare-and-swap
+plan prepared before reset; native readiness does not prove those effects.
+The in-progress HTTP disposal correction retains a complete bounded original
+ownership snapshot and client metadata durably before retirement. Its
+purpose-bound predecessor proof cannot substitute for a live grant or renew
+credentials; fresh-namespace ownership collisions or unknown observations block
+disposal. Only the owning fresh HTTP service initializes its first empty ledger
+before endpoint publication. Metadata reads never repair missing authority.
+
+The following checkpoint details apply to compatible-line upgrade and retained
+historical mechanisms. Their old-engine migration requirements do not apply to
+discarded pre-baseline operations. Reset receipts must report their disposition
+without inventing old successful completions.
+
 
 ### 8.1 State packet contract
 
@@ -903,7 +948,7 @@ read the resulting formats. For irreversible migrations, define a validated
 backup/restore or forward-repair policy before release; do not promise executable
 rollback will undo a storage migration. Never erase unknown or user source data.
 
-### 8.3 Accepted-job compatibility and recovery decisions
+### 8.3 Compatible-line accepted-job compatibility and recovery decisions
 
 Current native work deliberately binds accepted requests to their engine.
 `airk-core/src/service_configuration.rs::ConfigurationWork` and
@@ -939,7 +984,14 @@ one missing source cannot be mistaken for permission to delete or broaden them.
 Unexpected/ambiguous states return `recovery_required` with receipts and keep
 public admission closed. Timeout is not an observation that work did not happen.
 
-## 9. Setup and configuration migration: every entry point
+## 9. Setup, reset reconnection and compatible-line configuration refresh
+
+At the pre-1.8.16 boundary, old namespace credentials and grants are discarded.
+Owned old connection entries may be retired, but clients require fresh reviewed
+authority and reconnection; the historical exact-authority migration procedures
+below do not transfer old grants across the reset. Within a supported 1.8.16+
+state contract, connection refresh keeps the existing scope and ownership rules.
+
 
 Create one canonical endpoint/connection contract and explicit serializers per
 client. Remove `command`, `args`, `cwd` and launcher environment assumptions only
@@ -1054,7 +1106,23 @@ ownership; it must not silently weaken the existing offline container contract.
   `operations.md`, architecture and bundled `explorerHelp` instructions. Preserve
   dated release/review/research records and label old command examples historical.
 
-## 10. Upgrade path for older multi-process installations
+<a id="10-upgrade-path-for-older-multi-process-installations"></a>
+
+## 10. Clean break for older multi-process installations
+
+The user superseded the legacy index migration design on 8 November 2026. The
+current requirement is the mandatory clean break for every pre-1.8.16 runtime,
+with reviewed source/preference capture, verified process exit, fresh authority,
+rebuild and ownership-checked old-artifact retirement. Reconnection does not
+preserve old grants. Unknown source ownership or unreadable authoritative source
+metadata must remain explicit; reset cannot guess source folders or delete
+unowned files. See the [current contract](upgrade-rebuild-fallback.md).
+
+The remaining subsections record the earlier migration design and retained
+ownership lessons. Their preserved-index, imported-authority and historical
+job-continuation requirements are superseded at this boundary. Keep existing
+failed fixtures and historical receipts identifiable.
+
 
 Migration is a durable native installer operation with a configuration phase and
 an observed process-retirement phase. It must handle versions that cannot produce
@@ -1089,7 +1157,7 @@ that a user downloaded elsewhere.
    clients are not duplicate service owners; never terminate Codex, VS Code or
    another host merely because it is their parent.
 
-### 10.2 Bridge from old durable state
+### 10.2 Historical bridge from old durable state — superseded at the baseline
 
 1. Stage and authenticate the new single-image candidate and a migration journal.
 2. For a checkpoint-capable predecessor, use the state machine above. For an older
@@ -1290,7 +1358,7 @@ gates with explicit coverage mapping; do not simply skip them. Batch Neo checks,
 retain artifacts/timings and then clean its Cargo targets, including failed
 batches. No new broad Cargo or CI campaign is required merely to review this plan.
 
-### 12.2 Version 1.8.14 and documentation deliverables
+### 12.2 Historical 1.8.14 version milestone and current documentation deliverables
 
 At C0, update `Cargo.toml`'s workspace package version, every local `airk-*`
 `Cargo.lock` entry, `packages/vscode/package.json`, and the top/root-package entries
@@ -1335,7 +1403,7 @@ reconciliation before a commit/push or packaging cycle:
 | `read-interface-parity.md`, CLI/MCP references, `headless-cli.md`, Workbench guides and bundled help | Full supported inputs/results, CLI tool-call/shell/convenience parity, Workbench forms/plans/exports, separate management authority, exact retry semantics and host/network-namespace rules. Preserve historical audit dates while fixing stale text that calls an old build current. |
 | New `local-https-api.md`, generated OpenAPI/JSON schemas and public local-tool examples | Complete authenticated endpoint contract and working non-MCP clients as specified in section 5.3; discovery, actual ports, trust, scoped enrollment, methods, schemas, errors, paging, cancellation, upgrades and parity. Link from current developer/setup guides. |
 | `agent-integration.md`, `agent-tool-alignment.md`, `antigravity-mcp.md`, `vscode-extension.md`, examples/templates/setup scripts | Every client/version's real URL/trust/secret format, bootstrap and reconnect procedure, unsupported states and least scope. No current launcher, token-in-repo, hardcoded-port or TLS-bypass recipe. |
-| `CONTRIBUTING.md`, `docs/versioning.md`, `ci-and-builds.md`, `macos-build.md`, `windows-local-build.md` and release/package instructions | 1.8.14 version synchronization, new feature/static-link gates, artifact provenance/signing, direct Mac SMAppService flow and retained issue regressions. AGENTS/CLAUDE changes, if required, stay byte-identical. |
+| `CONTRIBUTING.md`, `docs/versioning.md`, `ci-and-builds.md`, `macos-build.md`, `windows-local-build.md` and release/package instructions | 1.8.16 version/state-contract synchronization, clean-reset acceptance, new feature/static-link gates, artifact provenance/signing, direct Mac SMAppService flow and retained issue regressions. AGENTS/CLAUDE changes, if required, stay byte-identical. |
 
 Unprefixed documentation filenames in this table are under `docs/`. Sweep current
 instructions for `airk-launcher`, `airk-embed`, `login-foreground`, stdio `command`
@@ -1348,6 +1416,15 @@ behavioral accuracy. The doc-only review leaves current product documentation at
 its implemented version; this checklist is mandatory implementation work.
 
 ## 13. Verification and completion checklist
+
+The current pre-baseline acceptance is clean reset, fresh indexing, reviewed
+reconnection and exact old-artifact retirement. Historical checklist items that
+require carrying imported publications or accepted old-engine jobs into the
+baseline are superseded. Keep their records; do not relabel those tests as reset
+qualification. Compatible-line upgrades still require checkpoint/state-contract
+coverage, and all source-preservation, ownership, security and parity gates below
+remain in force.
+
 
 - [ ] Record current process count, executable verification cost, cold/warm tool
   latency, aggregate private/resident memory, model-load count and idle CPU using

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 const {test}=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm');
 const {fieldExpressions,catalogExpression,observationExpression,workbenchAction}=require('../native-editor-workbench.cjs');
+const {retainUiDiagnostic}=require('../editor-ui.cjs');
 function fixture(){
     const writes=[],events=[];
     class Input{
@@ -34,21 +35,22 @@ test('rendered operation catalog retains full field constraints and default enum
     assert.deepEqual(catalog.fields[0],{label:'Query',tag:'INPUT',type:'text',required:true,min:'',max:'',minLength:0,maxLength:4096,options:[]});
     assert.deepEqual(catalog.fields[1].options,['','lexical','vector']);
 });
-function actionsFixture({failure,newError=false,superseded=false}={}){
-    const mutations=[],waits=[];let observations=0,submitted=false,tool='search';
+function actionsFixture({failure,newError=false,superseded=false,nativeFailure}={}){
+    const mutations=[],waits=[],records=[];let observations=0,submitted=false,tool='search';
     const actions={
         async observe(expression){
             new Function('return '+expression);
             if(expression===catalogExpression)return {tool,names:['search','capabilities'],fields:[]};
-            if(expression===observationExpression)return submitted?{count:superseded?2:1,input:'search form',envelope:{status:'complete',future:{preserved:true}},...(newError?{error:'native refused'}:{})}:{count:0};
+            if(expression===observationExpression)return submitted?{count:superseded?2:1,input:tool+' form',envelope:nativeFailure??{status:'complete',future:{preserved:true}},...(newError?{error:'native refused'}:{})}:{count:0};
             return false;
         },
         async mutate(ready,apply){new Function('return '+ready);new Function('return '+apply);mutations.push(apply);if(apply.includes("HTMLSelectElement.prototype,'value'")){tool=apply.includes('\"capabilities\"')?'capabilities':'search';}if(apply.includes('Run form')){submitted=true;if(failure)throw failure;}},
         async settle(){waits.push('animation frame');},
         async wait(expression,label){new Function('return '+expression);waits.push(label);return true;},
-        async waitValue(action){observations++;return action();}
+        async waitValue(action){observations++;return action();},
+        record:observation=>retainUiDiagnostic(records,observation),
     };
-    return {actions,mutations,waits,get observations(){return observations;}};
+    return {actions,mutations,waits,records,get observations(){return observations;}};
 }
 test('Workbench read submits one Run form and retains raw complete response/catalog',async()=>{
     const f=actionsFixture(),result=await workbenchAction({action:'workbenchRead',tool:'search',fields:{Query:'symbol',Mode:'lexical'}},f.actions);
@@ -65,6 +67,33 @@ test('rendered native error and superseded turn fail instead of adopting another
     for(const options of [{newError:true},{superseded:true}]){
         const f=actionsFixture(options);await assert.rejects(workbenchAction({action:'workbenchRead',tool:'search',fields:{}},f.actions),/failed|superseded/);
     }
+});
+
+test('actual native refusal frame is retained before the rendered Workbench error propagates',async()=>{
+    const error={code:'combined_reply_budget',query_replay_safe:false,retryable:false};
+    const nativeFailure={content:[{type:'text',text:JSON.stringify({error})}],structuredContent:{error},isError:true};
+    const f=actionsFixture({newError:true,nativeFailure});
+    await assert.rejects(workbenchAction({action:'workbenchRead',tool:'capabilities',fields:{}},f.actions),/Actual Workbench read failed: native refused/);
+    assert.equal(f.records.length,1,'A failing Workbench turn must retain its original rendered native frame');
+    assert.deepEqual(f.records[0].value,{count:1,input:'capabilities form',envelope:nativeFailure,error:'native refused'});
+    assert.equal(f.mutations.filter(source=>source.includes('Run form')).length,1,'A refusal never permits replay');
+    assert.equal(f.observations,1);
+});
+
+test('actual editor UI wires Workbench refusal capture to its existing bounded diagnostic owner',()=>{
+    const fs=require('node:fs'),path=require('node:path');
+    const source=fs.readFileSync(path.join(__dirname,'../editor-ui.cjs'),'utf8');
+    const begin=source.indexOf("if(['workbenchRead','workbenchCopy'].includes(request.action))"),end=source.indexOf("if(request.action==='providerStart'",begin);
+    assert.ok(begin>=0&&end>begin,'Actual Workbench action adapter must remain discoverable');
+    const adapter=source.slice(begin,end);
+    assert.match(adapter,/const diagnostic=activeReadDiagnostic\?\?beginUiDiagnostic\(readDiagnostics,/);
+    assert.match(adapter,/record:observation=>retainUiDiagnostic\(diagnostic\.native,observation\)/);
+    const samples=[];
+    retainUiDiagnostic(samples,{error:'native refused',envelope:{raw:'x'.repeat(65536)}});
+    assert.equal(samples[0].value.truncated,true,'Oversized frames retain the existing explicit truncation qualification');
+    assert.equal(samples[0].value.observation_unavailable,'DOM snapshot exceeded64KiB');
+    for(let index=0;index<6;index++)retainUiDiagnostic(samples,{error:'native refused',envelope:{index}});
+    assert.equal(samples.length,4,'Failure capture retains the existing bounded snapshot count');
 });
 test('complete copies use session controls and selected copies use exactly one selected card',async()=>{
     for(const selected of [false,true])for(const format of ['json','markdown']){

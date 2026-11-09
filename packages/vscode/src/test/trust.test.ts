@@ -719,9 +719,9 @@ test('Codex setup consolidates an existing legacy connection through guarded edi
 test('lost indexing acknowledgment preserves the exact intent and read-only reconnect never replays it',async context=>{
     const f=await serviceTestHost(context);
     try{f.state.ackLost=true;await assert.rejects(f.commands.get('airk.index')!(),/service_request_outcome_unknown/);
-        const keys=[...f.values.keys()].filter(key=>key.startsWith('airk.service.intent.'));assert.equal(keys.length,1);
-        const saved=structuredClone(f.values.get(keys[0]));f.state.ackLost=false;
+        const keys=f.intentStorage.keys().filter((key:string)=>key.startsWith('airk.service.intent.'));assert.equal(keys.length,1);
+        const saved=structuredClone(f.intentStorage.get(keys[0]));f.state.ackLost=false;
         await f.api.getServerDefinitions();await f.commands.get('airk.serviceConnect')!();
-        assert.equal(f.writes.filter(value=>value.enqueue).length,1);assert.deepEqual(f.values.get(keys[0]),saved);
+        assert.equal(f.writes.filter(value=>value.enqueue).length,1);assert.deepEqual(f.intentStorage.get(keys[0]),saved);
     }finally{await f.close();}
 });

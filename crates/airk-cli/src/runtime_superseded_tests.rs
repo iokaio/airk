@@ -2,6 +2,57 @@
 //! Native approved-file transaction fixtures; these inert payloads never run.
 use super::*;
 
+#[test]
+fn clean_break_runtime_proof_handoff_keeps_original_roster_after_payload_deletion() -> Result<()> {
+    let (_owner, root, active) = super::super::super::tests::unselected_fixture()?;
+    let old = add(&root, "previous", true)?;
+    // Real historical startup materializes these owned role images. A missing
+    // image cannot acquire a Windows held-image exclusion from this fixture.
+    let (old_main, _) = verify_runtime(&root, &old)?;
+    crate::process_roles::install(&old_main)?;
+    replace_json(
+        &root,
+        "selected.json",
+        &Selection {
+            schema: 1,
+            active: active.clone(),
+            previous: Some(old.clone()),
+        },
+    )?;
+    let _lock = install_lock(&root)?;
+    let captured = root.join("captured-runtime-retirement.json");
+    let first = retire_recording(&root, &active, &mut |receipt| {
+        fs::write(&captured, serde_json::to_vec(receipt)?)?;
+        bail!("injected death after durable proof and before native intent removal")
+    });
+    let error = first.expect_err("injected proof handoff must interrupt retirement");
+    assert!(
+        format!("{error:#}").contains("injected death after durable proof"),
+        "retirement failed before the injected handoff: {error:#}"
+    );
+    assert!(pending(&root)?);
+    assert!(!root.join("runtimes").join(&old).exists());
+    let original: serde_json::Value = serde_json::from_slice(&fs::read(&captured)?)?;
+    assert_eq!(original["retired_runtimes"], serde_json::json!([old]));
+    assert!(
+        !original["processes"]["image_roster"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    retire_recording(&root, &active, &mut |receipt| {
+        assert_eq!(receipt["retired_runtimes"], original["retired_runtimes"]);
+        assert_eq!(
+            receipt["processes"]["image_roster"],
+            original["processes"]["image_roster"]
+        );
+        assert_eq!(fs::read(&captured)?, serde_json::to_vec(&original)?);
+        Ok(())
+    })?;
+    assert!(!pending(&root)?);
+    Ok(())
+}
+
 fn add(root: &Path, label: &str, historical: bool) -> Result<String> {
     let source = root.join(format!("fixture-{label}"));
     local_ipc::prepare_root(&source)?;

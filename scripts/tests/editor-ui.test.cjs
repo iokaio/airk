@@ -4,6 +4,144 @@ const {formFillExpressions,checkboxFillExpressions,appliedReviewMatches,observeR
 const label='New index storage folder';
 const {clickDispatchExpression,retryUnclicked}=require('../editor-ui.cjs');
 const {clearedSearchScope}=require('../editor-ui.cjs');
+const {editorUi}=require('../editor-ui.cjs');
+
+function cdpHandshakeFixture(t,{recheck='gone',enableFailure=false,largeCause=false,clock}={}){
+    const target={id:'owned-fixture-target',type:'iframe',url:'vscode-webview://fixture/?extensionId=iokaio.airk',
+        webSocketDebuggerUrl:'ws://127.0.0.1:32145/devtools/page/owned-fixture-target'};
+    const nested=Object.assign(new Error(largeCause?'handshake '+ 'x'.repeat(10000):'handshake failed'),
+        {cause:Object.assign(new Error('socket reset'),{code:'ECONNRESET'})});
+    const sockets=[],fetches=[];
+    class Socket extends EventTarget{
+        static CONNECTING=0;static OPEN=1;static CLOSING=2;static CLOSED=3;
+        constructor(url){
+            super();this.url=url;this.readyState=Socket.CONNECTING;this.closeCalls=0;sockets.push(this);
+            queueMicrotask(()=>{
+                if(enableFailure){this.readyState=Socket.OPEN;this.dispatchEvent(new Event('open'));return;}
+                const event=new Event('error');
+                Object.defineProperties(event,{error:{value:nested},[Symbol.toStringTag]:{value:'ErrorEvent'}});
+                this.dispatchEvent(event);
+            });
+        }
+        close(){this.closeCalls++;this.readyState=Socket.CLOSED;this.dispatchEvent(new Event('close'));}
+        send(text){
+            const request=JSON.parse(text);
+            assert.equal(request.method,'Runtime.enable','No UI evaluation may follow refused CDP initialization');
+            queueMicrotask(()=>{const event=new Event('message');Object.defineProperty(event,'data',{
+                value:JSON.stringify({id:request.id,error:{code:-32000,message:'Runtime.enable refused'}})});this.dispatchEvent(event);});
+        }
+    }
+    const original=Object.getOwnPropertyDescriptor(globalThis,'WebSocket');
+    Object.defineProperty(globalThis,'WebSocket',{configurable:true,writable:true,value:Socket});
+    t.after(()=>Object.defineProperty(globalThis,'WebSocket',original));
+    t.mock.method(globalThis,'fetch',async(url,options)=>{
+        fetches.push({url,signal:options.signal});assert.equal(url,'http://127.0.0.1:32145/json/list');
+        if(fetches.length===1){if(clock)clock.value+=120001;return {json:async()=>[target]};}
+        if(recheck==='failed')throw Object.assign(new Error('fresh listing unavailable'),{cause:{code:'ECONNRESET'}});
+        return {ok:recheck!=='http_error',status:recheck==='http_error'?503:200,
+            json:async()=>recheck==='malformed'?{targets:[]}:recheck==='live'?[target]:[]};
+    });
+    return {target,nested,sockets,fetches};
+}
+
+test('public document discovery treats only a freshly confirmed vanished handshake target as unavailable',async t=>{
+    const f=cdpHandshakeFixture(t),ui=await editorUi(32145,Date.now()+30000);t.after(()=>ui.close());
+    assert.equal(await ui.document('true','true'),undefined);
+    assert.equal(f.fetches.length,2,'Target absence needs a fresh read-only observation');
+    assert.equal(f.sockets.length,1);assert.equal(f.sockets[0].closeCalls,1);
+    assert.equal(ui.diagnostics().reads,2,'The confirming list consumes the existing observation budget');
+    assert.equal(ui.diagnostics().dispatches,0);assert.deepEqual(ui.dispatchReceipts(),[]);
+});
+
+test('public document discovery keeps a live-target handshake failure fatal with its nested ErrorEvent cause',async t=>{
+    const f=cdpHandshakeFixture(t,{recheck:'live'}),ui=await editorUi(32145,Date.now()+30000);t.after(()=>ui.close());
+    const error=await ui.document('true','true').then(()=>assert.fail('A still-listed target must not be treated as absent'),error=>error);
+    assert.ok(error instanceof Error,'The DOM ErrorEvent must become an informative Error');
+    assert.match(error.message,/handshake failed/);assert.match(error.message,/ECONNRESET/);
+    assert.equal(error.cause,f.nested,'Original nested failure remains available for private diagnostics');
+    assert.equal(f.fetches.length,2);assert.equal(f.sockets.length,1);assert.equal(f.sockets[0].closeCalls,1);
+    assert.equal(ui.diagnostics().dispatches,0);
+});
+
+for(const recheck of ['failed','malformed'])test(`public document discovery never infers target absence from a ${recheck} fresh listing`,async t=>{
+    const f=cdpHandshakeFixture(t,{recheck}),ui=await editorUi(32145,Date.now()+30000);t.after(()=>ui.close());
+    await assert.rejects(ui.document('true','true'));
+    assert.equal(f.fetches.length,2);assert.equal(f.sockets.length,1);assert.equal(f.sockets[0].closeCalls,1);
+    assert.equal(ui.diagnostics().dispatches,0);
+});
+
+test('public document discovery bounds unwrapped handshake diagnostics and closes its failed socket',async t=>{
+    const f=cdpHandshakeFixture(t,{recheck:'live',largeCause:true}),ui=await editorUi(32145,Date.now()+30000);t.after(()=>ui.close());
+    const error=await ui.document('true','true').then(()=>assert.fail('Handshake failure must stay fatal'),error=>error);
+    assert.ok(error instanceof Error);assert.ok(error.message.length<=4096);
+    assert.equal(error.cause,f.nested);assert.equal(f.sockets[0].closeCalls,1);
+    assert.equal(ui.diagnostics().dispatches,0);
+});
+
+test('public document discovery closes an owned socket when Runtime.enable rejects after opening',async t=>{
+    const f=cdpHandshakeFixture(t,{recheck:'live',enableFailure:true}),ui=await editorUi(32145,Date.now()+30000);t.after(()=>ui.close());
+    await assert.rejects(ui.document('true','true'),/Runtime.enable refused/);
+    assert.equal(f.sockets.length,1);assert.equal(f.sockets[0].closeCalls,1);
+    assert.equal(ui.diagnostics().dispatches,0);
+});
+
+test('public initial CDP connection cannot outlive its existing action deadline',async t=>{
+    const clock={value:1000};t.mock.method(Date,'now',()=>clock.value);
+    const f=cdpHandshakeFixture(t,{clock}),ui=await editorUi(32145,clock.value+600000);t.after(()=>ui.close());
+    await assert.rejects(ui.indexing({action:'restricted',sequence:1}),/deadline exhausted/);
+    assert.equal(f.sockets.length,0,'An expired action must fail before creating a WebSocket');
+    assert.equal(ui.diagnostics().dispatches,0);
+});
+
+test('initial CDP target discovery refuses a WebSocket outside its owned local endpoint before connecting',async t=>{
+    const f=cdpHandshakeFixture(t),ui=await editorUi(32145,Date.now()+30000);t.after(()=>ui.close());
+    f.target.webSocketDebuggerUrl='ws://example.com:32145/devtools/page/owned-fixture-target';
+    await assert.rejects(ui.document('true','true'),/owned local discovery/);
+    assert.equal(f.fetches.length,1);assert.equal(f.sockets.length,0);assert.equal(ui.diagnostics().dispatches,0);
+});
+
+test('failed HTTP target recheck cannot prove disappearance and retains bounded original and recheck diagnostics',async t=>{
+    const f=cdpHandshakeFixture(t,{recheck:'http_error'}),ui=await editorUi(32145,Date.now()+30000);t.after(()=>ui.close());
+    await assert.rejects(ui.document('true','true'),/handshake failed/);
+    assert.equal(f.fetches.length,2);assert.equal(f.sockets[0].closeCalls,1);
+    const diagnostic=ui.diagnostics().read_observations[0].connections[0].value;
+    assert.equal(diagnostic.target.id,f.target.id);assert.match(diagnostic.error,/ECONNRESET/);
+    assert.equal(diagnostic.recheck.state,'unconfirmed');assert.match(diagnostic.recheck.error,/HTTP 503/);
+    assert.equal(ui.diagnostics().dispatches,0);
+});
+
+test('cached CDP client observes each current action deadline after the first action expires',async t=>{
+    let clock=1000;t.mock.method(Date,'now',()=>clock);
+    const sockets=[],calls=[],target={id:'cached-target',type:'iframe',url:'vscode-webview://fixture/?extensionId=iokaio.airk',
+        webSocketDebuggerUrl:'ws://127.0.0.1:32145/devtools/page/cached-target'};
+    class Socket extends EventTarget{
+        static OPEN=1;static CLOSED=3;
+        constructor(){super();this.readyState=0;sockets.push(this);queueMicrotask(()=>{this.readyState=1;this.dispatchEvent(new Event('open'));});}
+        close(){this.readyState=3;this.dispatchEvent(new Event('close'));}
+        send(text){
+            const request=JSON.parse(text);calls.push(request);
+            const emit=value=>{const event=new Event('message');Object.defineProperty(event,'data',{value:JSON.stringify(value)});this.dispatchEvent(event);};
+            queueMicrotask(()=>{
+                if(request.method==='Runtime.enable')emit({method:'Runtime.executionContextCreated',params:{context:{id:1}}});
+                const value=request.params?.expression?.includes('writeControls:')?{text:'scoped',writeControls:0}:true;
+                emit({id:request.id,result:request.method==='Runtime.enable'?{}:{result:{value}}});
+            });
+        }
+    }
+    const original=Object.getOwnPropertyDescriptor(globalThis,'WebSocket');
+    Object.defineProperty(globalThis,'WebSocket',{configurable:true,writable:true,value:Socket});
+    t.after(()=>Object.defineProperty(globalThis,'WebSocket',original));
+    t.mock.method(globalThis,'fetch',async()=>({ok:true,json:async()=>[target]}));
+    const ui=await editorUi(32145,clock+600000);t.after(()=>ui.close());
+    for(const sequence of [1,2]){
+        const result=await ui.indexing({action:'usageScoped',sequence});
+        assert.deepEqual(result,{text:'scoped',writeControls:0});
+        clock+=120001;
+    }
+    assert.equal(sockets.length,1,'The second action must reuse its existing live CDP connection');
+    assert.equal(calls.filter(call=>call.method==='Runtime.enable').length,1);
+    assert.equal(ui.diagnostics().dispatches,0,'Both actions remain read-only');
+});
 
 test('cleared scope accepts the canonical active empty choice and rejects retained authority',()=>{
     const value={outcome:{status:'search_scope_cleared'},searchScope:{active:true,selectedIndexIds:[],selectedProjectIds:[]}};

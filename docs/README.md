@@ -1,25 +1,31 @@
 # AIRK documentation
 
-The [1.8.14 working record](releases/release-1.8.14.md) identifies the new
-Windows debug r28 manual-test VSIX and its verified package hashes. Installed
-and final release qualification remain pending.
+**Repair stopped, 9 November 2026:** the [installer handoff](research/installer-stop-2026-11-09.md)
+records the unfinished 1.8.16 checkpoint, retained evidence and remaining
+definition-read cancellation. The package-verified VSIX failed installed acceptance;
+qualification is stopped, and no release or PR is being prepared.
 
-The [fixture compatibility matrix](testing/fixture-compatibility.md) records the
-separate packaging, authority, setup and migration contracts. The authentic
-legacy editor producer and installed acceptance remain pending. The authentic
-1.5.12 schema-8 metadata bridge passed scoped regression; reviewed 1.8.12 catalog
-migration remains a separate case.
+The [1.8.16 working record](releases/release-1.8.16.md) tracks the authorized
+clean-break baseline: every pre-1.8.16 installation rebuilds indexes in fresh
+AIRK state, preserving only reviewed source selections and supported preferences.
+Original sources remain untouched; old index IDs, grants, credentials and pending
+operations are discarded through the ownership-checked reset lifecycle. The
+1.8.16+ line uses an explicit persisted state contract for supported upgrades,
+with a future public 1.9.0 release after qualification. Implementation and
+installed acceptance of this revised policy remain incomplete. The earlier
+reconciliation adapter was not installed-qualified and is superseded.
 
-The [automatic upgrade rebuild option](upgrade-rebuild-fallback.md) records the
-user-approved earlier upgrade choice, followed by native rebuilding and progress
-notifications from eligible raw managed saved sources. Previous state and
-supported settings are preserved; unsupported configurations are refused before
-state changes. Modern catalog/grant migration and automatic client re-enrollment
-are outside this initial path. Native/editor source is implemented; installed
-and frozen qualification are pending.
-Explicitly preserved rebuild predecessors are reported recovery evidence; later
-ordinary upgrades retire unprotected intermediates. Missing historical job
-receipts report unavailable observation, separately from current native readiness.
+Historical r26/r29 packaging, checkpoint-overflow corrections and pre-baseline
+migration experiments remain in the [1.8.14 record](releases/release-1.8.14.md)
+and [fixture matrix](testing/fixture-compatibility.md). The authentic two-index
+1.8.11 to 1.8.16 native reset has passed; installed-editor and broader release
+qualification remain separate.
+
+The [clean-break and rebuild contract](upgrade-rebuild-fallback.md) replaces the
+optional fallback and historical index migration requirements. Native shutdown,
+fresh-state admission, interrupted-reset recovery, client reconnection and exact
+owned-artifact cleanup remain mandatory. Dated predecessor migration experiments
+retain their results; they do not define the current pre-baseline upgrade path.
 
 [Standalone CLI onboarding](agent-integration.md#standalone-onboarding-without-vs-code)
 is implemented on this branch. Scoped CLI tests pass; actual client launch and
@@ -30,6 +36,24 @@ environment/trust and the separate VS Code credential resolver.
 Standalone Windows/macOS/Linux installer source installs only the CLI/native
 server, with no VSIX or Code actions. Signing and published-artifact verification
 remain pending; the extension is a separate optional distribution.
+The [standalone Windows installer](../installers/windows/README.md) adds only
+its literal verified runtime directory to user `PATH` after native setup succeeds.
+Raw entries, registry type and manual paths are preserved; receipt-owned removal
+follows confirmed successful native uninstall. This is separate from VSIX
+terminal integration. Its 13 static/mocked checks do not execute Inno or registry
+round-trips; ISCC was unavailable for this local check; real compilation/signing remain unqualified.
+
+The [1.8.16 record](releases/release-1.8.16.md) retains passing native reset,
+Windows extension and Mac component scopes separately from failed installed
+editor runs. R38 mocked/native-enabled extension suites passed, but its UI run
+failed on a sequence-16 response budget. R39's corrected budget and completeness
+checks passed scoped regressions and actual one-/two-index native, CLI and
+HTTP-MCP parity. The fresh R39 runtime and authentic two-index reset passed,
+but all three R39 installed-editor attempts failed. The latest run stopped
+on a definition-read cancellation before enrollment. No R39 Neo batch ran;
+no public-release acceptance is implied.
+Reopen terminals for installed CLI PATH changes; activate an old loaded
+extension once with **Restart Extensions**.
 
 The authorized follow-up to the completion plan's two-failure stop corrected the
 shared native model-preparation fixture. Four cheap regressions, scoped Clippy,
@@ -38,11 +62,11 @@ the unchanged original r26 debug runtime. Installed/platform qualification is
 incomplete. The [8 November stop and repair note](research/one-airk-completion-stop-2026-11-08.md)
 retains both original failures, the correction and unrun gates.
 
-**1.8.14 implementation and qualification are in progress; unpublished.** The source versions and generated catalog identify the [One AIRK implementation](one-airk.md). The single-executable HTTPS runtime is implemented; remaining migration corrections and final native and installed-platform acceptance are tracked in the [1.8.14 working record](releases/release-1.8.14.md). Earlier binaries keep their original versions and hashes.
+**1.8.16 source builds on the unpublished 1.8.14 implementation; qualification is stopped and incomplete.** The source versions and generated catalog identify the [One AIRK implementation](one-airk.md). The single-executable HTTPS runtime is implemented; current clean-break and installed acceptance are tracked in the [1.8.16 working record](releases/release-1.8.16.md). The 1.8.14 record retains historical implementation evidence. Earlier binaries keep their original versions and hashes.
 
-[One AIRK implementation plan](one-airk.md) targets **1.8.14** with a single native
+[One AIRK implementation plan](one-airk.md) targets the **1.8.16+** development line with a single native
 executable, embedded MiniLM, authenticated loopback MCP, automatic alternate-port
-selection, checkpointed upgrades and migration of older launcher processes. It
+selection, compatible-line checkpointed upgrades and a clean break from older installations. It
 defines local certificate trust, macOS bootstrap/management, a documented HTTPS
 API for local tools and retained CLI/Workbench/MCP parity. The
 [implementation ledger](research/one-airk-implementation.md) records source
@@ -111,7 +135,7 @@ reasons, empty-result limits and inert next reads across CLI/MCP/Workbench.
 
 **Inherited 1.8.7 behavior:** CLI and Workbench reads use the MCP handlers and retain their full results, including configured `query_concurrency` in status/diagnostics. Cold status preserves explicit setup-timeout receipts across later polls. This release consolidates all unpublished 1.8.0-1.8.6 storage, startup, retrieval, concurrency and Workbench improvements. See the [consolidated release notes](releases/release-1.8.7.md) for current behavior and dated validation.
 
-Unreleased developer workflow: [native build reuse and Darwin failure diagnostics](ci-and-builds.md#native-build-reuse-and-darwin-failure-diagnostics) describes separate build/validation jobs, the complete-attempt release rule and focused repetitions. The historical Intel failure was corrected by the `0dbd2f0...` source and followed by green ARM/Intel main runs; those dated results do not qualify the current working tree. Current CI qualification remains pending. Source versions are synchronized at 1.8.14 for implementation; no new native binary or CI qualification is implied.
+Unreleased developer workflow: [native build reuse and Darwin failure diagnostics](ci-and-builds.md#native-build-reuse-and-darwin-failure-diagnostics) describes separate build/validation jobs, the complete-attempt release rule and focused repetitions. The historical Intel failure was corrected by the `0dbd2f0...` source and followed by green ARM/Intel main runs; those dated results do not qualify the current working tree. Current CI qualification remains pending. Source versions are synchronized at 1.8.16 for implementation; no new native binary or CI qualification is implied.
 
 Developer references: [MCP tools](mcp-developer-guide.md) covers all 29 public tools with inputs, examples, evidence limits and implementation/test links. [CLI commands](cli-developer-guide.md) covers each command, its purpose, native ownership and guarded workflows. CLI `tools list/help/call/shell` and public MCP share the 29-tool unified catalog; the 19 native evidence/help/plan/scope operations are an internal subset. Separate administrative and offline Explorer commands retain their own authority and workflow.
 
@@ -171,9 +195,9 @@ Installation and upgrades now display a VS Code progress notification with the c
 
 Successful runtime activation finishes quietly. Once its loader is active, AIRK handles later detected extension replacements automatically; external coding-agent sessions may need their own restart to load the new tool connection. Connection or cleanup issues produce a specific warning and details instead of a clean success message.
 
-The 1.8.14 working installer and **Install or Repair CLI** migrate recognized owned workspace connections for the supported Codex (`.codex/config.toml`), Claude Code (`.mcp.json`) and VS Code/Copilot Chat (`.vscode/mcp.json`) adapters to the authenticated native HTTPS endpoint. After complete known configuration migration, native ownership checks retire old launcher images, their processes and eligible approved superseded runtime executables. Both legacy-to-modern and later modern-to-modern updates preserve the selected runtime, sources, indexes and settings. New connections use HTTPS directly. Other servers, disabled settings and tool policies remain intact; missing entries do not enable an agent. Unsupported clients, unproven/custom declarations, ambiguous scopes, unsaved edits, unsafe files or blocked cleanup leave installation explicitly incomplete, rather than reporting clean success. Actual installed-client/platform qualification remains separate; see [agent setup](agent-integration.md).
+**Historical pre-baseline behavior:** The 1.8.14 working installer and **Install or Repair CLI** migrate recognized owned workspace connections for the supported Codex (`.codex/config.toml`), Claude Code (`.mcp.json`) and VS Code/Copilot Chat (`.vscode/mcp.json`) adapters to the authenticated native HTTPS endpoint. After complete known configuration migration, native ownership checks retire old launcher images, their processes and eligible approved superseded runtime executables. That historical migration preserved selected runtime, sources, indexes and settings. The current pre-1.8.16 boundary instead rebuilds all saved indexes in fresh state under the clean-break contract. New connections use HTTPS directly. Other servers, disabled settings and tool policies remain intact; missing entries do not enable an agent. Unsupported clients, unproven/custom declarations, ambiguous scopes, unsaved edits, unsafe files or blocked cleanup leave installation explicitly incomplete, rather than reporting clean success. Actual installed-client/platform qualification remains separate; see [agent setup](agent-integration.md).
 
-The current branch uses **1.8.14 for implementation**; the earlier **1.9.0** research target and release promotion remain separate, carrying forward the 1.5.0 addition of the [AIRK Explorer and Explorer Assistance](releases/release-1.5.0.md); the paragraphs above and below about 1.4.x describe earlier releases. [Routine CI](ci-and-builds.md) runs the full workspace once on Linux, focused native regressions elsewhere, all platform builds/package smoke and a container smoke. Full platform/container suites and installed-runtime lifecycle campaigns are explicit qualification. 1.4.2 scales Balanced admission to one quarter of detected RAM (2–32 GiB), protects capacity for up to four project query workers, and raises Balanced source pacing to 64 MiB/s per job within a 256 MiB/s shared ceiling. Native watching supports 8,192 directories per project and 32,768 shared, with bounded incremental traversal and specific limit diagnostics. Existing manual resource overrides and storage quotas are preserved. These are admission policies, not hard OS memory or disk-I/O limits. Follow the [versioning process](versioning.md) from local candidates through CI and publication. Its checks run on Windows x64; earlier installed-editor and Linux receipts do not qualify this follow-up.
+The current branch uses **1.8.16 for the clean-break baseline**, building on the unpublished 1.8.14 implementation. Public **1.9.0** remains a future release target. The paragraphs above and below about 1.4.x describe earlier releases. [Routine CI](ci-and-builds.md) runs the full workspace once on Linux, focused native regressions elsewhere, all platform builds/package smoke and a container smoke. Full platform/container suites and installed-runtime lifecycle campaigns are explicit qualification. Historical 1.4.2 introduced Balanced admission at one quarter of detected RAM (2–32 GiB), protection for up to four project query workers, and source pacing of 64 MiB/s per job within a 256 MiB/s shared ceiling. Native watching supports 8,192 directories per project and 32,768 shared, with bounded incremental traversal and specific limit diagnostics. These are admission policies, not hard OS memory or disk-I/O limits. Follow the [versioning process](versioning.md) and current working record for qualification and publication evidence.
 
 The [MCP contract](mcp.md) distinguishes raw unavailable diagnostics, bounded publication/readiness observations and typed exact-request retries. Qualification clients preserve these distinctions and exact submitted-query accounting.
 
@@ -181,7 +205,7 @@ The [MCP contract](mcp.md) also covers `help` (native usage topics, native parse
 
 The [MCP contract](mcp.md) documents `diagnostics.runtime`, including running frontend/worker/service versions, process and payload identities, build receipt metadata and explicit missing observations.
 
-Successful CLI installation removes obsolete terminal executables and eligible approved nonselected runtime payloads regardless of version, after activation and complete known-client configuration migration. Locked files report incomplete cleanup; a later trusted activation or **Install or Repair CLI** resumes the exact transaction. The selected runtime, sources, indexes and settings are preserved. See the [console installation contract](service-console.md).
+**Historical compatible-line cleanup:** Successful CLI installation removes obsolete terminal executables and eligible approved nonselected runtime payloads regardless of version, after activation and complete known-client configuration migration. Locked files report incomplete cleanup; a later trusted activation or **Install or Repair CLI** resumes the exact transaction. The selected runtime, sources, indexes and settings are preserved. See the [console installation contract](service-console.md).
 
 Trusted activation can install or reconnect the approved runtime and terminal
 command, then reconcile existing native registrations. It does not register opened
@@ -197,7 +221,7 @@ integration; external terminal applications may need restarting.
 
 The **1.4.4 release** corrects WAL admission and logical database sizing. Earlier 1.4.0/1.4.1/1.4.2 qualification remains historical. Start with the [historical 1.4.4 release record](releases/release-1.4.4.md), [service plan](airkservice-architecture.md), [completion checklist](service-implementation-checklist.md), [project setup](service-project-setup.md) and [client adapters](service-client-adapters.md). That historical record did not qualify native Mac or the complete installed-platform/signing/policy matrix; current P6 evidence is recorded in the implementation ledger.
 
-The 1.3.x/1.2.x release records and former direct-helper/window-scheduler guides are historical references. They do not describe the 1.4 default lifecycle or authorize opening legacy stores through the service. Native and extension source/lockfile versions are synchronized at **1.8.14 for implementation**. Earlier tested builds retain their original identity. Packaging, manual acceptance, later promotion and publication require their own evidence.
+The 1.3.x/1.2.x release records and former direct-helper/window-scheduler guides are historical references. They do not describe the 1.4 default lifecycle or authorize opening legacy stores through the service. Native and extension source/lockfile versions are synchronized at **1.8.16 for the local upgrade correction**. Earlier tested builds retain their original identity. Packaging, manual acceptance, later promotion and publication require their own evidence.
 
 The [local Rust iteration guide](../CONTRIBUTING.md#local-rust-iteration) covers scoped Clippy, persistent targets, platform-specific development incremental settings and timing reports; full qualification remains required.
 

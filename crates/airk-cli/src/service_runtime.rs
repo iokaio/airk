@@ -485,6 +485,7 @@ pub async fn serve(root: &Path) -> Result<()> {
 
 pub async fn serve_with_idle(root: &Path, idle_grace: Option<Duration>) -> Result<()> {
     crate::runtime_install::validate_control_root(root)?;
+    crate::runtime_install::require_baseline_service(root)?;
     local_ipc::prepare_root(root)?;
     let _ownership = Arc::new(airk_store::service::ServiceLease::acquire(root)?);
     crate::http_endpoint::rotation::require_start_allowed(root)?;
@@ -732,16 +733,57 @@ pub async fn request_for_version_and_instance(
 ) -> Result<ControlResponse> {
     request_scoped(root, method, version, Some(expected)).await
 }
+fn prebaseline_metadata_method(method: &ControlMethod) -> Result<bool> {
+    let encoded = serde_json::to_value(method)?;
+    let name = encoded
+        .as_str()
+        .or_else(|| {
+            encoded
+                .as_object()
+                .and_then(|object| object.keys().next().map(String::as_str))
+        })
+        .unwrap_or("");
+    Ok(matches!(
+        name,
+        "health" | "shutdown" | "resources" | "projects" | "inactive_projects" | "service_events"
+    ))
+}
+
 async fn request_scoped(
     root: &Path,
     method: ControlMethod,
     version: &str,
     expected_instance: Option<airk_core::identity::Incarnation>,
 ) -> Result<ControlResponse> {
+    if !prebaseline_metadata_method(&method)? {
+        crate::runtime_install::require_baseline_control(root)?;
+    }
     // registry_busy means either an unaccepted metadata queue entry or a
     // classified read-only contention failure. Retain every request identity;
     // uncertain outcomes and other refusals never enter this retry contract.
     registry_busy_retry(|| request_once(root, method.clone(), version, expected_instance)).await
+}
+
+/// This transport accepts only the opaque installer proof and a fixed read.
+/// Ordinary RequestEpoch, source reads and enrollment retain their baseline gate.
+pub(crate) async fn request_initialized_probe(
+    permit: &crate::runtime_install::InitializedProbe,
+) -> Result<ControlResponse> {
+    let (control, version, instance, namespace) = permit.request_identity()?;
+    let response = registry_busy_retry(|| {
+        request_once(
+            control,
+            ControlMethod::RequestEpoch,
+            version,
+            Some(instance),
+        )
+    })
+    .await?;
+    ensure!(
+        matches!(&response, ControlResponse::RequestEpoch { namespace: observed, .. } if *observed == namespace),
+        "clean-break bootstrap registry differs from initialized namespace"
+    );
+    Ok(response)
 }
 
 async fn registry_busy_retry<F, Fut>(mut request: F) -> Result<ControlResponse>

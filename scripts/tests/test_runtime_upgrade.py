@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Upgrade fixture retention and exact cleanup ordering; no native runtime is launched."""
 import importlib.util
+import ast
 from contextlib import closing
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import tempfile
 import json
 import hashlib
@@ -11,6 +12,8 @@ import time
 import subprocess
 import signal
 import copy
+import re
+import sys
 from types import SimpleNamespace
 from unittest import mock
 import unittest
@@ -20,17 +23,497 @@ UPGRADE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(UPGRADE)
 
 class UpgradeFixtureOwnershipTests(unittest.TestCase):
+    def test_persisted_baseline_resolved_windows_paths_accept_drive_and_unc_aliases(self):
+        class ResolvedPath:
+            def __init__(self, value):
+                self.value = str(value)
+
+            def resolve(self, *, strict):
+                self.assert_strict = strict
+                if not strict:
+                    raise AssertionError("Ownership paths must resolve strictly")
+                if self.value == "missing-location":
+                    raise FileNotFoundError(self.value)
+                return self
+
+            def __fspath__(self):
+                return self.value
+
+            def __eq__(self, other):
+                return isinstance(other, ResolvedPath) and self.value == other.value
+
+        def validate(marker, install, control, host):
+            with mock.patch.object(UPGRADE.sys, "platform", host), mock.patch.object(UPGRADE, "Path", ResolvedPath):
+                return UPGRADE.validate_clean_break_baseline(marker, {"successor_namespace": "a" * 32},
+                    ResolvedPath(control), ResolvedPath(install))
+
+        for install, recorded_install, control, recorded_control in (
+                (r"D:\owned\install", r"\\?\D:\owned\install", r"D:\owned\control", r"\\?\D:\owned\control"),
+                (r"\\server\share\install", r"\\?\UNC\server\share\install", r"\\server\share\control", r"\\?\UNC\server\share\control")):
+            marker = {"schema": 1, "state_contract": "airk-state/1", "baseline_version": "1.8.16",
+                      "namespace": "a" * 32, "install": recorded_install, "control": recorded_control}
+            with self.subTest(install=install):
+                validate(marker, install, control, "win32")
+                for field, wrong in (("namespace", "b" * 32), ("install", r"D:\other\install"),
+                                     ("control", r"D:\other\control"), ("schema", 2),
+                                     ("state_contract", "other/1"), ("baseline_version", "1.8.15")):
+                    with self.subTest(field=field), self.assertRaises(RuntimeError):
+                        validate({**marker, field: wrong}, install, control, "win32")
+                with self.assertRaises(RuntimeError):
+                    validate(marker, install, control, "linux")
+                for field in ("install", "control"):
+                    with self.subTest(missing=field), self.assertRaises(FileNotFoundError):
+                        validate({**marker, field: "missing-location"}, install, control, "win32")
+        posix = {"schema": 1, "state_contract": "airk-state/1", "baseline_version": "1.8.16",
+                 "namespace": "a" * 32, "install": "/owned/Install", "control": "/owned/control"}
+        with self.assertRaises(RuntimeError):
+            validate(posix, "/owned/install", "/owned/control", "linux")
+
+    def test_owned_client_capture_resolved_windows_alias_preserves_exact_image_boundary(self):
+        metadata = SimpleNamespace(st_mode=UPGRADE.stat.S_IFREG, st_nlink=1, st_size=12,
+                                   st_file_attributes=0, st_uid=UPGRADE.os.getuid() if hasattr(UPGRADE.os, "getuid") else None,
+                                   st_dev=1, st_ino=2)
+        for plain, resolved in ((r"D:\owned\airk.exe", r"\\?\D:\owned\airk.exe"),
+                                (r"\\server\share\airk.exe", r"\\?\UNC\server\share\airk.exe")):
+            path = SimpleNamespace(lstat=lambda: metadata, is_symlink=lambda: False,
+                                   resolve=lambda **kwargs: PureWindowsPath(resolved),
+                                   absolute=lambda: PureWindowsPath(plain))
+            with self.subTest(path=plain), mock.patch.object(UPGRADE.sys, "platform", "win32"), mock.patch.object(UPGRADE, "digest", return_value="a" * 64):
+                result = UPGRADE.capture_client_image(path)
+                self.assertEqual(result["path"], str(PureWindowsPath(resolved)))
+                with mock.patch.object(path, "absolute", return_value=PureWindowsPath(r"D:\other\airk.exe")), self.assertRaises(RuntimeError):
+                    UPGRADE.capture_client_image(path)
+                with mock.patch.object(path, "is_symlink", return_value=True), self.assertRaises(RuntimeError):
+                    UPGRADE.capture_client_image(path)
+
+    def test_successor_control_reuse_checks_captured_windows_paths_without_resolving_retired_root(self):
+        tree = ast.parse(Path(UPGRADE.__file__).read_text(encoding="utf-8"))
+        message = "Clean break reused the original control root or namespace"
+        checks = [node for node in ast.walk(tree) if isinstance(node, ast.If)
+                  and any(isinstance(child, ast.Raise) and isinstance(child.exc, ast.Call)
+                          and any(isinstance(arg, ast.Constant) and arg.value == message for arg in child.exc.args)
+                          for child in node.body)]
+        self.assertEqual(len(checks), 1)
+        validator = compile(ast.fix_missing_locations(ast.Module(body=[checks[0]], type_ignores=[])), "<actual successor control guard>", "exec")
+        # Pure paths have no resolve method: the captured old root has already
+        # been retired, so checking its native canonical spelling must not stat it.
+        for old, current in ((r"D:\owned\control", r"\\?\D:\owned\control"),
+                             (r"\\server\share\control", r"\\?\UNC\server\share\control")):
+            environment = {**UPGRADE.__dict__, "old_control": PureWindowsPath(old),
+                           "control": PureWindowsPath(current), "old_namespace": "a" * 32,
+                           "rebuild": {"successor_namespace": "b" * 32}}
+            with self.subTest(old=old), mock.patch.object(UPGRADE.sys, "platform", "win32"):
+                with self.assertRaises(RuntimeError):
+                    exec(validator, environment)
+                environment["control"] = PureWindowsPath(r"D:\new\control")
+                exec(validator, environment)
+                environment["rebuild"]["successor_namespace"] = "a" * 32
+                with self.assertRaises(RuntimeError):
+                    exec(validator, environment)
+
+    def test_clean_break_boundary_routes_every_prior_version_and_keeps_supported_line(self):
+        for previous in ("0.1.0", "1.5.12", "1.8.11", "1.8.14", "1.8.15"):
+            for candidate in ("1.8.16", "1.8.17", "1.9.0"):
+                self.assertTrue(UPGRADE.clean_break_required(previous, candidate))
+        for previous, candidate in (("1.8.16", "1.8.17"), ("1.8.17", "1.9.0"), ("1.8.11", "1.8.15")):
+            self.assertFalse(UPGRADE.clean_break_required(previous, candidate))
+        for invalid in ("1.8", "1.8.16-beta", "01.8.16", None):
+            with self.subTest(version=invalid), self.assertRaises(RuntimeError):
+                UPGRADE.clean_break_required(invalid, "1.8.16")
+
+    def clean_break_observation(self):
+        originals, rows = [], []
+        for position in range(2):
+            original = {"binding": str(position+1)*64, "root": f"source{position}",
+                "data_root": f"old-data{position}", "collection": f"collection{position}"}
+            replacement = {**original, "binding": str(position+3)*64, "data_root": f"new-data{position}"}
+            old_job = {"id": str(position+5)*64, "outcome": {"state": "succeeded", "revision": "airk-r1:"+"a"*32+":1:"+"e"*64}}
+            job = {"id": str(position+7)*64, "project": replacement["binding"], "kind": "index", "state": "succeeded",
+                "attempts": 1, "outcome": {"state": "succeeded", "revision": "airk-r1:"+"b"*32+":1:"+"f"*64}}
+            originals.append({"registration": original, "paused": position == 1, "watch": position == 1,
+                "sources": {}, "indexed_job": old_job})
+            rows.append({"original": original, "replacement": replacement, "sources": {}, "original_paused": position == 1,
+                "paused": position == 1, "watching": position == 1, "job": job, "readiness": "ready", "failure": None})
+        rebuild = {"schema": 1, "mode": "clean_break", "candidate": "c"*64, "predecessor": "d"*64,
+            "provenance": "native_rebuild_from_saved_configuration",
+            "original_namespace": "a"*32, "successor_namespace": "b"*32, "index_scope": None,
+            "failure": None, "stage": "ready", "indexes": rows, "indexes_complete": True, "expected_indexes": 2,
+            "cleanup": {"complete": True, "state": "complete", "failure": None}}
+        return originals, {"rebuild": rebuild, "rebuild_error": None}
+
+    def test_clean_break_requires_all_fresh_indexes_and_preserves_each_supported_preference(self):
+        originals, diagnosis = self.clean_break_observation()
+        before = copy.deepcopy(originals)
+        jobs = {item["indexed_job"]["id"] for item in originals}
+        validate = lambda value: UPGRADE.validate_clean_break_rebuild(value, originals, "a"*32, jobs, "c"*64, "d"*64)
+        observed = validate(diagnosis)
+        self.assertEqual(len(observed["indexes"]), 2)
+        self.assertFalse(observed["indexes"][0]["paused"])
+        self.assertTrue(observed["indexes"][1]["paused"])
+        self.assertEqual(originals, before)
+        for fault in ("missing", "duplicate", "extra", "old_binding", "same_storage", "changed_root", "old_job", "old_namespace",
+                      "changed_settings", "changed_pause", "subset", "failed", "no_publication", "old_publication", "no_cleanup", "blocked_cleanup", "wrong_mode"):
+            altered = copy.deepcopy(diagnosis)
+            rebuild = altered["rebuild"]
+            row = rebuild["indexes"][1]
+            if fault == "missing": rebuild["indexes"].pop()
+            elif fault == "duplicate": rebuild["indexes"][1] = rebuild["indexes"][0]
+            elif fault == "extra": rebuild["indexes"].append(copy.deepcopy(row))
+            elif fault == "old_binding": row["replacement"]["binding"] = row["original"]["binding"]
+            elif fault == "same_storage": row["replacement"]["data_root"] = row["original"]["data_root"]
+            elif fault == "changed_root": row["replacement"]["root"] = "other-source"
+            elif fault == "old_job": row["job"]["id"] = originals[1]["indexed_job"]["id"]
+            elif fault == "old_namespace": rebuild["successor_namespace"] = rebuild["original_namespace"]
+            elif fault == "changed_settings": row["watching"] = False
+            elif fault == "changed_pause": row["paused"] = False
+            elif fault == "subset": rebuild["index_scope"] = originals[0]["registration"]["binding"]
+            elif fault == "failed": rebuild["stage"] = "failed"
+            elif fault == "no_publication": row["job"]["outcome"]["revision"] = None
+            elif fault == "old_publication": row["job"]["outcome"]["revision"] = originals[1]["indexed_job"]["outcome"]["revision"]
+            elif fault == "no_cleanup": rebuild["cleanup"] = None
+            elif fault == "blocked_cleanup": rebuild["cleanup"] = {"complete": False, "state": "blocked", "failure": {"code": "cleanup_blocked"}}
+            else: rebuild["mode"] = "rebuild"
+            with self.subTest(fault=fault), self.assertRaises(RuntimeError):
+                validate(altered)
+        pending = copy.deepcopy(diagnosis)
+        pending["rebuild"].update(stage="preparing", successor_namespace=None,
+            cleanup={"complete": False, "state": "waiting_for_indexes", "failure": None})
+        for row in pending["rebuild"]["indexes"]:
+            row.update(replacement=None, job=None, readiness="pending")
+        self.assertIsNone(validate(pending))
+
+    def test_clean_break_rejects_reused_storage_hidden_by_windows_path_aliases(self):
+        for original_root, replacement_root in ((r"D:\owned\data", r"\\?\D:\owned\data"),
+                                                 (r"\\server\share\data", r"\\?\UNC\server\share\data")):
+            originals, diagnosis = self.clean_break_observation()
+            originals[0]["registration"]["data_root"] = original_root
+            diagnosis["rebuild"]["indexes"][0]["replacement"]["data_root"] = replacement_root
+            with self.subTest(root=original_root), mock.patch.object(UPGRADE.sys, "platform", "win32"):
+                with self.assertRaises(RuntimeError):
+                    UPGRADE.validate_clean_break_rebuild(diagnosis, originals, "a" * 32,
+                        {item["indexed_job"]["id"] for item in originals}, "c" * 64, "d" * 64)
+
+    def test_clean_break_waits_for_complete_native_roster_without_accepting_a_partial_result(self):
+        originals, diagnosis = self.clean_break_observation()
+        pending = copy.deepcopy(diagnosis)
+        pending["rebuild"].update(stage="accepted", successor_namespace=None, indexes=[], indexes_complete=False,
+            cleanup={"complete": False, "state": "waiting_for_indexes", "failure": None})
+        validate = lambda value: UPGRADE.validate_clean_break_rebuild(value, originals, "a"*32, set(), "c"*64, "d"*64)
+        self.assertIsNone(validate(pending), "accepted reset is not a complete empty-index success")
+        for fault in ("missing_qualifier", "wrong_count", "partial_roster", "ready_partial"):
+            changed = copy.deepcopy(pending)
+            if fault == "missing_qualifier": changed["rebuild"].pop("indexes_complete")
+            elif fault == "wrong_count": changed["rebuild"]["expected_indexes"] = 1
+            elif fault == "partial_roster": changed["rebuild"]["indexes"] = diagnosis["rebuild"]["indexes"][:1]
+            else: changed["rebuild"]["stage"] = "ready"
+            with self.subTest(fault=fault), self.assertRaises(RuntimeError):
+                validate(changed)
+
+    def test_clean_break_ready_stage_waits_for_jobs_policy_restore_and_cleanup_without_hiding_false_authority(self):
+        originals, ready = self.clean_break_observation()
+        old_jobs = {item["indexed_job"]["id"] for item in originals}
+        validate = lambda value: UPGRADE.validate_clean_break_rebuild(value, originals, "a"*32, old_jobs, "c"*64, "d"*64)
+        for state in ("pending", "running", "succeeded"):
+            waiting = copy.deepcopy(ready)
+            waiting["rebuild"]["cleanup"] = {"complete": False, "state": "waiting_for_indexes", "failure": None, "observation": None}
+            waiting["rebuild"]["indexes"][1]["paused"] = False
+            for row in waiting["rebuild"]["indexes"]:
+                row["job"]["state"] = state
+                if state != "succeeded":
+                    row["job"]["outcome"] = None
+                    row["readiness"] = "pending"
+            with self.subTest(state=state):
+                self.assertIsNone(validate(waiting), "native Ready is not cleanup or restored-policy completion")
+            for fault in ("wrong_root", "old_job", "old_namespace", "wrong_provenance", "failed_job", "blocked_cleanup"):
+                changed = copy.deepcopy(waiting)
+                row = changed["rebuild"]["indexes"][0]
+                if fault == "wrong_root": row["replacement"]["root"] = "unreviewed-source"
+                elif fault == "old_job": row["job"]["id"] = next(iter(old_jobs))
+                elif fault == "old_namespace": changed["rebuild"]["successor_namespace"] = "a"*32
+                elif fault == "wrong_provenance": changed["rebuild"]["provenance"] = "untrusted_source_substitution"
+                elif fault == "failed_job": row["job"].update(state="failed", outcome={"state": "failed", "code": "source_unavailable"})
+                else: changed["rebuild"]["cleanup"] = {"complete": False, "state": "blocked", "failure": {"code": "ownership_blocked"}}
+                with self.subTest(state=state, fault=fault), self.assertRaises(RuntimeError):
+                    validate(changed)
+        for fault in ("pending_job", "missing_publication", "unrestored_pause"):
+            completed = copy.deepcopy(ready)
+            row = completed["rebuild"]["indexes"][1]
+            if fault == "pending_job": row["job"].update(state="pending", outcome=None)
+            elif fault == "missing_publication": row["job"]["outcome"]["revision"] = None
+            else: row["paused"] = False
+            with self.subTest(completed_fault=fault), self.assertRaises(RuntimeError):
+                validate(completed)
+
+    def test_clean_break_catalog_pages_keep_complete_native_values_and_pin_revision(self):
+        first = {"status": "catalog_page", "future": {"complete": True}, "page": {"namespace": "a"*32, "revision": 3,
+            "items": [{"kind": "index", "value": {"id": "idx_"+"1"*32}}],
+            "continuation": {"kind": "indexes", "revision": 3, "after": "idx_"+"1"*32,
+                "index_id": None, "project_id": None}}}
+        second = {"status": "catalog_page", "page": {"namespace": "a"*32, "revision": 3,
+            "items": [{"kind": "index", "value": {"id": "idx_"+"2"*32}}], "continuation": None}}
+        rpc = mock.Mock(side_effect=[first, second])
+        rows, pages = UPGRADE.catalog_page_items(rpc, "indexes")
+        self.assertEqual(pages, [first, second])
+        self.assertEqual(len(rows), 2)
+        request = rpc.call_args_list[1].args[0]["catalog_page"]["request"]
+        self.assertEqual(request["after"], first["page"]["continuation"])
+        self.assertEqual(request["expected_catalog_revision"], 3)
+        for field, value in (("namespace", "b"*32), ("revision", 4)):
+            changed = copy.deepcopy(second); changed["page"][field] = value
+            with self.subTest(field=field), self.assertRaises(RuntimeError):
+                UPGRADE.catalog_page_items(mock.Mock(side_effect=[first, changed]), "indexes")
+
+    def test_clean_break_consumes_retained_cleanup_proof_without_replaying_any_native_operation(self):
+        originals, diagnosis = self.clean_break_observation()
+        rebuild = diagnosis["rebuild"]
+        process = lambda scope: {"scope": scope, "remaining": 0, "observations": [], "image_roster": [], "image_exclusions": []}
+        roots = [item["registration"]["data_root"] for item in originals]
+        observation = {"complete": True, "phase": "complete", "scope": "owned_predecessor_native_state_indexes_and_executables",
+            "old_control": "old/control", "collections_total": 2, "data_roots": roots,
+            "retired_collections": [str(Path(item["registration"]["data_root"]) / "collections-1.4" / item["registration"]["collection"])
+                for item in originals],
+            "retired_data_roots": [item["registration"]["data_root"] for item in originals],
+            "launchers": {"schema": 1, "active": "c"*64, "legacy_launchers_retired": True, "launcher": None,
+                "universal_launcher": None, "processes": process("verified_launcher_images")},
+            "runtimes": {"active": "c"*64, "complete": True, "selected_service_restarted": False,
+                "retired_runtimes": ["d"*64], "processes": process("verified_superseded_runtime_images")},
+            "future_complete_receipt": {"retained": True}}
+        rebuild["cleanup"]["observation"] = observation
+        with mock.patch.object(UPGRADE.subprocess, "run") as native:
+            retained = UPGRADE.validate_clean_break_cleanup(rebuild, originals, "old/control", "c"*64, "d"*64)
+        native.assert_not_called()
+        self.assertIs(retained, observation)
+        self.assertEqual(retained["future_complete_receipt"], {"retained": True})
+        for fault in ("missing", "partial", "wrong_control", "missing_root", "duplicate_root", "wrong_count", "remaining_process",
+                      "restarted", "empty_retirement", "old_launcher", "new_runtime_retired"):
+            changed = copy.deepcopy(rebuild)
+            value = changed["cleanup"]["observation"]
+            if fault == "missing": changed["cleanup"]["observation"] = None
+            elif fault == "partial": value["complete"] = False
+            elif fault == "wrong_control": value["old_control"] = "other/control"
+            elif fault == "missing_root": value["retired_data_roots"].pop()
+            elif fault == "duplicate_root": value["retired_data_roots"].append(value["retired_data_roots"][0])
+            elif fault == "wrong_count": value["collections_total"] = 1
+            elif fault == "remaining_process": value["launchers"]["processes"]["remaining"] = 1
+            elif fault == "restarted": value["runtimes"]["selected_service_restarted"] = True
+            elif fault == "empty_retirement": value["runtimes"]["retired_runtimes"] = []
+            elif fault == "old_launcher": value["launchers"]["launcher"] = "old.exe"
+            else: value["runtimes"]["retired_runtimes"].append("c"*64)
+            with self.subTest(fault=fault), self.assertRaises(RuntimeError):
+                UPGRADE.validate_clean_break_cleanup(changed, originals, "old/control", "c"*64, "d"*64)
+
+    def test_clean_break_connection_refuses_missing_or_broadened_sources_before_mutation(self):
+        replacement = {"binding": "b"*64, "root": "fictional-source", "data_root": "new-data", "collection": "fixture"}
+        index = {"kind": "index", "value": {"id": "idx_"+"1"*32, "backing": replacement, "tombstone": False}}
+        source = {"kind": "source", "value": {"id": "src_"+"1"*32, "enabled": True, "owner": True, "canonical_path": replacement["root"]}}
+        for indexes, sources in (([], []), ([index, index], []), ([index], []), ([index], [source, source]),
+                                 ([index], [{"kind": "source", "value": {**source["value"], "canonical_path": "other-source"}}])):
+            rpc = mock.Mock()
+            with mock.patch.object(UPGRADE, "catalog_page_items", side_effect=[(indexes, []), (sources, [])]), \
+                    self.subTest(indexes=indexes, sources=sources), self.assertRaises(RuntimeError):
+                UPGRADE.fresh_clean_break_selection(rpc, replacement)
+            rpc.assert_not_called()
+
+    def test_clean_break_auto_route_uses_actual_versions_before_any_runtime_execution(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            old = self.input_runtime(root / "old", "1.8.11", 1)
+            new = self.input_runtime(root / "new", "1.8.16", 2)
+            args = ["check-runtime-upgrade.py", "--runtime", str(new), "--previous-runtime", str(old),
+                "--output", str(root / "result.json"), "--fixture-setup", "reviewed"]
+            with mock.patch.object(sys, "argv", args), mock.patch.object(UPGRADE, "run_clean_break", return_value="clean-break") as reset, \
+                    mock.patch.object(UPGRADE.subprocess, "run") as native:
+                self.assertEqual(UPGRADE.main(), "clean-break")
+            reset.assert_called_once(); native.assert_not_called()
+
+    def test_source_input_ledger_covers_setup_failure_before_registration_and_never_claims_empty_success(self):
+        self.assertEqual(UPGRADE.observe_source_inputs([]), {"count": 0, "preserved": None, "observations": []})
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "README.md"
+            source.write_bytes(b"original fictional source before fallible setup")
+            source_inputs = [{"source_file": str(source), "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest()}]
+            registrations = []  # A native setup failure has not yet added a completed Index definition.
+            observed = UPGRADE.observe_source_inputs(source_inputs)
+            self.assertEqual(registrations, [])
+            self.assertEqual(observed["count"], 1)
+            self.assertTrue(observed["preserved"])
+            self.assertEqual(observed["observations"][0]["source_file"], str(source))
+            source.write_bytes(b"source was changed despite setup failure")
+            self.assertFalse(UPGRADE.observe_source_inputs(source_inputs)["preserved"])
+            source.unlink()
+            missing = UPGRADE.observe_source_inputs(source_inputs)
+            self.assertEqual(missing["count"], 1)
+            self.assertFalse(missing["preserved"])
+
+    def test_legacy_windows_path_budget_covers_staging_parts_final_payload_and_utf16(self):
+        inventories = [{"root": "C:/source", "files": {"airk.exe": "a"*64, "licenses/nested/license.txt": "b"*64}}]
+        observed = UPGRADE.legacy_windows_path_budget("D:/aq/au-12345678", inventories, "win32")
+        self.assertTrue(observed["checked"])
+        self.assertLessEqual(observed["max_file_utf16_units"], 259)
+        self.assertGreater(observed["max_file_utf16_units"], 120, "reserved partial hash path is budgeted")
+        for root, names in (("D:/"+"deep/"*27, inventories),
+                            ("D:/aq/u", [{"root": "C:/source", "files": {"deep/"*34+"file.txt": "a"*64}}]),
+                            ("D:/aq/u", [{"root": "C:/"+"a"*250, "files": {"file.txt": "a"*64}}]),
+                            ("D:/"+"😀"*70, inventories)):
+            with self.subTest(root=root), self.assertRaisesRegex(RuntimeError, "legacy_windows_fixture_path_budget"):
+                UPGRADE.legacy_windows_path_budget(root, names, "win32")
+        self.assertFalse(UPGRADE.legacy_windows_path_budget("/long/"*70, inventories, "linux")["checked"])
+
+    def test_fixture_base_override_does_not_modify_existing_directory_and_short_owner_is_retained(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            selected = root / "short"
+            selected.mkdir()
+            before = selected.stat()
+            with mock.patch.dict(UPGRADE.os.environ, {"AIRK_PRIVATE_CENSUS_BASE": str(root / "missing-long-base")}):
+                self.assertEqual(UPGRADE.fixture_parent(selected), selected.resolve())
+            self.assertEqual(selected.stat().st_mode, before.st_mode)
+            owner = UPGRADE.owned_temporary(selected)
+            self.assertTrue(Path(owner.name).name.startswith("au-"))
+            self.assertEqual(len(Path(owner.name).name), 11)
+            self.assertTrue(Path(owner.name).is_dir())
+            owner.cleanup()
+
+    def input_runtime(self, path, version, schema):
+        path.mkdir()
+        main = path / ("AIRK.app/Contents/MacOS/airk" if sys.platform == "darwin" else "airk.exe" if sys.platform == "win32" else "airk")
+        main.parent.mkdir(parents=True, exist_ok=True)
+        main.write_bytes(b"inert fictional runtime; never execute")
+        native = {"schema": schema, "version": version, "os": "windows" if sys.platform == "win32" else "macos" if sys.platform == "darwin" else "linux",
+                  "arch": "aarch64" if UPGRADE.platform.machine().lower() in ("arm64", "aarch64") else "x86_64", "airk_sha256": UPGRADE.digest(main)}
+        if schema == 1:
+            helper = main.with_name("airk-embed.exe" if sys.platform == "win32" else "airk-embed")
+            helper.write_bytes(b"inert fictional helper; never execute")
+            native["embed_sha256"] = UPGRADE.digest(helper)
+        (path / "airk-runtime.json").write_text(json.dumps(native), encoding="utf-8")
+        files = {item.relative_to(path).as_posix(): UPGRADE.digest(item) for item in path.rglob("*") if item.is_file()}
+        install = {key: native[key] for key in ("version", "os", "arch")}
+        install.update(schema=1, files=files)
+        (path / "airk-install.json").write_text(json.dumps(install), encoding="utf-8")
+        return path
+
+    def test_input_preflight_checks_all_seals_and_runs_no_subprocess(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            old = self.input_runtime(root / "old", "1.8.11", 1)
+            new = self.input_runtime(root / "new", "1.8.16", 2)
+            receipt = root / "inputs.json"
+            arguments = ["check-runtime-upgrade.py", "--runtime", str(new), "--previous-runtime", str(old),
+                         "--clean-break", "--check-inputs", "--output", str(receipt)]
+            with mock.patch.object(sys, "argv", arguments), mock.patch.object(UPGRADE.subprocess, "run") as run, \
+                    mock.patch.object(UPGRADE.subprocess, "Popen") as popen, mock.patch.object(UPGRADE.subprocess, "check_output") as output:
+                UPGRADE.main()
+            run.assert_not_called(); popen.assert_not_called(); output.assert_not_called()
+            observed = json.loads(receipt.read_text(encoding="utf-8"))
+            self.assertTrue(observed["passed"])
+            self.assertFalse(observed["runtime_executed"])
+            self.assertEqual(observed["inputs"]["predecessor"]["install_manifest_sha256"], UPGRADE.digest(old / "airk-install.json"))
+            self.assertEqual(observed["inputs"]["candidate"]["version"], "1.8.16")
+            with mock.patch.object(sys, "argv", arguments), self.assertRaises(FileExistsError):
+                UPGRADE.main()
+            self.assertEqual(json.loads(receipt.read_text(encoding="utf-8")), observed)
+            unsealed = new / "unexpected.txt"
+            unsealed.write_bytes(b"unexpected bytes")
+            with self.assertRaisesRegex(RuntimeError, "sealed file inventory"):
+                UPGRADE.check_upgrade_inputs(new, old, clean_break=True)
+            unsealed.unlink()
+            manifest = new / "airk-install.json"
+            original_manifest = manifest.read_bytes()
+            altered = json.loads(original_manifest)
+            altered["arch"] = "foreign_arch"
+            manifest.write_text(json.dumps(altered), encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "sealed file inventory"):
+                UPGRADE.check_upgrade_inputs(new, old, clean_break=True)
+            manifest.write_bytes(original_manifest)
+            (new / "airk-runtime.json").write_text("{}", encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "sealed file inventory"):
+                UPGRADE.check_upgrade_inputs(new, old, clean_break=True)
+            (new / "airk-runtime.json").unlink()
+            with self.assertRaises(FileNotFoundError):
+                UPGRADE.check_upgrade_inputs(new, old, clean_break=True)
+
+    def test_input_preflight_retains_inaccessible_root_failure_before_execution(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            receipt = Path(temporary) / "failed.json"
+            arguments = ["check-runtime-upgrade.py", "--runtime", "inaccessible-fixture", "--previous-runtime", "old-fixture",
+                         "--check-inputs", "--output", str(receipt)]
+            denied = PermissionError("fixture access denied")
+            with mock.patch.object(sys, "argv", arguments), mock.patch.object(UPGRADE.Path, "lstat", side_effect=denied), \
+                    mock.patch.object(UPGRADE.subprocess, "Popen") as popen:
+                with self.assertRaises(PermissionError) as observed:
+                    UPGRADE.main()
+            self.assertIs(observed.exception, denied)
+            popen.assert_not_called()
+            failure = json.loads(receipt.read_text(encoding="utf-8"))
+            self.assertFalse(failure["passed"])
+            self.assertFalse(failure["runtime_executed"])
+            self.assertEqual(failure["failure"]["type"], "PermissionError")
+
+    def test_input_preflight_keeps_darwin_predecessor_helper_inside_bundle(self):
+        with tempfile.TemporaryDirectory() as temporary, mock.patch.object(UPGRADE.sys, "platform", "darwin"), \
+                mock.patch.object(UPGRADE.platform, "machine", return_value="arm64"):
+            root = Path(temporary)
+            old = self.input_runtime(root / "old", "1.8.11", 1)
+            new = self.input_runtime(root / "new", "1.8.16", 2)
+            self.assertTrue((old / "AIRK.app/Contents/MacOS/airk-embed").is_file())
+            self.assertFalse((old / "airk-embed").exists())
+            observed = UPGRADE.check_upgrade_inputs(new, old, clean_break=True)
+            self.assertTrue(observed["passed"])
+
     def test_pre_candidate_cleanup_requires_exact_old_owner_and_retains_stop_receipt(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary); binary = root/"old.exe"; binary.write_bytes(b"inert exact old image")
             install = root/"install"; install.mkdir()
             execution = UPGRADE.digest(binary)
             health = {"status":"health","observation":{"runtime_sha256":"a"*64,"executable_sha256":execution,"instance":"b"*32,"process_id":123}}
-            command = mock.Mock(side_effect=[SimpleNamespace(returncode=0,stdout=json.dumps(health)),SimpleNamespace(returncode=0,stdout=json.dumps({"phase":"complete"}))])
+            # Match the actual Clap RuntimeCommand catalog and deny_unknown_fields
+            # lifecycle Input, rather than blessing an invented mocked subcommand.
+            native = Path(__file__).parents[2] / "crates/airk-cli/src"
+            runtime = (native / "runtime_install.rs").read_text(encoding="utf-8").split("pub enum RuntimeCommand {", 1)[1].split("\n}", 1)[0]
+            commands = {re.sub(r"(?<!^)(?=[A-Z])", "-", value).lower()
+                for value in re.findall(r"^    ([A-Z][A-Za-z]+)\s*(?:\{|,)", runtime, re.MULTILINE)}
+            self.assertIn("lifecycle", commands)
+            self.assertNotIn("stop", commands)
+            lifecycle = (native / "runtime_lifecycle.rs").read_text(encoding="utf-8").split("pub(super) struct Input {", 1)[1].split("\n}", 1)[0]
+            fields = set(re.findall(r"^    ([a-z_]+):", lifecycle, re.MULTILINE))
+            self.assertEqual(fields, {"caller", "key", "action", "expected_instance", "runtime", "force"})
+            calls = []
+            response = {}
+            def run(executable, *arguments, input=None, timeout=None):
+                calls.append((executable, arguments, input))
+                if arguments[:2] == ("service", "rpc"):
+                    method = json.loads(input)
+                    if method == "health": value = health
+                    elif method == "request_epoch": value = {"status": "request_epoch", "namespace": "c"*32, "epoch": 7}
+                    else: self.fail("Unexpected fixture observation")
+                else:
+                    self.assertIn(arguments[1], commands, "teardown must use a real native parser command")
+                    self.assertEqual(arguments, ("runtime", "lifecycle", "--install-dir", install))
+                    request = json.loads(input)
+                    self.assertEqual(set(request), fields)
+                    self.assertEqual(request["action"], "stop")
+                    self.assertFalse(request["force"])
+                    self.assertEqual(request["expected_instance"], health["observation"]["instance"])
+                    self.assertEqual(request["runtime"], health["observation"]["runtime_sha256"])
+                    self.assertEqual(request["key"]["namespace"], "c"*32)
+                    self.assertEqual(request["key"]["epoch"], 7)
+                    self.assertRegex(request["caller"], r"^[0-9a-f]{32}$")
+                    self.assertRegex(request["key"]["nonce"], r"^[0-9a-f]{32}$")
+                    retained = list(root.glob("*stop-request*.json"))
+                    self.assertEqual(len(retained), 1, "complete exact stop intent must be saved before mutation")
+                    self.assertEqual(json.loads(retained[0].read_text(encoding="utf-8")), request)
+                    value = {"status": "lifecycle", "record": {"id": "d"*64, "phase": "complete",
+                        "request": {**{key: value for key, value in request.items() if key != "force"}, "manager": False}},
+                        "future_complete_native_receipt": {"retained": True}}
+                    response.update(value)
+                return SimpleNamespace(returncode=0, stdout=json.dumps(value), stderr="")
+            command = mock.Mock(side_effect=run)
             result = UPGRADE.stop_predecessor_before_staging(command,binary,install,root/"control","a"*64,execution)
-            self.assertEqual(result["native_stop"],{"phase":"complete"})
+            self.assertEqual(result["native_stop"], response)
             self.assertFalse(result["process_exit_confirmed"])
-            self.assertEqual(command.call_args_list[1].args,(binary,"runtime","stop","--install-dir",install))
+            self.assertEqual(calls[1][1][:2], ("service", "rpc"))
+            self.assertEqual(json.loads(calls[1][2]), "request_epoch")
+            self.assertEqual(calls[2][1], ("runtime", "lifecycle", "--install-dir", install))
             for field,value in (("runtime_sha256","c"*64),("executable_sha256","c"*64),("instance","invalid"),("process_id",False)):
                 crossed = copy.deepcopy(health); crossed["observation"][field] = value
                 command = mock.Mock(return_value=SimpleNamespace(returncode=0,stdout=json.dumps(crossed)))
@@ -42,6 +525,38 @@ class UpgradeFixtureOwnershipTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 UPGRADE.stop_predecessor_before_staging(command,binary,install,root/"control","a"*64,execution)
             command.assert_not_called()
+
+    def test_owned_stop_keeps_exact_intent_and_full_unconfirmed_receipt_without_force_or_replay(self):
+        for fault in ("phase", "request", "exit", "malformed_record"):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary); install = root / "install"; install.mkdir()
+                binary = root / "airk.exe"; binary.write_bytes(b"inert exact owned fixture executable")
+                health = {"status": "health", "observation": {"instance": "b"*32, "runtime_sha256": "a"*64,
+                    "executable_sha256": UPGRADE.digest(binary), "process_id": 123}}
+                submitted, returned = [], []
+                def command(executable, *arguments, input=None, timeout=None):
+                    if arguments[:2] == ("service", "rpc"):
+                        self.assertEqual(json.loads(input), "request_epoch")
+                        return SimpleNamespace(returncode=0, stdout=json.dumps({"status": "request_epoch", "namespace": "c"*32, "epoch": 9}), stderr="")
+                    self.assertEqual(arguments, ("runtime", "lifecycle", "--install-dir", install))
+                    request = json.loads(input); submitted.append(request)
+                    self.assertFalse(request["force"])
+                    record = {"id": "d"*64, "phase": "draining" if fault == "phase" else "complete",
+                        "request": {**{key: value for key, value in request.items() if key != "force"}, "manager": False}}
+                    if fault == "request": record["request"]["expected_instance"] = "f"*32
+                    value = {"status": "lifecycle", "record": None if fault == "malformed_record" else record,
+                        "complete_native_failure_details": {"retry": {"exact_request_only": True}}}
+                    returned.append(value)
+                    return SimpleNamespace(returncode=1 if fault == "exit" else 0, stdout=json.dumps(value), stderr="retained native failure")
+                with self.assertRaisesRegex(RuntimeError, "Stop outcome is unconfirmed or crossed"):
+                    UPGRADE.stop_owned_runtime(command, binary, install, root / "control", "a"*64, UPGRADE.digest(binary), observed_health=health)
+                self.assertEqual(len(submitted), 1, "uncertain Stop is never replayed or forced")
+                request = json.loads((root / "fixture-stop-request.json").read_text(encoding="utf-8"))
+                observation = json.loads((root / "fixture-stop-observation.json").read_text(encoding="utf-8"))
+                self.assertEqual(request, submitted[0])
+                self.assertEqual(observation["native_stop"], returned[0])
+                self.assertFalse(observation["lifecycle_complete"])
+                self.assertFalse(observation["process_exit_confirmed"])
 
     def test_publication_summary_and_expansion_require_the_same_validated_identity(self):
         token = "airk-r1:"+"1"*32+":4:"+"2"*64

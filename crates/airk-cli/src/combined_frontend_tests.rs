@@ -5,6 +5,88 @@ use airk_core::{
     index_catalog::{GrantId, QueryProjectId},
 };
 
+fn exact_body_bytes(bytes: usize) -> Value {
+    let mut value = json!({"data":""});
+    let overhead = serde_json::to_vec(&value).unwrap().len();
+    value["data"] = json!("x".repeat(bytes - overhead));
+    assert_eq!(serde_json::to_vec(&value).unwrap().len(), bytes);
+    value
+}
+
+fn with_typed_delivery(mut body: Value) -> Result<Value> {
+    let receipt = airk_core::service::CombinedDeliveryReceipt {
+        schema: 1,
+        service_instance: Incarnation::from_bytes([1; 16]),
+        namespace: Incarnation::from_bytes([2; 16]),
+        catalog_revision: CatalogRevision::INITIAL,
+        scope_identity: Sha256Digest::from_bytes([3; 32]),
+        result_digest: framed_digest(
+            b"airk/combined-delivery-result/1",
+            &[&serde_json::to_vec(&body)?],
+        ),
+    };
+    body["delivery_observation"] =
+        json!({"receipt":receipt,"digest_basis":"canonical_body_without_delivery_observation"});
+    Ok(body)
+}
+
+#[test]
+fn public_read_and_plan_budgets_keep_distinct_declared_body_limits() -> Result<()> {
+    let ordinary = airk_core::MAX_RESPONSE_BYTES;
+    let plan = ReplyBudget::Plan { max_bytes: 262144 };
+    let full = native_envelope(exact_body_bytes(131072));
+    assert!(check_public_reply(&full).is_err());
+    check_public_reply_budget(&full, plan)?;
+    let receipt_bytes =
+        serde_json::to_vec(&with_typed_delivery(exact_body_bytes(1024))?)?.len() - 1024;
+    assert!(receipt_bytes < DELIVERY_OBSERVATION_RESERVE);
+    for (budget, maximum) in [(ReplyBudget::Read, ordinary), (plan, 262144)] {
+        let before = exact_body_bytes(maximum - receipt_bytes);
+        check_public_reply_budget(&native_envelope(before.clone()), budget)?;
+        let delivered = with_typed_delivery(before)?;
+        assert_eq!(serde_json::to_vec(&delivered)?.len(), maximum);
+        check_public_reply_budget(&native_envelope(delivered), budget)?;
+        let oversized = with_typed_delivery(exact_body_bytes(maximum - receipt_bytes + 1))?;
+        assert_eq!(serde_json::to_vec(&oversized)?.len(), maximum + 1);
+        assert!(check_public_reply_budget(&native_envelope(oversized), budget).is_err());
+        // A fitting pre-delivery body can still fail the actual final check.
+        let full_body = exact_body_bytes(maximum);
+        check_public_reply_budget(&native_envelope(full_body.clone()), budget)?;
+        assert!(
+            check_public_reply_budget(&native_envelope(with_typed_delivery(full_body)?), budget)
+                .is_err()
+        );
+        assert!(
+            check_public_reply_budget(&native_envelope(exact_body_bytes(maximum + 1)), budget)
+                .is_err()
+        );
+    }
+    for maximum in [0, 1023, 524289, usize::MAX] {
+        assert!(
+            ReplyBudget::Plan { max_bytes: maximum }
+                .body_bytes()
+                .is_err()
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn escaped_plan_transport_preserves_the_existing_public_envelope_hard_cap() -> Result<()> {
+    let budget = ReplyBudget::Plan { max_bytes: 524288 };
+    let body = json!({"data":"\0".repeat(85000)});
+    assert!(serde_json::to_vec(&body)?.len() <= 524288);
+    let reply = native_envelope(body);
+    assert!(
+        serde_json::to_vec(&reply)?.len()
+            > MAX_PUBLIC_TOOL_ENVELOPE_BYTES - PUBLIC_TRANSPORT_RESERVE
+    );
+    assert!(check_public_reply_budget(&reply, budget).is_err());
+    let fitting = native_envelope(json!({"data":"\0".repeat(30000)}));
+    check_public_reply_budget(&fitting, budget)?;
+    Ok(())
+}
+
 fn fixture() -> Backend {
     let identity = Incarnation::from_bytes([1; 16]);
     Backend {
@@ -127,8 +209,8 @@ fn public_transport_duplication_does_not_reduce_the_canonical_body_budget() -> R
     assert!(serde_json::to_vec(&body)?.len() < airk_core::MAX_RESPONSE_BYTES);
     let envelope = native_envelope(body);
     assert!(serde_json::to_vec(&envelope)?.len() > airk_core::MAX_RESPONSE_BYTES);
-    check_public_reply(&envelope, 0)?;
-    assert!(check_public_reply(&native_envelope(json!({"text":"x".repeat(65536)})), 0).is_err());
+    check_public_reply(&envelope)?;
+    assert!(check_public_reply(&native_envelope(json!({"text":"x".repeat(65536)}))).is_err());
     Ok(())
 }
 

@@ -7,6 +7,38 @@ import {test} from 'node:test';import {strict as assert} from 'node:assert';
 import {installedDeliveryFence,installedSelector,installedToolBody,installedMember,installedRevocation,finishInstalledClient,InstalledNativeReplyError,installedLegacyLifecycle,installedSourceReview,installedPolicyReady,installedRestoredDefinition,installedDefinitionContinuity} from './installedEditorContracts';
 const id=(prefix:string,byte:string)=>prefix+byte.repeat(32),hash=(byte:string)=>byte.repeat(64);
 
+const planWire=(body:any)=>({result:{isError:false,content:[{type:'text',text:JSON.stringify(body)}],structuredContent:structuredClone(body)}});
+const planRequest=(output?:any)=>({schema:'airk.parse.request/1',mode:'execute',plan:{steps:[],...(output===undefined?{}:{output})}});
+const declaredPlanBody=(wire:any,request:any)=>installedToolBody(wire,{tool:'airk_parse',request});
+test('installed parse parity uses the original declared plan budget while ordinary reads stay bounded',()=>{
+    const body={plan:{output:{max_bytes:262144}},steps:[{result:{payload:'x'.repeat(70000)}}]},wire=planWire(body);
+    assert.throws(()=>installedToolBody(wire),/body bound/);
+    assert.deepEqual(declaredPlanBody(wire,planRequest()),body);
+    assert.deepEqual(declaredPlanBody(wire,{...planRequest({max_bytes:1024}),output:{}}),body,'Top-level output has canonical precedence, including its defaults');
+    assert.throws(()=>declaredPlanBody(wire,planRequest({max_bytes:1024})));
+});
+test('installed parse parity enforces exact byte boundaries, declared range and returned budget identity',()=>{
+    const body={plan:{output:{max_bytes:1024}},payload:''};body.payload='x'.repeat(1024-Buffer.byteLength(JSON.stringify(body)));
+    assert.deepEqual(declaredPlanBody(planWire(body),planRequest({max_bytes:1024})),body);
+    assert.throws(()=>declaredPlanBody(planWire({...body,payload:body.payload+'x'}),planRequest({max_bytes:1024})),/body bound/);
+    for(const max_bytes of [0,1023,524289,1024.5,'262144',null])assert.throws(()=>declaredPlanBody(planWire(body),planRequest({max_bytes})));
+    assert.throws(()=>declaredPlanBody(planWire(body),{...planRequest(),schema:'untrusted.schema'}));
+    assert.throws(()=>declaredPlanBody(planWire(body),{...planRequest({max_bytes:1024}),output:{max_bytes:2048}}),'Response cannot substitute its own budget');
+});
+test('installed parse parity retains complete copies and the existing public wire bound',()=>{
+    const body={plan:{output:{max_bytes:524288}},payload:'"'.repeat(240000)},wire=planWire(body);
+    assert.ok(Buffer.byteLength(JSON.stringify(body))<524288);
+    assert.throws(()=>declaredPlanBody(wire,planRequest({max_bytes:524288})),/wire bound/);
+    const small=planWire({plan:{output:{max_bytes:262144}},payload:'exact'});
+    small.result.structuredContent.payload='crossed';assert.throws(()=>declaredPlanBody(small,planRequest()),/copies agree/);
+    assert.throws(()=>installedToolBody({...planWire({payload:'exact'}),extra:'x'.repeat(1048576)}),/wire bound/);
+});
+test('both actual installed Workbench parse transport callers supply their original request budget',()=>{
+    const source=require('node:fs').readFileSync(path.resolve(__dirname,'../../src/test/installedEditor.ts'),'utf8');
+    assert.ok(/installedToolBody\(wire,\{tool:'airk_parse',request:turn\.request\}\)/.test(source),'Actual MCP parse caller supplies the original request');
+    assert.ok(/installedToolBody\(\{result:cliEnvelope\},\{tool:'airk_parse',request:turn\.request\}\)/.test(source),'Actual CLI parse caller supplies the original request');
+});
+
 function policyFixture(){
     const index=id('idx_','a'),policy={index_id:index,owner_binding:hash('b'),epoch:1,roots:[{id:id('src_','c'),canonical_path:'/fixture',owner:true}],denies:[{path:'hidden'}]};
     const operation={operation:'change_index_policy',id:index,expected_source_revision:2,configuration:{configuration:{operation:'apply_source_policy',operation_id:'d'.repeat(32),policy}}};

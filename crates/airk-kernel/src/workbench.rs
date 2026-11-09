@@ -1771,9 +1771,27 @@ fn publication(value: &Value) -> Option<String> {
 fn clipped(value: &Value) -> bool {
     match value {
         Value::Object(m) => {
+            // This closed native catalog contains JSON Schema declarations,
+            // not returned pages. In particular properties.cursor describes an
+            // input and must not be mistaken for an outstanding continuation.
+            // Keep every root/sibling runtime flag and unknown catalog shape
+            // under the ordinary conservative recursive classification.
+            let operation_schemas = m.get("catalog").and_then(Value::as_str) == Some(CATALOG)
+                && m.get("operations")
+                    .and_then(Value::as_object)
+                    .is_some_and(|operations| {
+                        operations.values().all(|operation| {
+                            operation.get("type").and_then(Value::as_str) == Some("object")
+                                && operation.get("properties").is_some_and(Value::is_object)
+                                && operation.get("additionalProperties")
+                                    == Some(&Value::Bool(false))
+                        })
+                    });
             m.get("truncated") == Some(&Value::Bool(true))
                 || m.get("cursor").is_some_and(|v| !v.is_null())
-                || m.values().any(clipped)
+                || m.iter().any(|(key, value)| {
+                    !(operation_schemas && key == "operations") && clipped(value)
+                })
         }
         Value::Array(a) => a.iter().any(clipped),
         _ => false,

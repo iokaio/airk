@@ -2473,3 +2473,4 @@ impl Quota {
 #[path = "funding_retired.rs"]
 mod retired;
 pub(super) use retired::RetiredCurrentInventory;
+pub(super) use retired::clean_break_inventory;

@@ -7,6 +7,17 @@ import { statusSummary } from '../explorerStatus';
 
 const project = '12'.repeat(32), job = '34'.repeat(32), pending = '56'.repeat(32), plan = '78'.repeat(32), intent = '9a'.repeat(16);
 
+test('Management retains the entire multi-index clean-break observation and hides it after trust loss',()=>{
+    const value=state(),reset={mode:'clean_break',stage:'indexing',indexes_complete:true,expected_indexes:2,cleanup:{complete:false,state:'waiting_for_indexes',future_cleanup:{kept:true}},indexes:[
+        {original:{binding:project,root:'/source-one',collection:'one'},replacement:{data_root:'/fresh-one'},readiness:'ready'},
+        {original:{binding:'ab'.repeat(32),root:'/source-two',collection:'two'},replacement:{data_root:'/fresh-two'},readiness:'paused',paused:true,future_index:{kept:true}},
+    ],future_reset:{complete:true}};
+    value.bootstrap.value={rebuild:reset};
+    const view=managementView(value);
+    assert.deepEqual(view.cleanBreakRebuild,reset);assert.notEqual(view.cleanBreakRebuild,reset,'the panel cannot mutate cached native authority');
+    value.trusted=false;assert.equal(managementView(value).cleanBreakRebuild,undefined);
+});
+
 test('semantic cleanup and copy reports retain publication counts separately from attempt counters',()=>{
     const value=state(), row=value.page!.projects[0] as any;
     const worker={project,worker:'ab'.repeat(16),service:'cd'.repeat(16),fencing_generation:1};

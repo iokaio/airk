@@ -1,13 +1,48 @@
 # Native VS Code extension
 
-**1.8.14 source implementation; unpublished, with final native/installed-platform
+**1.8.16 source implementation; unpublished, with final native/installed-platform
 qualification pending.** The extension presents the native Artifact Indexing and
 Retrieval Kernel. Index contents, grants, jobs, process ownership and upgrades
 remain native; an editor panel or saved preference does not become authority.
-Current evidence and open gates belong in the [working record](releases/release-1.8.14.md).
+Current correction evidence belongs in the [1.8.16 record](releases/release-1.8.16.md);
+the [1.8.14 working record](releases/release-1.8.14.md) retains the broader open gates.
 Earlier results are preserved in the [dated pre-HTTP guide](reviews/vscode-extension-before-http-2026-11-07.md).
 
 ## Installation and evidence privacy
+
+Every installed version before 1.8.16 uses the native clean-break path: review
+preserved source selections and supported preferences, create fresh AIRK state
+and rebuild indexes. Old index IDs, grants, credentials and pending operations
+do not survive as authority; clients reconnect through fresh review. Original
+sources stay untouched. Native process/ownership checks govern old-artifact
+cleanup, and failures must remain visible. Supported 1.8.16+ upgrades require the
+persisted state contract in addition to the version. The target public release
+is 1.9.0 after qualification; current candidate versions remain 1.8.16.
+
+The [current reset contract](upgrade-rebuild-fallback.md) supersedes older
+optional migration/rebuild instructions. Implementation and installed acceptance
+of the revised policy are in progress.
+
+Reset review uses complete saved metadata, bounded to 64 indexes/128 KiB. An
+unsupported include/exclude policy or alias refuses before mutation instead of
+widening source access. Every saved index gets one initial build and then its
+saved pause/watch policy is restored. One unavailable index does not stop healthy
+indexes from building; final cleanup waits for the required replacement
+readiness. Complete native diagnostics and host-owned client-cleanup receipts
+remain separate observations.
+
+The in-progress HTTP disposal correction uses purpose-bound predecessor metadata
+proof, separate from ordinary live-grant lookup. Complete original HTTP and host
+client metadata must be durably captured before retirement; disposal never
+renews credentials or enrolls a connection. Fresh-namespace collisions or unknown
+ownership block cleanup. Earlier r34 checks remain historical for this change;
+no current Mac or VSIX qualification is claimed.
+
+Stop-related metadata, PATH and completion bookkeeping do not ensure or start a
+runtime. Host cleanup handles Windows aliases and bare-ID saved metadata with
+ownership checks. A flat managed trust-directory census permits at most 1,024
+entries and 2 MiB total read work, including failed reads/overflow attempts;
+unproven old-CA copies remain preserved with explicit blockers.
 
 Use the platform VSIX containing the exact approved native payload. The host
 checks the complete inventory before setup or execution. Modern runtime metadata
@@ -22,7 +57,7 @@ and recognized existing agent configuration updates. **Customize…**, **Not now
 and **Don't set up automatically** retain their distinct choices. Setup does not
 register or index an opened folder. All new indexes use **Indexing → Index
 library** review; source/storage overlap and unowned occupied locations remain
-refusals. Index/data deletion requires its own native review.
+refusals. Ordinary index/data deletion requires its own native review; the authenticated clean-break reset has its separate reviewed scope and owned-artifact retirement contract.
 
 ### Native execution control
 
@@ -32,6 +67,12 @@ and MCP definitions. Views disclose that execution is off. **AIRK: Enable Native
 Execution** restores the ordinary verified path. Restricted Mode independently
 blocks native work and secret resolution; navigation, trust-management guidance,
 help and local output remain available.
+
+After native clean-reset admission, old installation-level User Stop/lifecycle
+state is discarded so the new runtime can perform its initial builds. A new
+Stop during reset/rebuild stays authoritative and retry/resume cannot clear it.
+This boundary never overrides `airk.runtime.nativeExecution: false` or workspace
+trust; supported index pause/watch preferences remain a separate preserved policy.
 
 `airk.cli.autoInstall: false` skips automatic installation; it is not a no-process
 setting or an OS sandbox. Native discovery can still inspect the selected
@@ -68,6 +109,13 @@ changes are preserved. See [retirement](service-project-retirement.md) and
 <a id="airk-explorer-150"></a>
 
 ## AIRK Explorer
+
+Management → Service → Runtime → **Complete runtime diagnostics** offers
+**Open complete JSON**, **Copy complete JSON** and **Export complete JSON** for
+the full cached native bootstrap and diagnostic observation, with its capture
+timestamp. These host-owned actions do not start another native read. The saved
+observation is historical, not current health or process-cleanup proof. Service
+**Copy details** is a selected summary and points to the complete cached JSON.
 
 One AIRK Explorer panel is owned per VS Code window, across repeated commands,
 controllers and extension replacement. **×** dismisses update/connection/action
@@ -207,13 +255,24 @@ MCP launcher or embedding executable. The wrapper is a convenience for explicit
 terminal commands; clients use HTTP. Existing custom shell/PATH state and marked
 integration blocks have their own guarded ownership/removal checks.
 
+The standalone Windows EXE has a separate per-user PATH owner: after its native
+setup succeeds, it adds only the literal `{app}\runtime` directory. It is not a
+VSIX action and does not install this extension. Its exact-entry receipt/type
+preservation and confirmed successful-uninstall checks are documented in the
+[Windows installer guide](../installers/windows/README.md); actual Inno and
+registry round-trips remain unqualified. The reset's HTTP environment cleanup
+preserves the VSIX's existing terminal PATH mutator.
+
 ### Terminal command
 
 **Install or Repair CLI** verifies the matching payload/native selection and
-reports actual setup stages and failure details. Automatic forward upgrades
-retain existing data/Stop/watch preferences and use native checkpoint and
-capability checks; version labels alone do not authorize a takeover.
-`airk.cli.shellIntegration: off` avoids external shell/PATH edits. New VS Code
+reports actual setup stages and failure details. Within a supported 1.8.16+
+state contract, forward upgrades retain data/Stop/watch preferences and use
+native checkpoint/capability checks. Pre-baseline installation-level Stop is
+handled by the separate admitted clean-break policy; a new Stop remains
+authoritative. Version labels alone do not authorize a takeover.
+For VSIX-managed terminal integration, `airk.cli.shellIntegration: off` avoids
+external shell/PATH edits. New VS Code
 terminals and separately launched applications can have different environments.
 
 ### Removing the terminal command and uninstalling
@@ -228,6 +287,33 @@ their separate explicit deletion/purge contracts apply. Do not infer complete
 cleanup from the editor tab closing or an uninstall process starting.
 
 ## Runtime and distribution
+
+The in-progress request-tracking correction uses a private per-request journal
+at `globalStorageUri/service-intents`, shared by console and extension actions.
+Preferences remain in Memento. The journal keeps the existing 64 active-request
+and 2-MiB aggregate bounds across namespaces. Immutable preparation must be
+published before dispatch; later observations are separate. A bounded one-way
+current-scope Memento import records its disposition. Only after authenticated
+fresh Genesis establishes the exact operation/store/root/control/namespace
+retirement fence do fully validated predecessor-namespace Memento rows,
+including late nonces, stop consuming active quota or blocking a new Stop.
+Those rows are never imported or replayed. Queued writers in other windows may
+still publish; bounded exact-observed cleanup reports late removals and remaining
+rows separately, without claiming the original capture included them. Before
+the fence, and for nonretired, foreign, malformed or wrong-namespace state,
+uncertainty remains preserved and blocking. Uncaptured physical journal files
+remain blocked and untouched.
+
+If local persistence or retirement fails after a native response, the complete
+native reply and original tracking error remain available; another native
+mutation is not authorized. Proven publication of the exact activated fresh
+successor can retire captured predecessor request authority before physical
+cleanup completes. All-index readiness, native/client cleanup and overall
+installation completion remain separate gates. Ordinary compatible upgrades
+retain uncertain outcomes. The backend and interrupted-retirement handling are
+under correction and review; no new crash/platform qualification is claimed.
+POSIX directory synchronization and atomic file publication do not establish
+equivalent Windows directory-entry power-loss guarantees.
 
 Installation/control/state/index data remain separately bound. Modern runtime
 schema 2 distributes one main image with embedded default model assets/static

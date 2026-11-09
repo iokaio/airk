@@ -388,6 +388,324 @@ fn now() -> u64 {
 }
 
 #[test]
+fn cleanup_owner_census_retains_complete_metadata_without_reading_active_token_bodies()
+-> anyhow::Result<()> {
+    use airk_core::service_http_cleanup::HttpCleanupOwnership;
+    let root = private_root();
+    let mut store = CredentialStore::open(root.path(), binding())?;
+    let active = Incarnation::from_bytes([201; 16]);
+    let expired = Incarnation::from_bytes([202; 16]);
+    let revoked = Incarnation::from_bytes([203; 16]);
+    let issued = store.enroll(active, selection(), 100, 1)?;
+    store.enroll(expired, selection(), 2, 1)?;
+    store.enroll(revoked, selection(), 100, 1)?;
+    let token = read_client_token(root.path(), active)?;
+    let verifier = digest(token.as_bytes());
+    // The cleanup read uses the already committed verifier, not the current
+    // secret bytes and not live authentication. A corrupt body is never read.
+    write_private(
+        root.path(),
+        issued
+            .credential_file
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        &[b'x'; 103],
+        103,
+        true,
+    )?;
+    store.revoke(revoked)?;
+    let before = std::fs::read(root.path().join("credentials.json"))?;
+    let owners = store.cleanup_owners(3)?;
+    assert_eq!(owners.len(), 3);
+    assert_eq!(
+        owners
+            .iter()
+            .find(|owner| owner.connection_id == active)
+            .unwrap()
+            .ownership,
+        HttpCleanupOwnership::Active
+    );
+    assert_eq!(
+        owners
+            .iter()
+            .find(|owner| owner.connection_id == active)
+            .unwrap()
+            .credential_sha256,
+        Some(verifier)
+    );
+    assert_eq!(
+        owners
+            .iter()
+            .find(|owner| owner.connection_id == expired)
+            .unwrap()
+            .ownership,
+        HttpCleanupOwnership::Expired
+    );
+    assert_eq!(
+        owners
+            .iter()
+            .find(|owner| owner.connection_id == revoked)
+            .unwrap()
+            .ownership,
+        HttpCleanupOwnership::Revoked
+    );
+    assert!(owners.iter().all(|owner| owner.credential_sha256.is_some()));
+    let encoded = serde_json::to_string(&owners)?;
+    assert!(!encoded.contains(&token));
+    assert!(!encoded.contains("airk1."));
+    assert_eq!(std::fs::read(root.path().join("credentials.json"))?, before);
+    std::fs::remove_file(issued.credential_file)?;
+    assert_eq!(
+        store
+            .cleanup_owners(3)?
+            .iter()
+            .find(|owner| owner.connection_id == active)
+            .unwrap()
+            .credential_sha256,
+        Some(verifier),
+        "a missing secret cannot erase committed ownership"
+    );
+    store.compact_revoked()?;
+    let compacted = store.cleanup_owners(3)?;
+    assert_eq!(compacted.len(), 3);
+    let retired = compacted
+        .iter()
+        .find(|owner| owner.connection_id == revoked)
+        .unwrap();
+    assert_eq!(retired.ownership, HttpCleanupOwnership::Revoked);
+    assert_eq!(
+        retired.credential_sha256, None,
+        "a marker without a verifier must not invent a credential hash"
+    );
+    Ok(())
+}
+
+#[test]
+fn cleanup_owner_census_refuses_orphans_and_missing_or_corrupt_authority_without_mutation()
+-> anyhow::Result<()> {
+    let root = private_root();
+    let id = Incarnation::from_bytes([204; 16]);
+    let mut store = CredentialStore::open(root.path(), binding())?;
+    assert!(
+        store.cleanup_owners(1).is_err(),
+        "an unpersisted ledger is not a complete empty inventory"
+    );
+    store.enroll(id, selection(), 100, 1)?;
+    let original_ledger = std::fs::read(root.path().join("credentials.json"))?;
+    let orphan = root.path().join(format!(
+        "credential-{}.token",
+        Incarnation::from_bytes([205; 16])
+    ));
+    write_private(
+        root.path(),
+        orphan.file_name().unwrap().to_str().unwrap(),
+        &[b'x'; 103],
+        103,
+        false,
+    )?;
+    assert!(
+        store.cleanup_owners(1).is_err(),
+        "a native-sized orphan token is unobserved, never foreign"
+    );
+    assert_eq!(std::fs::read(&orphan)?, vec![b'x'; 103]);
+    assert_eq!(
+        std::fs::read(root.path().join("credentials.json"))?,
+        original_ledger
+    );
+    std::fs::remove_file(&orphan)?;
+    write_private(
+        root.path(),
+        orphan.file_name().unwrap().to_str().unwrap(),
+        &[b'{'; 200],
+        2048,
+        false,
+    )?;
+    assert!(
+        store.cleanup_owners(1).is_err(),
+        "unknown marker bytes do not prove retired ownership"
+    );
+    std::fs::remove_file(&orphan)?;
+    std::fs::remove_file(root.path().join("credentials.json"))?;
+    assert!(
+        store.cleanup_owners(1).is_err(),
+        "a stale in-memory ledger cannot replace missing native authority"
+    );
+    assert!(!root.path().join("credentials.json").exists());
+    write_private(root.path(), "credentials.json", b"{}", 1_048_576, false)?;
+    assert!(store.cleanup_owners(1).is_err());
+    assert_eq!(std::fs::read(root.path().join("credentials.json"))?, b"{}");
+    Ok(())
+}
+
+#[test]
+fn cleanup_owner_census_refuses_a_roster_over_128_instead_of_returning_a_subset()
+-> anyhow::Result<()> {
+    use airk_core::service_http_cleanup::{HttpCleanupOwnership, MAX_HTTP_CLEANUP_OWNERS};
+    let root = private_root();
+    let mut store = CredentialStore::open(root.path(), binding())?;
+    let first = Incarnation::from_bytes(1u128.to_be_bytes());
+    store.enroll(first, selection(), 100, 1)?;
+    store.revoke(first)?;
+    store.compact_revoked()?;
+    for value in 2..=MAX_HTTP_CLEANUP_OWNERS as u128 {
+        let id = Incarnation::from_bytes(value.to_be_bytes());
+        let marker = serde_json::to_vec(
+            &serde_json::json!({"schema":1,"binding":binding(),"id":id,"revoked":true}),
+        )?;
+        write_private(
+            root.path(),
+            &format!("credential-{id}.token"),
+            &marker,
+            2048,
+            false,
+        )?;
+    }
+    let owners = store.cleanup_owners(1)?;
+    assert_eq!(owners.len(), MAX_HTTP_CLEANUP_OWNERS);
+    assert!(
+        owners
+            .iter()
+            .all(|owner| owner.ownership == HttpCleanupOwnership::Revoked
+                && owner.credential_sha256.is_none())
+    );
+    let id = Incarnation::from_bytes(129u128.to_be_bytes());
+    let marker = serde_json::to_vec(
+        &serde_json::json!({"schema":1,"binding":binding(),"id":id,"revoked":true}),
+    )?;
+    write_private(
+        root.path(),
+        &format!("credential-{id}.token"),
+        &marker,
+        2048,
+        false,
+    )?;
+    assert!(store.cleanup_owners(1).is_err());
+    assert!(
+        root.path()
+            .join(format!("credential-{first}.token"))
+            .exists()
+    );
+    assert!(root.path().join(format!("credential-{id}.token")).exists());
+    Ok(())
+}
+
+fn owned_http_initialization_fixture() -> anyhow::Result<(
+    PrivateRoot,
+    airk_store::service::ServiceLease,
+    std::path::PathBuf,
+    InstallationBinding,
+)> {
+    let root = private_root();
+    let control = root.path().join("control");
+    crate::local_ipc::prepare_root(&control)?;
+    airk_store::service::registry::ServiceRegistry::open(&control, binding().namespace)?;
+    let owner = airk_store::service::ServiceLease::acquire(&control)?;
+    let http = owner.root().join("http-1");
+    let binding = installation_binding(owner.root(), binding().namespace)?;
+    Ok((root, owner, http, binding))
+}
+
+#[test]
+fn service_owned_empty_ledger_is_durable_without_repairing_later_missing_authority()
+-> anyhow::Result<()> {
+    use airk_core::service_http::{EndpointDescriptor, EndpointState, LoopbackMcpUrl};
+    let (_root, owner, http, binding) = owned_http_initialization_fixture()?;
+    let mut store = CredentialStore::open(&http, binding.clone())?;
+    assert!(CredentialStore::read_existing(&http, binding.clone()).is_err());
+    store.initialize_empty_owned(&owner)?;
+    assert!(store.cleanup_owners(1)?.is_empty());
+    assert!(
+        CredentialStore::read_existing(&http, binding.clone())?
+            .cleanup_owners(1)?
+            .is_empty()
+    );
+    let empty = std::fs::read(http.join("credentials.json"))?;
+    store.initialize_empty_owned(&owner)?;
+    assert_eq!(std::fs::read(http.join("credentials.json"))?, empty);
+    let id = Incarnation::from_bytes([206; 16]);
+    store.enroll(id, selection(), 100, 1)?;
+    let issued = std::fs::read(http.join("credentials.json"))?;
+    store.initialize_empty_owned(&owner)?;
+    assert_eq!(
+        std::fs::read(http.join("credentials.json"))?,
+        issued,
+        "service startup must not overwrite a valid ledger"
+    );
+    let descriptor = EndpointDescriptor {
+        schema: 1,
+        installation: binding.installation,
+        user: binding.user.clone(),
+        namespace: binding.namespace,
+        generation: 1,
+        service_instance: Incarnation::from_bytes([207; 16]),
+        executable_sha256: Sha256Digest::from_bytes([208; 32]),
+        url: LoopbackMcpUrl::new(57421)?,
+        ca_sha256: Sha256Digest::from_bytes([209; 32]),
+        certificate_sha256: Sha256Digest::from_bytes([210; 32]),
+        state: EndpointState::Ready,
+        predecessor_digest: None,
+    };
+    publish_descriptor(&http, &binding, &descriptor, None)?;
+    std::fs::remove_file(http.join("credentials.json"))?;
+    std::fs::remove_file(http.join(format!("credential-{id}.token")))?;
+    // Even an empty in-memory open cannot turn a historical publication into
+    // fresh installation evidence after its durable ledger disappears.
+    let mut reopened = CredentialStore::open(&http, binding.clone())?;
+    let error = reopened.initialize_empty_owned(&owner).unwrap_err();
+    assert!(error.to_string().contains("published HTTP endpoint"));
+    assert!(!http.join("credentials.json").exists());
+    assert!(CredentialStore::read_existing(&http, binding.clone()).is_err());
+    assert_eq!(load_descriptor(&http, &binding)?, Some(descriptor));
+    Ok(())
+}
+
+#[test]
+fn service_owned_empty_ledger_refuses_foreign_owner_or_orphan_or_corrupt_history()
+-> anyhow::Result<()> {
+    let (_root, owner, http, binding) = owned_http_initialization_fixture()?;
+    let (_other_root, other_owner, _, _) = owned_http_initialization_fixture()?;
+    let mut store = CredentialStore::open(&http, binding.clone())?;
+    assert!(store.initialize_empty_owned(&other_owner).is_err());
+    assert!(!http.join("credentials.json").exists());
+    let foreign_binding = installation_binding(owner.root(), Incarnation::from_bytes([212; 16]))?;
+    let mut foreign = CredentialStore::open(&http, foreign_binding)?;
+    assert!(foreign.initialize_empty_owned(&owner).is_err());
+    assert!(!http.join("credentials.json").exists());
+    for name in ["tls-identity.json", "ca.pem", "issuer-rotation.json"] {
+        write_private(
+            &http,
+            name,
+            b"retained native initialization history",
+            1024,
+            false,
+        )?;
+        assert!(
+            store.initialize_empty_owned(&owner).is_err(),
+            "a missing ledger cannot erase interrupted or damaged issuer history"
+        );
+        assert!(!http.join("credentials.json").exists());
+        assert_eq!(
+            std::fs::read(http.join(name))?,
+            b"retained native initialization history"
+        );
+        std::fs::remove_file(http.join(name))?;
+    }
+    let orphan = format!("credential-{}.token", Incarnation::from_bytes([211; 16]));
+    write_private(&http, &orphan, &[b'x'; 103], 103, false)?;
+    assert!(store.initialize_empty_owned(&owner).is_err());
+    assert!(!http.join("credentials.json").exists());
+    assert_eq!(std::fs::read(http.join(&orphan))?, [b'x'; 103]);
+    std::fs::remove_file(http.join(orphan))?;
+    store.initialize_empty_owned(&owner)?;
+    write_private(&http, "credentials.json", b"{}", 1_048_576, true)?;
+    assert!(store.initialize_empty_owned(&owner).is_err());
+    assert_eq!(std::fs::read(http.join("credentials.json"))?, b"{}");
+    Ok(())
+}
+
+#[test]
 fn retired_credentials_reclaim_capacity_preserve_manual_authority_and_never_reissue_ids()
 -> anyhow::Result<()> {
     let root = private_root();

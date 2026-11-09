@@ -29,22 +29,53 @@ mod cursor;
 // A canonical body is bounded separately from its public MCP presentation.
 // structuredContent retains N bytes; quoting the identical JSON in content
 // adds at most 2N bytes. Native child IPC and stdio input bounds stay unchanged.
-const MAX_COMBINED_TRANSPORT_BYTES: usize = 3 * airk_core::MAX_RESPONSE_BYTES + 4096;
+// The existing HTTP/MCP public envelope ceiling remains independent of the
+// selected canonical read/plan output budget (see airk_mcp::remote).
+const MAX_PUBLIC_TOOL_ENVELOPE_BYTES: usize = 1024 * 1024;
+const PUBLIC_TRANSPORT_RESERVE: usize = 2048;
 const DELIVERY_OBSERVATION_RESERVE: usize = 1024;
+
+#[derive(Clone, Copy)]
+enum ReplyBudget {
+    Read,
+    Plan { max_bytes: usize },
+}
+impl ReplyBudget {
+    fn body_bytes(self) -> Result<usize> {
+        match self {
+            Self::Read => Ok(airk_core::MAX_RESPONSE_BYTES),
+            Self::Plan { max_bytes } => {
+                // The canonical Workbench validator owns this existing range.
+                ensure!(
+                    (1024..=524288).contains(&max_bytes),
+                    "invalid plan output budget"
+                );
+                Ok(max_bytes)
+            }
+        }
+    }
+}
 struct ReadAdmission {
     remaining_deadline_ms: Option<u64>,
     capacity: usize,
     context: airk_mcp::read_attempt::ReadAttemptContext,
 }
 
-fn check_public_reply(result: &Value, reserve: usize) -> Result<()> {
+fn check_public_reply(result: &Value) -> Result<()> {
+    check_public_reply_budget(result, ReplyBudget::Read)
+}
+
+fn check_public_reply_budget(result: &Value, budget: ReplyBudget) -> Result<()> {
+    let maximum = budget.body_bytes()?;
+    // Check actual serialized data before and after the typed delivery receipt.
+    // A guessed receipt reservation must not reject a complete fitting reply.
+    airk_core::index_catalog::encoded_size(&canonical_body(result), maximum)
+        .map_err(|_| airk_kernel::combined_reads::CombinedReplyBudget)?;
     airk_core::index_catalog::encoded_size(
-        &canonical_body(result),
-        airk_core::MAX_RESPONSE_BYTES.saturating_sub(reserve),
+        result,
+        (3 * maximum + 4096).min(MAX_PUBLIC_TOOL_ENVELOPE_BYTES - PUBLIC_TRANSPORT_RESERVE),
     )
     .map_err(|_| airk_kernel::combined_reads::CombinedReplyBudget)?;
-    airk_core::index_catalog::encoded_size(result, MAX_COMBINED_TRANSPORT_BYTES)
-        .map_err(|_| airk_kernel::combined_reads::CombinedReplyBudget)?;
     Ok(())
 }
 
@@ -327,6 +358,24 @@ impl Backend {
         result: Value,
         deadline: Instant,
     ) -> Result<Value> {
+        self.finalize_budget(
+            selected,
+            scope_identity,
+            result,
+            deadline,
+            ReplyBudget::Read,
+        )
+        .await
+    }
+
+    async fn finalize_budget(
+        &self,
+        selected: &QuerySelection,
+        scope_identity: Sha256Digest,
+        result: Value,
+        deadline: Instant,
+        budget: ReplyBudget,
+    ) -> Result<Value> {
         use airk_core::service::{ControlMethod, ControlResponse};
         ensure!(
             !self.closed.load(std::sync::atomic::Ordering::Acquire),
@@ -391,7 +440,7 @@ impl Backend {
         if was_error || result_failed(&result) {
             result["isError"] = true.into();
         }
-        check_public_reply(&result, 0)?;
+        check_public_reply_budget(&result, budget)?;
         Ok(result)
     }
     fn request_selection(&self, args: &mut Map<String, Value>) -> Result<QuerySelection> {
@@ -636,7 +685,7 @@ impl Backend {
             ScopeReadRefused
         );
         let result = native_envelope(body);
-        check_public_reply(&result, DELIVERY_OBSERVATION_RESERVE)?;
+        check_public_reply(&result)?;
         let result = self
             .finalize(selected, before.identity, result, deadline)
             .await?;
@@ -698,11 +747,14 @@ impl Backend {
         ensure!(before.identity == after.identity, ScopeReadRefused);
         let failed = result.status == "failed" || result.status == "requirements_unmet";
         let output_max_bytes = result.plan.output.max_bytes;
+        let budget = ReplyBudget::Plan {
+            max_bytes: output_max_bytes,
+        };
         let body = serde_json::to_value(result)?;
         let result = json!({"content":[{"type":"text","text":body.to_string()}],"structuredContent":body,"isError":failed});
-        check_public_reply(&result, DELIVERY_OBSERVATION_RESERVE)?;
+        check_public_reply_budget(&result, budget)?;
         let result = self
-            .finalize(selected, before.identity, result, deadline)
+            .finalize_budget(selected, before.identity, result, deadline, budget)
             .await?;
         airk_core::index_catalog::encoded_size(&canonical_body(&result), output_max_bytes)
             .map_err(|_| airk_kernel::combined_reads::CombinedReplyBudget)?;
@@ -1387,7 +1439,7 @@ impl Backend {
             }
         }
         let result = json!({"content":[{"type":"text","text":value.to_string()}],"structuredContent":value,"isError":response.error.is_some() || verification_failed});
-        check_public_reply(&result, DELIVERY_OBSERVATION_RESERVE)?;
+        check_public_reply(&result)?;
         self.finalize(
             selected,
             before.identity,

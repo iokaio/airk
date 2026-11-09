@@ -10,6 +10,61 @@ fn nonce(value: u8) -> Incarnation {
 }
 
 #[test]
+fn retained_cleanup_source_roots_include_inactive_registration_and_refuse_unknown_scope()
+-> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let mut registry = ServiceRegistry::open(owner.path(), nonce(91))?;
+    let registration =
+        ProjectRegistration::new("/original".into(), "/derived".into(), "retained".into())?;
+    registry.register(&registration)?;
+    assert!(
+        registry
+            .retained_source_roots(registration.binding)
+            .is_err(),
+        "missing watcher data must not imply primary-root-only selection"
+    );
+    registry.configure_watch(registration.binding, true)?;
+    let mut lease = ProjectLease::acquire(owner.path(), registration.binding)?;
+    registry.admit_worker(&mut lease)?;
+    registry.record_watch_roots(&lease, &["/additional".into()])?;
+    let observed = registry.retained_source_roots(registration.binding)?;
+    assert_eq!(observed, vec!["/additional", "/original"]);
+    registry.connection.execute(
+        "UPDATE projects SET registered=0 WHERE binding=?1",
+        [registration.binding.to_string()],
+    )?;
+    assert!(registry.watch(registration.binding).is_err());
+    assert_eq!(
+        registry.retained_source_roots(registration.binding)?,
+        observed
+    );
+    let before: i64 = registry
+        .connection
+        .query_row("SELECT total_changes()", [], |row| row.get(0))?;
+    assert_eq!(
+        registry.retained_source_roots(registration.binding)?,
+        observed
+    );
+    assert_eq!(
+        registry
+            .connection
+            .query_row("SELECT total_changes()", [], |row| row.get::<_, i64>(0))?,
+        before,
+        "source guard must stay read-only"
+    );
+    registry.connection.execute(
+        "UPDATE service_watch SET roots=x'5b' WHERE project=?1",
+        [registration.binding.to_string()],
+    )?;
+    assert!(
+        registry
+            .retained_source_roots(registration.binding)
+            .is_err()
+    );
+    Ok(())
+}
+
+#[test]
 fn traversal_diagnostics_log_only_transitions_survive_restart_and_clear_only_verified_roots()
 -> Result<()> {
     use airk_core::service_watch::UnreadableDirectory;

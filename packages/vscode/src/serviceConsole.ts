@@ -4,13 +4,15 @@ import * as path from 'node:path';
 import { homedir } from 'node:os';
 import { BootstrapObservation, LegacyStartupTarget, nativeRunner, RuntimeHost, RuntimeOptions } from './serviceBootstrap';
 import { RecordValue, ServiceError, record } from './serviceClient';
-import { LOCAL_LOG_ACTIONS, ServiceConsoleController } from './serviceConsoleController';
+import { LOCAL_LOG_ACTIONS, LOCAL_DIAGNOSTIC_ACTIONS, ServiceConsoleController } from './serviceConsoleController';
 import { ServiceConsoleState } from './serviceConsoleView';
 import { runText } from './native';
 import * as fs from 'node:fs/promises';
 import { DiagnosticCaptures } from './diagnosticCaptures';
 import { recordDiagnosticFailure } from './diagnosticLogs';
 import { chooseRuntimeUpgradeMode } from './runtimeRebuild';
+import {type IntentStorage} from './serviceIntents';
+import {PrivateIntentStore} from './privateIntentStore';
 export type ConsoleRuntime=Pick<RuntimeHost,'discover'|'binding'|'ensure'|'client'|'snapshot'|'repair'|'prepareConfiguration'|'reviewTransition'|'transition'|'lifecycle'|'abandonLifecycle'> & Partial<Pick<RuntimeHost,'reviewLegacyStartup'|'loadLegacyStartup'|'legacyStartupReceipts'|'removeLegacyStartup'>>;
 
 /** Machine/user settings only. A repository cannot nominate an executable or approval. */
@@ -46,11 +48,14 @@ export class ServiceConsole implements vscode.Disposable {
     private readonly stateChanged=new vscode.EventEmitter<ServiceConsoleState>();
     /** Fired for every published controller state. */
     readonly onDidChangeState=this.stateChanged.event;
+    readonly intentStorage:IntentStorage&Partial<Pick<PrivateIntentStore,'captureScope'|'retireCapturedScope'>>;
     /** Consumers (the AIRK Explorer) that need observations to keep refreshing. */
     private consumers=0;
     private captures?:DiagnosticCaptures;
     constructor(private readonly context:vscode.ExtensionContext,readonly runtime:ConsoleRuntime,
-        private readonly workspace?:{register():Promise<void>;currentProjects():ReadonlySet<string>;removed?(project:string):Promise<void>}){
+        private readonly workspace?:{register():Promise<void>;currentProjects():ReadonlySet<string>;removed?(project:string):Promise<void>},storage?:IntentStorage&Partial<Pick<PrivateIntentStore,'captureScope'|'retireCapturedScope'>>){
+        this.intentStorage=storage??new PrivateIntentStore(path.join(context.globalStorageUri.fsPath,'service-intents'),context.globalState,
+            ()=>vscode.workspace.isTrusted&&!this.disposed,async()=>{await fs.mkdir(context.globalStorageUri.fsPath,{recursive:true});});
         this.controller=this.createController();
         if(vscode.workspace.onDidCloseTextDocument)this.listeners.push(vscode.workspace.onDidCloseTextDocument(document=>{
             if(document.uri.scheme==='file')void this.captures?.release(document.uri.fsPath).catch(error=>this.output.appendLine(`Diagnostic capture cleanup: ${String(error)}`));
@@ -59,11 +64,11 @@ export class ServiceConsole implements vscode.Disposable {
     private createController():ServiceConsoleController{
         return new ServiceConsoleController({
             version:this.context.extension.packageJSON.version,authority:vscode.env.remoteName?`Remote execution host (${vscode.env.remoteName})`:'Local execution host',
-            storage:this.context.globalState,runtime:this.runtime,trusted:()=>vscode.workspace.isTrusted&&!this.disposed,
+            storage:this.intentStorage,runtime:this.runtime,trusted:()=>vscode.workspace.isTrusted&&!this.disposed,
             changed:state=>this.changed(state),confirm:async(message,acceptLabel='Continue')=>(await vscode.window.showWarningMessage(message,{modal:true},acceptLabel))===acceptLabel,
             chooseUpgradeMode:()=>chooseRuntimeUpgradeMode(items=>vscode.window.showQuickPick(items,{title:'AIRK runtime upgrade',placeHolder:'Choose how AIRK handles the saved indexes'})),
             copy:async text=>vscode.env.clipboard.writeText(text),logs:observation=>this.logs(observation),resources:(current,queryOnly)=>this.resources(current,queryOnly),
-            openReport:async text=>{await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({content:text,language:'json'}),{preview:false});},
+            openReport:async text=>{const document=await vscode.workspace.openTextDocument({content:text,language:'json'});if(!this.disposed&&vscode.workspace.isTrusted)await vscode.window.showTextDocument(document,{preview:false});},
             saveReport:async text=>{await this.saveDiagnostic(text,'airk-diagnostic-report');},
             exportLogs:observation=>this.exportLogs(observation),
             rawLogs:(save,observation)=>this.rawLogs(save,observation),
@@ -121,7 +126,7 @@ export class ServiceConsole implements vscode.Disposable {
      */
     async run(action:string,fields:Record<string,unknown>={}):Promise<void>{
         const controller=this.controller;
-        if(!LOCAL_LOG_ACTIONS.includes(action)&&!await controller.whenIdle())return;
+        if(!LOCAL_LOG_ACTIONS.includes(action)&&!LOCAL_DIAGNOSTIC_ACTIONS.includes(action)&&!await controller.whenIdle())return;
         await controller.action({...fields,type:'service',revision:controller.state.revision,action});
     }
     /** Capture a native repair preview; approval stays a separate, explicit step. */
@@ -134,7 +139,7 @@ export class ServiceConsole implements vscode.Disposable {
     private async saveDiagnostic(text:string,name:string,extension='json'):Promise<boolean>{
         const target=await vscode.window.showSaveDialog({title:'Save AIRK diagnostics',saveLabel:'Save',filters:{'Diagnostic log':[extension]},
             defaultUri:vscode.Uri.file(path.join(homedir(),`${name}-${new Date().toISOString().replace(/[:.]/g,'-')}.${extension}`))});
-        if(!target||this.disposed)return false;
+        if(!target||this.disposed||!vscode.workspace.isTrusted)return false;
         await vscode.workspace.fs.writeFile(target,Buffer.from(text,'utf8'));
         this.output.appendLine(`Saved AIRK diagnostics: ${target.fsPath}`);return true;
     }

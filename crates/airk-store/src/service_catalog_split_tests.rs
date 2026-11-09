@@ -41,14 +41,25 @@ pub(in crate::service::registry::catalog) fn fixture() -> Result<(
     SourcePolicy,
     SplitPolicyPlan,
 )> {
+    fixture_in_namespace(Incarnation::from_bytes([1; 16]))
+}
+
+fn fixture_in_namespace(
+    namespace: Incarnation,
+) -> Result<(
+    tempfile::TempDir,
+    ServiceRegistry,
+    SplitRequest,
+    SourcePolicy,
+    SplitPolicyPlan,
+)> {
     let temp = tempfile::tempdir()?;
     let base = temp.path().canonicalize()?;
     let root = base.join("source");
     std::fs::create_dir(&root)?;
     std::fs::write(root.join("original.md"), "original remainder")?;
     std::fs::create_dir(base.join("control"))?;
-    let mut registry =
-        ServiceRegistry::open(&base.join("control"), Incarnation::from_bytes([1; 16]))?;
+    let mut registry = ServiceRegistry::open(&base.join("control"), namespace)?;
     let registration = ProjectRegistration::new(
         root.to_str().unwrap().into(),
         base.join("original-data").to_str().unwrap().into(),
@@ -1796,6 +1807,266 @@ fn generic_retirement_refuses_both_live_split_participants_before_any_storage_ef
             .catalog_active_split_for_binding(request.original_registration.binding)?
             .context("saved split missing")?,
         state
+    );
+    Ok(())
+}
+
+#[test]
+fn clean_break_namespace_retires_real_active_accepted_split_shell() -> Result<()> {
+    clean_break_namespace_retires_active_shell(false, false)
+}
+
+#[test]
+fn clean_break_namespace_retires_closed_funded_stage_and_refuses_live_capture() -> Result<()> {
+    clean_break_namespace_retires_active_shell(true, false)
+}
+
+#[test]
+fn clean_break_namespace_refuses_actual_foreign_namespace_split_capsule() -> Result<()> {
+    clean_break_namespace_retires_active_shell(false, true)
+}
+
+fn clean_break_namespace_retires_active_shell(funded: bool, foreign_capsule: bool) -> Result<()> {
+    use crate::service::{
+        ProjectLease, ServiceLease, collection::Collection, data_scope::CleanBreakNamespaceOwner,
+    };
+    use std::io::Write;
+
+    let (_temporary, mut registry, request, baseline, plan) = fixture()?;
+    let source_path = Path::new(&request.original_registration.root).join("original.md");
+    let source_before = std::fs::read(&source_path)?;
+    let accepted = registry.catalog_reserve_split(&request, &baseline, &plan)?;
+    registry.catalog_reserve_split_destination(request.operation_id()?, accepted.receipt_digest)?;
+    let state = registry.catalog_split_state(request.operation_id()?)?;
+    let prepared = super::super::setup::storage::prepare_split_test_storage(&registry, &state)?;
+    let recorded = prepared.record(&mut registry)?;
+    assert!(!matches!(
+        recorded.receipt.state,
+        SplitRunState::Complete | SplitRunState::CanceledBeforeFence { .. }
+    ));
+    crate::service::data_scope::bind(
+        Path::new(&request.original_registration.data_root),
+        &registry.root,
+        request.key.namespace,
+    )?;
+    let original = Collection::initialize(
+        Path::new(&request.original_registration.data_root),
+        &request.original_registration.root,
+        &request.original_registration.collection,
+        request.original_incarnation,
+    )?;
+    drop(original.selected_store()?.lock()?);
+    let selected = Collection::existing(
+        Path::new(&request.destination_registration.data_root),
+        &request.destination_registration.root,
+        &request.destination_registration.collection,
+    )?;
+    drop(selected.select_for_diagnostics()?.lock()?);
+    let _service = ServiceLease::acquire(&registry.root)?;
+    let mut capture = None;
+    if funded {
+        use crate::quota::{
+            Quota,
+            funding::{FundingBudget, FundingPhase, FundingRequest},
+        };
+        let funding_request = FundingRequest::for_split(
+            &request,
+            vec![
+                FundingBudget {
+                    index_id: request.original_index,
+                    bytes: request.capacity.original_rewrite
+                        + request.capacity.cleanup_allowance / 2,
+                },
+                FundingBudget {
+                    index_id: request.destination.index_id,
+                    bytes: request.capacity.destination_growth
+                        + request.capacity.destination_temporary
+                        + request.capacity.cleanup_allowance
+                        - request.capacity.cleanup_allowance / 2,
+                },
+            ],
+        )?;
+        let quota = Quota::open_service(Path::new(&request.destination_registration.data_root))?;
+        let funding = quota.reserve_funding(&funding_request)?;
+        let phase = quota.begin_funding_phase(
+            &funding,
+            request.destination.index_id,
+            FundingPhase {
+                revision: 2,
+                purpose: SplitJobPurpose::DestinationBuild,
+                job: Sha256Digest::from_bytes([201; 32]),
+            },
+        )?;
+        let reservation = quota
+            .with_funding(phase)?
+            .reserve(&request.destination_registration.collection, 8192)?;
+        let stage = reservation.staging_directory()?;
+        reservation
+            .create_file(stage.join("captured-source-fragment"))?
+            .write_all(b"captured private bytes")?;
+        capture = Some(reservation);
+    }
+    let destination =
+        ProjectLease::acquire(&registry.root, request.destination_registration.binding)?;
+    let registration = &request.destination_registration;
+    let directory = Path::new(&registration.data_root)
+        .join("collections-1.4")
+        .join(&registration.collection);
+    let owner_before = std::fs::read(directory.join("service-owner.json"))?;
+    let ordinary = Collection::purge_removed_turn(registration, &destination)
+        .expect_err("ordinary retirement must preserve an active split shell");
+    assert!(
+        format!("{ordinary:#}")
+            .contains("active split cannot be removed through ordinary retirement"),
+        "ordinary retirement failed for a different reason: {ordinary:#}"
+    );
+    assert_eq!(
+        std::fs::read(directory.join("service-owner.json"))?,
+        owner_before
+    );
+    drop(destination);
+    let registrations = vec![request.original_registration.clone(), registration.clone()];
+    assert!(
+        CleanBreakNamespaceOwner::acquire(&_service, request.key.namespace, &registrations[..1],)
+            .is_err(),
+        "partial namespace authority must refuse before deletion"
+    );
+    let live_project =
+        ProjectLease::acquire(&registry.root, request.original_registration.binding)?;
+    assert!(
+        CleanBreakNamespaceOwner::acquire(&_service, request.key.namespace, &registrations,)
+            .is_err(),
+        "live sibling project must exclude namespace disposal"
+    );
+    drop(live_project);
+    let live_writer = original.selected_store()?.lock()?;
+    assert!(
+        CleanBreakNamespaceOwner::acquire(&_service, request.key.namespace, &registrations,)
+            .is_err(),
+        "live sibling writer must exclude namespace disposal"
+    );
+    drop(live_writer);
+    if capture.is_some() {
+        assert!(
+            CleanBreakNamespaceOwner::acquire(&_service, request.key.namespace, &registrations,)
+                .is_err(),
+            "live funded capture must exclude namespace disposal"
+        );
+    }
+    drop(capture);
+    let funding_path = Path::new(&registration.data_root)
+        .join(".quota-1.4/split-allocations")
+        .join(format!("f-{}.json", request.operation_id()?));
+    let funding_before = if funded {
+        Some(std::fs::read(&funding_path)?)
+    } else {
+        None
+    };
+    assert_eq!(
+        std::fs::read(directory.join("service-owner.json"))?,
+        owner_before
+    );
+    let mut foreign_storage = None;
+    if foreign_capsule {
+        let (temporary, mut foreign_registry, foreign_request, foreign_baseline, foreign_plan) =
+            fixture_in_namespace(Incarnation::from_bytes([202; 16]))?;
+        let accepted = foreign_registry.catalog_reserve_split(
+            &foreign_request,
+            &foreign_baseline,
+            &foreign_plan,
+        )?;
+        foreign_registry.catalog_reserve_split_destination(
+            foreign_request.operation_id()?,
+            accepted.receipt_digest,
+        )?;
+        let state = foreign_registry.catalog_split_state(foreign_request.operation_id()?)?;
+        super::super::setup::storage::prepare_split_test_storage(&foreign_registry, &state)?
+            .record(&mut foreign_registry)?;
+        let foreign_directory = Path::new(&foreign_request.destination_registration.data_root)
+            .join("collections-1.4")
+            .join(&foreign_request.destination_registration.collection);
+        let foreign_owner: serde_json::Value = serde_json::from_slice(&std::fs::read(
+            foreign_directory.join("service-owner.json"),
+        )?)?;
+        #[derive(serde::Serialize, serde::Deserialize)]
+        struct CanonicalPointer {
+            reference: airk_core::catalog_split::SplitOwnerReference,
+            revision: CatalogRevision,
+            digest: Sha256Digest,
+        }
+        let pointer: CanonicalPointer =
+            serde_json::from_value(foreign_owner["required_split"].clone())?;
+        let name = format!("split-state-{}.json", pointer.digest);
+        std::fs::copy(foreign_directory.join(&name), directory.join(name))?;
+        let selected_owner: serde_json::Value = serde_json::from_slice(&owner_before)?;
+        let previous: CanonicalPointer =
+            serde_json::from_value(selected_owner["required_split"].clone())?;
+        // Retain the producer's canonical Owner field order while replacing the
+        // exact typed pointer with another canonical producer's pointer.
+        let previous = serde_json::to_string(&previous)?;
+        let next = serde_json::to_string(&pointer)?;
+        let owner_text = String::from_utf8(owner_before.clone())?;
+        ensure!(
+            owner_text.matches(&previous).count() == 1,
+            "producer pointer is not unique"
+        );
+        std::fs::write(
+            directory.join("service-owner.json"),
+            owner_text.replacen(&previous, &next, 1),
+        )?;
+        foreign_storage = Some(temporary);
+    }
+    let namespace =
+        CleanBreakNamespaceOwner::acquire(&_service, request.key.namespace, &registrations)?;
+    let foreign_registration = ProjectRegistration::new(
+        registration.root.clone(),
+        registration.data_root.clone(),
+        "unregistered-destination".into(),
+    )?;
+    assert!(
+        Collection::purge_for_clean_break_namespace_turn(&foreign_registration, &namespace)
+            .is_err(),
+        "unregistered destination cannot inherit namespace disposal authority"
+    );
+    if foreign_capsule {
+        let before = std::fs::read(directory.join("service-owner.json"))?;
+        let error = Collection::purge_for_clean_break_namespace_turn(registration, &namespace)
+            .expect_err("foreign namespace capsule must remain preserved");
+        assert!(
+            format!("{error:#}").contains("foreign clean-break split namespace"),
+            "{error:#}"
+        );
+        assert_eq!(std::fs::read(directory.join("service-owner.json"))?, before);
+        assert_eq!(std::fs::read(source_path)?, source_before);
+        drop(foreign_storage);
+        return Ok(());
+    }
+    let mut complete = false;
+    for _ in 0..16 {
+        if Collection::purge_for_clean_break_namespace_turn(registration, &namespace)? {
+            complete = true;
+            break;
+        }
+    }
+    assert!(
+        complete,
+        "owned old split shell must retire in bounded turns"
+    );
+    assert!(!directory.exists());
+    assert_eq!(std::fs::read(source_path)?, source_before);
+    if let Some(before) = funding_before {
+        assert_eq!(
+            std::fs::read(funding_path)?,
+            before,
+            "collection disposal must leave pending quota metadata for exact root retirement"
+        );
+    }
+    assert_eq!(
+        registry
+            .catalog_split_state(request.operation_id()?)?
+            .snapshot(),
+        &recorded,
+        "artifact disposal must not relabel old split work as completed"
     );
     Ok(())
 }

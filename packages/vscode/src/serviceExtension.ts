@@ -2,10 +2,10 @@
 //! Service-backed extension activation. Native ownership outlives editor windows.
 import * as vscode from 'vscode';
 import * as fs from 'node:fs/promises';
-import { readdirSync, statSync, watch, type FSWatcher } from 'node:fs';
-import { randomBytes, createHash } from 'node:crypto';
+import { readdirSync, statSync, lstatSync, readFileSync, realpathSync, unlinkSync, watch, type FSWatcher } from 'node:fs';
+import { randomBytes, createHash,X509Certificate } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { HttpSelection, HttpConnectionInfo, validateHttpConnection, preservedImportedHttpServerKey, matchesImportedHttpOrigin, sameHttpAuthority, credentialEnvironment, httpMaterial, httpPublicTrustFile, publishNativeInput, removeNativeInput } from './serviceHttp';
+import { HttpSelection, HttpConnectionInfo, validateHttpConnection, preservedImportedHttpServerKey, matchesImportedHttpOrigin, sameHttpAuthority, credentialEnvironment, httpMaterial, httpPublicTrustFile, publishNativeInput, removeNativeInput,validateEndpoint,validatePredecessorHttpLookup,predecessorHttpProof,type PredecessorHttpLookup,type PredecessorHttpScope,type OwnedPredecessorHttpProof,type PredecessorHttpSnapshot } from './serviceHttp';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import {inventoryGlobalAgentConfigs,globalConfigDeclarations,transformGlobalContainer,type GlobalAgent,type GlobalConfigFile} from './globalAgentInventory';
@@ -15,8 +15,10 @@ import { probeMcp, runText } from './native';
 import { LegacyRetirementSession, retirementJson, retirementMarkdown } from './runtimeLegacyRetirement';
 import { automaticUpgrade, BootstrapObservation, nativeRunner, RuntimeBinding, RuntimeHost, legacyOriginLocatorIdentity, runtimeBindingIdentity, type LegacyOriginLocator } from './serviceBootstrap';
 import { ConsoleRuntime, ServiceConsole, serviceRuntimeOptions } from './serviceConsole';
-import { identifier, record, ServiceError } from './serviceClient';
+import { identifier, record, ServiceError, type RecordValue } from './serviceClient';
 import { IntentJournal } from './serviceIntents';
+import {validateScopeRetirementCapture,type ScopeRetirementCapture,type ScopeRetirementResult} from './privateIntentStore';
+import {retainNativeOutcomeDuring} from './nativeOutcome';
 import { nativeScopeLaunchSpec, readWorkspaceRegistrations, ServiceWorkspace } from './serviceWorkspace';
 import { installLauncherCli, shellIntegration, ShellTouch } from './cliInstall';
 import { defaultProfiles, removeShellIntegration } from './cliRemove';
@@ -29,20 +31,20 @@ import type { SearchDraft } from './explorerDrafts';
 import { ExplorerSidebar } from './explorerSidebar';
 import { WorkbenchView } from './workbenchView';
 import type { ExplorerController, ExplorerHost } from './explorerController';
-import { hasUnifiedVscodeConfig, migrateAgentConfig, migrateLocalAgents, locations as localAgentLocations, LocalAgent, httpConfigurationConnectionId, refreshHttpAgentConfig, migrateStandaloneHttpEntry } from './agentMigration';
+import { hasUnifiedVscodeConfig, migrateAgentConfig, migrateLocalAgents, locations as localAgentLocations, LocalAgent, httpConfigurationConnectionId, refreshHttpAgentConfig, migrateStandaloneHttpEntry, captureCleanBreakClientCleanup, applyCleanBreakClientCleanup, validateCleanBreakClientPlan, type CleanBreakClientPlan, type CleanBreakClientFile } from './agentMigration';
 import { readJsonConfig, vscodeCredentialConfiguration, vscodeManualConnectionIds, vscodeManualConfiguration } from './agentConfig';
 import { AssistanceIpcHost } from './explorerAssistanceHost';
 import {ClientTrustPublicationError,IssuerRotationStatus,publishOwnedIssuerBundle,updateOwnedIssuerBundles} from './httpIssuerRotation';
 import { HandoffStore } from './explorerHandoffs';
 import { SuggestionStore } from './explorerSuggestions';
 import { assistanceDirectory, launchDescriptorPath, writeLaunchDescriptor } from './explorerAssistanceLaunch';
-import { rememberShellIntegration, rememberUninstallTarget, shellProfiles } from './extensionUninstall';
+import { rememberShellIntegration, rememberUninstallTarget, shellProfiles, captureCleanBreakUninstallReceipts, retireCleanBreakUninstallReceipts, type CleanBreakUninstallReceipt } from './extensionUninstall';
 import { recordDiagnosticFailure } from './diagnosticLogs';
 import { nativeExecutionAllowed, NativeExecutionDisabled, setNativeExecutionGate } from './nativeGate';
 import type {ServiceConsoleState} from './serviceConsoleView';
 import type { RuntimeUpgradeProgress } from './explorerContracts';
 import { applyLocalSearchScope, saveLocalIndexSet, localScopeChoice, managedScopeProject, type ManagedScopeProject, type LocalScopeAdapter } from './localSearchScope';
-import { chooseRuntimeUpgradeMode, NativeRebuildObservation, RebuildNotices, rebuildNotice, validateRebuildObservation } from './runtimeRebuild';
+import { chooseRuntimeUpgradeMode, NativeRebuildObservation, RebuildNotices, rebuildNotice, validateRebuildObservation, runtimeCleanBreakRequired,predecessorExecutableInRuntime,cleanBreakSuccessorPublished } from './runtimeRebuild';
 
 const SETUP_FAILED_STATUS='$(warning) AIRK: setup failed';
 
@@ -78,6 +80,20 @@ function codeStamp(root:string|undefined,required:readonly string[]=['serviceExt
 }
 function same(left:string,right:string):boolean {
     return path.relative(process.platform==='win32'?path.toNamespacedPath(left):left,process.platform==='win32'?path.toNamespacedPath(right):right)==='';
+}
+interface CleanBreakClientCapture {
+    schema:1;installDir:string;predecessor:string;controlDir:string;candidate:string;executable:string;verifiedLaunchers:string[];roots:string[];
+    plan:CleanBreakClientPlan;receipts:CleanBreakUninstallReceipt[];receiptBlockers:string[];operation?:string;
+    hostArtifacts?:CleanBreakHostArtifacts;
+    httpOwnership?:PredecessorHttpLookup;
+    journal?:ScopeRetirementCapture;
+    result?:{complete:boolean;capturedAt:number;configurations:Awaited<ReturnType<typeof applyCleanBreakClientCleanup>>;receipts:Awaited<ReturnType<typeof retireCleanBreakUninstallReceipts>>;hostArtifacts?:{complete:boolean;removed:string[];blockers:string[]};journal?:ScopeRetirementResult|{complete:false;state:'waiting_for_successor_publication'};httpRevalidation?:{snapshot:PredecessorHttpLookup['snapshot'];queries:Omit<PredecessorHttpLookup,'snapshot'>[]}};
+}
+interface CleanBreakHostArtifacts {
+    mementos:{key:string;sha256:string}[];
+    environment:{name:string;type:number;sha256:string;namespace:string;installation:string}[];
+    bundles:{file:string;sha256:string;dev:string;ino:string;size:number;namespace:string;installation:string}[];
+    blockers:string[];assistanceRefreshed?:boolean;
 }
 class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDataProvider<LaunchSpec> {
     // Capture the loaded code's version; extension metadata can change after a VSIX install.
@@ -115,6 +131,8 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     private checking?:Promise<void>;
     private startup?:{message:string;startedAt:number;failed?:boolean};
     private runtimeUpgrade?:RuntimeUpgradeProgress;
+    private cleanBreakClientResult?:RecordValue;
+    private cleanBreakClientWork?:{key:string;work:Promise<void>};
     private localScopeWorking=false;
     private localScopeEpoch=0;
     private localScopeLabelChoice?:{index_ids:string[];project_ids:string[]};
@@ -157,6 +175,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     private workbench?:WorkbenchView;
     private assistanceHost?:AssistanceIpcHost;
     private assistanceGeneration=0;
+    private assistanceReady?:{generation:number;launch:boolean;endpoint:boolean};
     private assistanceSetup:Promise<void>=Promise.resolve();
     private notifiedAssistanceDescriptor?:string;
     /** Agent drafts for this window, kept in memory only; the Explorer Inbox shows them. */
@@ -169,12 +188,12 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         if(this.startup){this.startup={...this.startup,message};this.treeChanges.fire();}
         this.installProgress?.report({message});this.output.appendLine(message);
     }
-    private reportUpgrade(stage:RuntimeUpgradeProgress['stage'],message:string,fromVersion?:string):void{
+    private reportUpgrade(stage:RuntimeUpgradeProgress['stage'],message:string,fromVersion?:string,cleanBreak=false):void{
         if(this.disposed)return;
         const now=Date.now(),prior=this.runtimeUpgrade;
         if(!prior&&!fromVersion)return;
         this.runtimeUpgrade={fromVersion:fromVersion??prior!.fromVersion,toVersion:this.runningVersion,
-            startedAt:prior?.startedAt??now,updatedAt:now,stage,message};
+            startedAt:prior?.startedAt??now,updatedAt:now,stage,message,...(cleanBreak||prior?.cleanBreak?{cleanBreak:true}:{})};
         this.reportInstall(message);
         this.treeChanges.fire();
     }
@@ -201,9 +220,42 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     }
     private currentRebuild(binding:RuntimeBinding):NativeRebuildObservation|undefined{
         const observed=binding.rebuild;
+        if(observed?.mode==='clean_break'&&observed.stage==='ready'&&record(observed.cleanup??{}).complete===true
+            &&this.context.globalState.get<string>(`airk.installComplete.2.${binding.installDir}`)===`${binding.version}:${binding.runtimeSha256}`
+            &&this.context.globalState.get<string>(`airk.cleanBreak.complete.1.${binding.installDir}`)===observed.operation_id){
+            const captured=this.loadCleanBreakClients(binding),receipt=captured?.result?.journal;
+            if(captured?.operation===observed.operation_id&&captured.journal&&captured.journal.namespace===observed.original_namespace
+                &&same(captured.controlDir,String(observed.preserved_control))&&receipt?.complete===true
+                &&record(receipt).operation_id===observed.operation_id&&record(receipt).scope===captured.journal.scope)return;
+        }
         return observed&&observed.candidate===binding.runtimeSha256&&same(String(observed.successor_control),binding.controlDir)?observed:undefined;
     }
-    private async presentRebuiltInstallation(binding:RuntimeBinding):Promise<void>{
+    private showRebuildProgress(binding:RuntimeBinding,observed:NativeRebuildObservation):void{
+        const journalWaiting=this.cleanBreakClientResult?.complete===false&&record(this.cleanBreakClientResult.journal??{}).state==='waiting_for_successor_publication'
+            &&record(this.cleanBreakClientResult.configurations??{}).complete===true&&record(this.cleanBreakClientResult.receipts??{}).complete===true&&record(this.cleanBreakClientResult.hostArtifacts??{}).complete===true;
+        const clientBlocked=observed.mode==='clean_break'&&this.cleanBreakClientResult?.complete!==true&&!journalWaiting;
+        const message=clientBlocked?'AIRK client configuration cleanup is unconfirmed. Original sources are unchanged; review the retained client cleanup details before reconnecting agents.':observed.mode==='clean_break'&&observed.stage==='ready'&&record(observed.cleanup??{}).complete===true?
+            'AIRK clean installation is ready. Fresh indexes and client cleanup are verified; owned legacy artifacts were removed. Connect coding agents with a new reviewed scope.':rebuildNotice(observed).message;
+        this.reportInstall(message);
+        if(observed.stage==='unavailable')this.runtimeUpgrade=undefined;
+        else if(observed.mode==='clean_break'){
+            const stage=clientBlocked||observed.stage==='failed'||record(observed.cleanup??{}).state==='blocked'?'failed'
+                :observed.stage==='ready'?(record(observed.cleanup??{}).complete===true?'ready':'cleaning'):'rebuilding';
+            this.reportUpgrade(stage,message,this.runtimeUpgrade?.fromVersion??binding.version,true);
+            if(this.runtimeUpgrade)this.runtimeUpgrade={...this.runtimeUpgrade,clientCleanup:structuredClone(this.cleanBreakClientResult)};
+        }else this.reportUpgrade(observed.stage==='failed'?'failed':'ready',message,this.runtimeUpgrade?.fromVersion??binding.version);
+        this.status.text=clientBlocked?'$(warning) AIRK: client cleanup needs attention':observed.stage==='unavailable'?'AIRK: rebuild history unavailable':observed.stage==='ready'?
+            observed.mode==='clean_break'&&record(observed.cleanup??{}).complete!==true?'AIRK: removing old artifacts':'AIRK: choose search scope'
+            :observed.stage==='failed'?'$(warning) AIRK: rebuild needs attention':observed.stage==='paused'?'AIRK: rebuild paused':'AIRK: rebuilding indexes';
+        this.startup=undefined;this.treeChanges.fire();this.definitions.fire();
+    }
+    private async rememberCleanBreakCompletion(binding:RuntimeBinding,observed:NativeRebuildObservation):Promise<void>{
+        if(observed.mode!=='clean_break'||observed.stage!=='ready'||record(observed.cleanup??{}).complete!==true||this.cleanBreakClientResult?.complete!==true)return;
+        const key=`airk.installComplete.2.${binding.installDir}`,identity=`${binding.version}:${binding.runtimeSha256}`;
+        await this.context.globalState.update(`airk.cleanBreak.complete.1.${binding.installDir}`,observed.operation_id);this.trusted();
+        if(this.context.globalState.get<string>(key)!==identity){await this.context.globalState.update(key,identity);this.trusted();}
+    }
+    private async presentRebuiltInstallation(binding:RuntimeBinding,resetConsole=true):Promise<void>{
         const observed=this.currentRebuild(binding);
         if(!observed)throw new ServiceError('native_rebuild_selection_unconfirmed');
         await this.observeRebuild(observed);this.trusted();
@@ -213,15 +265,15 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         if(changed){
             this.localScopeEpoch++;this.explicitCatalogScope=undefined;
             this.specs=[];this.roots=[];this.selectedEligible=undefined;this.selectedScope=undefined;
-            this.checks.clear();this.connectionCheck=undefined;this.console.reset();
+            this.checks.clear();this.connectionCheck=undefined;if(resetConsole)this.console.reset();
         }
         this.binding=binding;
-        const message=rebuildNotice(observed).message;
-        this.reportInstall(message);
-        if(observed.stage==='unavailable')this.runtimeUpgrade=undefined;
-        else this.reportUpgrade(observed.stage==='failed'?'failed':'ready',message,this.runtimeUpgrade?.fromVersion??binding.version);
-        this.status.text=observed.stage==='unavailable'?'AIRK: rebuild history unavailable':observed.stage==='ready'?'AIRK: choose search scope':observed.stage==='failed'?'$(warning) AIRK: rebuild needs attention':observed.stage==='paused'?'AIRK: rebuild paused':'AIRK: rebuilding indexes';
-        this.startup=undefined;this.treeChanges.fire();this.definitions.fire();
+        if(observed.mode==='clean_break'){
+            try{await this.finishCleanBreakClients(binding,observed);this.trusted();}
+            catch(error){this.cleanBreakClientResult={complete:false,qualification:'host_owned_clean_break_client_cleanup',operation_id:observed.operation_id,blockers:[{code:error instanceof ServiceError?error.code:'clean_break_client_cleanup_failed',message:String(error),...(error instanceof ServiceError&&error.nativeResponse?{observation:error.nativeResponse}:{})}]};this.output.appendLine('AIRK clean-break client cleanup: '+JSON.stringify(this.cleanBreakClientResult));}
+        }
+        this.showRebuildProgress(binding,observed);
+        await this.rememberCleanBreakCompletion(binding,observed);
     }
     /** Keep an unresolved setup failure visible when no usable runtime was observed. */
     private renderSetupFailed():boolean{
@@ -285,7 +337,18 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             prepareConfiguration:(binding,project,draft)=>this.runtime().prepareConfiguration(binding,project,draft),
             reviewLegacyStartup:(binding,target)=>this.runtime().reviewLegacyStartup(binding,target),loadLegacyStartup:(binding,approval)=>this.runtime().loadLegacyStartup(binding,approval),
             legacyStartupReceipts:binding=>this.runtime().legacyStartupReceipts(binding),removeLegacyStartup:(binding,review)=>this.runtime().removeLegacyStartup(binding,review),
-            reviewTransition:(binding,action,options)=>this.runtime().reviewTransition(binding,action,options),transition:(binding,review)=>this.runtime().transition(binding,review),
+            reviewTransition:(binding,action,options)=>this.runtime().reviewTransition(binding,action,options),transition:async(binding,review)=>{
+                if(review.cleanBreak)await this.captureCleanBreakClients(binding,review.target,review.cleanBreakPolicy??binding.cleanBreak??{});
+                const result=await this.runtime().transition(binding,review);this.trusted();
+                if(review.cleanBreak){
+                    const observed=await this.runtime().discover();this.trusted();
+                    if(!observed.inspection)throw new ServiceError('clean_break_selected_runtime_unavailable');
+                    const selected=this.runtime().binding(observed.inspection,observed.installDir);
+                    if(selected.runtimeSha256!==review.target)throw new ServiceError('clean_break_selected_runtime_changed');
+                    await this.presentRebuiltInstallation(selected,false);
+                }
+                return result;
+            },
             lifecycle:(binding,intent,force)=>this.runtime().lifecycle(binding,intent,force),abandonLifecycle:(binding,intent,id)=>this.runtime().abandonLifecycle(binding,intent,id)};
         this.workspace=new ServiceWorkspace(context.globalState,{reviewProject:(...args)=>this.runtime().reviewProject(...args),
             registerProject:(...args)=>this.runtime().registerProject(...args)},()=>vscode.workspace.isTrusted&&!this.disposed&&!this.extensionUpdate&&nativeExecutionAllowed());
@@ -301,7 +364,14 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         context.subscriptions.push(this.console.onDidChangeState(state=>{
             this.observeHttpOwner(state);
             const bootstrap=state.bootstrap.value,rebuild=bootstrap?.rebuild??(bootstrap?.diagnosis&&record(bootstrap.diagnosis).rebuild);
-            if(rebuild!==undefined&&rebuild!==null)void this.observeRebuild(rebuild).catch(error=>this.output.appendLine('AIRK rebuild notification: '+String(error)));
+            if(rebuild!==undefined&&rebuild!==null)void this.observeRebuild(rebuild).then(async observed=>{
+                if(this.disposed||!vscode.workspace.isTrusted||observed?.mode!=='clean_break'||!this.binding)return;
+                const current={...this.binding,rebuild:observed};
+                if(!this.currentRebuild(current))return;
+                this.binding=current;
+                if(cleanBreakSuccessorPublished(observed,current))await this.finishCleanBreakClients(current,observed);
+                this.showRebuildProgress(current,observed);await this.rememberCleanBreakCompletion(current,observed);
+            }).catch(error=>this.output.appendLine('AIRK rebuild notification: '+String(error)));
         }));
         this.status.text='AIRK';this.status.command='airk.explorer.open';this.status.show();
         this.publishNativeCommandAvailability();
@@ -682,14 +752,17 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         this.trusted();await this.showManagement('#indexing/library');
         this.output.appendLine('Set up an index in Indexing → Index library. Choose source and index-storage locations, review the native draft, then apply explicitly.');
     }
-    private async enqueue(binding:RuntimeBinding,project:string,kind:'index'|'inspect'|'model_setup',existing?:ReturnType<RuntimeHost['client']>):Promise<void>{
-        this.trusted();const client=existing??this.runtime().client(binding);
+    private async enqueue(binding:RuntimeBinding,project:string,kind:'index'|'inspect'|'model_setup',existing?:ReturnType<RuntimeHost['client']>,admit:()=>void=()=>{}):Promise<void>{
+        const generation=this.generation,window=this.windowIdentity().identity,observedBinding=this.binding?runtimeBindingIdentity(this.binding):undefined;
+        const check=()=>{this.trusted();admit();if(generation!==this.generation||window!==this.windowIdentity().identity||(this.binding?runtimeBindingIdentity(this.binding):undefined)!==observedBinding)throw new ServiceError('workspace_registration_changed');};
+        check();const client=existing??this.runtime().client(binding);
         try{
-            const intent=await client.prepareJob(project,kind);this.trusted();
-            const journal=new IntentJournal(this.context.globalState,binding.controlDir,intent.key.namespace);
-            const id=await journal.prepare(`${kind} ${project}`,{enqueue:intent});this.trusted();
-            const result=await journal.submit(client,id);this.trusted();
-            this.output.appendLine(`Native ${kind} job accepted: ${identifier(record(result.job).id,32)}. Completion/readiness is separate.`);
+            const intent=await client.prepareJob(project,kind);check();
+            const journal=new IntentJournal(this.console.intentStorage,binding.controlDir,intent.key.namespace);
+            const id=await journal.prepare(`${kind} ${project}`,{enqueue:intent});check();
+            const result=await journal.submit(client,id);await retainNativeOutcomeDuring(result,async()=>{check();
+                this.output.appendLine(`Native ${kind} job accepted: ${identifier(record(result.job).id,32)}. Completion/readiness is separate.`);
+            });
         }finally{if(!existing)client.dispose();}
     }
     async chooseSpec(requested?:LaunchSpec,registerMissing=true):Promise<LaunchSpec|undefined>{
@@ -728,6 +801,9 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         return catalogHex(backing.binding,64);
     }
     private readonly httpSetups=new Map<string,Promise<LaunchSpec>>();
+    // Live publication evidence, not a filename-derived ownership claim.
+    private readonly ownedHttpTrustBundles=new Map<string,{sha256:string;dev:string;ino:string;size:number;namespace:string;installation:string;connectionId:string}>();
+    private readonly ownedHttpTrustReferences=new Map<string,{file:string;namespace:string;installation:string}>();
     private httpAttachment():string|undefined{return this.assistanceEnabled()?this.assistanceHost?.descriptorPath:undefined;}
     private async waitForAssistance():Promise<void>{
         // A replacement setup cancels this owner before native enrollment.
@@ -773,8 +849,26 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
                         trust=previous.includes(material.ca)?previous:Buffer.concat([previous,Buffer.from('\n'),material.ca]);
                     }
                     const trustRoot=path.join(storage,'http-trust');await fs.mkdir(trustRoot,{recursive:true,mode:0o700});if(!same(await fs.realpath(trustRoot),trustRoot)||(await fs.lstat(trustRoot)).isSymbolicLink())throw new ServiceError('unsafe_http_trust_directory');
-                    const trustFile=await publishOwnedIssuerBundle(trustRoot,trust,current);
+                    const sha256=createHash('sha256').update(trust).digest('hex'),expectedFile=path.join(trustRoot,sha256+'.pem');
+                    const observe=async(file:string)=>{
+                        const published=await fs.lstat(file,{bigint:true});current();
+                        if(!published.isFile()||published.isSymbolicLink()||published.nlink!==1n||published.size!==BigInt(trust.length)||!trust.equals(await httpPublicTrustFile(file)))throw new ServiceError('changed_http_trust_publication');current();
+                        return published;
+                    };
+                    const trustFile=await publishOwnedIssuerBundle(trustRoot,trust,current,async created=>{
+                        // The original creator handle remains open throughout
+                        // this validation and proof admission, preventing inode
+                        // reuse even if all original directory links vanished.
+                        const published=await observe(expectedFile);
+                        if(created.dev===published.dev.toString()&&created.ino===published.ino.toString())this.ownedHttpTrustBundles.set(expectedFile,{sha256,dev:created.dev,ino:created.ino,size:trust.length,namespace:info.endpoint.namespace,installation:info.endpoint.installation,connectionId:info.connection_id});
+                        else this.ownedHttpTrustBundles.delete(expectedFile);
+                    });
+                    const published=await observe(trustFile),priorProof=this.ownedHttpTrustBundles.get(trustFile);
+                    // Reuse or a later change can invalidate existing proof;
+                    // this post-return observation can never create authority.
+                    if(priorProof&&(priorProof.sha256!==sha256||priorProof.dev!==published.dev.toString()||priorProof.ino!==published.ino.toString()||priorProof.size!==trust.length))this.ownedHttpTrustBundles.delete(trustFile);
                     current();this.context.environmentVariableCollection.persistent=false;this.context.environmentVariableCollection.replace(variable,trustFile);this.context.environmentVariableCollection.replace(credentialEnvironment(info),material.credential);
+                    this.ownedHttpTrustReferences.set(variable,{file:trustFile,namespace:info.endpoint.namespace,installation:info.endpoint.installation});
                 }
     }
     /** Only a recognized, CAS-guarded owned configuration supplies this receipt.
@@ -969,7 +1063,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         const spec=await this.chooseSpec(requested);if(!spec)return;this.trusted();const project=await this.managementProject(spec);if(!project)return;
         const generation=this.generation,binding=await this.runtime().ensure();this.trusted();
         if(generation!==this.generation||!this.isCurrent(spec))throw new ServiceError('workspace_registration_changed');
-        await this.enqueue(binding,project,'index');
+        await this.enqueue(binding,project,'index',undefined,()=>{this.trusted();if(generation!==this.generation||!this.isCurrent(spec))throw new ServiceError('workspace_registration_changed');});
         await this.showManagement('#manage/activity');
     }
     async watching():Promise<void>{
@@ -1037,7 +1131,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         }
         this.startup={message:'Connecting to the installed AIRK runtime…',startedAt};this.treeChanges.fire();
         const early=this.refresh(); // owned refresh may publish UI while full diagnostics continue
-        try{await this.automaticInstall();if(!this.binding)await early;
+        try{await this.automaticInstall();if(!this.binding&&!this.installationFailed)await early;
             if(!this.disposed)this.startup=this.startup?.failed?this.startup:this.installationFailed?{...this.startup,message:'AIRK startup needs attention. Open Logs for the recorded failure.',failed:true}:undefined;
         }catch(error){if(!this.disposed){this.startup={startedAt,message:String(error),failed:true};this.output.appendLine(String(error));}}
         finally{if(!this.disposed)this.treeChanges.fire();}
@@ -1114,6 +1208,10 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         this.installationWarnings=false;
         this.reportInstall('Checking selected runtime…');
         this.trusted();const binding=await this.runtime().ensure();this.trusted();
+        await this.installSelectedCommandLine(binding);
+    }
+    private async installSelectedCommandLine(binding:RuntimeBinding):Promise<void>{
+        this.trusted();
         if(!binding.executable)throw new ServiceError('native_executable_unavailable');
         this.reportInstall('Installing the terminal command…');
         const touched:ShellTouch[]=[];
@@ -1185,6 +1283,12 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     }
     async installationComplete(manual=false):Promise<void>{
         this.trusted();
+        const known=this.binding,observed=known?.rebuild?validateRebuildObservation(known.rebuild):undefined;
+        if(known&&observed?.mode==='clean_break'&&observed.candidate===known.runtimeSha256&&same(String(observed.successor_control),known.controlDir)){
+            // The scoped native reset observation owns completion reporting.
+            // Reading it never starts a service or overrides a new User Stop.
+            await this.observeRebuild(observed);return;
+        }
         const binding=await this.runtime().ensure();this.trusted();
         if(this.currentRebuild(binding)){await this.observeRebuild(binding.rebuild);return;}
         const key=`airk.installNotice.1.${binding.installDir}`,identity=`${this.runningVersion}:${binding.runtimeSha256}`;
@@ -1588,6 +1692,354 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         // policies even when several claims share one native publication.
         for(const [destination,file]of pending){const before=files.get(destination)!.file.source,saved=await this.saveMigrationConfiguration(destination,before,file.source,check);check();observe(destination,saved);this.migratedConnections=true;this.output.appendLine('Updated '+destination);}
     }
+    private cleanBreakClientKey(installDir:string):string{
+        const key=process.platform==='win32'?path.toNamespacedPath(installDir).toLowerCase():installDir;
+        return 'airk.cleanBreak.clients.1.'+createHash('sha256').update(key).digest('hex');
+    }
+    private async censusPredecessorTrustCopies(proven:readonly {file:string}[],check:()=>void,snapshot:()=>Promise<PredecessorHttpSnapshot>):Promise<string[]>{
+        const blockers:string[]=[],storage=await fs.realpath(this.context.globalStorageUri.fsPath),directory=path.join(storage,'http-trust');check();
+        const stat=await fs.lstat(directory).catch(error=>{if(error.code==='ENOENT')return undefined;throw error;});check();if(!stat)return blockers;
+        if(!stat.isDirectory()||stat.isSymbolicLink()||!same(await fs.realpath(directory),directory))return ['clean_break_http_trust_inventory_unsafe:'+directory];
+        // Reuse the publisher's 1024-entry census bound and 2 MiB public-bundle
+        // byte limit as a total read budget; never expand outside this directory.
+        let count=0,bytesRead=0,original:PredecessorHttpSnapshot|undefined;
+        for await(const entry of await fs.opendir(directory)){
+            check();if(++count>1024){blockers.push('clean_break_http_trust_inventory_bound:'+directory);break;}
+            const file=path.join(directory,entry.name);if(proven.some(item=>same(item.file,file)))continue;
+            const item=await fs.lstat(file);check();
+            if(!item.isFile()||item.isSymbolicLink()||item.nlink!==1){blockers.push('clean_break_http_trust_inventory_unsafe:'+file);continue;}
+            const remaining=2097152-bytesRead;
+            // The shared bounded reader may consume maximum+1 bytes to detect
+            // growth. Reserve that entire attempt before awaiting, including
+            // failure paths, then release unused bytes only after success.
+            if(remaining<1||item.size>=remaining){blockers.push('clean_break_http_trust_inventory_bound:'+directory);break;}
+            const before=bytesRead;bytesRead+=remaining;let bytes:Buffer;
+            try{bytes=await httpPublicTrustFile(file,remaining-1);check();}
+            catch{check();blockers.push('clean_break_http_trust_inventory_changed:'+file);break;}
+            bytesRead=before+bytes.length;
+            if(bytes.length!==item.size){blockers.push('clean_break_http_trust_inventory_changed:'+file);continue;}
+            const pems=bytes.toString('utf8').match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g)??[];
+            let certificates:X509Certificate[];
+            try{certificates=pems.map(pem=>new X509Certificate(pem)).filter(certificate=>certificate.ca);}catch{blockers.push('clean_break_http_trust_inventory_unsafe:'+file);continue;}
+            if(!certificates.length)continue;
+            original??=await snapshot();check();
+            if(!original.complete||!original.endpoint){blockers.push('clean_break_http_trust_inventory_unavailable:'+file);continue;}
+            if(certificates.some(certificate=>createHash('sha256').update(certificate.raw).digest('hex')===original!.endpoint!.ca_sha256))blockers.push('clean_break_http_trust_ownership_unproven:'+file);
+        }
+        return blockers;
+    }
+    private async captureCleanBreakHostArtifacts(binding:RuntimeBinding,plan:CleanBreakClientPlan,check:()=>void,lookupHttp:(id:string)=>Promise<PredecessorHttpLookup>):Promise<CleanBreakHostArtifacts>{
+        const result:CleanBreakHostArtifacts={mementos:[],environment:[],bundles:[],blockers:[]};
+        const digest=(value:string|Buffer)=>createHash('sha256').update(value).digest('hex');
+        const infos=new Map<string,OwnedPredecessorHttpProof>();
+        for(const file of plan.files)for(const removal of file.removals)if(removal.http)infos.set(removal.http.connection_id,removal.http);
+        const keys=this.context.globalState.keys().filter(key=>/^airk\.http\.(?:legacy\.|standalone\.|connection\.)/.test(key));
+        if(keys.length>4096)throw new ServiceError('clean_break_http_inventory_bound');
+        // Metadata alone supplies no ownership: consult the still-live original
+        // native ledger before its control directory is removed.
+        for(const key of keys){
+            const value=this.context.globalState.get<unknown>(key);let cached:RecordValue;
+            if(typeof value==='string'&&/^[a-f0-9]{32}$/.test(value)){
+                const lookup=await lookupHttp(value);check();const info=predecessorHttpProof(lookup);
+                if(info){infos.set(info.connection_id,info);result.mementos.push({key,sha256:digest(JSON.stringify(value))});}
+                else if(lookup.status==='unavailable')result.blockers.push('clean_break_http_memento_owner_unavailable:'+key);
+                continue;
+            }
+            try{cached=record(value);if(cached.schema!==1||typeof cached.connection_id!=='string'||!/^[a-f0-9]{32}$/.test(cached.connection_id)||Object.keys(cached).some(key=>!['schema','connection_id','endpoint','selection','ca_certificate_file','credential_file'].includes(key)))continue;validateEndpoint(cached.endpoint);}catch{continue;}
+            const lookup=await lookupHttp(String(cached.connection_id));check();
+            if(lookup.status==='unavailable'){result.blockers.push('clean_break_http_memento_owner_unavailable:'+key);continue;}
+            const info=predecessorHttpProof(lookup);if(!info)continue;
+            const endpoint=validateEndpoint(cached.endpoint);
+            if(endpoint.namespace!==info.namespace||endpoint.installation!==info.endpoint.installation||typeof cached.ca_certificate_file!=='string'||typeof cached.credential_file!=='string'||!same(cached.ca_certificate_file,info.ca_certificate_file)||!same(cached.credential_file,info.credential_file))continue;
+            infos.set(info.connection_id,info);result.mementos.push({key,sha256:digest(JSON.stringify(value))});
+        }
+        const collection=this.context.environmentVariableCollection,trustNames=['CODEX_CA_CERTIFICATE','NODE_EXTRA_CA_CERTS'];
+        const environmentIds=new Set<string>();
+        collection.forEach?.((name,mutator)=>{const match=/^AIRK_MCP_TOKEN_([A-F0-9]{32})$/.exec(name);if(match&&mutator.type===vscode.EnvironmentVariableMutatorType.Replace)environmentIds.add(match[1].toLowerCase());});
+        for(const proof of this.ownedHttpTrustBundles.values())environmentIds.add(proof.connectionId);
+        if(environmentIds.size>4096)throw new ServiceError('clean_break_http_environment_inventory_bound');
+        for(const id of environmentIds){if(infos.has(id))continue;const lookup=await lookupHttp(id);check();const proof=predecessorHttpProof(lookup);if(proof)infos.set(id,proof);else if(lookup.status==='unavailable')result.blockers.push('clean_break_http_environment_owner_unavailable:'+id);}
+        const storage=await fs.realpath(this.context.globalStorageUri.fsPath);check();
+        for(const info of infos.values()){
+            const name='AIRK_MCP_TOKEN_'+info.connection_id.toUpperCase(),entry=collection.get(name);
+            const trustEntries:{variable?:string;value:{type:vscode.EnvironmentVariableMutatorType;value:string}}[]=trustNames.flatMap(variable=>{const value=collection.get(variable);return value?[{variable,value}]:[];});
+            for(const file of this.ownedHttpTrustBundles.keys())if(!trustEntries.some(entry=>same(entry.value.value,file)))trustEntries.push({value:{type:vscode.EnvironmentVariableMutatorType.Replace,value:file}});
+            if(!entry&&!trustEntries.length)continue;
+            if(entry){
+                if(info.credential_sha256!==null&&entry.type===vscode.EnvironmentVariableMutatorType.Replace&&new RegExp(`^airk1\\.${info.connection_id}\\.[a-f0-9]{64}$`).test(entry.value)&&digest(entry.value)===info.credential_sha256)result.environment.push({name,type:entry.type,sha256:digest(entry.value),namespace:info.endpoint.namespace,installation:info.endpoint.installation});
+                else result.blockers.push('clean_break_http_token_environment_changed:'+name);
+            }
+            for(const {variable,value} of trustEntries){
+                const file=value.value;
+                if(value.type!==vscode.EnvironmentVariableMutatorType.Replace||!same(path.dirname(file),path.join(storage,'http-trust')))continue;
+                const reference=variable?this.ownedHttpTrustReferences.get(variable):undefined;
+                if(reference&&same(reference.file,file)&&(reference.namespace!==info.endpoint.namespace||reference.installation!==info.endpoint.installation))continue;
+                const bytes=await httpPublicTrustFile(file);check();
+                const certificates=bytes.toString('utf8').match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g)??[];
+                if(!certificates.some(pem=>{const certificate=new X509Certificate(pem);return certificate.ca&&digest(certificate.raw)===info.endpoint.ca_sha256;}))continue;
+                const proof=this.ownedHttpTrustBundles.get(file);
+                if(proof&&(proof.namespace!==info.endpoint.namespace||proof.installation!==info.endpoint.installation))continue;
+                if(variable&&!result.environment.some(item=>item.name===variable))result.environment.push({name:variable,type:value.type,sha256:digest(file),namespace:info.endpoint.namespace,installation:info.endpoint.installation});
+                const stat=await fs.lstat(file,{bigint:true});check();
+                if(!proof||proof.namespace!==info.endpoint.namespace||proof.installation!==info.endpoint.installation||proof.sha256!==digest(bytes)||proof.dev!==stat.dev.toString()||proof.ino!==stat.ino.toString()||BigInt(proof.size)!==stat.size||!stat.isFile()||stat.isSymbolicLink()||stat.nlink!==1n){result.blockers.push('clean_break_http_trust_ownership_unproven:'+file);continue;}
+                if([...this.ownedHttpTrustReferences].some(([name,reference])=>same(reference.file,file)&&(reference.namespace!==info.endpoint.namespace||reference.installation!==info.endpoint.installation)&&collection.get(name)?.value===file)){result.blockers.push('clean_break_http_trust_current_namespace_reference:'+file);continue;}
+                if(!result.bundles.some(item=>same(item.file,file)))result.bundles.push({file,sha256:proof.sha256,dev:proof.dev,ino:proof.ino,size:proof.size,namespace:proof.namespace,installation:proof.installation});
+            }
+        }
+        result.blockers.push(...await this.censusPredecessorTrustCopies(result.bundles,check,async()=>{
+            // An inventory probe selects no authority and creates no grant;
+            // the purpose read returns the complete original bounded snapshot.
+            return (await lookupHttp('0'.repeat(32))).snapshot;
+        }));check();return result;
+    }
+    private async finishCleanBreakHostArtifacts(captured:CleanBreakClientCapture,check:()=>void,retire=true):Promise<{complete:boolean;removed:string[];blockers:string[]}>{
+        const proof=captured.hostArtifacts,result={complete:false,removed:[] as string[],blockers:[] as string[]};
+        // Older in-progress captures cannot manufacture publication authority.
+        if(!proof){result.blockers.push('clean_break_host_artifact_capture_unavailable');return result;}
+        if(!retire)result.blockers.push('clean_break_http_current_authority_unconfirmed');
+        for(const blocker of proof.blockers){
+            // The bounded managed-directory census below refreshes these
+            // observations, so manual removal can resolve an earlier refusal.
+            if(blocker.startsWith('clean_break_http_trust_ownership_unproven:')||blocker.startsWith('clean_break_http_trust_inventory_'))continue;
+            const unproven='clean_break_http_trust_ownership_unproven:',shared='clean_break_http_trust_current_namespace_reference:',token='clean_break_http_token_environment_changed:',memento='clean_break_http_memento_owner_unavailable:';
+            if(blocker.startsWith(unproven)||blocker.startsWith(shared)){
+                const file=blocker.slice(blocker.startsWith(unproven)?unproven.length:shared.length);
+                if(path.isAbsolute(file)&&same(path.dirname(file),path.join(this.context.globalStorageUri.fsPath,'http-trust'))&&!await fs.lstat(file).catch(error=>{if(error.code==='ENOENT')return undefined;throw error;})){check();continue;}
+            }else if(blocker.startsWith(token)&&!this.context.environmentVariableCollection.get(blocker.slice(token.length)))continue;
+            else if(blocker.startsWith(memento)&&this.context.globalState.get(blocker.slice(memento.length))===undefined)continue;
+            result.blockers.push(blocker);
+        }
+        const digest=(value:string|Buffer)=>createHash('sha256').update(value).digest('hex');
+        for(const item of proof.environment){
+            const current=this.context.environmentVariableCollection.get(item.name);check();
+            if(!current)continue;
+            const reference=this.ownedHttpTrustReferences.get(item.name);
+            if(reference&&same(reference.file,current.value)&&(reference.namespace!==item.namespace||reference.installation!==item.installation)){result.blockers.push('clean_break_http_environment_namespace_changed:'+item.name);continue;}
+            if(current.type!==item.type||digest(current.value)!==item.sha256){result.blockers.push('clean_break_http_environment_changed:'+item.name);continue;}
+            if(!retire)continue;
+            this.context.environmentVariableCollection.delete(item.name);result.removed.push('environment:'+item.name);
+            this.ownedHttpTrustReferences.delete(item.name);
+        }
+        for(const item of proof.mementos){
+            const current=this.context.globalState.get<unknown>(item.key);check();if(current===undefined)continue;
+            if(digest(JSON.stringify(current))!==item.sha256){result.blockers.push('clean_break_http_memento_changed:'+item.key);continue;}
+            if(!retire)continue;
+            await this.context.globalState.update(item.key,undefined);check();result.removed.push('memento:'+item.key);
+        }
+        for(const item of proof.bundles){
+            const shared='clean_break_http_trust_current_namespace_reference:'+item.file;
+            if(result.blockers.includes(shared))continue;
+            if([...this.ownedHttpTrustReferences].some(([name,reference])=>same(reference.file,item.file)&&(reference.namespace!==item.namespace||reference.installation!==item.installation)&&this.context.environmentVariableCollection.get(name)?.value===item.file)){
+                // Retain this observation across editor reload: loss of the
+                // nonpersistent collection is not authority to delete a copy
+                // that a newly admitted namespace was observed using.
+                if(!proof.blockers.includes(shared))proof.blockers.push(shared);
+                result.blockers.push(shared);continue;
+            }
+            const stat=await fs.lstat(item.file,{bigint:true}).catch(error=>{if(error.code==='ENOENT')return undefined;throw error;});check();if(!stat)continue;
+            if(stat.dev.toString()!==item.dev||stat.ino.toString()!==item.ino||stat.size!==BigInt(item.size)||!stat.isFile()||stat.isSymbolicLink()||stat.nlink!==1n||digest(await httpPublicTrustFile(item.file))!==item.sha256){result.blockers.push('clean_break_http_trust_changed:'+item.file);continue;}
+            if(!retire)continue;
+            // Revalidate and unlink without yielding to editor callbacks between
+            // the final identity check and removal of this exact publication.
+            check();const final=lstatSync(item.file,{bigint:true});
+            if(!same(realpathSync(item.file),item.file)||!final.isFile()||final.isSymbolicLink()||final.nlink!==1n||final.dev.toString()!==item.dev||final.ino.toString()!==item.ino||final.size!==BigInt(item.size)||digest(readFileSync(item.file))!==item.sha256){result.blockers.push('clean_break_http_trust_changed:'+item.file);continue;}
+            unlinkSync(item.file);this.ownedHttpTrustBundles.delete(item.file);result.removed.push(item.file);
+        }
+        result.blockers.push(...await this.censusPredecessorTrustCopies(proof.bundles,check,async()=>{
+            if(captured.httpOwnership)return captured.httpOwnership.snapshot;
+            const binding=this.binding;if(!binding)throw new ServiceError('clean_break_runtime_binding_unavailable');
+            const scope={predecessor:captured.predecessor,controlDir:captured.controlDir,...(captured.operation?{operationId:captured.operation}:{})};
+            captured.httpOwnership=validatePredecessorHttpLookup(await this.runtime().lookupPredecessorHttpOwnership(binding,'0'.repeat(32),scope),binding.runtimeSha256,'0'.repeat(32),scope);check();return captured.httpOwnership.snapshot;
+        }));check();
+        if(!proof.assistanceRefreshed){
+            await this.startAssistance();check();
+            let confirmed=false;
+            try{
+                const enabled=this.assistanceEnabled(),filename=launchDescriptorPath(this.context.globalStorageUri.fsPath);
+                const present=await fs.lstat(filename).catch(error=>{if(error.code==='ENOENT')return undefined;throw error;});check();
+                if(!enabled&&!present)confirmed=true;
+                else{
+                    // Disabled Assistance may still have a predecessor launch
+                    // file. Refresh its metadata without creating an endpoint.
+                    const assetRoot=Reflect.get(this.context,Symbol.for('iokaio.airk.managedAssetRoot'))??this.context.extensionPath;
+                    if(!enabled)await writeLaunchDescriptor(this.context.globalStorageUri.fsPath,assetRoot,this.runningVersion,undefined,()=>!this.disposed&&vscode.workspace.isTrusted);
+                    const launch=JSON.parse((await httpPublicTrustFile(filename,65536)).toString('utf8'));check();
+                    const server=path.join(assetRoot,'out','explorerAssistance.js');
+                    confirmed=launch.schema==='airk-explorer-assistance-launch/1'&&launch.extension_version===this.runningVersion&&same(launch.extension_root,assetRoot)&&same(launch.server,server)&&launch.server_sha256===digest(readFileSync(server))&&launch.runtime?.path===process.execPath&&launch.runtime?.electron===Boolean(process.versions.electron);
+                    if(enabled)confirmed=confirmed&&this.assistanceReady?.generation===this.assistanceGeneration&&this.assistanceReady.launch&&this.assistanceReady.endpoint;
+                }
+            }catch{confirmed=false;}
+            if(confirmed)proof.assistanceRefreshed=true;else result.blockers.push('clean_break_assistance_refresh_unconfirmed');
+        }
+        result.complete=result.blockers.length===0;return result;
+    }
+    private cleanBreakSourceSpecs(binding:RuntimeBinding,policy:RecordValue):LaunchSpec[]{
+        if(policy.registrations_complete!==true||!Array.isArray(policy.registrations)||policy.registrations.length>1024)throw new ServiceError('clean_break_client_source_inventory_incomplete',false,policy);
+        return policy.registrations.map(input=>{
+            const row=record(input),project=identifier(row.binding,32);
+            for(const field of ['root','data_root'])if(typeof row[field]!=='string'||!path.isAbsolute(String(row[field]))||Buffer.byteLength(String(row[field]))>4096||/[\x00-\x1f]/.test(String(row[field])))throw new ServiceError('invalid_clean_break_client_source');
+            if(typeof row.collection!=='string'||!row.collection||Buffer.byteLength(row.collection)>128)throw new ServiceError('invalid_clean_break_client_source');
+            return {command:binding.executable,root:String(row.root),dataDir:String(row.data_root),collection:row.collection,name:row.collection,service:{installDir:binding.installDir,project,direct:true}};
+        });
+    }
+    private async cleanBreakClientFiles(roots:readonly string[],check:()=>void):Promise<{files:CleanBreakClientFile[];allowed:Set<string>;blockers:CleanBreakClientPlan['blockers']}>{
+        const global=await inventoryGlobalAgentConfigs({home:os.homedir(),env:{...process.env},globalStoragePath:this.context.globalStorageUri.fsPath,check});check();
+        const files:CleanBreakClientFile[]=global.files.map(file=>({agent:file.agent,destination:file.destination,source:file.source}));
+        const allowed=new Set([...global.checked,...files.map(file=>file.destination)]);
+        for(const root of new Set(roots))for(const [agent,parts]of Object.entries(localAgentLocations)){
+            const destination=path.join(root,...parts);if(allowed.has(destination))continue;allowed.add(destination);
+            const source=await readJsonConfig(destination);check();if(source!==undefined)files.push({agent:agent as LocalAgent,destination,source});
+        }
+        return {files,allowed,blockers:global.blockers.map(item=>({destination:item.destination??this.context.globalStorageUri.fsPath,code:item.code}))};
+    }
+    private loadCleanBreakClients(binding:RuntimeBinding):CleanBreakClientCapture|undefined{
+        const value=this.context.globalState.get<CleanBreakClientCapture>(this.cleanBreakClientKey(binding.installDir));if(value===undefined)return;
+        return this.validateCleanBreakClients(value,binding);
+    }
+    private validateCleanBreakClients(value:CleanBreakClientCapture,binding:RuntimeBinding):CleanBreakClientCapture{
+        if(value.schema!==1||!same(value.installDir,binding.installDir)||!Array.isArray(value.roots)||value.roots.length>1024||value.roots.some(root=>typeof root!=='string'||!path.isAbsolute(root))||!Array.isArray(value.receipts)||!Array.isArray(value.receiptBlockers)||Buffer.byteLength(JSON.stringify(value))>10*1024*1024)throw new ServiceError('invalid_clean_break_client_capture');
+        identifier(value.predecessor,32);identifier(value.candidate,32);if(!path.isAbsolute(value.controlDir))throw new ServiceError('invalid_clean_break_client_capture');
+        if(!predecessorExecutableInRuntime(binding.installDir,value.predecessor,value.executable)||!Array.isArray(value.verifiedLaunchers)||value.verifiedLaunchers.length>4||value.verifiedLaunchers.some(item=>typeof item!=='string'||!path.isAbsolute(item)))throw new ServiceError('invalid_clean_break_client_capture');
+        if(value.operation!==undefined)identifier(value.operation,16);
+        if(value.journal){const journal=validateScopeRetirementCapture(value.journal);if(!same(journal.controlDir,value.controlDir))throw new ServiceError('invalid_clean_break_journal_capture');}
+        if(value.httpOwnership){
+            try{validatePredecessorHttpLookup(value.httpOwnership,value.httpOwnership.active,value.httpOwnership.connection_id,{predecessor:value.predecessor,controlDir:value.controlDir,...(value.httpOwnership.operation_id?{operationId:value.httpOwnership.operation_id}:{})});}catch{throw new ServiceError('invalid_clean_break_http_capture');}
+        }
+        if(value.hostArtifacts){
+            const host=value.hostArtifacts;
+            if(!Array.isArray(host.mementos)||host.mementos.length>4096||!Array.isArray(host.environment)||host.environment.length>4096||!Array.isArray(host.bundles)||host.bundles.length>4096||!Array.isArray(host.blockers)||host.blockers.length>8192||host.blockers.some(item=>typeof item!=='string'||item.length>8192)||host.assistanceRefreshed!==undefined&&typeof host.assistanceRefreshed!=='boolean')throw new ServiceError('invalid_clean_break_host_capture');
+            for(const item of host.mementos){if(typeof item.key!=='string'||item.key.length>1024||!/^airk\.http\.(?:legacy\.|standalone\.|connection\.)/.test(item.key))throw new ServiceError('invalid_clean_break_host_capture');identifier(item.sha256,32);}
+            for(const item of host.environment){if(!/^(?:AIRK_MCP_TOKEN_[A-F0-9]{32}|CODEX_CA_CERTIFICATE|NODE_EXTRA_CA_CERTS)$/.test(item.name)||item.type!==vscode.EnvironmentVariableMutatorType.Replace)throw new ServiceError('invalid_clean_break_host_capture');identifier(item.sha256,32);identifier(item.namespace,16);identifier(item.installation,32);}
+            for(const item of host.bundles){if(typeof item.file!=='string'||!path.isAbsolute(item.file)||!same(path.dirname(item.file),path.join(this.context.globalStorageUri.fsPath,'http-trust'))||![item.dev,item.ino].every(value=>typeof value==='string'&&/^(?:0|[1-9][0-9]{0,29})$/.test(value))||!Number.isSafeInteger(item.size)||item.size<0||item.size>2097152)throw new ServiceError('invalid_clean_break_host_capture');identifier(item.sha256,32);identifier(item.namespace,16);identifier(item.installation,32);}
+        }
+        validateCleanBreakClientPlan(value.plan,binding.installDir);return value;
+    }
+    private async captureCleanBreakClients(binding:RuntimeBinding,candidate:string,policy:RecordValue,late?:{current:RuntimeBinding;scope:PredecessorHttpScope;commands:string[]}):Promise<void>{
+        const generation=this.generation,check=()=>{this.trusted();if(generation!==this.generation)throw new ServiceError('workspace_registration_changed');};
+        check();if(!this.uninstallDirectory){const observed=await this.runtime().discover();check();if(!same(observed.installDir,binding.installDir))throw new ServiceError('runtime_installation_changed');const launcher=record(observed.location.user_paths).launcher;if(typeof launcher!=='string'||!path.isAbsolute(launcher))throw new ServiceError('invalid_launcher_location');this.uninstallDirectory=launcher;}
+        const prior=this.loadCleanBreakClients(binding);
+        if(prior?.journal&&prior.candidate===candidate&&prior.predecessor===binding.runtimeSha256&&same(prior.controlDir,binding.controlDir)){
+            this.assistanceGeneration++;this.assistanceHost?.dispose();this.assistanceHost=undefined;return;
+        }
+        const specs=this.cleanBreakSourceSpecs(binding,policy),roots=[...new Set(specs.map(spec=>spec.root))];
+        const inventory=await this.cleanBreakClientFiles(roots,check);check();
+        let verifiedLaunchers=late?.commands;
+        if(!verifiedLaunchers){const launchers=await this.runtime().inspectLegacyLaunchers(binding,'predecessor-cleanup');check();verifiedLaunchers=['launcher','universal_launcher'].flatMap(field=>{const item=record(launchers[field]??{});return typeof item.path==='string'?[item.path]:[];});}
+        const scope=late?.scope??{predecessor:binding.runtimeSha256,controlDir:binding.controlDir},current=late?.current??binding;
+        const lookups=new Map<string,Promise<PredecessorHttpLookup>>();let httpOwnership:PredecessorHttpLookup|undefined;
+        const lookupHttp=(id:string):Promise<PredecessorHttpLookup>=>{
+            let pending=lookups.get(id);if(!pending){pending=(async()=>{
+                const raw=await this.runtime().lookupPredecessorHttpOwnership(current,id,scope);check();
+                let value:PredecessorHttpLookup;try{value=validatePredecessorHttpLookup(raw,current.runtimeSha256,id,scope);}catch{throw new ServiceError('predecessor_http_ownership_unconfirmed',false,raw);}
+                if(httpOwnership&&!isDeepStrictEqual(httpOwnership.snapshot,value.snapshot))throw new ServiceError('clean_break_predecessor_http_snapshot_changed');
+                httpOwnership??=value;return value;
+            })();lookups.set(id,pending);}return pending;
+        };
+        const plan=await captureCleanBreakClientCleanup(binding.installDir,this.context.globalStorageUri.fsPath,inventory.files,specs,check,async(_agent,id)=>{
+            const lookup=await lookupHttp(id);check();
+            if(lookup.status==='owned')return predecessorHttpProof(lookup);
+            if(lookup.status==='unavailable')throw new ServiceError('clean_break_owned_http_configuration_unavailable',false,lookup);
+            return undefined;
+        },verifiedLaunchers);check();plan.blockers.push(...inventory.blockers);validateCleanBreakClientPlan(plan,binding.installDir);
+        if(!this.uninstallDirectory)throw new ServiceError('clean_break_uninstall_directory_unavailable');
+        const captured=await captureCleanBreakUninstallReceipts(this.uninstallDirectory,binding.installDir,specs,check);check();
+        const hostArtifacts=await this.captureCleanBreakHostArtifacts(binding,plan,check,lookupHttp);check();
+        const namespace=(httpOwnership??await lookupHttp('0'.repeat(32))).snapshot.namespace;check();
+        if(typeof namespace!=='string')throw new ServiceError('clean_break_journal_namespace_unavailable');identifier(namespace,16);
+        if(late?.scope.namespace!==undefined&&late.scope.namespace!==namespace)throw new ServiceError('clean_break_journal_namespace_changed');
+        const store=this.console.intentStorage;if(!store.captureScope)throw new ServiceError('clean_break_journal_store_unavailable');
+        const journal=await store.captureScope(binding.controlDir,namespace);check();
+        const value:CleanBreakClientCapture={schema:1,installDir:binding.installDir,predecessor:binding.runtimeSha256,controlDir:binding.controlDir,candidate,executable:binding.executable,verifiedLaunchers,roots,plan,receipts:captured.receipts,receiptBlockers:captured.blockers,hostArtifacts,journal,...(httpOwnership?{httpOwnership}:{})};
+        this.validateCleanBreakClients(value,binding);
+        await this.context.globalState.update(this.cleanBreakClientKey(binding.installDir),value);check();
+        // Only the live creator disposes this window's endpoint. Persisted paths
+        // never authorize deleting another window's credential descriptor.
+        this.assistanceGeneration++;this.assistanceHost?.dispose();this.assistanceHost=undefined;
+    }
+    private async finishCleanBreakClients(binding:RuntimeBinding,observed:NativeRebuildObservation):Promise<void>{
+        const key=JSON.stringify([this.generation,runtimeBindingIdentity(binding),observed.operation_id]);
+        if(this.cleanBreakClientWork?.key===key)return this.cleanBreakClientWork.work;
+        const work=this.finishCleanBreakClientsOnce(binding,observed),current={key,work};this.cleanBreakClientWork=current;
+        try{await work;}finally{if(this.cleanBreakClientWork===current)this.cleanBreakClientWork=undefined;}
+    }
+    private async finishCleanBreakClientsOnce(binding:RuntimeBinding,observed:NativeRebuildObservation):Promise<void>{
+        const generation=this.generation,owner=runtimeBindingIdentity(binding),check=()=>{
+            this.trusted();if(generation!==this.generation)throw new ServiceError('workspace_registration_changed');
+            if(!this.binding||runtimeBindingIdentity(this.binding)!==owner||this.binding.rebuild?.operation_id!==observed.operation_id)throw new ServiceError('clean_break_client_capture_crossed_native_operation');
+        };
+        if(observed.mode!=='clean_break'||observed.candidate!==binding.runtimeSha256||!same(String(observed.successor_control),binding.controlDir))throw new ServiceError('clean_break_client_capture_crossed_native_operation');
+        check();let captured=this.loadCleanBreakClients(binding);
+        if(!captured){
+            const metadata=record(binding.cleanBreak?.predecessor_client_metadata??{}),executable=record(metadata.predecessor_executable??{});
+            if(metadata.schema!==1||metadata.operation_id!==observed.operation_id||metadata.predecessor!==observed.predecessor||typeof metadata.control_dir!=='string'||!same(metadata.control_dir,String(observed.preserved_control))||typeof metadata.namespace!=='string'||typeof executable.path!=='string'||!Array.isArray(metadata.command_images)||metadata.command_images.length>4)throw new ServiceError('clean_break_client_capture_unavailable',false,metadata);
+            identifier(metadata.namespace,16);identifier(executable.sha256,32);
+            const commands=metadata.command_images.map(raw=>{const command=record(raw);if(typeof command.path!=='string'||!path.isAbsolute(command.path))throw new ServiceError('invalid_predecessor_client_metadata');identifier(command.sha256,32);return command;});
+            if(!commands.some(command=>same(String(command.path),String(executable.path))&&command.sha256===executable.sha256))throw new ServiceError('invalid_predecessor_client_metadata');
+            const original={...binding,controlDir:String(metadata.control_dir),runtimeSha256:String(metadata.predecessor),executable:String(executable.path)};
+            await this.captureCleanBreakClients(original,binding.runtimeSha256,binding.cleanBreak??{},{current:binding,scope:{predecessor:original.runtimeSha256,controlDir:original.controlDir,namespace:String(metadata.namespace),operationId:observed.operation_id},commands:commands.map(command=>String(command.path))});check();captured=this.loadCleanBreakClients(binding);
+            if(!captured)throw new ServiceError('clean_break_client_capture_unavailable');
+        }
+        if(captured.candidate!==binding.runtimeSha256||captured.predecessor!==observed.predecessor||!same(captured.controlDir,String(observed.preserved_control))||captured.operation!==undefined&&captured.operation!==observed.operation_id)throw new ServiceError('clean_break_client_capture_crossed_native_operation');
+        const originalNamespace=identifier(observed.original_namespace,16);
+        if(!captured.journal){
+            const store=this.console.intentStorage;if(!store.captureScope)throw new ServiceError('clean_break_journal_store_unavailable');
+            captured.journal=await store.captureScope(captured.controlDir,originalNamespace);check();
+        }
+        if(captured.journal.namespace!==originalNamespace||!same(captured.journal.controlDir,captured.controlDir))throw new ServiceError('clean_break_journal_scope_changed');
+        const specs=this.cleanBreakSourceSpecs(binding,binding.cleanBreak??{}),roots=[...new Set(specs.map(spec=>spec.root))];
+        if(!isDeepStrictEqual([...roots].sort(),[...captured.roots].sort()))throw new ServiceError('clean_break_client_source_inventory_changed');
+        const inventory=await this.cleanBreakClientFiles(roots,check);check();
+        captured.operation=observed.operation_id;await this.context.globalState.update(this.cleanBreakClientKey(binding.installDir),captured);check();
+        // Old blockers are observations, not permanent failure authority. The
+        // complete fresh audit below must establish whether they still exist.
+        const httpChecks=new Map<string,PredecessorHttpLookup>(),httpBlockers:CleanBreakClientPlan['blockers']=[];
+        for(const file of captured.plan.files)for(const removal of file.removals){
+            const proof=removal.http;if(!proof)continue;
+            let checked=httpChecks.get(proof.connection_id);
+            if(!checked){const scope={predecessor:captured.predecessor,controlDir:captured.controlDir,namespace:proof.namespace,operationId:observed.operation_id};checked=validatePredecessorHttpLookup(await this.runtime().lookupPredecessorHttpOwnership(binding,proof.connection_id,scope),binding.runtimeSha256,proof.connection_id,scope);check();httpChecks.set(proof.connection_id,checked);}
+            const token=this.context.environmentVariableCollection.get('AIRK_MCP_TOKEN_'+proof.connection_id.toUpperCase());
+            if(checked.status!=='owned'||token&&(token.type!==vscode.EnvironmentVariableMutatorType.Replace||proof.credential_sha256===null||createHash('sha256').update(token.value).digest('hex')!==proof.credential_sha256))httpBlockers.push({destination:file.destination,serverKey:removal.serverKey,code:'clean_break_http_current_authority_unconfirmed'});
+        }
+        for(const owner of captured.httpOwnership?.snapshot.owners??[]){
+            if(httpChecks.has(owner.connection_id))continue;
+            const scope={predecessor:captured.predecessor,controlDir:captured.controlDir,...(captured.httpOwnership?.namespace?{namespace:captured.httpOwnership.namespace}:{}),operationId:observed.operation_id};
+            const checked=validatePredecessorHttpLookup(await this.runtime().lookupPredecessorHttpOwnership(binding,owner.connection_id,scope),binding.runtimeSha256,owner.connection_id,scope);check();httpChecks.set(owner.connection_id,checked);
+            if(checked.status!=='owned')httpBlockers.push({destination:this.context.globalStorageUri.fsPath,code:'clean_break_http_current_authority_unconfirmed'});
+        }
+        const cleanupPlan=captured.plan,configurationCheck=()=>{
+            check();for(const file of cleanupPlan.files)for(const removal of file.removals){const proof=removal.http;if(!proof)continue;const token=this.context.environmentVariableCollection.get('AIRK_MCP_TOKEN_'+proof.connection_id.toUpperCase());if(token&&(token.type!==vscode.EnvironmentVariableMutatorType.Replace||proof.credential_sha256===null||createHash('sha256').update(token.value).digest('hex')!==proof.credential_sha256))throw new ServiceError('clean_break_http_current_authority_unconfirmed');}
+        };
+        const configurations=httpBlockers.length?{complete:false,removed:[],blockers:httpBlockers}:await applyCleanBreakClientCleanup({...captured.plan,blockers:[]},binding.installDir,inventory.allowed,configurationCheck,readJsonConfig,async(destination,before,after)=>{await this.saveMigrationConfiguration(destination,before,after,configurationCheck);});check();
+        configurations.blockers.push(...inventory.blockers);configurations.complete=configurations.blockers.length===0;
+        if(configurations.complete){
+            const fresh=await this.cleanBreakClientFiles(roots,check);check();
+            const originalSpecs=this.cleanBreakSourceSpecs({...binding,executable:captured.executable},binding.cleanBreak??{});
+            const capturedHttp=new Map(captured.plan.files.flatMap(file=>file.removals.flatMap(removal=>removal.http?[[removal.http.connection_id,removal.http] as const]:[])));
+            const remaining=await captureCleanBreakClientCleanup(binding.installDir,this.context.globalStorageUri.fsPath,fresh.files,originalSpecs,check,async(_agent,id)=>capturedHttp.get(id),captured.verifiedLaunchers);check();
+            configurations.blockers.push(...fresh.blockers,...remaining.blockers,...remaining.files.map(file=>({destination:file.destination,code:'clean_break_owned_configuration_remains'})));
+            configurations.complete=configurations.blockers.length===0;
+        }
+        if(!this.uninstallDirectory)throw new ServiceError('clean_break_uninstall_directory_unavailable');
+        const receipts=configurations.complete?await retireCleanBreakUninstallReceipts(this.uninstallDirectory,captured.receipts,check):{complete:false,removed:[],blockers:['client_configuration_cleanup_incomplete']};check();
+        for(const file of captured.receiptBlockers){
+            if(typeof file!=='string'||!same(path.dirname(file),path.join(this.uninstallDirectory,'extension-uninstall'))||!/^[a-f0-9]{64}\.json$/.test(path.basename(file)))throw new ServiceError('invalid_clean_break_uninstall_blocker');
+            if(await readJsonConfig(file)!==undefined)receipts.blockers.push(file);check();
+        }
+        receipts.complete=receipts.blockers.length===0;
+        const hostArtifacts=await this.finishCleanBreakHostArtifacts(captured,check,httpBlockers.length===0);check();
+        let journal:NonNullable<CleanBreakClientCapture['result']>['journal']={complete:false,state:'waiting_for_successor_publication'};
+        if(cleanBreakSuccessorPublished(observed,binding)){
+            const store=this.console.intentStorage;if(!store.retireCapturedScope)throw new ServiceError('clean_break_journal_store_unavailable');
+            journal=await store.retireCapturedScope(captured.journal,observed.operation_id);check();
+        }
+        const firstHttp=httpChecks.values().next().value as PredecessorHttpLookup|undefined;
+        const httpRevalidation=firstHttp?{snapshot:firstHttp.snapshot,queries:[...httpChecks.values()].map(({snapshot,...query})=>query)}:undefined;
+        if(firstHttp&&[...httpChecks.values()].some(value=>!isDeepStrictEqual(value.snapshot,firstHttp.snapshot)))throw new ServiceError('clean_break_predecessor_http_snapshot_changed');
+        captured.result={complete:configurations.complete&&receipts.complete&&hostArtifacts.complete&&journal.complete,capturedAt:Date.now(),configurations,receipts,hostArtifacts,journal,...(httpRevalidation?{httpRevalidation}:{})};
+        await this.context.globalState.update(this.cleanBreakClientKey(binding.installDir),captured);check();
+        this.cleanBreakClientResult={qualification:'host_owned_clean_break_client_cleanup',operation_id:observed.operation_id,...captured.result};
+        this.output.appendLine('AIRK clean-break client cleanup: '+JSON.stringify(this.cleanBreakClientResult));
+    }
     private migrationClient(binding:RuntimeBinding){return binding.version===this.runningVersion?Promise.resolve(this.runtime().client(binding)):this.runtime().migrationClient(binding);}
     private async migrateAgentConnections(binding:RuntimeBinding,restored:readonly LaunchSpec[]=[]):Promise<void>{
         this.trusted();
@@ -1830,7 +2282,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     private async automaticSetup(notify:boolean,explicit:boolean):Promise<void>{
         if(!vscode.workspace.isTrusted||!explicit&&vscode.workspace.getConfiguration('airk').inspect<boolean>('cli.autoInstall')?.globalValue===false)return;
         this.installationFailed=false;this.installationWarnings=false;
-        let runtimeInstalled=false,finalized=false;
+        let runtimeInstalled=false,finalized=false,cleanBreakTransition=false;
         let setupObservation:BootstrapObservation|undefined;
         try{
             this.reportInstall('Connecting to AIRK; checking the installed runtime…');
@@ -1848,16 +2300,17 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             }
             if(!explicit&&installed.inspection&&installed.inspection.payload_verified!==false&&installed.inspection.metadata_only!==true){
                 const binding=this.runtime().binding(installed.inspection,installed.installDir);
+                const cleanBreak=runtimeCleanBreakRequired(binding.version,this.runningVersion,binding.cleanBreak??installed.diagnosis?.clean_break);
                 // A retained rebuild belongs to its original candidate. It must
                 // not bypass the reviewed upgrade for a newer version or a
                 // replacement bundle with the same application version.
-                if(binding.version===this.runningVersion&&binding.runtimeSha256===installed.bundle.digest&&this.currentRebuild(binding)){
+                if(!cleanBreak&&binding.version===this.runningVersion&&binding.runtimeSha256===installed.bundle.digest&&this.currentRebuild(binding)){
                     const connected=await this.runtime().reconnect(installed);this.trusted();
                     if(connected.runtimeSha256!==binding.runtimeSha256||!same(connected.controlDir,binding.controlDir))throw new ServiceError('runtime_selection_changed_review_again');
                     await this.presentRebuiltInstallation(connected);return;
                 }
                 const identity=`${this.runningVersion}:${binding.runtimeSha256}`;
-                if(binding.version===this.runningVersion&&binding.runtimeSha256===installed.bundle.digest
+                if(!cleanBreak&&binding.version===this.runningVersion&&binding.runtimeSha256===installed.bundle.digest
                     &&!installed.diagnosis?.pending_activation&&this.context.globalState.get<string>(`airk.installComplete.2.${binding.installDir}`)===identity){
                     runtimeInstalled=true;
                     if(installed.inspection.lifecycle&&record(installed.inspection.lifecycle).explicitly_stopped===true)throw new ServiceError('service_explicitly_stopped');
@@ -1888,23 +2341,39 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
                 }
                 if(!installed.inspection)throw new ServiceError('runtime_selection_changed_review_again');
                 const current=this.runtime().binding(installed.inspection,installed.installDir),target=this.runningVersion as string;
-                if(automaticUpgrade(current.version,target)&&(current.version!==target||current.runtimeSha256!==installed.bundle.digest)){
-                    const mode=explicit&&!installed.diagnosis?.pending_activation&&!current.rebuild
+                const cleanBreak=runtimeCleanBreakRequired(current.version,target,current.cleanBreak??installed.diagnosis?.clean_break);
+                if(automaticUpgrade(current.version,target)&&(cleanBreak||current.version!==target||current.runtimeSha256!==installed.bundle.digest)){
+                    const mode=cleanBreak?'clean_break':explicit&&!installed.diagnosis?.pending_activation&&!current.rebuild
                         ?await chooseRuntimeUpgradeMode(items=>vscode.window.showQuickPick(items,{title:'AIRK runtime upgrade',placeHolder:'Choose how AIRK handles the saved indexes'})):'migrate';this.trusted();
                     if(mode===undefined)return;
-                    if(mode!=='rebuild'&&!current.rebuild&&current.launcher===null&&current.payloadVerified!==false){
+                    if(mode==='migrate'&&!current.rebuild&&current.launcher===null&&current.payloadVerified!==false){
                         // A fully occupied approved installation must finish its
                         // preceding modern transaction before staging another.
                         await this.migrateAgentConnections(current,this.migrationPredecessors);
                         await this.finalizeLegacyLauncherRemoval(current,false,true);
                     }
-                    this.reportUpgrade('checking',`Upgrading ${current.version} → ${target}… Checking the installed runtime and saved indexes.`,current.version);
+                    this.reportUpgrade('checking',cleanBreak?`Preparing AIRK ${target} clean installation. Original sources and supported settings stay; old indexes, grants and unfinished operations are replaced.`:`Upgrading ${current.version} → ${target}… Checking the installed runtime and saved indexes.`,current.version,cleanBreak);
                     // Native bounded staging retains every approved predecessor until
                     // recognized clients have migrated and final removal is proven.
-                    if(mode!=='rebuild'&&!current.rebuild)this.migrationPredecessors=await this.workspace.definitions(current,[...new Set([...this.folders().map(folder=>folder.uri.fsPath),...this.workspace.rememberedRoots(current)])]);
+                    if(mode==='migrate'&&!current.rebuild)this.migrationPredecessors=await this.workspace.definitions(current,[...new Set([...this.folders().map(folder=>folder.uri.fsPath),...this.workspace.rememberedRoots(current)])]);
                     const review=await this.runtime().reviewTransition(current,installed.diagnosis?.pending_activation?'resume':'upgrade',mode==='rebuild'?{rebuildIndexes:true}:undefined);this.trusted();
+                    if(review.cleanBreak)await this.captureCleanBreakClients(current,review.target,review.cleanBreakPolicy??current.cleanBreak??{});
+                    cleanBreakTransition=review.cleanBreak===true;
                     await this.runtime().transition(current,review,(message,stage)=>this.reportUpgrade(stage,message));this.trusted();
                 }
+            }
+            if(cleanBreakTransition||record(installed.inspection?.rebuild??{}).mode==='clean_break'){
+                // Activation owns service lifecycle. A later User Stop must
+                // not prevent metadata-only client cleanup or terminal setup.
+                this.reportInstall('Checking selected runtime…');
+                const selected=await this.runtime().discover();this.trusted();
+                const binding=selected.inspection?this.runtime().binding(selected.inspection,selected.installDir):undefined;
+                const reset=binding?.rebuild?validateRebuildObservation(binding.rebuild):undefined;
+                if(binding&&binding.payloadVerified!==false&&selected.inspection?.metadata_only!==true&&binding.version===this.runningVersion&&binding.runtimeSha256===selected.bundle.digest&&reset?.mode==='clean_break'&&reset.candidate===binding.runtimeSha256&&same(String(reset.successor_control),binding.controlDir)){
+                    await this.installSelectedCommandLine(binding);this.trusted();this.console.reset();runtimeInstalled=true;
+                    await this.presentRebuiltInstallation(binding);finalized=true;return;
+                }
+                if(cleanBreakTransition)throw new ServiceError('clean_break_progress_unavailable');
             }
             await this.installCommandLine();this.trusted();
             // Activation/retirement can replace the incarnation behind an older metadata pipe.
@@ -1914,6 +2383,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             runtimeInstalled=true;
             const completed=await this.runtime().discover();
             const completedBinding=completed.inspection?this.runtime().binding(completed.inspection,completed.installDir):binding;
+            if(cleanBreakTransition&&completedBinding.rebuild?.mode!=='clean_break')throw new ServiceError('clean_break_progress_unavailable');
             if(this.currentRebuild(completedBinding)){
                 await this.presentRebuiltInstallation(completedBinding);finalized=true;return;
             }
@@ -2256,6 +2726,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     /** Refresh the external launch descriptor and this window's attachment endpoint; untrusted windows publish neither. */
     startAssistance():Promise<void>{
         const generation=++this.assistanceGeneration;
+        this.assistanceReady={generation,launch:false,endpoint:false};
         this.assistanceHost?.dispose();this.assistanceHost=undefined;
         const setup=this.startAssistanceOnce(generation).finally(()=>{
             if(generation!==this.assistanceGeneration||this.disposed)return;
@@ -2270,7 +2741,9 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         if(!this.assistanceEnabled())return;
         const storage=this.context.globalStorageUri.fsPath,version=this.runningVersion;
         try{await writeLaunchDescriptor(storage,Reflect.get(this.context,Symbol.for('iokaio.airk.managedAssetRoot'))??this.context.extensionPath,version,undefined,
-            ()=>generation===this.assistanceGeneration&&this.assistanceEnabled());}
+            ()=>generation===this.assistanceGeneration&&this.assistanceEnabled());
+            if(this.assistanceReady?.generation===generation)this.assistanceReady.launch=true;
+        }
         catch(error){this.output.appendLine(`Explorer Assistance launch descriptor was not written: ${error instanceof Error?error.message:String(error)}`);}
         if(generation!==this.assistanceGeneration||!this.assistanceEnabled())return;
         try{
@@ -2284,6 +2757,9 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
                 proposalStatus:id=>this.suggestions.status(id)});
             if(generation!==this.assistanceGeneration||!this.assistanceEnabled()){host?.dispose();return;}
             this.assistanceHost=host;
+            // Undefined is the creator's explicit no-usable-roots result;
+            // exceptions never certify a replacement endpoint.
+            if(this.assistanceReady?.generation===generation)this.assistanceReady.endpoint=true;
         }catch(error){this.output.appendLine(`Explorer Assistance window endpoint is unavailable: ${error instanceof Error?error.message:String(error)}`);}
     }
     connectionEntries(spec:LaunchSpec):ServerEntry[]{

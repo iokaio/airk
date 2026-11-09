@@ -562,17 +562,42 @@ impl Fixture {
 }
 
 fn body(envelope: &Value) -> Result<Value> {
+    body_with_budgets(
+        envelope,
+        airk_core::MAX_RESPONSE_BYTES,
+        3 * airk_core::MAX_RESPONSE_BYTES + 4096,
+    )
+}
+
+/// Plans own their declared output allocation; ordinary native read bodies
+/// continue to use body()'s unchanged 64 KiB contract.
+fn parse_body(envelope: &Value, declared_output_bytes: usize) -> Result<Value> {
+    ensure!((1024..=524288).contains(&declared_output_bytes));
+    let transport_budget = (3 * declared_output_bytes + 4096).min(1024 * 1024 - 2048);
+    let value = body_with_budgets(envelope, declared_output_bytes, transport_budget)?;
+    ensure!(
+        value["plan"]["output"]["max_bytes"] == json!(declared_output_bytes),
+        "parse reply changed the declared output allocation"
+    );
+    Ok(value)
+}
+
+fn body_with_budgets(
+    envelope: &Value,
+    body_budget: usize,
+    transport_budget: usize,
+) -> Result<Value> {
     // Check the exact received representation before resolving any metadata
     // references. Expanded logical copies have a separate materialization bound.
     let wrapped = envelope.get("structuredContent").is_some()
         || envelope.pointer("/content/0/type").and_then(Value::as_str) == Some("text");
     // Public MCP/CLI replies carry both text and structured copies. Native
-    // canonical data remains 64 KiB; their explicit public wrapper is bounded
-    // separately by the production adapter's three-copy/framing allowance.
+    // canonical data retains its owning allocation; their explicit public
+    // wrapper is bounded separately by the supplied framing allowance.
     let maximum = if wrapped {
-        3 * airk_core::MAX_RESPONSE_BYTES + 4096
+        transport_budget
     } else {
-        airk_core::MAX_RESPONSE_BYTES
+        body_budget
     };
     airk_core::index_catalog::encoded_size(envelope, maximum).with_context(||{
         let bytes=airk_core::index_catalog::encoded_size(envelope,usize::MAX).ok();
@@ -587,8 +612,8 @@ fn body(envelope: &Value) -> Result<Value> {
     } else {
         envelope.clone()
     };
-    airk_core::index_catalog::encoded_size(&value, airk_core::MAX_RESPONSE_BYTES)
-        .context("unwrapped canonical body exceeds the unchanged 65536-byte native bound")?;
+    airk_core::index_catalog::encoded_size(&value, body_budget)
+        .context("unwrapped canonical body exceeds its explicit owning budget")?;
     if value["schema"] == "airk.combined-read/1" || value.get("delivery_observation").is_some() {
         let delivery = value
             .get("delivery_observation")
@@ -1713,6 +1738,118 @@ async fn all_native_read_families_keep_complete_results_through_cli_and_mcp() ->
         "complete native family results failed:\n{}",
         failures.join("\n")
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn capabilities_plans_keep_complete_native_cli_and_mcp_results_above_read_frame() -> Result<()>
+{
+    const OUTPUT_BYTES: usize = 262144;
+    let f = Fixture::new(true)?;
+    let _service = f.start().await?;
+    let backend = airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
+    let mut mcp = McpSession::start(&f)?;
+    for count in [1usize, 2] {
+        let selection = json!({
+            "project_ids":f.projects[..2],
+            "index_ids":f.indexes[..count],
+            "member_availability":"require"
+        });
+        let mut arguments = selection.clone();
+        arguments["response_mode"] = json!("full");
+        eprintln!(
+            "actual {count}-member capabilities/parse transport iteration: direct native read"
+        );
+        let direct = native_read(backend.as_ref(), "airk_capabilities", &arguments).await?;
+        ensure!(
+            direct["isError"] != true,
+            "{count}-member direct capabilities failed: {direct}"
+        );
+        let expected =
+            body(&direct).with_context(|| format!("{count}-member direct capability body"))?;
+        eprintln!(
+            "actual {count}-member direct capabilities with native delivery: {} bytes",
+            serde_json::to_vec(&expected)?.len()
+        );
+        assert_eq!(
+            expected["workbench"],
+            airk_kernel::workbench::combined::operation_catalog(),
+            "the full combined operation schemas must survive composition"
+        );
+        let request = json!({
+            "schema":"airk.parse.request/1", "mode":"execute", "verification":"off",
+            "project_ids":selection["project_ids"], "index_ids":selection["index_ids"],
+            "member_availability":"require",
+            "plan":{"steps":[{"id":"form","tool":"capabilities","args":{}}],
+                    "output":{"view":"raw","max_bytes":OUTPUT_BYTES}}
+        });
+        let native = native_read(backend.as_ref(), "airk_parse", &request).await?;
+        let cli = f.cli("airk_parse", &request).await?;
+        // Use the actual MCP alias used by client hosts, retaining its JSON-RPC
+        // envelope when checking the existing one-MiB transport bound.
+        let wire = mcp.call(9000 + count as u64, "parse", request.clone())?;
+        airk_core::index_catalog::encoded_size(&wire, 1024 * 1024)?;
+        for (route, envelope) in [("native", &native), ("CLI", &cli), ("MCP", &wire["result"])] {
+            ensure!(
+                envelope["isError"] != true,
+                "{route} capabilities plan failed: {envelope}"
+            );
+            let parsed = parse_body(envelope, OUTPUT_BYTES)
+                .with_context(|| format!("{route}: {count}-member capabilities plan"))?;
+            let text: Value = serde_json::from_str(
+                envelope["content"][0]["text"]
+                    .as_str()
+                    .context("parse text mirror missing")?,
+            )?;
+            assert_eq!(
+                text, parsed,
+                "{route}: complete text and structured replies differ"
+            );
+            let bytes = airk_core::index_catalog::encoded_size(&parsed, OUTPUT_BYTES)?;
+            ensure!(
+                bytes > airk_core::MAX_RESPONSE_BYTES,
+                "{route}: fixture did not exercise a plan larger than a native read frame"
+            );
+            assert_eq!(parsed["status"], "complete", "{route}: {parsed}");
+            assert_eq!(parsed["schema"], airk_core::workbench::RESULT_SCHEMA);
+            assert_eq!(parsed["executed"], true);
+            assert_eq!(parsed["truncated"], false);
+            assert_eq!(parsed["calls"], 1);
+            assert_eq!(parsed["requires_input"], json!([]));
+            assert_eq!(parsed["completeness"], json!([]));
+            let steps = parsed["steps"].as_array().context("parse steps missing")?;
+            assert_eq!(steps.len(), 1);
+            assert_eq!(steps[0]["status"], "complete");
+            assert_eq!(steps[0]["error"], Value::Null);
+            let combined = body(&steps[0]["result"])?;
+            assert_parity(
+                &format!("{route}: {count}-member capabilities plan"),
+                &expected,
+                &combined,
+            )?;
+            assert_eq!(combined["truncated"], false);
+            assert_eq!(combined["partial"], false);
+            assert_eq!(combined["workbench"], expected["workbench"]);
+            let members = combined["members"]
+                .as_array()
+                .context("capability members missing")?;
+            assert_eq!(members.len(), count);
+            for (position, member) in members.iter().enumerate() {
+                assert_eq!(member["outcome"], "complete");
+                assert_eq!(member["is_error"], false);
+                let actual = member_body(&combined, member)?;
+                let expected_member = member_body(&expected, &expected["members"][position])?;
+                assert_parity(
+                    &format!("{route}: complete capability member {position}"),
+                    &expected_member,
+                    &actual,
+                )?;
+            }
+        }
+    }
+    backend.close();
+    backend.shutdown().await?;
+    f.assert_sources_unchanged()?;
     Ok(())
 }
 

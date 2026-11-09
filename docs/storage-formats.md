@@ -1,5 +1,38 @@
 # Storage formats and release versions
 
+## Current baseline and independent format identity
+
+The user approved **1.8.16** as the clean-break baseline on 8 November 2026.
+Every earlier installation creates fresh AIRK state and rebuilt indexes,
+preserving only reviewed source selections and supported preferences. Original
+sources remain untouched. The [reset contract](upgrade-rebuild-fallback.md)
+supersedes the older directory/index migration guidance below.
+
+Supported ordinary upgrades require both an approved runtime version/digest and
+the supported persisted state-contract identity. Registry, index/publication,
+source-policy and transport formats retain their independent validation; an
+application version or copied binary cannot relabel old state as compatible.
+Use native location/status/diagnostic observations for actual installed paths,
+formats and cleanup state. Modern connections use the verified HTTPS endpoint,
+not a stable launcher. Implementation and installed qualification of the new
+baseline are in progress; public 1.9.0 remains a future qualified release.
+
+The r36 storage-disposal correction is in progress. A private-control retirement
+marker binds the complete retained registration roster, exact data-root identity
+and inventoried file identities/hashes for bounded crash replay. Metadata
+preflight does not create or migrate state. The marker is limited to 512 KiB,
+with 1,024 retained registrations and 4,096 entries; retirement processes at most
+64 files per root turn and one root per metadata tick. Storage ownership and
+strict IPC/control privacy remain distinct checks. This source correction is
+not installed-qualified; see the [current release record](releases/release-1.8.16.md).
+
+## Historical pre-baseline format naming and migration
+
+The material below records earlier supported naming and directory migration.
+It is retained historical context, not permission to reuse pre-1.8.16 indexes or
+keep legacy launchers under the current baseline policy.
+
+
 Storage compatibility has its own identifiers. AIRK release versions such as 1.5.9 describe the executable and extension; they do not name an index format, authorize deletion, or require a new index directory.
 
 | Component | Compatibility identifier | Fresh native default leaf |

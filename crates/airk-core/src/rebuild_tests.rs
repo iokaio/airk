@@ -15,10 +15,13 @@ fn observation() -> Result<RebuildObservation> {
                 name.into(),
             )?),
             sources: BTreeMap::from([("docs".into(), format!("/source/{name}-docs"))]),
+            settings_available: None,
+            discarded_preferences: Vec::new(),
             settings_sha256: Sha256Digest::from_bytes([7; 32]),
             original_paused: true,
             paused: true,
             watching: false,
+            initial_job: None,
             job: None,
             readiness: RebuildReadiness::Paused,
             failure: None,
@@ -26,6 +29,10 @@ fn observation() -> Result<RebuildObservation> {
     };
     Ok(RebuildObservation {
         schema: 1,
+        mode: None,
+        indexes_complete: None,
+        expected_indexes: None,
+        cleanup: None,
         operation_id: Incarnation::from_bytes([1; 16]),
         stage: RebuildStage::Paused,
         provenance: RebuildProvenance::NativeRebuildFromSavedConfiguration,
@@ -70,6 +77,89 @@ fn scoped_rebuild_observation_discloses_exact_subset_and_preserves_complete_inde
             .is_none()
     );
     assert_eq!(original.indexes.len(), 2);
+    Ok(())
+}
+
+#[test]
+fn scoped_clean_break_cleanup_redacts_sibling_paths_and_keeps_administrative_proof() -> Result<()> {
+    use crate::service::{JobKind, JobOutcome, JobState};
+    let mut administrative = observation()?;
+    administrative.mode = Some(RebuildMode::CleanBreak);
+    administrative.indexes_complete = Some(true);
+    administrative.expected_indexes = Some(2);
+    administrative.stage = RebuildStage::Ready;
+    for (position, index) in administrative.indexes.iter_mut().enumerate() {
+        index.readiness = RebuildReadiness::Ready;
+        index.job = Some(JobRecord {
+            id: Sha256Digest::from_bytes([11 + position as u8; 32]),
+            project: index.replacement.as_ref().unwrap().binding,
+            kind: JobKind::Index,
+            state: JobState::Succeeded,
+            fencing_generation: 1,
+            attempts: 1,
+            outcome: Some(JobOutcome::Succeeded { revision: None }),
+        });
+    }
+    let private = "/private/sibling-cleanup-path";
+    administrative.cleanup = Some(RebuildCleanup {
+        complete: false,
+        state: "blocked".into(),
+        scope: "administrative".into(),
+        failure: Some(RebuildFailure {
+            code: "clean_break_cleanup_blocked".into(),
+            message: format!("Unknown retained file at {private}"),
+        }),
+        observation: Some(serde_json::json!({
+            "complete": false,
+            "retired_collections": ["/old/alpha", private],
+            "native_failure": {"path": private}
+        })),
+    });
+    administrative.validate()?;
+    let original = serde_json::to_value(&administrative)?;
+    let binding = administrative.indexes[0]
+        .replacement
+        .as_ref()
+        .unwrap()
+        .binding;
+    let selected = administrative.scoped_for(binding)?.unwrap();
+    let cleanup = selected.cleanup.as_ref().unwrap();
+    assert_eq!(selected.index_scope, Some(binding));
+    assert_eq!(selected.expected_indexes, Some(1));
+    assert_eq!(selected.indexes_complete, Some(true));
+    assert_eq!(cleanup.scope, "selected_index_summary");
+    assert!(!cleanup.complete);
+    assert_eq!(cleanup.state, "blocked");
+    assert!(cleanup.observation.is_none());
+    assert_eq!(
+        cleanup.failure.as_ref().unwrap().code,
+        "clean_break_cleanup_blocked"
+    );
+    assert!(
+        cleanup
+            .failure
+            .as_ref()
+            .unwrap()
+            .message
+            .contains("unavailable")
+    );
+    assert!(!serde_json::to_string(&selected)?.contains(private));
+    assert!(!serde_json::to_string(&selected)?.contains("/old/beta"));
+    assert_eq!(
+        serde_json::to_value(&selected.indexes[0])?,
+        original["indexes"][0]
+    );
+    assert_eq!(
+        serde_json::to_value(&administrative)?,
+        original,
+        "scoping must not remove the administrator's complete native receipt"
+    );
+    let mut crossed = selected;
+    crossed.cleanup.as_mut().unwrap().observation = administrative.cleanup.unwrap().observation;
+    assert!(
+        crossed.validate().is_err(),
+        "a selected-index summary cannot carry administrative proof paths"
+    );
     Ok(())
 }
 

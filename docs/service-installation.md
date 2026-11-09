@@ -1,11 +1,215 @@
 # Offline service installation and lifecycle
 
-**1.8.14 source implementation; unpublished and not yet platform-qualified.**
+**1.8.16 source implementation; unpublished and not yet platform-qualified.**
 The current sources implement a shared localhost HTTPS service, one distributed
 native executable with embedded default inference, direct manager entries and
 checkpointed upgrades. Final Windows installer, actual client/OS trust and Mac
 Neo acceptance are separate pending gates. Use the [working record](releases/release-1.8.14.md)
 for observed results, not older release evidence.
+
+## Required clean break before 1.8.16
+
+The user approved the [clean-break contract](upgrade-rebuild-fallback.md) on
+8 November 2026. Every earlier installation must rebuild into fresh AIRK state.
+Preserve only authenticated, reviewed source selections and supported preferences;
+original source files remain untouched. Old indexes, IDs, grants, credentials and
+pending operations are not reused. Native shutdown, durable reset recovery and
+ownership-checked retirement of old index/state roots, runtimes and launchers are
+mandatory. Incomplete rebuilding or cleanup remains visible.
+
+Fresh Genesis atomically qualifies `airk-state-contract.json` in the selected
+control root: schema 1, state contract `airk-state/1`, baseline version 1.8.16,
+and exact installation/control/namespace binding. Missing or copied markers do
+not qualify old state. Capture uses complete catalog/registry metadata with
+explicit 64-index/128-KiB bounds; no old index publication is needed. The complete
+predecessor/successor protected-path union must also fit the existing 16-path
+bound before admission/Stop; 64 logical indexes do not imply 64 distinct supported
+physical roots. Still-existing retained older namespace/private roots outside
+exact immediate ownership refuse before mutation with
+`clean_break_retained_root_unsupported`. A recorded protection path does not
+authorize deletion; already absent old roots are not outstanding cleanup.
+
+A historically staged but never-started payload may lack optional process-role
+aliases. On Windows, missing alias files alone do not prove process exit when
+the native process audit is incomplete. That known unproven layout refuses
+before reset admission or Stop. The installer does not create aliases to make
+inspection pass, invent retirement proof, or omit a known process obligation;
+canonical retirement guards still apply. Not every historical layout qualifies
+for automatic reset.
+
+Unsupported
+include/exclude or alias translation refuses before mutation instead of widening
+the selected sources. Supported pause/watch/vector/detail preferences survive;
+custom policies, quotas, models, grants and operation history are not migrated.
+External user custom-model files remain untouched.
+
+Admitted clean reset discards predecessor installation-level User Stop and
+lifecycle state, so the fresh runtime can start its initial builds. This does
+not discard a new Stop accepted during reset/rebuild; that newer intent remains
+authoritative through retry/resume. Native-execution-disabled and workspace-trust
+gates remain enforced by the extension. Index pause/watch preferences retain
+their separate supported preservation contract.
+
+Every saved index gets one initial build before its saved pause/watch policy is
+restored. An unavailable index does not block independent builds, but final old
+state retirement waits for all required replacement readiness. Native cleanup
+guards every deletion against all primary/additional source roots, including
+inactive registrations; links and unproven ownership block it. External client
+declaration/uninstall-receipt cleanup is a separate host-owned compare-and-swap
+plan, prepared before reset. Native completion does not claim client cleanup.
+
+From 1.8.16 onward, the supported persisted state contract and approved runtime
+version govern ordinary upgrades. A new binary or changed version string cannot
+label old state as compatible. The 1.8.16+ line is to be qualified before a future
+public 1.9.0 release. Implementation and installed acceptance of this revised
+policy are in progress. The previous narrow reconciliation-continuation adapter
+was superseded before installed qualification.
+
+The installed 1.8.15 refusal happened in preflight before shutdown, despite its
+earlier progress text. Explorer failure publication and progress corrections
+remain part of the new candidate: failure must be visible while an unrelated
+connection read is pending, and progress must not claim process exit before it
+is verified.
+
+Management → Service → Runtime → **Complete runtime diagnostics** opens, copies
+or exports the complete cached native bootstrap and diagnostic observation as
+JSON. The capture timestamp identifies its age. The extension host owns these
+actions; they make no new native read and do not prove current health, process
+absence or upgrade completion. Service **Copy details** remains an explicitly
+selected summary and points to this complete cached JSON route.
+
+## Exact native bootstrap and host artifact cleanup
+
+Host request tracking is being moved from Memento into a shared private
+per-request journal; preferences stay in Memento. Immutable preparation is
+persisted before native dispatch, and post-response local tracking failures
+retain the full native reply without authorizing replay. After authenticated
+fresh Genesis establishes the exact operation/store/root/control/namespace
+retirement fence, fully validated predecessor-namespace Memento rows, including
+late nonces, are never imported or replayed and no longer consume active quota
+or block a new Stop. This is not a cross-window writer drain: bounded
+exact-observed cleanup separately reports late removals and remaining rows,
+without claiming the original capture included them. Before the fence,
+nonretired/foreign/malformed/wrong-namespace rows remain preserved and blocking;
+uncaptured physical journal files remain blocked and untouched.
+
+Predecessor request retirement requires exact captured scope/physical proof,
+the matching accepted native reset, selected successor control/candidate and a
+distinct activated Genesis namespace. That proves old request authority was
+revoked; it does not prove all indexes ready or old index/state/runtime files
+removed. Physical cleanup and overall installation completion still require
+all fresh index, client and native cleanup gates. Ordinary same-contract
+upgrades preserve uncertain requests. Interrupted-retirement handling remains
+under source review; this correction has no new backend qualification yet.
+
+An additional HTTP disposal correction is implemented in source; qualification
+is in progress. The administrative
+`predecessor_cleanup` proof is separate from ordinary live-grant lookup: it can
+identify expired/revoked historical ownership for disposal without renewing
+credentials or authorizing reads. The complete bounded original HTTP snapshot
+and host client metadata must be durable before retirement. Fresh-namespace
+ownership collisions and unavailable observations block disposal. Only the
+owning fresh HTTP service can initialize its first durable empty ledger before
+publishing an endpoint; metadata reads cannot repair a missing ledger or treat
+it as proof of absence. See the [reset contract](upgrade-rebuild-fallback.md).
+Earlier r34 checks do not qualify these new inputs.
+
+After verified predecessor exit and before the state fork, native reset captures
+the complete original private HTTP ownership inventory, bounded to 128 IDs and
+64 KiB. The durable journal retains its original control root, namespace,
+predecessor and operation identity after old-control deletion. It stores neither
+token plaintext nor live grants. Missing, corrupt or orphan metadata reports
+`unavailable`; it does not prove an empty inventory. A compacted retired marker
+without a token digest cannot prove ownership of an environment token, so that
+unproven environment entry is preserved.
+
+`runtime lookup-http-connection --purpose predecessor-cleanup --predecessor
+<originalSHA> --expected-active <CURRENTselectedSHA>` returns the disposal-only
+Core DTO with the full original snapshot. Ordinary modern lookup and enrollment
+remain separate. `runtime inspect-legacy-launchers --purpose predecessor-cleanup`
+allows an exact selected predecessor-pair ownership read for pre-reset client
+capture; ordinary HTTPS inspection keeps its existing gate. The journal retains
+verified predecessor main/stable/universal-launcher metadata, and explicit
+`command_images` excludes the staged candidate. The fresh service persists its
+first empty ledger under its `ServiceLease` before TLS startup, without allowing
+reads to create or repair an absent ledger.
+
+The reset's final bootstrap probe now uses an opaque native permit issued only
+for the exact admitted clean-break operation in `Starting`, its matching saved
+activation intent, fresh Genesis marker and verified candidate health. The
+transport is fixed to the candidate's request-epoch read and revalidates the
+operation, instance and namespace. Ordinary reads, enrollment, checkpoints and
+other lifecycle callers retain their version/state gates; this is not a general
+pre-baseline bypass. The actual narrow transport regression passed locally.
+
+Host artifact retirement is separate from native index/state removal. The
+extension captures predecessor-native-proven HTTP environment entries and saved
+connection metadata, with exact preimage checks before removal. Public trust
+copies additionally require native CA provenance, this host's creator proof,
+matching public bytes and full-width device/file identity. The creator handle
+stays open through the awaited publication observer, and the caller checks the
+original file identity; post-return adoption is rejected. Modified, unproven,
+shared or newly referenced namespace copies remain preserved and visible
+blockers. Cleanup plans retain digests/references, not bearer-token plaintext.
+The existing terminal PATH mutator is preserved.
+
+Stop-related metadata, PATH and completion bookkeeping do not ensure or start a
+runtime. Host cleanup recognizes Windows path aliases and bare-ID saved
+connection metadata while retaining ownership checks. Its flat managed
+`http-trust` census is bounded to 1,024 entries and 2 MiB total read work,
+including failed-read and overflow attempts. An old CA copy without proven
+ownership remains preserved with an explicit blocker.
+
+Only the current window's live Assistance creator can retire and positively
+refresh its endpoint. Refresh failure stays visible and retry rechecks current
+ownership; other windows are untouched. This does not enroll a new evidence
+connection automatically. Native completion, host cleanup and client
+reconnection remain separate observations.
+
+## Standalone Windows EXE and user PATH
+
+The standalone Inno package, separate from VSIX terminal integration, adds the
+literal existing `{app}\runtime` directory to HKCU user `PATH` only after
+`NativeSetupSuccess`. It preserves the other raw entries and existing `REG_SZ`/
+`REG_EXPAND_SZ` type. Variable-bearing entries stay raw during ownership
+comparison; the comparison does not apply expansion indiscriminately across
+registry kinds. Pre-existing manual paths are not claimed as owned.
+
+A durable `user-path-owner.txt` receipt records pending intent before the write
+and ownership only after verification. After uninstall confirmation, successful
+native uninstall is required before removing the exact owned literal. Native or
+PATH cleanup failure aborts Inno's uninstall before package-file deletion,
+preserving the receipt, PATH entry and bootstrap files for diagnosis. Cancellation
+does not run native removal or change PATH. Existing terminals keep their
+inherited environment; an application may need restarting before its new
+terminals observe the updated user PATH.
+
+The [Windows installer guide](../installers/windows/README.md) owns the detailed
+lifecycle. Thirteen static/mocked PATH/package checks passed locally; they do not
+execute Pascal or a registry. ISCC was unavailable for this local qualification,
+so actual Inno compilation, registry/type/Unicode round-trips and signing remain
+unqualified. No installer-ready claim follows from those tests.
+
+<a id="checkpoint-history-capacity-correction"></a>
+
+## Historical checkpoint history capacity correction
+
+The r28 manual-test VSIX can refuse an upgrade from 1.8.11 with
+`checkpoint_complete_roster_limit: serialized snapshot` when retained completed
+jobs and request receipts overflow the 448 KiB checkpoint. Retrying unchanged
+state repeats the refusal; deleting history is not the recovery procedure.
+
+The r29 correction uses checkpoint snapshot schema 2. Every
+retained table row still contributes to its complete count and authenticated
+digest, while expanded job and request details describe pending/running work.
+It preserves the existing size and row limits and does not delete retained
+history. Saved schema-1 checkpoints are reobserved using their original format
+for immutable packet and journal verification. An older checkpoint-capable
+1.8.14 predecessor still executes its own checkpoint capture and may encounter
+its original limit; candidate-side compaction does not change that executable.
+The replacement r29 VSIX is package-verified; installed acceptance remains
+pending. See the
+[working record](releases/release-1.8.14.md).
 
 ## Approval and immutable staging
 
@@ -69,10 +273,12 @@ It supports skipped version numbers and repeated schema-2 replacements through
 the same inventory contract. A successful receipt has `complete: true`, the
 full `retired_runtimes` list and native process observations. It does not stop or
 restart the selected service, clear User Stop, or modify source/index state.
-Its complete receipt reports explicitly preserved rebuild payloads separately.
-After an A-to-B rebuild, a later ordinary B-to-C upgrade can retire B while
-preserving the recorded A evidence; a historical rebuild receipt does not require
-its candidate B to remain the selected runtime.
+The pre-1.8.16 clean-break lifecycle must retire its ownership-proven old
+payloads and state once reset retirement is admitted; the older optional-rebuild
+preservation rule is not an exemption. Historical optional rebuilds reported
+preserved payloads separately and could retain A while retiring intermediate B
+in a later upgrade. Those retained receipts remain historical evidence, not
+proof that current baseline cleanup is complete.
 Historical schema-1 selected runtimes keep the older one-previous command
 behavior; current installation orchestration uses the modern branch only after
 configuration migration and verified launcher absence.
@@ -98,6 +304,15 @@ declares completion. Arbitrary user-downloaded flat executables are outside the
 owned runtime and editor-cache inventories; their names do not authorize deletion.
 
 ## Pre-managed saved indexes and owned editor caches
+
+For the current pre-1.8.16 boundary, old index publications and imported authority
+are not migrated. Capture only reviewed source/preference inputs that the reset
+owner can authenticate, then rebuild fresh state. The older migration/adoption
+mechanisms described below are retained historical implementation context and do
+not bypass the [required reset](upgrade-rebuild-fallback.md). Cache/process
+ownership checks still govern retirement; unknown files are preserved and
+reported rather than classified by name.
+
 
 For the official standalone families beginning at 0.2.1, the native origin adapter
 captures the actual original MCP declaration and complete configuration digest,
@@ -264,6 +479,13 @@ for exact review inputs, owned client-bundle CAS and remaining host qualificatio
 
 ## Selection and lifetime
 
+Apply the version/state-contract boundary before selecting the lifecycle below:
+pre-1.8.16 uses fresh-state reset, and supported 1.8.16+ state uses the ordinary
+compatible-line path. A legacy checkpoint or preserved predecessor cannot grant
+permission to retain pre-baseline indexes. Cleanup remains a separate verified
+outcome; the reset contract does not authorize deleting original sources.
+
+
 Explicit Stop and pause preferences remain native. Observation is not authority
 to start a stopped owner or replay a request. Newer runtime versions cannot
 implicitly widen a configured search selection. Accepted source/index work
@@ -342,7 +564,17 @@ and excludes unknown or redirected locations. Index deletion uses the native
 retirement contract. See [index retirement](service-project-retirement.md) and
 [extension cleanup](vscode-extension.md#removing-the-terminal-command-and-uninstalling).
 
-## Unavailable legacy index during upgrade
+<a id="unavailable-legacy-index-during-upgrade"></a>
+
+## Unavailable legacy index during the clean break
+
+The current reset never needs to read an old index publication to carry it
+forward. It still requires authoritative reviewed source/preference metadata and
+proven cleanup ownership. A missing source is reported as unavailable and cannot
+be replaced by guessing another folder. Unowned or unreadable legacy artifacts
+remain reported cleanup work. The repair/adoption behavior below is historical
+migration context, superseded for the pre-1.8.16 boundary.
+
 
 **Approved follow-up, pending implementation:** automatic fresh-index recovery
 with notification after a positively identified incompatible migration must
@@ -372,3 +604,12 @@ The [1.8.14 record](releases/release-1.8.14.md) owns current validation and gaps
 The [archived pre-HTTP installation guide](reviews/service-installation-before-http-2026-11-07.md)
 retains earlier helper/launcher formats, commands and dated local/hosted results.
 Those results do not qualify the new runtime, trust setup or installer.
+
+## 1.8.15 legacy preflight lock correction
+
+Legacy upgrade preflight observes registry capacity and accepted-work compatibility
+without opening collection publications while the predecessor runs. The opaque
+preflight observation is never a complete checkpoint. Full publication capture
+and compatibility verification still require native exclusion after verified
+predecessor exit. See the [candidate record](releases/release-1.8.15.md) for evidence
+and remaining installed/platform qualification.

@@ -125,6 +125,56 @@ pub(super) fn automatic_source_candidate(
 }
 
 impl ServiceRegistry {
+    /// Complete retained source roots for cleanup isolation, including inactive
+    /// registrations. Missing observations never imply primary-root-only scope.
+    pub fn retained_source_roots(&self, binding: ProjectBinding) -> Result<Vec<String>> {
+        let project = self.retained_project(binding)?;
+        let mut selected = std::collections::BTreeSet::from([project.registration.root]);
+        let mut complete = false;
+        let mut catalog_incomplete = false;
+        if self.catalog_state()?.is_some() {
+            let mut statement = self.connection.prepare("SELECT s.canonical_path,i.source_import_state FROM index_sources s JOIN index_definitions i ON i.id=s.index_id WHERE i.legacy_binding=?1 ORDER BY s.id LIMIT 18")?;
+            let rows = statement
+                .query_map([binding.to_string()], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            ensure!(
+                rows.len() <= 17,
+                "retained source root census exceeds bound"
+            );
+            if !rows.is_empty() {
+                complete = rows.iter().all(|(_, state)| state == "complete");
+                catalog_incomplete = !complete;
+                for (path, _) in rows {
+                    airk_core::source_policy::validate_root_path(&path)?;
+                    selected.insert(path);
+                }
+            }
+        }
+        let watch_exists: bool = self.connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='service_watch')", [], |row| row.get(0))?;
+        if watch_exists {
+            let saved: Option<(Vec<u8>, bool)> = self.connection.query_row(
+                "SELECT substr(roots,1,98305),roots_observed FROM service_watch WHERE project=?1",
+                [binding.to_string()], |row| Ok((row.get(0)?, row.get(1)?))).optional()?;
+            if let Some((bytes, observed)) = saved {
+                for root in roots(&bytes)? {
+                    selected.insert(root);
+                }
+                complete |= observed && !catalog_incomplete;
+            }
+        }
+        ensure!(
+            complete,
+            "retained source root selection is unavailable; preserve old storage pending source review"
+        );
+        ensure!(
+            selected.len() <= 17,
+            "retained source root census exceeds bound"
+        );
+        Ok(selected.into_iter().collect())
+    }
+
     /// A new private watcher incarnation cannot inherit another process's claim
     /// that native registrations are active. Root configuration stays retained.
     pub fn reset_native_watch_observations(&mut self) -> Result<()> {

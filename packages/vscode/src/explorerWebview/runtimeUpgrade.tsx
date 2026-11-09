@@ -12,6 +12,8 @@ const STAGE_LABELS: Record<Upgrade['stage'], string> = {
     draining: 'Settling previous runtime cleanup',
     activating: 'Activating the upgraded runtime',
     reconnecting: 'Reconnecting and checking index capabilities',
+    rebuilding: 'Building fresh indexes',
+    cleaning: 'Removing owned legacy installation artifacts',
     ready: 'Upgrade complete',
     failed: 'Upgrade needs attention',
 };
@@ -34,10 +36,12 @@ export function RuntimeUpgradeProgress({ upgrade }: { upgrade: Upgrade }) {
         <strong>{upgrade.stage === 'ready' ? 'AIRK update complete' : upgrade.stage === 'failed' ? 'AIRK update needs attention' : 'Updating AIRK for your indexes'}</strong>
         <p>AIRK {upgrade.fromVersion} → {upgrade.toVersion}. {upgrade.message}</p>
         <p>{active && <progress aria-label="AIRK upgrade in progress" />} Current stage: {STAGE_LABELS[upgrade.stage]}. Elapsed: {elapsed} seconds.</p>
+        {upgrade.clientCleanup&&<details><summary>Client configuration cleanup</summary><pre>{JSON.stringify(upgrade.clientCleanup,null,2)}</pre></details>}
         <p>{upgrade.stage === 'failed'
             ? 'The upgrade has not completed. Review Management → Service and the installation log for the recorded failure.'
             : upgrade.stage === 'ready'
                 ? 'The runtime update finished. Split availability is checked from the connected service.'
+                : upgrade.cleanBreak?'Original sources stay unchanged. Fresh indexes are rebuilding; old AIRK-owned artifacts are removed after indexing is ready. Coding agents require a new reviewed connection.'
                 : 'Existing index data and source policies are retained. Splitting becomes available after the upgraded service reports support.'}</p>
         <button class="ghost" onClick={() => { void request('manage.command', { command: 'airk.showExtensionOutput' }).catch(() => undefined); }}>Show installation log</button>
     </Notice>;

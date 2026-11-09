@@ -10,7 +10,51 @@ import { RecordValue, ServiceClient, ServiceError, record } from '../serviceClie
 import { nativePayloadDirectory } from './nativeServiceFixture';
 import { LegacyRetirementSession } from '../runtimeLegacyRetirement';
 import { httpAuthorityDigest } from '../serviceHttp';
+import { ConsoleHost, ServiceConsoleController } from '../serviceConsoleController';
+import { managementView, panelDetails } from '../explorerManagement';
+import { diagnosticPreview } from '../serviceConsoleView';
+import {predecessorHttpFixture} from './fixtures/predecessorHttpFixture';
 const sha=(bytes:Buffer|string)=>createHash('sha256').update(bytes).digest('hex');
+
+test('predecessor command inspection requests the disposal purpose without weakening ordinary inspection',async()=>{
+    const f=await fixture(),install=path.join(f.root,'install'),calls:string[][]=[];
+    const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable'},async(_command,args)=>{
+        if(args[1]==='self-test')return {protocol:1,version:'1.4.0',self_test:'passed',metadata_console:1};
+        calls.push([...args]);return {schema:1,active:f.digest,launcher:null,universal_launcher:null};
+    });
+    const binding={installDir:install,controlDir:path.join(install,'control'),executable:f.source,launcher:null,runtimeSha256:f.digest,version:'1.8.11',lifecycle:'on-demand' as const,verificationBasis:'trusted_distribution'};
+    try{
+        await (host as any).inspectLegacyLaunchers(binding,'predecessor-cleanup');
+        assert.deepEqual(calls[0],['runtime','inspect-legacy-launchers','--install-dir',install,'--expected-active',f.digest,'--purpose','predecessor-cleanup']);
+        await host.inspectLegacyLaunchers(binding);assert.deepEqual(calls[1],['runtime','inspect-legacy-launchers','--install-dir',install,'--expected-active',f.digest]);
+    }finally{await f.cleanup();}
+});
+
+test('predecessor disposal lookup uses its metadata purpose before the baseline and retains the complete snapshot',async()=>{
+    const f=await fixture(),install=path.join(f.root,'install'),control=path.join(install,'old-control'),id='29'.repeat(16),reply=predecessorHttpFixture(control,f.digest,id);let queried=false;
+    const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable'},async(_command,args)=>{
+        if(args[1]==='self-test')return {protocol:1,version:'1.4.0',self_test:'passed',metadata_console:1};
+        assert.deepEqual(args,['runtime','lookup-http-connection','--install-dir',install,'--expected-active',f.digest,'--connection-id',id,'--purpose','predecessor-cleanup','--predecessor',f.digest]);queried=true;return reply;
+    });
+    const binding={installDir:install,controlDir:control,executable:f.source,launcher:null,runtimeSha256:f.digest,version:'1.8.11',lifecycle:'on-demand' as const,verificationBasis:'trusted_distribution'};
+    try{
+        const observed=await (host as any).lookupPredecessorHttpOwnership(binding,id,{predecessor:f.digest,controlDir:control,namespace:reply.namespace});
+        assert.equal(queried,true);assert.deepEqual(observed,reply);assert.equal(observed.ownership,'expired');assert.equal(observed.qualification.live_authority,false);assert.equal('connection' in observed,false);
+    }finally{await f.cleanup();}
+});
+
+test('predecessor disposal lookup rejects crossed namespace, control, predecessor and saved operation scope',async()=>{
+    const f=await fixture(),install=path.join(f.root,'install'),control=path.join(install,'old-control'),id='29'.repeat(16),original=predecessorHttpFixture(control,'ab'.repeat(32),id);original.active=f.digest;original.operation_id='cd'.repeat(16);original.qualification.source='saved_predecessor_snapshot';original.qualification.current_namespace='78'.repeat(16);original.qualification.current_namespace_ownership='not_owned';let reply:any=original;
+    const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable'},async(_command,args)=>args[1]==='self-test'?{protocol:1,version:'1.4.0',self_test:'passed',metadata_console:1}:reply);
+    const binding={installDir:install,controlDir:path.join(install,'fresh-control'),executable:f.source,launcher:null,runtimeSha256:f.digest,version:'1.8.16',lifecycle:'on-demand' as const,verificationBasis:'trusted_distribution'};
+    const expected={predecessor:original.predecessor,controlDir:control,namespace:original.namespace,operationId:original.operation_id};
+    try{
+        assert.deepEqual(await (host as any).lookupPredecessorHttpOwnership(binding,id,expected),original);
+        for(const change of [(value:any)=>value.predecessor='ef'.repeat(32),(value:any)=>value.control_dir=path.join(install,'foreign-control'),(value:any)=>value.namespace='ef'.repeat(16),(value:any)=>value.operation_id='ef'.repeat(16),(value:any)=>value.snapshot.complete=false]){
+            reply=structuredClone(original);change(reply);await assert.rejects((host as any).lookupPredecessorHttpOwnership(binding,id,expected),/predecessor_http_ownership_unconfirmed/);
+        }
+    }finally{await f.cleanup();}
+});
 
 test('installation retires previous native runtime with the exact current selection and validates its receipt',async()=>{
     const f=await fixture(),install=path.join(f.root,'install');let crossed=false;
@@ -233,19 +277,20 @@ test('Mac bundle verification resolves the same two native roles and refuses an 
     }
 });
 
-async function transitionFixture(version='1.4.0'){
-    const f=await fixture(undefined,version),install=path.join(f.root,'install');await fs.mkdir(install,{mode:0o700});
+async function transitionFixture(version='1.4.0',diagnosis:RecordValue={}){
+    const [major,minor,patch]=version.split('.').map(Number),modern=major>1||major===1&&(minor>8||minor===8&&patch>=14);
+    const f=modern?await modernBindingFixture(version):await fixture(undefined,version),install=path.join(f.root,'install');await fs.mkdir(install,{mode:0o700});
     await fs.mkdir(path.join(install,'control'));
-    const calls:string[][]=[];let active='ab'.repeat(32),pending:RecordValue|null=null,candidateVersion=version,selectedVersion=version;
+    const calls:string[][]=[];let active='ab'.repeat(32),pending:RecordValue|null=null,candidateVersion=version,selectedVersion=version,cleanBreakPolicy:RecordValue|undefined;
     const inspection=()=>({selection:{active,previous:'cd'.repeat(32)},executable:path.join(install,'runtimes',active,f.main),launcher:path.join(install,'airk-launcher'),
-        control_dir:path.join(install,'control'),managed_policy:null,approval:{version:selectedVersion,manifest_sha256:active,verification_basis:'trusted_distribution'}});
+        control_dir:path.join(install,'control'),managed_policy:null,approval:{version:selectedVersion,manifest_sha256:active,verification_basis:'trusted_distribution'},...(cleanBreakPolicy?{clean_break:cleanBreakPolicy}:{})});
     const run:NativeRunner=async(command,args)=>{
         assert.equal(command,path.join(f.source,f.main));calls.push([...args]);
         switch(args[1]){
             case 'self-test':return {protocol:1,version,self_test:'passed',metadata_console:1};
             case 'location':return {protocol:1,install_dir:install};
             case 'inspect':return inspection();
-            case 'diagnose':return {pending_activation:pending};
+            case 'diagnose':return {...diagnosis,pending_activation:pending};
             case 'inspect-candidate':{const target=args[args.indexOf('--runtime-sha256')+1];return {runtime_sha256:target,metadata_only:true,selection_changed:false,executed:false,
                 approval:{version:candidateVersion,manifest_sha256:target,verification_basis:'trusted_distribution'}};}
             case 'stage':return {};
@@ -264,8 +309,79 @@ async function transitionFixture(version='1.4.0'){
     };
     const host=new RuntimeHost(f.root,version,{channel:'stable',installDir:install},run);
     return {f,host,calls,install,binding:()=>host.binding(inspection(),install),setActive:(value:string)=>{active=value;},
-        setPending:(value:RecordValue)=>{pending=value;},setCandidateVersion:(value:string)=>{candidateVersion=value;},setSelectedVersion:(value:string)=>{selectedVersion=value;}};
+        setPending:(value:RecordValue)=>{pending=value;},setCandidateVersion:(value:string)=>{candidateVersion=value;},setSelectedVersion:(value:string)=>{selectedVersion=value;},setCleanBreakPolicy:(value:RecordValue)=>{cleanBreakPolicy=value;}};
 }
+
+test('native clean break policy forces the current bundle through a prior pending activation without a migration option',async()=>{
+    const t=await transitionFixture('1.8.16');
+    try{
+        t.setSelectedVersion('1.8.11');t.setCleanBreakPolicy({required:true,baseline_version:'1.8.16',state_contract:'airk-state/1',installed_contract:null,future_policy:{retained:true}});
+        const binding=t.binding();assert.equal(binding.cleanBreak?.required,true);
+        t.setPending({candidate:'ef'.repeat(32),phase:'drain',prior:{active:binding.runtimeSha256}});
+        assert.equal(await t.host.supersedePending(binding,{pending_activation:{candidate:'ef'.repeat(32),phase:'drain'}}),false,'legacy supersession must not run before native reset');
+        const review=await t.host.reviewTransition(binding,'resume');
+        assert.equal(review.cleanBreak,true);assert.equal(review.rebuildIndexes,undefined);assert.equal(review.target,t.f.digest);
+        assert.equal(t.calls.some(args=>args[1]==='inspect-candidate'||args[1]==='abort-activation'),false);
+        await assert.rejects(t.host.reviewTransition(binding,'rollback'),/clean_break_required_before_runtime_rollback/);
+        const stages:string[]=[];await t.host.transition(binding,review,message=>{stages.push(message);});
+        assert.deepEqual(t.calls.filter(args=>['stage','activate'].includes(args[1])).map(args=>args[1]),['stage','activate']);
+        const activation=t.calls.find(args=>args[1]==='activate')!;
+        assert.equal(activation.includes('--rebuild-indexes'),false,'native clean break policy is unconditional, not an optional rebuild fallback');
+        assert.equal(activation[activation.indexOf('--expected-active')+1],binding.runtimeSha256);
+        assert.match(stages.at(-1)!,/clean installation/);
+    }finally{await t.f.cleanup();}
+});
+
+test('a validated baseline state contract retains the normal compatible runtime upgrade',async()=>{
+    const t=await transitionFixture('1.9.0');
+    try{
+        t.setSelectedVersion('1.8.16');t.setCleanBreakPolicy({required:false,baseline_version:'1.8.16',state_contract:'airk-state/1',installed_contract:{schema:1}});
+        const binding=t.binding(),review=await t.host.reviewTransition(binding,'upgrade');
+        assert.equal(review.cleanBreak,undefined);await t.host.transition(binding,review);
+        assert.equal(t.calls.find(args=>args[1]==='activate')!.includes('--rebuild-indexes'),false);
+    }finally{await t.f.cleanup();}
+});
+
+test('a same-version executable without the baseline state contract cannot open a native client or enroll a connection',async()=>{
+    const t=await transitionFixture('1.8.16');
+    try{
+        t.setCleanBreakPolicy({required:true,baseline_version:'1.8.16',state_contract:'airk-state/1',installed_contract:null});
+        const binding=t.binding(),before=t.calls.length;
+        assert.throws(()=>t.host.client(binding),/clean_break_required_before_connection/);
+        await assert.rejects(t.host.httpConnection(binding,{} as any,path.join(t.install,'scope.json'),'ab'.repeat(16),'codex'),/clean_break_required_before_connection/);
+        assert.equal(t.calls.length,before,'contract refusal precedes native transport or credential mutation');
+    }finally{await t.f.cleanup();}
+});
+
+test('native runtime diagnostic transport survives complete cached Management JSON exports without scalar copies',async()=>{
+    const diagnosis={upgrade_checkpoint:{schema:1,entries:Array.from({length:200},(_,index)=>({index,future_native_field:'checkpoint-detail-'.repeat(30)})),future_manifest_field:{preserved:true}},future_diagnosis:{preserved:'native transport'}};
+    const t=await transitionFixture('1.4.0',diagnosis),copied:string[]=[],opened:string[]=[],saved:string[]=[];
+    let trusted=true;
+    const host:ConsoleHost={authority:'fixture native runtime',version:'1.4.0',storage:{keys:()=>[],get:()=>undefined,update:async()=>{}},trusted:()=>trusted,
+        runtime:t.host,changed(){},confirm:async()=>false,copy:async text=>{copied.push(text);},openReport:async text=>{opened.push(text);},saveReport:async text=>{saved.push(text);},
+        logs:async()=>{},resources:async()=>undefined,lifecycle:async()=>{throw new Error('No lifecycle work allowed');}};
+    // Discovery still uses the real RuntimeHost parsing/reshaping of native
+    // command results. A refused subsequent service connection must not erase it.
+    t.host.client=()=>{throw new ServiceError('fixture_service_unavailable');};
+    const controller=new ServiceConsoleController(host);
+    try{
+        const canonical=await t.host.discover();await controller.refresh();
+        assert.ok(controller.state.runtimeDiagnostics);
+        assert.ok(t.calls.some(args=>args[1]==='diagnose'));
+        const nativeCalls=t.calls.length;
+        for(const action of ['copyRuntimeDiagnostics','openRuntimeDiagnostics','saveRuntimeDiagnostics'])await controller.action({type:'service',revision:controller.state.revision,action});
+        const capture=JSON.parse(copied[0]);assert.equal(capture.qualification,'cached_native_bootstrap_observation');assert.equal(capture.capturedAt,controller.state.runtimeDiagnostics.capturedAt);
+        assert.deepEqual(capture.observation,canonical);assert.deepEqual(capture.observation.diagnosis.upgrade_checkpoint,diagnosis.upgrade_checkpoint);
+        assert.ok(Buffer.byteLength(copied[0])>65536,'complete JSON must exceed and bypass the summary copy limit');
+        assert.deepEqual(opened,copied);assert.deepEqual(saved,copied);assert.equal(t.calls.length,nativeCalls,'cached exports issue no native commands or RPC');
+        const view=managementView(controller.state);assert.deepEqual(view.runtimeDiagnostics,controller.state.runtimeDiagnostics);
+        assert.doesNotMatch(JSON.stringify(view),/checkpoint-detail/,'scalar Management updates carry only capture metadata');
+        assert.match(panelDetails(view,'service','1.4.0'),/Selected service\/runtime summary fields only/);
+        const summary=JSON.parse(diagnosticPreview(controller.state,false));assert.equal(summary.qualification,'selected_diagnostic_summary');assert.ok(summary.completeRuntimeDiagnostics);
+        trusted=false;await assert.rejects(controller.action({type:'service',revision:controller.state.revision,action:'copyRuntimeDiagnostics'}),/runtime_client_no_longer_authorized/);
+        assert.equal(copied.length,1);assert.equal(controller.state.runtimeDiagnostics,undefined);
+    }finally{controller.dispose();await t.f.cleanup();}
+});
 
 test('concurrent discovery shares verification and callers cannot mutate each other’s observations',async()=>{
     const t=await transitionFixture();
@@ -362,6 +478,7 @@ test('runtime upgrade uses only its host-owned review and supplies the exact nat
         const stages:string[]=[];
         const result=await t.host.transition(binding,review,(message,stage)=>{
             assert.ok(message.length>0);stages.push(stage);
+            if(stage==='activating')assert.equal(message,'Checking upgrade prerequisites and activating the selected runtime…');
             // Each observation precedes its actual native work, not a guessed percentage.
             assert.equal(t.calls.slice(before).filter(args=>args[1]==='activate').length,0);
         });assert.equal(result.active,t.f.digest);

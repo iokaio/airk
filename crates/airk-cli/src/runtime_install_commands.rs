@@ -58,7 +58,27 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             install_dir,
             expected_active,
             connection_id,
-        } => http_commands::lookup_connection(install_dir, expected_active, *connection_id).await?,
+            purpose,
+            predecessor,
+        } => {
+            if purpose.is_some() {
+                http_cleanup::lookup(
+                    install_dir,
+                    expected_active,
+                    predecessor
+                        .as_deref()
+                        .context("predecessor cleanup requires exact predecessor")?,
+                    *connection_id,
+                )?
+            } else {
+                ensure!(
+                    predecessor.is_none(),
+                    "predecessor is only valid for cleanup-purpose lookup"
+                );
+                http_commands::lookup_connection(install_dir, expected_active, *connection_id)
+                    .await?
+            }
+        }
         RuntimeCommand::HttpConnection {
             install_dir,
             selection_file,
@@ -515,7 +535,9 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             // across lock waits. Actual native startup retains all locked guards.
             let connection_observation = connection_observation(install_dir);
             let (rebuild, rebuild_error) = rebuild_report(install_dir);
-            serde_json::json!({"selection":selection,"executable":executable,"approval":approval,"launcher":launcher,"universal_launcher":universal_launcher,"managed_policy":policy,"control_dir":control.ok(),"state_error":state_error,"lifecycle":lifecycle,"registry_namespace":registry_namespace,"payload_verified":true,"payload_repair":payload_repair::status(install_dir)?,"connection_observation":connection_observation,"rebuild":rebuild,"rebuild_error":rebuild_error})
+            let clean_break = state_contract::report(install_dir);
+            let clean_break_error = clean_break.as_ref().err().map(ToString::to_string);
+            serde_json::json!({"selection":selection,"executable":executable,"approval":approval,"launcher":launcher,"universal_launcher":universal_launcher,"managed_policy":policy,"control_dir":control.ok(),"state_error":state_error,"lifecycle":lifecycle,"registry_namespace":registry_namespace,"payload_verified":true,"payload_repair":payload_repair::status(install_dir)?,"connection_observation":connection_observation,"rebuild":rebuild,"rebuild_error":rebuild_error,"clean_break":clean_break.ok(),"clean_break_error":clean_break_error})
         }
         RuntimeCommand::Remove {
             install_dir,
@@ -554,7 +576,14 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
         RuntimeCommand::InspectLegacyLaunchers {
             install_dir,
             expected_active,
-        } => legacy_launchers::inspect(install_dir, expected_active)?,
+            purpose,
+        } => {
+            if purpose.is_some() {
+                legacy_launchers::inspect_predecessor_cleanup(install_dir, expected_active)?
+            } else {
+                legacy_launchers::inspect(install_dir, expected_active)?
+            }
+        }
         RuntimeCommand::InspectLegacyCaches {
             install_dir,
             expected_active,
@@ -728,7 +757,9 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
                 .and_then(|control| crate::service_logs::recent(&control, 32));
             let log_error = logs.is_err();
             let (rebuild, rebuild_error) = rebuild_report(install_dir);
-            serde_json::json!({"logs":logs.ok(),"logs_unavailable":log_error,"runtime":selection.ok(),"runtime_error":selection_error,"bootstrap":bootstrap.ok().flatten(),"bootstrap_error":bootstrap_error,"pending_stages":stages.ok(),"staging_error":stages_error,"pending_launcher_repair":repair.ok().flatten(),"launcher_repair_error":repair_error,"state_layout":state_layout.ok(),"layout_error":layout_error,"managed_policy":policy.ok().flatten(),"managed_policy_error":policy_error,"pending_activation":activation.ok().flatten(),"activation_error":activation_error,"activation_result":activation_result.ok().flatten(),"activation_result_error":activation_result_error,"upgrade_checkpoint":checkpoint.ok().flatten(),"upgrade_checkpoint_error":checkpoint_error,"live_service_health":"not_checked","rebuild":rebuild,"rebuild_error":rebuild_error})
+            let clean_break = state_contract::report(install_dir);
+            let clean_break_error = clean_break.as_ref().err().map(ToString::to_string);
+            serde_json::json!({"logs":logs.ok(),"logs_unavailable":log_error,"runtime":selection.ok(),"runtime_error":selection_error,"bootstrap":bootstrap.ok().flatten(),"bootstrap_error":bootstrap_error,"pending_stages":stages.ok(),"staging_error":stages_error,"pending_launcher_repair":repair.ok().flatten(),"launcher_repair_error":repair_error,"state_layout":state_layout.ok(),"layout_error":layout_error,"managed_policy":policy.ok().flatten(),"managed_policy_error":policy_error,"pending_activation":activation.ok().flatten(),"activation_error":activation_error,"activation_result":activation_result.ok().flatten(),"activation_result_error":activation_result_error,"upgrade_checkpoint":checkpoint.ok().flatten(),"upgrade_checkpoint_error":checkpoint_error,"live_service_health":"not_checked","rebuild":rebuild,"rebuild_error":rebuild_error,"clean_break":clean_break.ok(),"clean_break_error":clean_break_error})
         }
         RuntimeCommand::ResetStartup { install_dir } => {
             let _lock = install_lock(install_dir)?;
@@ -852,7 +883,7 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
                     &format!("airk-embed {}", env!("CARGO_PKG_VERSION")),
                 )?;
             }
-            serde_json::json!({"protocol":1,"version":env!("CARGO_PKG_VERSION"),"self_test":"passed","state_layout":1,"foreground_dispatch":1,"managed_reference":1,"activation_resume":1,"metadata_console":1,"io_worker_threads":2,"index_catalog":airk_store::service::registry::catalog::capabilities()})
+            serde_json::json!({"protocol":1,"version":env!("CARGO_PKG_VERSION"),"self_test":"passed","state_contract":state_contract::CONTRACT,"state_layout":1,"foreground_dispatch":1,"managed_reference":1,"activation_resume":1,"metadata_console":1,"io_worker_threads":2,"index_catalog":airk_store::service::registry::catalog::capabilities()})
         }
     };
     println!("{}", serde_json::to_string(&output)?);

@@ -21,15 +21,39 @@ function receipt(intent:ReferenceRefreshIntent):Value {
     const selected=intent.reference_refresh.configure_project.request.configuration.selection as Value,members=selected.members as Value[],before=String(members[0].original_publication),after='airk-r1:'+id('7')+':2:'+hash('e');
     return {status:'reference_refresh_receipt',job:{id:refreshJobId(intent),project:intent.reference_refresh.configure_project.project,kind:'configure',state:'succeeded',fencing_generation:1,attempts:1,outcome:{state:'succeeded',revision:after}},configuration:{engine:hash('f'),request:structuredClone(intent.reference_refresh.configure_project.request)},result:{schema:'airk.reference-refresh-result/1',selection_digest:refreshSelectionIdentity(selected),original_query_digest:selected.original_query_digest,effective_mode:'selected_only',effective_scope:'selected_sources',before_publication:before,after_publication:after,report:{generation:2,path_scoped:true,future_report:'retained'},status:{publication:{token:after},future_status:[1,2,3]},requery_executed:false,future_result:{retained:true}},expired:false,future_envelope:'retained'};
 }
+function admission(response:Value):Value{
+    const job:Value={...structuredClone(response.job as Value),state:'pending'};delete job.outcome;
+    return {status:'job',job};
+}
 function environment(intent:ReferenceRefreshIntent,lost=false){
     let response=receipt(intent),trusted=true,reconfirmChanged=false,queryCalls=0,mutationCalls=0,readCalls=0;const requests:unknown[]=[];
-    const transport:ControlTransport={dispose(){},async request(method){requests.push(structuredClone(method));const name=Object.keys(method as object)[0];if(name==='configure_project'){mutationCalls++;if(lost)throw new ServiceError('lost_native_reply',true);return {status:'job',job:structuredClone(response.job)};}
+    const transport:ControlTransport={dispose(){},async request(method){requests.push(structuredClone(method));const name=Object.keys(method as object)[0];if(name==='configure_project'){mutationCalls++;if(lost)throw new ServiceError('lost_native_reply',true);return admission(response);}
         if(name==='reference_refresh_receipt'){readCalls++;return structuredClone(response);}throw new Error('unexpected_native_method:'+name);}};
     const storage=new Memory(),journal=new IntentJournal(storage,'owned-control',id('1')),client=new ServiceClient(transport);
     const host={trusted:()=>trusted,confirm:async()=>true,reconfirm:async(selected:Value)=>({...structuredClone(selected),...(reconfirmChanged?{expected_grant_revision:2}:{})}),query:async(query:Value)=>{queryCalls++;assert.deepEqual(query,intent.reference_refresh.original_query);return {publication_vector:[{current:true}],future_query_result:{preserve:true}};}};
     const flow=new ReferenceRefreshFlow(client,journal,host);
     return {flow,journal,storage,client,host,requests,setResponse:(value:Value)=>{response=value;},revoke:()=>{trusted=false;},changeGrant:()=>{reconfirmChanged=true;},counts:()=>({queryCalls,mutationCalls,readCalls})};
 }
+
+for(const phase of ['submit','check'] as const)test(`reference refresh preserves its full native reply after local ${phase} observation fails`,async()=>{
+    const intent=fixture(),e=environment(intent),cause=new ServiceError('fixture_refresh_tracking_failed');let attempts=0,id:string|undefined;
+    if(phase==='check')id=await e.flow.reviewAndSubmit(intent,{capabilities:{reference_refresh_contract:1}});
+    e.journal.observeRefresh=async()=>{attempts++;throw cause;};
+    const work=phase==='submit'?e.flow.reviewAndSubmit(intent,{capabilities:{reference_refresh_contract:1}}):e.flow.check(id!);
+    await assert.rejects(work,(error:unknown)=>{assert.ok(error instanceof ServiceError);assert.deepEqual(error.nativeResponse,phase==='submit'?admission(receipt(intent)):receipt(intent));return true;});
+    assert.equal(attempts,1);assert.equal(e.counts().mutationCalls,1);assert.equal(e.counts().readCalls,phase==='check'?1:0);assert.equal(e.journal.list().length,1);
+});
+
+for(const qualified of [true,false])test(`a separate terminal refresh frame ${qualified?'settles':'cannot cross'} the prior exact-intent guard without fusing receipts`,async()=>{
+    const intent=fixture(),e=environment(intent),id=await e.flow.reviewAndSubmit(intent,{capabilities:{reference_refresh_contract:1}}),row=e.journal.list()[0],configured=receipt(intent);
+    (configured.job as Value).state='running';(configured.job as Value).outcome=null;configured.result=null;
+    const terminal={status:'job',job:structuredClone(receipt(intent).job),future_terminal_frame:{retained:true}};if(!qualified)(terminal.job as Value).project='0'.repeat(64);
+    e.storage.data.set([...e.storage.data.keys()][0],{...row.value,nativeRefreshReceipt:configured,nativeRefreshLookup:{status:'reference_refresh_receipt',job:null,configuration:null,result:null,expired:true},nativeRefreshTerminalReceipt:terminal});
+    const next=fixture('5');e.setResponse(receipt(next));
+    if(qualified){await e.flow.reviewAndSubmit(next,{capabilities:{reference_refresh_contract:1}});assert.equal(e.counts().mutationCalls,2);const exported=JSON.parse(e.flow.exportObservation(id!).json);assert.deepEqual(exported.last_known_historical_native_receipt,configured);assert.deepEqual(exported.last_known_terminal_native_receipt,terminal);}
+    else{await assert.rejects(e.flow.reviewAndSubmit(next,{capabilities:{reference_refresh_contract:1}}),/prior_outcome_requires_exact_receipt/);assert.equal(e.counts().mutationCalls,1);}
+    await assert.rejects(e.flow.reviewAndSubmit(intent,{capabilities:{reference_refresh_contract:1}}),/already_tracked/);
+});
 test('refresh requires explicit native capability and current reviewed grant before reservation/dispatch',async()=>{
     const intent=fixture(),e=environment(intent);assert.equal(refreshCapability({capabilities:{policy_contract:2}}),false);
     await assert.rejects(e.flow.reviewAndSubmit(intent,{capabilities:{policy_contract:2}}),/capability_required/);e.changeGrant();
@@ -54,7 +78,19 @@ test('explicit requery keeps complete original query/verification and distinct f
 });
 test('crossed native proof is retained for diagnosis without overwriting accepted historical proof',async()=>{
     const intent=fixture(),e=environment(intent);const saved=await e.flow.reviewAndSubmit(intent,{capabilities:{reference_refresh_contract:1}});await e.flow.check(saved!);const known=structuredClone(e.journal.list()[0].value.nativeRefreshReceipt),bad=receipt(intent);(bad.result as Value).original_query_digest=hash('0');e.setResponse(bad);
-    await assert.rejects(e.flow.check(saved!));assert.deepEqual(e.journal.list()[0].value.nativeRefreshReceipt,known);assert.deepEqual(e.journal.list()[0].value.nativeRefreshLookup,bad);assert.equal(e.counts().mutationCalls,1);
+    let writes=0;const update=e.storage.update.bind(e.storage);e.storage.update=async(key,value)=>{writes++;await update(key,value);};
+    await assert.rejects(e.flow.check(saved!));assert.deepEqual(e.journal.list()[0].value.nativeRefreshReceipt,known);assert.deepEqual(e.journal.list()[0].value.nativeRefreshLookup,bad);assert.equal(e.counts().mutationCalls,1);assert.equal(writes,1,'a rejected RPC frame is recorded once as diagnosis');assert.ok(e.journal.list()[0].value.nativeRefreshValidationError);
+});
+test('invalid native admission is recorded once without creating accepted historical authority',async()=>{
+    const intent=fixture(),e=environment(intent),bad=receipt(intent);(bad.job as Value).id=hash('0');e.setResponse(bad);
+    let writes=0;const update=e.storage.update.bind(e.storage);e.storage.update=async(key,value)=>{writes++;await update(key,value);};
+    await assert.rejects(e.flow.reviewAndSubmit(intent,{capabilities:{reference_refresh_contract:1}}));
+    const row=e.journal.list()[0].value;assert.equal((row.nativeRefreshLookup?.job as Value).id,hash('0'));assert.equal(row.nativeRefreshReceipt,undefined);assert.ok(row.nativeRefreshValidationError);assert.equal(writes,2,'one preparation and one diagnostic write');assert.deepEqual(e.counts(),{mutationCalls:1,readCalls:0,queryCalls:0});
+});
+test('a completed accepted job cannot change terminal outcome for the same refresh key',async()=>{
+    const intent=fixture(),e=environment(intent),id=await e.flow.reviewAndSubmit(intent,{capabilities:{reference_refresh_contract:1}});await e.flow.check(id!);
+    const known=structuredClone(e.journal.list()[0].value.nativeRefreshReceipt),changed=receipt(intent);(changed.job as Value).state='failed';(changed.job as Value).outcome={state:'failed',code:'changed_terminal_outcome'};e.setResponse(changed);
+    await assert.rejects(e.flow.check(id!),/historical_refresh_terminal_job_changed/);assert.deepEqual(e.journal.list()[0].value.nativeRefreshReceipt,known);assert.deepEqual(e.journal.list()[0].value.nativeRefreshLookup,changed);assert.equal(e.counts().mutationCalls,1);assert.equal(e.counts().queryCalls,0);
 });
 test('workspace trust loss refuses mutation or later requery without new grant or replay',async()=>{
     const intent=fixture(),e=environment(intent);const saved=await e.flow.reviewAndSubmit(intent,{capabilities:{reference_refresh_contract:1}});e.revoke();await assert.rejects(e.flow.requery(saved!),/not_trusted/);assert.equal(e.counts().queryCalls,0);assert.equal(e.counts().mutationCalls,1);

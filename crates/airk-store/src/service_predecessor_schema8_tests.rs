@@ -195,7 +195,7 @@ CREATE TABLE IF NOT EXISTS service_semantic_review(
  project TEXT PRIMARY KEY REFERENCES projects(binding),signature TEXT NOT NULL CHECK(length(signature)<=129)) WITHOUT ROWID;",
 ];
 
-fn schema8(
+pub(super) fn schema8(
     control: &Path,
     namespace: Incarnation,
     registration: &ProjectRegistration,

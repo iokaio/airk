@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { rememberShellIntegration, rememberUninstallTarget, shellProfiles, uninstallTargets } from '../extensionUninstall';
+import { rememberShellIntegration, rememberUninstallTarget, shellProfiles, uninstallTargets, captureCleanBreakUninstallReceipts, retireCleanBreakUninstallReceipts } from '../extensionUninstall';
 import { LaunchSpec, unifiedEntry } from '../model';
 import { launchDescriptorPath } from '../explorerAssistanceLaunch';
 import { NativeRunner } from '../serviceBootstrap';
@@ -29,6 +29,26 @@ async function fixture(){
     return {root,installDir,launcher,source,storage,spec,calls,messages,run,shell,shellCalls,preserve:(value:string[])=>{preserved=value;},setFailure:(value:boolean)=>{fail=value;},
         cleanup:()=>fs.rm(root,{recursive:true,force:true})};
 }
+
+test('clean break retires only exact original project receipts and retains generic and reenrolled ownership',async()=>{
+    const f=await fixture();
+    try{
+        const second:LaunchSpec={...f.spec,root:path.join(f.root,'second-project'),collection:'second',service:{...f.spec.service!,project:'34'.repeat(32)}};
+        await rememberUninstallTarget(f.launcher,f.installDir,f.storage);
+        await rememberUninstallTarget(f.launcher,f.installDir,f.storage,f.spec);
+        await rememberUninstallTarget(f.launcher,f.installDir,f.storage,second);
+        const captured=await captureCleanBreakUninstallReceipts(f.launcher,f.installDir,[f.spec,second],()=>{});
+        assert.equal(captured.receipts.length,2);assert.deepEqual(captured.blockers,[]);
+        const renewed:LaunchSpec={...f.spec,service:{...f.spec.service!,project:'56'.repeat(32)}};
+        await rememberUninstallTarget(f.launcher,f.installDir,f.storage,renewed);
+        const result=await retireCleanBreakUninstallReceipts(f.launcher,captured.receipts,()=>{});
+        assert.equal(result.complete,false);assert.equal(result.removed.length,1);assert.equal(result.blockers.length,1);
+        const names=await fs.readdir(path.join(f.launcher,'extension-uninstall'));
+        assert.equal(names.length,2,'generic current-install receipt and newly reenrolled project are preserved');
+        const retry=await retireCleanBreakUninstallReceipts(f.launcher,captured.receipts,()=>{});
+        assert.equal(retry.complete,false);assert.equal(retry.blockers.length,1);
+    }finally{await f.cleanup();}
+});
 test('uninstall removes owned Claude/Codex/Copilot connections in a closed project and delegates runtime shutdown',async()=>{
     const f=await fixture();
     try{

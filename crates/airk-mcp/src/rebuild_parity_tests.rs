@@ -22,16 +22,22 @@ fn body(reply: CallToolResult) -> Result<Value> {
 #[tokio::test]
 async fn canonical_status_settings_and_mcp_retain_complete_scoped_rebuild_observation() -> Result<()>
 {
-    assert_rebuild_parity(RebuildStage::Paused).await
+    assert_rebuild_parity(RebuildStage::Paused, false).await
 }
 
 #[tokio::test]
 async fn unavailable_rebuild_history_keeps_full_canonical_status_settings_and_mcp_results()
 -> Result<()> {
-    assert_rebuild_parity(RebuildStage::Unavailable).await
+    assert_rebuild_parity(RebuildStage::Unavailable, false).await
 }
 
-async fn assert_rebuild_parity(stage: RebuildStage) -> Result<()> {
+#[tokio::test]
+async fn clean_break_scoped_cleanup_keeps_complete_native_and_mcp_results_without_sibling_paths()
+-> Result<()> {
+    assert_rebuild_parity(RebuildStage::Ready, true).await
+}
+
+async fn assert_rebuild_parity(stage: RebuildStage, clean_break: bool) -> Result<()> {
     let owner = tempfile::tempdir()?;
     let source = owner.path().join("source");
     std::fs::create_dir(&source)?;
@@ -57,8 +63,12 @@ async fn assert_rebuild_parity(stage: RebuildStage) -> Result<()> {
             .into_owned(),
         replacement.collection.clone(),
     )?;
-    let observation = RebuildObservation {
+    let mut observation = RebuildObservation {
         schema: 1,
+        mode: None,
+        indexes_complete: None,
+        expected_indexes: None,
+        cleanup: None,
         operation_id: Incarnation::from_bytes([1; 16]),
         stage,
         provenance: RebuildProvenance::NativeRebuildFromSavedConfiguration,
@@ -94,11 +104,14 @@ async fn assert_rebuild_parity(stage: RebuildStage) -> Result<()> {
             original,
             replacement: Some(replacement.clone()),
             sources: Default::default(),
-            settings_sha256: Sha256Digest::from_bytes([6; 32]),
+            settings_available: None,
+        discarded_preferences: Vec::new(),
+        settings_sha256: Sha256Digest::from_bytes([6; 32]),
             original_paused: true,
             paused: true,
             watching: false,
-            job: None,
+            initial_job: None,
+        job: None,
             readiness: if stage == RebuildStage::Unavailable {
                 RebuildReadiness::Unavailable
             } else {
@@ -110,7 +123,62 @@ async fn assert_rebuild_parity(stage: RebuildStage) -> Result<()> {
             }),
         }],
     };
+    let sibling_private = "/private/sibling-cleanup-must-not-leak";
+    if clean_break {
+        use airk_core::service::{JobKind, JobOutcome, JobRecord, JobState};
+        observation.mode = Some(RebuildMode::CleanBreak);
+        observation.indexes_complete = Some(true);
+        observation.expected_indexes = Some(2);
+        let mut sibling = observation.indexes[0].clone();
+        sibling.original = ProjectRegistration::new(
+            "/private/sibling-source".into(),
+            sibling_private.into(),
+            "sibling".into(),
+        )?;
+        sibling.replacement = Some(ProjectRegistration::new(
+            "/private/sibling-source".into(),
+            "/private/sibling-new-data".into(),
+            "sibling".into(),
+        )?);
+        observation
+            .preserved_index_roots
+            .push(sibling_private.into());
+        observation.indexes.push(sibling);
+        for (position, index) in observation.indexes.iter_mut().enumerate() {
+            index.readiness = RebuildReadiness::Ready;
+            index.job = Some(JobRecord {
+                id: Sha256Digest::from_bytes([21 + position as u8; 32]),
+                project: index.replacement.as_ref().unwrap().binding,
+                kind: JobKind::Index,
+                state: JobState::Succeeded,
+                fencing_generation: 1,
+                attempts: 1,
+                outcome: Some(JobOutcome::Succeeded { revision: None }),
+            });
+        }
+        observation.cleanup = Some(RebuildCleanup {
+            complete: false,
+            state: "blocked".into(),
+            scope: "administrative".into(),
+            failure: Some(RebuildFailure {
+                code: "clean_break_cleanup_blocked".into(),
+                message: format!("Retained sibling file at {sibling_private}"),
+            }),
+            observation: Some(json!({"complete":false,"retired_collections":[sibling_private]})),
+        });
+    }
+    observation.validate()?;
     let expected = serde_json::to_value(observation.scoped_for(replacement.binding)?.unwrap())?;
+    if clean_break {
+        assert_eq!(expected["cleanup"]["scope"], "selected_index_summary");
+        assert!(expected["cleanup"]["observation"].is_null());
+        assert_eq!(
+            expected["cleanup"]["failure"]["code"],
+            "clean_break_cleanup_blocked"
+        );
+        assert_eq!(expected["expected_indexes"], 1);
+        assert!(!expected.to_string().contains(sibling_private));
+    }
     let kernel =
         kernel.with_rebuild_observer(replacement.binding, move || Ok(Some(observation.clone())));
     assert_eq!(kernel.status_summary()?["rebuild"], expected);
@@ -129,14 +197,19 @@ async fn assert_rebuild_parity(stage: RebuildStage) -> Result<()> {
     );
     let mut tools = LocalTools::new(kernel).await?;
     for tool in ["airk_status", "airk_diagnostics"] {
-        let result = body(
-            tools
-                .call(
-                    tool.into(),
-                    json!({"response_mode":"full"}).as_object().unwrap().clone(),
-                )
-                .await?,
-        )?;
+        let reply = tools
+            .call(
+                tool.into(),
+                json!({"response_mode":"full"}).as_object().unwrap().clone(),
+            )
+            .await?;
+        if clean_break {
+            assert!(
+                !serde_json::to_string(&reply)?.contains(sibling_private),
+                "actual MCP text or structured transport leaked administrative sibling paths"
+            );
+        }
+        let result = body(reply)?;
         assert_eq!(
             result["rebuild"], expected,
             "actual MCP {tool} changed native recovery metadata"
@@ -163,6 +236,9 @@ async fn assert_rebuild_parity(stage: RebuildStage) -> Result<()> {
         page.items[0].value["rebuild"], expected,
         "canonical NativeRead settings omitted recovery metadata"
     );
+    if clean_break {
+        assert!(!serde_json::to_string(&page)?.contains(sibling_private));
+    }
     tools.close().await?;
     Ok(())
 }

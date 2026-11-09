@@ -84,6 +84,17 @@ test('upgrade rendering reports observed stages and elapsed time without invente
     }
 });
 
+test('clean break rebuilding and cleanup do not claim old indexes are retained or installation complete',()=>{
+    const ui=browserModule('runtimeUpgrade.tsx');
+    for(const stage of ['rebuilding','cleaning']){
+        const tree=ui.RuntimeUpgradeProgress({upgrade:{...upgrade,stage,cleanBreak:true}}),text=renderedText(tree);
+        assert.match(text,/Original sources stay unchanged/);assert.match(text,/new reviewed connection/);
+        assert.doesNotMatch(text,/Existing index data.*retained|update complete/);
+        assert.equal(ui.upgradePending({...upgrade,stage,cleanBreak:true}),true);
+        assert.match(text,stage==='rebuilding'?/Building fresh indexes/:/Removing owned legacy installation artifacts/);
+    }
+});
+
 test('split text distinguishes a real upgrade from unconfirmed or unsupported capability', () => {
     const ui = browserModule('runtimeUpgrade.tsx'), view = { generation: 1, busy: false };
     const pending = renderedText(ui.SplitAvailability({ view, upgrade }));

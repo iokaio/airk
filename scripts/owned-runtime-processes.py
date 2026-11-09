@@ -341,7 +341,7 @@ class Census:
                 "executable_sha256_basis": "sealed_private_path_file_not_process_memory",
                 "held_identity_authoritative": hold}
 
-    def verify_gone(self, timeout=10):
+    def _wait_for_exit(self, timeout):
         if self.closed or type(timeout) not in (int, float) or not math.isfinite(timeout) or not 0 <= timeout <= 60:
             raise RuntimeError("Invalid closed census or wait bound")
         deadline = time.monotonic() + timeout
@@ -349,6 +349,9 @@ class Census:
             if time.monotonic() >= deadline:
                 raise RuntimeError("Captured predecessor process is still alive")
             time.sleep(min(0.025, max(0, deadline - time.monotonic())))
+
+    def verify_gone(self, timeout=10):
+        self._wait_for_exit(timeout)
         # The immutable rollback runtime must remain intact. Only the separate
         # stable launcher may be legitimately retired by the modern candidate.
         for name, expected, bound in [("airk-install.json", self.identity, 1 << 20),
@@ -365,6 +368,58 @@ class Census:
         return {"schema": 1, "captured_identities_exited": True,
                 "captured_count": len(self.owners), "after": after,
                 "signals_sent": 0, "numeric_pid_reuse_is_not_exit_evidence": True}
+
+    def verify_retired_gone(self, retirement, timeout=10):
+        """An explicit clean break retires images; held kernel identities still prove exit."""
+        if not isinstance(retirement, dict) or retirement.get("complete") is not True:
+            raise RuntimeError("Complete original native retirement receipt is required")
+        runtimes, launchers = retirement.get("runtimes"), retirement.get("launchers")
+        if not isinstance(runtimes, dict) or not isinstance(launchers, dict):
+            raise RuntimeError("Original runtime and launcher retirement receipts are required")
+        retired = runtimes.get("retired_runtimes")
+        active = runtimes.get("active")
+        def processes(value, scope):
+            return (isinstance(value, dict) and value.get("scope") == scope
+                and type(value.get("remaining")) is int and value["remaining"] == 0
+                and all(isinstance(value.get(name), list) and len(value[name]) <= 20
+                    for name in ("observations", "image_roster", "image_exclusions")))
+        if (runtimes.get("complete") is not True or runtimes.get("selected_service_restarted") is not False
+                or not isinstance(active, str) or not re.fullmatch(r"[0-9a-f]{64}", active) or active == self.identity
+                or not isinstance(retired, list) or not 1 <= len(retired) <= 4
+                or self.identity not in retired or active in retired or len(set(retired)) != len(retired)
+                or any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value) for value in retired)
+                or not processes(runtimes.get("processes"), "verified_superseded_runtime_images")
+                or launchers.get("schema") != 1 or launchers.get("active") != active
+                or launchers.get("legacy_launchers_retired") is not True
+                or "launcher" not in launchers or launchers["launcher"] is not None
+                or "universal_launcher" not in launchers or launchers["universal_launcher"] is not None
+                or not processes(launchers.get("processes"), "verified_launcher_images")):
+            raise RuntimeError("Native retirement receipt does not match the captured predecessor")
+        proven = {}
+        for receipt in (runtimes, launchers):
+            for image in receipt["processes"]["image_roster"]:
+                if (not isinstance(image, dict) or not isinstance(image.get("path"), str)
+                        or not Path(image["path"]).is_absolute() or ".." in Path(image["path"]).parts
+                        or not isinstance(image.get("sha256"), str) or not HEX.fullmatch(image["sha256"])):
+                    raise RuntimeError("Native retirement contains an invalid captured image proof")
+                key = _key(image["path"])
+                if key in proven:
+                    raise RuntimeError("Native retirement duplicates a captured image proof")
+                proven[key] = image["sha256"]
+        for key, image in self.images.items():
+            if proven.get(key) != image["executable_sha256"]:
+                raise RuntimeError("Native retirement omits or crosses an original captured image")
+        self._wait_for_exit(timeout)
+        # Absence is checked only after the original native receipt and held
+        # process objects independently prove retirement. It never proves exit.
+        if os.path.lexists(self.runtime):
+            raise RuntimeError("Native retirement receipt left its predecessor payload")
+        after = self._scan()
+        if after["processes"]:
+            raise RuntimeError("Exact predecessor executable survivors remain after retirement")
+        return {"schema": 1, "captured_identities_exited": True, "captured_count": len(self.owners), "after": after,
+            "signals_sent": 0, "numeric_pid_reuse_is_not_exit_evidence": True,
+            "qualification": "held_process_identities_and_original_native_retirement", "native_retirement": retirement}
 
     def close(self):
         for owner in self.owners:

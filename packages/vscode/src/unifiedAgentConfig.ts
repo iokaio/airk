@@ -4,6 +4,59 @@ import { applyEdits, createScanner, findNodeAtLocation, getNodeValue, modify, pa
 import {scanTomlStatements,TomlValue,parseTomlDeclarations,encodeTomlValue} from './agentToml';
 import { EXPLORER_TOOL_RENAMES, RETRIEVAL_TOOLS, UNIFIED_TOOLS, type ServerEntry } from './model';
 
+export type ConfigurationAgent='codex'|'claude'|'copilot';
+export interface ConfigurationDeclaration {serverKey:string;containerPath:string[];fields:Record<string,unknown>}
+export interface ConfigurationFile {agent:ConfigurationAgent;destination:string;source:string;sha256:string;declarations:ConfigurationDeclaration[]}
+const configurationObject=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
+function configurationFail(code:string):never{throw new Error(code);}
+function uniqueConfiguration(node:Node):void{
+    if(node.type==='object'){
+        const keys=new Set<string>();for(const item of node.children??[]){const key=String(item.children?.[0].value);if(keys.has(key))configurationFail('duplicate_configuration_key');keys.add(key);}
+    }
+    for(const child of node.children??[])uniqueConfiguration(child);
+}
+function globalConfigurationTree(source:string):Node{
+    const errors:ParseError[]=[],root=parseTree(source,errors,{allowTrailingComma:true});
+    if(!root||root.type!=='object'||errors.length)configurationFail('invalid_json_configuration');uniqueConfiguration(root);return root;
+}
+/** Pure bounded declaration parsing shared by inventory, reset and uninstall.
+ * This module never discovers config locations or reads the filesystem. */
+export function globalConfigDeclarations(agent:ConfigurationAgent,source:string):ConfigurationDeclaration[]{
+    if(Buffer.byteLength(source)>1_048_576)configurationFail('configuration_size_bound');
+    if(agent==='codex')return parseTomlDeclarations(source);
+    const root=globalConfigurationTree(source),value=getNodeValue(root) as Record<string,unknown>,rows:ConfigurationDeclaration[]=[];
+    const group=(containerPath:string[],raw:unknown)=>{
+        if(raw===undefined)return;if(!configurationObject(raw))configurationFail('invalid_mcp_server_group');
+        for(const [serverKey,fields] of Object.entries(raw)){
+            if(!configurationObject(fields))configurationFail('invalid_mcp_server_declaration');
+            rows.push({serverKey,containerPath,fields});if(rows.length>512)configurationFail('configuration_declaration_bound');
+        }
+    };
+    if(agent==='copilot')group(['servers'],value.servers);
+    else{
+        group(['mcpServers'],value.mcpServers);
+        if(value.projects!==undefined){if(!configurationObject(value.projects))configurationFail('invalid_claude_projects');
+            for(const [project,settings] of Object.entries(value.projects)){
+                if(!configurationObject(settings))configurationFail('invalid_claude_project');
+                group(['projects',project,'mcpServers'],settings.mcpServers);
+            }
+        }
+    }
+    return rows;
+}
+/** Transform exactly one container. Other projects/accounts/settings remain
+ * byte-identical; the host still owns the file compare-and-save boundary. */
+export function transformGlobalContainer(file:ConfigurationFile,containerPath:readonly string[],transform:(source:string)=>string):string{
+    if(file.agent==='codex'){if(containerPath.join('.')!=='mcp_servers')configurationFail('invalid_toml_container');return transform(file.source);}
+    const expected=file.agent==='copilot'?'servers':'mcpServers';
+    if(containerPath.at(-1)!==expected||!file.declarations.some(row=>JSON.stringify(row.containerPath)===JSON.stringify(containerPath)))configurationFail('unknown_configuration_container');
+    if(containerPath.length===1)return transform(file.source);
+    const node=findNodeAtLocation(globalConfigurationTree(file.source),[...containerPath]);if(!node||node.type!=='object')configurationFail('configuration_container_changed');
+    const before=file.source.slice(node.offset,node.offset+node.length),wrapped=`{${JSON.stringify(expected)}:${before}}`,after=transform(wrapped);
+    const replacement=findNodeAtLocation(globalConfigurationTree(after),[expected]);if(!replacement||replacement.type!=='object')configurationFail('configuration_container_removed');
+    return file.source.slice(0,node.offset)+after.slice(replacement.offset,replacement.offset+replacement.length)+file.source.slice(node.offset+node.length);
+}
+
 type Fields = Record<string, unknown>;
 type Family = 'retrieval' | 'explorer' | 'unified';
 interface Existing { key: string; family: Family; fields: Fields }
@@ -19,6 +72,8 @@ export interface Consolidation {
     warn(message: string): void;
     /** Explicit uninstall removes only entries that pass the same ownership checks. */
     remove?: boolean;
+    /** Disposal-only HTTP recognition. This flag cannot create a connection. */
+    removeHttp?: boolean;
 }
 const approvals = new Set(['autoApprove','alwaysAllow']);
 const allows = new Set(['enabled_tools','includeTools','tools']);
@@ -85,7 +140,7 @@ function merge(entries: Existing[], options: Consolidation): Fields {
 function family(key:string, options:Consolidation):Family { return options.onlyKey&&key===options.retrievalKey&&options.selectedFamily?options.selectedFamily:key==='airk'?'unified':key===options.retrievalKey?'retrieval':'explorer'; }
 function check(entries:Existing[], options:Consolidation):void {
     for (const entry of entries) {
-        if ((!options.entry.http&&('url' in entry.fields || 'serverUrl' in entry.fields || ('type' in entry.fields && entry.fields.type!=='stdio')))||!options.recognizes(entry.family,entry.fields)) {
+        if ((!options.entry.http&&!(options.remove&&options.removeHttp)&&('url' in entry.fields || 'serverUrl' in entry.fields || ('type' in entry.fields && entry.fields.type!=='stdio')))||!options.recognizes(entry.family,entry.fields)) {
             throw new Error(`Unrecognized ${entry.key} connection; existing configuration preserved for review.`);
         }
     }

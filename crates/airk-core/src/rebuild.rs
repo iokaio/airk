@@ -89,19 +89,50 @@ pub struct RebuildIndexObservation {
     /// Original additional-root aliases, not a discovery of live source folders.
     pub sources: BTreeMap<String, String>,
     pub settings_sha256: Sha256Digest,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settings_available: Option<bool>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub discarded_preferences: Vec<String>,
     pub original_paused: bool,
     /// Current native pause observation; before replacement exists, the saved choice.
     pub paused: bool,
     pub watching: bool,
     pub job: Option<JobRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initial_job: Option<JobRecord>,
     pub readiness: RebuildReadiness,
     pub failure: Option<RebuildFailure>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RebuildMode {
+    CleanBreak,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RebuildCleanup {
+    pub complete: bool,
+    pub scope: String,
+    pub state: String,
+    pub failure: Option<RebuildFailure>,
+    /// Complete native cleanup observation, not a projected summary.
+    pub observation: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RebuildObservation {
     pub schema: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<RebuildMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub indexes_complete: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_indexes: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cleanup: Option<RebuildCleanup>,
     pub operation_id: Incarnation,
     pub stage: RebuildStage,
     pub provenance: RebuildProvenance,
@@ -134,10 +165,74 @@ impl RebuildObservation {
     pub fn validate(&self) -> Result<()> {
         ensure!(
             self.schema == 1
-                && !self.indexes.is_empty()
+                && (!self.indexes.is_empty() || self.mode == Some(RebuildMode::CleanBreak))
                 && self.indexes.len() <= MAX_REBUILD_INDEXES,
             "invalid native rebuild observation"
         );
+        ensure!(
+            self.mode.is_some() == self.indexes_complete.is_some()
+                && self.mode.is_some() == self.expected_indexes.is_some(),
+            "clean-break roster qualification missing"
+        );
+        if let Some(expected) = self.expected_indexes {
+            ensure!(
+                expected <= MAX_REBUILD_INDEXES,
+                "clean-break complete roster bound exceeded"
+            );
+            ensure!(
+                self.indexes_complete != Some(true)
+                    || self.index_scope.is_some()
+                    || self.indexes.len() == expected,
+                "clean-break complete roster count changed"
+            );
+            ensure!(
+                self.indexes_complete != Some(false)
+                    || self.indexes.is_empty() && self.stage != RebuildStage::Ready,
+                "incomplete clean-break census is not an empty completed rebuild"
+            );
+        }
+        ensure!(
+            self.mode.is_some() == self.cleanup.is_some(),
+            "clean-break cleanup observation missing or unqualified"
+        );
+        if let Some(cleanup) = &self.cleanup {
+            ensure!(
+                matches!(
+                    cleanup.scope.as_str(),
+                    "administrative" | "selected_index_summary"
+                ) && (cleanup.scope == "administrative" || cleanup.observation.is_none()),
+                "cleanup observation crossed administrative scope"
+            );
+            ensure!(
+                matches!(
+                    cleanup.state.as_str(),
+                    "waiting_for_indexes" | "removing" | "blocked" | "complete"
+                ) && cleanup.complete == (cleanup.state == "complete"),
+                "invalid clean-break cleanup state"
+            );
+            if let Some(failure) = &cleanup.failure {
+                failure.validate()?;
+            }
+            ensure!(
+                cleanup.state != "blocked" || cleanup.failure.is_some(),
+                "blocked cleanup has no diagnostic"
+            );
+            ensure!(
+                !cleanup.complete || cleanup.failure.is_none(),
+                "completed cleanup has a failure"
+            );
+            ensure!(
+                !cleanup.complete || self.stage == RebuildStage::Ready,
+                "cleanup cannot complete before fresh indexes"
+            );
+        }
+        if self.mode == Some(RebuildMode::CleanBreak) && self.stage == RebuildStage::Ready {
+            ensure!(
+                self.successor_namespace
+                    .is_some_and(|namespace| namespace != self.original_namespace),
+                "clean-break readiness requires fresh Genesis"
+            );
+        }
         for value in [
             &self.preserved_state,
             &self.preserved_control,
@@ -190,6 +285,19 @@ impl RebuildObservation {
                         && replacement.binding != index.original.binding
                         && replacements.insert(replacement.binding),
                     "native rebuild changed saved source or collection identity"
+                );
+            }
+            if let Some(initial) = &index.initial_job {
+                ensure!(
+                    index
+                        .replacement
+                        .as_ref()
+                        .is_some_and(|replacement| replacement.binding == initial.project)
+                        && matches!(
+                            initial.state,
+                            crate::service::JobState::Failed | crate::service::JobState::Canceled
+                        ),
+                    "invalid original clean-break retry receipt"
                 );
             }
             if let Some(job) = &index.job {
@@ -307,6 +415,17 @@ impl RebuildObservation {
             .collect();
         selected.indexes = indexes;
         selected.index_scope = Some(binding);
+        if selected.mode == Some(RebuildMode::CleanBreak) {
+            selected.expected_indexes = Some(selected.indexes.len());
+            selected.indexes_complete = Some(true);
+        }
+        if let Some(cleanup) = &mut selected.cleanup {
+            cleanup.scope = "selected_index_summary".into();
+            cleanup.observation = None;
+            if let Some(failure) = &mut cleanup.failure {
+                failure.message = "Administrative cleanup details are unavailable in this selected-index observation; inspect Management Service complete runtime diagnostics.".into();
+            }
+        }
         // The operation-wide failure can mention another index's source or
         // storage. Keep its fixed code while explicitly disclosing that full
         // details belong to the installation's administrative observation.

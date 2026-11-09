@@ -4,16 +4,22 @@ import { SplitIntent, SPLIT_JOURNAL_BYTES, splitIntentKey, validateSplitApply, v
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { identifier, MutationIntent, record, RequestKey, ServiceClient, ServiceError, validateMutationIntent, count } from './serviceClient';
+import {retainNativeOutcome,retainNativeOutcomeDuring,retainUnvalidatedNativeReply} from './nativeOutcome';
+import {selectAcceptedIntentEvidence,mergeAcceptedIntentEvidence} from './intentAcceptedEvidence';
 import { CatalogApplyIntent, IndexSetupApplyIntent, SourceResolveIntent, PolicyResumeIntent, validatePolicyResumeIntent, catalogFenceObservation, indexSetupObservation, sourceChangeObservation, validateCatalogApply, validateIndexSetupApply, validateSourceResolveIntent } from './indexingCatalog';
 
 export interface IntentStorage {
     keys(): readonly string[];
     get<T>(key: string): T | undefined;
     update(key: string, value: unknown): Thenable<void>;
+    initialize?(scope:string):Promise<void>;
+    create?(key:string,value:unknown):Promise<void>;
+    replace?(key:string,value:unknown):Promise<void>;
+    retire?(key:string):Promise<void>;
 }
 export interface LifecycleIntent { lifecycle:{caller:string;key:RequestKey;action:'stop'|'restart';expected_instance:string;runtime:string} }
 export type ConsoleIntent=MutationIntent|LifecycleIntent|CatalogApplyIntent|IndexSetupApplyIntent|SourceResolveIntent|PolicyResumeIntent|SplitIntent|ReferenceRefreshIntent;
-export interface SavedIntent { nativeRefreshReceipt?:Record<string,unknown>;nativeRefreshLookup?:Record<string,unknown>;nativeRefreshValidationError?:string; schema: 1; scope: string; title: string; intent: ConsoleIntent; nativeObservation?:Record<string,unknown>; nativeFenceObservation?:Record<string,unknown>; nativeSetupObservation?:Record<string,unknown>; nativeSourceObservation?:Record<string,unknown>; localDispatchState?:'submitted'|'known_receipt'; reservedObservationBytes?:number; nativeSplitReceipt?:Record<string,unknown>; nativeSplitSnapshot?:Record<string,unknown> }
+export interface SavedIntent { nativeRefreshReceipt?:Record<string,unknown>;nativeRefreshTerminalReceipt?:Record<string,unknown>;nativeRefreshLookup?:Record<string,unknown>;nativeRefreshValidationError?:string; schema: 1; scope: string; title: string; intent: ConsoleIntent; nativeObservation?:Record<string,unknown>; nativeCatalogObservation?:Record<string,unknown>; nativePolicyObservation?:Record<string,unknown>; nativeFenceObservation?:Record<string,unknown>; nativeSetupObservation?:Record<string,unknown>; nativeSourceObservation?:Record<string,unknown>; localDispatchState?:'submitted'|'known_receipt'; reservedObservationBytes?:number; nativeSplitReceipt?:Record<string,unknown>; nativeSplitSnapshot?:Record<string,unknown> }
 function validate(input:unknown):ConsoleIntent {
     const object=record(input);
     if('reference_refresh'in object)return validateRefreshIntent(input);
@@ -41,15 +47,30 @@ function identity(intent:ConsoleIntent):{namespace:string;id:string}{
     const request='catalog_apply' in intent?intent.catalog_apply.request:'enqueue' in intent?intent.enqueue:'retry' in intent?intent.retry:'plan_create' in intent?intent.plan_create:'configure_project' in intent?intent.configure_project:intent.lifecycle;
     return {namespace:request.key.namespace,id:request.key.nonce};
 }
-const PREFIX = 'airk.service.intent.1.';
-const LIMIT = 64;
+export const INTENT_PREFIX = 'airk.service.intent.1.';
+export const INTENT_LIMIT = 64;
+export const INTENT_MAX_TOTAL_BYTES = 64 * 32768;
+const PREFIX = INTENT_PREFIX;
+const LIMIT = INTENT_LIMIT;
 const MAX_BYTES = 65536;
-const MAX_TOTAL_BYTES = 64 * 32768;
+const MAX_TOTAL_BYTES = INTENT_MAX_TOTAL_BYTES;
 function splitIntent(value:unknown):boolean {const intent=record(value);return 'catalog_split_apply' in intent||'catalog_split_recover' in intent;}
 function reservedBytes(intent:unknown):number|undefined {const value=record(intent);return 'reference_refresh'in value?REFRESH_JOURNAL_BYTES:splitIntent(value)?SPLIT_JOURNAL_BYTES:undefined;}
-function maximumRecordBytes(intent:unknown):number{return reservedBytes(intent)??MAX_BYTES;}
-function chargedRecordBytes(value:unknown):number {const saved=record(value),bytes=Buffer.byteLength(JSON.stringify(saved));return [SPLIT_JOURNAL_BYTES,REFRESH_JOURNAL_BYTES].includes(Number(saved.reservedObservationBytes))?Math.max(bytes,Number(saved.reservedObservationBytes)):bytes;}
-/** Each immutable request has its own storage key: windows never rewrite a shared list. */
+export function maximumRecordBytes(intent:unknown):number{return reservedBytes(intent)??MAX_BYTES;}
+export function chargedRecordBytes(value:unknown):number {const saved=record(value),bytes=Buffer.byteLength(JSON.stringify(saved));return [SPLIT_JOURNAL_BYTES,REFRESH_JOURNAL_BYTES].includes(Number(saved.reservedObservationBytes))?Math.max(bytes,Number(saved.reservedObservationBytes)):bytes;}
+export function validateStoredIntent(key:string,input:unknown,namespace?:string):SavedIntent {
+    const match=/^airk\.service\.intent\.1\.([0-9a-f]{64})\.([0-9a-f]{32})$/.exec(key),value=record(input);
+    if(!match||Buffer.byteLength(JSON.stringify(value))>maximumRecordBytes(value.intent)||value.schema!==1||value.scope!==match[1]
+        ||typeof value.title!=='string'||value.title.length>160||value.localDispatchState!==undefined&&!['submitted','known_receipt'].includes(String(value.localDispatchState)))throw new ServiceError('local_intent_record_invalid');
+    const intent=validate(value.intent);
+    if(value.reservedObservationBytes!==reservedBytes(intent))throw new ServiceError('local_intent_terminal_reservation_invalid');
+    const requestKey=identity(intent);
+    if(namespace!==undefined&&requestKey.namespace!==namespace)throw new ServiceError('local_intent_scope_mismatch');
+    if(requestKey.id!==match[2])throw new ServiceError('local_intent_identity_mismatch');
+    return value as unknown as SavedIntent;
+}
+/** Each immutable request has its own durable base; observations cannot recreate
+ * a retired base. Memory storage remains available for isolated contract tests. */
 export class IntentJournal {
     readonly scope: string;
     private tail: Promise<unknown> = Promise.resolve();
@@ -59,26 +80,35 @@ export class IntentJournal {
         this.scope=createHash('sha256').update(JSON.stringify([control,namespace])).digest('hex');
     }
     private key(id:string):string { return `${PREFIX}${this.scope}.${identifier(id,16)}`; }
+    async ready():Promise<void>{await this.storage.initialize?.(this.scope);}
     list(): {id:string;value:SavedIntent}[] {
         const keys=this.storage.keys().filter(key=>key.startsWith(PREFIX));
-        // Memento does not provide a cross-window count transaction. Racing
+        // Admission does not provide a cross-window count transaction. Racing
         // windows can exceed the admission count; page those records instead
         // of poisoning the journal or discarding an unknown outcome.
-        return keys.filter(key=>key.startsWith(`${PREFIX}${this.scope}.`)).sort().slice(0,LIMIT).map(key=>{
-            const value=record(this.storage.get(key));
-            if(Buffer.byteLength(JSON.stringify(value))>maximumRecordBytes(value.intent)||value.schema!==1||value.scope!==this.scope
-                ||typeof value.title!=='string'||value.title.length>160||value.localDispatchState!==undefined&&!['submitted','known_receipt'].includes(String(value.localDispatchState)))throw new ServiceError('local_intent_record_invalid');
-            const intent=validate(value.intent);
-            if(value.reservedObservationBytes!==reservedBytes(intent))throw new ServiceError('local_intent_terminal_reservation_invalid');
-            const requestKey=identity(intent);
-            if(requestKey.namespace!==this.namespace)throw new ServiceError('local_intent_scope_mismatch');
+        return keys.filter(key=>key.startsWith(`${PREFIX}${this.scope}.`)).sort().slice(0,LIMIT).flatMap(key=>{
+            const stored=this.storage.get(key);if(stored===undefined)return [];
+            const value=validateStoredIntent(key,stored,this.namespace);
             const id=identifier(key.slice(key.lastIndexOf('.')+1),16);
-            if(requestKey.id!==id)throw new ServiceError('local_intent_identity_mismatch');
-            return {id,value:value as unknown as SavedIntent};
+            return [{id,value}];
         });
     }
     private serialize<T>(action:()=>Promise<T>):Promise<T> {
-        const next=this.tail.then(action);this.tail=next.catch(()=>undefined);return next;
+        const next=this.tail.then(async()=>{await this.ready();return action();});this.tail=next.catch(()=>undefined);return next;
+    }
+    private async save(key:string,value:SavedIntent,create=false):Promise<void>{
+        const prior=this.storage.get<SavedIntent>(key);
+        value=mergeAcceptedIntentEvidence(value,[...(prior?selectAcceptedIntentEvidence(prior):[]),...selectAcceptedIntentEvidence(value)]);
+        const write=create?this.storage.create:this.storage.replace;
+        if(write)await write.call(this.storage,key,value);else await this.storage.update(key,value);
+        const saved=this.storage.get(key);
+        const expected=saved===undefined?value:mergeAcceptedIntentEvidence(value,selectAcceptedIntentEvidence(validateStoredIntent(key,saved,this.namespace)));
+        if(saved===undefined||!isDeepStrictEqual(JSON.parse(JSON.stringify(saved)),JSON.parse(JSON.stringify(expected))))throw new ServiceError('local_intent_write_unconfirmed',true);
+        validateStoredIntent(key,saved,this.namespace);
+    }
+    private async retire(key:string):Promise<void>{
+        if(this.storage.retire)await this.storage.retire(key);else await this.storage.update(key,undefined);
+        if(this.storage.get(key)!==undefined)throw new ServiceError('local_intent_retirement_unconfirmed',true);
     }
     prepare(title:string,intent:ConsoleIntent,nativeObservation?:Record<string,unknown>):Promise<string> {
         // Copy before any asynchronous work; the exact persisted bytes are submitted.
@@ -116,7 +146,7 @@ export class IntentJournal {
             if(savedKeys.length>=LIMIT)throw new ServiceError('local_intent_capacity_exceeded');
             const totalBytes=savedKeys.reduce((sum,key)=>{const saved=this.storage.get(key);return sum+(saved===undefined?0:chargedRecordBytes(saved));},0);
             if(totalBytes+chargedRecordBytes(value)>MAX_TOTAL_BYTES)throw new ServiceError('local_intent_byte_capacity_exceeded');
-            await this.storage.update(this.key(id),value);
+            await this.save(this.key(id),value,true);
             return id;
         });
     }
@@ -125,7 +155,7 @@ export class IntentJournal {
         const copied=structuredClone(response);
         return this.serialize(async()=>{
             const saved=this.list().find(value=>value.id===id);if(!saved||!('reference_refresh'in saved.value.intent))throw new ServiceError('local_refresh_intent_not_found',true);
-            const intent=saved.value.intent;let known=saved.value.nativeRefreshReceipt,error:string|undefined;
+            const intent=saved.value.intent;let known=saved.value.nativeRefreshReceipt,error:string|undefined,validationFailure:unknown;
             try{
                 if(copied.status==='reference_refresh_review_required')validateRefreshRefusal(copied,intent);
                 else if(copied.status==='job')validateRefreshJob(copied.job,intent);
@@ -139,15 +169,15 @@ export class IntentJournal {
                     if(previous&&['succeeded','failed','canceled'].includes(String(previous.state))&&!isDeepStrictEqual(previous,next))throw new Error('historical_refresh_terminal_job_changed');
                     if(!prior||copied.status==='reference_refresh_receipt'&&(prior.result==null||copied.result!=null))known=copied;
                 }
-            }catch(failure){error=failure instanceof Error?failure.message:'invalid_refresh_receipt';}
+            }catch(failure){validationFailure=failure;error=failure instanceof Error?failure.message:'invalid_refresh_receipt';}
             const value:SavedIntent={...saved.value,nativeRefreshLookup:copied,...(known?{nativeRefreshReceipt:structuredClone(known),localDispatchState:'known_receipt' as const}:{}),...(error?{nativeRefreshValidationError:error}:{})};
             if(!error)delete value.nativeRefreshValidationError;
             if(Buffer.byteLength(JSON.stringify(value))>REFRESH_JOURNAL_BYTES)throw new ServiceError('local_intent_record_oversize',true);
             const total=this.storage.keys().filter(key=>key.startsWith(PREFIX)&&key!==this.key(id)).reduce((sum,key)=>{const other=this.storage.get(key);return sum+(other===undefined?0:chargedRecordBytes(other));},chargedRecordBytes(value));
             if(total>MAX_TOTAL_BYTES)throw new ServiceError('local_intent_byte_capacity_exceeded',true);
-            await this.storage.update(this.key(id),value);
-            if(error)throw new ServiceError(error,true,copied);
-        });
+            await this.save(this.key(id),value);
+            if(error){const reported=new ServiceError(error,true,copied);reported.cause=validationFailure;throw retainUnvalidatedNativeReply(reported,copied);}
+        }).catch(error=>{throw retainNativeOutcome(error,copied);});
     }
     /** Preserve the full authenticated native outcome without changing the immutable request. */
     observeCatalog(id:string,response:Record<string,unknown>):Promise<void>{
@@ -171,8 +201,8 @@ export class IntentJournal {
             if(bytes>maximumRecordBytes(saved.value.intent))throw new ServiceError('local_intent_record_oversize',true);
             const total=this.storage.keys().filter(key=>key.startsWith(PREFIX)&&key!==this.key(id)).reduce((sum,key)=>{const item=this.storage.get(key);return sum+(item===undefined?0:chargedRecordBytes(item));},chargedRecordBytes(value));
             if(total>MAX_TOTAL_BYTES)throw new ServiceError('local_intent_byte_capacity_exceeded',true);
-            await this.storage.update(this.key(id),value);
-        });
+            await this.save(this.key(id),value);
+        }).catch(error=>{throw retainNativeOutcome(error,copied);});
     }
     markSubmitted(id:string):Promise<void>{
         return this.serialize(async()=>{
@@ -180,7 +210,7 @@ export class IntentJournal {
             const value:SavedIntent={...saved.value,localDispatchState:'submitted'},bytes=Buffer.byteLength(JSON.stringify(value));
             if(bytes>maximumRecordBytes(saved.value.intent))throw new ServiceError('local_intent_record_oversize');
             const total=this.storage.keys().filter(key=>key.startsWith(PREFIX)&&key!==this.key(id)).reduce((sum,key)=>{const item=this.storage.get(key);return sum+(item===undefined?0:chargedRecordBytes(item));},chargedRecordBytes(value));
-            if(total>MAX_TOTAL_BYTES)throw new ServiceError('local_intent_byte_capacity_exceeded');await this.storage.update(this.key(id),value);
+            if(total>MAX_TOTAL_BYTES)throw new ServiceError('local_intent_byte_capacity_exceeded');await this.save(this.key(id),value);
         });
     }
     async reconcile(client:ServiceClient,onReceipt:(response:Record<string,unknown>)=>Promise<void>,onRemoved?:(project:string)=>Promise<void>,onFailure?:(id:string,error:unknown)=>void):Promise<void>{
@@ -189,29 +219,33 @@ export class IntentJournal {
         const batch=[...candidates.filter(saved=>saved.id>after),...candidates.filter(saved=>saved.id<=after)].slice(0,8);
         for(const saved of batch){
             this.reconcileAfter=saved.id;
+            let nativeReply:Record<string,unknown>|undefined,validated=false;
             try{
                 const intent=saved.value.intent;
                 if('lifecycle' in intent||'plan_create' in intent||'catalog_index_setup_apply' in intent||'catalog_source_change_resolve' in intent||'catalog_policy_resume' in intent||'catalog_split_apply' in intent||'catalog_split_recover' in intent||'reference_refresh'in intent)continue;
                 if('catalog_apply' in intent){
                     const request=intent.catalog_apply.request;
-                    const result=await client.rpc({catalog_receipt:{caller:request.caller,key:request.key}},'catalog_receipt');
+                    const result=nativeReply=await client.rpc({catalog_receipt:{caller:request.caller,key:request.key}},'catalog_receipt');
                     const complete=client.validateCatalogObservation(result,request,intent.request_digest,intent.catalog_apply.preview_digest);
                     if(saved.value.nativeFenceObservation)client.validateCatalogFenceContinuity(saved.value.nativeFenceObservation,result);
+                    validated=true;
                     await this.observeCatalog(saved.id,result);if(!complete)continue;
-                    await onReceipt(result);await this.forget(saved.id);continue;
+                    await onReceipt(result);await this.forget(saved.id,result);continue;
                 }
                 const request='enqueue' in intent?intent.enqueue:'configure_project' in intent?intent.configure_project:intent.retry;
                 const project='project' in request?request.project:undefined;
-                const result=await client.rpc({request_receipt:{caller:request.caller,key:request.key,...(project?{project}:{})}},'request_receipt');
+                const result=nativeReply=await client.rpc({request_receipt:{caller:request.caller,key:request.key,...(project?{project}:{})}},'request_receipt');
                 if(result.removed_project!==undefined){
                     if(!project||identifier(result.removed_project,32)!==project)throw new ServiceError('crossed_removed_project_receipt');
-                    await onRemoved?.(project);await this.forget(saved.id);continue;
+                    validated=true;
+                    await onRemoved?.(project);await this.forget(saved.id,result);continue;
                 }
                 if(result.job===null)continue; // Missing/expired receipts never authorize another write.
                 const job=record(result.job);identifier(job.id,32);
                 if('project' in request&&job.project!==request.project)throw new ServiceError('crossed_job_receipt');
-                await onReceipt({status:'job',job});await this.forget(saved.id);
-            }catch(error){if(!onFailure)throw error;onFailure(saved.id,error);}
+                validated=true;
+                await onReceipt({status:'job',job});await this.forget(saved.id,result);
+            }catch(error){const failure=nativeReply?(validated?retainNativeOutcome(error,nativeReply):retainUnvalidatedNativeReply(error,nativeReply)):error;if(!onFailure)throw failure;onFailure(saved.id,failure);}
         }
     }
     async submit(client:ServiceClient|undefined,id:string,onReceipt?:(response:Record<string,unknown>)=>Promise<void|boolean>,
@@ -230,17 +264,20 @@ export class IntentJournal {
         if('lifecycle' in intent&&!lifecycle)throw new ServiceError('native_lifecycle_transport_required');
         if(!('lifecycle' in intent)&&!client)throw new ServiceError('console_not_connected');
         const response='lifecycle' in intent?await lifecycle!(intent):await client!.submitMutation(intent);
-        const retire=await onReceipt?.(response);
-        if(retire!==false)await this.forget(id);
-        return response;
+        return retainNativeOutcomeDuring(response,async()=>{
+            const retire=await onReceipt?.(response);
+            if(retire!==false)await this.forget(id,response);
+            return response;
+        });
     }
     forgetUnchanged(id:string,expected:unknown,valid:()=>boolean):Promise<void>{
         return this.serialize(async()=>{
             if(!valid()||!isDeepStrictEqual(this.list().find(entry=>entry.id===id)?.value,expected))throw new ServiceError('stale_local_tracking_review');
-            await this.storage.update(this.key(id),undefined);
+            await this.retire(this.key(id));
         });
     }
-    forget(id:string):Promise<void> {
-        return this.serialize(async()=>{await this.storage.update(this.key(id),undefined);});
+    forget(id:string,response?:Record<string,unknown>):Promise<void> {
+        const work=this.serialize(async()=>{await this.retire(this.key(id));});
+        return response?work.catch(error=>{throw retainNativeOutcome(error,response);}):work;
     }
 }

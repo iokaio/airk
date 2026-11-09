@@ -67,6 +67,48 @@ export async function rememberUninstallTarget(launcherDirectory:string,installDi
         await fs.rename(temporary,target);
     }finally{await fs.unlink(temporary).catch(()=>undefined);}
 }
+
+export interface CleanBreakUninstallReceipt { file:string; sha256:string; project:string }
+/** Capture only this installation's original, registered project receipts.
+ * Generic installation and shell receipts remain needed by the new runtime. */
+export async function captureCleanBreakUninstallReceipts(launcherDirectory:string,installDir:string,specs:readonly LaunchSpec[],check:()=>void):Promise<{receipts:CleanBreakUninstallReceipt[];blockers:string[]}>{
+    const root=path.join(absolute(launcherDirectory),'extension-uninstall'),receipts:CleanBreakUninstallReceipt[]=[],blockers:string[]=[];
+    let names:string[];
+    try{const metadata=await fs.lstat(root);if(!metadata.isDirectory()||metadata.isSymbolicLink()||!same(await fs.realpath(root),root))throw new Error('Uninstall receipt directory redirected');names=await fs.readdir(root);}
+    catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return {receipts,blockers};throw error;}
+    if(names.length>limit)throw new Error('Uninstall receipt capacity exceeded');
+    for(const name of names){
+        check();if(!/^[a-f0-9]{64}\.json$/.test(name))continue;
+        const file=path.join(root,name),source=await readJsonConfig(file);check();
+        if(!source||Buffer.byteLength(source)>receiptLimit)throw new Error('Invalid uninstall receipt size');
+        const item=validate(JSON.parse(source));if(receiptName(item)!==name)throw new Error('Uninstall receipt identity changed');
+        if(!same(item.installDir,installDir)||!item.spec)continue;
+        const original=item.spec;
+        if(!specs.some(spec=>!!spec.service&&spec.service.project===original.service?.project&&same(spec.service.installDir,item.installDir)&&same(spec.root,original.root)&&same(spec.dataDir,original.dataDir)&&spec.collection===original.collection)){
+            blockers.push(file);continue;
+        }
+        receipts.push({file,sha256:createHash('sha256').update(source,'utf8').digest('hex'),project:original.service!.project});
+    }
+    check();return {receipts,blockers};
+}
+
+/** Config removal must already be verified. An edited or reenrolled receipt is
+ * preserved rather than deleted, including after an interrupted reset. */
+export async function retireCleanBreakUninstallReceipts(launcherDirectory:string,receipts:readonly CleanBreakUninstallReceipt[],check:()=>void):Promise<{complete:boolean;removed:string[];blockers:string[]}>{
+    const root=path.join(absolute(launcherDirectory),'extension-uninstall'),removed:string[]=[],blockers:string[]=[];
+    if(receipts.length>limit)throw new Error('Uninstall receipt capacity exceeded');
+    for(const receipt of receipts){
+        check();if(path.dirname(receipt.file)!==root||!/^[a-f0-9]{64}\.json$/.test(path.basename(receipt.file))||!/^[a-f0-9]{64}$/.test(receipt.sha256)||!/^[a-f0-9]{64}$/.test(receipt.project))throw new Error('Invalid clean-break uninstall receipt');
+        try{
+            const info=await fs.lstat(root);if(!info.isDirectory()||info.isSymbolicLink()||!same(await fs.realpath(root),root))throw new Error('Uninstall receipt directory redirected');
+            const source=await readJsonConfig(receipt.file);check();if(source===undefined){removed.push(receipt.file);continue;}
+            const item=validate(JSON.parse(source));
+            if(createHash('sha256').update(source,'utf8').digest('hex')!==receipt.sha256||item.spec?.service?.project!==receipt.project||receiptName(item)!==path.basename(receipt.file))throw new Error('Uninstall receipt changed after reset admission');
+            check();await fs.unlink(receipt.file);check();removed.push(receipt.file);
+        }catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT'){removed.push(receipt.file);continue;}blockers.push(receipt.file);}
+    }
+    return {complete:blockers.length===0,removed,blockers};
+}
 interface ShellReceipt { schema:1; storage:string; profiles:ShellTouch[] }
 const shellName=(storage:string)=>`shell-${createHash('sha256').update(storage).digest('hex')}.json`;
 function validateShell(value:unknown):ShellReceipt {

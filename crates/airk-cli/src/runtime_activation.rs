@@ -70,6 +70,7 @@ pub(crate) fn verify_admission_release(
 ) -> Result<()> {
     checkpoint::verify_release(root, control, operation, selected_inventory)
 }
+
 fn record(root: &Path, intent: &Intent, outcome: Outcome) -> Result<()> {
     result(root)?; // Never overwrite a foreign or malformed historical receipt.
     let receipt = Receipt {
@@ -117,7 +118,13 @@ fn exists(path: &Path) -> Result<bool> {
         Err(error) => Err(error.into()),
     }
 }
-fn selection(root: &Path) -> Result<Option<Selection>> {
+pub(super) fn admitted_service_candidate(root: &Path, control: &Path) -> Result<Option<String>> {
+    Ok(pending(root)?
+        .filter(|intent| intent.control == control && intent.phase == Phase::Probe)
+        .map(|intent| intent.candidate))
+}
+
+pub(super) fn selection(root: &Path) -> Result<Option<Selection>> {
     if exists(&root.join("selected.json"))? {
         Ok(Some(selection_record(root)?))
     } else {
@@ -129,7 +136,11 @@ impl Intent {
         Selection {
             schema: 1,
             active: self.candidate.clone(),
-            previous: self.prior.as_ref().map(|prior| prior.active.clone()),
+            previous: self
+                .prior
+                .as_ref()
+                .map(|prior| prior.active.clone())
+                .filter(|prior| prior != &self.candidate),
         }
     }
     fn save(&self, root: &Path) -> Result<()> {
@@ -247,6 +258,12 @@ pub(super) async fn start_selected(
     main: &Path,
     expected_manager: Option<bool>,
 ) -> Result<ServiceHealth> {
+    if selection(root)?.is_some_and(|selected| selected.active == approval.manifest_sha256) {
+        ensure!(
+            !state_contract::required(root)?,
+            "clean_break_required: start cannot reopen predecessor state"
+        );
+    }
     let manager = crate::service_manager::ServiceManager::for_runtime(root)?;
     let managed = manager.owns_restart()?;
     ensure!(
@@ -289,6 +306,10 @@ pub(super) async fn start_verified_checked(
         cancel.checkpoint()?;
     }
     let root = verified.authority.root;
+    ensure!(
+        !state_contract::required(root)?,
+        "clean_break_required: installed state has not crossed the 1.8.16 baseline"
+    );
     ensure!(
         verified.selection.active == verified.approval.manifest_sha256,
         "runtime selection identity mismatch"
@@ -360,16 +381,24 @@ async fn probe(root: &Path, approval: &Approval, main: &Path, manager: bool) -> 
         );
         return Ok(());
     }
+    let response = if let Some(permit) = state_contract::initialized_probe(
+        root,
+        &approval.manifest_sha256,
+        &approval.version,
+        observed.instance,
+        &observed.executable_sha256,
+    )? {
+        service_runtime::request_initialized_probe(&permit).await?
+    } else {
+        service_runtime::request_for_version(
+            &layout::control(root)?,
+            ControlMethod::RequestEpoch,
+            &approval.version,
+        )
+        .await?
+    };
     ensure!(
-        matches!(
-            service_runtime::request_for_version(
-                &layout::control(root)?,
-                ControlMethod::RequestEpoch,
-                &approval.version
-            )
-            .await?,
-            ControlResponse::RequestEpoch { .. }
-        ),
+        matches!(response, ControlResponse::RequestEpoch { .. }),
         "candidate control health is available but its registry is not ready"
     );
     Ok(())
@@ -493,6 +522,11 @@ pub(super) fn legacy_retirement_candidate(
 
 /// Resume under the same installer ownership, preserving the public selection.
 pub(super) async fn resume(root: &Path) -> Result<()> {
+    if !rebuild::pending(root)? && state_contract::required(root)? {
+        bail!(
+            "clean_break_required: activate a supported 1.8.16-or-later distribution to replace the old state"
+        );
+    }
     if rebuild::pending(root)? {
         rebuild::resume(root).await?;
         return Ok(());
@@ -768,6 +802,10 @@ pub(super) fn reviewed_request(root: &Path, candidate: &str, expected: &str) -> 
 }
 
 pub(super) async fn begin(root: &Path, candidate: &str) -> Result<Selection> {
+    if state_contract::required(root)? {
+        let selected = selection(root)?.context("clean-break predecessor missing")?;
+        return rebuild::activate(root, candidate, &selected.active).await;
+    }
     if rebuild::pending(root)? {
         return rebuild::resume(root).await;
     }

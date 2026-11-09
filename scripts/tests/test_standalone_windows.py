@@ -78,8 +78,69 @@ class WindowsInstallerContracts(unittest.TestCase):
         self.assertNotIn("[UninstallDelete]", script)
         self.assertNotIn(".vsix", script.lower())
         self.assertNotIn("code --install", script.lower())
-        self.assertLess(script.index("if ExitCode <> 0", script.index("function InitializeUninstall")),
-                        script.index("Result := True", script.index("function InitializeUninstall")))
+        initialize = script[script.index("function InitializeUninstall"):script.index("procedure CurUninstallStepChanged")]
+        self.assertIn("VerifiedBinary := NativeBinary;", initialize)
+        self.assertNotIn("Exec(", initialize)
+        self.assertNotIn("RemoveOwnedUserPath;", initialize)
+
+    def test_user_path_is_published_only_after_native_setup_and_removed_only_after_native_uninstall(self):
+        script = windows.SCRIPT.read_text()
+        self.assertIn("ChangesEnvironment=yes", script)
+        setup = script[script.index("procedure CurStepChanged"):script.index("function InitializeUninstall")]
+        self.assertLess(setup.index("if ExitCode <> 0"), setup.index("AddOwnedUserPath;"))
+        uninstall = script[script.index("procedure CurUninstallStepChanged"):]
+        self.assertLess(uninstall.index("if ExitCode <> 0"), uninstall.index("RemoveOwnedUserPath;"))
+        self.assertIn("Abort;", uninstall[uninstall.index("except"):])
+
+    def test_user_path_preserves_registry_kind_and_requires_durable_exact_entry_ownership(self):
+        script = windows.SCRIPT.read_text()
+        self.assertIn("RegQueryStringValue(HKCU, 'Environment', 'Path'", script)
+        self.assertIn("RegWriteStringValue(HKCU, 'Environment', 'Path'", script)
+        self.assertNotIn("HKLM", script)
+        self.assertNotIn("GetEnv('PATH')", script)
+        self.assertIn("'airk-user-path/1'", script)
+        self.assertIn("SaveStringsToUTF8File", script)
+        self.assertIn("LoadStringsFromFile", script)
+        self.assertIn("Lines[1] := 'pending'", script)
+        self.assertIn("Lines[1] := 'owned'", script)
+        self.assertIn("Lines[1] <> 'owned'", script)
+        self.assertIn("ExactCount <> 1", script)
+        self.assertIn("Parts[I] = Entry", script)
+
+    def test_user_path_receipt_cannot_claim_a_manual_entry_or_erase_later_empty_entries(self):
+        script = windows.SCRIPT.read_text()
+        add = script[script.index("procedure AddOwnedUserPath;"):script.index("procedure RemoveOwnedUserPath;")]
+        self.assertLess(add.index("else if HasPathEntry(Before, Entry)"), add.index("Lines[1] := 'pending'"))
+        manual = add[add.index("else if HasPathEntry(Before, Entry)"):add.index("SetArrayLength(Lines, 6)")]
+        self.assertIn("Exit;", manual)
+        self.assertLess(add.index("Lines[1] := 'pending'"), add.index("WriteUserPath("))
+        self.assertLess(add.index("WriteUserPath("), add.index("Lines[1] := 'owned'"))
+        remove = script[script.index("procedure RemoveOwnedUserPath;"):script.index("function NativeBinary:")]
+        self.assertIn("(Lines[3] = '0') and (Kept = 0)", remove)
+        self.assertLess(remove.index("Lines[1] <> 'owned'"), remove.index("WriteUserPath("))
+        self.assertLess(remove.index("ExactCount <> 1"), remove.index("WriteUserPath("))
+        self.assertIn("manually edited entries were preserved", remove)
+
+    def test_uninstall_confirmation_precedes_every_native_or_path_side_effect(self):
+        script = windows.SCRIPT.read_text()
+        hook = "procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);"
+        self.assertIn(hook, script)
+        initialize = script[script.index("function InitializeUninstall"):script.index(hook)]
+        self.assertNotIn("Exec(", initialize)
+        self.assertNotIn("RemoveOwnedUserPath;", initialize)
+        confirmed = script[script.index(hook):]
+        self.assertIn("if CurUninstallStep = usUninstall then begin", confirmed)
+        self.assertLess(confirmed.index("if ExitCode <> 0"), confirmed.index("RemoveOwnedUserPath;"))
+        failure = confirmed[confirmed.index("except"):]
+        self.assertIn("Abort;", failure)
+        self.assertLess(failure.index("MsgBox("), failure.index("Abort;"))
+
+    def test_path_dedup_does_not_expand_untyped_registry_values(self):
+        script = windows.SCRIPT.read_text()
+        compare = script[script.index("function ComparablePathEntry"):script.index("function HasPathEntry")]
+        self.assertNotIn("GetEnv(", compare)
+        self.assertNotIn("ExpandEnvironmentStrings", compare)
+        self.assertIn("Result := Trim(Value);", compare)
 
     def test_prepare_exposes_unsigned_uninstaller_and_never_a_publish_success(self):
         with tempfile.TemporaryDirectory() as temporary:

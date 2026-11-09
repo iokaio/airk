@@ -1,38 +1,72 @@
 # AIRK: Local Search for Coding Agents
 
-The [fixture compatibility matrix](https://github.com/iokaio/airk/blob/feat/finetuning/docs/testing/fixture-compatibility.md)
-keeps imported-legacy migration distinct from reviewed catalog upgrades. The
-authentic legacy producer and installed-editor acceptance remain pending; the
-1.5.12 schema-8 metadata bridge passed scoped regression. r26 remains preserved.
+**Repair stopped, 9 November 2026:** 1.8.16 is an unfinished checkpoint. The
+Windows VSIX is package-verified but failed installed-editor acceptance. The
+[stop and handoff](https://github.com/iokaio/airk/blob/feat/finetuning/docs/research/installer-stop-2026-11-09.md)
+records the changes, unresolved binding cancellation and validation limits. It is not release-ready.
 
-The approved [automatic rebuild option](https://github.com/iokaio/airk/blob/feat/finetuning/docs/upgrade-rebuild-fallback.md)
-will let users choose rebuilding earlier in an upgrade, then automatically build
-fresh indexes from eligible raw managed saved sources while preserving previous
-state and supported settings. Unsupported configurations are refused before state
-changes; client re-enrollment is explicit. Native/editor source is implemented;
-installed and frozen qualification are pending.
+**1.8.16 clean-break baseline:** every installation older than 1.8.16 must use
+fresh AIRK state and rebuild its indexes. Preserve reviewed source selections and
+supported preferences; original source files remain untouched. Old index IDs,
+grants, credentials and pending operations do not carry authority into the new
+state. Verify shutdown and remove ownership-proven legacy installation artifacts
+through the native reset lifecycle. From 1.8.16 onward, ordinary upgrades require
+the supported persisted state contract as well as an approved runtime version.
+The development line will be qualified before a public **1.9.0** release; 1.9.0
+is a future release target, not the current package version.
+See the [1.8.16 working record](https://github.com/iokaio/airk/blob/feat/finetuning/docs/releases/release-1.8.16.md). Implementation
+and installed qualification of this revised policy remain incomplete.
+Management → Service → Runtime → **Complete runtime diagnostics** opens, copies
+or exports the full cached native JSON with its capture time. It makes no new
+native read; summary copies disclose their subset. Cached data is not live proof.
+
+Historical r26/r29 packaging and pre-baseline migration experiments retain their
+original identities in the working records and fixture compatibility matrix.
+They do not define the current clean-break path. The authentic two-index
+1.8.11 to 1.8.16 native reset passed within its recorded scope; installed-editor
+and broader release qualification remain separate.
+
+The [clean-break contract](https://github.com/iokaio/airk/blob/feat/finetuning/docs/upgrade-rebuild-fallback.md) replaces the
+previous optional rebuild and pre-1.8.16 migration paths. It requires a fresh
+namespace, explicit client reconnection, durable interrupted-reset recovery and
+ownership-checked cleanup. Older candidate evidence remains historical.
 
 [Standalone CLI onboarding](https://github.com/iokaio/airk/blob/feat/finetuning/docs/agent-integration.md#standalone-onboarding-without-vs-code)
 is implemented on this branch for setup without VS Code: native service
 discovery, reviewed index scope and protected client launch. Scoped CLI tests
-pass; actual client launch and installed acceptance remain pending. Use the printed installed executable path;
-setup does not change `PATH`.
+pass; actual client launch and installed acceptance remain pending. Native
+`airk setup` itself does not edit `PATH`; use its printed installed executable
+path when no terminal integration is installed.
 Standalone Windows/macOS/Linux installer source installs only the CLI/native
 server; this VS Code extension remains a separate optional distribution.
 Actual installer builds, signing and publication remain pending.
+The [standalone Windows EXE](https://github.com/iokaio/airk/blob/feat/finetuning/installers/windows/README.md) now adds its literal
+`{app}\runtime` directory to user `PATH` only after native setup succeeds.
+Its pending-to-owned receipt preserves existing raw entries and registry value
+type; uninstall removes only the exact owned literal after confirmation and
+successful native uninstall. This differs from the VSIX's existing reviewed
+terminal integration. Inno compilation and real registry/signing round-trips
+remain unqualified; the 13 static/mocked checks are not installed acceptance.
 
-**1.8.14 implementation and qualification are in progress; unpublished.** The source versions and generated catalog identify the [One AIRK implementation](https://github.com/iokaio/airk/blob/feat/finetuning/docs/one-airk.md). The single-executable HTTPS runtime is implemented; remaining migration corrections and final native and installed-platform acceptance are tracked in the [1.8.14 working record](https://github.com/iokaio/airk/blob/feat/finetuning/docs/releases/release-1.8.14.md). Earlier binaries keep their original versions and hashes.
+The reset rebuilds every saved index from its reviewed sources and supported
+preferences, including restored pause/watch policy. It verifies predecessor
+process exit and removes ownership-proven legacy state and executables;
+incomplete or unproven cleanup stays visible. Existing terminals need reopening
+to inherit installed CLI PATH changes. If Explorer still runs old extension
+JavaScript, use **Restart Extensions** once to activate the replacement loader.
+Public-release and full-matrix qualification remain incomplete. The
+[working record](https://github.com/iokaio/airk/blob/feat/finetuning/docs/releases/release-1.8.16.md) records exact candidate, package and installed
+acceptance scopes and preserves failed evidence.
 
-Modern installation must migrate recognized owned Codex, Claude Code and
-VS Code/Copilot Chat connections to direct native HTTPS, then remove verified
-legacy launcher images, their processes and eligible superseded runtime executables.
-This applies to legacy-to-modern and later modern-to-modern updates, preserving
-the selected runtime, sources, indexes and settings. The explicit rebuild option
-separately preserves its predecessor runtime and old state as recovery evidence.
-Later ordinary upgrades retire unprotected intermediates and report that
-preserved evidence separately. Unexplained obsolete payloads mean unfinished cleanup. Unsupported clients,
-unproven scopes and blocked cleanup leave installation explicitly incomplete.
-Installed-client and platform acceptance remain pending.
+**1.8.16 source builds on the unpublished 1.8.14 implementation; qualification is stopped and incomplete.** The source versions and generated catalog identify the [One AIRK implementation](https://github.com/iokaio/airk/blob/feat/finetuning/docs/one-airk.md). The single-executable HTTPS runtime is implemented; the [1.8.16 working record](https://github.com/iokaio/airk/blob/feat/finetuning/docs/releases/release-1.8.16.md) tracks current clean-break and installed acceptance. The 1.8.14 record retains historical implementation evidence. Earlier binaries keep their original versions and hashes.
+
+Before 1.8.16, legacy runtime, launcher and index formats are cleanup inputs,
+not reusable index state. The reset preserves only reviewed sources and supported
+preferences. It rebuilds fresh indexes and requires clients to reconnect with new
+authority. Old AIRK-owned indexes, state, runtimes and launchers are removed only
+through proven ownership and lifecycle checks; incomplete cleanup remains visible.
+Supported upgrades within the 1.8.16+ state contract retain their own admission,
+checkpoint and compatibility checks. Installed/platform qualification is pending.
 
 HTTPS uses normal certificate validation with an installation-local CA; clients
 do not ignore certificate errors or discard their existing trusted CAs. Native

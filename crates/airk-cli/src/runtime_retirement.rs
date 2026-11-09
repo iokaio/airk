@@ -17,6 +17,12 @@ mod superseded;
 pub(super) fn superseded_images(root: &Path, active: &str) -> Result<Vec<serde_json::Value>> {
     superseded::inspect_images(root, active)
 }
+pub(super) fn absent_optional_process_aliases(
+    root: &Path,
+    active: &str,
+) -> Result<Vec<legacy_launchers::Image>> {
+    superseded::absent_optional_aliases(root, active)
+}
 
 #[cfg(test)]
 mod previous_tests {
@@ -391,6 +397,31 @@ pub(super) async fn retire_previous(root: &Path, expected: &str) -> Result<serde
         .context("replacement runtime remains selected but restart after retirement is pending")?;
     cleanup.context("previous runtime cleanup is incomplete; retry retire-previous")?;
     Ok(serde_json::json!({"active":expected,"retired_previous":intent.previous}))
+}
+
+/// Synchronous modern retirement under the reset continuation's existing lock.
+/// It uses the same inventory/process owner and complete receipt as the CLI.
+pub(super) fn clean_break_retirement_pending(root: &Path) -> Result<bool> {
+    superseded::pending(root)
+}
+
+pub(super) fn retire_clean_break_locked_recording(
+    root: &Path,
+    expected: &str,
+    record: &mut dyn FnMut(&serde_json::Value) -> Result<()>,
+) -> Result<serde_json::Value> {
+    activation::rebuild::require_retirement_allowed(root)?;
+    require_issuer_rotation_settled(root)?;
+    managed::require_unmanaged(root)?;
+    activation::require_settled(root)?;
+    payload_repair::require_settled(root)?;
+    lifecycle::require_settled(root)?;
+    let (main, _) = verify_runtime(root, expected)?;
+    ensure!(
+        runtime_pair::single_executable(&main)?,
+        "clean break requires a single executable"
+    );
+    superseded::retire_recording(root, expected, record)
 }
 
 fn validate_startup(root: &Path, identity: &str) -> Result<()> {

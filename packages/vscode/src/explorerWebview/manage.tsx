@@ -56,6 +56,22 @@ function Frame(props: { view?: ManagementView; trusted: boolean; actions: Return
 
 function Rows(props: { rows: readonly FactRow[]; hideUnobserved?: boolean }) { return <Facts rows={props.rows.filter(([, value]) => !props.hideUnobserved || value.toLowerCase() !== 'not observed').map(([name, value]) => [name, value])} />; }
 
+function CleanBreakProgress({value}:{value:Record<string,unknown>}) {
+    const object=(input:unknown):Record<string,unknown>=>input&&typeof input==='object'&&!Array.isArray(input)?input as Record<string,unknown>:{};
+    const indexes=Array.isArray(value.indexes)?value.indexes.map(object):[];
+    const count=(state:string)=>indexes.filter(index=>index.readiness===state).length;
+    const cleanup=object(value.cleanup),complete=value.stage==='ready'&&cleanup.complete===true;
+    return <article class="card" data-testid="clean-break-progress"><h2>Clean installation and fresh indexes</h2>
+        <p>Original source files are unchanged. {value.indexes_complete===true?`${indexes.length} observed indexes of ${String(value.expected_indexes)} total: ${count('ready')} ready, ${count('pending')} pending, ${count('paused')} paused, ${count('failed')} failed, ${count('unavailable')} unavailable.`:`The source roster is being captured: ${String(value.expected_indexes)} expected indexes; ${indexes.length} observed so far.`}</p>
+        <p>Legacy cleanup: {cleanup.complete===true?'complete':cleanup.state==='blocked'?'blocked':cleanup.state==='removing'?'removing artifacts':'waiting for fresh indexes'}. {complete?'Connect coding agents with a new reviewed scope.':'The clean installation is not complete until every fresh index is ready and owned legacy artifacts are removed.'}</p>
+        {indexes.map((index,position)=>{const original=object(index.original),replacement=object(index.replacement),failure=object(index.failure);return <div class="section" key={String(original.binding??position)}>
+            <strong>{String(original.collection??original.root??`Index ${position+1}`)}</strong>
+            <Rows rows={[[ 'Source',String(original.root??'Not reported')],['Fresh index',String(replacement.data_root??'Not reported')],['Readiness',String(index.readiness??'unavailable')],['Paused',String(index.paused??'Not reported')],...(typeof index.settings_available==='boolean'?[[ 'Saved settings available',String(index.settings_available)] as FactRow]:[]),...(Array.isArray(index.discarded_preferences)&&index.discarded_preferences.length?[[ 'Discarded preferences',index.discarded_preferences.map(String).join(', ')] as FactRow]:[]),...(typeof failure.code==='string'?[[ 'Failure',`${failure.code}${typeof failure.message==='string'?`: ${failure.message}`:''}`] as FactRow]:[])]} />
+        </div>;})}
+        <details><summary>Complete cached reset observation</summary><pre>{JSON.stringify(value,null,2)}</pre><p class="muted">Runtime diagnostics JSON copy/open/export retains this complete observation with its native bootstrap result and capture time.</p></details>
+    </article>;
+}
+
 function RuntimeVersions(props: { state: ScreenProps['state']; view: ManagementView }) {
     return <section class="card runtime-versions" aria-label="AIRK executable versions">
         <h2>AIRK executable versions</h2>
@@ -397,10 +413,13 @@ export function ServiceScreen(props: ScreenProps) {
                 {view.lifecycle === 'external' && <p class="muted">Startup, stop, restart, upgrades and rollback are controlled by the external service manager.</p>}
                 {view.capturedLifecycle&&<details class="card" data-testid="captured-native-lifecycle"><summary>Captured native lifecycle response (historical)</summary><p>This records the complete native request and response at capture time, with the actual pre-operation health response when available. It is not current health, evidence authority or a new process inspection. JSON includes machine details and any native diagnostic fields.</p><pre>{JSON.stringify(view.capturedLifecycle,null,2)}</pre><div class="actions"><Act actions={actions} action="copyLifecycle">Copy complete JSON</Act><Act actions={actions} action="openLifecycle" ghost>Open complete JSON</Act><Act actions={actions} action="saveLifecycle" ghost>Export complete JSON</Act></div></details>}
                 {view.capturedLifecycleUnavailable&&<p class="callout">The native lifecycle result exceeded the complete-capture budget. Its saved request remains tracked for native recovery; no completed receipt is being displayed.</p>}
+                {view.cleanBreakRebuild&&<CleanBreakProgress value={view.cleanBreakRebuild} />}
                 <div class="cards two">
                     <article class="card"><div class="section-head"><h2>Service</h2><CopyDetails section="service" /></div><Rows rows={view.service} hideUnobserved />
                         <p class="muted">Health confirms responsiveness. It does not prove indexing progress, source freshness or complete semantic coverage.</p></article>
                     <article class="card"><h2>Runtime</h2><Rows rows={view.runtime} hideUnobserved />
+                        <p class="muted">Selected summary fields. Complete runtime diagnostics retain the cached native bootstrap and diagnosis, including upgrade blockers. They are an observation at capture time; later runtime state may differ.</p>
+                        {view.runtimeDiagnostics&&<details><summary>Complete runtime diagnostics</summary><p>Captured {new Date(view.runtimeDiagnostics.capturedAt).toISOString()}. Full JSON includes machine paths and native diagnostic fields.</p><div class="actions"><Act actions={actions} action="openRuntimeDiagnostics" ghost>Open complete JSON</Act><Act actions={actions} action="copyRuntimeDiagnostics" ghost>Copy complete JSON</Act><Act actions={actions} action="saveRuntimeDiagnostics" ghost>Export complete JSON</Act></div></details>}
                         <div class="actions">
                             <Act actions={actions} action="upgradeRuntime" enabled={on('upgradeRuntime')} ghost>Review bundled runtime upgrade</Act>
                             <Act actions={actions} action="rollbackRuntime" enabled={on('rollbackRuntime')} ghost>Review previous runtime</Act>

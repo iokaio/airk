@@ -60,7 +60,7 @@ async function workbenchAction(request,actions){
             const current=await actions.observe(observationExpression);
             if(current?.count>before.count+1)throw Error('Workbench result superseded by another turn');
             if(current?.count!==before.count+1||current.input!==request.tool+' form')return;
-            if(current.error)throw Error('Actual Workbench read failed: '+current.error);
+            if(current.error){actions.record(current);throw Error('Actual Workbench read failed: '+current.error);}
             return current.envelope?current:undefined;
         },'new complete actual Workbench response');
         return {envelope:result.envelope,catalog:{...catalog,forms},turn:{ordinal:result.count,input:result.input},submissions:1};

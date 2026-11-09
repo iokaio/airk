@@ -128,20 +128,62 @@ async function retryUnclicked(discover,evaluate,{deadline,now=()=>performance.no
         target=await discover(Math.min(until-now(),deadline-wallNow()));
     }
 }
-async function connect(target,deadline){
-    const socket=new WebSocket(target.webSocketDebuggerUrl),contexts=new Set(),pending=new Map();let sequence=0;
-    const budget=max=>{const left=Math.min(max,deadline-Date.now());if(left<=0)throw new Error('Shared editor scenario deadline exhausted');return left;};
-    await new Promise((resolve,reject)=>{const timer=setTimeout(()=>{socket.close();reject(new Error('CDP connection timeout'));},budget(10000));socket.addEventListener('open',()=>{clearTimeout(timer);resolve();},{once:true});socket.addEventListener('error',error=>{clearTimeout(timer);reject(error);},{once:true});});
-    socket.addEventListener('close',()=>{contexts.clear();for(const item of pending.values()){clearTimeout(item.timer);item.reject(new Error('CDP socket closed'));}pending.clear();});
-    socket.addEventListener('message',event=>{let value;try{if(String(event.data).length>8388608)throw new Error('CDP frame bound exceeded');value=JSON.parse(event.data);}catch(error){for(const item of pending.values()){clearTimeout(item.timer);item.reject(error);}pending.clear();socket.close();return;}
+function connectionError(event,target,phase){
+    if(event?.cdpConnectionFailure===true)return event;
+    const cause=event?.error??event,parts=[],seen=new Set();let current=cause;
+    for(let depth=0;current&&depth<4&&!seen.has(current);depth++){
+        seen.add(current);
+        if(typeof current.code==='string')parts.push(current.code.slice(0,128));
+        parts.push(String(current.message??current).slice(0,2048));current=current.cause;
+    }
+    const failure=new Error(('CDP '+phase+' failed for target '+String(target.id).slice(0,256)+': '+parts.join('; ')).slice(0,4096),{cause});
+    Object.defineProperty(failure,'cdpConnectionFailure',{value:true});return failure;
+}
+async function connect(target,getDeadline){
+    const budget=max=>{const left=Math.min(max,getDeadline()-Date.now());if(left<=0)throw new Error('Shared editor scenario deadline exhausted');return left;};
+    const openingBudget=budget(10000); // Check before creating an owned socket.
+    const socket=new WebSocket(target.webSocketDebuggerUrl),contexts=new Set(),pending=new Map();
+    let sequence=0,ended=false,established=false,phase='WebSocket opening',rejectOpening,clearOpening=()=>{};
+    const finish=(error,closeSocket=true)=>{
+        if(ended)return;ended=true;contexts.clear();clearOpening();
+        rejectOpening?.(error);rejectOpening=undefined;
+        for(const item of pending.values()){clearTimeout(item.timer);item.reject(error);}pending.clear();
+        socket.removeEventListener('error',onError);socket.removeEventListener('close',onClose);socket.removeEventListener('message',onMessage);
+        if(closeSocket&&socket.readyState!==WebSocket.CLOSED){try{socket.close();}catch(closeError){error.socket_cleanup_error=String(closeError).slice(0,4096);}}
+    };
+    const onClose=()=>finish(new Error('CDP socket closed'),false);
+    const onError=event=>{
+        const error=connectionError(event,target,phase);
+        finish(established?new Error(('CDP socket closed: '+error.message).slice(0,4096),{cause:error}):error);
+    };
+    const onMessage=event=>{try{
+        if(String(event.data).length>8388608)throw new Error('CDP frame bound exceeded');
+        const value=JSON.parse(event.data);
         if(value.method==='Runtime.executionContextCreated')contexts.add(value.params.context.id);
         if(value.method==='Runtime.executionContextDestroyed')contexts.delete(value.params.executionContextId);
         if(value.method==='Runtime.executionContextsCleared')contexts.clear();
-        const request=pending.get(value.id);if(request){pending.delete(value.id);clearTimeout(request.timer);value.error?request.reject(new Error(JSON.stringify(value.error))):request.resolve(value.result);}});
-    const call=(method,params={})=>new Promise((resolve,reject)=>{if(socket.readyState!==WebSocket.OPEN){reject(new Error('CDP socket closed'));return;}if(pending.size>=16){reject(new Error('CDP pending bound exhausted'));return;}const id=++sequence,timer=setTimeout(()=>{pending.delete(id);reject(new Error(`CDP timeout: ${method}`));},budget(method==='Runtime.evaluate'?2000:15000));
-        pending.set(id,{resolve,reject,timer});socket.send(JSON.stringify({id,method,params}));});
-    await call('Runtime.enable');
-    return {contexts,call,get closed(){return socket.readyState!==WebSocket.OPEN;},close:()=>socket.close(),async evaluate(contextId,expression){const result=await call('Runtime.evaluate',{contextId,expression,returnByValue:true});if(result.exceptionDetails)throw new Error('CDP expression failed: '+JSON.stringify(result.exceptionDetails));return result.result?.value;}};
+        const request=pending.get(value.id);if(request){pending.delete(value.id);clearTimeout(request.timer);value.error?request.reject(new Error(JSON.stringify(value.error))):request.resolve(value.result);}
+    }catch(error){finish(error);}};
+    socket.addEventListener('error',onError);socket.addEventListener('close',onClose);socket.addEventListener('message',onMessage);
+    const call=(method,params={})=>new Promise((resolve,reject)=>{
+        if(ended||socket.readyState!==WebSocket.OPEN){reject(new Error('CDP socket closed'));return;}
+        if(pending.size>=16){reject(new Error('CDP pending bound exhausted'));return;}
+        const id=++sequence,timer=setTimeout(()=>{pending.delete(id);reject(new Error(`CDP timeout: ${method}`));},budget(method==='Runtime.evaluate'?2000:15000));
+        pending.set(id,{resolve,reject,timer});
+        try{socket.send(JSON.stringify({id,method,params}));}catch(error){finish(error);}
+    });
+    try{
+        await new Promise((resolve,reject)=>{
+            rejectOpening=reject;
+            const opened=()=>{clearOpening();rejectOpening=undefined;resolve();};
+            const timer=setTimeout(()=>finish(new Error('CDP connection timeout')),openingBudget);
+            clearOpening=()=>{clearTimeout(timer);socket.removeEventListener('open',opened);};
+            socket.addEventListener('open',opened,{once:true});
+        });
+        phase='Runtime.enable';await call('Runtime.enable');established=true;
+        return {contexts,call,get closed(){return ended||socket.readyState!==WebSocket.OPEN;},close:()=>finish(new Error('CDP socket closed')),
+            async evaluate(contextId,expression){const result=await call('Runtime.evaluate',{contextId,expression,returnByValue:true});if(result.exceptionDetails)throw new Error('CDP expression failed: '+JSON.stringify(result.exceptionDetails));return result.result?.value;}};
+    }catch(error){finish(error);throw connectionError(error,target,phase);}
 }
 async function editorUi(port,deadline=Date.now()+600000){
     const clients=new Map();
@@ -150,15 +192,36 @@ async function editorUi(port,deadline=Date.now()+600000){
     const budget=max=>editorRemainingBudget(actionDeadline,max);
     const boundedUntil=(action,label,timeout=180000)=>pollUntil(action,label,budget(timeout));
     const until=boundedUntil;
+    async function targetList(){
+        if(++reads>12000)throw new Error('Private editor DOM observation budget exhausted');
+        const response=await fetch(`http://127.0.0.1:${port}/json/list`,{signal:AbortSignal.timeout(budget(10000)),redirect:'error'});
+        if(response.ok===false)throw new Error('CDP target listing HTTP '+response.status);
+        const targets=await response.json();
+        if(!Array.isArray(targets)||targets.some(target=>!target||typeof target.id!=='string'||!target.id)
+            ||new Set(targets.map(target=>target.id)).size!==targets.length)throw new Error('CDP target listing is malformed');
+        return targets;
+    }
     async function document(predicate,expression,type='iframe'){
         if(/\.click\(|\.dispatchEvent\(|\.set\.call\(|\.value\s*=(?!=)|\.checked\s*=(?!=)/.test(expression))throw new Error('Mutating expression requires captured-context dispatch');
-        if(++reads>12000)throw new Error('Private editor DOM observation budget exhausted');
         let targets;
         // The DevTools listing can refuse or reset a connection transiently; callers retry through until().
-        try{targets=await(await fetch(`http://127.0.0.1:${port}/json/list`,{signal:AbortSignal.timeout(budget(10000))})).json();}
+        try{targets=await targetList();}
         catch(error){if(/ECONNREFUSED|ECONNRESET|UND_ERR_SOCKET|UND_ERR_CONNECT_TIMEOUT/.test(String(error?.cause?.code??'')))return;throw error;}
-        for(const target of targets.filter(value=>value.type===type&&(type==='page'?value.url.includes('workbench'):value.url.includes('extensionId=iokaio.airk')))){
-            let client=clients.get(target.id);if(client?.closed){clients.delete(target.id);client=undefined;}if(!client){try{client=await connect(target,deadline);}catch(error){if(/CDP socket closed|WebSocket.*closed/.test(String(error)))continue;throw error;}clients.set(target.id,client);}
+        for(const target of targets.filter(value=>value.type===type&&typeof value.url==='string'&&(type==='page'?value.url.includes('workbench'):value.url.includes('extensionId=iokaio.airk')))){
+            const endpoint=new URL(target.webSocketDebuggerUrl);
+            if(endpoint.protocol!=='ws:'||endpoint.hostname!=='127.0.0.1'||Number(endpoint.port||80)!==port||endpoint.username||endpoint.password
+                ||endpoint.search||endpoint.hash||endpoint.pathname!=='/devtools/page/'+encodeURIComponent(target.id))throw new Error('CDP target endpoint differs from owned local discovery');
+            let client=clients.get(target.id);if(client?.closed){clients.delete(target.id);client=undefined;}
+            if(!client){try{client=await connect(target,()=>actionDeadline);}catch(error){
+                let recheck;
+                try{const fresh=await targetList();recheck={state:fresh.some(value=>value.id===target.id||value.webSocketDebuggerUrl===target.webSocketDebuggerUrl)?'listed':'absent',target_count:fresh.length,
+                    target_roster_sha256:require('node:crypto').createHash('sha256').update(JSON.stringify(fresh.map(value=>({id:value.id,endpoint:value.webSocketDebuggerUrl??null})))).digest('hex')};}
+                catch(recheckError){recheck={state:'unconfirmed',error:String(recheckError).slice(0,4096)};}
+                const diagnostic=activeReadDiagnostic??beginUiDiagnostic(readDiagnostics,{action:'document',native:[],rendered:[]});
+                retainUiDiagnostic((diagnostic.connections??=[]),{target:{id:target.id,endpoint:target.webSocketDebuggerUrl},error:String(error),recheck});
+                if(recheck.state==='absent')continue;
+                throw error;
+            }clients.set(target.id,client);}
             for(const context of client.contexts){try{if(await client.evaluate(context,predicate))return {value:await client.evaluate(context,expression),client,context,target};}
                 catch(error){if(/CDP socket closed/.test(String(error))){client.close();clients.delete(target.id);break;}if(!/CDP timeout: Runtime.evaluate|Cannot find context|navigated or closed/.test(String(error)))throw error;}}
         }
@@ -301,8 +364,10 @@ async function editorUi(port,deadline=Date.now()+600000){
         if(['workbenchRead','workbenchCopy'].includes(request.action)){
             const predicate='document.visibilityState===\'visible\'&&!!document.querySelector(\'textarea[aria-label="Request indexed evidence"]\')';
             const observe=async expression=>(await document(predicate,expression))?.value;
+            const diagnostic=activeReadDiagnostic??beginUiDiagnostic(readDiagnostics,{action:request.action,sequence:request.sequence,native:[],rendered:[]});
             return require('./native-editor-workbench.cjs').workbenchAction(request,{
                 observe,mutate:(ready,apply)=>dispatch(predicate,ready,apply),
+                record:observation=>retainUiDiagnostic(diagnostic.native,observation),
                 settle:async()=>{
                     const target=await document(predicate,'true');
                     if(!target)throw Error('Visible Workbench context disappeared after dispatch');

@@ -163,12 +163,19 @@ scope, then requests native grants and credential references. Opening a folder
 is not authorization to index it.
 
 Setup prints the exact approved installed executable as `cli_executable`, with
-setup/uninstall instructions. In all examples below, replace `airk` with that
-full path unless you have added its directory to `PATH` yourself. The installer
-does not add a proxy launcher or change shell startup files or `PATH`. You can
-finish setup and launch your client in the installer terminal without changing
-`PATH`; on macOS the printed executable is the installed copy, so the disk image
-can be ejected after successful installation.
+setup/uninstall instructions. Native `airk setup` does not edit `PATH` or add an
+MCP proxy. In the examples below, use that full path unless terminal integration
+is available. The standalone Windows Inno package separately adds its literal
+verified `{app}\runtime` directory to HKCU user `PATH` after native setup
+succeeds. It preserves raw manual/variable-bearing entries and `REG_SZ`/
+`REG_EXPAND_SZ` type, using a durable pending-to-owned receipt; its uninstall
+removes only the exact owned literal after confirmation and successful native
+uninstall. Existing terminals keep their inherited environment. See the
+[Windows installer](../installers/windows/README.md). Actual Inno/registry
+round-trips and signing remain unqualified; mocked/static tests do not establish
+them. VSIX terminal integration has its separate reviewed ownership path.
+On macOS, the printed executable is the installed copy, so the disk image can
+be ejected after successful installation without editing PATH.
 
 ```console
 airk setup
@@ -187,10 +194,13 @@ Installer bootstrapping pairs `--runtime-source <bundled-payload>` with
 `--approved-sha256 <distributor-pinned-manifest-digest>`. The signed or attested
 distribution supplies that pin; hashing arbitrary downloaded bytes does not
 create approval. `--install-only --yes` installs without client enrollment.
-During an upgrade, choose migration or the bounded early rebuild option;
-`--rebuild-indexes` selects rebuilding explicitly. Its
-[supported-configuration limits](upgrade-rebuild-fallback.md#initial-supported-configuration)
-still apply. `airk uninstall [--yes]` uses the native owner to stop/remove owned
+Every installation before 1.8.16 must use the native clean break and rebuild;
+there is no preserved-index migration choice at that boundary. Preserve only
+reviewed source selections and supported preferences, then reconnect clients
+with fresh authority. Supported 1.8.16+ upgrades require the persisted state
+contract as well as the approved version. See the
+[current reset contract](upgrade-rebuild-fallback.md); its historical optional
+rebuild section is no longer current setup guidance. `airk uninstall [--yes]` uses the native owner to stop/remove owned
 runtime files while preserving source files and index data; removing a downloaded
 installer or ejecting its image is not uninstalling the service.
 

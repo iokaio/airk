@@ -185,6 +185,50 @@ export function validateHttpConnection(input:unknown,expected?:HttpSelection,dir
     if(!sameFile(value.ca_certificate_file,path.join(parent,'ca.pem'))||!sameFile(value.credential_file,path.join(parent,`credential-${value.connection_id}.token`)))throw Error('crossed_http_private_reference');
     return structuredClone({...value,selection}) as HttpConnectionInfo;
 }
+
+export interface PredecessorHttpScope {predecessor:string;controlDir:string;namespace?:string;operationId?:string}
+export interface PredecessorHttpSnapshot {schema:1;purpose:'predecessor_cleanup';predecessor:string;control_dir:string;namespace:string|null;endpoint:EndpointDescriptor|null;ca_certificate_file_sha256:string|null;complete:boolean;owners:{connection_id:string;ownership:'active'|'expired'|'revoked';credential_sha256:string|null}[];failure:{code:string;message:string}|null;[key:string]:unknown}
+export interface PredecessorHttpProof {schema:1;purpose:'predecessor_cleanup';active:string;predecessor:string;operation_id:string|null;control_dir:string;namespace:string|null;connection_id:string;status:'owned'|'not_owned'|'unavailable';ownership:'active'|'expired'|'revoked'|null;endpoint:EndpointDescriptor|null;ca_certificate_file:string|null;credential_file:string|null;credential_sha256:string|null;ca_certificate_file_sha256:string|null;qualification:{live_authority:false;source:'current_predecessor_metadata'|'saved_predecessor_snapshot';snapshot_complete:boolean;credential_digest_algorithm:'sha256_full_airk1_token';current_namespace:string|null;current_namespace_ownership:'same_predecessor'|'not_owned'|'owned'|'unavailable';current_namespace_failure:{code:string;message:string}|null;[key:string]:unknown};[key:string]:unknown}
+export type PredecessorHttpLookup=PredecessorHttpProof&{snapshot:PredecessorHttpSnapshot};
+export type OwnedPredecessorHttpProof=PredecessorHttpProof&{status:'owned';namespace:string;endpoint:EndpointDescriptor;ca_certificate_file:string;credential_file:string;ownership:'active'|'expired'|'revoked'};
+function cleanupFailure(value:unknown):void{if(value===null)return;const failure=object(value);if(typeof failure.code!=='string'||!failure.code.length||failure.code.length>128||typeof failure.message!=='string'||failure.message.length>2048)throw Error('invalid_predecessor_http_failure');}
+export function validatePredecessorHttpSnapshot(input:unknown,scope?:PredecessorHttpScope):PredecessorHttpSnapshot{
+    const value=object(input);if(Buffer.byteLength(JSON.stringify(value))>65536||value.schema!==1||value.purpose!=='predecessor_cleanup'||typeof value.control_dir!=='string'||!path.isAbsolute(value.control_dir)||value.control_dir.length>4096||/[\x00-\x1f]/.test(value.control_dir)||typeof value.complete!=='boolean'||!Array.isArray(value.owners)||value.owners.length>128)throw Error('invalid_predecessor_http_snapshot');
+    hex(value.predecessor);if(value.namespace!==null)hex(value.namespace,32);if(value.ca_certificate_file_sha256!==null)hex(value.ca_certificate_file_sha256);
+    if(value.endpoint!==null){validateEndpoint(value.endpoint);if(value.endpoint.namespace!==value.namespace)throw Error('crossed_predecessor_http_namespace');}
+    cleanupFailure(value.failure);if(value.complete?(value.failure!==null||value.namespace===null||value.endpoint===null):(value.failure===null||value.owners.length!==0))throw Error('incomplete_predecessor_http_snapshot');
+    const ids=new Set<string>();for(const raw of value.owners){const owner=object(raw);hex(owner.connection_id,32);if(ids.has(owner.connection_id)||!['active','expired','revoked'].includes(owner.ownership))throw Error('invalid_predecessor_http_owner');ids.add(owner.connection_id);if(owner.credential_sha256!==null)hex(owner.credential_sha256);}
+    if(scope&&(value.predecessor!==scope.predecessor||!sameFile(value.control_dir,scope.controlDir)||scope.namespace!==undefined&&value.namespace!==scope.namespace))throw Error('crossed_predecessor_http_scope');
+    return structuredClone(value) as PredecessorHttpSnapshot;
+}
+export function validateOwnedPredecessorHttpProof(input:unknown):OwnedPredecessorHttpProof{
+    const value=object(input),q=object(value.qualification);
+    if(Buffer.byteLength(JSON.stringify(value))>131072||value.schema!==1||value.purpose!=='predecessor_cleanup'||value.status!=='owned'||!['active','expired','revoked'].includes(value.ownership)||q.live_authority!==false||q.snapshot_complete!==true||q.credential_digest_algorithm!=='sha256_full_airk1_token'||!['same_predecessor','not_owned'].includes(q.current_namespace_ownership))throw Error('invalid_predecessor_http_disposal_proof');
+    hex(value.active);hex(value.predecessor);hex(value.connection_id,32);hex(value.namespace,32);if(value.operation_id!==null)hex(value.operation_id,32);if(value.credential_sha256!==null)hex(value.credential_sha256);if(value.ca_certificate_file_sha256!==null)hex(value.ca_certificate_file_sha256);
+    const endpoint=validateEndpoint(value.endpoint);if(endpoint.namespace!==value.namespace||typeof value.control_dir!=='string'||!path.isAbsolute(value.control_dir)||!sameFile(value.ca_certificate_file,path.join(value.control_dir,'http-1','ca.pem'))||!sameFile(value.credential_file,path.join(value.control_dir,'http-1',`credential-${value.connection_id}.token`)))throw Error('crossed_predecessor_http_disposal_proof');
+    if(q.source==='current_predecessor_metadata'){if(value.operation_id!==null||value.active!==value.predecessor||q.current_namespace_ownership!=='same_predecessor'||q.current_namespace!==value.namespace)throw Error('crossed_predecessor_http_lineage');}
+    else if(q.source!=='saved_predecessor_snapshot'||value.operation_id===null)throw Error('crossed_predecessor_http_lineage');
+    if(q.current_namespace!==null)hex(q.current_namespace,32);cleanupFailure(q.current_namespace_failure);if(q.current_namespace_failure!==null||q.current_namespace_ownership==='same_predecessor'&&q.current_namespace!==value.namespace||q.current_namespace_ownership==='not_owned'&&(q.current_namespace===null||q.current_namespace===value.namespace))throw Error('unconfirmed_current_http_namespace');
+    return structuredClone(value) as OwnedPredecessorHttpProof;
+}
+export function validatePredecessorHttpLookup(input:unknown,active:string,id:string,scope:PredecessorHttpScope):PredecessorHttpLookup{
+    const value=object(input),snapshot=validatePredecessorHttpSnapshot(value.snapshot,scope),q=object(value.qualification);
+    if(Buffer.byteLength(JSON.stringify(value))>131072||value.schema!==1||value.purpose!=='predecessor_cleanup'||value.active!==active||value.connection_id!==id||value.predecessor!==snapshot.predecessor||!sameFile(value.control_dir,snapshot.control_dir)||value.namespace!==snapshot.namespace||!isDeepStrictEqual(value.endpoint,snapshot.endpoint)||value.ca_certificate_file_sha256!==snapshot.ca_certificate_file_sha256||q.live_authority!==false||q.snapshot_complete!==snapshot.complete||q.credential_digest_algorithm!=='sha256_full_airk1_token'||!['same_predecessor','not_owned','owned','unavailable'].includes(q.current_namespace_ownership))throw Error('crossed_predecessor_http_lookup');
+    hex(active);hex(id,32);if(value.operation_id!==null)hex(value.operation_id,32);if(scope.operationId!==undefined&&value.operation_id!==scope.operationId)throw Error('crossed_predecessor_http_operation');
+    if(q.source==='current_predecessor_metadata'){if(value.operation_id!==null||active!==scope.predecessor||q.current_namespace_ownership!=='same_predecessor')throw Error('crossed_predecessor_http_lineage');}else if(q.source!=='saved_predecessor_snapshot'||value.operation_id===null)throw Error('crossed_predecessor_http_lineage');
+    if(q.current_namespace!==null)hex(q.current_namespace,32);cleanupFailure(q.current_namespace_failure);
+    const owner=snapshot.owners.find(row=>row.connection_id===id),eligible=['same_predecessor','not_owned'].includes(q.current_namespace_ownership);
+    if(q.current_namespace_ownership==='same_predecessor'&&q.current_namespace!==snapshot.namespace||['not_owned','owned'].includes(q.current_namespace_ownership)&&(q.current_namespace===null||q.current_namespace===snapshot.namespace)||q.current_namespace_ownership==='unavailable'&&q.current_namespace_failure===null||q.current_namespace_ownership!=='unavailable'&&q.current_namespace_failure!==null)throw Error('crossed_current_http_namespace');
+    if(value.status==='owned'){
+        if(!owner||!eligible||value.ownership!==owner.ownership||value.credential_sha256!==owner.credential_sha256)throw Error('unconfirmed_predecessor_http_owner');validateOwnedPredecessorHttpProof(value);
+    }else{
+        if(value.ownership!==null||value.credential_sha256!==null||value.ca_certificate_file!==null||value.credential_file!==null||value.status==='not_owned'&&(!snapshot.complete||owner||!eligible)||value.status==='unavailable'&&snapshot.complete&&eligible||!['not_owned','unavailable'].includes(value.status))throw Error('unconfirmed_predecessor_http_absence');
+    }
+    return structuredClone(value) as PredecessorHttpLookup;
+}
+export function predecessorHttpProof(lookup:PredecessorHttpLookup):OwnedPredecessorHttpProof|undefined{
+    if(lookup.status!=='owned')return;const {snapshot,...proof}=lookup;return validateOwnedPredecessorHttpProof(proof);
+}
 function sameFile(left:string,right:string):boolean{
     const normalize=(value:string)=>process.platform==='win32'?path.toNamespacedPath(path.resolve(value)).toLowerCase():value;
     return normalize(left)===normalize(right);

@@ -3,6 +3,7 @@
 AIRK is an independent Artifact Indexing and Retrieval Kernel. Read README.md, CONTRIBUTING.md, docs/architecture.md and the affected component before changing code. Follow more specific guidance when present.
 
 - Use parallel agents where independent investigation, implementation or review can accelerate the work. Keep ownership clear and have the primary agent review the combined changes. Parallelize reading, source work and review; serialize builds, tests and platform batches through one owner.
+- Do not apologize. Report the facts, correct the problem and complete the authorized work.
 
 - Before every commit, push, or PR creation cycle, update the affected documentation and verify that the README, documentation index, release notes, and VSIX/Marketplace description agree with the current version and implemented behavior. Keep dated historical records identifiable instead of rewriting them as current guidance.
 - **Discover AIRK MCP before repository exploration.** Check available tools, including deferred tool discovery, for the `airk` server (often exposed as `mcp__airk__*`); call its status tool to confirm availability and the project binding. If absent or failing, inspect `.codex/config.toml` and `.mcp.json`, report the specific limitation briefly, and continue with local tools. Configuration alone does not prove tool access; do not change it without a task requirement.
@@ -25,11 +26,23 @@ AIRK is an independent Artifact Indexing and Retrieval Kernel. Read README.md, C
 
 Progress comes from finding defects with the cheapest check that can expose them, then using expensive runs once to confirm reviewed code. Builds, installed journeys, platform batches and CI are not the way to discover what is wrong. Repeating "patch the latest symptom, rebuild, rerun a long campaign" is the main source of wasted time in this project; stop and change approach when you notice it.
 
+### Mandatory correction cycle
+
+These rules apply to **all** checks, including T0 tests and compiler invocations. A cheap check is not permission to alternate tiny patches with test runs.
+
+1. **Finish the code investigation first.** Collect the complete existing failure evidence, then trace the affected state flow and related callers. Record the root-cause hypothesis, invariants, failure/recovery boundaries and remaining uncertainty in the task ledger. Inspect applicable ownership, persistence, concurrency, budgets, cleanup, reload and platform paths together. Do not use successive test failures as a substitute for this review.
+2. **Batch the regressions.** Add the known sibling regressions together and run one scoped diagnostic batch to confirm the analyzed failure class. A passing hypothesis is not a reproduced defect. If evidence is insufficient, improve the smallest observation or test seam; do not guess a production fix or restart a long campaign.
+3. **Complete one coherent correction.** Finish the production changes, related callers, fixtures and regression coverage before another validation batch. Review types, signatures, fixture identities, consumed-input rosters and interruption paths before compiling. Do not run a compiler or test after each small edit.
+4. **Review and freeze before validation.** The primary agent reviews the combined source and all delegated changes against the recorded invariants. Freeze every consumed input, then perform one compilation and batched affected checks. Agents doing source work must not edit those inputs during the batch. Required independent review and T2/T3 gates still apply.
+5. **Collect, reassess, then correct.** On failure, collect the entire batch and audit all related diagnostics before editing. Prepare the complete next correction, review it, and only then repeat the affected batch. Do not fix the first reported line and immediately rerun. Reuse unaffected native artifacts and passed evidence with their original identities; never rebuild them for unrelated frontend, harness, fixture or documentation edits.
+
+The task ledger must distinguish source-review findings, actual reproductions, passing hypotheses and qualification results. Anticipating defects from code is required work; testing confirms that work.
+
 ### Cost tiers
 
 | Tier | Examples | Typical cost | Use |
 | --- | --- | --- | --- |
-| T0 | One named `node --test out/test/<file>.test.js` after `npx tsc -p .`; one Python `unittest` module; a filtered Rust unit selection; a static/contract check | Seconds | Freely while investigating and repairing |
+| T0 | A batched named Node selection after one pinned local TypeScript compilation; scoped Python modules; a filtered Rust unit selection; static/contract checks | Seconds | Confirm a completed code investigation; follow the mandatory correction cycle |
 | T1 | Scoped `python scripts/dev-check.py -p <crate>`; workspace Clippy; mocked extension suite; full Python suite | About 1-2 minutes | Before handing a component back or requesting review |
 | T2 | Debug runtime build and VSIX; enabled-native extension suite; installed-editor journeys; actual client hosts; load campaigns; a Neo batch | 2-12 minutes each | Only to confirm reviewed code on frozen inputs |
 | T3 | Full workspace tests; optimized builds; Docker qualification; `scripts/ci-local.ps1`; hosted CI | 13-40 minutes each | Once per host, in a final ordered qualification ladder |
@@ -37,7 +50,7 @@ Progress comes from finding defects with the cheapest check that can expose them
 ### Find defects cheaply
 
 - Read the affected source, contracts, existing tests and retained failure evidence before running anything. Explain a failure from the code first; a run should confirm a stated hypothesis, not generate one.
-- Reproduce each defect as a T0 test before fixing it and keep that test as the regression. If a T2/T3 failure cannot be reproduced at T0/T1, add the smallest seam that makes the logic testable instead of iterating on the long run.
+- After the code investigation, reproduce the known defects together in a T0 batch before the coherent correction, and keep those regressions. If a T2/T3 failure cannot be reproduced at T0/T1, add the smallest seam that makes the logic testable instead of iterating on the long run. Do not turn this requirement into a separate fix-and-test loop for every minor finding.
 - Keep decision logic testable on any host. Put classification, deadlines, state transitions, ownership/invalidation and retry eligibility in pure functions with injected observers and clocks, outside `cfg(target_os)` FFI modules, so Windows can exercise macOS/Linux logic. Keep the platform FFI layer thin.
 - Turn a recurring failure class into a cheap static or contract check. When the same class of failure appears a second time (missing container inputs, path length, fixture ACLs, Unix-only lint, unchecked clock assumptions), add the check that would have caught every instance before fixing the new one.
 - When source compiled only on another platform changed, the first step on that platform is scoped Clippy for the affected crate; stop the batch if it fails.

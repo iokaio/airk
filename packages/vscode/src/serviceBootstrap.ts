@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import * as fs from 'node:fs/promises';
-import { HttpConnectionInfo, HttpSelection, validateHttpConnection, validateEndpoint, matchesImportedHttpOrigin, validateAttachmentRetirement } from './serviceHttp';
+import { HttpConnectionInfo, HttpSelection, validateHttpConnection, validateEndpoint, matchesImportedHttpOrigin, validateAttachmentRetirement,validatePredecessorHttpLookup,type PredecessorHttpLookup,type PredecessorHttpScope } from './serviceHttp';
 import * as path from 'node:path';
 import { runText } from './native';
 import { NativeControlTransport, ServiceClient, ServiceError, record, RecordValue, identifier, count, ProjectConfigurationRequest, validateConfigurationRequest } from './serviceClient';
@@ -10,7 +10,7 @@ import type { LifecycleIntent } from './serviceIntents';
 import { validateRetirementReply } from './runtimeLegacyRetirement';
 import {validateNativeLegacyBinding} from './indexingCatalog';
 import {IssuerRotationAction,IssuerRotationStatus,validateIssuerRotation} from './httpIssuerRotation';
-import { NativeRebuildObservation, validateRebuildObservation } from './runtimeRebuild';
+import { NativeRebuildObservation, validateRebuildObservation, runtimeCleanBreakRequired, RuntimeCleanBreakPolicy, validateCleanBreakPolicy } from './runtimeRebuild';
 
 /** Version direction only, never a protocol/storage compatibility claim.
  * Native authenticated formats and migration capabilities decide whether a
@@ -43,6 +43,7 @@ export interface RuntimeBinding {
     payloadVerified?:boolean;
     /** Complete native observation, kept separate from runtime health/readiness. */
     rebuild?:NativeRebuildObservation;
+    cleanBreak?:RuntimeCleanBreakPolicy;
 }
 export interface LegacyOriginLocator {path:string;format:'codex_toml'|'mcp_servers_json'|'vscode_servers_json'|'open_code_json';server:string;container_path?:string[]}
 export function legacyOriginLocatorIdentity(locator:LegacyOriginLocator):string{
@@ -105,6 +106,8 @@ export interface RuntimeTransitionReview {
     readonly action:'upgrade'|'rollback'|'resume'; readonly installDir:string; readonly controlDir:string;
     readonly observedActive:string; readonly expectedActive:string; readonly target:string; readonly version:string;
     readonly rebuildIndexes?:boolean;
+    readonly cleanBreak?:boolean;
+    readonly cleanBreakPolicy?:RuntimeCleanBreakPolicy;
 }
 export interface ProjectRegistrationReview {
     readonly installDir:string; readonly controlDir:string; readonly runtimeSha256:string;
@@ -416,13 +419,14 @@ export class RuntimeHost {
                     await this.invoke(bundle.main,['runtime','activate','--install-dir',installDir,'--runtime-sha256',bundle.digest],180000);
                 }
                 if(selection?.active&&runtimeVersion(record(inspected?.approval).version)!==this.version)throw new ServiceError('explicit_runtime_upgrade_or_matching_extension_required');
+                if(selection?.active&&runtimeCleanBreakRequired(runtimeVersion(record(inspected?.approval).version),this.version,inspected?.clean_break))throw new ServiceError('clean_break_required_before_connection');
                 if(!explicitStart&&record(inspected?.lifecycle??{}).explicitly_stopped===true)throw new ServiceError('service_explicitly_stopped');
                 await this.invoke(bundle.main,['runtime',explicitStart?'start':'ensure','--install-dir',installDir],180000);
                 if(managed)await this.invoke(bundle.main,['runtime','prepare-client','--install-dir',installDir],180000);
                 const inspection=await this.invoke(bundle.main,['runtime','inspect','--install-dir',installDir]);
                 return this.binding(inspection,installDir);
             }catch(error){
-                if(error instanceof ServiceError&&['runtime_client_no_longer_authorized','managed_runtime_policy_mismatch','managed_runtime_state_mismatch','service_explicitly_stopped','selected_runtime_payload_unverified','explicit_runtime_upgrade_or_matching_extension_required'].includes(error.code))throw error;
+                if(error instanceof ServiceError&&['runtime_client_no_longer_authorized','managed_runtime_policy_mismatch','managed_runtime_state_mismatch','service_explicitly_stopped','selected_runtime_payload_unverified','explicit_runtime_upgrade_or_matching_extension_required','clean_break_required_before_connection'].includes(error.code))throw error;
                 lastError=error;if(attempt<2)await new Promise(resolve=>setTimeout(resolve,1000*(attempt+1)));
             }
         }
@@ -440,7 +444,8 @@ export class RuntimeHost {
             lifecycle:managed?.lifecycle==='external'?'external':managed?'user-on-demand':'on-demand',
             verificationBasis:typeof approval.verification_basis==='string'?approval.verification_basis:'unknown',
             payloadVerified:inspection.payload_verified!==false&&inspection.metadata_only!==true,
-            ...(inspection.rebuild!==undefined&&inspection.rebuild!==null?{rebuild:validateRebuildObservation(inspection.rebuild)}:{})};
+            ...(inspection.rebuild!==undefined&&inspection.rebuild!==null?{rebuild:validateRebuildObservation(inspection.rebuild)}:{}),
+            ...(inspection.clean_break!==undefined&&inspection.clean_break!==null?{cleanBreak:validateCleanBreakPolicy(inspection.clean_break)}:{})};
     }
     async retirePrevious(binding:RuntimeBinding):Promise<RecordValue|undefined>{
         this.active();
@@ -456,9 +461,9 @@ export class RuntimeHost {
         return result;
     }
     /** Read-only native proof of this installation's exact legacy command lineage. */
-    async inspectLegacyLaunchers(binding:RuntimeBinding):Promise<RecordValue>{
+    async inspectLegacyLaunchers(binding:RuntimeBinding,purpose?:'predecessor-cleanup'):Promise<RecordValue>{
         this.active();if(binding.payloadVerified===false)throw new ServiceError('selected_runtime_payload_unverified');
-        const bundle=await this.verified(),result=await this.invoke(bundle.main,['runtime','inspect-legacy-launchers','--install-dir',binding.installDir,'--expected-active',binding.runtimeSha256],60000);
+        const bundle=await this.verified(),result=await this.invoke(bundle.main,['runtime','inspect-legacy-launchers','--install-dir',binding.installDir,'--expected-active',binding.runtimeSha256,...(purpose?['--purpose',purpose]:[])],60000);
         if(result.schema!==1||result.active!==binding.runtimeSha256)throw new ServiceError('legacy_launcher_inspection_unconfirmed',false,result);
         for(const field of ['launcher','universal_launcher']){const item=result[field];if(item===null)continue;const value=record(item);safePath(value.path);identifier(value.sha256,32);}
         if(result.legacy_runtime_images!==undefined){if(!Array.isArray(result.legacy_runtime_images)||result.legacy_runtime_images.length>20)throw new ServiceError('legacy_launcher_inspection_unconfirmed',false,result);for(const item of result.legacy_runtime_images){const value=record(item);safePath(value.path);identifier(value.sha256,32);identifier(value.runtime_sha256,32);if(value.runtime_sha256===binding.runtimeSha256||path.relative(process.platform==='win32'?path.toNamespacedPath(String(value.path)).toLowerCase():String(value.path),process.platform==='win32'?path.toNamespacedPath(binding.executable).toLowerCase():binding.executable)==='')throw new ServiceError('legacy_launcher_inspection_unconfirmed',false,result);}}
@@ -610,6 +615,7 @@ export class RuntimeHost {
         this.active();
         if(binding.version!==this.version)throw new ServiceError('service_runtime_version_mismatch');
         if(binding.payloadVerified===false)throw new ServiceError('selected_runtime_payload_unverified');
+        if(runtimeCleanBreakRequired(binding.version,this.version,binding.cleanBreak))throw new ServiceError('clean_break_required_before_connection');
         return new ServiceClient(new NativeControlTransport(binding.executable,['service','console','--runtime-dir',binding.controlDir,
             '--runtime-sha256',binding.runtimeSha256],timeout));
     }
@@ -700,12 +706,14 @@ export class RuntimeHost {
      * listener and never execute this native command. Native validates the input
      * file's owner-private ACL and the live selected grant before returning refs. */
     async httpConnection(binding:RuntimeBinding,selection:HttpSelection,selectionFile:string,connectionId:string,client:string,explorerDescriptor?:string):Promise<HttpConnectionInfo>{
+        if(runtimeCleanBreakRequired(binding.version,this.version,binding.cleanBreak))throw new ServiceError('clean_break_required_before_connection');
         this.active();if(!/^[a-f0-9]{32}$/.test(connectionId)||!/^[A-Za-z0-9._-]{1,64}$/.test(client))throw new ServiceError('invalid_http_enrollment_identity');
         safePath(selectionFile);const bundle=await this.verified();
         const response=await this.invoke(bundle.main,['runtime','http-connection','--install-dir',binding.installDir,'--selection-file',selectionFile,'--connection-id',connectionId,'--client',client,...(explorerDescriptor?['--explorer-descriptor',safePath(explorerDescriptor)]:[])],60000);
         this.active();const info=validateHttpConnection(response,selection,path.join(binding.controlDir,'http-1'));if(info.connection_id!==connectionId)throw new ServiceError('crossed_http_connection_identity');return info;
     }
     async httpLegacyConnection(binding:RuntimeBinding,registration:{binding:string;root:string;data_root:string;collection:string},registrationFile:string,receipt:string,connectionId:string,client:string,explorerDescriptor?:string,originSha256?:string,reattachConnectionId?:string):Promise<HttpConnectionInfo>{
+        if(runtimeCleanBreakRequired(binding.version,this.version,binding.cleanBreak))throw new ServiceError('clean_break_does_not_migrate_legacy_grants');
         this.active();if(originSha256)identifier(originSha256,32);if(reattachConnectionId)identifier(reattachConnectionId,16);if(!/^[a-f0-9]{32}$/.test(connectionId)||!/^[a-f0-9]{64}$/.test(receipt)||!/^[A-Za-z0-9._-]{1,64}$/.test(client))throw new ServiceError('invalid_http_enrollment_identity');
         safePath(registrationFile);const bundle=await this.verified();
         const response=await this.invoke(bundle.main,['runtime','http-legacy-connection','--install-dir',binding.installDir,'--registration-file',registrationFile,'--configuration-receipt',receipt,...(originSha256?['--origin-sha256',originSha256]:[]),'--connection-id',connectionId,'--client',client,...(explorerDescriptor?['--explorer-descriptor',safePath(explorerDescriptor)]:[]),...(reattachConnectionId?['--reattach-connection-id',reattachConnectionId]:[])],60000);this.active();
@@ -716,6 +724,7 @@ export class RuntimeHost {
         return info;
     }
     async httpLegacyUnionConnection(binding:RuntimeBinding,registrations:{registration:{binding:string;root:string;data_root:string;collection:string};configuration_receipt:string}[],file:string,connectionId:string,client:string,explorerDescriptor?:string):Promise<HttpConnectionInfo>{
+        if(runtimeCleanBreakRequired(binding.version,this.version,binding.cleanBreak))throw new ServiceError('clean_break_does_not_migrate_legacy_grants');
         this.active();if(registrations.length<2||registrations.length>32||!/^[a-f0-9]{32}$/.test(connectionId)||!/^[A-Za-z0-9._-]{1,64}$/.test(client))throw new ServiceError('invalid_http_enrollment_identity');
         safePath(file);const bundle=await this.verified();
         const response=await this.invoke(bundle.main,['runtime','http-legacy-union-connection','--install-dir',binding.installDir,'--registrations-file',file,'--connection-id',connectionId,'--client',client,...(explorerDescriptor?['--explorer-descriptor',safePath(explorerDescriptor)]:[])],60000);this.active();
@@ -725,6 +734,12 @@ export class RuntimeHost {
     }
     /** Typed ownership lookup never issues/renews credentials. Absence is valid
      * only when the native private ledger proves this installation never owned it. */
+    async lookupPredecessorHttpOwnership(binding:RuntimeBinding,connectionId:string,scope:PredecessorHttpScope):Promise<PredecessorHttpLookup>{
+        this.active();identifier(connectionId,16);identifier(scope.predecessor,32);if(scope.operationId!==undefined)identifier(scope.operationId,16);
+        const bundle=await this.verified();
+        const result=await this.invoke(bundle.main,['runtime','lookup-http-connection','--install-dir',binding.installDir,'--expected-active',binding.runtimeSha256,'--connection-id',connectionId,'--purpose','predecessor-cleanup','--predecessor',scope.predecessor],60000);
+        try{return validatePredecessorHttpLookup(result,binding.runtimeSha256,connectionId,scope);}catch{throw new ServiceError('predecessor_http_ownership_unconfirmed',false,result);}
+    }
     async lookupHttpConnection(binding:RuntimeBinding,connectionId:string,reattachment?:{connection:HttpConnectionInfo;client:string}):Promise<RecordValue>{
         this.active();identifier(connectionId,16);const bundle=await this.verified();
         const result=await this.invoke(bundle.main,['runtime','lookup-http-connection','--install-dir',binding.installDir,'--expected-active',binding.runtimeSha256,'--connection-id',connectionId],60000);
@@ -830,8 +845,14 @@ export class RuntimeHost {
         if(current.payloadVerified===false)throw new ServiceError('repair_selected_payload_before_activation');
         if(current.runtimeSha256!==binding.runtimeSha256||path.relative(current.controlDir,binding.controlDir)!=='')throw new ServiceError('runtime_selection_changed_review_again');
         const selection=record(observed.inspection.selection),pending=observed.diagnosis?.pending_activation;
+        const cleanBreak=runtimeCleanBreakRequired(current.version,this.version,current.cleanBreak??observed.diagnosis?.clean_break);
+        if(cleanBreak&&action==='rollback')throw new ServiceError('clean_break_required_before_runtime_rollback');
         let expectedActive=current.runtimeSha256,target:string,version=this.version;
-        if(action==='resume'){
+        if(cleanBreak){
+            // Native reset owns any predecessor activation intent. No old
+            // candidate or legacy checkpoint receives execution authority here.
+            target=observed.bundle.digest;
+        }else if(action==='resume'){
             const saved=record(pending);expectedActive=identifier(record(saved.prior).active,32);target=identifier(saved.candidate,32);
             const [savedInstall,installed,savedControl,control]=await Promise.all([
                 fs.realpath(safePath(saved.install)),fs.realpath(binding.installDir),fs.realpath(safePath(saved.control)),fs.realpath(binding.controlDir),
@@ -844,7 +865,7 @@ export class RuntimeHost {
             target=action==='upgrade'?observed.bundle.digest:identifier(selection.previous,32);
             if(target===current.runtimeSha256)throw new ServiceError('runtime_already_selected');
         }
-        if(action!=='upgrade'){
+        if(action!=='upgrade'&&!cleanBreak){
             const candidate=await this.invoke(observed.bundle.main,['runtime','inspect-candidate','--install-dir',binding.installDir,'--runtime-sha256',target]);
             const approval=record(candidate.approval);
             version=runtimeVersion(approval.version);
@@ -857,7 +878,7 @@ export class RuntimeHost {
                 ||!['trusted_distribution','organization_digest'].includes(String(approval.verification_basis)))throw new ServiceError('candidate_not_compatible_with_this_extension');
         }
         const review:RuntimeTransitionReview=Object.freeze({action,installDir:binding.installDir,controlDir:binding.controlDir,
-            observedActive:current.runtimeSha256,expectedActive,target,version,...(rebuildIndexes?{rebuildIndexes:true}:{})});
+            observedActive:current.runtimeSha256,expectedActive,target,version,...(cleanBreak?{cleanBreak:true,...(current.cleanBreak?{cleanBreakPolicy:structuredClone(current.cleanBreak)}:{})}:rebuildIndexes?{rebuildIndexes:true}:{})});
         if(!superseding)this.transitionReviews.add(review);return review;
     }
     async transition(binding:RuntimeBinding,review:RuntimeTransitionReview,progress?:(message:string,stage:'staging'|'activating')=>void):Promise<RecordValue>{
@@ -866,19 +887,20 @@ export class RuntimeHost {
             ||review.observedActive!==binding.runtimeSha256)throw new ServiceError('runtime_transition_not_reviewed');
         if(binding.lifecycle!=='on-demand'||this.options.managed)throw new ServiceError('runtime_payload_managed_externally');
         const bundle=await this.verified();
-        if(review.action==='upgrade'){
+        if(review.action==='upgrade'||review.cleanBreak){
             if(bundle.digest!==review.target)throw new ServiceError('reviewed_distribution_changed');
             progress?.('Staging verified runtime files…','staging');
             await this.invoke(bundle.main,['runtime','stage','--source',bundle.source,'--install-dir',binding.installDir,
                 '--approved-sha256',bundle.digest,'--verification-basis','trusted-distribution','--channel',this.options.channel],180000);
         }
-        progress?.(review.rebuildIndexes?'Preserving previous AIRK state and rebuilding indexes from saved sources…':'Stopping previous AIRK processes and activating runtime…','activating');
+        progress?.(review.cleanBreak?'Preparing the clean installation and fresh indexes from saved sources…':review.rebuildIndexes?'Checking rebuild prerequisites and activating the selected runtime…':'Checking upgrade prerequisites and activating the selected runtime…','activating');
         const selected=await this.invoke(bundle.main,['runtime','activate','--install-dir',binding.installDir,
             '--runtime-sha256',review.target,'--expected-active',review.expectedActive,...(review.rebuildIndexes?['--rebuild-indexes']:[])],180000);
         if(selected.schema!==1||selected.active!==review.target)throw new ServiceError('crossed_runtime_activation_receipt',true);
         this.transitionReviews.delete(review);return selected;
     }
     async supersedePending(binding:RuntimeBinding,diagnosis:RecordValue|undefined):Promise<boolean>{
+        if(runtimeCleanBreakRequired(binding.version,this.version,binding.cleanBreak??diagnosis?.clean_break))return false;
         if(!diagnosis?.pending_activation)return false;
         const saved=record(diagnosis?.pending_activation);
         if(!saved.candidate)return false;

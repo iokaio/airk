@@ -1306,6 +1306,9 @@ impl Management {
                 let mut next_catalog_resume=std::time::Instant::now();
                 let split_engine = crate::runtime_pair::engine_identity();
                 let mut split_cursor = None;
+                let mut clean_break = crate::runtime_install::clean_break_background::Continuation::new(
+                    std::env::current_exe().ok(), std::time::Instant::now());
+                let mut clean_break_failed = false;
                 loop {
                     if recovery_fenced && crate::service_runtime::checkpoint::admission_closed(&root).unwrap_or(true)
                         || checkpoint_freeze.load(Ordering::Acquire)
@@ -1413,6 +1416,18 @@ impl Management {
                                 missing_work.push_back(work);
                             }
                         }
+                        // No registry transaction/borrow survives this point.
+                        // The existing recovery/checkpoint early continue above
+                        // suppresses reset mutations while admission is fenced.
+                        let cleanup = registry.as_ref()
+                            .map_err(|_| anyhow::anyhow!("clean-break registry owner unavailable"))
+                            .and_then(|registry| clean_break.tick(
+                                &_ownership, registry.incarnation()?, std::time::Instant::now()));
+                        if clean_break.pending() { runnable_plans.store(true, Ordering::Release); }
+                        if cleanup.is_err() && !clean_break_failed {
+                            log.record(airk_core::service_logs::LogKind::ControlFailed, None, None);
+                        }
+                        clean_break_failed = cleanup.is_err();
                     }
                     let envelope = match receiver.recv_timeout(
                         next_tick.saturating_duration_since(std::time::Instant::now()),

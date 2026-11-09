@@ -102,6 +102,7 @@ mod configuration;
 pub mod data_relocation;
 #[path = "service_lifecycle.rs"]
 mod lifecycle;
+pub use lifecycle::ExistingLifecycleLedger;
 #[path = "service_project_removal.rs"]
 mod project_removal;
 #[path = "service_unregistration.rs"]
@@ -112,6 +113,19 @@ pub struct ServiceRegistry {
     connection: Connection,
     registration_state: bool,
     watch_traversal_state: bool,
+}
+
+#[derive(Clone, Copy)]
+enum ExistingWrite {
+    Maintenance(Incarnation),
+    Lifecycle(Incarnation),
+}
+impl ExistingWrite {
+    fn namespace(self) -> Incarnation {
+        match self {
+            Self::Maintenance(namespace) | Self::Lifecycle(namespace) => namespace,
+        }
+    }
 }
 
 impl ServiceRegistry {
@@ -454,19 +468,23 @@ impl ServiceRegistry {
         expected_namespace: Incarnation,
         action: impl FnOnce(&mut Self) -> Result<T>,
     ) -> Result<T> {
-        let mut registry = Self::open_existing(lease.root(), None, Some(expected_namespace))?;
+        let mut registry = Self::open_existing(
+            lease.root(),
+            None,
+            Some(ExistingWrite::Maintenance(expected_namespace)),
+        )?;
         action(&mut registry)
     }
 
     fn open_existing(
         root: &Path,
         deadline: Option<std::time::Instant>,
-        writable_namespace: Option<Incarnation>,
+        writable: Option<ExistingWrite>,
     ) -> Result<Self> {
         scope::scope_remaining(deadline)?;
         let root = root.canonicalize()?;
         let namespace = retained_namespace(&root)?;
-        if let Some(expected) = writable_namespace {
+        if let Some(expected) = writable.map(ExistingWrite::namespace) {
             ensure!(
                 namespace == expected,
                 "maintenance registry namespace changed"
@@ -483,14 +501,14 @@ impl ServiceRegistry {
         }
         #[cfg(test)]
         scope::record_saved_open();
-        let flags = if writable_namespace.is_some() {
+        let flags = if writable.is_some() {
             rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
         } else {
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
         };
         let connection = Connection::open_with_flags(&path, flags)?;
         connection.busy_timeout(scope::scope_remaining(deadline)?)?;
-        if writable_namespace.is_none() {
+        if writable.is_none() {
             connection.execute_batch("PRAGMA query_only=ON;")?;
         }
         connection.execute_batch("PRAGMA cache_size=-8192;")?;
@@ -504,9 +522,16 @@ impl ServiceRegistry {
             "unsupported saved service registry format"
         );
         ensure!(
-            writable_namespace.is_none() || matches!(version, 12 | 13),
-            "maintenance requires an existing activated catalog registry"
+            match writable {
+                None => true,
+                Some(ExistingWrite::Maintenance(_)) => matches!(version, 12 | 13),
+                Some(ExistingWrite::Lifecycle(_)) => matches!(version, 11..=13),
+            },
+            "unsupported_existing_registry_write: lifecycle requires schema 11..13; maintenance requires an activated catalog"
         );
+        if version == 11 && matches!(writable, Some(ExistingWrite::Lifecycle(_))) {
+            catalog::validate_shape(&connection, 11)?;
+        }
         if matches!(version, 12 | 13) {
             catalog::validate_existing(&connection)?;
             ensure!(

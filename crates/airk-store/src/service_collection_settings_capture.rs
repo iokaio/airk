@@ -63,6 +63,82 @@ impl CapturedCollectionSettings {
 }
 
 impl Collection {
+    /// Read known saved preference envelopes for a clean rebuild without
+    /// opening retained publications or requiring their historical format.
+    /// Unknown settings are deliberately outside this reset preference catalog.
+    pub fn capture_clean_break_preferences(
+        &self,
+        include_legacy_roots: bool,
+    ) -> Result<CapturedCollectionSettings> {
+        let selected = self.select_existing_locked()?;
+        let _writer = selected.store.existing_writer_exclusion()?;
+        let incarnation = selected
+            .store
+            .service_incarnation()?
+            .context("saved preferences require an owned service incarnation")?;
+        let directory =
+            crate::service::registry::catalog::setup::storage::SetupDirectory::open_canonical(
+                selected.store.directory(),
+            )?;
+        let mut files = Vec::with_capacity(SETTINGS.len());
+        let mut total = 0usize;
+        for name in SETTINGS {
+            if matches!(name, "compression-policy.json" | "scan-limits.json")
+                || name == "roots.json" && !include_legacy_roots
+            {
+                files.push((name, None));
+                continue;
+            }
+            let bytes = match directory.read_file(std::ffi::OsStr::new(name), MAX_SETTING_BYTES) {
+                Ok(bytes) => Some(bytes),
+                Err(error)
+                    if error
+                        .downcast_ref::<std::io::Error>()
+                        .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
+                {
+                    None
+                }
+                Err(error) => return Err(error),
+            };
+            if let Some(bytes) = &bytes {
+                total = total
+                    .checked_add(bytes.len())
+                    .context("saved preferences size overflow")?;
+                ensure!(
+                    total <= MAX_SETTINGS_BYTES as usize,
+                    "saved preferences exceed byte bound"
+                );
+                validate_envelope(
+                    name,
+                    bytes,
+                    &self.owner.root,
+                    selected.store.collection_id()?,
+                )?;
+            }
+            files.push((name, bytes));
+        }
+        let digest = framed_digest(
+            b"airk/clean-break-preferences/1",
+            &[&serde_json::to_vec(&(
+                self.binding,
+                incarnation,
+                &self.owner.root,
+                &self.owner.collection,
+                &files,
+            ))?],
+        );
+        Ok(CapturedCollectionSettings {
+            owner_root: self.owner.root.clone(),
+            collection: self.owner.collection.clone(),
+            owner: self.binding,
+            incarnation,
+            files,
+            applied: None,
+            saved_search_policy: false,
+            digest,
+        })
+    }
+
     /// Capture only the existing selected incarnation, without creating a
     /// writer marker, policy, publication or source read. Failure to authenticate
     /// any supported file remains a failure, never an absent/default setting.

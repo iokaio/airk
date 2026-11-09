@@ -6,7 +6,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import {rootCertificates} from 'node:tls';
 import {createHash,X509Certificate} from 'node:crypto';
-import {ClientTrustPublicationError,IssuerRotationRecord,IssuerRotationStatus,updateOwnedIssuerBundles,validateIssuerRotation} from '../httpIssuerRotation';
+import {ClientTrustPublicationError,IssuerRotationRecord,IssuerRotationStatus,publishOwnedIssuerBundle,updateOwnedIssuerBundles,validateIssuerRotation} from '../httpIssuerRotation';
 import {RuntimeHost} from '../serviceBootstrap';
 import {ServiceError} from '../serviceClient';
 import {ca} from './fixtures/httpTlsFixture';
@@ -24,6 +24,34 @@ async function fixture(){
     const collection={persistent:true,get:(key:string)=>values.get(key),replace:(key:string,value:string)=>{writes.push(key);values.set(key,{type:1,value});}};
     return {root,control,directory,record,status,file,bytes,values,writes,collection,storage:path.dirname(directory),async close(){await fs.rm(root,{recursive:true,force:true});}};
 }
+
+test('exclusive publication keeps the original handle live until the awaited creator observation finishes',async context=>{
+    const f=await fixture(),promises=require('node:fs/promises'),open=promises.open;
+    let original:any,closed=false,observed:Promise<void>|undefined;
+    context.mock.method(promises,'open',async(filename:string,...args:unknown[])=>{
+        const handle=await open(filename,...args);
+        if(path.basename(filename)==='bundle.pem'&&args[0]==='wx'){
+            original=handle;const close=handle.close.bind(handle);
+            context.mock.method(handle,'close',async()=>{closed=true;return close();});
+        }
+        return handle;
+    });
+    try{
+        await publishOwnedIssuerBundle(f.directory,Buffer.from(nextCa),()=>{},identity=>{
+            observed=(async()=>{
+                assert.equal(closed,false,'the actual original handle must still prevent creator inode reuse');
+                const before=await original.stat({bigint:true});assert.equal(identity.dev,before.dev.toString());assert.equal(identity.ino,before.ino.toString());
+                await new Promise<void>(resolve=>setImmediate(resolve));
+                assert.equal(closed,false,'the publisher must await asynchronous caller ownership validation');
+                const after=await original.stat({bigint:true});assert.equal(after.ino.toString(),identity.ino);
+            })();
+            // Observe a rejection even against the old non-awaited API, then
+            // explicitly assert it after publication for one deterministic test.
+            void observed.catch(()=>{});return observed;
+        });
+        assert.ok(observed);await observed;assert.equal(closed,true,'the original handle closes after the observer settles');
+    }finally{await f.close();}
+});
 
 test('rotation receipts retain complete native data and reject crossed owners, generations and transactions',async()=>{
     const f=await fixture();try{

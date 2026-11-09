@@ -39,6 +39,7 @@ fn activate_genesis(root: &Path, intent: &Intent, successor: bool) -> Result<()>
         .as_ref()
         .is_some_and(|receipt| receipt.stage == GenesisStage::Settled)
     {
+        state_contract::require_initialized(root, &intent.control)?;
         return Ok(());
     }
     let operation = saved
@@ -92,6 +93,7 @@ fn activate_genesis(root: &Path, intent: &Intent, successor: bool) -> Result<()>
         receipt.authority_v1.is_some(),
         "native genesis qualification missing"
     );
+    state_contract::initialize(root, &owner)?;
     owner.settle_authority_v1()?;
     Ok(())
 }
@@ -138,6 +140,7 @@ pub(in crate::runtime_install) fn activate_managed(
         receipt.authority_v1.is_some(),
         "managed native qualification missing"
     );
+    state_contract::initialize(authority.root, owner)?;
     owner.settle_authority_v1()?;
     Ok(())
 }

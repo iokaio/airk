@@ -91,7 +91,10 @@ async function recoverBundleLink(directory:string,final:string,output:Buffer):Pr
     }
     if(!recovered)throw Error('unowned_http_trust_publication');
 }
-export async function publishOwnedIssuerBundle(directory:string,output:Buffer,current:()=>void):Promise<string>{
+/** onCreated runs while the original created handle is still live, and is
+ * awaited before that handle closes. Callers must validate the final path and
+ * retain proof inside this observation. Reuse/recovery never emits it. */
+export async function publishOwnedIssuerBundle(directory:string,output:Buffer,current:()=>void,onCreated?:(identity:{dev:string;ino:string})=>void|Promise<void>):Promise<string>{
     if(output.length>2097152)throw Error('http_client_trust_bundle_limit');
     if(!samePath(await fs.realpath(directory),directory)||(await fs.lstat(directory)).isSymbolicLink())throw Error('unsafe_http_trust_directory');current();
     const final=path.join(directory,sha(output)+'.pem');
@@ -103,22 +106,27 @@ export async function publishOwnedIssuerBundle(directory:string,output:Buffer,cu
     };
     if(await existing()){current();return final;}
     const stage=await fs.mkdtemp(path.join(directory,stagePrefix)),temporary=path.join(stage,'bundle.pem'),marker=path.join(stage,'owner.json');
-    let identity:{dev:number;ino:number}|undefined,receipt:Buffer|undefined;
+    let identity:{dev:number;ino:number}|undefined,receipt:Buffer|undefined,created=false,createdIdentity:{dev:string;ino:string}|undefined;
+    let handle:Awaited<ReturnType<typeof fs.open>>|undefined;
     try{
-        const handle=await fs.open(temporary,'wx',0o600);
-        try{identity=await handle.stat();await handle.writeFile(output);await handle.sync();}finally{await handle.close();}
-        if(!output.equals(await httpPublicTrustFile(temporary)))throw Error('changed_http_trust_stage_body');
-        receipt=Buffer.from(JSON.stringify({schema:1,stage:path.basename(stage),sha256:sha(output),size:output.length,dev:identity.dev,ino:identity.ino}));
-        const owner=await fs.open(marker,'wx',0o600);try{await owner.writeFile(receipt);await owner.sync();}finally{await owner.close();}
-        await syncBundleDirectory(stage);await syncBundleDirectory(directory);
-        current();try{await fs.link(temporary,final);}catch(error){if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error;await existing();}
-    }finally{
-        if(identity){
-            if(receipt)await cleanBundleStage(stage,identity,receipt);
-            else{const stat=await fs.lstat(temporary);if(!sameIdentity(stat,identity)||!stat.isFile()||stat.isSymbolicLink()||stat.nlink!==1)throw Error('changed_http_trust_stage');await fs.unlink(temporary);await fs.rmdir(stage);}
-        }else await fs.rmdir(stage);
-    }
-    if(!await existing())throw Error('missing_http_trust_publication');current();return final;
+        try{
+            handle=await fs.open(temporary,'wx',0o600);
+            identity=await handle.stat();
+            const original=await handle.stat({bigint:true});createdIdentity={dev:original.dev.toString(),ino:original.ino.toString()};
+            await handle.writeFile(output);await handle.sync();
+            if(!output.equals(await httpPublicTrustFile(temporary)))throw Error('changed_http_trust_stage_body');
+            receipt=Buffer.from(JSON.stringify({schema:1,stage:path.basename(stage),sha256:sha(output),size:output.length,dev:identity.dev,ino:identity.ino}));
+            const owner=await fs.open(marker,'wx',0o600);try{await owner.writeFile(receipt);await owner.sync();}finally{await owner.close();}
+            await syncBundleDirectory(stage);await syncBundleDirectory(directory);
+            current();try{await fs.link(temporary,final);created=true;}catch(error){if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error;await existing();}
+        }finally{
+            if(identity){
+                if(receipt)await cleanBundleStage(stage,identity,receipt);
+                else{const stat=await fs.lstat(temporary);if(!sameIdentity(stat,identity)||!stat.isFile()||stat.isSymbolicLink()||stat.nlink!==1)throw Error('changed_http_trust_stage');await fs.unlink(temporary);await fs.rmdir(stage);}
+            }else await fs.rmdir(stage);
+        }
+        if(!await existing())throw Error('missing_http_trust_publication');current();if(created&&createdIdentity)await onCreated?.(createdIdentity);return final;
+    }finally{await handle?.close();}
 }
 /** Changes only this window's exact extension-owned immutable bundle references.
  * Original enterprise/user files, unrelated certificates and config scopes stay

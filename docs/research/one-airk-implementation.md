@@ -3054,3 +3054,2715 @@ signing and release workflow dispatch remain outside that authorization.
 - Existing native read execution lacks a propagated original deadline and consumes
   one-shot handlers. The 50 ms retry requires a canonical read-attempt context;
   an outer replay or snapshot-only workaround would not satisfy the plan.
+
+
+## 8 November 2026: accumulated completed history blocks r28 upgrade
+
+The user reported `checkpoint_complete_roster_limit: serialized snapshot` when
+installing the r28 `airk-1.8.14-win32-x64.vsix` over running **1.8.11** (corrected
+from the initially recalled 1.8.12). Read-only aggregate inspection of the installed
+contract-12 registry found **991 succeeded jobs, 991 requests, no unfinished jobs**.
+No installed records or configuration were modified. AIRK MCP was unavailable in
+this session; deferred discovery exposed no AIRK tools and workspace config disables
+that server. Investigation used verified live source.
+
+Root cause: the checkpoint's 448 KiB packet duplicates completed job/request
+history already bound by complete type-tagged table commitments. The previous
+capacity fixture covered catalog receipts only, not service job/request history.
+The new canonical 1,024-job/4,096-request regression selected **1 test** and failed
+with the exact serialized-snapshot error before the fix (0 passed, 1 failed,
+851 filtered; 0.43 s execution, 61 s compilation). Cargo used
+`test -p airk-store --no-default-features --locked --timings --target-dir
+artifacts/v190/p10-target completed_job_and_request_capacity_retains_full_history_without_expansion
+-- --nocapture`, incremental on; report
+`artifacts/v190/p10-target/cargo-timings/cargo-timing-20261109T015919086Z-c40827fc20672f35.html`.
+
+The source correction emits schema-2 checkpoints with expanded pending/running
+jobs and their requests only. Every history row is still counted, parsed and
+validated, and complete table commitments cover terminal history. Limits are
+unchanged and no history is deleted. Maintenance now compares complete job,
+request and configuration table commitments, including presence and schema.
+Existing immutable schema-1 manifests, native packets and maintenance baselines
+are reobserved with their original encoding. An older checkpoint-capable 1.8.14
+predecessor still runs its own capture and may refuse oversized state; this is
+not qualified as a repair for that different upgrade path.
+
+The combined Store/CLI diff received a separate agent review with no blocking
+finding; the primary reviewed the CLI adaptation. Added coverage includes legacy
+manifest recapture/verification and maintenance history commitments. The no-feature
+scoped Clippy attempt failed on unchanged `http_gateway_tests::live_https_status`
+being unused. The shipping `local-inference` scoped Clippy passed in **18.248 s**:
+`completion-checkpoint-history-clippy-r1.json` and retained Cargo timing report;
+Store/CLI all-targets, persistent `artifacts/v190/p10-target`, incremental on.
+Final scoped regression results and replacement candidate receipts follow below.
+
+
+Shipping-configuration scoped Nextest passed; retained receipt
+`completion-checkpoint-history-native-r1.json`, JUnit and complete log record
+selected counts and results. The exact selection was
+`cargo nextest run --profile ci -p airk-store -p airk-cli --no-default-features
+--features local-inference --locked --timings -E
+'test(checkpoint) | test(runtime_legacy_maintenance)'` through the existing
+qualification runner; 71.326 s wrapper, consumed native/harness inputs unchanged.
+Repository checks passed for 2,123 public files; synchronized version check passed
+at 1.8.14. Full workspace tests, cross-platform and installed acceptance have not
+been rerun for this local correction.
+
+**Declared r29 replacement T2 ladder:** after reviewed scoped checks, freeze
+native, extension, harness and fixture groups separately using the existing
+`completion-freeze-r27.py` owner into `completion-freeze-r29.json`. Run, in order,
+through `run-qualification-gate.py`, stopping on the first failure:
+
+1. `python scripts/build-service-runtime.py --destination artifacts/local/one-airk-1.8.14/windows-debug-r29/runtime --profile debug`
+2. `python scripts/package-native.py --target x86_64-pc-windows-msvc --runtime-dir artifacts/local/one-airk-1.8.14/windows-debug-r29/runtime --output artifacts/local/one-airk-1.8.14/windows-debug-native-r29`
+3. `python scripts/package-extension.py --target x86_64-pc-windows-msvc --native-dir artifacts/local/one-airk-1.8.14/windows-debug-native-r29/publish --output artifacts/local/one-airk-1.8.14/windows-debug-vsix-r29`
+
+Expect a fresh source-sealed debug runtime and package-verified manual VSIX with
+unchanged consumed inputs. Abort on any failed receipt, source mismatch or package
+verification failure. Keep r28 and earlier evidence. This produces a replacement
+manual candidate; it does not install it or claim installed/platform qualification.
+
+R29 runtime T2 passed: `completion-runtime-r29-r1.json`, complete log and retained
+Cargo timing HTML. Fresh debug runtime built in 69.958 s wrapper (27.15 s Cargo),
+existing persistent P10 target, incremental on; native, scripts and shared test
+inputs unchanged. Selected native regression count was **53 passed, 2,047 excluded**,
+4.918 s execution. Native/extension/harness/fixture freeze identities are retained
+separately in `completion-freeze-r29.json`; compiled source `8c5ebb5c…`, 1,137 files.
+
+R29 native packaging T2 passed in **17.184 s**: `completion-native-package-r29-r1.json`
+and log; verified original runtime, unchanged native/harness inputs. Freeze recheck
+passed for all four original groups. Before extension packaging, only the three
+README descriptions were updated to identify the built r29 correction and scoped
+results without claiming installed qualification. No native input changed. Capture
+a separate `completion-freeze-r29-package.json` for this intentional extension/docs
+identity update, then run the already declared extension-package command.
+
+R29 extension packaging T2 passed in **20.357 s**:
+`completion-vsix-package-r29-r1.json` and complete log. The final four-group freeze
+verification passed against `completion-freeze-r29-package.json`; native source,
+harness and fixtures retained their original identities and the README-only
+extension identity update was frozen before packaging. VSIX size **86,427,333 bytes**,
+SHA-256 `a0ed95d3ba0d008c75cd3bfcb89fb00e9063a1cbb150258ccb2a144fe562cc41`. The release record and installation guide now report these collected
+results; their edits follow the completed freeze check. No installed repair,
+commit, push, PR or publication was performed. Full workspace tests, installed
+acceptance and other-host validation remain unrun for this correction. The
+lightweight no-feature Clippy unused-helper failure remains recorded above.
+
+
+## 1.8.15 local retry candidate: live legacy preflight lock (8 November 2026)
+
+The user reported a second installed 1.8.11 → 1.8.14 upgrade refusal after
+restarting VS Code: `service incarnation selection is busy` at `manifest.lock`.
+The user explicitly requested a fix and a version increment for another attempt.
+Native/extension manifests, both lockfiles and the generated template catalog
+now identify **1.8.15**. Older r28/r29 artifacts retain their original identities.
+
+Source tracing found the legacy preflight's full publication capture before
+predecessor shutdown. It could acquire an exclusive manifest lock while that
+predecessor legitimately held the publication. The fix uses an opaque registry-only
+preflight for capacity and engine/accepted-work checks. Complete capture remains
+after native exclusion; no lock deletion, timeout increase or mutation replay.
+The regression holds a real manifest lock, calls the canonical installer preflight,
+requires complete capture to refuse typed contention, then releases the lock and
+requires complete capture to succeed. History regression also checks that partial
+preflight refuses incompatible accepted work.
+
+Combined changes were reviewed separately by the investigation agent and by the
+primary agent. No blocker was found for the 1.8.11 upgrade path. Review identified
+a separate unqualified newer-CLI/older-checkpoint-capable-service issuer rotation
+schema comparison; activation does not call that rotation path. It remains an
+explicit follow-up, outside this correction.
+
+Initial scoped Clippy failed in the sandbox because the linker could not access
+the established contributor-private temporary directory (27.864 s). A subsequent
+contributor-context run stopped on formatting (7.154 s). After formatting, scoped
+Store/CLI shipping-feature Clippy passed in 67.168 s; its receipt records a concurrent
+test-only edit, so a final unchanged-input check is required. Receipts and Cargo
+timings: `upgrade-lock-r30-clippy-r1.json` through `-r3.json`, under
+`artifacts/local/one-airk-1.8.14/`. Persistent target
+`artifacts/v190/p10-target`, Windows incremental on. The first regression command
+used unsupported `--cargo-timings` and selected no tests; that invocation is a
+failure, retained in `upgrade-lock-r30-native-tests-r1.json`. The corrected command
+uses the earlier recorded `--timings` command and must report its selected count.
+
+Extension compilation and 18 focused upgrade/rebuild/retirement tests passed.
+The two Python release-version/runtime-upgrade modules passed **38 tests**;
+Marketplace output came from mocked fixtures, not publication. Repository checks
+passed for **2,124 public files**. Version agreement passed at **1.8.15**.
+
+Declared T2 candidate ladder, after final scoped checks and frozen input capture:
+freeze native, extension, harness and fixtures separately using
+`completion-freeze-r30.py --output .../completion-freeze-r30.json`. Through the
+existing `run-qualification-gate.py`, run in order:
+
+1. `python scripts/build-service-runtime.py --destination artifacts/local/one-airk-1.8.14/windows-debug-r30/runtime --profile debug`
+2. `python scripts/package-native.py --target x86_64-pc-windows-msvc --runtime-dir artifacts/local/one-airk-1.8.14/windows-debug-r30/runtime --output artifacts/local/one-airk-1.8.14/windows-debug-native-r30`
+3. `python scripts/package-extension.py --target x86_64-pc-windows-msvc --native-dir artifacts/local/one-airk-1.8.14/windows-debug-native-r30/publish --output artifacts/local/one-airk-1.8.14/windows-debug-vsix-r30`
+
+Expect a fresh source-sealed **1.8.15** Windows debug runtime and verified VSIX.
+Stop at the first failed step, changed consumed input or package verification
+failure. Preserve all earlier evidence. This produces a local candidate for the
+user's retry; it does not install it. Full workspace, cross-platform and actual
+installed acceptance remain pending. No commit, push, PR or publication.
+
+
+The first actual selected native run (`upgrade-lock-r30-native-tests-r2.json`)
+completed: **53 passed / 1 failed**, 54 selected, 2,047 excluded; 141.671 s wrapper.
+The new fixture placed source/data below its install/control root and was correctly
+refused by source isolation. This was a test defect, before lock verification.
+The fixture now uses disjoint sibling roots. The live-state preflight phase is
+an explicit helper invoked by the production preflight after approved-target and
+manager checks, so the regression tests that phase without executing an inert
+fixture executable. The full same selection is rerunning; no T2 build has begun.
+
+
+`upgrade-lock-r30-native-tests-r3.json` completed **53 passed / 1 failed**, 54
+selected (48.820 s wrapper). Its fixture had collection owner/manifest metadata
+but lacked the native object gate required by final read-only capture. The
+correction initializes that gate via ordinary `Collection::select` before taking
+the test lock. No production assertion or refusal was weakened. All failures
+and full receipts remain retained; T2 has still not begun.
+
+The full mocked extension suite passed: **1,096 passed / 21 skipped**, 1,117 total,
+22.529 s wrapper, `upgrade-lock-r30-extension-r1.json`. Skipped installed/native
+journeys are not counted as installed acceptance.
+
+
+Final scoped native selection passed **54/54**, 2,047 selection exclusions,
+4.942 s execution / 30.285 s wrapper. Receipt
+`upgrade-lock-r30-native-tests-r4.json`, JUnit and Cargo timing HTML retain the
+unchanged native/script/shared-test inputs. The manifest-lock regression passed.
+The primary agent reviewed the final fixture's ordinary gate initialization and
+production helper call order; no final-capture assertion was weakened.
+
+
+Final formatting and workspace all-target/all-feature Clippy passed with warnings
+denied: `upgrade-lock-r30-workspace-clippy-r1.json`, **48.035 s** wrapper,
+40.43 s Cargo; unchanged native/harness inputs, P10 target and incremental on,
+retained Cargo timing HTML. Compiler descendants exited before build ownership.
+
+The r30 freeze records compiled native source
+`1636720659260b4995d18b2cf51ffee643270bc4e73542bebdf2684a9ce080a9`
+/ 1,137 inputs. Independent group identities: native `039b76af…` / 1,125 files,
+extension `cb5a7e86…` / 391, harness `c84c7c46…` / 269, fixtures `bf8399bd…` / 110.
+Exact hashes are retained in `completion-freeze-r30.json`. The declared runtime,
+native-package, VSIX ladder now starts on these frozen reviewed inputs.
+
+
+R30 fresh debug runtime T2 passed: `upgrade-lock-r30-runtime-r1.json`, complete
+log and retained Cargo timings. **97.336 s** wrapper / **54.54 s** Cargo, existing
+P10 target, incremental on. Consumed native/script/shared-test inputs stayed
+unchanged. Source identity remains `16367206…` / 1,137 inputs. This is a fresh
+1.8.15 build, not reused or relabeled r29. Native packaging is next in the declared
+ladder; installed qualification remains pending.
+
+
+R30 native packaging T2 passed in **17.147 s**:
+`upgrade-lock-r30-native-package-r1.json` and log. Frozen native, extension,
+harness and fixture identities all reverified unchanged; all per-run consumed
+native/script/shared-test inputs stayed unchanged. VSIX packaging follows.
+
+
+R30 VSIX packaging T2 passed in **19.684 s**:
+`upgrade-lock-r30-vsix-package-r1.json` and complete log. Final four-group freeze
+verification passed; all per-run consumed inputs remained unchanged. Verified
+Windows debug **1.8.15** VSIX: `artifacts/local/one-airk-1.8.14/windows-debug-vsix-r30/publish/airk-1.8.15-win32-x64.vsix`, **86,416,985 bytes**,
+SHA-256 `9f2968c5eefe50d7d904ff869c1982e4f63fa8727f766b2b85d3297be1f980e6`. Runtime self-test, source/payload sealing, native packaging
+and VSIX verification passed on the recorded identities. The package is unsigned
+and unpublished. Full workspace tests, other-host qualification and the user's
+actual installed upgrade have not run for this correction. No installed state,
+service ownership, client configuration or trust store was changed.
+
+## 1.8.16 installed-upgrade root cause — 8 November 2026
+
+The installed r30 1.8.15 attempt failed with
+`checkpoint_job_compatibility_blocked: 3 unfinished accepted operations`.
+The retained activation journal remained `staged_verified`, revision 0: native
+preflight rejected the transition before shutdown. The extension's earlier
+“Stopping previous AIRK processes” text did not establish that shutdown ran.
+Read-only process inspection found the selected legacy service and its source and
+embedding descendants; this is not evidence that hard-stop execution failed.
+Read-only registry inspection later found pending/running `reconcile` jobs, no
+unfinished plans/lifecycle requests and no catalog operation receipts. It does
+not reconstruct the exact three-operation roster at the earlier refusal.
+
+The wrong native assumption was that all accepted work needs the same engine,
+including ordinary reconciliation which already has fenced restart recovery.
+The missing cheap regression was a legacy upgrade preflight/final checkpoint
+with an ordinary pending/running reconciliation job while different engines are
+selected. The correction must use an explicit versioned continuation adapter,
+preserve exact accepted jobs and requests, and keep generic compatibility strict.
+Unknown/configured work must remain refused. No installed retry is justified
+until the adapter, final immutable proof and verification paths pass scoped tests.
+
+The separate Explorer defect is reproducible with a gated early connection read:
+startup waits for that read after automatic installation has already failed,
+delaying publication of `startup.failed`. The regression must observe an already
+open panel receiving failure before the gate is released, and verify its header
+no longer says connecting. A replacement loader message alone does not prove
+that panel state reached the webview.
+
+Version 1.8.16 is authorized for the correction. Existing failed installed
+receipts and historical package identities remain unchanged. No processes,
+registry rows, locks, source files or installed configuration were changed during
+the read-only diagnosis. Implementation and validation receipts follow below.
+
+### 1.8.16 correction: scoped validation and review
+
+The explicit `legacy-reconcile-continuation/1` adapter now binds the complete
+post-exit immutable checkpoint, approved 1.8.11 pair/1.8.16 single-image versions,
+old/new engines and original accepted reconciliation job IDs. Candidate recovery
+consumes that exact manifest through a digest pointer in its native admission
+fence. It compares original jobs, requests, configuration, retry/source/cancel
+records, watcher budgets, project authority, source outcomes and retained intents.
+Generic engine compatibility is unchanged. Terminal release remains idempotent
+without the removed activation intent or retired predecessor. Native watchdog
+progress stays with its existing owner and recovery policy; the patch does not
+reset progress, attempts or retry limits.
+
+The separate review found and corrected candidate readiness's unconditional
+empty-work refusal, terminal-release lifetime assumptions, the busy Explorer
+header, and complete diagnostic export omissions before any replacement T2 run.
+The primary reviewed the combined native and extension changes. Inert metadata
+fixtures are explicitly synthetic; they do not qualify authentic registry
+migration. The forthcoming actual upgrade uses the retained authentic 1.8.11
+runtime and wholly fictional source/state, never a copy of installed private
+indexes.
+
+Validation collected so far:
+
+- `upgrade-reconcile-r31-python-r1.json`: full Python suite, 896 tests, 13 skips,
+  exit 0, 81.641 s. Harness inputs stayed unchanged; native source was still being
+  edited and this receipt is only Python harness evidence.
+- `python -m unittest scripts.tests.test_runtime_upgrade`: 27 tests, exit 0 after
+  the opt-in pending-reconciliation fixture and preserved-pause assertion.
+- `python -m unittest scripts.tests.test_release_version -q`: 14 tests, exit 0.
+- `upgrade-reconcile-r31-extension-r2.json`: prior compiled mocked suite,
+  1,119 tests / 1,098 passed / 21 skipped, 9.621 s. Complete diagnostic export
+  changes followed, so a final compile/full mocked pass is still required.
+  The preceding `-extension-r1` wrapper could not spawn the Windows npm shim;
+  no tests ran in that invocation. Node direct execution succeeded.
+- Scoped extension final targeted pass: 244 selected / 243 passed / 1 skipped;
+  TypeScript compiled. Full webview/assistance compilation remains separate.
+- `upgrade-reconcile-r31-clippy-r1.json`: Store/CLI all-targets,
+  `--no-default-features --features local-inference`, exit 0, 85.869 s wrapper /
+  78 s Cargo. Native inputs unchanged; independent harness source changed.
+- `upgrade-reconcile-r31-clippy-r2.json`: same scope after final watcher/project
+  guards, exit 0, 18.338 s wrapper / 10.94 s Cargo; all recorded inputs unchanged.
+  Command: `python scripts/dev-check.py -p airk-store -p airk-cli --features
+  local-inference --target-dir artifacts/v190/p10-target`. Incremental on,
+  persistent P10 target, Cargo `--timings`; HTML retained beside each receipt.
+
+Selected native tests, final full extension compile/suite and repository checks
+are next. No corrected installable package or installed acceptance is claimed.
+
+### Declared 1.8.16 r31 qualification ladder
+
+After the selected native regressions, final extension compile/full mocked suite
+and repository checks pass, verify compiler descendants have exited. Freeze with
+`python artifacts/local/one-airk-1.8.14/completion-freeze-r30.py --output artifacts/local/one-airk-1.8.14/completion-freeze-r31.json`.
+The established owner records current version plus separate native, extension,
+harness and fixture identities. The historical filename does not relabel its
+old r30 snapshot. Verify that exact new freeze before and after every T2 step;
+stop on any failed receipt, changed consumed input, or absent selected tests.
+
+Run through the existing `run-qualification-gate.py` owner, in this order:
+
+1. `upgrade-reconcile-r31-runtime-r1`: `python scripts/build-service-runtime.py --destination artifacts/local/one-airk-1.8.14/windows-debug-r31/runtime --profile debug`.
+2. `upgrade-reconcile-r31-authentic-upgrade-r1`: `python scripts/check-runtime-upgrade.py --runtime artifacts/local/one-airk-1.8.14/windows-debug-r31/runtime --previous-runtime artifacts/local/1.8.11-indexing-20261107/runtime --fixture-setup reviewed --pending-reconcile --output artifacts/local/one-airk-1.8.14/windows-debug-reconcile-upgrade-r31.json`.
+3. `upgrade-reconcile-r31-native-package-r1`: `python scripts/package-native.py --target x86_64-pc-windows-msvc --runtime-dir artifacts/local/one-airk-1.8.14/windows-debug-r31/runtime --output artifacts/local/one-airk-1.8.14/windows-debug-native-r31`.
+4. `upgrade-reconcile-r31-vsix-package-r1`: `python scripts/package-extension.py --target x86_64-pc-windows-msvc --native-dir artifacts/local/one-airk-1.8.14/windows-debug-native-r31/publish --output artifacts/local/one-airk-1.8.14/windows-debug-vsix-r31`.
+
+Expected evidence: fresh sealed1.8.16 runtime, authentic1.8.11 upgrade of isolated
+fictional sources with an accepted paused reconciliation job, exact saved job and
+request preserved through candidate readiness and then completed once after
+explicit resume, HTTPS reconnect, verified predecessor exit, complete native
+launcher/payload retirement, and verified native/VSIX packages. This does not
+qualify the user's live installation, other legacy operation kinds, macOS/Linux
+or publication. Required broader local checks remain separately recorded.
+
+R31 fresh debug runtime T2 passed: `upgrade-reconcile-r31-runtime-r1.json`,
+complete log and retained Cargo timing HTML, 105.675 s wrapper. Native, harness
+and shared-test consumed inputs stayed unchanged. Frozen source identity is
+`e8fd0d47644a504d73d965684184904ba60d7a66b7265851509f8959357389ec`
+(1,138 compiled-source inputs). The separate native/extension/harness/fixture
+identities are retained in `completion-freeze-r31.json`; freeze verification
+passed after the build. This is a fresh1.8.16 build, not relabeled r30.
+Selected native tests passed80/80 (`upgrade-reconcile-r31-native-tests-r1.json`,
+145.705 s wrapper /8.614 s execution), and final full extension compilation plus
+mocked suite passed1,100 with21 skips (`upgrade-reconcile-r31-extension-final-r1.json`,
+22.284 s). Repository check passed under documented PowerShell7
+(`upgrade-reconcile-r31-repo-r2.json`); the Windows PowerShell attempt failed
+because its host lacked Get-FileHash and was not treated as passing.
+Authentic isolated upgrade is next in the declared ladder.
+
+R31 authentic upgrade T2 attempt1 did not launch either runtime:
+`upgrade-reconcile-r31-authentic-upgrade-r1.json`, exit1 after0.130 s. The
+historical artifact root failed canonical resolution with WinError5. Retained
+log records the exact denied path; no upgrade output receipt exists because
+input resolution precedes fixture creation. No native, harness or shared inputs
+changed. This is an input-access failure, not a completed upgrade or native
+activation failure. The ladder stopped before packaging.
+
+Read-only replacement-input preflight verified the accessible installed extension
+copy at `C:/Users/tdotn/.vscode/extensions/iokaio.airk-1.8.11/native/runtime`.
+Its version is1.8.11, complete inventory has674 files, and every sealed file
+hash matched. Manifest SHA-256
+`3a950c83217688fe509a2dbfadcd4d78cd1d5eabb1b7265a2ff939df7248d5ad`
+is the same authenticated original identity observed in the live selection.
+Only distribution bytes are used; no installed index/state is copied. ACLs are
+unchanged. A reusable input-only harness preflight is being added for this
+recurring fixture-access class. Re-freeze the changed harness, preserve the
+original compiled native identity, and reuse the sealed r31 runtime rather than
+rebuild it. The next authentic-upgrade command substitutes this verified
+`--previous-runtime` path and uses receipt suffixr2 after input-only validation.
+
+R31 authentic upgrade attempt2 stopped at OLD-runtime staging, before the
+candidate transition: `upgrade-reconcile-r31-authentic-upgrade-r2.json` exit1
+in4.350 s, with `windows-debug-reconcile-upgrade-r31-r2.json` preserving source,
+fixture root and incomplete cleanup. Error206 (`The filename or extension is too
+long`) occurred under the established deep private fixture base. No new native
+activation was attempted. Native/extension/harness/shared consumed inputs stayed
+unchanged and the sealed r31 runtime was explicitly authenticated as reuse.
+The read-only input preflight itself passed all seals and versions in1.473 s:
+`upgrade-reconcile-r31-input-check-r1.json`, no runtime execution. Harness-only
+freeze `completion-freeze-r31-harness2.json` retains exactly the original native,
+extension and fixture identities; changed harness identity is`70fc1e88…`.
+
+**Two-strike stop applied and reported to the user before another attempt.**
+Wrong assumptions: a historically retained artifact root was accessible to the
+current qualification process, and an owner-private fixture base was therefore
+also short enough for the authentic legacy Windows staging implementation.
+The missing cheap checks were complete input access/seals and a prelaunch
+Windows legacy path budget for the actual deepest sealed relative path plus
+native staging/runtime prefixes. Input access is now checked without execution;
+path-budget correction and a shorter newly owned fixture location must receive
+T0 tests and review before any third upgrade attempt. Failed fixture and
+incomplete teardown receipt stay preserved; no service restart or cleanup is
+used to manufacture a passing receipt. No native rebuild is justified by these
+harness-only corrections. This stop does not declare migration fixed or broken;
+that transition has not yet run in this authentic campaign.
+
+## 1.8.16 mandatory clean-break baseline — authorized 8 November 2026
+
+The user superseded the preceding pre-baseline migration correction and authorized
+mandatory fresh state/index rebuilds for every earlier version. The1.8.16+ line
+will stabilize the single-process architecture under an explicit persisted state
+contract;1.9.0 is a future public-release target, not the current source version.
+The user explicitly required discovery and independent rebuilding of multiple
+saved indexes. No previous migration candidate or pre-policy test result qualifies
+this new policy. The r31 reconciliation adapter was unpublished and is removed.
+Earlier failed receipts, fixtures and compiled identities remain historical.
+
+Current implementation work replaces the canonical pre-baseline activation
+route, not a catch after migration fails. Native fresh Genesis alone creates the
+installation/control/namespace-bound `airk-state-contract.json` marker declaring
+`airk-state/1`, baseline1.8.16. A copied version or missing/unknown marker does not
+establish baseline state. Complete native saved index/source metadata is read
+without old publications. Original sources remain read-only; unsupported source
+policies refuse before mutation rather than broadening source selection.
+Existing64-index,128KiB roster and512KiB journal gates remain explicit complete
+refusals. Each index has its own exact setup/job outcome; healthy indexes can
+proceed when another cannot. Initially paused indexes receive one initial build,
+then supported pause/watch/vector/detail preferences are restored. Old grants,
+credentials and accepted operations are discarded as old namespace authority,
+not relabeled as completed. New client enrollment remains explicit.
+
+Predecessor installation-level User Stop/lifecycle state is discarded only under
+accepted reset authority so the initial fresh build can start. A new Stop during
+reset/rebuild remains authoritative. Extension native-execution-disabled and
+workspace trust gates remain enforced. An existing metadata-owner continuation,
+not a read handler or editor-owned job runner, observes exact durable job success,
+keeps accepted cleanup obligations alive, and advances bounded cleanup turns.
+
+Native cleanup admission records the exact old namespace, all retained/inactive
+registrations, every known saved source root, and owned storage scopes before
+mutating files. All source roots guard every target. Shared data roots are never
+removed from one registration alone: each exact collection uses Store's bounded
+owner/capsule-aware purge, and an unknown orphan or unproven scope blocks cleanup.
+Private control/log namespace ownership authorizes their derived contents; links
+and redirected entries are refused. Original sources/custom model inputs outside
+owned state are not deletion targets. Full canonical executable/launcher
+retirement receipts survive cleanup in the reset observation; historical failures
+and original process identities are not replaced by duplicate cleanup runs.
+External client-declaration/uninstall-receipt cleanup uses a separate host-owned
+pre-reset ownership plan and byte-guarded post-selection removal. Native cleanup
+completion is explicitly native state/index/executable scope, not a claim that
+all external clients have been re-enrolled or all foreign files removed.
+
+Independent review and cheap checks are in progress. No corrected clean-break
+runtime/VSIX or installed qualification is claimed yet. All runtime builds,
+Clippy, tests and platform batches remain serialized through the primary owner.
+The prior input-access/path-budget failures remain preserved; upcoming campaigns
+must use input-only seal/path preflight and the fresh short owner-private base
+`artifacts/q31` before any real native upgrade/reset.
+
+### Clean-break r32 cheap validation, review and first compilation
+
+- Harness T0:57 tests passed with1 skip,0.530 s, in
+  `scripts.tests.test_runtime_upgrade` and `scripts.tests.test_owned_runtime_processes`.
+  No AIRK process was launched. Regressions first exposed crossed-installation
+  retirement proof, incomplete source-roster handling, and vacuous source
+  preservation after partial fixture creation; all were corrected cheaply.
+- Scoped extension T0 collected277 tests:273 passed,3 failed,1 skipped. The
+  failures identified HTTP removal transformation, foreign selector ownership,
+  and a setup-warning fixture/behavior discrepancy. Full results were collected
+  before correction; helper/source recovery corrections and regressions are
+  prepared for the next named pass. This was not an installed-editor run.
+- `clean-break-r32-clippy-r1.json`: exact command
+  `python scripts/dev-check.py -p airk-core -p airk-store -p airk-cli -p airk-mcp
+  --features local-inference --target-dir artifacts/v190/p10-target`, all-targets,
+  no-default-features, warnings denied, incremental on, Cargo timings retained.
+  Formatting passed. Clippy failed during Store test compilation because a new
+  regression compared JobRecord with assert_eq without PartialEq. The test now
+  compares complete serialized native records; production traits were unchanged.
+ 46.120 s wrapper; native/harness/shared inputs unchanged. Compiler descendants
+  exited before corrective source ownership resumed. Other packages are not
+  claimed passing from this failed run.
+
+Review added actual native retirement crash seams: full canonical proof now
+passes a recording callback BEFORE the accepted native intent is removed.
+The reset plan saves it durably there. An interrupted handoff resumes the same
+native accepted intent while retaining the original proof and exact image/runtime
+roster. It never repeats completed cleanup to substitute an empty receipt.
+Per-old-control cleanup journal names allow later supported-line reset operations
+without replacing another predecessor's receipt. Review also caught per-index
+unavailable-job starvation, scoped-MCP sibling-path leakage, and invalid persisted
+client inventory blockers. Their owning components contain cheap regressions.
+No clean-break T2 build/reset/VSIX has run yet.
+
+### Clean-break r32 compilation follow-up
+
+Scoped compilation used the same four-crate/all-targets/local-inference command,
+`artifacts/v190/p10-target`, incremental on, and retained Cargo timings.
+`clean-break-r32-clippy-r2.json` failed in37.483 s on missing shared filesystem
+existence checking and an ambiguously resolved activation-pending helper. Both
+were corrected without changing policy. The r3 attempt stopped at formatting
+in7.023 s; its preceding direct Cargo invocation could not resolve Cargo from
+the restricted PATH. Formatting then ran through the explicit installed toolchain.
+The r4 check failed in33.595 s on two lint findings (a collapsible conditional
+and a needless test borrow). The r5 check passed in35.060 s with unchanged
+native, harness and shared inputs. Receipts and timing reports are retained in
+`artifacts/local/one-airk-1.8.14/clean-break-r32-clippy-r*.json` and adjacent HTML.
+This scoped result does not substitute for workspace or platform qualification.
+
+The first full extension compile stopped at the uninstall bundle input guard:
+`globalAgentInventory.ts` had become a transitive dependency. Pure declaration
+parsing now resides in the existing allowlisted configuration module; filesystem
+inventory remains outside that bundle. The guard was not widened. The owning
+component's49 selected regressions and canonical bundler passed; the primary is
+re-running the full extension suite.
+
+Further review found an older retained-root obligation could survive immediate
+predecessor cleanup, and the existing16-path preservation bound could fail after
+stop for sufficiently many distinct roots. A pre-mutation refusal/preflight and
+boundary regressions are being prepared. Path-only retained roots do not confer
+deletion authority. No installed shutdown, reset, multi-index rebuild or Mac Neo
+success is claimed from compilation.
+
+`clean-break-r32-extension-r2.log`: primary ran `npm --prefix packages/vscode
+test` after the bundle correction. Compilation, canonical bundle guards and the
+mocked suite passed:1141 collected,1120 passed,21 skipped,0 failed; test-runner
+duration9.548 s. This is not an installed-editor or enabled-native result.
+
+Neo preparation T0 (`python -m unittest discover -s
+artifacts/local/one-airk-1.8.14/clean-break-r32-neo -p test_preparation.py -v`)
+selected7 tests:6 passed,1 error. A fixture wrote a Unicode Node summary using
+the Windows default code page. Explicit UTF-8 fixture writes are being corrected;
+no SSH transfer, Neo compiler run or platform qualification occurred.
+
+Primary full Python suite passed: `python -m unittest discover -s scripts/tests
+-q`,912 tests,13 skipped,83.380 s; log `clean-break-r32-python-r1.log`.
+Repository checks passed for2132 public files and `git diff --check` passed.
+Scoped Clippy r6 found a new helper re-export visibility error; after correcting
+the helper's containing-module visibility, r7 passed in19.288 s with unchanged
+inputs and retained Cargo timings. Review then requested a no-follow existence
+check for dangling retained links before the final native regression run.
+
+Final no-follow scoped Clippy r8 passed in18.661 s. The first focused native
+selection then ran64 tests:61 passed,3 failed,2421 outside the selected scope;
+136.626 s including compilation,13.599 s tests. Exact command/filter, source
+identities, timing HTML, log and JUnit are retained under
+`clean-break-r32-native-focused-r1`. Failures were collected together before
+correction: optional saved rebuild review/no-mutation, runtime retirement proof
+handoff, and complete multi-index source census. Process roster tests and actual
+native/MCP scoped observation parity passed. This failed selection blocks the
+runtime/reset/Neo campaign; it is not a qualification pass.
+
+Neo preparation r2 passed10 tests in0.245 s after explicit UTF-8 writes and
+startup/collector/terminal-evidence corrections. Its receipt is
+`clean-break-r32-neo/preparation-tests-r2.json`; the tests mock all network and
+remote execution. No Neo platform result follows from preparation tests.
+
+Native failure correction: the optional rebuild path had inferred a predecessor
+for an unreviewed activation and then saved failure state. Automatic inference is
+now restricted to mandatory clean breaks; the original no-mutation regression
+remains unchanged. The Store census test used an authority-0 metadata fixture;
+it now asserts rejection before explicitly preparing canonical authority-1
+metadata for its original multi-index assertions. Production guards are unchanged.
+
+The one-test retirement diagnostic (`clean-break-r32-proof-diagnostic-r1`,1
+selected, failed,46.638 s including compilation) showed the fixture omitted
+historically materialized role images, so Windows could not acquire exclusion
+proof for absent aliases under an incomplete OS process audit. The handoff test
+now materializes startup-owned aliases before capture and requires the actual
+injected callback error. Review also identified staged-but-never-started payloads
+as a distinct real layout requiring investigation; a passing started-runtime
+fixture must not be presented as evidence for that layout. Scoped Clippy r9
+passed in20.166 s; the corrected full focused selection is running.
+
+`clean-break-r32-native-focused-r2`:65 selected tests passed,2421 outside scope;
+37.803 s including compilation,13.762 s tests, native/harness/shared inputs
+unchanged. The same four-crate/profile/filter command is recorded in its JSON,
+with adjacent JUnit and Cargo timing HTML. This confirms the three corrections
+and their existing assertions. Review's additional staged-but-never-started
+historical alias case remains under source investigation before runtime freeze.
+
+The staged-only follow-up now refuses a missing unsealed optional role alias
+unless its canonical native audit is complete, has zero matches and no failure.
+Both admission and Accepted-phase preflights run before stop. It neither creates
+alias files nor omits aliases from final process-proof obligations. Mandatory
+sealed images remain mandatory. Independent source review found no blocker;
+scoped Clippy r10 passed in19.443 s with unchanged inputs and retained timings.
+The expanded native focused r3 selection is running.
+
+### Clean-break r32 frozen T2 input plan (not an execution result)
+
+All owners reported source frozen. Separate identities are retained in
+`artifacts/local/one-airk-1.8.14/completion-freeze-r32-clean-break.json`:
+compiled native source `c1751d31700693deecfa73e7241610f55d2fa68d9131faa9314421e80d0077c9`
+(1144 files); native inventory `f48bacf7f97b6c26de152ddb76b03a3c73e2d2aeb99f31a9eea49bdd11547255`;
+extension `84397800f8cf8a8a3d683e6794927801b96241967ec5f1fc98cc34dbe53c47d1`;
+harness `c885ac1bcb9658e1cca299e92b650cc7d2eadc1e3605e107f60ad4609f8b14e0`;
+fixtures `5d5985e4b6bd2f296e44e8d7668f03612ef158abae973094413e14c015937119`.
+
+Only after focused r3 passes and final combined review, the next T2 command is
+`python scripts/build-service-runtime.py --destination
+artifacts/local/one-airk-1.8.14/windows-debug-r32/runtime --profile debug`, through
+the qualification wrapper using the persistent P10 target, incremental on and
+Cargo timings. Expected result: a newly sealed1.8.16 debug runtime whose compiled
+identity equals the freeze. Verify the complete freeze before and after; stop
+at the first failed command or changed input. No previous r31 runtime may be
+relabelled as this candidate. Subsequent reset qualification first checks input
+access/seals/legacy path budgets without executing AIRK, then uses the authentic
+1.8.11 predecessor, short owner-private `artifacts/q31`, and the two-index
+`--clean-break` campaign. These are plans; no fresh runtime/reset/Neo success is
+recorded here.
+
+Final focused r3 passed67/67 selected tests (2421 outside the filter),55.896 s
+including compilation,14.086 s tests, with unchanged native/harness/shared inputs.
+JSON, JUnit, log and Cargo timing HTML are retained under
+`clean-break-r32-native-focused-r3`. The final no-follow/optional-alias preflight
+is included in this passing selection. Frozen group identities were reverified;
+final independent T2 review is pending. Neo public-source inspection has started
+locally; it does not launch SSH, a compiler or remote tests.
+
+Final independent source/validation review passed after rehashing all1902 freeze
+entries with zero mismatches. Fresh T2 debug build
+`clean-break-r32-debug-build-r1.json` passed in93.398 s, persistent P10 target,
+incremental on; Cargo timings retained. Source1144-file identity matches
+`c1751d31700693deecfa73e7241610f55d2fa68d9131faa9314421e80d0077c9`;
+schema2 Windows x86_64 runtime1.8.16 main digest is
+`16f4a48832eb72fbca0817a6e48afa03904aef8bb9c01c2ac6fae173b177000f`.
+The complete freeze was verified before and after the build. This is a fresh
+debug build, not reused r31 evidence or an installed-reset result.
+
+Next exact input-only check: `python scripts/check-runtime-upgrade.py --runtime
+artifacts/local/one-airk-1.8.14/windows-debug-r32/runtime --previous-runtime
+C:/Users/tdotn/.vscode/extensions/iokaio.airk-1.8.11/native/runtime --fixture-setup
+reviewed --fixture-base artifacts/q31 --clean-break --check-inputs --output
+artifacts/local/one-airk-1.8.14/clean-break-r32-input-preflight-r1.json`.
+Expected: both complete seals accessible, candidate1.8.16/source freeze and
+authentic predecessor1.8.11 identified, all legacy Windows path budgets within
+limits, no AIRK execution. Stop on failure before the native journey.
+
+Neo inspection r1 correctly refused a concurrent task-ledger edit; no archive or
+remote action followed. R2 inspected all2132 public source files with the ledger
+held stable; independent review verified every file and all8 pinned public
+model assets, excluding private/config/index/temp material. Local finalization
+passed against that unchanged roster: source `2e0b96b64ad2455901b994fa6cc35351a2be3b5fb046b30dafdff4528b387d4c`,
+models `c8e33ba41ebb92f3cc4f65cf1e28e945cfa148a3dbb30b01e99e6e69e0d7868e`,
+transfer receipt `dd10e56a4310cd05a9a9c74f49f8ab22c34f2df8d32c8f0f910057a59f8cb98a`
+in `clean-break-r32-neo/neo-frozen-transfer-r32-clean-break`. No SSH, transfer or
+Mac execution has occurred. Later ledger updates do not alter those frozen bytes.
+
+Input-only preflight passed: candidate manifest
+`6bbf730bcd4353c5e0700157f6a72cbfca02ae54e0775fd1fadd0104e6ac6b28`,811 sealed
+files; authentic1.8.11 manifest `3a950c83217688fe509a2dbfadcd4d78cd1d5eabb1b7265a2ff939df7248d5ad`,674 sealed
+files.4464 predicted fixture files fit the legacy limits: max file248/259 UTF-16
+units, directory175/247. AIRK was not executed. The first check passed but primary
+gave the wrapper and checker the same JSON output path, so wrapper receipt
+creation refused; that passing report/log remain preserved. The repeated pure
+check used distinct paths, passed in1.547 s with unchanged inputs, and is retained
+as `clean-break-r32-input-preflight-gate-r2.json` plus
+`clean-break-r32-input-preflight-report-r2.json`.
+
+Next T2 exact native journey: `python scripts/check-runtime-upgrade.py --runtime
+artifacts/local/one-airk-1.8.14/windows-debug-r32/runtime --previous-runtime
+C:/Users/tdotn/.vscode/extensions/iokaio.airk-1.8.11/native/runtime --fixture-setup
+reviewed --fixture-base artifacts/q31 --clean-break --output
+artifacts/local/one-airk-1.8.14/clean-break-r32-upgrade-report-r1.json`, through
+the sealed-runtime qualification wrapper named `clean-break-r32-upgrade-gate-r1`.
+Expected: real old owned processes exit, separate fresh index identities/jobs/
+publications for both saved sources, one initial build for paused selection then
+preference restore, complete original native retirement proofs, absent old owned
+state/data/artifacts, explicit fresh client grants and preserved source bytes.
+Stop on first command/assertion/seal/freeze failure; preserve failed fixture and
+complete cleanup observations. No VSIX or installed-user reset claim follows
+before this command passes.
+
+T2 `clean-break-r32-upgrade-gate-r1.json` FAILED in64.471 s. Complete report
+`clean-break-r32-upgrade-report-r1.json` preserves fixture
+`artifacts/q31/au-p4z3wa06`: both authentic old catalog indexes were set up, but
+activation refused with `successor state must match the accepted recovery
+operation`. Both original fictional sources were hash-verified unchanged (2/2)
+before teardown; teardown has no errors but is incomplete, candidate not selected,
+and the failed fixture is retained. No native cleanup/reset success is claimed.
+The wrapper and post-run freeze verification confirm unchanged consumed inputs.
+
+Source diagnosis: rebuild admission records a canonical installation path but
+constructs its successor from the input path; layout preparation compares that
+successor with a canonical-root path. Windows ordinary and extended canonical
+spellings diverge. Canonical fixture roots in earlier unit tests missed this
+real command boundary. Native owner must reproduce it cheaply using an ordinary
+input root and exact canonical identity, then correct admission/resume/validation
+together before another build. Expensive steps stop here. The r32 debug runtime
+and Neo package retain their original identities; neither may be relabeled as
+the corrected candidate if production inputs change. No Mac execution occurred.
+
+### Canonical-path correction r33: cheap reproduction before another T2 run
+
+The root-cause audit found the same mixed spelling in successor data/default
+paths, preflight capacity and cleanup ownership comparisons. The correction
+derives operation paths from canonical installation identity, preserves exact
+operation/source scope on safe pre-handoff resume, and uses the cleanup plan's
+already-qualified installation for logical ownership comparisons.
+
+Before changing cleanup production comparisons, primary reproduced both siblings
+in metadata-only tests: `clean-break-r33-cleanup-path-diagnostic-r1` selected2,
+both failed,44.477 s including compilation/0.064 s tests; JUnit/log/timings retained.
+One showed an ordinary-root caller could miss a canonical runtime target; the
+other attempted to remove the installation directory when old state equalled
+the installation, then safely failed because it was nonempty. Both use newly
+owned fictional temporary state, not the retained failed upgrade fixture.
+
+The three cleanup comparisons now use receipt-bound `plan.install`. Native
+regressions additionally exercise ordinary-path preflight/handoff, actual Store
+Genesis and three setup interruption/resume boundaries; an exact Accepted leaf
+alias read leaves original bytes unchanged and refuses an unrelated state path.
+Formatting passed; r33 scoped Clippy is running. No expensive retry has started.
+
+R33 scoped Clippy r1 passed in19.867 s. Focused native r1 ran71 tests:70
+passed,1 failed,52.806 s including compilation/14.544 s tests, unchanged inputs.
+Both cleanup path regressions passed after the production correction. The new
+ordinary-path setup test failed because its fixture passed a read-only
+`open_saved` registry into the owning setup mutation. The fixture now uses the
+same `ServiceRegistry::open(control,namespace)` constructor as the existing
+setup-boundary tests; all three boundaries and assertions remain intact.
+Production code was unchanged by that fixture correction. Scoped Clippy r2 is
+running before the final focused selection. No second native T2 attempt yet.
+
+R33 Clippy r2 passed in18.726 s. Final focused native r2 passed71/71 selected
+tests (2421 outside filter),35.012 s including compilation/15.375 s tests; all
+consumed native/script/shared inputs unchanged. Receipts, JUnit, logs and timings
+are retained under the exact `clean-break-r33-*` names. The four new canonical
+path regressions are included. Version remains1.8.16; extension/harness/fixture
+inputs are unchanged, so their earlier cheap results retain their recorded scope.
+
+Final r33 freeze is `completion-freeze-r33-clean-break-r2.json`: compiled native
+`51f8c606a84308aaace4029fcbc5a4580c9e6c2874269f22aa86567d4f192c6b` (1144 files),
+native inventory `6733dde5a175c8373ce0f1ff66e5b061591a5087ba07955dc6c3643c37227455`;
+extension/harness/fixture identities match r32. Earlier r33 freeze retains the
+test-fixture constructor before correction and is historical, not current.
+
+Pending final independent validation/freeze review, next T2 exact command is
+`python scripts/build-service-runtime.py --destination
+artifacts/local/one-airk-1.8.14/windows-debug-r33/runtime --profile debug`, through
+the P10/incremental-on/timings qualification wrapper. Expected: fresh sealed
+schema2/version1.8.16 Windows runtime with compiled identity51f8c606..., freeze
+unchanged before/after. Stop at first failure or changed input. Then repeat the
+input-only seal/path check with distinct wrapper/checker reports before the
+second real two-index journey. A second native journey failure triggers the
+documented two-strike stop and user root-cause report before any third attempt.
+
+Final independent r33 review passed: actual71/71 JUnit results and Clippy were
+verified, all1902 frozen entries rehashed with zero mismatches. Fresh T2 build
+`clean-break-r33-debug-build-r1.json` passed in62.492 s, P10 target/incremental on,
+timings retained, complete freeze unchanged before/after. Compiled identity is
+51f8c606.../1144; schema2/version1.8.16 Windows main digest is
+`f7e46e6bbe9e7137ffb99c75d1d336bc0341283eddbceedf522a2c8f29ca83c9`.
+
+Next input-only command is the prior exact checker command with candidate root
+`artifacts/local/one-airk-1.8.14/windows-debug-r33/runtime`, same authentic1.8.11
+predecessor, reviewed setup, `artifacts/q31`, `--clean-break --check-inputs`,
+and checker output `clean-break-r33-input-preflight-report-r1.json`; wrapper
+receipt uses distinct `clean-break-r33-input-preflight-gate-r1`. Expected seals,
+candidate/source identity and legacy budgets must pass without AIRK execution.
+
+R33 input-only gate passed in1.544 s with complete runtime/source/seal validation
+and unchanged consumed inputs, no AIRK execution. Second native T2 exact command:
+`python scripts/check-runtime-upgrade.py --runtime
+artifacts/local/one-airk-1.8.14/windows-debug-r33/runtime --previous-runtime
+C:/Users/tdotn/.vscode/extensions/iokaio.airk-1.8.11/native/runtime --fixture-setup
+reviewed --fixture-base artifacts/q31 --clean-break --output
+artifacts/local/one-airk-1.8.14/clean-break-r33-upgrade-report-r1.json`, through
+wrapper `clean-break-r33-upgrade-gate-r1`. Expected outcome remains both fresh
+indexes/jobs/publications, original source bytes preserved, restored supported
+preferences, verified old process exit and full original cleanup proof. Frozen
+inputs must remain unchanged; stop on first failure. A second journey failure
+ends expensive retries under the two-strike rule and is brought to the user
+with root-cause/missing-cheap-test evidence before any third attempt.
+
+### Two-strike stop: second native clean-break journey
+
+`clean-break-r33-upgrade-gate-r1.json` FAILED in68.637 s with unchanged native,
+extension, harness and fixture inputs (post-run freeze also verified). Full
+report retains `artifacts/q31/au-ifvpz0ha`; both fictional source hashes remain
+unchanged (2/2), no teardown errors, activation pending, candidate not selected,
+cleanup incomplete and fixture preserved. There is no successful reset receipt.
+
+Unlike the first failure, the retained journal reached Starting: fresh Genesis
+and its marker existed, both setup requests and initial index jobs were accepted,
+and exact candidate health was verified. The final bootstrap probe sends
+RequestEpoch through the ordinary request-for-version guard, which still judges
+the selected predecessor1.8.11. It therefore rejects the fresh, initialized
+candidate before selection can commit. Wrong assumption: metadata-only native
+Genesis/setup coverage exercised the bootstrap command boundary. Missing cheap
+test: the actual initialized-candidate RequestEpoch transport path while the old
+version remains selected, including rejection of ordinary reads/enrollment and
+stale/foreign bootstrap authority.
+
+Expensive runs stopped after the second failure; the root cause and missing
+cheap test were brought to the user. No third upgrade journey, new runtime build,
+Neo batch or packaging is running. Native owner is preparing an operation-bound
+opaque probe permit and real framing regression. This must not open general
+pre-baseline reads, enrollment, or checkpoints. Both failed fixtures and original
+receipts remain untouched.
+
+Related host artifact audit found stale terminal token/trust environment values,
+old private connection metadata and the current window Assistance descriptor
+were not retired by the reset. Primary reproduced all3 with focused mocked
+onboarding tests BEFORE production changes: core TypeScript compile passed,
+exactly3 selected tests failed (0.513 s). Native token files themselves are under
+the old control cleanup; host artifacts require separate exact ownership/CAS
+handling. Extension owner is correcting these gaps; unproven/foreign/changed CA
+copies and other live windows must remain protected, and no persisted plan may
+contain token plaintext. No installed-native run follows from these mocked tests.
+
+### R34 cheap corrections during the two-strike pause
+
+The native bootstrap path now mints an opaque permit only for the exact Starting
+reset journal, saved Probe intent, initialized control/namespace marker and
+verified candidate health identity. Its transport sends only instance-bound
+RequestEpoch and validates the returned namespace. Ordinary source, enrollment
+and epoch clients retain their baseline gate. The new actual local-IPC fixture
+uses real sealed inert inventories and native Store Genesis; it confirms normal
+requests are denied, the precise bootstrap succeeds, and stale/foreign authority
+is refused. Initial named selection typo selected0 tests and failed correctly;
+the corrected1-case selection first exposed a fixture selection/save ordering
+error, which was corrected without production changes. Final1-case transport
+test passed (0.792 s tests,22.691 s including compilation).
+
+R34 scoped Clippy r1 passed30.992 s; final r2 passed18.467 s. Combined native
+selection `clean-break-r34-native-focused-r1` passed72/72 (2421 outside filter),
+17.610 s including compilation/15.664 s tests, with unchanged native/script/
+shared inputs and retained JUnit/log/timings. No new runtime or native journey
+was used to discover these fixes.
+
+Host artifacts: core TypeScript passed and the first5 focused ownership/CAS/
+Assistance cases passed after exact bigint filesystem IDs were serialized as
+canonical decimal strings. Independent review then identified existing-copy
+ownership adoption, swallowed Assistance failure completion and capture reload
+bounds. All5 new cases were reproduced failing BEFORE production correction.
+Publisher proof now requires this call's successful exclusive creation (or exact
+prior live creator proof), full capture validation precedes persistence/reset,
+and Assistance completion requires verified current metadata and creator success.
+Same-path publication reassigned to a fresh namespace stays protected across
+reload. All11 focused regressions now pass (1.900 s); PATH mutation is explicitly
+preserved and token plaintext is absent from the capture. Full extension suite
+is running; no installed host claim follows from these mocks.
+
+User explicitly requested fixing standalone CLI PATH availability. The existing
+VSIX already publishes its terminal command; the standalone Inno route did not.
+New source adds its existing packaged runtime directory to raw per-user PATH only
+after native setup succeeds, preserves other entries/value type and records exact
+ownership. Preexisting manual entries are not adopted. Review caught destructive
+uninstall work before Inno confirmation and type-blind `%VAR%` expansion;2 focused
+static cases reproduced both before correction. Uninstall mutations now occur
+only in confirmed usUninstall, with supported Abort before tracked deletion on
+failure; comparisons are literal and preserve variable entries. All13 standalone
+static/mocked packaging tests pass (0.248 s). No actual signatures, registry
+round-trip or Inno compilation are claimed; ISCC is unavailable. Independent
+review verified the supported behavior against pinned Inno6.7.1 source/docs.
+
+Full corrected Python suite passed917 tests with13 skipped,85.855 s tests/
+86.601 s wrapper (`clean-break-r34-python-full-r1`), unchanged native/script/
+shared inputs. Mocked signing/packaging messages inside that suite are fixture
+output, not actual signatures or EXE qualification. Final standalone source
+review found no remaining blocker; actual ISCC/registry round-trip is unavailable.
+Required broad workspace/all-features/all-targets Clippy passed in48.236 s
+(`clean-break-r34-workspace-clippy-r1`), P10 target/incremental on, timings retained.
+Repository checks passed for2132 public files; version1.8.16 and whitespace checks
+passed. No workspace test/T3 or cross-platform result is inferred from Clippy.
+
+Extension full r1 passed1152 collected/1131 passed/21 skipped,25.309 s wrapper,
+11.252 s tests. Exact-creator review then found same-byte file substitution
+between exclusive publication and later identity capture. A new1-case regression
+reproduced deletion before correction. Original stage-handle BigInt identity is
+now passed through publication and compared by the host before creator authority
+is retained. All12 focused cases passed in1.856 s and full r2 passed1153
+collected/1132 passed/21 skipped (11.194 s tests). Further lifetime review found
+the descriptor still closed before the awaited observer; a1-case actual-handle
+regression reproduced that gap (0.124 s). The final scoped lifetime correction is
+being prepared; combined source approval and expensive confirmation remain held.
+
+### Final r34 correction and renewed confirmation plan
+
+The lifetime correction is complete: original stage FileHandle remains live
+through link, stage cleanup and the AWAITED caller observer; the actual caller
+validates final bigint identity/body and records original creator identity inside
+that observer. Outer finally closes the handle on every path. Post-return checks
+may revoke proof but cannot create it. The reproduced lifetime failure now passes;
+all13 focused host/lifetime cases passed (1.801 s). Final full extension receipt
+`clean-break-r34-extension-full-r3.json` passed1154 collected/1133 passed/21
+skipped/0 failed,24.349 s wrapper/11.079 s tests, all unchanged flags true.
+
+Final independent combined source and validation review passed. The reviewer
+checked actual72-case native JUnit, full extension and917-run/13-skip Python
+results, all-feature/all-target workspace Clippy and every1902 frozen entry with
+zero mismatches. Final freeze: `completion-freeze-r34-clean-break-final.json`;
+compiled native `d39d4fd644f604afd6652ea4b2acf429384bdec56be39d849b107dd4f7e3ec4b`
+(1144 files), native `69841dedbf1a134de886095bd2bcdf6395614987473a167059a0b0993c809c5a`,
+extension `91d37f5505ca48852bc258039f77414dc2be28d7e1f0ba2a40b7712877905c8d`,
+harness `bac9459b45ae4b495b2cb116810107b1f43208bcba5f1fb7fba9ba57e7784983`,
+fixtures `5d5985e4b6bd2f296e44e8d7668f03612ef158abae973094413e14c015937119`.
+The two-strike root cause/missing cheap test were written and brought to the user
+before this renewed confirmation; source/transport/host corrections were grouped
+and reviewed rather than restarting on the latest symptom.
+
+Ordered next commands (plans, not pass receipts):
+
+1. `python scripts/build-service-runtime.py --destination
+   artifacts/local/one-airk-1.8.14/windows-debug-r34/runtime --profile debug`
+   through wrapper `clean-break-r34-debug-build-r1`, persistent P10 target,
+   incremental on, Cargo timings. Expected fresh1.8.16 schema2 debug seal and
+   compiled identityd39d4fd.../1144; verify complete freeze before/after.
+2. `python scripts/check-runtime-upgrade.py --runtime
+   artifacts/local/one-airk-1.8.14/windows-debug-r34/runtime --previous-runtime
+   C:/Users/tdotn/.vscode/extensions/iokaio.airk-1.8.11/native/runtime --fixture-setup
+   reviewed --fixture-base artifacts/q31 --clean-break --check-inputs --output
+   artifacts/local/one-airk-1.8.14/clean-break-r34-input-preflight-report-r1.json`,
+   wrapper `clean-break-r34-input-preflight-gate-r1`. Expected both complete seals
+   and legacy path budgets pass with no AIRK execution.
+3. THIRD native confirmation uses the same checker arguments without
+   `--check-inputs`, output `clean-break-r34-upgrade-report-r1.json`, wrapper
+   `clean-break-r34-upgrade-gate-r1`. Expected two fresh namespace/index/job/
+   publication lineages, supported preference restoration, verified original
+   predecessor process exit/full retirement receipts, removal of old owned
+   index/state scopes and unchanged original source bytes.
+
+Stop at the FIRST failed command/assertion/seal or changed consumed input; retain
+all failed fixtures/receipts. No immediate symptom-patch/restart loop is allowed.
+No reuse/relabeling of r32/r33 runtimes or old Neo archives. A passing fixture is
+still separate from actual Mac, Inno/registry, installed editor, final workspace
+tests, VSIX packaging or public release qualification. No publication authorized.
+
+Fresh r34 T2 build passed in70.552 s (`clean-break-r34-debug-build-r1.json`),
+P10/incremental on, Cargo timings retained, all consumed inputs unchanged and
+full freeze verified before/after. New1.8.16/schema2 Windows main digest:
+`d64a1684921ec5f0c008d1672bb2aa0bac0544e51bd94c6bdfe90851b5b5ddea`;
+compiled source matches d39d4fd.../1144. This is a fresh build with the bootstrap
+transport correction, not reuse of either failed candidate. Proceeding only to
+the previously recorded input-only preflight; no new journey result yet.
+
+R34 input-only gate passed in1.579 s, all native/extension/harness/shared inputs
+unchanged, no AIRK execution. The previously recorded THIRD native command is
+now starting against the sealed r34 runtime and authentic1.8.11 predecessor,
+reviewed two-index setup and short owner-private base. Complete freeze is checked
+immediately before the command. Stop conditions and retained-failure rules remain
+in force; there is no successful process-retirement/reset claim before its result.
+
+R34 THIRD native confirmation failed in68.484 s; receipts
+`clean-break-r34-upgrade-gate-r1.json` and
+`clean-break-r34-upgrade-report-r1.json`, preserved fixture
+`artifacts/q31/au-msqi029h`. Activation selected the candidate in19.113 s and
+terminated the original connected client. Both replacement Index jobs succeeded
+with fresh publications, but the validator incorrectly treated stage `ready` as
+completed cleanup/preference restoration. Teardown additionally called a
+nonexistent `runtime stop` command. Source hashes remained unchanged; both source
+trees were preserved. This is a failed journey, not completed reset qualification.
+No fourth expensive journey has been started.
+
+The harness defects were reproduced cheaply (38 tests:2 failures/3 errors), then
+corrected together: wait for `cleanup.complete` while retaining scope/provenance
+checks, and submit a durable instance-fenced canonical `runtime lifecycle` Stop
+request with complete or uncertain receipt preservation. The revised module
+passes39/39 tests in0.442 s. A subsequent read-only observation of the original
+fixture, `clean-break-r34-original-continuation-observation-r1.json`, still shows
+waiting cleanup, unrestored pause, repeated control failures and an OS3 runtime
+selection error. That underlying continuation failure remains under investigation;
+the fixture has not been restarted, resumed or retried to manufacture completion.
+
+Source review also exposed a host/native ownership gap: ordinary HTTP lookup
+requires a live permitted predecessor and cannot prove disposal ownership after
+an old process/token/control is gone. Four new host regressions were reproduced
+red before production changes. A distinct metadata-only predecessor-disposal
+contract, complete durable original ownership snapshot and current-namespace
+collision checks are being implemented. Ordinary connection/enrollment authority
+is unchanged. Missing/corrupt ownership evidence remains unknown, never foreign.
+The earlier r34 component checks and runtime seal predate these new changes.
+Mac checks, final workspace tests, actual Inno registry behavior and the new VSIX
+remain unqualified/unbuilt.
+
+The retained journal narrows the continuation failure to the first preference
+write: job0's successful receipt was saved, its preference flag remained false,
+and job1 had not reached receipt persistence. Source confirms the cause:
+`continue_clean_break` uses `ServiceRegistry::open_saved`, explicitly read-only
+with SQLite `query_only=ON`, then calls mutating `pause`/`configure_watch`.
+The correction will borrow the actual native ServiceLease through the existing
+writable maintenance API; a two-index actual Genesis/setup/job regression has
+been added before changing production. The separate OS3 diagnostic observation
+was caused by the relative install argument: an absolute-path read-only diagnosis
+of the same original fixture verifies the selected runtime and approval with no
+runtime error (`clean-break-r34-original-absolute-diagnosis-r1.json`). Neither
+observation restarted or modified the fixture. Harness independent review also
+verified its lifecycle schema against historical1.8.11 source; no historical
+Stop was executed for that review.
+
+R35 scoped Clippy passed in93.936 s after formatting (earlier r1/r2 stopped at
+format checks, not compiler/test failures). Command: `python scripts/dev-check.py
+-p airk-core -p airk-store -p airk-cli -p airk-mcp --features local-inference
+--target-dir artifacts/v190/p10-target`, Windows incremental on, Cargo timings
+retained as `clean-break-r35-clippy-r3-cargo-timing.html`; receipt
+`clean-break-r35-clippy-r3.json`, native inputs unchanged. The single actual
+Genesis/setup/completed-job continuation regression then reproduced the exact
+SQLite readonly failure (1 selected/1 failed,1.125 s test;122.508 s including
+compilation), `clean-break-r35-continuation-red-r1.json` plus JUnit/timings.
+Production continuation repair starts only after this red reproduction. These
+are scoped component observations, not a passing installed upgrade or new VSIX.
+
+Independent review found a sibling failure in the new preference-error path:
+returning immediately after the first recorded error would starve later indexes.
+The first fault fixture used an extra SQLite trigger, which the unchanged native
+schema guard correctly rejected before reaching restoration (not a reproduction
+of sibling starvation). Replaced that invalid injection with a private restore
+callback seam; actual Genesis, admitted/completed jobs, lease, namespace and schema
+validation remain exercised. The corrected regression reproduced starvation:
+1 selected/1 failed at the healthy sibling completion assertion,1.204 s test,
+41.467 s including compilation (`clean-break-r35-sibling-red-r2.json`, timings
+and JUnit retained). The loop was then corrected to preserve each failure and
+visit healthy siblings before returning the first error; authority crossings and
+failed durable writes still abort immediately. No expensive installed rerun yet.
+
+R35 scoped Clippy r4 stopped on one collapsible-if lint in that correction
+(20.716 s, timings retained); the suggested equivalent let-chain was applied.
+R5 is the queued confirmation, not a reported pass yet. Native and host source
+now also include explicit cleanup-purpose launcher inspection for approved old
+paired runtimes; ordinary inspection retains its HTTPS admission guard.
+
+R35 scoped Clippy r5 passed in21.651 s with timings retained and unchanged
+native inputs. The expanded clean-break/HTTP native batch completed all337
+selected tests:332 passed,5 failed,2169 outside the filter;86.164 s test time,
+147.478 s total (`clean-break-r35-native-focused-r1.json`, JUnit/timings retained).
+All three actual continuation/preference regressions pass. Three new HTTP tests
+had a shared fixture error: changed selected identities were not saved to the
+journal before the canonical metadata collector revalidated it. That fixture
+save order was corrected without changing production guards or assertions.
+The other two failures were actual CLI/MCP journeys: original retained stderr
+shows readonly SQLite writes in canonical lifecycle teardown. Source audit found
+the same erroneous read-only helper used for lifecycle begin/advance/clear-Stop;
+other normal `open_saved` callers remain observations. Failed fixtures and
+uncertain teardown receipts remain preserved.
+
+The complete extension suite then ran1162 tests:1139 passed,2 failed,21 skipped;
+11.133 s test time,24.692 s total (`clean-break-r35-extension-full-r1.json`).
+One helper fixture crossed its own namespace fields; the other exposed an
+unconditional service `ensure` before metadata-only reset completion, conflicting
+with a saved Stop. Independent review additionally found Windows ordinary versus
+extended path spelling and unreferenced host artifact census gaps. These are
+being reproduced cheaply before one coherent correction. No passing combined
+qualification, Mac execution or new VSIX is claimed from either failed batch.
+
+Lifecycle mutation was reproduced separately with an actual held service lease:
+1 selected/1 failed, exact SQLite readonly code8,0.147 s test/38.136 s total
+(`clean-break-r35-lifecycle-red-r1.json`, JUnit/timings retained). The reviewed
+correction adds a restricted existing lifecycle writer exposing only canonical
+begin/advance/clear-Stop, namespace-fenced and scoped to fully validated known
+schemas11..13; no CREATE, migration or pruning on open. CLI mutations retain the
+installation lock; observations retain read-only2..13 behavior. Older schema8
+write refusal and namespace/missing/unknown-shape refusal have dedicated tests;
+a recurring static guard covers lifecycle/continuation readonly-handle misuse.
+Scoped Clippy passed37.211 s (`clean-break-r35-lifecycle-clippy-r2.json`, timings,
+unchanged native inputs), after a test-only full-record comparison was corrected
+to compare serialized data because LifecycleRecord has no PartialEq. The363-case
+combined native confirmation is running; this is not its final result.
+
+All three additional host review regressions reproduced their intended failures
+before production edits (3 selected/3 failed,0.313 s): Windows canonical path
+spelling, orphan native-owned bare ID memento and false completion with an
+unreferenced old CA copy after reload. Corrections preserve unproven files and
+report blockers rather than adopting deletion authority. Stop-aware metadata
+completion and the inconsistent helper fixture are included in the same host
+correction. No installer/runtime rebuild has been repeated during this repair.
+
+The next complete native batch ran363 selected cases:362 passed,1 failed,
+2149 outside filter;90.443 s tests/185.607 s total
+(`clean-break-r35-native-focused-r2.json`, JUnit/timings retained). All lifecycle,
+ownership, headless HTTP snapshot and two-index regressions passed; the actual
+CLI HTTP journey now completed its Stop teardown. The remaining MCP assertion
+expected the superseded generic `review_required` error. Diagnostic execution
+showed the current guided CLI's exact terminal-review refusal. Only that test
+was corrected to require the precise current refusal for each client and verify
+unchanged full catalog authority rows plus credential ownership. It then passed
+1/1 in24.627 s/32.587 s total (`clean-break-r35-mcp-setup-confirm-r2.json`).
+No production guard was relaxed. The complete batch remains recorded as failed;
+this separate focused confirmation does not rewrite it as a363-case pass.
+
+Required workspace/all-features/all-targets Clippy passed46.553 s on these
+unchanged native inputs (`clean-break-r35-workspace-clippy-r1.json`, P10 target,
+Windows incremental on, Cargo timings retained). Core TypeScript compilation
+and all9 focused host regressions passed (0.501 s). A final growth-race census
+regression then reproduced the remaining aggregate read-budget defect before
+its correction (1 selected/1 failed,0.222 s).
+
+Fresh ignored r35 Neo preparation source preserves the existing SSH, Python,
+static ORT and Nextest bindings and matches the expanded Windows native filter.
+Its13 pure/mocked preparation tests pass0.270 s, including rejection of changed,
+missing or extra Windows native/script hash rosters against the exported source.
+Draft approvals remain false; printed launch output in these tests is mocked.
+No SSH, transfer, remote build or Mac qualification has occurred. The old r32
+exports/pins remain historical and are not selected for the current source.
+
+Final r35 mocked extension suite passed1170 collected:1149 passed,21 skipped,
+0 failed;11.368 s tests/24.741 s total
+(`clean-break-r35-extension-full-r3.json`). The immediately preceding full run
+had five historical activation tests fail solely because the new metadata-only
+selection route omitted the existing selection-check progress message; that
+truthful message is restored immediately before native discovery, without adding
+ensure/IPC or changing assertions. All growth-race, Stop, headless, orphan and
+Windows path regressions are included in this complete passing suite.
+
+Full Python contracts passed919 run,13 skipped,0 failed;81.414 s tests/82.300 s
+total (`clean-break-r35-python-full-r1.json`). Signing/compiler messages in this
+mocked suite are not actual Inno compilation, registry or signing qualification.
+Repository checks passed2138 public files in2.866 s
+(`clean-break-r35-repo-check-r1.json`). Native/extension versions remain1.8.16;
+1.9.0 remains a future public target. No publication is authorized.
+
+The reviewed r35 correction is now entering a new explicit freeze. Ordered T2
+commands after the final separate lightweight-main check and complete frozen
+manifest review:
+
+1. Build fresh `windows-debug-r35/runtime` with
+   `python scripts/build-service-runtime.py --destination
+   artifacts/local/one-airk-1.8.14/windows-debug-r35/runtime --profile debug`,
+   wrapper `clean-break-r35-debug-build-r1`, P10 target/incremental on/timings.
+2. Input-only checker uses that runtime and authentic sealed1.8.11 predecessor
+   `C:/Users/tdotn/.vscode/extensions/iokaio.airk-1.8.11/native/runtime`,
+   `--fixture-setup reviewed --fixture-base artifacts/q31 --clean-break
+   --check-inputs`, distinct checker output
+   `clean-break-r35-input-preflight-report-r1.json` and wrapper
+   `clean-break-r35-input-preflight-gate-r1`.
+3. Only after both pass, FOURTH installed native confirmation uses the same
+   arguments without `--check-inputs`, distinct output
+   `clean-break-r35-upgrade-report-r1.json`, wrapper
+   `clean-break-r35-upgrade-gate-r1`. Expect two real fresh publications,
+   restoration of pause/watch preferences, complete original process/storage/
+   runtime retirement receipts, unchanged original sources and honest teardown.
+
+Stop at the first failed assertion/command/seal or consumed input change. Keep
+failed fixtures and original incomplete receipts; no retroactive successful
+cleanup or restart of prior failures. The preceding failures' shared read-only
+root cause, missing tests and sibling audit were collected and corrected before
+this confirmation. Neither r34 runtimes nor old Neo archives may be relabeled.
+No successful journey, new VSIX or Mac result exists before those receipts.
+
+Separate lightweight-main/all-targets/no-default-features check passed66.196 s
+(`clean-break-r35-lightweight-main-r1.json`, timings retained). It emits one
+existing unused cfg-test HTTP helper warning; all-features Clippy remains clean.
+The r35 freeze is `completion-freeze-r35-clean-break-final.json`: compiled native
+`b6459ec1a279df29c3297487afe011f7627862a0bb52bd7526e4252615bcbc8f`/1149;
+native `631589f4e7cf2f94a298f0b2980c41c7d65fb3a1638e0f1684e3042e9da6a24f`/1137;
+extension `f0e1f083095f3c573abf64249fd32b34aaa9afc05d16a67817a98c74029ee459`/392;
+harness `df65205a8bc5d456d73aad4ffea101af624a795a715f5449710c639c9e3cdf29`/269;
+fixtures `157509ba305a08d6745c450b1a630ec1fcb3f5b0b6d4ca3877981026631034bf`/110.
+Independent review rehashed all1908 entries with0 mismatches, reviewed the actual
+receipts and full combined correction, and approved the recorded T2 confirmation.
+The only native batch-to-current change is the separately passing stronger MCP
+test; production bytes match. Whitespace checks pass and AGENTS/CLAUDE remain
+byte-identical. Starting only the recorded fresh r35 debug build now.
+
+Fresh r35 T2 build passed170.689 s (`clean-break-r35-debug-build-r1.json`),
+P10/incremental on, Cargo timings retained, all consumed native/script/shared
+inputs unchanged and complete freeze verified after the build. The original
+compiled identity is b6459ec1.../1149,1.8.16/schema2;811 sealed files. New main:
+`4739cec2582bbc609bd7fe030d5bed2ae9d38c32cfde506225e90e87000db404`;
+install manifest:
+`81e1d40605c6e23f7cf7089863814c13098e1bad5e0201d1295ed4a44ac27afe`.
+This is a fresh build, not reuse of the failed r34 candidate.
+
+Input-only preflight passed4.424 s (`clean-break-r35-input-preflight-gate-r1.json`
+and distinct checker report), with both complete seals, path budgets and all
+native/extension/harness/shared inputs unchanged; no AIRK execution. Starting
+only the previously recorded FOURTH two-index native confirmation after another
+complete freeze verification. All first-failure and retained-fixture rules remain
+in force. A passing build/preflight is not successful reset or VSIX qualification.
+
+FOURTH r35 native confirmation FAILED73.208 s
+(`clean-break-r35-upgrade-gate-r1.json` and distinct checker report), all consumed
+native/extension/script/shared inputs unchanged. Preserved fixture:
+`artifacts/q31/au-i64mt0b9`. Activation selected the fresh candidate in23.217 s;
+the held original client terminated. Both real Index jobs succeeded with fresh
+publications and the saved pause/watch preferences were restored. Original
+source bytes remain2/2 unchanged. Cleanup then reported
+`clean_break_cleanup_blocked: native runtime directory is not owner-only`.
+Candidate teardown now records a canonical full lifecycle Stop completion with
+no teardown errors; it does not assert an unobserved process-exit proof. Failed
+fixture and original receipts remain; no uninstall or successful overall cleanup
+was manufactured. All further expensive runs stopped at this failure.
+
+Read-only native, Store and historical1.8.11 producer audits identify the exact
+wrong assumption: capture calls the IPC private-directory validator on
+`data0/collections-1.4`. Canonical data roots/collections preserve inherited
+storage permissions, separately from strict control/credential privacy. The
+fixture's current-user-owned storage has inherited OWNER RIGHTS/System/Admin
+ACEs; protected control/log roots remain private. Hardening the fixture would
+hide a real contract mismatch. The same complete audit found canonical
+`.writer-locks`, `.quota-1.4`, `.lifecycle-1.4.lock` and `usage-quota.lock` omitted
+from cleanup's storage model, including absent-collection accounting settlement.
+A bounded metadata-only census saw48 entries and read no index/source contents.
+Normal Unix native-created0755 descendants beneath a private0700 control root
+also need ownership-aware descendant validation rather than repeated root
+privacy predicates. Root IPC privacy and source/foreign-data protection remain
+required. New real-writer/quota regressions precede this coherent Store-owned
+retirement correction. No fifth T2, new VSIX or Mac execution has been started.
+
+R36 cheap validation records, all with the persistent P10 target, Windows
+incremental on and Cargo timings: the initial storage regression first exposed
+a fixture API typo (`clean-break-r36-storage-red-r1.json`, compile failure9.990 s),
+then missing canonical saved-source setup (r2,1 selected failure28.644 s total).
+After fixture-only corrections the real defect was reproduced: `.writer-locks`
+was classified as an orphan collection (r3,1 selected failure23.914 s total).
+The private Unix descendant policy was independently reproduced on Windows
+with injected platform observations (1 selected failure77.585 s total,
+`clean-break-r36-private-policy-red-r1.json`). Production corrections followed
+those reproductions; no fixture ACLs or retained failed installations changed.
+
+Scoped Core/Store/CLI/MCP Clippy with local-inference/all targets passed51.509 s
+(`clean-break-r36-storage-clippy-r1.json`). The next combined native T0 batch
+selected28 tests:24 passed,4 failed,1736 outside the filter;3.960 s test time,
+48.640 s total (`clean-break-r36-storage-focused-r1.json`). This includes the
+intended producer-backed unfinished Accepted split failure: ordinary retirement
+guards still block the clean-break route. The other failures expose a native
+private-control receipt classification mismatch and two Windows storage replay
+test/lock boundaries. All results were collected before corrections. Store,
+collection and CLI owners are correcting these cases together; no new runtime
+build, fifth installed journey, Mac execution or VSIX qualification is approved.
+
+R36 scoped Clippy r2 passed34.557 s with all consumed inputs unchanged. The
+next focused batch selected31:27 passed,4 failed,1736 outside filter;5.520 s
+tests/56.589 s total (`clean-break-r36-storage-focused-r2.json`). All17 storage
+cases and the canonical CLI writer/quota case now pass. The Windows fixes
+avoid ReadFile on empty locked advisories and close each exact unlinked handle
+before exposing its physical-deletion checkpoint, retaining the other locks.
+The CLI fixture now uses the actual current-store producer; legacy index.sqlite3
+was correctly refused and its allowlist was not widened.
+
+The four current failures comprise the intentional zero-index reproduction
+(the new capability wrongly required a nonempty roster), two active-split cases
+reporting root-lifecycle lock contention, and a foreign-capsule test that emitted
+noncanonical owner metadata. All outcomes were collected before correction.
+Zero-index admission must prove the exact saved empty registry and namespace;
+it grants no storage targets. Active-split cleanup retains actual namespace/root
+exclusion and must not reacquire its own incompatible lifecycle lock. Review also
+requires a same-filesystem fence in the new exact-stage traversal. No expensive
+confirmation has resumed; current source corrections remain unqualified.
+
+R36 scoped Clippy r3 exposed only two unqualified serde derive names in a new
+test fixture (31.503 s compile failure). Qualifying those names fixed compilation;
+r4 Clippy passed25.333 s. Focused r3 then selected34:32 passed,2 intentionally
+failed filesystem-boundary regressions,1736 outside filter;5.523 s tests/38.539 s
+total (`clean-break-r36-storage-focused-r3.json`), all inputs unchanged.
+The actual Accepted split, live-to-closed funded staging, foreign-namespace
+capsule refusal, zero-index CLI admission and all18 Store storage tests pass.
+The final two regressions exercise real bounded stage traversal with injected
+filesystem identity observations; both expose the missing comparison before
+unlink, without privileged mounts. The owning agent may now add that guard.
+Independent source review cleared exact empty-registry admission and the
+descriptor-anchored marker write; full confirmation still awaits the guard,
+passing combined tests, complete review and a new source/artifact freeze.
+
+R36 final source correction now passes workspace/all-targets/all-features Clippy
+42.936 s (`clean-break-r36-workspace-clippy-r1.json`). The complete affected
+Core/Store/CLI/MCP selection passed389/389,2149 outside filter,101.863 s tests /
+164.091 s total (`clean-break-r36-native-focused-r1.json`), all native/script/shared
+inputs unchanged. This includes both filesystem regressions after their guard,
+all18 storage cases, real Accepted/funded/foreign-namespace split producers,
+empty-registry cleanup, and actual native CLI/MCP transport comparisons. Timings
+and JUnit are retained with those receipts, persistent P10 target, incremental on.
+Independent combined R36 source review is clear; final receipt/freeze review and
+the separate lightweight-main gate precede the next T2. This result does not
+qualify a newly built runtime, Mac execution, an installed journey or a VSIX.
+
+Separate lightweight-main/no-default-features/all-targets check passed35.026 s
+(`clean-break-r36-lightweight-main-r1.json`); repository check passed4.423 s and
+whitespace check passed. Native/extension/lockfiles agree1.8.16. Existing r35
+full extension and Python receipts remain the relevant unchanged component
+evidence; no rerun is represented as new coverage.
+
+New R36 freeze: `completion-freeze-r36-clean-break-final.json`, independently
+awaiting review; primary verified it under the actual contributor context.
+Compiled source `cf81a39ad2af229bd1fb8769c6f8badbc39057ca0cfb64acccd1c7b0939056c8`/1153;
+native `d718eab21bf20af0ca263f1bd7db7e5d13b1b99b5c36da4fa0f0dafc947bd81b`/1141;
+extension `cd8f7d3db188c8aede6bc5c76c5794defd569c015ab45688e38992cfca93bd0f`/392;
+harness `df65205a8bc5d456d73aad4ffea101af624a795a715f5449710c639c9e3cdf29`/269;
+fixtures `157509ba305a08d6745c450b1a630ec1fcb3f5b0b6d4ca3877981026631034bf`/110.
+All source owners are frozen. No r35 artifact may stand in for this source.
+
+After independent receipt/identity approval, the exact ordered T2 commands are:
+
+1. `python scripts/build-service-runtime.py --destination artifacts/local/one-airk-1.8.14/windows-debug-r36/runtime --profile debug`
+   through `run-qualification-gate.py clean-break-r36-debug-build-r1` with the
+   pinned static environment, persistent P10 target, incremental on and timings.
+2. With that newly sealed runtime bound through the wrapper's `--runtime`, run
+   `python scripts/check-runtime-upgrade.py --runtime artifacts/local/one-airk-1.8.14/windows-debug-r36/runtime --previous-runtime C:/Users/tdotn/.vscode/extensions/iokaio.airk-1.8.11/native/runtime --fixture-setup reviewed --fixture-base artifacts/q31 --clean-break --check-inputs --output artifacts/local/one-airk-1.8.14/clean-break-r36-input-preflight-report-r1.json`.
+3. Only if the build, input preflight and full freeze verification pass, run the
+   same checker without `--check-inputs`, with distinct
+   `clean-break-r36-upgrade-report-r1.json` output and wrapper gate name
+   `clean-break-r36-upgrade-gate-r1`. This is the FIFTH real confirmation, after
+   the complete storage/split correction and cheap regressions; prior failed
+   fixtures/receipts remain untouched.
+
+Expected: exact new sealed single-main candidate, then two independently rebuilt
+fresh indexes, saved pause/watch restored, original sources unchanged, proven old
+images exited, and complete owned state/storage/payload cleanup. Stop on the
+first failure, input change or incomplete proof; retain all failed fixtures and
+truthful teardown receipts. No fifth result or installer readiness is claimed
+before that evidence exists.
+
+The actual Neo batch is ordered ahead of that Windows T2 ladder so that scoped
+Mac Clippy can expose platform-only compile issues before a new runtime build.
+The existing `clean-break-r35-neo` preparation tools retain their historical tool
+tag; the exported source, current Windows389-test receipt, runner hashes and
+models receive new exact pins. Its13 pure/mocked preparation regressions passed
+0.275 s on9 November; printed fake launch receipts in that test are not SSH or
+Mac execution. Source export and finalization are read-only packaging steps;
+primary and independent package/pins review must precede any `--execute`.
+
+Use fresh `neo-inspection-r35-r36-final` then
+`neo-frozen-transfer-r35-r36-final` through `prepare-source.py`, and
+`prepare-final-pins.py --package <frozen> --windows-check-receipt clean-break-r36-native-focused-r1.json --output <new-draft-pins>`.
+After actual approval, `transfer-and-launch.py --approved-pins <approved> --execute`
+uses the existing pinned SSH host/key/UID, creates only fresh owned paths, and
+executes scoped Core/Store/CLI/MCP Clippy FIRST, then the same native filter,
+full Python and mocked extension checks. Stop the batch at its first failure,
+retain receipts/timings, settle compiler descendants and clean only its exact
+owned Cargo target in finally, including failure. Collect terminal evidence
+with `collect.py` before reporting any Mac result. No GUI, Intel, signing or
+installed Mac reset is covered. No actual SSH or Mac result exists at this point.
+
+Independent final R36 gate review approved the recorded T2 ladder after hashing
+all1912 freeze entries and all1307 captured native/script/shared inputs with zero
+mismatches and reading actual green receipts. Fresh Neo provisional and finalized
+packages were separately reviewed by primary and independent reviewer: all2142
+source and8 model archive members match exact safe path/type/mode/size/SHA; private
+archive entries and reachable-history private entries are zero. Authentic HEAD
+is9c71c2b041eaee65c6639019a58c88ad8c85a74c; no synthetic commit/index rewrite.
+Final public source roster914ea3ceda7f2bd4dd638105996f29c2efef53ae3b2eb7eb16e1eda77e993833;
+model rosterc8e33ba41ebb92f3cc4f65cf1e28e945cfa148a3dbb30b01e99e6e69e0d7868e;
+transfer receiptc1d9fd40b34b54ab021ade8a22f7776e7eb21770b7bd294c9bf4bcaa1f871b8a.
+An ignored prep helper's old r35-only receipt-name restriction was reproduced by
+the new r36 subcase (13 tests,1 error,0.131 s), then narrowly corrected to accept
+r35/r36 names while retaining exact full source/script maps and r32 refusal;
+all13 pure/mocked tests passed0.133 s. No receipt was relabeled.
+
+Fresh `approved-pins-r36.json` records the actually completed primary/independent
+reviews. Its SHA is1393c988d8cd1452589083fe5b74d4e908c2b0d064bee65c4eabc66717abd8db;
+Windows389-test receipt SHA07f09eadaa80d05068e1aae757d2f63d0272533156377e7f6e08f702ea59fec6.
+Local launcher verification passed with explicit NO_SSH_OR_BUILD status. Starting
+only the approved existing launcher with those pins and `--execute` next; this
+is one new scoped unsigned Neo batch, not reuse of any earlier archive/result.
+The now-frozen exported ledger is dated at its capture; subsequent local ledger
+evidence does not alter its exact compiled/native/script inputs or archive.
+
+Actual Neo launch succeeded over the existing SSH setup: campaign
+`/Users/tylerjensen/airk-builds/airk-clean-break-r35-final-1794218081236320400`,
+owner PID/PGID92852, exact R36 nativecf81a39a.../1153 and authentic HEAD9c71c2... .
+Local transfer receipt:
+`clean-break-r35-neo/neo-transfer-r35-1794218081236320400/owner-receipt.json`.
+Read-only host readiness found no competing compiler; package restore/seals
+verified. First actual status reports scoped-four-crate-clippy running. This
+records execution only, not passing Mac checks. Primary retains sole build/test
+ownership and starts no Windows Cargo/build/editor batch while Neo is active.
+
+Actual read-only Neo status now observes scoped Core/Store/CLI/MCP Clippy PASS
+151.4 s, incremental off/two Cargo jobs with timings retained by the owner.
+Canonical remote receipt remains `<campaign>/evidence/batch-receipt.json` until
+terminal allowlisted collection. The same focused native filter is compiling
+next. No native test, full component or overall Mac pass is inferred yet.
+
+First actual R36 Neo batch is terminal and all15 allowlisted reports collected
+in `clean-break-r35-neo/collected-r36-first`. Scoped Clippy passed151.4 s;
+the same native filter passed393/393 with zero skips/failures/errors,508.713 s
+including compilation and execution. Full Python then ran919 tests in12.178 s,
+FAILED1 assertion/6 setup errors,22 skips (12.885 s owner stage). The original
+batch remains FAILED; extension stages did not run. Required exact-owned Cargo
+cleanup passed0.905 s, removed7.6 GiB, and reports retain timings/JUnit before
+cleaning. No overall Mac component/installed qualification is claimed.
+
+All failures share two cold-checkout harness assumptions, read from complete
+collected evidence before correction: six Linux-installer contract fixtures call
+TemporaryDirectory under source/artifacts before that ignored parent exists;
+the real fixture consumer requires compiled packages/vscode/out/model.js, but
+the batch ordered Python before npm dependency installation and compilation.
+The native source/tests are unchanged and all393 passed. Correct only remaining
+component orchestration in a separately reviewed ignored follow-up owner with
+fresh evidence/fixtures, artifact-parent preparation and npm compile BEFORE
+Python. Reproduce scheduling/setup at T0 first. Do not rerun native compilation,
+erase the failed batch, alter its fixtures or manufacture a combined passing
+receipt; retain native compiled-source identity and original receipts separately.
+
+Independent receipt audit confirmed393 Mac native passes (215.487 s JUnit
+execution,508.713 s total including compile), all15 report hashes and before/after
+pins exact, all descendants settled and target cleaned. It approved retaining
+that original native result without rebuilding for the unrelated harness setup
+correction. One T0 case then reproduced the actual immutable runner's wrong
+compile-after-Python order (1 selected failure0.036 s). The ignored component-only
+follow-up is being implemented/reviewed; no second Mac batch has started.
+
+Fresh R36 Windows runtime build PASSED78.568 s
+(`clean-break-r36-debug-build-r1.json`), Cargo37.29 s with timings, persistent
+P10/incremental on; consumed native/script/shared inputs unchanged and full freeze
+verified again. Sourcecf81a39a.../1153, version1.8.16/schema2,811 sealed files;
+main SHAa63267921be7a2e47b7a0e3de6d4850068a00e1ff5f32f07fc6eb220fa3ddd31,
+install manifest22440f579e2ce82e588b603010abc126d88f796b03fa3bb99888421f460ca97b.
+This is a fresh build, not a relabeled r35 runtime.
+
+Input-only preflight PASSED1.565 s (`clean-break-r36-input-preflight-gate-r1.json`
+and distinct report): candidate and authentic1.8.11 predecessor complete seals,
+path budgets and all native/extension/script/shared inputs unchanged. It executed
+no AIRK process. Starting only the previously approved FIFTH actual two-index
+clean-break confirmation with the recorded fresh candidate and separate output.
+Retain first-failure stop rules and all previous failed fixtures/receipts.
+
+FIFTH actual R36 journey FAILED83.313 s
+(`clean-break-r36-upgrade-gate-r1.json` and separate report); all consumed
+native/extension/script/shared inputs unchanged. Fixture `artifacts/q31/au-yczac83b`
+is preserved. Activation selected22.605 s; the held old client terminated. Both
+fresh Index jobs succeeded, original pause/watch preferences restored,2/2 source
+hashes unchanged. Native cleanup reports complete=true/phase=complete, both old
+collections/data roots, old control/endpoints, old launchers and old runtime
+retired under their exact process/image exclusions. This is the first actual
+native cleanup completion observation, not an overall journey pass.
+
+The subsequent harness baseline check falsely rejects the valid marker's
+extended Windows install path against the equivalent ordinary fixture install
+path. Read-only evaluation of all six conjuncts from the retained marker proves
+schema/state-contract/baseline/namespace/control all true; ONLY install path
+equality is false. Existing helper normalization already handles this spelling
+elsewhere. The final authority/read/process-census checks after this assertion
+have not executed, so they remain unqualified. Teardown records canonical Stop
+complete/no errors, actual process-exit proof false, uninstall unacknowledged and
+fixture retained. The original failure is not relabeled or repaired in place.
+
+Stop further expensive runs. Reproduce and fix the complete Python path-identity
+validator/caller class at T0, including wrong-owner/namespace/control and UNC
+negatives; review the coherent harness change independently. Native production
+inputs/seals are unchanged, so no native rebuild is warranted. Reuse retains
+the original R36 compiled identity/build receipt, with the new harness identity
+recorded separately before any later confirmation.
+
+The complete Python alias class was reproduced before the fix:43 selected tests,
+the39 existing cases passed; four new names failed eight drive/UNC subcases
+(four failures/four expected-behavior errors),0.516 s. The correction applies
+existing platform-specific location_key only AFTER strict resolution for current
+marker/install/control and client images; saved retired-control/reused-storage
+identities compare canonical captured strings without stat of deleted old roots.
+Strict schema/version/namespace/foreign paths, no-link/single-link image checks,
+original registration provenance and POSIX case sensitivity remain enforced.
+Native inputs are unchanged.
+
+Corrected43-test receipt r1 retained an unrelated sandbox access failure at the
+existing protected fixture parent (41 passed,1 failure/1 error); rerunning in the
+required contributor context passed43/43,0.640 s wrapper/0.4 s tests
+(`clean-break-r36-runtime-upgrade-t0-r2.json`). Independent source review is clear;
+full Python validation is running. No sixth journey or native rebuild has begun.
+
+The separate ignored Neo component-only owner passed17 T0 pure/mocked cases
+(initial0.526 s tests; retained `clean-break-r35-neo/followup-t0-r36-r1.json`:
+17 selected/0.632 s wrapper, all inputs unchanged). Runner
+8046d49a2e2b4d5e64704abc006217f2f0f48cf83fdc83eff588c6e47ffe4dd7
+and testsf4b8b374903748fc291266b22dac6498e6584a32d72a0192be7866e73153695d
+were independently reviewed and approved for ONE serialized follow-up. It pins
+the original failed batch b87968569da0f5d6c12fc7dd61eb84c5f8657b0c2a3cc4efc6552e050a40911f,
+native393/Clippy/timings/JUnit/clean proofs and frozen source/model rosters.
+It creates fresh evidence/fixtures and the missing owned ignored artifacts parent,
+then npm ci/compile BEFORE full919 Python and the full mocked extension selection.
+No Cargo/build/clean or original failed-fixture/receipt rewrite is permitted.
+This follow-up executes the original frozen Mac Python919 scope; the newly
+corrected Windows-specific public path harness has its own current validation.
+Actual follow-up execution waits until the current Windows Python command exits.
+
+Corrected current Windows full Python passed923 tests/13 skips,81.443 s tests /
+82.072 s total (`clean-break-r36-python-full-r1.json`), native/script/shared inputs
+unchanged. No native code/build changed for the four path regressions.
+
+After that Windows command settled, actual Neo readiness reconfirmed UID501/ARM,
+original failed phase/settled descendants/clean target and no competing compiler.
+Copied and verified only the reviewed follow-up runner8046d49a... into fresh
+`components-control-r36-1794219736000000000`; one Popen started PID/PGID2074.
+Fresh evidence namespace beneath the original campaign is
+`components-followup-r36-1794219736000000000`; launch receipt is in the adjacent
+new control directory. This actual run performs no Cargo operations. Original
+source/failed receipt/native393 proofs remain pinned; no Mac follow-up outcome
+is inferred before terminal collection.
+
+Neo component follow-up is terminal FAILED42.887 s; all8 explicit report/log
+files collected and SHA/size verified in
+`clean-break-r35-neo/collected-r36-components-first`. All owned descendants settled.
+Owned-artifacts preparation, npm ci1.744 s, compilation7.402 s and full Python
+PASSED919/19 skips/900 executed (13.918 s stage). Full mocked Node then collected
+1170:1113 passed,24 failed,33 skipped,0 canceled (19.331 s stage). Original first
+batch and this follow-up both remain FAILED; no Cargo was repeated.
+
+All further Mac batches STOP. Exact first retained error is listen EINVAL on
+the campaign's deep TMPDIR-derived Assistance socket path, longer than Darwin's
+Unix-domain address limit. Cascading attachment/credential assertions require
+audit of every failure before correction. This is a recurring path-budget class;
+the missing cheap test must validate the actual fixture address BYTE length and
+choose a new short canonical owner-only fixture root before executing Node.
+Do not change/harden/reuse failed long fixtures, widen socket limits, weaken
+attachment assertions or rerun native/Python/npm stages for a Node-only fixture
+correction. A third Mac component attempt requires T0 reproduction, a complete
+root-cause note and independent review first. The user has been informed of this
+failure/stop; no third attempt is authorized by the current passing receipts.
+
+Independent current Windows review verified43/43 and full Python923/13 skips,
+all captured input hashes, the complete corrected1912-entry freeze, and every
+original R36 runtime seal (811 sealed files plus exact physical manifest roster).
+Only the upgrade checker and its tests differ: harness
+32238f77b912f642fd397bd07aac75651b622e06477f92596d91c831c830ff26/269;
+compiled/native/extension/fixture identities are unchanged. It approved ONE
+SIXTH Windows confirmation after the now-completed/collected Mac follow-up.
+No competing platform batch remains. Reuse the original built R36 runtime and
+its original78.568 s build identity; record current harness separately. Execute
+the same approved checker command with new `clean-break-r36-upgrade-gate-r2`
+and distinct `clean-break-r36-upgrade-report-r2.json`, a new fresh fixture,
+stop-first-failure and no old-fixture restart/repair. No native rebuild.
+
+SIXTH actual Windows confirmation PASSED106.995 s
+(`clean-break-r36-upgrade-gate-r2.json` plus separate successful report), all
+native/extension/script/shared inputs unchanged. Reused original R36 build/seals,
+new fixture `au-dd94zprm`; no rebuild. Activation22.863 s; two distinct fresh
+bindings/jobs/publications succeeded, saved pause/watch restored,2/2 original
+source hashes preserved. Baseline marker exact/new namespace; cleanup complete
+for both old collections/data roots, control/endpoints, old launchers and runtime.
+Independent held-process census confirms all7 captured original identities
+exited,0 signals; global process enumeration is explicitly not certified.
+Five old jobs return UnknownJob; prior request expired/job=null. Fresh catalog
+grant audit and two fresh scoped HTTPS connections both show original source
+and complete MCP/API parity. Teardown errors0, uninstall acknowledged, teardown
+complete and fictional fixture removed only after success. Prior fifth failure
+and fixture remain unchanged. Independent review read the complete actual report
+and approved this Windows native gate.
+
+Next frozen T2 ladder, subject to independent exact-command approval:
+
+1. Reuse this exact R36 runtime with wrapper `--runtime`; select ALL sorted
+   absolute `packages/vscode/out/test/*.test.js` paths (reject empty roster),
+   then `node --test --test-concurrency=2 <complete roster>` through
+   `clean-break-r36-extension-native-r1`. Host/webview/Assistance output is reused
+   from the unchanged passed R35 full compile; source/compiled extension hashes
+   remain in the current freeze. This enables real native fixtures, unlike mock
+   suite evidence. Preserve actual skipped/selected counts. Stop first failure
+   or consumed-input drift.
+2. On success, `python scripts/package-native.py --target x86_64-pc-windows-msvc --runtime-dir artifacts/local/one-airk-1.8.14/windows-debug-r36/runtime --output artifacts/local/one-airk-1.8.14/windows-debug-r36-native`,
+   then `python scripts/package-extension.py --target x86_64-pc-windows-msvc --native-dir artifacts/local/one-airk-1.8.14/windows-debug-r36-native/publish --output artifacts/local/one-airk-1.8.14/windows-debug-r36-vsix --channel preview`.
+   Preserve the original compiled/build identity; packaging is not a rebuild.
+   Verify resulting source/payload/archive seals and source/lock/catalog versions.
+3. Only the supported Windows installed scopes: set
+   `AIRK_EDITOR_SCENARIOS=untrusted,multi,same`, then
+   `node scripts/check-native-editor.cjs "C:/Users/tdotn/AppData/Local/Programs/Microsoft VS Code/Code.exe" "C:/Users/tdotn/AppData/Local/Programs/Microsoft VS Code/c4453f8ea4/resources/app/out/cli.js" <new verified VSIX>`.
+   Both actual Code paths were read-only verified. Private profiles/client home,
+   explicit nondefault installation and shellIntegration=off prevent user config
+   and persistent PATH mutation. Only the already authorized temporary owned
+   Windows trust enrollment/removal may occur. This is fresh/multi-index/untrusted
+   and two-window native acceptance; no authentic old Windows VSIX was available,
+   so do not claim in-place old-to-new Windows VSIX qualification. Stop first
+   failure/input change and retain all uncertain cleanup evidence.
+
+Primary remains the sole serialized test/build/platform owner; Mac source work
+may proceed independently, but no Mac batch overlaps these commands.
+
+Independent review approved the native-enabled extension command with one
+consumed-input correction: the ordinary freeze omits generated out/test modules.
+New read-only helper `compiled-extension-inputs-r36.py` records the ENTIRE
+recursive compiled output before and after, requiring exact equality, and the
+command consumes the exact104 sorted test paths from that receipt. Before
+receipt `clean-break-r36-extension-native-inputs-before-r1.json` covers211 files,
+SHA4b6f4b4e85cbb1a0f638a9fe644a8dbc5fc92f4fdd02220096592444e3792669;
+helperSHA37a7b238b7821cd1f0bdab7ba343ca7db13745ff6a2aa95466a1c22e971a2d72.
+No recompilation/source edits or new native build were needed. Primary will
+retain the after supplement even on failure; any changed output invalidates
+the run. Starting only that approved one native-enabled command now.
+
+Native-enabled extension suite FAILED149.132 s
+(`clean-break-r36-extension-native-r1.json`):1171 collected,1151 passed,17 failed,
+3 skipped,0 canceled. All native/extension/script/shared inputs stayed unchanged.
+The after compiled supplement proves all211 output files and104 selected test
+paths unchanged (after receipt93c53a681600386d21e818b3a0636d94d0de912910f076629356d13f028dd8b6).
+All17 native fixtures remain preserved with their original bounded failures and
+incomplete cleanup receipts. No packaging or installed-editor run may proceed.
+
+Complete source/error audit finds a new shared ownership-mode assumption:
+state_contract::required consults selected.json as an installer-owned payload
+BEFORE consulting managed-runtime.json. Managed installation intentionally also
+publishes selected.json, while executing its approved external provider payload;
+there is no owned root/runtimes directory. Health succeeds (require_service
+already prefers managed policy), while nonhealth console reads call the faulty
+required guard and their error is conservatively collapsed to
+service_request_outcome_unknown. Retained fixture7ACDWx contains the managed
+policy/public selection and no runtimes directory. This explains initial
+catalogHostContext and cleanup RequestEpoch failures.
+
+Independent TS audit read all17 final stacks and29 retained reports:31 leaf
+errors are14 retained first catalog-host calls and17 cleanup epoch calls, all
+same code; three test bodies have cleanup-only retention so their original
+exceptions remain unobserved. No separate sibling failure is shown. The owned
+two-index sixth journey does not qualify managed installation. Missing cheap
+coverage was managed policy PLUS its public selection cache in the actual state
+contract guard, including crossed selection/corrupt policy/old-version/marker
+negatives. Native owner must reproduce at T0 before centrally correcting policy
+precedence, audit read/start/report/lifecycle/rebuild callers, and retain managed
+pin consistency. This production correction requires a NEW frozen R37 runtime;
+the R36 artifact is not relabeled, rebuilt in place or ready for an installer.
+
+Managed-baseline T0: first compilation failed14.913 s on one unqualified
+test-only Sha256Digest; primary qualified it without production edits. Focused
+r2 reproduced3 failures/1 pass (30.572 s total). Full module selection r3 then
+ran5:1 passed/4 failed,1.412 s tests/2.646 s total
+(`clean-break-r37-managed-red-r3.json`), all inputs unchanged. Matching published
+managed selection fails on missing owned runtime path; ordinary/versioned epoch
+guards and old/missing-contract classification reproduce the same error. A
+malformed managed policy also incorrectly falls through to valid owned metadata.
+Production correction is now authorized centrally, preserving all pin, marker,
+version and external-provider read-only rules. No R37 build has started.
+
+Mac Unix-socket class was first reproduced cheaply from the ACTUAL frozen
+component fixture assignment:18 selected,17 pass/1 fail,0.531 s; full address
+171 bytes including NUL versus Darwin104. Source audit accounted for all24
+failures:6 direct listen EINVAL and18 missing Assistance/attachment consequences.
+Before any third attempt, primary also caught a wrong prior-helper deployment
+path in the new owner's actual main. A separate real-AST/retained-launch test
+failed1/1 in0.005 s; both import and later hash verification now bind the exact
+existing control-child helper8046, with no copy/search/adoption.
+
+New Node-only owner25c4385fcc6a36518ac6edc26b69f08b1eb7a88552aeb264a50e8db987cf7d59
+and tests2c8d13774366467902130033115e4fd77e3e0d52f66abf8b28802c6b6ecfccee
+passed32/32 T0 cases,0.647 s tests/0.856 s wrapper, all four owner/helper inputs
+unchanged (`clean-break-r35-neo/node-only-t0-r36-r1.json` and log). Independent
+complete source/evidence review approved ONE third Mac attempt, Node ONLY,
+after the recorded two-strike stop/root-cause note. It borrows exact prior
+393 native/Python919/compile/source/model/generated-JS proofs; no npm, compile,
+Python, Cargo, reexport or old-fixture/receipt repair. It creates a fresh short
+canonical UID501/0700 root in /private/tmp, checks full UTF8 socket bytes+NUL
+before dispatch, then runs the original104 test files once, requiring1170 cases,
+1137 passes/33 original skips/0 fail/cancel/todo. Stop any failure/drift and retain
+new fixture/evidence. This cannot qualify the forthcoming R37 Rust correction.
+
+R36 third Mac Node-only batch completed successfully:1170 collected,1137 passed,
+33 original skips,0 failed/canceled,13.845 s tests/14.203 s stage. Five collected
+reports under clean-break-r35-neo/collected-r36-node-final were hash-verified;
+the two earlier failed batches remain failed. This qualifies unchanged R36
+component source only, not the subsequent R37 Rust change.
+
+R37 managed policy now precedes the published selection cache in required().
+The shared managed-selection check authenticates policy/active pin and rejects
+crossed/previous selections; corrupt managed policy cannot fall back to owned
+metadata. Existing owned behavior and service inventory/marker checks remain.
+Five focused native tests passed (clean-break-r37-managed-focused-r1.json,
+27.201 s total); scoped Clippy passed23.086 s, workspace/all-feature/all-target
+Clippy passed19.666 s. The broader native batch passed394/394 selected with2149
+outside the filter,100.612 s tests/135.647 s total
+(clean-break-r37-native-focused-r1.json). Lightweight no-default-feature CLI
+Clippy passed15.369 s (clean-break-r37-lightweight-main-r1.json), retaining one
+existing test-only unused-function warning. Cargo timings and input seals were
+retained. Independent source/evidence review found no remaining native issue.
+
+Fresh ignored R37 Neo preparation corrects prerequisite ordering, creates its
+owned artifacts parent, validates the actual Darwin socket path under a short
+UID501/0700 temporary root, and records/rechecks the complete generated output
+roster and exact Node test paths across Python/Node. Its19 pure/mocked tests
+passed0.376 s tests/0.575 s total
+(clean-break-r37-neo-preparation-t0-r1.json). No new export, SSH batch or R37
+runtime build has occurred yet. Repository checks passed2.836 s and whitespace
+checks passed. Version remains1.8.16; no second bump is required. Next: freeze
+and independently review the complete R37 inputs, qualify Neo, build a fresh
+Windows runtime, and rerun actual native-enabled extension tests before VSIX
+packaging. The R36 runtime is not eligible for reuse after this production fix.
+
+R37 freeze completed: compiled-native e62c0e91183d74677065bd647d222f6ff72086ee274ad7135ab58e14f6e66d20
+(1154 inputs), native group091a0ac0.../1142, extension65569436.../392,
+unchanged harness32238f77.../269 and fixtures157509ba.../110.
+Fresh Neo package contains2143 public source files and8 public model files;
+source rosterbba8c42991841d7e5f4e12578348cd40a6554f1cc6b99b7a89820afd2b3bf41d,
+transfer receiptd805f1830ad5e26e37197a1f96477244a9eba13af9f050052d8c45f7a9e731ce.
+Primary and independent reviewer streamed every archive member and verified
+authentic HEAD/history (zero private entries), exact payload seals and Windows
+receipt source/script maps. Fresh approved-pins-r37.json has both actual reviews
+recorded, SHA5ca28af17d2653b0c6ae8d7bfac882a1a2d044a77477b84741e76ddd79cffbdf.
+Its dry verification passed without SSH. No new Mac batch has started yet.
+The package is immutable; subsequent local ledger updates are not edits to its
+captured public source or compiled-native inputs.
+
+Windows R37 debug build passed62.465 s total/Cargo20.13 s, persistent P10 target,
+incremental on, retained Cargo timings (clean-break-r37-debug-build-r1.json).
+This is a fresh build, not R36 reuse. Full freeze verification after build passed.
+Contributor-context seal verification confirmed811 sealed files/exact812 physical
+files, manifest70f8af5e36b4597f01571a608a0013716682fe346db07761248a30bef4cac517,
+mainb816113b0231e3be6142c83acf9216b7c6ddff763a39159686dbbf76baaa4c95.
+Sandbox read of the protected staging directory was denied; contributor read
+then succeeded without changing permissions. The full generated extension
+before supplement captures211 files/104 test paths, receipt4b6f4b4e... and
+helper37a7b238..., unchanged from the previous compilation.
+
+Next exact command, pending independent artifact review: use the qualification
+wrapper with --runtime windows-debug-r37/runtime and receipt name
+clean-break-r37-extension-native-r1, then node --test --test-concurrency=2 with
+the exact104 paths from clean-break-r37-extension-native-inputs-before-r1.json.
+Retain its complete after-generated supplement even on failure. Expect1171
+collected,1168 passes/3 original skips/0 failures or cancellations and successful
+native fixture cleanup. Stop for any failure/input drift and collect all results
+before correction. No Mac batch overlaps Windows builds/tests. Packaging and
+installed-editor acceptance remain blocked until native extension qualification.
+
+Independent artifact review additionally rehashed all811 payload files and
+verified exact physical roster/no redirects or hardlinks, build identity and
+all211 generated inputs/104 selected paths. Approved full native-extension
+command started once with the fresh R37 runtime, contributor fixture context,
+and no overlapping Mac batch. Result is pending; this is not a pass claim.
+
+R37 actual native-enabled extension suite PASSED319.368 s total:
+1171 collected,1168 passed,3 original skips,0 failed/canceled/todo
+(clean-break-r37-extension-native-r1.json/log). All native/script/shared/extension
+inputs unchanged; the complete after supplement confirms211 generated files and
+104 selected paths unchanged, SHA93c53a681600386d21e818b3a0636d94d0de912910f076629356d13f028dd8b6.
+The previous17 managed fixture failures are resolved in this actual run; native
+operations and fixture lifecycle completed. Existing failed R36 fixtures remain.
+
+Conditional independent review approved the next exact owned confirmation and
+its condition is now satisfied: qualification wrapper --runtime
+artifacts/local/one-airk-1.8.14/windows-debug-r37/runtime with receipt
+clean-break-r37-input-preflight-gate-r1 invokes python
+scripts/check-runtime-upgrade.py --runtime
+artifacts/local/one-airk-1.8.14/windows-debug-r37/runtime --previous-runtime
+C:/Users/tdotn/.vscode/extensions/iokaio.airk-1.8.11/native/runtime
+--fixture-setup reviewed --fixture-base artifacts/q31 --clean-break --check-inputs
+--output artifacts/local/one-airk-1.8.14/clean-break-r37-input-preflight-report-r1.json.
+Only after successful preflight, run the same command without --check-inputs,
+gate clean-break-r37-upgrade-gate-r1 and report clean-break-r37-upgrade-report-r1.json.
+Expected two complete fresh builds/settings restored/source preservation,
+ownership-proven predecessor exit and cleanup, fresh scoped HTTPS/MCP/full parity
+and acknowledged uninstall; stop first failure/drift and preserve all evidence.
+No rebuild or Mac overlap. Packaging/UI remain pending.
+
+Fresh R37 two-index confirmation PASSED105.505 s
+(clean-break-r37-upgrade-gate-r1.json/report-r1.json), following successful
+input preflight1.561 s. Activation22.736 s; both fresh index jobs and publications
+completed, pause/watch settings restored and both original sources preserved.
+Old collection/control/runtime/launcher cleanup complete;7 captured predecessor
+identities exited,0 extra census signals. This is held-identity/native retirement
+proof, not global PID enumeration certification. Two fresh scoped HTTPS/MCP
+connections qualified. Uninstall acknowledged/teardown complete,0 teardown
+errors, fixtureau-9dh5zn0s removed only after the successful acknowledgment.
+All consumed native/script/shared/TS inputs unchanged. No old failed fixture
+was repaired, restarted or removed to obtain this receipt.
+
+Proceeding to the independently approved single fresh Neo R37 batch using
+approved-pins-r37.json (SHA5ca28af1...), exact recorded --execute command in
+clean-break-r37-neo/primary-prelaunch-review-r37.json. Native e62c0e91.../1154,
+immutable2143-source/8-model package; incremental off,2 Cargo jobs, fresh exact
+owned campaign/cargo-target. First scoped Clippy, then focused native tests,
+npm lock/compile, full Python and full mocked extension; positive selections,
+unchanged source and full generated roster, retained timings, settled owned
+descendants and finally exact target clean required. Stop first failure/drift;
+retain all receipts/fixtures. No Windows build/test overlaps. Scope is ARM
+components, not installed Mac/GUI/Intel/signing/publication. Package creation
+and installed Windows editor acceptance remain pending.
+
+First R37 Neo launch attempt stopped locally before launch()/SSH: contributor
+context could not resolve the sandbox-created mode0700 public export directory
+(WinError5). No remote directories, compiler target or platform tests were
+created; this is not a failed remote batch. The missing cheap check was dry
+verification under the SAME execution principal. No fixture ACL was altered.
+Seven exact sealed PUBLIC files were copied with inherited permissions into
+fresh neo-frozen-transfer-r35-r37-launch; every byte/hash remains identical to
+the reviewed export. Contributor-context read of the whole copied package and
+all seals now passes. Only the draft package location/review flags changed;
+fresh independent copy/path review and same-context dry verify are required
+before execution. Native source, package contents and prior failed evidence
+remain unchanged.
+
+Independent launch-copy/path review passed. New approved-launch-pins-r37.json
+SHA7e9a77810f0299ad4e171271b24abd6b05c1d14a6a07d141083e0681ad9cb553 records
+the completed reviews. Same-contributor-context dry verification then passed;
+the authorized single Neo batch started successfully, PID/PGID3598, campaign
+/Users/tylerjensen/airk-builds/airk-clean-break-r35-final-1794224190256027000,
+retained launch receipt clean-break-r37-neo/neo-transfer-r35-1794224190256027000/owner-receipt.json.
+Restored source e62c0e91.../1154 and runner915d218b... are exact reviewed inputs;
+read-only poll observed scoped-four-crate-clippy running. No Windows tests or
+builds overlap. The prior local WinError5 remains a separate no-SSH failure.
+
+Fresh R37 Neo batch PASSED704.004 s, qualification_complete=true. Scoped
+four-crate Clippy151.173 s;398/398 native cases passed218.715 s tests/507.440 s
+stage (2105 outside filter); npm locked dependencies1.501 s and compile7.934 s;
+Python923 run/19 skips/0 failures13.114 s tests/13.927 s stage; mocked Node1170
+collected1137 passed/33 original skips/0 failed/canceled14.747 s stage.
+The complete209-file generated roster/104 exact test paths was preserved across
+Python and Node. Short owned UID501/0700 fixture root had71 socket bytes including
+NUL against Darwin104. All owned command descendants settled, evidence/timings
+retained before required cargo clean0.905 s, compiler tree absent/empty, source
+and fixtures retained. No unavailable stage. No Windows tests/builds overlapped.
+
+All21 allowlisted reports were collected into
+clean-break-r37-neo/collected-r37-final and independently rehashed by primary;
+collection copied no private fixtures. Native/source/model/runner identities
+match the reviewed R37 pins. Sandbox reads of contributor-owned collected
+reports were denied; contributor-context read succeeded without ACL changes.
+This is ARM component evidence, not native-enabled extension, installed Mac
+editor/upgrade, Intel, signing or publication qualification. Earlier failed R36
+batches and the no-SSH local R37 handoff failure retain their original results.
+
+Next after independent collected-evidence/current-doc review: freeze final
+packaging inputs and run package-native.py --target x86_64-pc-windows-msvc
+--runtime-dir artifacts/local/one-airk-1.8.14/windows-debug-r37/runtime
+--output artifacts/local/one-airk-1.8.14/windows-debug-r37-native; then
+package-extension.py --target x86_64-pc-windows-msvc --native-dir
+artifacts/local/one-airk-1.8.14/windows-debug-r37-native/publish --output
+artifacts/local/one-airk-1.8.14/windows-debug-r37-vsix --channel preview.
+Reuse original fresh R37 compiled source/build identity; packaging is not a
+native rebuild. Require full archive/payload seals and version agreement, stop
+first failure/drift. Installed private Windows untrusted,multi,same checks
+follow actual VSIX seal review. The separately reviewed final Windows ladder
+then runs workspace build, full Nextest --ignore-default-filter (restoring all
+four routine campaigns), and serial doctests; those checks remain unrun.
+
+Independent review verified all21 Mac report seals/counts/pins and cleanup,
+then final stable README/Marketplace wording and documentation limits. Primary
+corrected a release-note inversion of managed-policy precedence and qualified
+the manual-CLI PATH sentence to distinguish native setup from installer/VSIX
+integration. Four docs are frozen. Final completion-freeze-r37-package-final.json
+retains native e62c0e91.../1154 and all native/harness/fixture groups unchanged;
+extension groupbe4463f0cf23bdf51f1f9a6b66d1937308b21e1b66085c9611aa5d3dae1bc641
+contains only the packaged README change since native testing. No TS/generated
+code changed. Repository check passed2.766 s and whitespace check passed.
+
+Native packaging PASSED17.784 s (clean-break-r37-package-native-r1.json),
+all inputs unchanged, with original R37 runtime reuse. Primary independently
+verified all812 archive members/digests and original source/version/manifest.
+Native ZIP airk-1.8.16-x86_64-pc-windows-msvc.zip has
+SHAa2afff79ffee33b73c500034e501e96ae36aa349f399912d97155b537490bac8;
+installer manifest remains70f8af5e... . This is unsigned local debug packaging,
+not a new runtime build or signed/public release. The conditionally reviewed
+preview VSIX packaging command started next, using that exact archive. No global
+installation/publication or actual editor execution has occurred yet.
+
+Preview VSIX packaging PASSED19.625 s
+(clean-break-r37-package-extension-r1.json), all consumed inputs unchanged.
+Artifact windows-debug-r37-vsix/publish/airk-1.8.16-win32-x64.vsix is86,928,799
+bytes, SHA5ac1678a80c4119c0ed627162cc43e3cd14f865ca642dd7e00e9bf0c530e4d90.
+Primary verified all920 payload files plus the two generated VSIX metadata
+entries, version1.8.16/win32-x64/preview, and original native e62c0e91.../1154
+with installer70f8af5e... . First ad hoc manual check assumed LICENSE stayed
+literal; VSCE normalizes it to LICENSE.txt (README.md to readme.md). Corrected
+read-only full verification passed using the existing canonical normalization;
+no source/archive changes or repackaging. Package freeze after both gates is
+unchanged. Independent VSIX seal review is pending before actual private editor
+acceptance; artifact creation alone is not installed qualification.
+
+Next exact UI command, pending independent seal review: set child selection
+AIRK_EDITOR_SCENARIOS=untrusted,multi,same, then qualification wrapper WITHOUT
+--runtime (avoid external test-binary overrides), gate
+clean-break-r37-installed-editor-r1, node scripts/check-native-editor.cjs
+"C:/Users/tdotn/AppData/Local/Programs/Microsoft VS Code/Code.exe"
+"C:/Users/tdotn/AppData/Local/Programs/Microsoft VS Code/c4453f8ea4/resources/app/out/cli.js"
+artifacts/local/one-airk-1.8.14/windows-debug-r37-vsix/publish/airk-1.8.16-win32-x64.vsix.
+Recheck exact package freeze and full211 generated outputs before/after. Private
+profiles, client homes and nondefault runtime; shellIntegration=off prevents real
+PATH/config writes. Only the previously authorized owned temporary CurrentUser
+Root trust enrollment/removal may occur. Expect untrusted no-service behavior,
+multi-index and same-service two-window acceptance plus complete teardown/trust
+cleanup; stop first failure/drift, retain all fixtures and uncertainty. No
+authentic previous Windows VSIX exists, so this does not qualify in-place old
+Windows VSIX replacement. Native two-index predecessor reset is separate proof.
+
+Independent review approved all812 native ZIP and920 VSIX payload seals plus
+exact generated metadata/version/preview flags. Actual private editor run then
+FAILED47.833 s (clean-break-r37-installed-editor-r1.json/log), fixture
+artifacts/editor-qualification/native-installed-Ujos45. Untrusted scenario passed;
+multi reached successful source setup/indexing and restrictive policy Apply, but
+next index-set creation failed catalog_outcome_unconfirmed_reconcile_first.
+Same-service two-window scenario was not reached. The owned editor was forced
+closed; native-stop.json was absent, so native cleanup remains UNQUALIFIED and
+the complete failed fixture/profile/receipts remain retained. No service restart,
+forced cleanup or acknowledgment was manufactured. Temporary trust cleanup must
+not be claimed complete without its actual receipt.
+
+All211 generated files/104 selected paths and the entire package freeze remain
+unchanged after failure; after supplement SHA93c53a68... . The built R37 VSIX
+therefore exists but is NOT accepted for user installation. Full workspace/T3
+ladder is stopped. Parallel read-only native/TS/harness investigations are
+collecting all sibling evidence before one coherent correction and a cheap T0
+reproduction. Initial evidence: a-ui-done-12 records catalog_applied trim policy,
+catalog revision5/authority_fence_required=true and pending=[]; mailbox sequence13
+is setCreate. Error text originates in TS catalog pending/in-flight guards,
+not Rust. Do not infer native refusal or failed native Stop from missing
+teardown files. No second installed-editor attempt is authorized until root
+cause/T0/affected checks/review/frozen inputs are complete.
+
+Read-only combined audit isolates two paths. Prior trim genuinely completed
+native policy job and physical cleanup; ui13 setCreate issued its own project
+and membership intents before the later guard error. Synthetic Service.log
+request_outcome_unconfirmed is generic page logging for live journal entries,
+not a raw native failure. No Rust defect is established. TS owner is adding a
+real controller/journal/local-index-set deferred-storage regression before any
+product correction; a green hypothesis will be reported as such.
+
+Separate confirmed harness gap: actual driver Stop occurs after early setup
+and after the client try/catch/finally, so either setup failure or rethrown client
+body failure skips it. Existing withFailureStop helper tests never proved driver
+wiring. New tests execute the ACTUAL terminal catch callback with injected side
+effects:7 selected,5 passed/2 failed,87.499 ms tests/0.158 s total
+(clean-break-r38-error-teardown-red-r1.json/log). Both observed zero Stop calls.
+Authorized harness correction will close owned editors then attempt one exact
+ownership/instance/namespace/runtime-bound Stop, retaining separate failure-only
+intent/receipt evidence; normal UI Stop receipt and original acceptance failure
+must remain unchanged. Include the consumed helper in actual driver hashes and
+add wiring, foreign/crossed/uncertain-dispatch regressions. No restart, repeated
+mutation, force, uninstall or manufactured successful qualification. Existing
+failed fixture remains untouched. No T2/T3 rerun until the combined correction
+passes cheap checks and independent review.
+
+Index-set hypothesis checks: the combined real ServiceConsoleController /
+IntentJournal / saveLocalIndexSet deferred-storage/reactive-view regression
+PASSED1/1,22.414 ms tests/0.204 s total
+(clean-break-r38-index-set-real-console-t0-r1.json). It does NOT reproduce the
+installed failure, so no pending/concurrency relaxation is justified. Initial
+compile incorrectly invoked npx from repository root, causing a71.126 s npm-cache
+permission failure instead of using the extension's compiler. Corrected direct
+invocation of the existing pinned TypeScript compiler passed8.046 s; no package
+or dependency was installed. No native source changed.
+
+Immutable read-only SQLite metadata proves the new project committed at revision6
+and membership at revision7 with matching full fenced receipt/caller/namespace;
+final UI context remained6. Database hash/size/mtime stayed unchanged. A second
+cheap discriminator loaded ONLY that exact existing record in memory and passed
+the canonical handler envelope through actual ServiceClient submit validation /
+observation validation / IntentJournal prepare-observe-forget. PASSED1/1,
+5.438 ms tests/0.089 s wrapper
+(clean-break-r38-retained-receipt-t0-r1.json/log), all211 compiled inputs and
+database SHA unchanged. Raw record1319 bytes/SHA090b2ef4... was not written to
+any new file; diagnostics retain only hashes/field names/stage outcomes. This is
+a source-defined response reconstructed from durable native proof, not a captured
+wire frame. It also fails to reproduce the error; no native validation fix.
+
+Read-only installed VS Code Memento audit found whole-value replacement on
+storage events without a per-key sequence guard. Main-thread event ordering is
+being audited before modeling any stale snapshot. A stronger actual
+ServiceExtension host/adapter/finally regression is authorized test-only; pending
+guards remain intact. The exact throwing caller/pending nonce at that instant
+is still unknown. Generic page logging and the green mock boundaries are not
+proof of a product cause. Harness failure-teardown correction proceeds separately
+from its actual two-test red reproduction; no T2/T3 rerun is underway.
+
+Stronger actual ServiceExtension host/adapter/finally regression reproduced the
+reported guard:4 selected,3 passed/1 failed,281.181 ms tests/0.347 s total
+(clean-break-r38-index-set-host-red-r1.json/log). The failing whole_snapshot_event
+case restores a matching intent after local forget sets undefined but BEFORE
+Memento's scheduled flush serializes its current whole snapshot; the write then
+acknowledges the restored value. This ordering is supported by read-only installed
+VS Code source. Own normal completion, foreign unknown pending and changed
+identity cases pass. It proves this failure class, not the exact missing event
+in the original R37 fixture. Native request/receipt validation remains green.
+
+Authorized correction: a thin private per-intent durable backend at the existing
+IntentStorage boundary, used by BOTH console and direct enqueue, while ordinary
+preferences remain Memento. Immutable exclusive/fsynced request bases, bounded
+atomic observation writes and retirement must prevent late observers recreating
+requests. Preserve current aggregate/per-record budgets, scope/revision/identity,
+unknown/cross-window recovery and explicit legacy-row handling; no retry loop or
+global pending/known-receipt exemption. Prepare/observe/retire all need coverage,
+since a whole snapshot can erase prepared state too. Implementation is pending.
+Extension owner handles journal/console/host wiring; client-cleanup owner handles
+only the new private store and its unit tests. Primary remains sole runner.
+
+Failure-teardown focused correction initially hit protected fixture mkdtemp EPERM
+under sandbox, before fixture logic; contributor-context run passed30/30.
+Primary then caught an unrelated omitted installedEditorC8.js in the new driver
+hash roster. An actual complete-roster regression reproduced1/1 failure
+(clean-break-r38-error-teardown-roster-red-r1.json,0.151 s); primary restored only
+the omitted existing input. Full31/31 now pass,0.328 s total
+(clean-break-r38-error-teardown-focused-r3.json/log). Independent source/evidence
+review approved helper/driver ownership, one Stop, complete raw bounded capture,
+14 consumed hashes and separation from ordinary UI acceptance. No existing
+failed fixture was touched and no new UI/native run has occurred.
+
+### R38 coherent correction: investigation checkpoint
+
+The user required an end to patch/compile/test loops, including cheap checks.
+AGENTS.md and CLAUDE.md now contain the same mandatory investigation,
+batched-regression, coherent-correction, combined-review and frozen-validation
+cycle. Their instruction update was verified byte-identical. No compiler or
+test is running while this source correction is being completed.
+
+Additional collected diagnostic evidence (not installer acceptance):
+
+- Scope publication/capacity diagnostic reproduced both selected defects:
+  clean-break-r38-scope-capacity-stage-red-r1.json/log, 6.352 seconds.
+- Combined four-module diagnostic selected 228 tests: 225 passed, three failed,
+  24.529 seconds (clean-break-r38-journal-combined-t0-r1.json/log). Failures cover
+  the publication fence, capacity needed by successor Stop, and reload of the
+  captured pre-reset proof. Subsequent source corrections remain unqualified.
+- Interruption diagnostic reproduced both ordinary-retirement and captured-scope
+  retirement crashes: clean-break-r38-retirement-crash-red-r1.json/log,
+  two selected/two failed, 0.577 seconds total. A base removed before its overlay
+  leaves an orphan that blocks the next census. Recovery must use an exact,
+  bounded durable retirement proof; an arbitrary orphan is not cleanup authority.
+- Compiler diagnostics exposed test-only missing inspection narrowing and a
+  widened schema literal. Both source typing corrections were collected before
+  successful compiler receipts r4/r6 (7.929/7.872 seconds). These receipts do not
+  qualify the later coherent source changes.
+
+The complete source audit additionally requires: preserving existing logical
+record limits independently of filesystem wrapper overhead; strict ENOENT-only
+absence checks during recovery; preserving historical accepted native proof
+across simultaneous windows (compare-then-rename is not atomic CAS); retaining
+the full validated native response when subsequent local tracking fails; and
+rechecking captured ownership after asynchronous enqueue preparation. These are
+source-review findings unless separately reproduced above. The native immutable
+request and no-replay boundary must remain intact throughout.
+
+Request retirement after clean-break successor publication is distinct from
+physical old-index cleanup: it requires matching published fresh genesis,
+complete captured index roster and distinct original/successor namespaces.
+Overall completion and physical cleanup still require all indexes ready plus
+their native/client cleanup receipts. No gate, quota or ownership assertion is
+relaxed to make the diagnostic pass.
+
+Primary review and independent combined-source review are pending. Next execution
+will be one pinned compilation and a batched affected selection on frozen inputs,
+after all related production, caller and regression changes are complete. Reuse
+of the unchanged R37 native build must retain its original compiled identity;
+frontend, harness and documentation edits do not justify another native build.
+
+The accepted-proof correction uses protocol-defined finite immutable anchors,
+separate from replaceable current lookup observations. The selector must cover
+catalog fences, setup, source changes, reference refresh and split recovery;
+protecting only catalog-applied proof would miss sibling paths. Canonical
+continuity/dominance may compact an exact weaker anchor only after stronger
+full evidence is durable. Same-phase progress remains a current observation,
+not a promise of globally latest cross-window history. Physical read/metadata
+bounds must include interrupted and concurrent finite-slot states independently
+of unchanged logical admission limits. No generic version chain, stale-PID lock,
+native replay or quota increase is authorized. This is source work, not a pass.
+
+Ownership: the review agent implements only the new pure accepted-evidence
+helper and its regressions; the backend and TS caller owners retain their
+files. Primary and the separate native/transport reviewer must review that
+helper and final integration independently of its implementer. Documentation
+now describes the journal and separate retirement/completion gates as pending
+correction, without claiming platform or crash qualification.
+
+A new ignored R38 generated-input helper preserves the historical hard-104
+receipt helper unchanged. It requires an explicitly frozen source-test count,
+an exact source-to-generated test catalog, and before/after hashes of every
+generated file. Read-only review caught root redirects and nested generated
+test omission; both are corrected in source before execution. Final frozen
+count will include all new regression modules, rather than assuming the old
+104-file selection remains complete.
+
+Independent caller review found policy-resume's existing sticky authority in
+the controller's accepted_job_id comparison against receipt.job.id. Although
+stored in nativeObservation, that is a historical continuity guard. The coherent
+correction therefore adds a dedicated nativePolicyObservation field and fixed
+policy anchor while preserving the complete current observation separately.
+This corrects the initial source-audit assumption that policy had no sticky
+authority; ordinary nonfenced metadata gains no invented history contract.
+
+The finite-format audit derived a conservative 53-MiB physical read stop
+(52-MiB bodies plus 1-MiB metadata), at most 480 captured file proofs/256-KiB
+scope envelope and 18 files/32-KiB ordinary retirement envelope. These format
+bounds cover duplicated immutable evidence and legal interrupted slot states;
+they do not change the 64 active requests, 2-MiB effective SavedIntent quota or
+1,024-entry directory limit. Typical weaker anchors compact only after durable
+stronger proof and canonical continuity. A smaller-only injected read ceiling
+is authorized for regression tests; no production setting or environment
+override is introduced. Outer capture-envelope compatibility remains part of
+the pending combined source review.
+
+The independent complete consumer inventory also confirms ordinary catalog
+metadata is sticky authority: the unprepared-receipt guard rejects a prior
+catalog_applied/non-null catalog_receipt. The correction includes one dedicated
+nativeCatalogObservation historical field rather than erasing that guard.
+The full affected family set is now catalog metadata/fence, setup, source,
+policy, split and refresh; generic requests retain their immutable request/native
+receipt model. Full local catalog details must expose both new historical fields.
+
+Historical anchors must not authorize setup resume without its existing fresh,
+same-client reviewed response. They also must not duplicate a complete current
+accepted source/policy/metadata frame merely to fill a fallback field: that would
+make previously legal near-64-KiB records fail the unchanged record ceiling.
+Effective current-plus-fallback admission is checked before publication, with
+local failure retaining the complete new native response instead of widening
+quotas or dropping accepted authority. Final source review remains pending.
+
+The pure accepted-evidence helper and regression source have now received
+primary and separate reviewer source clearance; no compilation or tests were
+run. Final family-specific stripping retains unrelated legacy diagnostic
+fields, validates explicit claimed historical authority before elision, and
+does not silently delete malformed proof. The final narrow delta was included
+in the primary review.
+
+Refresh has one additional concrete existing consumer: fresh-key admission
+checks whether the prior job is terminal. A configured-running receipt and a
+terminal-job-only receipt can be incomparable. The helper keeps the original
+full terminal DTO in optional nativeRefreshTerminalReceipt only when neither
+the main historical receipt nor a valid current lookup already carries it.
+The caller must validate/use that terminal proof without fusing DTOs, discarding
+configuration/results, or replaying the old request. Controller/backend
+integration and complete-detail exports remain under review before the single
+frozen validation batch.
+
+Open-Explorer source audit found a delayed legacy-writer boundary: loader
+closeSession awaits preparation/deactivation/disposal and two microtasks, but
+neither the controller nor the old journal contract drains already queued
+Memento updates or other windows. A prepared old-scope nonce can therefore
+arrive after the import/capture; native shutdown cannot cancel that JavaScript
+write. This is a source-proven interleaving, not another observed installed
+failure or a claimed inspected historical v1.8.11 module.
+
+The approved discard-predecessor-requests policy applies only after the existing
+exact operation/store/root/control/scope fence is established from authenticated
+fresh Genesis. Fully validated Memento requests in that retired predecessor
+namespace, including delayed nonces, must not consume active admission or block
+new Stop, and must never be imported/replayed. One bounded exact-observed
+legacy-disposal pass may report late removals and remaining entries separately;
+it must not pretend they appeared in the original capture or prove that a
+legacy writer can never publish again. Before that fence, and for foreign,
+malformed, crossed-namespace or nonretired rows, existing blockers remain.
+Uncaptured physical request/observation/anchor files remain untouched blockers;
+this logical retired-scope rule grants no additional filesystem deletion
+authority. Backend/host regressions join the same coherent source correction;
+no additional test or compiler run has occurred.
+
+### R38 frozen correction: first combined validation batch
+
+All production and regression source is now frozen. Primary and separate
+reviewer cleared the combined host/helper/backend correction before execution.
+Host R1 is retained; R2 changes only reconciliation ownership-loss classification
+and its four regression cases. A valid reply followed by local owner loss is
+not relabeled as malformed native data; historical contradictions remain
+diagnostic. R2 manifest SHA ffa3e9e5d201fbc4c669e6aed1e1a10ab73b5afb540fc8d1970cf2513fae8ff6.
+Backend production SHA b0907e45acf3ce9ec8005ae4d9e8b7722ffcb0ac1eca2205c010507d86838396;
+backend test SHA 077a98e8095edb86eeb5fc2a73ccd145a409487e6cbcdb352fe6bf7e6f4bac72
+defines 48 cases. Unknown/wrong-family anchors now refuse in both the census
+and actual capture pass; capture validates cached bodies and physical preimages
+before retaining their hashes. No extra deletion authority or quota is added.
+
+The first batch uses the existing qualification wrapper and original sealed
+R37 runtime solely for artifact/source verification. Native source remains
+e62c0e91183d74677065bd647d222f6ff72086ee274ad7135ab58e14f6e66d20,
+1154 files; this is reuse, not a fresh native build. The complete source-test
+catalog now contains 108 modules, including the four new regression modules.
+
+Exact compilation steps (cwd packages/vscode), one frozen batch:
+
+1. node node_modules/typescript/bin/tsc -p .
+2. node node_modules/typescript/bin/tsc -p tsconfig.webview.json
+3. node node_modules/typescript/bin/tsc -p tsconfig.assistance.json
+4. node scripts/build-explorer.cjs
+
+These are the existing package compile stages, invoked through the installed
+Node executable and locked local compiler. Collect all three configuration
+diagnostics before any correction; bundle only if all configurations succeed.
+Expected result: all stages exit zero, native/extension/script inputs unchanged.
+After successful compilation, seal every generated file and exact 108-module
+catalog; run the complete mocked Node selection with native override variables
+explicitly removed, the full Python contracts, and the nine source-only R38 Neo
+preparation contracts. Collect the complete batch before editing. No installed
+editor, native rebuild, platform batch or T3 step is authorized by this record
+until these results pass and the frozen artifact inputs receive review.
+
+### 9 November 2026: resumed delivery and collected R38 results
+
+The user resumed work after the explicit stop. Before further execution, the
+retained complete batch was collected: `clean-break-r38-extension-full-compile-r1`
+failed with 11 host type-narrowing errors; webview and assistance configurations
+passed and bundling did not run. All diagnostics follow guarded calls to the
+same inferred const-arrow `failure` helper. The existing correction changes it
+to an explicitly declared never-returning function, preserving all runtime
+checks. Primary and separate source review confirmed the complete diagnostic
+mapping; helper SHA256 is
+83f2b6796182423de2a6c2bda9b86aca11ac49d06248795ce0fbb6886c195184.
+
+The unaffected `clean-break-r38-python-full-r1` passed 923 tests with 13 skips
+in 82.219 seconds, and `clean-break-r38-neo-preparation-t0-r1` passed all nine
+preparation tests in 0.282 seconds. No Neo execution or installed acceptance
+is implied. These receipts were collected before the previous stop.
+
+Next frozen batch: repeat the three pinned local TypeScript configurations
+and bundle only after all pass; seal the complete 108-module generated test
+catalog, then run the full mocked suite with native overrides removed. Reuse
+R37 native source e62c0e91183d74677065bd647d222f6ff72086ee274ad7135ab58e14f6e66d20
+only after the wrapper verifies every native input and payload seal. Stop on
+compile failure; collect the complete mocked suite before any correction.
+
+R38 full compile r2: all three TypeScript configurations pass; bundling fails
+on `src/nativeOutcome.ts` absent from the standalone uninstall allowlist.
+Elapsed 12.633 seconds; all recorded inputs unchanged. This is packaging input
+drift from extracting the shared ServiceError class, not a native failure.
+Complete bundle/source roster audit found that normal package MODULES already
+contains all three new modules; browser/Assistance boundaries remain unchanged.
+The correction adds only import-free nativeOutcome to standalone uninstall;
+the actual uninstall-bundle regression now verifies that dependency and rejects
+the private journal, accepted-evidence helper and host controller. R2 diagnostic
+is retained; no native rebuild is needed. Repeat compilation and the complete
+mocked suite after review, with the same frozen inputs and stop conditions.
+
+R38 compilation r3 passes all configurations and bundling in 12.673 seconds.
+The first complete mocked suite selected 108 modules / 1288 cases: 1257 passed,
+10 failed, 21 skipped, no cancellations, 48.651 seconds. Receipt
+`clean-break-r38-extension-mock-r1`; all native/extension/script/shared inputs
+unchanged. Generated before/after receipts confirm all 218 files unchanged.
+All ten diagnostics were collected before preparing the next correction.
+
+The failures cover four related integration boundaries: error wrapping lost
+plain Error(machine_code) names; an old assertion expected rejected native
+frames to be discarded instead of retained as explicitly unvalidated diagnosis;
+accepted-evidence normalization disagreed with readback/current refresh history;
+and three enqueue tests read a deliberately uninitialized journal after the
+pre-key ownership guard correctly refused dispatch. Ownership is split between
+backend, accepted-evidence and host-test agents; primary owns error preservation.
+No tests or compilation run during this coherent correction. Existing assertions
+on budgets, no replay, complete receipts and trust remain in force.
+
+The complete mock correction is intentionally bounded. PrivateIntentStore now
+inherits prior accepted fallback only when its immutable slot has no durable
+anchor; newer compatible current DTOs remain visible without replacing that
+first fallback. Existing collision coverage additionally checks anchor bytes
+and cold reload. Shared native errors preserve bounded machine-code messages
+from pure validators and keep arbitrary free text in the cause only. Crossed
+catalog-frame tests now require the full rejected DTO with an explicit
+unvalidated marker, rather than discarding diagnosis. Stale pre-key enqueue
+cases assert zero initialization, zero persistence and no dispatch, instead of
+reading a lazy store that correctly never initialized.
+
+Remaining qualification order after the coherent correction passes compilation
+and all mocked tests: full native-enabled extension selection against sealed
+R37 runtime; repository/version/whitespace checks; extension-only R38 preview
+VSIX packaging; private Windows installed-editor scenarios untrusted,multi,same;
+R38 Neo component-only batch retaining R37 native proof; final unfiltered Windows
+workspace tests and doctests. Every T2/T3 step requires reviewed frozen inputs,
+retains separate native/extension/harness identities and stops at its first
+failure. No old migration scenario, native rebuild for TS changes, global
+installation, commit, publication or stale-failure fixture removal is implied.
+
+R38 complete correction reviewed independently and by primary before execution.
+Primary caught and corrected one pending-admission fixture expectation during
+source review, before compiling. Full compile r4 passes in 13.016 seconds.
+Full mocked suite r2 PASSES: 1291 cases, 1270 passed, 21 skipped, zero failed or
+canceled, 48.791 seconds. All 108 modules were selected; 218 generated files
+and complete source identities remain unchanged (before-r2/after-mock-r2).
+All ten original failures are retained in r1; none were skipped or suppressed.
+
+Next T1 batch: full Python contracts on current inputs; repository, synchronized
+1.8.16 version, formatting and whitespace checks. Then T2 exact command:
+`node --test --test-concurrency=2 <108 paths from compiled-before-r2.json>`
+through run-qualification-gate.py --runtime windows-debug-r37/runtime, preserving
+native overrides for actual runtime coverage. Expected zero failures/cancels,
+positive full catalog and unchanged seals; stop before packaging on any failure.
+
+Current full Python r2 PASSES: 923 tests, 13 skipped, no failures, 78.305 seconds;
+all native/extension/script/shared inputs unchanged. Repository r1 PASSES:
+2150 public files, native/extension/lockfiles 1.8.16, Rust formatting and whitespace,
+13.018 seconds. Separate reviewer verified complete compile/mock/generated/native
+receipts and source. Native-enabled T2 now begins on the same frozen 108-module
+catalog and original sealed R37 runtime, with no rebuild or source edits.
+
+R38 native-enabled extension T2 PASSES: 1292 cases, 1289 passed, 3 existing
+skips, zero failures/cancellations, 328.721 seconds. Receipt
+`clean-break-r38-extension-native-r1.json`; complete native/script/shared/extension
+seals unchanged. Generated after-native-r1 matches all 218 files and the exact
+108-module catalog. Reused native runtime keeps original R37/e62 identity.
+
+Packaging command, reviewed frozen inputs:
+`python scripts/package-extension.py --target x86_64-pc-windows-msvc --native-dir
+artifacts/local/one-airk-1.8.14/windows-debug-r37-native/publish --output
+artifacts/local/one-airk-1.8.14/windows-debug-r38-vsix --channel preview`.
+Expected version 1.8.16, complete staged dependency seals and unchanged native ZIP
+(a2afff79ffee33b73c500034e501e96ae36aa349f399912d97155b537490bac8).
+Stop on packaging/source/seal failure; no native build or version increment.
+
+R38 preview VSIX packaging PASSES (20.147 seconds), retained at
+`artifacts/local/one-airk-1.8.14/windows-debug-r38-vsix/publish/airk-1.8.16-win32-x64.vsix`.
+SHA256 573b3c432d4aec2088f67fbfd3abddd6ac1fa66ce5d78baf40c9b7788f8f49c1;
+86,984,427 bytes, 925 ZIP members. Primary and independent reviewer checked
+all 89 extension outputs against the qualified generated roster and the entire
+native payload against the original R37 seals/ZIP. Packaging is not yet
+installed acceptance.
+
+Installed-editor T2 exact command: node scripts/check-native-editor.cjs
+"C:/Users/tdotn/AppData/Local/Programs/Microsoft VS Code/Code.exe"
+"C:/Users/tdotn/AppData/Local/Programs/Microsoft VS Code/c4453f8ea4/resources/app/out/cli.js"
+artifacts/local/one-airk-1.8.14/windows-debug-r38-vsix/publish/airk-1.8.16-win32-x64.vsix.
+Child AIRK_EDITOR_SCENARIOS=untrusted,multi,same; native binary/F09 overrides
+explicitly removed. Private editor profiles, installation and owned temporary
+trust only. The frozen harness includes the already-passed error-stop correction.
+Expected all three scenarios and normal Stop/cleanup receipts complete. Stop
+at first failure; retain failed fixture. R37's previous failed fixture remains
+untouched. Generated input seal before run matches all 218 files.
+
+### Installed-editor two-strike stop and narrow native budget investigation
+
+R38 installed-editor r1 FAILED after 96.874 seconds. Untrusted startup passed.
+Multi completed the formerly failing index-set create/apply/scope selection and
+reload, then sequence 16 failed its actual Workbench capabilities form. Same
+scenario did not run. The saved Workbench session retains the complete native
+MCP refusal: code combined_reply_budget, retryable=false, query_replay_safe=false.
+The original request was airk_parse execute with one capabilities step and empty
+arguments. This is a different failure from R37's Memento retirement race.
+
+Failure disposal now worked: failure-native-stop.json confirms the exact owned
+service stopped and is explicitly stopped. This is disposal-only evidence;
+normal native-stop.json/normal acceptance cleanup remain unqualified. Preserve
+fixture artifacts/editor-qualification/native-installed-J4sSbu and the earlier
+Ujos45 fixture. The R38 VSIX remains packaged but NOT accepted. All generated
+inputs still match the 218-file freeze. Neo transfer and remaining T3 work have
+not started.
+
+No third installed journey is running. The user was informed immediately.
+Wrong prior assumption: ordinary full capabilities fitting the native frame
+was treated as evidence that selected/combined capabilities wrapped by parse
+also fit. Existing canonical test covers only the ordinary body; installed
+Workbench forces full native data through composition and the parse envelope.
+The exact size gate is not yet identified: composition, combined catalog
+insertion, and final parse reply have separate 64 KiB checks, while parse has
+its own established output budget. Measure these with a canonical no-service
+Rust regression before any production correction; do not widen budgets or
+omit schemas to pass. Add the missing actual harness diagnostic observation
+so a rendered failure retains its already-observed complete refusal. Both
+regressions form one diagnostic batch, followed by one reviewed correction.
+
+R39 diagnostic batch collected completely before correction:
+`clean-break-r39-capability-diagnostic-r1.json`/`.log`, 107.962 seconds.
+Scoped `dev-check.py -p airk-mcp --features airk-kernel/local-inference
+--skip-fmt` passed (Cargo 47.44 seconds); persistent P10 target, incremental on,
+Cargo timing retained beside the receipt. One selected canonical Rust test
+failed, and one selected Node diagnostic test failed as predicted; zero skips.
+All native/script/shared inputs remained unchanged during the batch.
+
+The actual one-member capability body is 62,418 bytes, within the ordinary
+64 KiB body limit and 1 KiB delivery reserve. Its full MCP callback is 132,850
+bytes; the real combined parse body is 134,668 bytes, within its declared
+262,144-byte output budget. The frontend incorrectly checks that parse body
+against the ordinary read limit both before and after delivery validation.
+The same canonical regression also exposed a separate completeness defect:
+the shared recursive truncation detector interprets the capabilities catalog's
+`properties.cursor` schema object as a live continuation. The test stops at
+that incorrect partial/truncated result before checking both member counts.
+Both defects belong in one correction, with actual one-/two-member DTO
+round-trip and budget-boundary regressions. Preserve ordinary read, declared
+plan, and existing public 1 MiB transport bounds; do not drop schemas/results.
+
+The harness diagnostic regression reproduced zero retained observations for
+an already-rendered native refusal. Its correction uses the existing bounded
+diagnostic owner before propagating the same failure, with no replay or
+acceptance change. The previous R38 Neo export is now stale and will not be
+used to qualify these source changes. No further installed journey has run.
+
+R39 coherent source correction is frozen after primary review and independent
+review by `/root/clean_break_harness`. Only parse selects its existing validated
+output allocation through both delivery checks; ordinary reads keep 64 KiB.
+The wrapper keeps the existing 1 MiB ceiling with 2 KiB transport headroom.
+The shared truncation classifier excludes only operation schemas under the
+identified closed native Workbench catalog, retaining real root/sibling cursors,
+unknown/malformed catalogs and both definition-binding refusal paths. Actual
+one-/two-member canonical coverage uses independently indexed vector-disabled
+Kernels; the separate native/CLI/HTTP-MCP regression uses one actual service.
+No native test success is claimed before execution. Formatting completed.
+
+Ordered primary-owned T0/T1 batch: `node --test
+scripts/tests/native-editor-workbench.test.cjs` (10 tests); `python
+artifacts/local/one-airk-1.8.14/clean-break-r39-neo/test_r39_plan.py` (14 tests);
+`python scripts/dev-check.py -p airk-cli -p airk-mcp -p airk-kernel --features
+local-inference --skip-fmt`; then `cargo nextest run --profile ci -p airk-cli
+-p airk-mcp -p airk-kernel --lib --no-default-features --features local-inference
+--locked --timings --test-threads 2 -E 'test(combined_frontend) | test(workbench)
+| test(actual_combined_capabilities) | test(full_capability_catalog)'`; full
+Python contracts last. Reuse persistent P10 target, incremental on. Expected
+positive selected counts and zero failures; stop on first failed stage, input
+drift or missing evidence. The actual process/transport test, fresh runtime,
+VSIX and installed-editor confirmation remain subsequent gates, not this batch.
+
+The first cheap batch stopped at scoped compilation, before any native tests,
+build or installed rerun. Harness 10/10 and Neo preparation 14/14 passed
+(`clean-break-r39-harness-regressions-r1.json`, 0.151 s;
+`clean-break-r39-neo-preparation-t0-r1.json`, 0.337 s). Scoped Clippy collected
+four diagnostics from one missing `crate::Kernel` import in the new external
+test module (30.153 s, `clean-break-r39-scoped-clippy-r1.json`, timings retained).
+The completed batch's source seals were unchanged. Correct that test-only
+import after inspecting the entire log; retain the two passing cheap stages
+and resume at scoped Clippy. No production correction or limits changed.
+
+R39 resumed T0/T1 batch PASSES: scoped CLI/MCP/Kernel Clippy 9.285 seconds
+(`clean-break-r39-scoped-clippy-r2.json`); canonical library selection 67/67,
+1,225 outside the filter, 78.703 seconds total/26.307 tests
+(`clean-break-r39-canonical-regressions-r1.json`, JUnit and Cargo timings retained);
+full Python 923 tests, 13 skips, zero failures, 78.837 seconds total/78.188 tests
+(`clean-break-r39-python-full-r1.json`). Native/script/shared seals stayed
+unchanged throughout. All 291 extension sources and 218 generated files still
+match R38's passing compile/mock/native suite; the exact 108-test-file catalog
+is recorded in `clean-break-r39-extension-inputs-before-r1.json`.
+
+Next reviewed T2 is the actual process/transport preflight, not an editor rerun:
+`cargo nextest run --profile ci -p airk-cli --test combined_reads
+--no-default-features --features local-inference --locked --timings
+--test-threads 2 -E
+'test(capabilities_plans_keep_complete_native_cli_and_mcp_results_above_read_frame)'`.
+Expected exactly one selected test over one owned service, one and two selected
+members, real CLI and HTTP-MCP, complete original member DTOs and delivery proofs,
+within unchanged declared body/wire budgets. Native/harness/test inputs remain
+frozen; persistent P10 target, incremental on. Stop on failure or input drift;
+only a pass permits fresh runtime staging and package confirmation.
+
+R39 actual transport preflight FAILED: one selected test, zero passed, 42
+outside the filter; 46.402 seconds total/8.462 tests. Receipt
+`clean-break-r39-actual-parse-transport-r1.json`, JUnit and Cargo timing retained.
+All consumed inputs stayed unchanged. Direct combined capabilities returned
+`combined_reply_budget` before the parse check. The retained failure does not
+identify which member-count iteration failed; the fixture did not label each
+iteration or retain successful intermediate replies. Do not infer that count.
+
+No runtime rebuild, packaging, Neo launch or third installed-editor run follows
+this failure. The missing cheap seam is now explicit: the two indexed Kernels
+used by the T0 fixture were unscoped. Actual project workers use
+`ScopedReadAuthority` and add complete scope observation/publication/status
+fields. Runtime/work injection applies to diagnostics, not capabilities, so
+fabricating runtime fields would reproduce the wrong contract. Strengthen the
+canonical regression with the real scoped Kernel constructor and the actual
+two-Project/one-shared-index membership layout; collect both counts and field
+sizes before changing production representation. Preserve limits and full DTOs.
+
+The scoped no-service reproduction now confirms the missing case:
+`clean-break-r39-scoped-capability-diagnostic-r1.json` FAILED as expected,
+one selected test, 15.924 seconds total/1.59 tests; scoped MCP Clippy passed
+6.655 seconds. Both scoped native members retain their actual grant and source
+observations. One-member combined capabilities is 63,064 bytes; two-member is
+64,514 bytes. Both fit the actual 65,536-byte bound. The two-member body exceeds
+only the guessed 64,512-byte pre-delivery threshold, by two bytes. The actual
+typed delivery receipt has six bounded fields; final delivery already checks
+the complete serialized body and wrapper before returning it. Remove only the
+guessed preflight deduction, retain final hard limits and discovery's separate
+page allocation reserve, and test exact complete-reply boundaries. No new
+compression format, schema omissions or advertised limit increase is needed.
+
+R39 Neo preparation's independent review caught inherited component-only
+collector/launch assumptions before any transfer: native JUnit/timings were
+outside the collection allowlist, cleanup qualification did not require the
+observed empty target, and launch metadata prematurely asserted no native build.
+The coherent preparation correction restores native evidence collection,
+requires actual empty/absent target proof, and reports build state unknown until
+the owner observes it. All 17 pure guards passed in 0.364 seconds
+(`clean-break-r39-neo-preparation-t0-r2.json`). No Mac execution has occurred.
+
+The actual-size correction is source-frozen and independently reviewed by
+`/root/clean_break_harness`. Canonical preflight and final checks measure the
+actual complete bytes against the same read/plan limits; receipt authority,
+instance, namespace, digest and final transport checks remain intact. Tests use
+the typed receipt to require exact final N-byte acceptance and N+1-byte refusal,
+including a preflight body that fits but must fail after its receipt is added.
+The actual transport regression now records the iteration/member count before
+reading. Resume only affected three-crate Clippy and the 67-case native library
+group; preserve already-passing unchanged harness/Python/extension evidence.
+
+Scoped Clippy r3 stopped before tests after collecting two stale test-only
+calls to the removed helper parameter (11.547 seconds,
+`clean-break-r39-scoped-clippy-r3.json`). Primary audited every live helper
+reference, corrected both calls without changing their assertions, and retained
+the original complete compiler evidence. No production behavior changed in this
+correction; only the stopped scoped stage and following unrun checks resume.
+
+Final R39 source identity is
+`f187c34556fe74ee72ef7ab645100a0e57c564da77160c59219ca0dddb97e9da`
+(1,154 native build inputs), recorded with nine reviewed source/harness hashes
+in `clean-break-r39-reviewed-inputs-r1.json`. Scoped Clippy r4 PASSES
+13.481 seconds. Canonical regressions r2 PASSES 67/67, 1,225 outside the filter,
+51.636 seconds total/24.975 tests. Their receipts retain JUnit, Cargo timings
+and unchanged native/script/shared input proofs. The full scoped reply measures
+63,462 bytes for one member and 64,912 for two, including the typed 398-byte
+delivery observation, within the unchanged 65,536-byte limit.
+
+Resume the same exact single real transport preflight command as r1, with
+`--success-output immediate` to retain its per-member measurements; r2 consumes
+the frozen f187 source and unchanged harness. Expected one test passed, all
+three native/CLI/HTTP-MCP routes for both member counts, unchanged source files,
+complete data/delivery identity and no truncation. Stop on failure/input drift;
+no runtime build, Neo launch or installer run until it passes.
+
+R39 actual transport r2 PASSES: exactly one selected test, 42 outside the filter,
+33.959 seconds total/11.854 tests. Native, CLI and HTTP-MCP return complete
+matching data for one and two members, with original sources unchanged. Genuine
+native-delivered capabilities measure 63,480 and 64,925 bytes respectively.
+`clean-break-r39-actual-parse-transport-r2.json` retains exact commands, JUnit,
+timings and unchanged native/script/shared input proofs. This clears the
+specific R38 Workbench failure before any new installed-editor run.
+
+Next frozen ladder uses f187/1,154 native inputs, the unchanged R38-qualified
+291 extension sources/218 outputs, and the corrected harness. Run repository
+checks/version/format/whitespace, workspace all-feature/all-target Clippy and
+the separate lightweight CLI gate before building. Exact fresh runtime command:
+`python scripts/build-service-runtime.py --destination
+artifacts/local/one-airk-1.8.14/windows-debug-r39/runtime --profile debug`.
+Persistent P10 target, incremental on, timings retained; this will be a fresh
+runtime with its own source/payload seals, not reused R37 binaries. Stop the
+ladder on first failed check or changed consumed input. Packaging, native upgrade,
+installed UI, Neo and remaining workspace qualification follow their own receipts.
+
+R39 frozen build ladder PASSES: repository/version/format/whitespace 10.782s,
+workspace all-feature/all-target Clippy 29.900s, lightweight main 24.538s,
+fresh debug runtime 150.817s. Receipts are `clean-break-r39-repository-r1.json`,
+`clean-break-r39-workspace-clippy-r1.json`, `clean-break-r39-lightweight-main-r1.json`
+and `clean-break-r39-debug-build-r1.json`, with unchanged consumed inputs and
+Cargo timing reports. Next, reuse the R37 authentic predecessor command with
+`--runtime artifacts/local/one-airk-1.8.14/windows-debug-r39/runtime` and output
+`clean-break-r39-upgrade-report-r1.json`; previous runtime remains the installed
+1.8.11, reviewed fixture setup, `artifacts/q31`, `--clean-break`. Expected two
+indexes rebuilt with preferences/source protection and exact predecessor exit,
+followed by a complete cleanup receipt. Then run the unchanged 108 generated
+extension test modules, two processes, with both native binary overrides pointing
+at this sealed R39 runtime. Stop on first failure or input drift; no source edits.
+
+R39 authentic clean-break upgrade PASSES in 113.245s, using installed 1.8.11
+and the freshly built f187 runtime. `clean-break-r39-upgrade-gate-r1.json`
+retains unchanged input/seal proofs; `clean-break-r39-upgrade-report-r1.json`
+records both rebuilt indexes, source/preference preservation, owned predecessor
+exit, complete obsolete cleanup and acknowledged teardown with zero errors.
+The native-enabled extension suite is running separately.
+
+R39 Neo public export is frozen at 2,150 files, native f187/1,154,
+source roster `3dac3b04b238a57504912b1860124f0f0fa517765b71552b9cd7362430a41f00`,
+eight public model files, transfer receipt
+`1791957f2e73bc7da3a4337f2d62811941ebc852bbc7c16f599c15284b03ca93`.
+Package: `clean-break-r39-neo/neo-frozen-transfer-r35-r39-final`.
+Later ledger/result documentation edits are separate from this frozen public
+snapshot; native, extension, harness and model inputs stay fixed. No transfer
+or remote execution has occurred. Concrete pin/archive review follows.
+
+R39 native-enabled extension suite FAILS one of 1,292 collected cases:
+1,288 pass, one fails, three existing skips; 344.791s. Receipt/log:
+`clean-break-r39-extension-native-r1.{json,log}`. All native, script, shared
+and 291 extension-source inputs remained unchanged. Failure is the mocked
+onboarding case for live owner replacement after two transient lookups: the
+saved HTTPS URL remained the old port instead of the replacement port.
+This same TS/output roster passed R38. Packaging, installed UI and Neo are
+stopped while the source retry/observation race and test clock assumptions are
+traced. Reproduce with a deterministic T0 before changing production; no native
+rebuild is warranted by this evidence. Preserve this failed full-suite receipt.
+
+T0 `clean-break-r39-onboarding-race-red-r1` confirms the cause deterministically:
+one selected test FAILS in 12.142s including compilation. A forced native-health
+read during the third ownership lookup reports old instance `12`, while the
+console reports replacement `98`; the guarded refresh correctly refuses with
+`workspace_registration_changed` after the two intended busy failures.
+The fixture only updated native health in its directory-watcher variant. Fix
+that one contradictory fixture for all three variants; retain the deterministic
+overlap, initial-discovery settlement, exact three-lookups assertion, edits,
+enrollment/retirement invariants and original deadlines. No production, native,
+retry or capacity change. Run the complete affected onboarding module with
+the R39 binary, then the full mocked extension suite. The other 1,288 native
+passes remain evidence for unchanged production/fixtures; do not rerun their
+five-minute campaign or rebuild native code for this test-only correction.
+Refresh the Neo public test-source export after the correction passes review.
+
+Affected onboarding module PASSES 117/117 with R39 native overrides (38.987s,
+30.156s tests), `clean-break-r39-onboarding-module-green-r1.json`.
+The full mocked suite PASSES in 51.481s, `clean-break-r39-extension-mock-r1.json`.
+Independent extension review confirms no weakened assertions and no production
+change. Direct host-only TypeScript compilation also emits the intermediate
+unbundled `uninstallHook.js`; the canonical package compile restores its reviewed
+bundle. Before installed acceptance verify every packaged production output is
+byte-identical to the prior qualified roster; the only intended final generated
+test difference is `out/test/serviceOnboarding.test.js`. The intermediate
+compiled roster is retained as `clean-break-r39-extension-inputs-final-r1.json`.
+
+Package frozen f187/1,154 runtime with `python scripts/package-native.py --target
+x86_64-pc-windows-msvc --runtime-dir artifacts/local/one-airk-1.8.14/windows-debug-r39/runtime
+--output artifacts/local/one-airk-1.8.14/windows-debug-r39-native`, followed by
+`python scripts/package-extension.py --target x86_64-pc-windows-msvc --native-dir
+artifacts/local/one-airk-1.8.14/windows-debug-r39-native/publish --output
+artifacts/local/one-airk-1.8.14/windows-debug-r39-vsix --channel preview`.
+Expect sealed 1.8.16 Windows preview and unchanged qualified production outputs;
+stop before installed UI on any source, archive or output mismatch. No native
+rebuild or additional version increment for this fixture correction.
+
+R39 native package PASSES 17.596s; initial extension packaging PASSES 20.833s,
+but primary qualified-output verification REJECTS that first VSIX: contrary to
+the preceding assumption, package-extension stages existing outputs and does
+not compile. The host-only T0 compile left an intermediate unbundled uninstall
+hook. No installed journey consumed it. Reused the exact R38 complete compile
+command (three TypeScript configurations and build-explorer): PASS 13.612s.
+All 217 previously qualified outputs are byte-identical; only the intended
+onboarding test output differs. Extension-only repack PASSES 19.972s; native
+archive was not rebuilt. Retained `verify-r39-vsix.py` makes the complete
+qualified-output/native-seal comparison a repeatable cheap package gate.
+
+Final VSIX: `windows-debug-r39-vsix-final/publish/airk-1.8.16-win32-x64.vsix`,
+86,985,679 bytes, SHA256
+`b879926d43d4d816fb48eff32afc2ec134c22bd36da98a2d4e744269875eedb6`.
+`clean-break-r39-package-proof-r1.json` verifies all 925 archive members, all
+89 shipped extension outputs against the qualified roster, and all 811 native
+sealed files plus manifest against the fresh f187 runtime and native ZIP.
+Native ZIP SHA256 `fc40912be469770582d7e08dd9b65d3b8c28298307796bc990825c70c5fd00da`.
+Final generated before-seal: `clean-break-r39-installed-editor-inputs-before-r2.json`,
+218 files/108 modules, SHA256 `2133f0a2d061d129e7349ad6b24232826493ed3edca1b24d384981aa3b8a465c`.
+
+Installed-editor confirmation reuses the exact R38 command and Code/CLI paths
+with the final VSIX above. `AIRK_EDITOR_SCENARIOS=untrusted,multi,same`; remove
+all native/F09 overrides. Private profiles/installations/owned temporary trust,
+unchanged reviewed harness, no source edits. Expect all three scenarios and
+normal cleanup receipts; stop at first failure and retain the failed fixture.
+The earlier two UI failures have deterministic canonical regressions and real
+native/CLI/HTTP-MCP coverage before this third installed confirmation.
+
+R39 installed-editor r1 FAILS before AIRK native activation in 9.438s:
+untrusted scenario, first Restricted Mode observation, one DOM read attempt,
+zero UI mutation dispatches. `clean-break-r39-installed-editor-r1.{json,log}`
+and `artifacts/editor-qualification/native-installed-KKmCTx` are retained.
+The debugger WebSocket emits an ErrorEvent; the harness rejects the event itself,
+losing its nested error and reporting only `[object ErrorEvent]`. Editor logs
+show a running extension host; no native installation was created. Owned editor
+disposal was forced and is not normal acceptance cleanup. All input seals stayed
+unchanged. Final VSIX remains package-verified, not installed-accepted.
+
+Stop this component before another installed run. The missing cheap coverage is
+target turnover between `/json/list` discovery and initial WebSocket attachment,
+plus nested ErrorEvent diagnostic retention and failed-socket disposal. The old
+logs cannot prove turnover was this run's exact underlying error. Add deterministic
+T0 coverage, then narrowly classify only confirmed disappeared targets as the
+existing closed-target read case; surviving targets, failed rediscovery and unknown
+errors remain failures. No mutation replay, capacity increase, native rebuild or
+VSIX repack. Primary runs tests; harness agent owns these two harness source files.
+
+`clean-break-r39-cdp-red-r1.json` records the deterministic T0 baseline:
+37 selected, 30 existing cases pass, all seven new CDP cases fail (0.261s total).
+Actual public document/action paths reproduce lost nested ErrorEvent details,
+unclosed failed connections, missing confirmation of disappeared targets and
+initial attachment using the scenario deadline after the action deadline elapsed.
+Mocks inject fetch/WebSocket events without a browser, sleeps or native work.
+Existing mutation no-replay/deadline tests stay unchanged. The implementation
+will retain the original budgets, charge confirming discovery to the existing
+read count, and fail unknown/live-target handshakes with bounded diagnostic causes.
+
+User requested a 30-minute delivery target at 17:06:58 UTC; target 17:36:58 UTC
+(10:36:58 Denver). This is a delivery target, not permission to call failed or
+unrun acceptance passing. The built VSIX remains b879926d and the native f187.
+Primary source review caught an additional harness lifetime bug before any
+confirmation run: binding a cached CDP client to its first action's deadline
+would reject later valid actions. Keep per-action deadlines dynamic for reused
+clients and add a positive two-action regression before the single green batch.
+
+CDP correction is reviewed and frozen: editor-ui.cjs
+`ed1531d6b9d10ba8307011ef8bceefeff8d8f8ae7074ee0a4d5fe045130944c0`,
+editor-ui.test.cjs `63026b4e3148efe4e6088c141c70aa37f64cf7f3baa434f933065458c78e9d90`.
+Primary reviewed the combined lifecycle, read-only rediscovery, diagnostic and
+dynamic deadline changes independently of the implementer. The seven-file Node
+editor harness selection PASSES 0.412s (`clean-break-r39-editor-harness-green-r1`),
+scoped Python fixture checks PASS 0.552s (`clean-break-r39-editor-fixture-python-r1`),
+repository check PASS 3.004s (`clean-break-r39-final-repository-r1`). No production
+native/extension change. Reuse the exact final b879926d VSIX and installed-editor
+command as r1, with a fresh retained fixture and receipt r2. Expected all three
+scenarios; stop at first failure, retaining nested connection diagnostics if any.
+
+Green selected counts: Node 114/114, Python 7/7; no skips or failures. Refresh
+the Neo export once with this final harness and corrected onboarding fixture;
+all native production inputs remain f187 and all packaged outputs remain b879.
+
+Installed-editor r2 FAILS after 106.415s: untrusted PASSES; multi reaches a
+complete rendered/copied Workbench response but the external parity fixture's
+`installedToolBody` still imposes the ordinary 65,536-byte body cap on `airk_parse`.
+This missed caller was an incomplete earlier budget audit. Preserve fixture
+`native-installed-gSWrVc`, receipt `clean-break-r39-installed-editor-r2.json`,
+and exact failure-disposal receipt; disposal is not acceptance cleanup.
+Stopped after these two R39 UI failures and reported the root cause/missing
+cheap test to the user before another installed attempt.
+
+Complete TS/CJS budget audit found exactly two wrong parse callers (MCP and
+CLI Workbench parity); other read, request, control-frame and copy limits are
+separate and stay intact. T0 `clean-break-r39-installed-budget-red-r1` records
+37 selected, 33 pass/four new failures (9.766s including TypeScript). Fix only
+the external test helper/callers: original parse request selects its declared
+output budget with native defaults/precedence/range, returned budget must match,
+ordinary body cap remains 65,536, full text/structured copies and actual wire
+limits remain enforced. Static regressions bind both real caller sites.
+Independent extension review confirms the Rust contract match. Complete compile
+PASSES 13.920s; all 45 installed contract/completion/HTTP tests PASS 1.321s.
+Receipts: `clean-break-r39-installed-budget-full-compile-r1.json` and
+`clean-break-r39-installed-budget-green-r1.json`. The same final VSIX's 89
+production outputs still match exactly. Native and VSIX are not rebuilt.
+
+Resume the same installed command as r2 with a new fixture and receipt r3,
+using the four changed external test outputs and corrected CDP harness. The
+actual native transport and all cheap regressions precede this confirmation.
+Expected all three scenarios and acknowledged cleanup; stop on first failure.
+
+### 9 November 2026 — user-requested stop and checkpoint
+
+The preceding r3 plan was executed and FAILED; it is not a pending instruction
+to resume. `clean-break-r39-installed-editor-r3.{json,log}` records exit 1 in
+42.121s. Untrusted passed; multi stopped at sequence 4 `setupDraft`, during the
+definition scan before enrollment, with `workspace_registration_changed`.
+Same-root did not run. Fixture `native-installed-pid1qa` and failure-disposal
+receipt are preserved; failure disposal is not acceptance cleanup.
+
+Read-only source review found that refresh can replace an equivalent binding
+object while `hasManualVscodeConnection` checks reference identity across awaited
+configuration reads. No definitions-change event is guaranteed for an equivalent
+replacement. The stack proves stale-binding cancellation, not whether the actual
+fixture's authority changed. The deterministic same-authority/changed-authority
+race regression and production correction were not completed. No speculative
+retry or invalidation change was made.
+
+The user then stopped repair work and authorized documenting, committing and
+pushing this unfinished checkpoint with NO PR. The full
+[stop and handoff](installer-stop-2026-11-09.md) records changes, why successive
+checks kept failing, exact passing/failed/unrun scopes, retained candidate
+identities and requirements for any future repair. Version remains 1.8.16.
+The 30-minute working-delivery target was not achieved before the stop.
+
+The R39 Neo delivery export was byte-reviewed but never launched: 2,151 public
+files, 291 TS sources and 108 test modules matched their seals; native f187 and
+eight model files were unchanged. The extra user-owned simplify-plan revision
+was explicitly accounted for. Transfer receipt SHA-256
+`9f979afe5bbeca6168988bdccd9cdd2e6f6a276118898ed31620139debef4394`.
+Execution approval stayed held. This is archive verification, not Mac testing.
+
+All repair agents finished and no further build/platform run was started.
+Stop-time census found four old fixture processes in `q31/au-ifvpz0ha` and
+`q31/au-msqi029h`. Exact executable/creation identities were rechecked and all
+four were forcibly disposed; no fixture files were deleted. Receipt
+`clean-break-stop-2026-11-09-processes.json` records zero remaining processes
+under those exact roots. Normal installed AIRK processes were left untouched.
+This disposal does not repair or relabel earlier native cleanup failures.
+
+Documentation-only checkpoint updates supersede current-status wording in the
+README, documentation index, architecture, release record and Marketplace
+README. The retained b879 VSIX predates these documentation changes and is not
+rebuilt. Public source/tests/docs are to be committed; ignored packages, logs,
+private state, indexes and failed fixtures remain local. The two separate
+user-owned proposal/review documents are preserved outside this repair commit.
+
+Checkpoint-only validation passed: synchronized 1.8.16 versions, repository
+checks over 2,152 public files, byte-identical AGENTS.md/CLAUDE.md and whitespace.
+Receipt: `clean-break-stop-2026-11-09-doc-checks.json`. Existing native formatting
+and Clippy evidence retain their original scope; no compiler or long suite was
+restarted for this documentation/checkpoint action.

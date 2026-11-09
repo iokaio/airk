@@ -183,7 +183,16 @@ export function installedSelector(definition:any,result:any,selection:any):any{
         selection.source_ids.map((source_root_id:string)=>({source_root_id,kind:'subtree',path:''})).sort((a:any,b:any)=>a.source_root_id.localeCompare(b.source_root_id)),'Original complete source-root scope');
     return selector;
 }
-export function installedToolBody(wire:any):any{
+export function installedToolBody(wire:any,owner?:{tool:'airk_parse';request:any}):any{
+    let bodyBytes=65536;
+    if(owner!==undefined){
+        assert.equal(owner.tool,'airk_parse','Only an explicit original parse request selects its plan budget');
+        const request=owner.request;assert.equal(request?.schema,'airk.parse.request/1');assert.equal(request.mode,'execute');
+        const output=request.output??request.plan?.output;
+        if(output!==undefined)assert.ok(output&&typeof output==='object'&&!Array.isArray(output),'Original plan output object');
+        bodyBytes=output!==undefined&&Object.hasOwn(output,'max_bytes')?output.max_bytes:262144;
+        assert.ok(Number.isSafeInteger(bodyBytes)&&bodyBytes>=1024&&bodyBytes<=524288,'Original declared plan output range');
+    }
     assert.ok(wire&&typeof wire==='object');assert.equal(wire.error,undefined,'No RPC error in successful tool envelope');
     const result=wire.result;assert.ok(result&&typeof result==='object'&&!Array.isArray(result));
     assert.ok(result.isError===undefined||typeof result.isError==='boolean','Actual typed outer error flag');
@@ -196,7 +205,11 @@ export function installedToolBody(wire:any):any{
         throw error; // Successful tool bodies must still satisfy the JSON contract.
     }
     if(result.structuredContent!==undefined)assert.deepEqual(result.structuredContent,body,'Complete text and structured native copies agree');
-    assert.ok(Buffer.byteLength(JSON.stringify(body))<=65536,'Native canonical body bound');return body;
+    assert.ok(Buffer.byteLength(JSON.stringify(body))<=bodyBytes,'Native canonical body bound');
+    assert.ok(Buffer.byteLength(JSON.stringify(result))<=Math.min(3*bodyBytes+4096,1048576-2048),'Native MCP wire bound');
+    assert.ok(Buffer.byteLength(JSON.stringify(wire))<=1048576,'Native public wire bound');
+    if(owner!==undefined&&result.isError!==true)assert.equal(body.plan?.output?.max_bytes,bodyBytes,'Returned plan preserves the original output budget');
+    return body;
 }
 function installedPublication(actual:any,expected:any,collection:string):void{
     assert.ok(expected&&typeof expected==='object'&&!Array.isArray(expected));

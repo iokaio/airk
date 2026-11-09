@@ -102,16 +102,7 @@ impl Transition {
                 "invalid preserved private state path"
             );
         }
-        let mut complete = self.preserved_private_paths.clone();
-        complete.push(self.successor.install.clone());
-        complete.push(self.successor.state.clone());
-        complete.extend(self.successor.logs.clone());
-        complete.sort();
-        complete.dedup();
-        ensure!(
-            complete.len() <= MAX_PRESERVED_PATHS,
-            "rebuild private-path union exceeds the existing sixteen-path bound"
-        );
+        require_private_union(&self.preserved_private_paths, &self.successor.state)?;
         ensure!(
             self.previous_layout.len() as u64 <= MAX_LAYOUT
                 && serde_json::to_vec(self)?.len() as u64 <= MAX_TRANSITION,
@@ -188,6 +179,52 @@ pub(super) fn preserved_private_paths(root: &Path) -> Result<Vec<PathBuf>> {
         return Ok(Vec::new());
     };
     Ok(read(root, operation)?.preserved_private_paths)
+}
+
+fn require_private_union(preserved: &[PathBuf], state: &Path) -> Result<()> {
+    let mut complete = preserved.to_vec();
+    complete.push(state.into());
+    complete.push(state.join("logs"));
+    complete.sort();
+    complete.dedup();
+    ensure!(
+        complete.len() <= MAX_PRESERVED_PATHS,
+        "rebuild private-path union exceeds the existing sixteen-path bound"
+    );
+    Ok(())
+}
+
+/// Saved protection paths do not grant deletion authority. Refuse a reset whose
+/// cleanup would leave a still-existing older namespace or unknown private root.
+/// This metadata-only check runs before accepting or stopping the predecessor.
+pub(in super::super) fn preflight_clean_break(root: &Path, operation: Incarnation) -> Result<()> {
+    let canonical_root = root.canonicalize()?;
+    let root = canonical_root.as_path();
+    let previous = Layout::read(root)?.context("clean-break layout missing")?;
+    let preserved = capture_private_paths(root, &previous)?;
+    require_private_union(&preserved, &successor_state(root, operation))?;
+    let mut owned = vec![
+        previous.install.clone(),
+        previous.state.clone(),
+        previous.state.join("control"),
+    ];
+    owned.extend(previous.logs.clone());
+    let registry = airk_store::service::registry::ServiceRegistry::open_saved(
+        &previous.state.join("control"),
+    )?;
+    for binding in registry.bindings()? {
+        owned.push(PathBuf::from(
+            registry.retained_project(binding)?.registration.data_root,
+        ));
+    }
+    for path in preserved {
+        ensure!(
+            owned.contains(&path) || !exists(&path)?,
+            "clean_break_retained_root_unsupported: retained private root requires separately verified cleanup: {}",
+            path.display()
+        );
+    }
+    Ok(())
 }
 
 fn prepare(

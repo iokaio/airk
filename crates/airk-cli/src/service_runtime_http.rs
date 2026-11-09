@@ -56,6 +56,8 @@ impl Owner {
         // This is the stable protected installation/control root, never a versioned payload path.
         let binding = http_endpoint::installation_binding(&state.control_root, clock.namespace)?;
         let previous = http_endpoint::load_descriptor(&root, &binding)?;
+        let mut credential_store = CredentialStore::open(&root, binding.clone())?;
+        credential_store.initialize_empty_owned(&ownership)?;
         let held = BoundEndpoint::bind(previous.as_ref().map(|value| value.url.port()))?;
         let identity = TlsIdentity::load_or_create(&root, binding.clone(), now_ms()?)?;
         let descriptor = EndpointDescriptor {
@@ -84,7 +86,7 @@ impl Owner {
                 .map(EndpointDescriptor::digest)
                 .transpose()?,
         };
-        let credentials = Arc::new(Mutex::new(CredentialStore::open(&root, binding.clone())?));
+        let credentials = Arc::new(Mutex::new(credential_store));
         let (tls, receiver) = watch::channel(identity.acceptor());
         let control = state.control_root.clone();
         let weak: Weak<State> = Arc::downgrade(state);

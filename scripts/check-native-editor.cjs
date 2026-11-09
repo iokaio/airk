@@ -10,6 +10,7 @@ const initialIndexObservations=new Map();
 const receiptPlans=new Map(),retainedProfileFolders=new Set();
 const {prepareOwnedReceipts,cleanupOwnedReceipts,verifyOwnedReceiptsAbsent}=require('./native-editor-receipts.cjs');
 const {verifyHealth:verifyIdleHealth,waitForIndexIdle,idleEvidencePrefix}=require('./native-editor-idle.cjs');
+const {stopOwnedFixture,invokeNativeJson}=require('./native-editor-failure.cjs');
 const {editorUi,privateEditorEnvironment,privateClientEnvironment}=require('./editor-ui.cjs');
 const {publishMailbox,readMailbox}=require('./editor-mailbox.cjs');
 const root=path.resolve(__dirname,'..');
@@ -264,6 +265,29 @@ async function checkExplorer(ui){
     if(!rows.some(row=>row.kind==='project'&&String(row.value.name).includes('Fixture index set')))throw new Error('Indexing did not list the native index set');
     return {hits,rows,help:['role search','purpose and format guide','offline native engine guide','live tool schema','About credits/history/community links'],about};
 }
+async function stopOwnedServicesOnFailure(editorCleanup){
+    const results=[];
+    // This is disposal after a failed journey, never UI Stop acceptance. Keep
+    // services in place so ordinary cleanup still reports its original failure.
+    for(const folder of services){
+        retainedProfileFolders.add(folder);
+        const legacy=legacyServices.get(folder),install=legacy?.install_dir??path.join(folder,'native-service');
+        try{
+            if(!Array.isArray(editorCleanup)||editorCleanup.some(receipt=>receipt.closed!==true))throw Error('Owned editor closure is unconfirmed; no failure Stop submitted');
+            try{await fs.lstat(install);}catch(error){if(error.code==='ENOENT'){results.push({folder,absent:true,acceptance:false});continue;}throw error;}
+            if(!bundle)throw Error('Verified runtime bundle unavailable for failure disposal');
+            if(legacy&&legacy.qualification?.status!=='qualified_native_fixture')throw Error('Legacy failure disposal fixture is unqualified');
+            const fixture=legacy?.fixture_root??folder,control=legacy?.control_dir??path.join(install,'control');
+            let normalStop=null;
+            try{normalStop=JSON.parse(await fs.readFile(path.join(folder,'native-stop.json'),'utf8'));}
+            catch(error){if(error.code!=='ENOENT')throw error;}
+            const invoke=(command,args,timeout,input,record)=>invokeNativeJson(command,args,{timeout,input,record,environment});
+            const receipt=await stopOwnedFixture({fixture,install,control,bundle,invoke,normalStop,editorsClosed:true});
+            results.push({folder,acceptance:false,receipt});
+        }catch(error){results.push({folder,acceptance:false,complete:false,error:String(error)});}
+    }
+    return results;
+}
 async function cleanupServices(){
     const results=[];
     for(const folder of services.splice(0)){
@@ -302,7 +326,7 @@ async function cleanupServices(){
     return results;
 }
 async function main(){
-    const harnessPaths=['scripts/check-native-editor.cjs','scripts/editor-ui.cjs','scripts/native-editor-workbench.cjs','scripts/editor-mailbox.cjs','scripts/native-editor-legacy.cjs','scripts/native-editor-receipts.cjs','scripts/native-editor-idle.cjs','packages/vscode/out/test/installedEditor.js','packages/vscode/out/test/installedCompletion.js','packages/vscode/out/test/installedControlTrace.js','packages/vscode/out/test/installedEditorC8.js','packages/vscode/out/test/installedEditorContracts.js','packages/vscode/out/test/installedEditorHttp.js'];
+    const harnessPaths=['scripts/check-native-editor.cjs','scripts/editor-ui.cjs','scripts/native-editor-workbench.cjs','scripts/editor-mailbox.cjs','scripts/native-editor-legacy.cjs','scripts/native-editor-receipts.cjs','scripts/native-editor-idle.cjs','scripts/native-editor-failure.cjs','packages/vscode/out/test/installedEditor.js','packages/vscode/out/test/installedCompletion.js','packages/vscode/out/test/installedControlTrace.js','packages/vscode/out/test/installedEditorC8.js','packages/vscode/out/test/installedEditorContracts.js','packages/vscode/out/test/installedEditorHttp.js'];
     const harness=Object.fromEntries(await Promise.all(harnessPaths.map(async name=>[name,sha(await fs.readFile(path.join(root,name)))])));
     const stage=(await fs.lstat(source)).isDirectory();
     if(stage){const version=JSON.parse(await fs.readFile(path.join(source,'package.json'),'utf8')).version;
@@ -449,4 +473,4 @@ exports.activate=()=>{if(!process.env.AIRK_EDITOR_RUN)return;void require(${JSON
     if(summary.status==='partial'){console.log(`Native editor coverage remains unqualified: ${run}`);process.exitCode=2;}
     else console.log(`Native editor selected scenarios passed: ${run}`);
 }
-main().catch(async error=>{const editorCleanup=await closeOwnedEditors();let serviceCleanup,profileCleanup;try{serviceCleanup=await cleanupServices();}catch(cleanupError){serviceCleanup=String(cleanupError);}try{profileCleanup=await cleanupProfiles();}catch(cleanupError){profileCleanup=String(cleanupError);}console.error(JSON.stringify({error:String(error),editorCleanup,serviceCleanup,profileCleanup}));process.exitCode=1;});
+main().catch(async error=>{let editorCleanup,failureNativeStop,serviceCleanup,profileCleanup;try{editorCleanup=await closeOwnedEditors();}catch(cleanupError){editorCleanup={error:String(cleanupError)};}try{failureNativeStop=await stopOwnedServicesOnFailure(editorCleanup);}catch(cleanupError){failureNativeStop={error:String(cleanupError),acceptance:false};}try{serviceCleanup=await cleanupServices();}catch(cleanupError){serviceCleanup=String(cleanupError);}try{profileCleanup=await cleanupProfiles();}catch(cleanupError){profileCleanup=String(cleanupError);}console.error(JSON.stringify({error:String(error),editorCleanup,failureNativeStop,serviceCleanup,profileCleanup}));process.exitCode=1;});

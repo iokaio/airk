@@ -101,6 +101,64 @@ fn existing_empty_control_without_selection_uses_owned_policy_not_a_generated_os
     Ok(())
 }
 
+#[test]
+fn live_legacy_preflight_compatibility_does_not_acquire_collection_manifest() -> Result<()> {
+    use airk_core::{identity::Incarnation, service::ProjectRegistration};
+    use airk_store::service::{collection::Collection, registry::ServiceRegistry};
+
+    let (owner, root, candidate) = crate::runtime_install::tests::unselected_fixture()?;
+    let intent = fresh_intent(&root, candidate)?;
+    let data = owner.path().join("preflight-data");
+    let source = owner.path().join("preflight-source");
+    for path in [&intent.control, &data, &source] {
+        local_ipc::prepare_root(path)?;
+    }
+    let namespace = Incarnation::from_bytes([51; 16]);
+    let registration = ProjectRegistration::new(
+        source.to_str().unwrap().into(),
+        data.to_str().unwrap().into(),
+        "preflight-fixture".into(),
+    )?;
+    let mut registry = ServiceRegistry::open(&intent.control, namespace)?;
+    registry.register(&registration)?;
+    airk_store::service::data_scope::bind(&data, &intent.control, namespace)?;
+    let collection = Collection::initialize(
+        &data,
+        &registration.root,
+        &registration.collection,
+        Incarnation::from_bytes([52; 16]),
+    )?;
+    // Native activation creates the selection gate before checkpoint readers
+    // can use its read-only existing-gate path.
+    drop(
+        collection
+            .select()
+            .context("initialize fixture object gate")?,
+    );
+    let lock_path = data
+        .join("collections-1.4")
+        .join(&registration.collection)
+        .join("manifest.lock");
+    let lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(lock_path)?;
+    lock.try_lock()?;
+    // Exercise the installer's live-state phase separately from executing the
+    // approved target's self-test (this fixture deliberately has an inert image).
+    preflight_live_state(&root, &intent).context("observe live preflight")?;
+    let error = store::snapshot(&intent.control).unwrap_err();
+    assert!(store::is_read_contention(&error), "{error:#}");
+    drop(lock);
+    // A preflight observation never substitutes for the final complete capture.
+    assert!(
+        store::snapshot(&intent.control)
+            .context("capture released fixture publication")?
+            .complete
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn safely_aborted_first_activation_can_begin_again_with_retained_control() -> Result<()> {
     let (_owner, root, candidate) = crate::runtime_install::tests::unselected_fixture()?;
@@ -287,6 +345,30 @@ fn fixture() -> Result<(tempfile::TempDir, PathBuf, Intent)> {
     };
     save(&root, journal, None)?;
     Ok((owner, root, intent))
+}
+
+#[test]
+fn schema_one_manifest_recapture_and_verification_keep_original_representation() -> Result<()> {
+    let (_owner, root, candidate) = crate::runtime_install::tests::unselected_fixture()?;
+    let mut intent = fresh_intent(&root, candidate)?;
+    local_ipc::prepare_root(&intent.control)?;
+    initialize(&root, &mut intent)?;
+    stage(&root, &intent, Stage::Quiescing)?;
+    let exclusion = quiescent(&root)?;
+    capture(&root, &intent, &exclusion)?;
+    let path = root.join(name(intent.checkpoint.as_ref().unwrap())?);
+    let mut saved: Manifest = serde_json::from_slice(&fs::read(&path)?)?;
+    saved.state = store::snapshot_for_schema(&intent.control, 1)?;
+    let bytes = serde_json::to_vec(&saved)?;
+    fs::write(&path, &bytes)?;
+    let mut envelope = read(&root)?.unwrap();
+    envelope.journal.checkpoint_sha256 = Some(hash(&bytes));
+    save(&root, envelope.journal, Some(&envelope.sha256))?;
+    assert_eq!(store::snapshot(&intent.control)?.schema, 2);
+    capture(&root, &intent, &exclusion)?;
+    verify(&root, &intent)?;
+    assert_eq!(fs::read(&path)?, bytes);
+    Ok(())
 }
 
 #[test]

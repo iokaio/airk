@@ -72,6 +72,8 @@ const PREPARED_PUBLICATION: &str = "prepared-publication.json";
 mod current;
 mod retired;
 pub(crate) use retired::AbsentCollectionSettlement;
+mod clean_break;
+pub(crate) use clean_break::{CleanBreakInventory, clean_break_inventory};
 pub mod funding;
 #[cfg(any(unix, windows))]
 pub(crate) mod setup;

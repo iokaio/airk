@@ -3,10 +3,10 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import {createHash} from 'node:crypto';
-import {findNodeAtLocation,getNodeValue,parseTree,type Node,type ParseError} from 'jsonc-parser';
 import {readJsonConfig} from './agentConfig';
-import {parseTomlDeclarations} from './agentToml';
-export type GlobalAgent='codex'|'claude'|'copilot';
+import {globalConfigDeclarations,type ConfigurationAgent,type ConfigurationDeclaration,type ConfigurationFile} from './unifiedAgentConfig';
+export {globalConfigDeclarations,transformGlobalContainer} from './unifiedAgentConfig';
+export type GlobalAgent=ConfigurationAgent;
 export interface GlobalInventoryOptions {
     home:string;env:Readonly<Record<string,string|undefined>>;platform?:NodeJS.Platform;
     /** Actual extension-host URI, never a workspace path or setting. */
@@ -16,12 +16,11 @@ export interface GlobalInventoryOptions {
     check?:()=>void;
 }
 export interface GlobalInventoryBlocker {code:string;destination?:string}
-export interface GlobalDeclaration {serverKey:string;containerPath:string[];fields:Record<string,unknown>}
-export interface GlobalConfigFile {agent:GlobalAgent;destination:string;source:string;sha256:string;declarations:GlobalDeclaration[]}
+export type GlobalDeclaration=ConfigurationDeclaration;
+export type GlobalConfigFile=ConfigurationFile;
 export interface GlobalConfigInventory {files:GlobalConfigFile[];checked:string[];blockers:GlobalInventoryBlocker[]}
 interface Location {agent:GlobalAgent;destination:string}
 const FILE_BYTES=1_048_576,TOTAL_BYTES=8*FILE_BYTES,MAX_FILES=64,MAX_PROFILES=32,MAX_DECLARATIONS=512;
-const object=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
 function fail(code:string):never{throw new Error(code);}
 function same(a:string,b:string):boolean{return process.platform==='win32'?a.toLowerCase()===b.toLowerCase():a===b;}
 export function globalConfigLocations(options:GlobalInventoryOptions):{locations:Location[];vscodeRoots:string[];blockers:GlobalInventoryBlocker[]}{
@@ -62,39 +61,6 @@ export function globalConfigLocations(options:GlobalInventoryOptions):{locations
     for(const supplied of (options.vscodeUserDirectories??[]).slice(0,8))roots(absolute(supplied,'vscode_user_directory'));
     for(const root of vscodeRoots)add('copilot',p.join(root,'mcp.json'));
     return {locations,vscodeRoots,blockers};
-}
-function unique(node:Node):void{
-    if(node.type==='object'){
-        const keys=new Set<string>();for(const item of node.children??[]){const key=String(item.children?.[0].value);if(keys.has(key))fail('duplicate_configuration_key');keys.add(key);}
-    }
-    for(const child of node.children??[])unique(child);
-}
-function tree(source:string):Node{
-    const errors:ParseError[]=[],root=parseTree(source,errors,{allowTrailingComma:true});
-    if(!root||root.type!=='object'||errors.length)fail('invalid_json_configuration');unique(root);return root;
-}
-export function globalConfigDeclarations(agent:GlobalAgent,source:string):GlobalDeclaration[]{
-    if(Buffer.byteLength(source)>FILE_BYTES)fail('configuration_size_bound');
-    if(agent==='codex')return parseTomlDeclarations(source);
-    const root=tree(source),value=getNodeValue(root) as Record<string,unknown>,rows:GlobalDeclaration[]=[];
-    const group=(containerPath:string[],raw:unknown)=>{
-        if(raw===undefined)return;if(!object(raw))fail('invalid_mcp_server_group');
-        for(const [serverKey,fields] of Object.entries(raw)){
-            if(!object(fields))fail('invalid_mcp_server_declaration');
-            rows.push({serverKey,containerPath,fields});if(rows.length>MAX_DECLARATIONS)fail('configuration_declaration_bound');
-        }
-    };
-    if(agent==='copilot')group(['servers'],value.servers);
-    else{
-        group(['mcpServers'],value.mcpServers);
-        if(value.projects!==undefined){if(!object(value.projects))fail('invalid_claude_projects');
-            for(const [project,settings] of Object.entries(value.projects)){
-                if(!object(settings))fail('invalid_claude_project');
-                group(['projects',project,'mcpServers'],settings.mcpServers);
-            }
-        }
-    }
-    return rows;
 }
 async function directDirectory(directory:string):Promise<boolean>{
     try{const info=await fs.lstat(directory);if(!info.isDirectory()||info.isSymbolicLink()||!same(await fs.realpath(directory),directory))fail('redirected_configuration_directory');return true;}
@@ -138,16 +104,4 @@ export async function inventoryGlobalAgentConfigs(options:GlobalInventoryOptions
         }catch(error){block(error instanceof Error&&/^(unsupported|invalid|duplicate|orphan|configuration|redirected)_/.test(error.message)?error.message:'configuration_unreadable_or_redirected',location.destination);}
     }
     options.check?.();return result;
-}
-/** Transform exactly one Claude container with the existing migrator. Other
- * projects/accounts/settings remain byte-identical. The host must perform CAS. */
-export function transformGlobalContainer(file:GlobalConfigFile,containerPath:readonly string[],transform:(source:string)=>string):string{
-    if(file.agent==='codex'){if(containerPath.join('.')!=='mcp_servers')fail('invalid_toml_container');return transform(file.source);}
-    const expected=file.agent==='copilot'?'servers':'mcpServers';
-    if(containerPath.at(-1)!==expected||!file.declarations.some(row=>JSON.stringify(row.containerPath)===JSON.stringify(containerPath)))fail('unknown_configuration_container');
-    if(containerPath.length===1)return transform(file.source);
-    const node=findNodeAtLocation(tree(file.source),[...containerPath]);if(!node||node.type!=='object')fail('configuration_container_changed');
-    const before=file.source.slice(node.offset,node.offset+node.length),wrapped=`{${JSON.stringify(expected)}:${before}}`,after=transform(wrapped);
-    const replacement=findNodeAtLocation(tree(after),[expected]);if(!replacement||replacement.type!=='object')fail('configuration_container_removed');
-    return file.source.slice(0,node.offset)+after.slice(replacement.offset,replacement.offset+replacement.length)+file.source.slice(node.offset+node.length);
 }

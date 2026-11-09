@@ -5,6 +5,7 @@ import {isDeepStrictEqual} from 'node:util';
 import {catalogBound,catalogHex,catalogId,catalogObject,catalogRevision} from './indexingCatalog';
 import type {ConfigurationIntent,ProjectConfigurationRequest,RequestKey,ServiceClient} from './serviceClient';
 import type {IntentJournal} from './serviceIntents';
+import {ServiceError,retainNativeOutcome,retainNativeOutcomeDuring,isLocalTrackingFailure,isNativeReplyValidationFailure} from './nativeOutcome';
 type ObjectValue=Record<string,unknown>;
 export const REFRESH_SELECTION_BYTES=12*1024;
 export const REFRESH_NATIVE_BYTES=64*1024;
@@ -143,8 +144,19 @@ export class ReferenceRefreshFlow {
         for(const existing of this.journal.list())if('reference_refresh'in existing.value.intent){
             const previous=existing.value.intent.reference_refresh.configure_project;
             if(isDeepStrictEqual(previous.key,key))throw new Error('refresh_already_tracked_check_exact_receipt');
-            const known=existing.value.nativeRefreshReceipt,job=known?.job==null?undefined:catalogObject(known.job);
+            const known=existing.value.nativeRefreshReceipt;let job=known?.job==null?undefined:catalogObject(known.job);
             if(known?.status==='reference_refresh_review_required')continue;
+            const terminal=existing.value.nativeRefreshTerminalReceipt??existing.value.nativeRefreshLookup;
+            if(terminal&&(!job||!['succeeded','failed','canceled'].includes(String(job.state)))){
+                // A terminal job-only reply does not replace a richer full
+                // configuration/result receipt. Validate its separate original
+                // frame against this exact prior intent before using its state.
+                try{
+                    if(terminal.status==='job')validateRefreshJob(terminal.job,existing.value.intent);else validateRefreshReceipt(terminal,existing.value.intent);
+                    const candidate=terminal.job==null?undefined:catalogObject(terminal.job);
+                    if(candidate&&['succeeded','failed','canceled'].includes(String(candidate.state)))job=candidate;
+                }catch{/* An unqualified current lookup never settles the prior request. */}
+            }
             if(previous.project===intent.reference_refresh.configure_project.project&&(!job||!['succeeded','failed','canceled'].includes(String(job.state))))throw new Error('refresh_prior_outcome_requires_exact_receipt');
         }
 
@@ -157,19 +169,34 @@ export class ReferenceRefreshFlow {
         this.requireTrust();
         this.originalEvidence.set(id,{query:structuredClone(originalQuery),result:structuredClone(originalResult)});
         // Persist terminal space before dispatch. Never replay from a saved row.
-        try{const reply=await this.client.submitReferenceRefresh(intent);await this.journal.observeRefresh(id,reply);if(reply.status==='reference_refresh_review_required')throw new Error('refresh_scope_changed_review_required',{cause:reply});}
-        catch(error){
-            if(error instanceof Error&&error.message==='refresh_scope_changed_review_required')throw error;
-            const native=(error as {nativeResponse?:ObjectValue})?.nativeResponse;
-            if(native)try{await this.journal.observeRefresh(id,native);}catch{/* Full bounded diagnostic was retained, accepted historical proof preserved. */}
-            throw new Error('refresh_outcome_unknown_check_exact_receipt',{cause:error});
-        }
+        let reply:ObjectValue;
+        try{reply=await this.client.submitReferenceRefresh(intent);}
+        catch(error){throw this.unknownOutcome(await this.retainRejectedLookup(id,error));}
+        try{await retainNativeOutcomeDuring(reply,()=>this.journal.observeRefresh(id,reply));}
+        catch(error){throw this.unknownOutcome(error);}
+        if(reply.status==='reference_refresh_review_required')throw new Error('refresh_scope_changed_review_required',{cause:reply});
         return id;
+    }
+    /** The journal independently validates this diagnostic frame. Invalid RPC
+     * replies must not become historical authority, but must remain visible as
+     * the latest lookup. Keep this outside the local-persistence catch so an
+     * already-recorded validation failure is never written a second time. */
+    private async retainRejectedLookup(id:string,error:unknown):Promise<unknown>{
+        const native=(error as {nativeResponse?:ObjectValue})?.nativeResponse;
+        if(native&&!isLocalTrackingFailure(error))try{await this.journal.observeRefresh(id,native);}catch(local){return retainNativeOutcome(local,native);}
+        return error;
+    }
+    private unknownOutcome(error:unknown):ServiceError{
+        const outcome=new ServiceError('refresh_outcome_unknown_check_exact_receipt',true,(error as {nativeResponse?:ObjectValue})?.nativeResponse);outcome.cause=error;
+        if(isLocalTrackingFailure(error))Object.assign(outcome,{localTrackingUnconfirmed:true});
+        if(isNativeReplyValidationFailure(error))Object.assign(outcome,{nativeReplyUnvalidated:true});return outcome;
     }
     async check(id:string):Promise<ObjectValue>{
         this.requireTrust();const saved=this.journal.list().find(value=>value.id===id);if(!saved||!('reference_refresh'in saved.value.intent))throw new Error('refresh_intent_not_found');
-        try{const reply=await this.client.referenceRefreshReceipt(saved.value.intent);await this.journal.observeRefresh(id,reply);this.requireTrust();return reply;}
-        catch(error){const native=(error as {nativeResponse?:ObjectValue})?.nativeResponse;if(native)try{await this.journal.observeRefresh(id,native);}catch{/* Keep prior accepted proof. */}throw error;}
+        let reply:ObjectValue;
+        try{reply=await this.client.referenceRefreshReceipt(saved.value.intent);}
+        catch(error){throw await this.retainRejectedLookup(id,error);}
+        return retainNativeOutcomeDuring(reply,async()=>{await this.journal.observeRefresh(id,reply);this.requireTrust();return reply;});
     }
     exportObservation(id:string,requery?:ObjectValue):{json:string;markdown:string}{
         this.requireTrust();const saved=this.journal.list().find(value=>value.id===id);
@@ -177,7 +204,7 @@ export class ReferenceRefreshFlow {
         const intent=structuredClone(saved.value.intent),memory=this.originalEvidence.get(id);
         if(memory){intent.reference_refresh.original_query=structuredClone(memory.query);intent.reference_refresh.original_result=structuredClone(memory.result);}
         validateRefreshIntent(intent);
-        return refreshExport(intent,saved.value.nativeRefreshLookup,saved.value.nativeRefreshReceipt,requery);
+        return refreshExport(intent,saved.value.nativeRefreshLookup,saved.value.nativeRefreshReceipt,requery,saved.value.nativeRefreshTerminalReceipt);
     }
     async requery(id:string):Promise<{original:ObjectValue;current:ObjectValue;native_receipt:ObjectValue}>{
         this.requireTrust();const saved=this.journal.list().find(value=>value.id===id);if(!saved||!('reference_refresh'in saved.value.intent))throw new Error('refresh_intent_not_found');
@@ -195,7 +222,7 @@ export class ReferenceRefreshFlow {
     }
 }
 export function refreshReviewText(intent:ReferenceRefreshIntent):string {const selection=catalogObject(intent.reference_refresh.configure_project.request.configuration.selection);return `${selection.mode==='selected_only'?'Refresh only selected files.':'Full index reconciliation was explicitly selected; unrelated source files in this index may also update.'}\nThe original result stays historical. ${intent.reference_refresh.evidence_retention==='memory_only'?'Query/result text stays in memory; restart recovery retains only native metadata and cannot rerun a missing query.':'This review saves the complete original query/result locally under the approved persistence setting.'} This starts one native job; any later requery requires confirmation.\n${JSON.stringify(selection.members,null,2)}`;}
-export function refreshExport(intent:ReferenceRefreshIntent,latest:ObjectValue|undefined,known:ObjectValue|undefined,requery?:ObjectValue):{json:string;markdown:string}{
-    const value={evidence_retention:intent.reference_refresh.evidence_retention,reviewed_native_request:intent.reference_refresh.configure_project,original_query:intent.reference_refresh.original_query,original_historical_result:intent.reference_refresh.original_result,latest_receipt_lookup:latest??null,last_known_historical_native_receipt:known??null,current_requery_result:requery??null};
+export function refreshExport(intent:ReferenceRefreshIntent,latest:ObjectValue|undefined,known:ObjectValue|undefined,requery?:ObjectValue,terminal?:ObjectValue):{json:string;markdown:string}{
+    const value={evidence_retention:intent.reference_refresh.evidence_retention,reviewed_native_request:intent.reference_refresh.configure_project,original_query:intent.reference_refresh.original_query,original_historical_result:intent.reference_refresh.original_result,latest_receipt_lookup:latest??null,last_known_historical_native_receipt:known??null,...(terminal?{last_known_terminal_native_receipt:terminal}:{}),current_requery_result:requery??null};
     return {json:JSON.stringify(value,null,2),markdown:`# Refresh from reviewed references\n\nOriginal evidence, historical accepted proof, latest lookup and new query are separate observations.\n\n\`\`\`json\n${JSON.stringify(value,null,2)}\n\`\`\`\n`};
 }

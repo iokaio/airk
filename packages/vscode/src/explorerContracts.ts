@@ -3,7 +3,9 @@
 export interface RuntimeUpgradeProgress {
     readonly fromVersion: string;
     readonly toVersion: string;
-    readonly stage: 'checking' | 'staging' | 'draining' | 'activating' | 'reconnecting' | 'ready' | 'failed';
+    readonly stage: 'checking' | 'staging' | 'draining' | 'activating' | 'reconnecting' | 'rebuilding' | 'cleaning' | 'ready' | 'failed';
+    readonly cleanBreak?:boolean;
+    readonly clientCleanup?:Record<string,unknown>;
     readonly message: string;
     readonly startedAt: number;
     readonly updatedAt: number;
@@ -427,6 +429,8 @@ export interface PlanView {
 }
 export interface PendingIntentView { readonly id: string; readonly title: string; readonly unknown: boolean; readonly lifecycle: boolean; readonly forceAvailable: boolean }
 export interface ManagementView {
+    readonly runtimeDiagnostics?:{readonly capturedAt:number};
+    readonly cleanBreakRebuild?:Record<string,unknown>;
     readonly capturedLifecycle?:CapturedLifecycleResponse;
     readonly capturedLifecycleUnavailable?:string;
     readonly busy: boolean;
@@ -464,6 +468,7 @@ export interface ManagementView {
 
 /** Console action names the Explorer may send; identical to the console's own allowlist (tested). */
 export const MANAGE_ACTIONS = [
+    'copyRuntimeDiagnostics','openRuntimeDiagnostics','saveRuntimeDiagnostics',
     'copyLifecycle', 'openLifecycle', 'saveLifecycle',
     'reviewLegacyStartup', 'legacyStartupReceipts', 'removeLegacyStartup', 'copyLegacyStartup', 'registeredProjects', 'inactiveProjects', 'registerWorkspace',
     'refresh', 'connect', 'start', 'stop', 'restart', 'repairRuntime', 'upgradeRuntime', 'rollbackRuntime', 'resumeActivation', 'logs', 'resources', 'queryConcurrency',

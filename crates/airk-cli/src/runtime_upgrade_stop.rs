@@ -27,6 +27,156 @@ pub(super) fn stop(root: &Path, identity: &str) -> Result<()> {
     Ok(())
 }
 
+/// A clean break retires every approved earlier payload in this installation,
+/// including processes left by an older selection than the immediate prior.
+/// Physical payload removal remains the canonical retirement owner's work.
+pub(super) fn stop_all_predecessors(root: &Path, candidate: &str) -> Result<()> {
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+    {
+        let paths = all_predecessor_images(root, candidate)?;
+        let current = std::env::current_exe()?.canonicalize()?;
+        for path in &paths {
+            ensure!(
+                !image_present(path)? || path.canonicalize()? != current,
+                "run the clean break from the new distribution, outside every earlier runtime and launcher"
+            );
+        }
+        stop_paths(&paths)?;
+    }
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+    let _ = (root, candidate);
+    Ok(())
+}
+
+fn require_absent_optional_alias_observation(
+    path: &Path,
+    audit: &crate::legacy_processes::Audit,
+) -> Result<()> {
+    ensure!(
+        audit.complete && audit.failure.is_none() && audit.matching_executable_pids.is_empty(),
+        "clean_break_predecessor_process_observation_unsupported: optional predecessor image {} is absent and has no complete native process-exit observation; successor-state activation is blocked; observation={}",
+        path.display(),
+        serde_json::to_string(audit)?
+    );
+    Ok(())
+}
+
+/// Missing optional aliases cannot acquire a Windows held-image exclusion.
+/// Refuse unsupported observations before reset admission instead of rebuilding
+/// fresh indexes and only discovering the same blocker during final retirement.
+pub(super) fn preflight_all_predecessors(root: &Path, candidate: &str) -> Result<()> {
+    for image in retirement::absent_optional_process_aliases(root, candidate)? {
+        require_absent_optional_alias_observation(
+            &image.path,
+            &crate::legacy_processes::audit(&image.path),
+        )?;
+    }
+    Ok(())
+}
+
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+fn image_present(path: &Path) -> Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+fn all_predecessor_images(root: &Path, candidate: &str) -> Result<Vec<PathBuf>> {
+    let (_, channel) = layout::retained_parameters(root)?;
+    all_predecessor_images_with_universal(root, candidate, || {
+        let Some(image) = crate::universal_launcher::retirement_image_for(root, channel)? else {
+            return Ok(None);
+        };
+        let sha256 = crate::universal_launcher::retirement_digest_for(root, channel, &image)?;
+        Ok(Some((image, sha256)))
+    })
+}
+
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+fn all_predecessor_images_with_universal(
+    root: &Path,
+    candidate: &str,
+    universal: impl FnOnce() -> Result<Option<(PathBuf, String)>>,
+) -> Result<Vec<PathBuf>> {
+    let (candidate_main, _) = verify_runtime(root, candidate)?;
+    let candidate_main = candidate_main.canonicalize()?;
+    // This shared inventory authenticates every noncandidate manifest/approval,
+    // role copy and surviving image. Its existing four-runtime bound is retained.
+    let observed = retirement::superseded_images(root, candidate)?;
+    ensure!(
+        observed.len() <= 20,
+        "clean-break predecessor image roster exceeds bound"
+    );
+    let mut images = Vec::new();
+    for image in observed {
+        let path = PathBuf::from(
+            image["path"]
+                .as_str()
+                .context("predecessor image path missing")?,
+        );
+        let sha256 = image["sha256"]
+            .as_str()
+            .context("predecessor image digest missing")?;
+        digest(sha256)?;
+        ensure!(
+            path.starts_with(root.join("runtimes")),
+            "predecessor image crossed its installation"
+        );
+        safe_file(&path)?;
+        ensure!(
+            runtime_pair::digest_file(&path)? == sha256,
+            "predecessor image changed after inventory"
+        );
+        ensure!(
+            path.canonicalize()? != candidate_main,
+            "candidate crossed predecessor image roster"
+        );
+        if !images.contains(&path) {
+            images.push(path);
+        }
+    }
+    // The stable and universal launcher are separate receipt-owned scopes, each
+    // with at most one image. They do not become approved through their names.
+    let launcher = launcher_path(root);
+    if image_present(&launcher)? || image_present(&root.join("launcher.json"))? {
+        let receipt: LauncherReceipt =
+            serde_json::from_slice(&read_bounded(&root.join("launcher.json"), 4096)?)?;
+        digest(&receipt.sha256)?;
+        ensure!(receipt.schema == 1, "unsupported stable launcher receipt");
+        if image_present(&launcher)? {
+            safe_file(&launcher)?;
+            ensure!(
+                runtime_pair::digest_file(&launcher)? == receipt.sha256,
+                "unknown or modified launcher preserved"
+            );
+        }
+        if !images.contains(&launcher) {
+            images.push(launcher);
+        }
+    }
+    if let Some((image, sha256)) = universal()? {
+        digest(&sha256)?;
+        if image_present(&image)? {
+            safe_file(&image)?;
+            ensure!(
+                runtime_pair::digest_file(&image)? == sha256,
+                "universal launcher image changed after ownership validation"
+            );
+            ensure!(
+                image.canonicalize()? != candidate_main,
+                "candidate crossed universal launcher scope"
+            );
+        }
+        if !images.contains(&image) {
+            images.push(image);
+        }
+    }
+    Ok(images)
+}
+
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn predecessor_images(root: &Path, main: &Path) -> Result<Vec<PathBuf>> {
     let mut paths = vec![main.to_path_buf()];
@@ -58,6 +208,10 @@ fn predecessor_images(root: &Path, main: &Path) -> Result<Vec<PathBuf>> {
     }
     Ok(paths)
 }
+
+#[cfg(all(test, any(windows, target_os = "linux", target_os = "macos")))]
+#[path = "runtime_upgrade_stop_roster_tests.rs"]
+mod all_predecessor_tests;
 
 /// The caller must prove every image from the installation's inventory/launcher receipts.
 /// Keep OS identities open through termination; filenames and PIDs alone confer no authority.

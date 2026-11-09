@@ -13,7 +13,7 @@ const CONTROL_PART: &str = "airk-control-1.4.owner.part";
 mod registry_binding;
 #[path = "runtime_layout_successor.rs"]
 mod successor;
-pub(super) use successor::{admit_successor, successor_handoff_started};
+pub(super) use successor::{admit_successor, preflight_clean_break, successor_handoff_started};
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -27,6 +27,10 @@ pub(super) fn require_settled(root: &Path) -> Result<()> {
     Ok(())
 }
 
+pub(super) fn pending(root: &Path) -> Result<bool> {
+    present(&root.join(JOURNAL))
+}
+
 fn all_identities(root: &Path, active: &str) -> Result<Vec<String>> {
     let mut identities = BTreeSet::new();
     let directory = root.join("runtimes");
@@ -101,23 +105,59 @@ fn images_for(root: &Path, identity: &str, inventory: &InstallManifest) -> Resul
     Ok(images)
 }
 
+/// A synthesized process-role alias is not a sealed distribution file. If it
+/// was never materialized, no Windows image handle exists from which retirement
+/// could later establish exclusion. Discover that limitation before reset.
+pub(super) fn absent_optional_aliases(root: &Path, active: &str) -> Result<Vec<Image>> {
+    inspect_images(root, active)?;
+    let mut absent = Vec::new();
+    for identity in all_identities(root, active)? {
+        let inventory = inspection_inventory(root, &identity)?;
+        let mut possible = inventory.files.clone();
+        crate::process_roles::inventory(&mut possible);
+        for role in [
+            crate::process_roles::Role::Service,
+            crate::process_roles::Role::Index,
+            crate::process_roles::Role::Source,
+        ] {
+            if inventory.files.contains_key(role.name()) {
+                continue; // A sealed image is never an optional alias.
+            }
+            if let Some(sha256) = possible.get(role.name()) {
+                let path = root.join("runtimes").join(&identity).join(role.name());
+                if !present(&path)? {
+                    absent.push(Image {
+                        path,
+                        sha256: sha256.clone(),
+                    });
+                }
+            }
+        }
+    }
+    Ok(absent)
+}
+
+fn inspection_inventory(root: &Path, identity: &str) -> Result<InstallManifest> {
+    let receipt = root.join(format!("retire-{identity}.json"));
+    if present(&receipt)? {
+        let raw = read_bounded(&receipt, MAX_MANIFEST)?;
+        ensure!(
+            format!("{:x}", Sha256::digest(&raw)) == identity,
+            "changed retained retirement manifest"
+        );
+        let inventory: InstallManifest = serde_json::from_slice(&raw)?;
+        ensure!(inventory.schema == 1, "invalid retirement manifest schema");
+        Ok(inventory)
+    } else {
+        Ok(owned_inventory(root, identity)?.2)
+    }
+}
+
 pub(super) fn inspect_images(root: &Path, active: &str) -> Result<Vec<serde_json::Value>> {
     let mut result = Vec::new();
     for identity in all_identities(root, active)? {
         let preserved = activation::rebuild::preserved_runtime(root, &identity)?;
-        let receipt = root.join(format!("retire-{identity}.json"));
-        let inventory = if present(&receipt)? {
-            let raw = read_bounded(&receipt, MAX_MANIFEST)?;
-            ensure!(
-                format!("{:x}", Sha256::digest(&raw)) == identity,
-                "changed retained retirement manifest"
-            );
-            let inventory: InstallManifest = serde_json::from_slice(&raw)?;
-            ensure!(inventory.schema == 1, "invalid retirement manifest schema");
-            inventory
-        } else {
-            owned_inventory(root, &identity)?.2
-        };
+        let inventory = inspection_inventory(root, &identity)?;
         for image in images_for(root, &identity, &inventory)? {
             if present(&image.path)? {
                 safe_file(&image.path)?;
@@ -317,6 +357,14 @@ fn prepare(root: &Path, expected: &str) -> Result<Intent> {
 }
 
 pub(super) fn retire(root: &Path, expected: &str) -> Result<serde_json::Value> {
+    retire_recording(root, expected, &mut |_| Ok(()))
+}
+
+pub(super) fn retire_recording(
+    root: &Path,
+    expected: &str,
+    record: &mut dyn FnMut(&serde_json::Value) -> Result<()>,
+) -> Result<serde_json::Value> {
     legacy_launchers::require_absent(root)?;
     ensure!(
         staging::pending(root)?.is_empty(),
@@ -399,6 +447,7 @@ pub(super) fn retire(root: &Path, expected: &str) -> Result<serde_json::Value> {
     let result = serde_json::json!({"active":expected,"retired_previous":intent.previous,"retired_runtimes":intent.runtimes,
         "preserved_rebuild_runtimes":activation::rebuild::preserved_runtime_ids(root)?,"complete":true,
         "processes":{"scope":"verified_superseded_runtime_images","remaining":0,"observations":observations,"pre_removal_observations":pre_observations,"image_roster":intent.images,"image_exclusions":intent.image_exclusions},"selected_service_restarted":false});
+    record(&result)?;
     fs::remove_file(root.join(JOURNAL))?;
     sync_directory(root)?;
     Ok(result)

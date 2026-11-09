@@ -1,18 +1,28 @@
 # One AIRK completion plan
 
-**8 November follow-up authorization, refined:** retain automatic rebuilding
-and offer it earlier as an explicit upgrade choice, without classifying all
-incompatible-failure permutations. Native `runtime activate --rebuild-indexes`
-requires the exact `--expected-active` inventory; after admission it automatically
-rebuilds from eligible raw managed saved sources in fresh successor state.
-Preserve old state, supported settings, source boundaries and the separate
-migration requirements. Unsupported settings or catalog/grant configurations
-must be refused before state changes; successor client re-enrollment is explicit. The
-[rebuild recovery contract](upgrade-rebuild-fallback.md) records this bounded
-production requirement; native/editor source is implemented, with installed and
-frozen qualification pending. The authentic 1.5.12 schema-8 metadata bridge passed
-its scoped regression; installed producer and imported-authority acceptance are
-still separate. This refinement does not waive review, freeze, run or publication gates.
+**8 November 2026, clean-break policy authorized:** the user approved making
+1.8.16 the compatibility baseline. Every earlier installation must use fresh AIRK
+state and rebuilt indexes, preserving only reviewed source selections and
+supported preferences. Original sources remain untouched. Old index IDs, grants,
+credentials and pending operations are discarded; ownership-proven old processes,
+indexes, state, launchers and runtime artifacts must be retired. Interrupted
+reset, paused/unavailable rebuilding and blocked cleanup remain visible.
+
+The 1.8.16+ line requires an explicit persisted state contract alongside the
+verified runtime version for supported ordinary upgrades. A copied binary cannot
+relabel old state. The user plans to stabilize this line before a future public
+1.9.0 release; keep the current package version 1.8.16. No publication is authorized.
+
+This authorization explicitly reopens and supersedes this plan's pre-baseline
+preserved-index/imported-authority migration and optional rebuild decisions. The
+[current clean-break contract](upgrade-rebuild-fallback.md) takes precedence.
+The narrow unpublished reconciliation adapter and earlier migration qualification
+attempts remain dated evidence, not current completion requirements. The review,
+freeze, cost tiers, stop rules, source isolation and required validation gates
+below remain in force. Implementation and installed qualification of the revised
+policy are in progress.
+
+### Historical revision 2 authorization — retained context
 
 **8 November 2026, revision 2: approved for local completion.**
 
@@ -125,7 +135,7 @@ These rules are mandatory.
 
    Keep every failed fixture and every incomplete cleanup receipt.
 
-## 1. Current position (8 November follow-up)
+## 1. Historical position before the clean-break authorization
 
 The [implementation ledger](research/one-airk-implementation.md) now includes
 the retained r25 results and the subsequent r26 repair/acceptance cycle. The
@@ -226,7 +236,13 @@ actual Claude acceptance, with its Windows debug scope and projection limit.
 | Neo r13 | Python, formatting, workspace Clippy, lightweight compile, 51 native regressions, debug model, runtime and checkpoint passed | Uninstall failed with `ESRCH` (see B). Cargo cleanup was done |
 | Linux r3 | Canceled during archive preparation | Static build not claimed |
 
-## 2. Frozen decisions (do not reopen)
+## 2. Frozen decisions (clean-break exception authorized above)
+
+The user-approved 1.8.16 boundary replaces only pre-baseline migration and
+indefinite predecessor preservation. It does not waive the remaining decisions
+or their evidence requirements. Historical imported-legacy migration gates below
+are no longer requirements to carry discarded indexes into the baseline.
+
 
 The ledger shows each of these being decided more than once. They are now fixed.
 To change one, bring evidence and a reason to the user.
@@ -669,7 +685,7 @@ approved choices in section 7 and current position above govern remaining work.
 | 7. A held inference call | Subsequently passed on preserved r26: 1/1 held checkpoint case, 66 embedding calls (`completion-modern-checkpoint-r26-r3.json`) | Selected Windows debug coverage; final candidate qualification remains |
 | 8. Two OS users and port squatting | Wrong-issuer and crossed-authority cases passed | Needs a second OS account. User provides one, or it is recorded as a limitation |
 | 11. Full fault matrix (full disk, corrupt manifest, …) | Partial | List which cases have tests. User decides on the remainder |
-| 13. Real predecessor migrations: Mac, universal launchers, many clients | Windows passed for 1.3.1, 1.0.0-build.7 and 1.8.12 | Mac in the Neo batch. Universal launchers and many clients are a user decision |
+| 13. Pre-baseline reset and artifact retirement | Historical migration experiments retain their original results | Qualify the required fresh-state reset on supported hosts, including owned legacy launchers/clients and cleanup; do not substitute historical index-migration passes |
 | 14. Lifecycle on all four targets, with Developer ID and notarized Mac | Windows debug only | **Needs hosted CI and a merge**, which are authorization items |
 
 Until the user has decided an item, do not start work on it, and do not report it
@@ -717,7 +733,14 @@ Every fence decision in A must match this table:
 - the input freeze is recorded;
 - the user has answered section 7.
 
-## 6. The validation ladder (in order, each step once)
+## 6. Retained pre-baseline validation ladder
+
+The commands below record the earlier migration campaign. Do not resume its
+imported-index or accepted-job migration steps as current clean-break
+qualification. The task ledger must declare the revised reset/fresh-install and
+compatible-line acceptance ladder, with exact new input identities. Cost tiers,
+review/freeze requirements and the two-strike stop rule remain unchanged.
+
 
 **Live-review additions, 8 November 2026.** Cheap source/T0 review found missing
 prerequisites in the original commands: the positive legacy editor fixture

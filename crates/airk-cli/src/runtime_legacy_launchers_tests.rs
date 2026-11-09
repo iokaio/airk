@@ -16,6 +16,48 @@ fn old_launcher(root: &Path) -> Result<Vec<u8>> {
 }
 
 #[test]
+fn clean_break_launcher_proof_handoff_survives_death_before_intent_removal() -> Result<()> {
+    let (_owner, root, identity) = super::super::tests::unselected_fixture()?;
+    replace_json(
+        &root,
+        "selected.json",
+        &Selection {
+            schema: 1,
+            active: identity.clone(),
+            previous: None,
+        },
+    )?;
+    old_launcher(&root)?;
+    let _lock = install_lock(&root)?;
+    let captured = root.join("captured-retirement.json");
+    let first = retire_locked_recording(&root, &identity, &mut |receipt| {
+        fs::write(&captured, serde_json::to_vec(receipt)?)?;
+        bail!("injected death after durable proof and before native intent removal")
+    });
+    assert!(first.is_err());
+    assert!(pending(&root)?);
+    assert!(!launcher_path(&root).exists());
+    let original: serde_json::Value = serde_json::from_slice(&fs::read(&captured)?)?;
+    assert_eq!(
+        original["processes"]["image_roster"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    retire_locked_recording(&root, &identity, &mut |receipt| {
+        assert_eq!(
+            receipt["processes"]["image_roster"],
+            original["processes"]["image_roster"]
+        );
+        assert_eq!(fs::read(&captured)?, serde_json::to_vec(&original)?);
+        Ok(())
+    })?;
+    assert!(!pending(&root)?);
+    Ok(())
+}
+
+#[test]
 fn retained_launcher_cleanup_is_durable_idempotent_and_preserves_main_and_data() -> Result<()> {
     let (_owner, root, identity) = super::super::tests::unselected_fixture()?;
     let (main, _) = verify_runtime(&root, &identity)?;

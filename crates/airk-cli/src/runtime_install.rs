@@ -18,14 +18,30 @@ use std::{
     time::Duration,
 };
 
+/// Do not classify a dangling link as an absent owned artifact. Callers must
+/// inspect/reject the existing directory entry before any cleanup or reuse.
+fn exists(path: &Path) -> Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
 #[path = "runtime_activation.rs"]
 mod activation;
 pub(crate) use activation::verify_admission_release;
 #[path = "runtime_setup.rs"]
 mod setup;
 pub(crate) use setup::{SetupAdmission, SetupCancellation, installed_control_cooperative};
+#[path = "runtime_clean_break_background.rs"]
+pub(crate) mod clean_break_background;
+#[path = "runtime_clean_break_cleanup.rs"]
+mod clean_break_cleanup;
 #[path = "runtime_data_migration.rs"]
 mod data_migration;
+#[path = "runtime_http_cleanup.rs"]
+mod http_cleanup;
 #[path = "runtime_inventory.rs"]
 mod inventory;
 #[path = "runtime_launcher_repair.rs"]
@@ -34,6 +50,9 @@ mod launcher_repair;
 mod layout;
 #[path = "runtime_managed.rs"]
 mod managed;
+#[path = "runtime_state_contract.rs"]
+mod state_contract;
+pub(crate) use state_contract::InitializedProbe;
 #[path = "runtime_upgrade_stop.rs"]
 mod upgrade_stop;
 pub use managed::ManagedLifecycle;
@@ -118,6 +137,14 @@ pub enum RuntimeCommand {
         expected_active: String,
         #[arg(long)]
         connection_id: airk_core::identity::Incarnation,
+        #[arg(long, value_parser = ["predecessor-cleanup"])]
+        purpose: Option<String>,
+        #[arg(
+            long,
+            requires = "purpose",
+            required_if_eq("purpose", "predecessor-cleanup")
+        )]
+        predecessor: Option<String>,
     },
     /// Inspect or explicitly manage this native issuer in the current user's trust store.
     HttpTrust {
@@ -412,6 +439,8 @@ pub enum RuntimeCommand {
         install_dir: PathBuf,
         #[arg(long)]
         expected_active: String,
+        #[arg(long, value_parser = ["predecessor-cleanup"])]
+        purpose: Option<String>,
     },
     /// Read-only ownership inventory of obsolete extension helper caches.
     InspectLegacyCaches {
@@ -597,6 +626,13 @@ pub(crate) fn validate_control_root(control: &Path) -> Result<()> {
     layout::require_managed_control_ready(control)?;
     airk_store::service::registry::data_relocation::require_settled(control)
 }
+pub(crate) fn require_baseline_control(control: &Path) -> Result<()> {
+    state_contract::require_control(control)
+}
+pub(crate) fn require_baseline_service(control: &Path) -> Result<()> {
+    state_contract::require_service(control)
+}
+
 pub(crate) fn record_control_root(lease: &airk_store::service::ServiceLease) -> Result<()> {
     layout::record_control(lease)
 }
@@ -2180,7 +2216,7 @@ async fn ensure_running_locked_checked_after_settlement(
         cancel,
     )
     .await?;
-    setup::settle_then_checkpoint(lifecycle::settle(root), cancel).await?;
+    setup::settle_then_checkpoint(lifecycle::settle(authority), cancel).await?;
     if managed::read(root)?.is_some() {
         return managed::ensure_checked(authority, cancel, after_settlement).await;
     }
@@ -2456,7 +2492,10 @@ pub async fn activate_rebuilding_reviewed(
     expected: &str,
 ) -> Result<Selection> {
     let _lock = install_lock(root)?;
-    if activation::rebuild::pending(root)? {
+    if state_contract::required(root)? {
+        return activation::rebuild::activate(root, identity, expected).await;
+    }
+    if activation::rebuild::pending(root)? || activation::rebuild::repair_pending(root, identity)? {
         return activation::rebuild::activate(root, identity, expected).await;
     }
     require_issuer_rotation_settled(root)?;
@@ -2473,6 +2512,20 @@ pub(crate) fn rebuild_observation_for_control(
     binding: airk_core::service::ProjectBinding,
 ) -> Result<Option<airk_core::rebuild::RebuildObservation>> {
     activation::rebuild::observation_for_control(control, binding)
+}
+
+/// Existing native metadata maintenance owns these bounded continuation turns.
+pub(crate) fn continue_clean_break(
+    root: &Path,
+    owner: &airk_store::service::ServiceLease,
+    namespace: airk_core::identity::Incarnation,
+) -> Result<bool> {
+    activation::rebuild::continue_clean_break(root, owner, namespace)?;
+    activation::rebuild::continuation_pending(root, owner.root())
+}
+
+pub(crate) fn clean_break_continuation_pending(root: &Path, control: &Path) -> Result<bool> {
+    activation::rebuild::continuation_pending(root, control)
 }
 
 pub(super) fn rebuild_report(
@@ -2493,11 +2546,21 @@ async fn activate_with_expected(
     expected: Option<&str>,
 ) -> Result<Selection> {
     let _lock = install_lock(root)?;
-    if activation::rebuild::pending(root)? {
-        let expected = expected.context(
-            "an accepted index rebuild requires its exact reviewed predecessor to resume",
-        )?;
-        return activation::rebuild::activate(root, identity, expected).await;
+    if activation::rebuild::pending(root)? || activation::rebuild::repair_pending(root, identity)? {
+        let predecessor = activation::rebuild::activation_predecessor(root, expected)?;
+        return activation::rebuild::activate(root, identity, &predecessor).await;
+    }
+    if state_contract::required(root)? {
+        let selected = selection_record(root)?;
+        ensure!(
+            expected.is_none_or(|expected| expected == selected.active),
+            "clean-break selection changed since review"
+        );
+        return activation::rebuild::activate(root, identity, &selected.active).await;
+    }
+    activation::rebuild::require_upgrade_allowed(root, identity)?;
+    if activation::selection(root)?.is_some() {
+        state_contract::candidate(root, identity)?;
     }
     require_issuer_rotation_settled(root)?;
     retirement::require_previous_settled(root)?;

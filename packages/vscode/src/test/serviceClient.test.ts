@@ -3,7 +3,16 @@ import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { spawn } from 'node:child_process';
 import { ControlTransport, NativeControlTransport, ServiceClient, ServiceError, RecordValue } from '../serviceClient';
+import {isNativeReplyValidationFailure,isLocalTrackingFailure} from '../nativeOutcome';
 const project='1'.repeat(64), other='2'.repeat(64), incarnation='3'.repeat(32);
+
+for(const family of ['job','catalog'] as const)test(`malformed ${family} mutation acknowledgment keeps its raw frame strictly diagnostic`,async()=>{
+    const key={namespace:incarnation,epoch:1,nonce:'4'.repeat(32)},caller='5'.repeat(32),digest='6'.repeat(64);
+    const reply:RecordValue=family==='job'?{status:'job',job:{id:17,project},future_native:{all:'retained'}}:{status:'catalog_applied',receipt:{schema:1,operation_id:17,caller,key,request_digest:digest,catalog_revision:2,authority_fence_required:false},future_native:{all:'retained'}};
+    let calls=0;const client=new ServiceClient({dispose(){},async request(){calls++;return reply;}});
+    const work=family==='job'?client.submitMutation({enqueue:{project,caller,key,kind:'index'}}):client.submitCatalog({catalog_apply:{request:{caller,key,expected_catalog_revision:1,operation:{operation:'rename_project',id:'prj_'+'7'.repeat(32),expected_definition_revision:1,name:'Reviewed'}},preview_digest:digest},request_digest:digest});
+    await assert.rejects(work,(error:unknown)=>{assert.ok(error instanceof ServiceError);assert.equal(isNativeReplyValidationFailure(error),true);assert.equal(isLocalTrackingFailure(error),false);assert.deepEqual(error.nativeResponse,reply);assert.ok(error.cause instanceof Error);return true;});assert.equal(calls,1);
+});
 const fixture=String.raw`
 let pending=Buffer.alloc(0);
 process.stdin.on('data',bytes=>{

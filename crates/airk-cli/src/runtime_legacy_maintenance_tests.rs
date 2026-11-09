@@ -101,6 +101,12 @@ fn manager_changes_preserve_every_pending_maintenance_phase_and_unknown_journal(
         read(&root)?.unwrap().restoration_state_sha256,
         journal.restoration_state_sha256
     );
+    let legacy = store::snapshot_for_schema(&journal.control, 1)?;
+    save_snapshot(&journal, &cycle_baseline_name(&journal), &legacy)?;
+    journal.cycle_state_sha256 = Some(legacy.digest()?);
+    let reobserved = current_snapshot(&journal)?;
+    assert_eq!(reobserved.schema, 1);
+    assert_eq!(reobserved.digest()?, legacy.digest()?);
     fs::write(root.join(JOURNAL), b"{unknown")?;
     assert!(require_manager_change_settled(&root).is_err());
     assert_eq!(fs::read(root.join(JOURNAL))?, b"{unknown");
@@ -254,6 +260,39 @@ fn bounded_plan_roster_keeps_exact_retry_and_never_discards_an_existing_group() 
 fn bound_plans_without_actual_store_receipts_never_admit_introduced_native_indexes() -> Result<()> {
     for plan in [adoption_plan(27)?, adoption_plan(28)?] {
         assert!(checked_native_receipt(&plan, None)?.is_none());
+    }
+    Ok(())
+}
+
+#[test]
+fn compact_maintenance_history_rejects_terminal_row_or_table_changes() -> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let mut before = store::snapshot(owner.path())?;
+    assert_eq!(before.schema, 2);
+    assert!(before.jobs.is_empty() && before.requests.is_empty());
+    for name in ["service_jobs", "service_requests", "service_configuration"] {
+        before.tables.push(store::TableCheckpoint {
+            name: name.into(),
+            schema_digest: Sha256Digest::from_bytes([41; 32]),
+            ephemeral_or_observation_only: false,
+            rows: Some(1024),
+            rows_digest: Some(Sha256Digest::from_bytes([42; 32])),
+        });
+    }
+    require_job_history_preserved(&before, &before)?;
+    for index in 0..before.tables.len() {
+        let mut after = before.clone();
+        after.tables[index].rows_digest = Some(Sha256Digest::from_bytes([43; 32]));
+        assert!(require_job_history_preserved(&before, &after).is_err());
+        let mut after = before.clone();
+        after.tables[index].rows = Some(1023);
+        assert!(require_job_history_preserved(&before, &after).is_err());
+        let mut after = before.clone();
+        after.tables[index].schema_digest = Sha256Digest::from_bytes([44; 32]);
+        assert!(require_job_history_preserved(&before, &after).is_err());
+        let mut after = before.clone();
+        after.tables.remove(index);
+        assert!(require_job_history_preserved(&before, &after).is_err());
     }
     Ok(())
 }

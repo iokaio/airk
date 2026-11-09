@@ -4,6 +4,8 @@ import { randomUUID } from 'node:crypto';
 import {ReferenceRefreshIntent,refreshConfiguration,refreshDigest,validateRefreshIntent,validateRefreshJob,validateRefreshReceipt,validateRefreshRefusal} from './referenceRefresh';
 import * as path from 'node:path';
 import { requireNativeExecution } from './nativeGate';
+import {ServiceError,validateNativeReply,retainUnvalidatedNativeReply} from './nativeOutcome';
+export {ServiceError} from './nativeOutcome';
 import { CatalogApplyIntent, CatalogObject, CatalogRequest, CatalogReview, IndexSetupApplyIntent, IndexSetupReview, catalogBound, catalogFenceObservation, catalogHex, catalogObject, catalogRevision, sameCatalogValue, CATALOG_RECEIPT_BYTES, validateCatalogApply, validateGrantSelection, validateNativeGrantDraft, validateNativeHostContext, validateIndexSetupSelection, validateIndexSetupApply, validateNativeIndexSetupDraft, validateIndexSetupReceipt, indexSetupObservation, validateNativeLegacyBinding } from './indexingCatalog';
 import { SourceResolveIntent, PolicyResumeIntent, validatePolicyResumeIntent, validateNativeSourceDraft, validateSourceMutationSelection, validateSourceResolveIntent, sourceChangeObservation, validateNativeRetirementRequest } from './indexingCatalog';
 import { validatePolicyStatus, validateNativePolicyConfiguration } from './indexingCatalog';
@@ -23,9 +25,6 @@ export function identifier(value: unknown, bytes: 16 | 32): string {
 export function count(value: unknown): number {
     if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) { throw new Error('Invalid AIRK service count.'); }
     return value;
-}
-export class ServiceError extends Error {
-    constructor(readonly code: string, readonly outcomeUnknown = false,readonly nativeResponse?:RecordValue) { super(`AIRK service: ${code}`); }
 }
 export interface ControlTransport { request(method: unknown): Promise<RecordValue>; dispose(): void }
 interface Pending {
@@ -221,6 +220,12 @@ export class ServiceClient {
         if (expected && response.status !== expected) { throw new ServiceError('unexpected_service_response', true,response); }
         return response;
     }
+    private async mutationReply(method:unknown,expected?:string):Promise<RecordValue>{
+        try{return await this.rpc(method,expected);}catch(error){
+            if(error instanceof ServiceError&&error.nativeResponse&&['unexpected_service_response','invalid_service_failure','crossed_source_change_busy'].includes(error.code))throw retainUnvalidatedNativeReply(error,error.nativeResponse);
+            throw error;
+        }
+    }
     /** Native source review/admission returns this refusal before inserting work.
      * Keep the full response, but qualify no-effect only for its exact index. */
     private rejectSourceChangeBusy(method:unknown,response:RecordValue):never {
@@ -294,13 +299,13 @@ export class ServiceClient {
     }
     async submitCatalog(intent: CatalogApplyIntent): Promise<RecordValue> {
         validateCatalogApply(intent);
-        const response = await this.rpc({catalog_apply:intent.catalog_apply});
+        const response = await this.mutationReply({catalog_apply:intent.catalog_apply});
         if(response.status==='catalog_outcome_unknown'){
-            this.validateCatalogUnknown(response,intent.catalog_apply.request,intent.request_digest,intent.catalog_apply.preview_digest);
+            validateNativeReply(response,()=>this.validateCatalogUnknown(response,intent.catalog_apply.request,intent.request_digest,intent.catalog_apply.preview_digest));
             throw new ServiceError(String(response.code),true,response);
         }
-        if(response.status!=='catalog_applied')throw new ServiceError('unexpected_service_response',true);
-        this.validateCatalogReceipt(response, intent.catalog_apply.request, intent.request_digest,intent.catalog_apply.preview_digest);
+        if(response.status!=='catalog_applied')throw retainUnvalidatedNativeReply(new ServiceError('unexpected_service_response',true),response);
+        validateNativeReply(response,()=>this.validateCatalogReceipt(response,intent.catalog_apply.request,intent.request_digest,intent.catalog_apply.preview_digest));
         return response;
     }
     async catalogSourceDraft(selection:CatalogObject):Promise<CatalogReview>{
@@ -310,17 +315,17 @@ export class ServiceClient {
     }
     async catalogPendingSource(index:string,namespace:string):Promise<RecordValue>{
         if(!/^idx_[0-9a-f]{32}$/.test(index))throw new ServiceError('invalid_source_index');catalogHex(namespace);
-        const response=await this.rpc({catalog_pending_source_change:{index_id:index}},'catalog_pending_source_change');catalogBound(response,65536);
+        const response=await this.rpc({catalog_pending_source_change:{index_id:index}},'catalog_pending_source_change');return validateNativeReply(response,()=>{catalogBound(response,65536);
         if(response.index_id!==index)throw new ServiceError('crossed_pending_source_index',true,response);
         const observed=sourceChangeObservation(response);
         if(observed){const begin=record(observed.begin),id=identifier(record(begin.metadata).operation_id,16);this.validateSourceObservation(response,id,namespace);if(record(begin.request).operation&&record(record(begin.request).operation).id!==index)throw new ServiceError('crossed_pending_source_begin',true,response);}
         else if(response.observation!==null)throw new ServiceError('invalid_pending_source_observation',true,response);
-        return response;
+        return response;});
     }
     async catalogPolicyStatus(index:string):Promise<RecordValue>{
         if(!/^idx_[0-9a-f]{32}$/.test(index))throw new ServiceError('invalid_source_policy_index');
         const response=await this.rpc({catalog_policy_status:{index_id:index}},'catalog_policy_status');
-        return validatePolicyStatus(response,index);
+        return validateNativeReply(response,()=>validatePolicyStatus(response,index));
     }
     async catalogSplitDraft(selection:CatalogObject):Promise<SplitReview>{
         catalogBound(selection,16384);
@@ -334,9 +339,9 @@ export class ServiceClient {
     }
     async submitSplit(input:SplitApplyIntent):Promise<RecordValue>{
         const intent=validateSplitApply(structuredClone(input));
-        const response=await this.rpc(intent,'catalog_split_accepted');
+        const response=await this.mutationReply(intent,'catalog_split_accepted');
         try{catalogBound(response,SPLIT_RESPONSE_BYTES);validateSplitSnapshot(response.snapshot,intent.catalog_split_apply.draft);return response;}
-        catch(error){const failure=new ServiceError('invalid_native_split_acceptance',true,response);failure.cause=error;throw failure;}
+        catch(error){const failure=new ServiceError('invalid_native_split_acceptance',true,response);failure.cause=error;throw retainUnvalidatedNativeReply(failure,response);}
     }
     async catalogSplitStatus(operation:string):Promise<RecordValue>{
         catalogHex(operation);const response=await this.rpc({catalog_split_status:{operation_id:operation}},'catalog_split_status');catalogBound(response,SPLIT_RESPONSE_BYTES);
@@ -345,9 +350,9 @@ export class ServiceClient {
     }
     async catalogSplitReceipt(input:SplitApplyIntent):Promise<RecordValue>{
         const intent=validateSplitApply(input),request=catalogObject(intent.catalog_split_apply.draft.request);
-        const response=await this.rpc({catalog_split_receipt:{caller:request.caller,key:request.key}},'catalog_split_receipt');catalogBound(response,SPLIT_RESPONSE_BYTES);
+        const response=await this.rpc({catalog_split_receipt:{caller:request.caller,key:request.key}},'catalog_split_receipt');return validateNativeReply(response,()=>{catalogBound(response,SPLIT_RESPONSE_BYTES);
         if(response.caller!==request.caller||!sameCatalogValue(response.key,request.key)||typeof response.expired!=='boolean')throw new ServiceError('crossed_split_receipt',true,response);
-        if(response.snapshot!==null){validateSplitSnapshot(response.snapshot,intent.catalog_split_apply.draft);if(response.expired)throw new ServiceError('crossed_split_receipt',true,response);}return response;
+        if(response.snapshot!==null){validateSplitSnapshot(response.snapshot,intent.catalog_split_apply.draft);if(response.expired)throw new ServiceError('crossed_split_receipt',true,response);}return response;});
     }
     async prepareSplitRecovery(reviewed:CatalogObject,action:'resume'|'cancel'):Promise<SplitRecoverIntent>{
         validateSplitSnapshot(reviewed);const receipt=catalogObject(reviewed.receipt);
@@ -356,15 +361,15 @@ export class ServiceClient {
     async submitSplitRecovery(input:SplitRecoverIntent):Promise<RecordValue>{
         const intent=validateSplitRecover(structuredClone(input));
         let response:RecordValue|undefined;
-        try{response=await this.rpc({catalog_split_recover:intent.catalog_split_recover},'catalog_split_recovered');this.validateSplitRecoveryResponse(response,intent);return response;}
-        catch(error){const failure=new ServiceError(error instanceof ServiceError?error.code:'invalid_native_split_recovery',true,response??(error instanceof ServiceError?error.nativeResponse:undefined));failure.cause=error;throw failure;}
+        try{response=await this.mutationReply({catalog_split_recover:intent.catalog_split_recover},'catalog_split_recovered');validateNativeReply(response,()=>this.validateSplitRecoveryResponse(response!,intent));return response;}
+        catch(error){if(response)throw retainUnvalidatedNativeReply(error,response,'invalid_native_split_recovery');throw error;}
     }
     async catalogSplitRecoveryReceipt(input:SplitRecoverIntent):Promise<RecordValue>{
         const intent=validateSplitRecover(input),request=intent.catalog_split_recover.request;
         const response=await this.rpc({catalog_split_recovery_receipt:{operation_id:request.operation_id,caller:request.caller,key:request.key}},'catalog_split_recovery_receipt');
-        this.validateSplitRecoveryResponse(response,intent);return response;
+        validateNativeReply(response,()=>this.validateSplitRecoveryResponse(response,intent));return response;
     }
-    private validateSplitRecoveryResponse(response:RecordValue,intent:SplitRecoverIntent):void{
+    validateSplitRecoveryResponse(response:RecordValue,intent:SplitRecoverIntent):void{
         catalogBound(response,SPLIT_RESPONSE_BYTES);const request=intent.catalog_split_recover.request;
         if(response.status==='catalog_split_recovery_receipt'&&(response.operation_id!==request.operation_id||response.caller!==request.caller||!sameCatalogValue(response.key,request.key)||typeof response.expired!=='boolean'))throw new ServiceError('crossed_split_recovery_receipt',true,response);
         if(response.receipt!==null){validateSplitRecoveryReceipt(response.receipt,intent);if(response.expired===true)throw new ServiceError('crossed_split_recovery_receipt',true,response);}
@@ -374,26 +379,34 @@ export class ServiceClient {
     async catalogPolicyResumeReceipt(input:PolicyResumeIntent):Promise<RecordValue>{
         const intent=validatePolicyResumeIntent(structuredClone(input)),request=intent.catalog_policy_resume;
         const response=await this.rpc({catalog_policy_resume_receipt:request},'catalog_policy_resume_receipt');
+        validateNativeReply(response,()=>this.validatePolicyResumeReceipt(response,intent));return response;
+    }
+    validatePolicyResumeReceipt(response:RecordValue,input:PolicyResumeIntent):boolean{
+        const intent=validatePolicyResumeIntent(structuredClone(input)),request=intent.catalog_policy_resume;
         catalogBound(response,65536);
+        if(response.status!=='catalog_policy_resume_receipt')throw new ServiceError('crossed_policy_resume_receipt',true,response);
         if(response.index_id!==request.index_id||response.operation_id!==request.operation_id||response.caller!==request.caller||!sameCatalogValue(response.key,request.key)||typeof response.expired!=='boolean')throw new ServiceError('crossed_policy_resume_receipt',true,response);
-        if(response.receipt===null)return response;
+        if(response.receipt===null)return false;
         const receipt=record(response.receipt),job=record(receipt.job),work=record(receipt.configuration);
         catalogHex(receipt.source_job,64);catalogHex(job.id,64);catalogHex(work.engine,64);
         const policy=validateNativePolicyConfiguration(work.request),configuration=record(record(work.request).configuration);
         if(configuration.operation_id!==request.operation_id||policy.index_id!==request.index_id||policy.owner_binding!==intent.project||job.project!==intent.project||job.kind!=='configure'||!['pending','running','succeeded','failed','canceled'].includes(String(job.state))||response.expired)throw new ServiceError('crossed_policy_resume_receipt',true,response);
         if(receipt.result!==null){const result=record(receipt.result);if(result.operation_id!==request.operation_id)throw new ServiceError('crossed_policy_resume_result',true,response);catalogHex(result.policy_digest,64);}
-        return response;
+        return true;
     }
     async preparePolicyResume(index:string,operation:string,project:string):Promise<PolicyResumeIntent>{
         return validatePolicyResumeIntent({catalog_policy_resume:{index_id:index,operation_id:operation,caller:this.caller,key:await this.key()},project});
     }
     async submitPolicyResume(input:PolicyResumeIntent):Promise<RecordValue>{
         const intent=validatePolicyResumeIntent(structuredClone(input)),request=intent.catalog_policy_resume;
-        const response=await this.rpc({catalog_policy_resume:request},'catalog_policy_resumed');
+        const response=await this.mutationReply({catalog_policy_resume:request},'catalog_policy_resumed');
+        validateNativeReply(response,()=>this.validatePolicyResumeObservation(response,intent));return response;
+    }
+    validatePolicyResumeObservation(response:RecordValue,input:PolicyResumeIntent):void{
+        const intent=validatePolicyResumeIntent(structuredClone(input)),request=intent.catalog_policy_resume;
         validatePolicyStatus(response,request.index_id,'catalog_policy_resumed');
         const snapshot=record(response.snapshot);
         if(snapshot.operation_id!==request.operation_id||record(snapshot.policy).owner_binding!==intent.project)throw new ServiceError('crossed_policy_resume',true,response);
-        return response;
     }
     async catalogRetirementEvidence(index:string,namespace:string,backing:string,minimumRevision:number,registration?:CatalogObject):Promise<RecordValue>{
         if(!/^idx_[0-9a-f]{32}$/.test(index))throw new ServiceError('invalid_retirement_index');catalogHex(namespace);catalogHex(backing,64);catalogRevision(minimumRevision);
@@ -437,10 +450,10 @@ export class ServiceClient {
         return observed.completion!==null;
     }
     async submitSourceResolve(intent:SourceResolveIntent,prior:RecordValue):Promise<RecordValue>{
-        intent=validateSourceResolveIntent(structuredClone(intent));const response=await this.rpc({catalog_source_change_resolve:intent.catalog_source_change_resolve});
-        this.validateSourceObservation(response,intent.catalog_source_change_resolve.begin_operation,intent.namespace,prior);
+        intent=validateSourceResolveIntent(structuredClone(intent));const response=await this.mutationReply({catalog_source_change_resolve:intent.catalog_source_change_resolve});
+        validateNativeReply(response,()=>this.validateSourceObservation(response,intent.catalog_source_change_resolve.begin_operation,intent.namespace,prior));
         if(response.status==='source_change_resolution_outcome_unknown')throw new ServiceError('source_change_resolution_outcome_unknown',true,response);
-        if(response.status!=='catalog_source_change_resolved')throw new ServiceError('unexpected_source_resolution_response',true,response);
+        if(response.status!=='catalog_source_change_resolved')throw retainUnvalidatedNativeReply(new ServiceError('unexpected_source_resolution_response',true),response);
         return response;
     }
     async catalogIndexSetupDraft(selection:CatalogObject):Promise<IndexSetupReview>{
@@ -451,10 +464,10 @@ export class ServiceClient {
     }
     async submitIndexSetup(intent:IndexSetupApplyIntent):Promise<RecordValue>{
         intent=validateIndexSetupApply(structuredClone(intent));const draft=intent.catalog_index_setup_apply.draft;
-        const response=await this.rpc({catalog_index_setup_apply:{draft}});
-        this.validateIndexSetupObservation(response,draft,intent.request_digest);
+        const response=await this.mutationReply({catalog_index_setup_apply:{draft}});
+        validateNativeReply(response,()=>this.validateIndexSetupObservation(response,draft,intent.request_digest));
         if(response.status==='catalog_outcome_unknown')throw new ServiceError(String(response.code),true,response);
-        if(response.status!=='catalog_index_setup_applied')throw new ServiceError('unexpected_setup_response',true,response);
+        if(response.status!=='catalog_index_setup_applied')throw retainUnvalidatedNativeReply(new ServiceError('unexpected_setup_response',true),response);
         return response;
     }
     validateIndexSetupObservation(response:RecordValue,draft:CatalogObject,requestDigest:string,prior?:RecordValue):boolean{
@@ -496,7 +509,7 @@ export class ServiceClient {
         if(receipt.authority_fence_required!==true||!sameCatalogValue(fenced.request,request)||!sameCatalogValue(fenced.metadata,receipt)||fenced.preview_digest!==previewDigest)throw new ServiceError('crossed_catalog_fenced_receipt',true);
         catalogHex(fenced.prepared_digest,64);this.validateFenceProof(fenced.proof,request);
     }
-    private validateCatalogUnknown(response:RecordValue,request:CatalogRequest,requestDigest:string,previewDigest:string):void{
+    validateCatalogUnknown(response:RecordValue,request:CatalogRequest,requestDigest:string,previewDigest:string):void{
         catalogBound(response,65536);const key=record(response.key);
         if(typeof response.code!=='string'||!/^[a-z0-9_]{1,128}$/.test(response.code)||response.caller!==request.caller||!sameCatalogValue(key,request.key)||response.request_digest!==requestDigest)throw new ServiceError('crossed_catalog_outcome_unknown',true);
         if(response.observation==null)return;
@@ -619,13 +632,13 @@ export class ServiceClient {
         return validateRefreshIntent(intent);
     }
     async submitReferenceRefresh(input:ReferenceRefreshIntent):Promise<RecordValue>{
-        const intent=validateRefreshIntent(input),response=await this.rpc({configure_project:intent.reference_refresh.configure_project});
-        try{if(response.status==='reference_refresh_review_required')validateRefreshRefusal(response,intent);else {if(response.status!=='job')throw new Error('invalid_refresh_ack_status');validateRefreshJob(response.job,intent);}return response;}catch{throw new ServiceError('crossed_reference_refresh_acknowledgment',true,response);}
+        const intent=validateRefreshIntent(input),response=await this.mutationReply({configure_project:intent.reference_refresh.configure_project});
+        try{if(response.status==='reference_refresh_review_required')validateRefreshRefusal(response,intent);else {if(response.status!=='job')throw new Error('invalid_refresh_ack_status');validateRefreshJob(response.job,intent);}return response;}catch(cause){const failure=new ServiceError('crossed_reference_refresh_acknowledgment',true,response);failure.cause=cause;throw retainUnvalidatedNativeReply(failure,response);}
     }
     async referenceRefreshReceipt(input:ReferenceRefreshIntent):Promise<RecordValue>{
         const intent=validateRefreshIntent(input),request=intent.reference_refresh.configure_project;
         const response=await this.rpc({reference_refresh_receipt:{caller:request.caller,key:request.key}},'reference_refresh_receipt');
-        try{validateRefreshReceipt(response,intent);return response;}catch{throw new ServiceError('unqualified_reference_refresh_receipt',true,response);}
+        try{validateRefreshReceipt(response,intent);return response;}catch(cause){const failure=new ServiceError('unqualified_reference_refresh_receipt',true,response);failure.cause=cause;throw retainUnvalidatedNativeReply(failure,response);}
     }
     async prepareConfiguration(project:string,request:ProjectConfigurationRequest):Promise<MutationIntent>{
         if(request.configuration.operation==='refresh_references')throw new ServiceError('refresh_requires_original_evidence_review');
@@ -650,11 +663,37 @@ export class ServiceClient {
         if('configure_project'in intent&&intent.configure_project.request.configuration.operation==='refresh_references')throw new ServiceError('refresh_requires_exact_receipt_tracking');
         // The host persists the complete prepared intent before this call and
         // retires it only after receiving a complete, matching native result.
-        const response = await this.rpc(intent, 'plan_create' in intent ? 'plan' : 'job');
-        if ('enqueue' in intent && record(response.job).project !== intent.enqueue.project) { throw new ServiceError('crossed_job_receipt',true); }
-        if ('configure_project' in intent && record(response.job).project !== intent.configure_project.project) { throw new ServiceError('crossed_job_receipt',true); }
-        identifier(record('plan_create' in intent ? response.plan : response.job).id,32);
-        return response;
+        const response = await this.mutationReply(intent, 'plan_create' in intent ? 'plan' : 'job');
+        return validateNativeReply(response,()=>{
+            if ('enqueue' in intent && record(response.job).project !== intent.enqueue.project) { throw new ServiceError('crossed_job_receipt',true); }
+            if ('configure_project' in intent && record(response.job).project !== intent.configure_project.project) { throw new ServiceError('crossed_job_receipt',true); }
+            identifier(record('plan_create' in intent ? response.plan : response.job).id,32);
+            return response;
+        });
     }
     dispose(): void { this.transport.dispose(); }
 }
+
+/** Canonical synchronous validation only: no client constructor, transport,
+ * native execution, RPC or mutable client identity is created by this facade. */
+const validatorNames=[
+    'validateCatalogObservation','validateCatalogFenceContinuity','validateIndexSetupObservation','validateSourceObservation',
+    'validatePolicyResumeReceipt','validatePolicyResumeObservation','validateSplitRecoveryResponse','validateCatalogReceipt',
+    'validateCatalogMetadata','validateCatalogUnknown','validateFencedReceipt','validateFenceProof','validatePendingFence','validateFenceTarget',
+    'validateFenceConfirmations','validateWorkerIdentity','validateWorkerObligation','validateWorkerConfirmations',
+] as const;
+type PublicObservationValidation=Pick<ServiceClient,'validateCatalogObservation'|'validateCatalogUnknown'|'validateCatalogFenceContinuity'|'validateIndexSetupObservation'|'validateSourceObservation'|'validatePolicyResumeReceipt'|'validatePolicyResumeObservation'|'validateSplitRecoveryResponse'>;
+const validatorPrototype=ServiceClient.prototype as unknown as Record<string,unknown>;
+const observationValidation=Object.freeze(Object.assign(Object.create(null),Object.fromEntries(validatorNames.map(name=>[name,validatorPrototype[name]])))) as PublicObservationValidation;
+export const intentObservationValidators=Object.freeze({
+    catalog:(...args:Parameters<ServiceClient['validateCatalogObservation']>)=>{
+        if(args[0].status==='catalog_outcome_unknown'){observationValidation.validateCatalogUnknown(...args);return false;}
+        return observationValidation.validateCatalogObservation(...args);
+    },
+    fenceContinuity:(...args:Parameters<ServiceClient['validateCatalogFenceContinuity']>)=>observationValidation.validateCatalogFenceContinuity(...args),
+    setup:(...args:Parameters<ServiceClient['validateIndexSetupObservation']>)=>observationValidation.validateIndexSetupObservation(...args),
+    source:(...args:Parameters<ServiceClient['validateSourceObservation']>)=>observationValidation.validateSourceObservation(...args),
+    policyReceipt:(...args:Parameters<ServiceClient['validatePolicyResumeReceipt']>)=>observationValidation.validatePolicyResumeReceipt(...args),
+    policyResumed:(...args:Parameters<ServiceClient['validatePolicyResumeObservation']>)=>observationValidation.validatePolicyResumeObservation(...args),
+    splitRecovery:(...args:Parameters<ServiceClient['validateSplitRecoveryResponse']>)=>observationValidation.validateSplitRecoveryResponse(...args),
+});

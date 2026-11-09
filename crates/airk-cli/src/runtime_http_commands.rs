@@ -11,6 +11,10 @@ use airk_core::{
 mod tests;
 
 async fn control(install: &Path) -> Result<(PathBuf, ServiceHealth)> {
+    ensure!(
+        !state_contract::required(install)?,
+        "clean_break_required: HTTP enrollment requires the initialized baseline"
+    );
     let control = installed_control(install).await?;
     let response = service_runtime::request(&control, ControlMethod::Health).await?;
     let ControlResponse::Health { observation } = response else {

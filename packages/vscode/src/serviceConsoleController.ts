@@ -5,12 +5,14 @@ import {refreshWithinAuthority,type PreparedWorkbenchRefresh} from './workbenchR
 import {validateCombinedCatalogSession} from './catalogSession';
 import { isDeepStrictEqual } from 'node:util';
 import { BootstrapObservation, LegacyStartupReview, LegacyStartupTarget, RuntimeBinding, RuntimeHost, runtimeBindingIdentity } from './serviceBootstrap';
+import { runtimeCleanBreakRequired } from './runtimeRebuild';
 import { count, identifier, parseConsolePage, record, RecordValue, ServiceClient, ServiceError } from './serviceClient';
 import { ConsoleIntent, IntentJournal, IntentStorage, LifecycleIntent } from './serviceIntents';
 import { CatalogObject, CatalogReview, IndexSetupReview, catalogBound, catalogHex, catalogObject, catalogRevision, sameCatalogValue, validateCatalogApply, validateCatalogOperation, validateGrantSelection, validateIndexSetupSelection, validateIndexSetupApply } from './indexingCatalog';
 import { sourceChangeObservation, indexSetupObservation, validateSourceMutationSelection, validateSourceResolveIntent, CatalogRetirementReview } from './indexingCatalog';
 import { consoleAction, ConsoleObservation, diagnosticPreview, ServiceConsoleState } from './serviceConsoleView';
 import { SplitApplyIntent, SplitRecoverIntent, SplitReview, isSplitIntent, splitTerminal, validateSplitApply, validateSplitContinuity, validateSplitRecover, validateSplitSelection, validateSplitSnapshot } from './indexingSplit';
+import {retainNativeOutcome,retainNativeOutcomeDuring,isLocalTrackingFailure,isNativeReplyValidationFailure,retainUnvalidatedNativeReply,validateNativeReply} from './nativeOutcome';
 
 const WORKSPACE_TRUST_MESSAGE='Workspace trust is required before AIRK can connect. Trust this workspace, then review AIRK setup and status.';
 
@@ -47,6 +49,7 @@ export interface ConsoleHost {
 }
 const empty=():ConsoleObservation=>({state:'unavailable',checkedAt:Date.now()});
 export const LOCAL_LOG_ACTIONS=['logs','exportLogs','openRawLogs','saveRawLogs'];
+export const LOCAL_DIAGNOSTIC_ACTIONS=['copyRuntimeDiagnostics','openRuntimeDiagnostics','saveRuntimeDiagnostics'];
 function objOutcomeUnknown(row:RecordValue):boolean{return record(record(row.configuration??{}).outcome??{}).code==='configuration_outcome_unknown_reinspect';}
 function code(error:unknown):string{return error instanceof ServiceError?error.code:'console_operation_failed';}
 export class ServiceConsoleController {
@@ -63,6 +66,7 @@ export class ServiceConsoleController {
     }
     private binding?:RuntimeBinding;
     private bootstrap?:BootstrapObservation;
+    private runtimeDiagnostics?:{capturedAt:number;qualification:'cached_native_bootstrap_observation';observation:BootstrapObservation};
     private client?:ServiceClient;
     private journal?:IntentJournal;
     private registryNamespace?:string;
@@ -98,7 +102,8 @@ export class ServiceConsoleController {
             selected:new Set(),pending:[],includePaths:false};
         this.publish();
     }
-    private authorized():void{if(this.disposed||!this.host.trusted()){this.clearLifecycleCapture();throw new ServiceError('runtime_client_no_longer_authorized');}}
+    private authorized():void{if(this.disposed||!this.host.trusted()){this.clearLifecycleCapture();this.clearRuntimeDiagnostics();throw new ServiceError('runtime_client_no_longer_authorized');}}
+    private clearRuntimeDiagnostics():void{this.runtimeDiagnostics=undefined;this.state.runtimeDiagnostics=undefined;}
     private clearLifecycleCapture():void{this.state.capturedLifecycle=undefined;this.state.capturedLifecycleUnavailable=undefined;this.lifecycleReconnectAllowed=false;this.lifecycleReconnectInFlight=false;}
     whenIdle():Promise<boolean>{
         if(this.disposed)return Promise.resolve(false);
@@ -107,7 +112,7 @@ export class ServiceConsoleController {
     }
     private releaseIdle():void{for(const resolve of this.idle)resolve(!this.disposed);this.idle.clear();}
     private publish():void{
-        if(this.disposed)return;this.state.trusted=this.host.trusted();if(!this.state.trusted)this.clearLifecycleCapture();this.state.revision=randomUUID();
+        if(this.disposed)return;this.state.trusted=this.host.trusted();if(!this.state.trusted){this.clearLifecycleCapture();this.clearRuntimeDiagnostics();}this.state.revision=randomUUID();
         this.state.responseMode=this.host.responseMode?.()??'terse';
         this.state.registrationAvailable=!!this.host.registerWorkspace;
         this.state.legacyAvailable=!!this.host.legacy;
@@ -136,8 +141,8 @@ export class ServiceConsoleController {
             if(Object.keys(args).some(key=>!['project','expected_catalog_revision'].includes(key))||typeof args.project!=='string'||revision!==null&&typeof revision!=='number')throw new ServiceError('invalid_catalog_legacy_binding_request');
             response=await client.catalogLegacyBinding(args.project,revision);
         }else response=await client.rpc(method,name[0]==='catalog_receipt'?undefined:name[0]==='catalog_context'?'catalog_detail':name[0]);
-        this.authorized();if(client!==this.client||identity!==this.observationIdentity)throw new ServiceError('stale_catalog_client');
-        catalogBound(response,65536);
+        return retainNativeOutcomeDuring(response,async()=>{this.authorized();if(client!==this.client||identity!==this.observationIdentity)throw new ServiceError('stale_catalog_client');
+        return validateNativeReply(response,()=>{catalogBound(response,65536);
         if(name[0]==='catalog_receipt'&&!['catalog_receipt','catalog_receipt_unprepared'].includes(String(response.status)))throw new ServiceError('unexpected_catalog_receipt_response',true,response);
         const body=response.page??response.detail??response.descriptor??(name[0]==='catalog_legacy_binding'?response.observation:undefined);
         if(body&&catalogObject(body).namespace!==this.registryNamespace)throw new ServiceError('catalog_namespace_changed_refresh');
@@ -147,7 +152,7 @@ export class ServiceConsoleController {
             const descriptor=catalogObject(response.descriptor);
             this.catalogHostIdentity={observation:identity,host,key:String(descriptor.key),revision:Number(descriptor.catalog_revision)};
         }
-        return response;
+        return response;});});
     }
     async catalogHostContext(key:string,expectedCatalogRevision:number|null=null):Promise<RecordValue>{
         return this.catalogRead({catalog_host_context:{key,expected_catalog_revision:expectedCatalogRevision}});
@@ -206,14 +211,14 @@ export class ServiceConsoleController {
             try{check();}catch(error){await journal.forget(id);this.pending();throw error;}
             this.pending();this.publish();
             let received=false;
-            try{const response=await client.submitCatalog(intent);received=true;await journal.observeCatalog(id,response);check();await journal.forget(id);this.pending();return response;}
+            try{const response=await client.submitCatalog(intent);received=true;return await retainNativeOutcomeDuring(response,async()=>{await journal.observeCatalog(id,response);check();await journal.forget(id,response);this.pending();return response;});}
             catch(error){
-                if(error instanceof ServiceError&&error.nativeResponse){
+                if(error instanceof ServiceError&&error.nativeResponse&&!isLocalTrackingFailure(error)&&!isNativeReplyValidationFailure(error)){
                     try{await journal.observeCatalog(id,error.nativeResponse);}
-                    catch(local){const observed=new ServiceError('local_catalog_observation_unavailable',true,error.nativeResponse);observed.cause=local;this.logReceipt(id,observed);throw observed;}
+                    catch(local){const observed=retainNativeOutcome(local,error.nativeResponse,'local_catalog_observation_unavailable');this.logReceipt(id,observed);throw observed;}
                 }
                 // A complete typed native refusal is a known no-write outcome. Transport uncertainty retains the intent.
-                if(!received&&error instanceof ServiceError&&!error.outcomeUnknown){await journal.forget(id);this.pending();}
+                if(!received&&error instanceof ServiceError&&!error.outcomeUnknown){await journal.forget(id,error.nativeResponse);this.pending();}
                 this.logReceipt(id,error);throw error;
             }
         }finally{this.catalogApplyInFlight=false;}
@@ -241,8 +246,9 @@ export class ServiceConsoleController {
         this.authorized();const client=this.client,identity=this.observationIdentity;
         if(!client||namespace!==this.registryNamespace)throw new ServiceError('catalog_control_connection_unavailable');catalogHex(beginOperation);
         const response=await this.catalogRead({catalog_source_change_observation:{begin_operation:beginOperation}});
-        this.authorized();if(client!==this.client||identity!==this.observationIdentity)throw new ServiceError('stale_catalog_client');
-        client.validateSourceObservation(response,beginOperation,namespace,prior);this.nativeSourceObservations.set(response,{client,identity,response:structuredClone(response),namespace});return response;
+        return retainNativeOutcomeDuring(response,async()=>{this.authorized();if(client!==this.client||identity!==this.observationIdentity)throw new ServiceError('stale_catalog_client');
+            validateNativeReply(response,()=>client.validateSourceObservation(response,beginOperation,namespace,prior));this.nativeSourceObservations.set(response,{client,identity,response:structuredClone(response),namespace});return response;
+        });
     }
     async catalogPendingSource(index:string,namespace:string):Promise<RecordValue>{
         this.authorized();const client=this.client,identity=this.observationIdentity;
@@ -301,11 +307,11 @@ export class ServiceConsoleController {
     }
     private async submitSplitIntent(client:ServiceClient,journal:IntentJournal,intent:SplitApplyIntent|SplitRecoverIntent,check:()=>void,title:string):Promise<RecordValue>{
         const id=await journal.prepare(title,intent);try{check();}catch(error){await journal.forget(id);throw error;}this.pending();this.publish();let received=false;
-        try{const response='catalog_split_apply'in intent?await client.submitSplit(intent):await client.submitSplitRecovery(intent);received=true;await journal.observeCatalog(id,response);check();
-            if(response.snapshot!==null&&splitTerminal(catalogObject(response.snapshot)))await journal.forget(id);
-            if('catalog_split_recover'in intent&&response.receipt!=null&&(record(record(response.receipt).outcome).outcome==='restrictive_completion_required'||record(record(response.receipt).outcome).outcome==='already_complete'&&intent.reviewed.finalization==null))await journal.forget(id);
+        try{const response='catalog_split_apply'in intent?await client.submitSplit(intent):await client.submitSplitRecovery(intent);received=true;return await retainNativeOutcomeDuring(response,async()=>{await journal.observeCatalog(id,response);check();
+            if(response.snapshot!==null&&splitTerminal(catalogObject(response.snapshot)))await journal.forget(id,response);
+            if('catalog_split_recover'in intent&&response.receipt!=null&&(record(record(response.receipt).outcome).outcome==='restrictive_completion_required'||record(record(response.receipt).outcome).outcome==='already_complete'&&intent.reviewed.finalization==null))await journal.forget(id,response);
             this.pending();return response;
-        }catch(error){if(error instanceof ServiceError&&error.nativeResponse)await journal.observeCatalog(id,error.nativeResponse);if(!received&&error instanceof ServiceError&&!error.outcomeUnknown)await journal.forget(id);this.pending();this.logReceipt(id,error);throw error;}
+        });}catch(error){if(error instanceof ServiceError&&error.nativeResponse&&!isLocalTrackingFailure(error)&&!isNativeReplyValidationFailure(error))await journal.observeCatalog(id,error.nativeResponse);if(!received&&error instanceof ServiceError&&!error.outcomeUnknown)await journal.forget(id,error.nativeResponse);this.pending();this.logReceipt(id,error);throw error;}
     }
     async catalogPolicyResume(observation:CatalogObject,valid:()=>boolean):Promise<RecordValue>{
         this.authorized();const client=this.client,journal=this.journal,identity=this.observationIdentity,frozen=this.nativePolicyObservations.get(observation);
@@ -321,10 +327,10 @@ export class ServiceConsoleController {
             const id=await journal.prepare('Resume permanent-exclusion cleanup',intent,frozen.response);
             try{check();}catch(error){await journal.forget(id);this.pending();throw error;}
             this.nativePolicyObservations.delete(observation);this.pending();this.publish();let received=false;
-            try{const response=await client.submitPolicyResume(intent);received=true;await journal.observeCatalog(id,response);check();await journal.forget(id);this.pending();return response;}
+            try{const response=await client.submitPolicyResume(intent);received=true;return await retainNativeOutcomeDuring(response,async()=>{await journal.observeCatalog(id,response);check();await journal.forget(id,response);this.pending();return response;});}
             catch(error){
-                if(error instanceof ServiceError&&error.nativeResponse?.status==='failure')await journal.observeCatalog(id,error.nativeResponse);
-                if(!received&&error instanceof ServiceError&&!error.outcomeUnknown)await journal.forget(id);
+                if(error instanceof ServiceError&&error.nativeResponse?.status==='failure'&&!isLocalTrackingFailure(error)&&!isNativeReplyValidationFailure(error))await journal.observeCatalog(id,error.nativeResponse);
+                if(!received&&error instanceof ServiceError&&!error.outcomeUnknown)await journal.forget(id,error.nativeResponse);
                 this.pending();this.logReceipt(id,error);throw error;
             }
         }finally{this.catalogApplyInFlight=false;}
@@ -341,13 +347,13 @@ export class ServiceConsoleController {
             const id=await journal.prepare('Indexing: resolve failed source metadata',intent,original);
             try{await journal.markSubmitted(id);check();}catch(error){await journal.forget(id);this.pending();throw error;}
             this.pending();this.publish();
-            try{const response=await client.submitSourceResolve(intent,original);try{await journal.observeCatalog(id,response);}catch(local){const error=new ServiceError('local_source_observation_unavailable',true,response);error.cause=local;throw error;}check();if(client.validateSourceObservation(response,intent.catalog_source_change_resolve.begin_operation,intent.namespace,original))await journal.forget(id);this.pending();return response;}
+            try{const response=await client.submitSourceResolve(intent,original);return await retainNativeOutcomeDuring(response,async()=>{await journal.observeCatalog(id,response);check();if(client.validateSourceObservation(response,intent.catalog_source_change_resolve.begin_operation,intent.namespace,original))await journal.forget(id,response);this.pending();return response;});}
             catch(error){
-                if(error instanceof ServiceError&&error.nativeResponse){
+                if(error instanceof ServiceError&&error.nativeResponse&&!isLocalTrackingFailure(error)&&!isNativeReplyValidationFailure(error)){
                     if(error.nativeResponse.status==='failure')await journal.observeCatalog(id,error.nativeResponse);
-                    else{try{client.validateSourceObservation(error.nativeResponse,intent.catalog_source_change_resolve.begin_operation,intent.namespace,original);await journal.observeCatalog(id,error.nativeResponse);}catch{/* Keep original proof when a crossed response is refused. */}}
+                    else{let matching=false;try{client.validateSourceObservation(error.nativeResponse,intent.catalog_source_change_resolve.begin_operation,intent.namespace,original);matching=true;}catch{/* Keep original proof when a crossed response is refused. */}if(matching)await journal.observeCatalog(id,error.nativeResponse);}
                 }
-                if(error instanceof ServiceError&&!error.outcomeUnknown)await journal.forget(id);this.pending();this.logReceipt(id,error);throw error;
+                if(error instanceof ServiceError&&!error.outcomeUnknown)await journal.forget(id,error.nativeResponse);this.pending();this.logReceipt(id,error);throw error;
             }
         }finally{this.catalogApplyInFlight=false;}
     }
@@ -364,13 +370,13 @@ export class ServiceConsoleController {
             // This exact new local intent has not crossed the native boundary yet.
             try{check();}catch(error){await journal.forget(id);this.pending();throw error;}
             this.pending();this.publish();let received=false;
-            try{const response=await client.submitIndexSetup(intent);received=true;await journal.observeCatalog(id,response);check();if(client.validateIndexSetupObservation(response,intent.catalog_index_setup_apply.draft,intent.request_digest))await journal.forget(id);this.pending();return response;}
+            try{const response=await client.submitIndexSetup(intent);received=true;return await retainNativeOutcomeDuring(response,async()=>{await journal.observeCatalog(id,response);check();if(client.validateIndexSetupObservation(response,intent.catalog_index_setup_apply.draft,intent.request_digest))await journal.forget(id,response);this.pending();return response;});}
             catch(error){
-                if(error instanceof ServiceError&&error.nativeResponse){
+                if(error instanceof ServiceError&&error.nativeResponse&&!isLocalTrackingFailure(error)&&!isNativeReplyValidationFailure(error)){
                     if(error.nativeResponse.status==='failure')await journal.observeCatalog(id,error.nativeResponse);
-                    else{try{client.validateIndexSetupObservation(error.nativeResponse,intent.catalog_index_setup_apply.draft,intent.request_digest);await journal.observeCatalog(id,error.nativeResponse);}catch{/* Crossed results cannot replace the original native identity. */}}
+                    else{let matching=false;try{client.validateIndexSetupObservation(error.nativeResponse,intent.catalog_index_setup_apply.draft,intent.request_digest);matching=true;}catch{/* Crossed results cannot replace the original native identity. */}if(matching)await journal.observeCatalog(id,error.nativeResponse);}
                 }
-                if(!received&&error instanceof ServiceError&&!error.outcomeUnknown)await journal.forget(id);
+                if(!received&&error instanceof ServiceError&&!error.outcomeUnknown)await journal.forget(id,error.nativeResponse);
                 this.pending();this.logReceipt(id,error);throw error;
             }
         }finally{this.catalogApplyInFlight=false;}
@@ -413,7 +419,7 @@ export class ServiceConsoleController {
         try{this.authorized();}catch(error){this.retirementReviews.delete(review);throw error;}const frozen=this.retirementReviews.get(review),target=this.retirementTarget(review.id),journal=this.journal;
         if(!frozen||!journal||!valid()||frozen.client!==this.client||frozen.identity!==this.observationIdentity||frozen.journal!==journal||target.namespace!==this.registryNamespace||this.registryObservationSuspended||!sameCatalogValue(review.response,frozen.response)||!sameCatalogValue(frozen.original,journal.list().find(entry=>entry.id===review.id)?.value))throw new ServiceError('read_current_native_retirement_evidence');
         if(!frozen.client.validateRetirementEvidence(frozen.response,target.index,target.namespace,target.backing,target.revision,target.registration))throw new ServiceError('native_retirement_evidence_unavailable');
-        this.retirementReviews.delete(review);await frozen.journal.forgetUnchanged(review.id,frozen.original,()=>valid()&&frozen.client===this.client&&frozen.identity===this.observationIdentity&&frozen.journal===this.journal&&!this.disposed&&this.host.trusted()&&target.namespace===this.registryNamespace&&!this.registryObservationSuspended);this.pending();this.publish();
+        this.retirementReviews.delete(review);await retainNativeOutcomeDuring(frozen.response,()=>frozen.journal.forgetUnchanged(review.id,frozen.original,()=>valid()&&frozen.client===this.client&&frozen.identity===this.observationIdentity&&frozen.journal===this.journal&&!this.disposed&&this.host.trusted()&&target.namespace===this.registryNamespace&&!this.registryObservationSuspended));this.pending();this.publish();
         return {local_tracking:'stopped_after_native_retirement',original_intent_id:review.id,native_retirement_evidence:frozen.response};
     }
     async catalogSetupResume(id:string,valid:()=>boolean):Promise<RecordValue>{
@@ -425,9 +431,9 @@ export class ServiceConsoleController {
         const check=()=>{this.authorized();if(!valid()||client!==this.client||journal!==this.journal||identity!==this.observationIdentity||catalogObject(request.key).namespace!==this.registryNamespace)throw new ServiceError('stale_setup_resume');};check();this.catalogApplyInFlight=true;this.setupResumeReceipts.delete(id);
         try{
             await journal.markSubmitted(id);check();this.pending();this.publish();
-            try{const response=await client.submitIndexSetup(intent);await journal.observeCatalog(id,response);check();if(client.validateIndexSetupObservation(response,intent.catalog_index_setup_apply.draft,intent.request_digest,known.response))await journal.forget(id);this.pending();return response;}
+            try{const response=await client.submitIndexSetup(intent);return await retainNativeOutcomeDuring(response,async()=>{await journal.observeCatalog(id,response);check();if(client.validateIndexSetupObservation(response,intent.catalog_index_setup_apply.draft,intent.request_digest,known.response))await journal.forget(id,response);this.pending();return response;});}
             catch(error){
-                if(error instanceof ServiceError&&error.nativeResponse){if(error.nativeResponse.status==='failure')await journal.observeCatalog(id,error.nativeResponse);else{try{client.validateIndexSetupObservation(error.nativeResponse,intent.catalog_index_setup_apply.draft,intent.request_digest,known.response);await journal.observeCatalog(id,error.nativeResponse);}catch{/* Preserve the last matching native receipt. */}}}
+                if(error instanceof ServiceError&&error.nativeResponse&&!isLocalTrackingFailure(error)&&!isNativeReplyValidationFailure(error)){if(error.nativeResponse.status==='failure')await journal.observeCatalog(id,error.nativeResponse);else{let matching=false;try{client.validateIndexSetupObservation(error.nativeResponse,intent.catalog_index_setup_apply.draft,intent.request_digest,known.response);matching=true;}catch{/* Preserve the last matching native receipt. */}if(matching)await journal.observeCatalog(id,error.nativeResponse);}}
                 this.pending();this.logReceipt(id,error);throw error; // The original setup was already accepted; a refused continuation cannot erase it.
             }
         }finally{this.catalogApplyInFlight=false;}
@@ -437,24 +443,29 @@ export class ServiceConsoleController {
         for(const [id,value] of this.setupResumeReceipts)if(!ids.has(id)||value.client!==this.client||value.identity!==this.observationIdentity)this.setupResumeReceipts.delete(id);
     }
     catalogPending(): readonly string[] { this.pruneSetupResumeReceipts();return this.journal?.list().filter(entry=>'catalog_apply' in entry.value.intent||'catalog_index_setup_apply' in entry.value.intent||'catalog_source_change_resolve' in entry.value.intent||'catalog_policy_resume' in entry.value.intent||isSplitIntent(entry.value.intent)).filter(entry=>!isSplitIntent(entry.value.intent)||entry.value.localDispatchState!=='known_receipt').map(entry=>entry.id)??[]; }
-    catalogPendingDetails():readonly CatalogObject[]{return this.journal?.list().filter(entry=>'catalog_apply' in entry.value.intent||'catalog_index_setup_apply' in entry.value.intent||'catalog_source_change_resolve' in entry.value.intent||'catalog_policy_resume' in entry.value.intent||isSplitIntent(entry.value.intent)).map(entry=>({id:entry.id,intent:entry.value.intent,...(entry.value.nativeObservation?{native_observation:entry.value.nativeObservation}:{}),...(entry.value.nativeFenceObservation?{native_fence_observation:entry.value.nativeFenceObservation}:{}),...(entry.value.nativeSetupObservation?{native_setup_observation:entry.value.nativeSetupObservation}:{}),...(entry.value.nativeSourceObservation?{native_source_observation:entry.value.nativeSourceObservation}:{}),...(entry.value.nativeSplitReceipt?{historical_split_recovery_receipt:entry.value.nativeSplitReceipt}:{}),...(entry.value.nativeSplitSnapshot?{last_known_split_snapshot:entry.value.nativeSplitSnapshot}:{}),local_dispatch_state:entry.value.localDispatchState,can_resume_setup:this.setupResumeReceipts.get(entry.id)?.client===this.client&&this.setupResumeReceipts.get(entry.id)?.identity===this.observationIdentity&&entry.value.localDispatchState==='known_receipt'}))??[];}
+    catalogPendingDetails():readonly CatalogObject[]{return this.journal?.list().filter(entry=>'catalog_apply' in entry.value.intent||'catalog_index_setup_apply' in entry.value.intent||'catalog_source_change_resolve' in entry.value.intent||'catalog_policy_resume' in entry.value.intent||isSplitIntent(entry.value.intent)).map(entry=>({id:entry.id,intent:entry.value.intent,...(entry.value.nativeObservation?{native_observation:entry.value.nativeObservation}:{}),...(entry.value.nativeCatalogObservation?{native_catalog_observation:entry.value.nativeCatalogObservation}:{}),...(entry.value.nativePolicyObservation?{native_policy_observation:entry.value.nativePolicyObservation}:{}),...(entry.value.nativeFenceObservation?{native_fence_observation:entry.value.nativeFenceObservation}:{}),...(entry.value.nativeSetupObservation?{native_setup_observation:entry.value.nativeSetupObservation}:{}),...(entry.value.nativeSourceObservation?{native_source_observation:entry.value.nativeSourceObservation}:{}),...(entry.value.nativeSplitReceipt?{historical_split_recovery_receipt:entry.value.nativeSplitReceipt}:{}),...(entry.value.nativeSplitSnapshot?{last_known_split_snapshot:entry.value.nativeSplitSnapshot}:{}),local_dispatch_state:entry.value.localDispatchState,can_resume_setup:this.setupResumeReceipts.get(entry.id)?.client===this.client&&this.setupResumeReceipts.get(entry.id)?.identity===this.observationIdentity&&entry.value.localDispatchState==='known_receipt'}))??[];}
     async catalogReconcile(): Promise<RecordValue[]> {
         this.pruneSetupResumeReceipts();
         this.authorized();const client=this.client,journal=this.journal,identity=this.observationIdentity;
         if(!client||!journal||this.registryObservationSuspended)throw new ServiceError('catalog_control_connection_unavailable');
-        const results:RecordValue[]=[];
+        const results:RecordValue[]=[];let nativeReply:RecordValue|undefined,validated=false;
+        const checkOwner=(response:RecordValue,check:()=>void)=>{
+            try{this.authorized();check();}catch(error){throw retainNativeOutcome(error,response);}
+        };
         const candidates=journal.list().filter(entry=>'catalog_apply' in entry.value.intent||'catalog_index_setup_apply' in entry.value.intent||'catalog_source_change_resolve' in entry.value.intent||'catalog_policy_resume' in entry.value.intent||isSplitIntent(entry.value.intent));
         const previous=candidates.findIndex(entry=>entry.id===this.catalogReceiptCursor),start=previous<0?0:(previous+1)%candidates.length;
         const batch=[...candidates.slice(start),...candidates.slice(0,start)].slice(0,8);
-        for(const saved of batch){
+        try{for(const saved of batch){
+            nativeReply=undefined;validated=false;
             // Advance before the read so one unavailable operation cannot starve others.
             this.catalogReceiptCursor=saved.id;
             if(isSplitIntent(saved.value.intent)){
-                const intent=saved.value.intent,response='catalog_split_apply'in intent?await client.catalogSplitReceipt(intent):await client.catalogSplitRecoveryReceipt(intent);
-                this.authorized();if(client!==this.client||journal!==this.journal||identity!==this.observationIdentity||this.registryObservationSuspended)throw new ServiceError('stale_split_receipt');
+                const intent=saved.value.intent,response=nativeReply='catalog_split_apply'in intent?await client.catalogSplitReceipt(intent):await client.catalogSplitRecoveryReceipt(intent);
+                checkOwner(response,()=>{if(client!==this.client||journal!==this.journal||identity!==this.observationIdentity||this.registryObservationSuspended)throw new ServiceError('stale_split_receipt');});
                 const prior=saved.value.nativeSplitSnapshot??saved.value.nativeObservation?.snapshot;
                 if(response.snapshot!=null&&prior!=null)validateSplitContinuity(catalogObject(prior),catalogObject(response.snapshot));
                 if('catalog_split_recover'in intent&&response.receipt!=null&&saved.value.nativeSplitReceipt&&!sameCatalogValue(response.receipt,saved.value.nativeSplitReceipt))throw new ServiceError('historical_split_receipt_changed',true,response);
+                validated=true;
                 await journal.observeCatalog(saved.id,response);results.push(response);
                 const known='catalog_split_apply'in intent?response.snapshot!=null:response.receipt!=null&&record(record(response.receipt).outcome).outcome!=='unknown';
                 if(known&&(response.snapshot!=null&&splitTerminal(catalogObject(response.snapshot))||'catalog_split_recover'in intent&&response.receipt!=null&&(record(record(response.receipt).outcome).outcome==='restrictive_completion_required'||record(record(response.receipt).outcome).outcome==='already_complete'&&intent.reviewed.finalization==null)))await journal.forget(saved.id);
@@ -462,47 +473,57 @@ export class ServiceConsoleController {
             }
             if('catalog_policy_resume' in saved.value.intent){
                 const intent=saved.value.intent,request=intent.catalog_policy_resume;
-                const response=await client.catalogPolicyResumeReceipt(intent);
-                this.authorized();if(client!==this.client||journal!==this.journal||identity!==this.observationIdentity)throw new ServiceError('stale_catalog_client');
-                if(response.receipt===null){await journal.observeCatalog(saved.id,response);results.push(response);continue;}
+                const response=nativeReply=await client.catalogPolicyResumeReceipt(intent);
+                checkOwner(response,()=>{if(client!==this.client||journal!==this.journal||identity!==this.observationIdentity)throw new ServiceError('stale_catalog_client');});
+                if(response.receipt===null){validated=true;await journal.observeCatalog(saved.id,response);results.push(response);continue;}
                 const receipt=record(response.receipt),job=record(receipt.job);
-                if(saved.value.nativeObservation?.accepted_job_id!==undefined&&saved.value.nativeObservation.accepted_job_id!==job.id)throw new ServiceError('crossed_policy_resume_receipt',true,response);
+                const acceptedJob=(value:RecordValue|undefined):unknown=>{
+                    if(value?.accepted_job_id!==undefined)return value.accepted_job_id;
+                    if(value?.status==='catalog_policy_resume_receipt'&&value.receipt!==null)return record(record(value.receipt).job).id;
+                    if(value?.status==='catalog_policy_resumed')return record(value.job).id;
+                    return undefined;
+                };
+                if([acceptedJob(saved.value.nativePolicyObservation),acceptedJob(saved.value.nativeObservation)].some(known=>known!==undefined&&known!==job.id))throw new ServiceError('crossed_policy_resume_receipt',true,response);
+                validated=true;
                 // Persist accepted proof before another independent current-state read.
                 await journal.observeCatalog(saved.id,response);
                 const status=await this.catalogPolicyStatus(request.index_id);
-                this.authorized();if(client!==this.client||journal!==this.journal||identity!==this.observationIdentity)throw new ServiceError('stale_catalog_client');
-                const observation={...status,accepted_job_id:job.id,status_basis:'current_policy',resume_receipt:response};await journal.observeCatalog(saved.id,observation);results.push(observation);await journal.forget(saved.id);continue;
+                checkOwner(status,()=>{if(client!==this.client||journal!==this.journal||identity!==this.observationIdentity)throw new ServiceError('stale_catalog_client');});
+                const observation=nativeReply={...status,accepted_job_id:job.id,status_basis:'current_policy',resume_receipt:response};await journal.observeCatalog(saved.id,observation);results.push(observation);await journal.forget(saved.id,observation);continue;
             }
             if('catalog_source_change_resolve' in saved.value.intent){
                 const intent=saved.value.intent,prior=sourceChangeObservation(saved.value.nativeObservation??{})?saved.value.nativeObservation:saved.value.nativeSourceObservation;
-                const response=await this.catalogSourceObservation(intent.catalog_source_change_resolve.begin_operation,intent.namespace,prior);
-                this.authorized();if(client!==this.client||journal!==this.journal||identity!==this.observationIdentity)throw new ServiceError('stale_catalog_client');
-                const complete=client.validateSourceObservation(response,intent.catalog_source_change_resolve.begin_operation,intent.namespace,prior);await journal.observeCatalog(saved.id,response);results.push(response);if(complete)await journal.forget(saved.id);continue;
+                const response=nativeReply=await this.catalogSourceObservation(intent.catalog_source_change_resolve.begin_operation,intent.namespace,prior);
+                checkOwner(response,()=>{if(client!==this.client||journal!==this.journal||identity!==this.observationIdentity)throw new ServiceError('stale_catalog_client');});
+                const complete=client.validateSourceObservation(response,intent.catalog_source_change_resolve.begin_operation,intent.namespace,prior);validated=true;await journal.observeCatalog(saved.id,response);results.push(response);if(complete)await journal.forget(saved.id,response);continue;
             }
             if('catalog_index_setup_apply' in saved.value.intent){
                 const draft=saved.value.intent.catalog_index_setup_apply.draft,request=catalogObject(draft.request);
-                const response=await this.catalogRead({catalog_index_setup_receipt:{caller:request.caller,key:request.key}});
-                this.authorized();if(client!==this.client||journal!==this.journal||identity!==this.observationIdentity)throw new ServiceError('stale_catalog_client');
+                const response=nativeReply=await this.catalogRead({catalog_index_setup_receipt:{caller:request.caller,key:request.key}});
+                checkOwner(response,()=>{if(client!==this.client||journal!==this.journal||identity!==this.observationIdentity)throw new ServiceError('stale_catalog_client');});
                 const complete=client.validateIndexSetupObservation(response,draft,saved.value.intent.request_digest,saved.value.nativeSetupObservation);
+                validated=true;
                 await journal.observeCatalog(saved.id,response);results.push(response);this.setupResumeReceipts.delete(saved.id);
-                const receipt=indexSetupObservation(response);if(complete)await journal.forget(saved.id);else if(receipt&&['reserved','prepared'].includes(String(receipt.stage)))this.setupResumeReceipts.set(saved.id,{client,identity,intent:structuredClone(saved.value.intent),response:structuredClone(response)});continue;
+                const receipt=indexSetupObservation(response);if(complete)await journal.forget(saved.id,response);else if(receipt&&['reserved','prepared'].includes(String(receipt.stage)))this.setupResumeReceipts.set(saved.id,{client,identity,intent:structuredClone(saved.value.intent),response:structuredClone(response)});continue;
             }
             const intent=saved.value.intent;if(!('catalog_apply' in intent))continue;
             const request=intent.catalog_apply.request;
-            const response=await this.catalogRead({catalog_receipt:{caller:request.caller,key:request.key}});
-            this.authorized();if(client!==this.client||journal!==this.journal||identity!==this.observationIdentity)throw new ServiceError('stale_catalog_client');
+            const response=nativeReply=await this.catalogRead({catalog_receipt:{caller:request.caller,key:request.key}});
+            checkOwner(response,()=>{if(client!==this.client||journal!==this.journal||identity!==this.observationIdentity)throw new ServiceError('stale_catalog_client');});
             if(response.status==='catalog_receipt_unprepared'){
                 client.validateCatalogUnprepared(response,request,intent.request_digest);
-                const prior=saved.value.nativeObservation;
+                const prior=saved.value.nativeCatalogObservation??saved.value.nativeObservation;
                 if(saved.value.nativeFenceObservation||prior?.status==='catalog_applied'||prior?.status==='catalog_receipt'&&prior.receipt!=null)throw new ServiceError('catalog_unprepared_conflicts_with_saved_proof',true,response);
-                await journal.observeCatalog(saved.id,response);results.push(response);await journal.forget(saved.id);continue;
+                validated=true;await journal.observeCatalog(saved.id,response);results.push(response);await journal.forget(saved.id,response);continue;
             }
             const complete=client.validateCatalogObservation(response,request,intent.request_digest,intent.catalog_apply.preview_digest);
             if(saved.value.nativeFenceObservation)client.validateCatalogFenceContinuity(saved.value.nativeFenceObservation,response);
+            validated=true;
             await journal.observeCatalog(saved.id,response);results.push(response);
-            if(complete)await journal.forget(saved.id);
+            if(complete)await journal.forget(saved.id,response);
         }
         this.pending();return results;
+        }catch(error){if(!nativeReply||isLocalTrackingFailure(error)||isNativeReplyValidationFailure(error))throw error;throw validated?retainNativeOutcome(error,nativeReply):retainUnvalidatedNativeReply(error,nativeReply);}
     }
     private pollActive():void{
         if(this.pollDeadline!==undefined&&Date.now()>=this.pollDeadline)throw new ServiceError('status_poll_timed_out');
@@ -524,6 +545,8 @@ export class ServiceConsoleController {
         else this.clearLifecycleCapture();
         try{
         this.bootstrap=await this.observation(()=>this.host.runtime.discover());this.authorized();
+        this.runtimeDiagnostics={capturedAt:Date.now(),qualification:'cached_native_bootstrap_observation',observation:structuredClone(this.bootstrap)};
+        this.state.runtimeDiagnostics={capturedAt:this.runtimeDiagnostics.capturedAt};
         this.state.bootstrap={state:'live',checkedAt:Date.now(),value:{
             installed:this.bootstrap.installed,installDir:this.bootstrap.installDir,
             bundleDigest:this.bootstrap.bundle.digest,platform:this.bootstrap.bundle.platform,
@@ -547,7 +570,7 @@ export class ServiceConsoleController {
             }
             if(this.binding.payloadVerified!==false&&this.binding.version===this.host.version)this.client=this.host.runtime.client(this.binding);
             this.state.lifecycle=this.binding.lifecycle;
-            if(typeof this.bootstrap.inspection.registry_namespace==='string')this.restoreJournal(this.bootstrap.inspection.registry_namespace);
+            if(typeof this.bootstrap.inspection.registry_namespace==='string')await this.restoreJournal(this.bootstrap.inspection.registry_namespace);
             this.cachedSnapshot(this.bootstrap.inspection);
             if(this.binding.version!==this.host.version){
                 try{const snapshot=await this.observation(()=>this.host.runtime.snapshot(this.binding!));this.authorized();this.cachedSnapshot(snapshot);}catch{/* Installer observations remain usable without readable cached project metadata. */}
@@ -585,7 +608,7 @@ export class ServiceConsoleController {
     private async savedSnapshot(after:string|null=null,revision:number|null=null):Promise<void>{
         if(!this.binding)return;
         const snapshot=await this.observation(()=>this.host.runtime.snapshot(this.binding!,after,revision));this.authorized();
-        if(snapshot.registry_namespace)this.restoreJournal(identifier(snapshot.registry_namespace,16));
+        if(snapshot.registry_namespace)await this.restoreJournal(identifier(snapshot.registry_namespace,16));
         this.cachedSnapshot(snapshot);this.pending();
         if(snapshot.registry_error)throw new ServiceError('cached_registry_unavailable_or_cursor_expired');
     }
@@ -704,10 +727,14 @@ export class ServiceConsoleController {
         this.legacyReview=undefined;this.state.legacyReview=undefined;this.state.legacyReceipts=undefined;this.state.legacyResult=undefined;
         this.pageStart={after:null,revision:null};
     }
-    private restoreJournal(namespace:string):void{
+    private async restoreJournal(namespace:string):Promise<void>{
+        const binding=this.binding,client=this.client,identity=this.observationIdentity,observedNamespace=this.registryNamespace;
+        if(!binding)throw new ServiceError('console_not_connected');
+        const journal=new IntentJournal(this.host.storage,binding.controlDir,identifier(namespace,16));
+        await journal.ready();this.authorized();
+        if(binding!==this.binding||client!==this.client||identity!==this.observationIdentity||observedNamespace!==this.registryNamespace)throw new ServiceError('stale_intent_store_binding');
         if(this.state.capturedLifecycle&&this.state.capturedLifecycle.namespace!==namespace)this.clearLifecycleCapture();
         this.registryNamespace=identifier(namespace,16);
-        const journal=new IntentJournal(this.host.storage,this.binding!.controlDir,identifier(namespace,16));
         if(this.journal?.scope!==journal.scope){
             this.observationToken=randomUUID();this.clearRegistryObservation();
             this.journal=journal;this.state.selected.clear();this.eventCursor=null;this.state.events=[];this.state.page=undefined;this.state.activePage=undefined;
@@ -778,7 +805,7 @@ export class ServiceConsoleController {
     private async events():Promise<void>{
         const page=record((await this.rpc({events:{project:null,cursor:this.eventCursor,limit:32}},'events')).page);
         if(!Array.isArray(page.events)||page.events.length>32)throw new ServiceError('invalid_event_page');
-        this.restoreJournal(identifier(page.namespace,16));
+        await this.restoreJournal(identifier(page.namespace,16));
         this.lifecycleReconnectInFlight=false;
         const events=page.events.map(event=>record(event));
         const merged=new Map(this.state.events.map(event=>[event.sequence,event]));
@@ -834,7 +861,7 @@ export class ServiceConsoleController {
         try{const response=await this.submit(id);this.pending();return response;}
         catch(error){
             this.logReceipt(id,error);
-            if(error instanceof ServiceError&&error.outcomeUnknown)this.retainedOutcomes.add(error);
+            if(error instanceof ServiceError&&error.outcomeUnknown&&!isLocalTrackingFailure(error)&&!isNativeReplyValidationFailure(error))this.retainedOutcomes.add(error);
             throw error;
         }
     }
@@ -847,9 +874,10 @@ export class ServiceConsoleController {
             const before=this.state.connected&&this.state.health.state==='live'&&this.state.health.value?structuredClone(this.state.health.value):null;
             this.clearLifecycleCapture();
             try{
-                const result=await this.host.lifecycle(binding,intent,force);this.authorized();
-                if(binding!==this.binding||runtime!==runtimeBindingIdentity(this.binding)||client!==this.client||journal!==this.journal||identity!==this.observationIdentity||namespace!==this.registryNamespace||namespace!==intent.lifecycle.key.namespace)throw new ServiceError('stale_lifecycle_response',true,result);
-                retain=!this.captureLifecycleResponse(result,intent,binding,before,force);return result;
+                const result=await this.host.lifecycle(binding,intent,force);return await retainNativeOutcomeDuring(result,async()=>{this.authorized();
+                    if(binding!==this.binding||runtime!==runtimeBindingIdentity(this.binding)||client!==this.client||journal!==this.journal||identity!==this.observationIdentity||namespace!==this.registryNamespace||namespace!==intent.lifecycle.key.namespace)throw new ServiceError('stale_lifecycle_response',true,result);
+                    retain=!validateNativeReply(result,()=>this.captureLifecycleResponse(result,intent,binding,before,force));return result;
+                });
             }catch(error){
                 // Discovery only: expose the saved native phase/force ownership
                 // without replaying the uncertain mutation or starting a service.
@@ -870,6 +898,11 @@ export class ServiceConsoleController {
     async action(message:unknown):Promise<void>{
         const action=consoleAction(message,this.state);if(!action||this.disposed)return;
         if(LOCAL_LOG_ACTIONS.includes(action.action)){await this.localLogs(action.action);return;}
+        if(LOCAL_DIAGNOSTIC_ACTIONS.includes(action.action)){
+            this.authorized();if(!this.runtimeDiagnostics)throw new ServiceError('runtime_diagnostics_unavailable');
+            const text=JSON.stringify(this.runtimeDiagnostics,null,2),operation=action.action==='copyRuntimeDiagnostics'?this.host.copy:action.action==='openRuntimeDiagnostics'?this.host.openReport:this.host.saveReport;
+            if(!operation)throw new ServiceError('diagnostic_export_unavailable');await operation(text);this.authorized();return;
+        }
         if(this.state.busy)return;
         const requestedPreview=this.state.preview;
         this.state.busy=true;this.state.message=undefined;this.publish();
@@ -908,10 +941,11 @@ export class ServiceConsoleController {
             if(['upgradeRuntime','rollbackRuntime','resumeActivation'].includes(action.action)){
                 if(!this.binding)throw new ServiceError('runtime_binding_not_observed');
                 const kind=action.action==='upgradeRuntime'?'upgrade':action.action==='rollbackRuntime'?'rollback':'resume';
-                const mode=kind==='upgrade'&&this.host.chooseUpgradeMode?await this.host.chooseUpgradeMode():'migrate';this.authorized();
+                const cleanBreak=runtimeCleanBreakRequired(this.binding.version,this.host.version,this.binding.cleanBreak??this.bootstrap?.diagnosis?.clean_break);
+                const mode=!cleanBreak&&kind==='upgrade'&&this.host.chooseUpgradeMode?await this.host.chooseUpgradeMode():'migrate';this.authorized();
                 if(mode===undefined)return;
                 const review=await this.host.runtime.reviewTransition(this.binding,kind,mode==='rebuild'?{rebuildIndexes:true}:undefined);this.authorized();
-                if(!await this.host.confirm(`${review.rebuildIndexes?'Rebuild indexes from saved sources':kind==='upgrade'?'Use the bundled runtime':kind==='rollback'?'Roll back the runtime':'Resume the saved native activation'} on ${this.host.authority}? Reviewed selection ${review.expectedActive}; target ${review.target}, version ${review.version}. ${review.rebuildIndexes?'Previous state and indexes stay preserved. Native AIRK creates fresh indexes using saved source and indexing settings. Search readiness is separate; saved connections require reconnection.':'Native activation drains affected work and starts the selected service.'} Requests can disconnect. Other clients have not been counted. A changed selection invalidates this review.`))return;
+                if(!await this.host.confirm(`${review.cleanBreak?'Start the clean installation and rebuild indexes':review.rebuildIndexes?'Rebuild indexes from saved sources':kind==='upgrade'?'Use the bundled runtime':kind==='rollback'?'Roll back the runtime':'Resume the saved native activation'} on ${this.host.authority}? Reviewed selection ${review.expectedActive}; target ${review.target}, version ${review.version}. ${review.cleanBreak?'Original sources and supported settings stay. Old indexes, grants and unfinished operations are replaced; owned legacy state and payloads are removed after fresh indexing is ready. Coding agents require a new reviewed connection.':review.rebuildIndexes?'Previous state and indexes stay preserved. Native AIRK creates fresh indexes using saved source and indexing settings. Search readiness is separate; saved connections require reconnection.':'Native activation drains affected work and starts the selected service.'} Requests can disconnect. Other clients have not been counted. A changed selection invalidates this review.`))return;
                 this.authorized();this.clearLifecycleCapture();this.client?.dispose();this.client=undefined;this.disconnected();
                 try{await this.host.runtime.transition(this.binding,review);this.authorized();}
                 catch(error){try{await this.discover();}catch{/* Preserve the native intent for explicit recovery. */}throw error;}
@@ -1088,13 +1122,13 @@ export class ServiceConsoleController {
         const current=()=>this.host.trusted()&&!this.disposed&&valid()&&client===this.client&&journal===this.journal&&identity===this.observationIdentity;
         return new ReferenceRefreshFlow(client,journal,{...host,trusted:()=>current()&&host.trusted()});
     }
-    referenceRefreshPending(selection:RecordValue):Array<{id:string;latest?:RecordValue;historical?:RecordValue}> {
+    referenceRefreshPending(selection:RecordValue):Array<{id:string;latest?:RecordValue;historical?:RecordValue;terminalHistorical?:RecordValue}> {
         this.authorized();
         return (this.journal?.list()??[]).flatMap(saved=>{
             if(!('reference_refresh'in saved.value.intent))return [];
             const selected=record(record(saved.value.intent.reference_refresh.configure_project.request.configuration.selection).selection);
             if(!refreshWithinAuthority(selected,selection))return [];
-            return [{id:saved.id,latest:saved.value.nativeRefreshLookup,historical:saved.value.nativeRefreshReceipt}];
+            return [{id:saved.id,latest:saved.value.nativeRefreshLookup,historical:saved.value.nativeRefreshReceipt,...(saved.value.nativeRefreshTerminalReceipt?{terminalHistorical:saved.value.nativeRefreshTerminalReceipt}:{})}];
         });
     }
     private async refreshGrant(selection:RecordValue,valid:()=>boolean):Promise<{selection:RecordValue;capabilities:RecordValue}> {
@@ -1334,5 +1368,5 @@ export class ServiceConsoleController {
             default:throw new ServiceError('unsupported_console_action');
         }
     }
-    dispose():void{this.clearLifecycleCapture();this.disposed=true;this.client?.dispose();this.client=undefined;this.releaseIdle();}
+    dispose():void{this.clearLifecycleCapture();this.clearRuntimeDiagnostics();this.disposed=true;this.client?.dispose();this.client=undefined;this.releaseIdle();}
 }

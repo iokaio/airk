@@ -11,7 +11,131 @@ import { record, RecordValue, ServiceClient, ServiceError } from '../serviceClie
 import { IntentJournal } from '../serviceIntents';
 import { splitFixture, splitAtStage, splitFrozenFixture } from './fixtures/split';
 import { splitExport } from '../indexingSplit';
+import {saveLocalIndexSet,type LocalScopeAdapter} from '../localSearchScope';
+import {IndexingCatalogController} from '../indexingCatalogController';
+import {type CatalogObject} from '../indexingCatalog';
+import {isLocalTrackingFailure,isNativeReplyValidationFailure} from '../nativeOutcome';
 const project='12'.repeat(32),namespace='34'.repeat(16),instance='56'.repeat(16),job='78'.repeat(32);
+
+for(const change of ['trust','identity','client','journal'] as const)test(`a valid reconciliation reply retains local ownership-loss classification after ${change} changes`,async()=>{
+    const f=fixture(),base=f.host.runtime.client({} as any),digest='43'.repeat(32),operation={operation:'rename_project',id:'prj_'+'21'.repeat(16),expected_definition_revision:1,name:'Reviewed'};
+    let originalRequest:RecordValue|undefined,nativeReply:RecordValue|undefined,dispatches=0;
+    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(input){const name=typeof input==='string'?input:Object.keys(record(input))[0];
+        if(name==='catalog_preview')return {status:name,preview_digest:digest,preview:{request_digest:digest,catalog_revision:1,next_revision:2,operation,before:[],after:[],authority_fence_required:false,file_data_changes:false}};
+        if(name==='catalog_apply'){dispatches++;originalRequest=record(record(input).catalog_apply).request as RecordValue;throw new ServiceError('transport_closed',true);}
+        if(name==='catalog_receipt'){nativeReply={status:name,receipt:{schema:1,operation_id:instance,caller:originalRequest!.caller,key:originalRequest!.key,request_digest:digest,catalog_revision:2,authority_fence_required:false},future_native_frame:{preserved:true}};return nativeReply;}
+        return base.transport.request(input);
+    }});
+    try{
+        await f.controller.refresh();const review=await f.controller.catalogPrepare(operation,1);await assert.rejects(f.controller.catalogApply(review,()=>true),/transport_closed/);
+        const internal=f.controller as any,originalJournal=internal.journal as IntentJournal,read=f.controller.catalogRead.bind(f.controller);
+        f.controller.catalogRead=async method=>{
+            const response=await read(method);if(method.catalog_receipt){
+                if(change==='trust')f.setTrusted(false);
+                if(change==='identity')internal.observationToken='changed-owner';
+                if(change==='client')internal.client=f.host.runtime.client({} as any);
+                if(change==='journal')internal.journal=new IntentJournal(f.host.storage,'/different-control',namespace);
+            }return response;
+        };
+        await assert.rejects(f.controller.catalogReconcile(),(error:unknown)=>{
+            assert.ok(error instanceof ServiceError);assert.equal(error.code,change==='trust'?'runtime_client_no_longer_authorized':'stale_catalog_client');
+            assert.equal(isLocalTrackingFailure(error),true);assert.equal(isNativeReplyValidationFailure(error),false);assert.deepEqual(error.nativeResponse,nativeReply);assert.ok(error.cause instanceof ServiceError);return true;
+        });
+        assert.equal(originalJournal.list().length,1);assert.equal(dispatches,1,'owner loss cannot replay the original mutation or retire its unknown request');
+    }finally{f.controller.dispose();}
+});
+
+for(const phase of ['observe','retire'] as const)test(`a successful native catalog reply survives local ${phase} failure without another dispatch`,async()=>{
+    const f=fixture(),base=f.host.runtime.client({} as any),digest='43'.repeat(32),operation={operation:'rename_project',id:'prj_'+'21'.repeat(16),expected_definition_revision:1,name:'Reviewed'},cause=new ServiceError('fixture_local_tracking_failed');
+    let native:RecordValue|undefined,dispatches=0,observations=0;const update=f.host.storage.update;
+    f.host.storage.update=async(key,value)=>{if(value!==undefined&&record(value).nativeObservation){observations++;if(phase==='observe')throw cause;}if(value===undefined&&phase==='retire')throw cause;await update(key,value);};
+    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(input){const method=typeof input==='string'?input:Object.keys(record(input))[0];
+        if(method==='catalog_preview')return {status:method,preview_digest:digest,preview:{request_digest:digest,catalog_revision:1,next_revision:2,operation,before:[],after:[],authority_fence_required:false,file_data_changes:false}};
+        if(method==='catalog_apply'){dispatches++;const request=record(record(input).catalog_apply).request as RecordValue;native={status:'catalog_applied',receipt:{schema:1,operation_id:instance,caller:request.caller,key:request.key,request_digest:digest,catalog_revision:2,authority_fence_required:false,future_native_receipt:{complete:[1,null,3]}},future_native_envelope:'retained'};return native;}
+        return base.transport.request(input);
+    }});
+    try{
+        await f.controller.refresh();const review=await f.controller.catalogPrepare(operation,1);
+        await assert.rejects(f.controller.catalogApply(review,()=>true),(error:unknown)=>{assert.ok(error instanceof ServiceError);assert.equal(error.code,cause.code);assert.equal(error.cause,cause);assert.equal(error.outcomeUnknown,true);assert.deepEqual(error.nativeResponse,native);return true;});
+        assert.equal(dispatches,1);assert.equal(observations,1,'retaining a local failure never retries the observation write');assert.equal(f.controller.catalogPending().length,1);
+    }finally{f.controller.dispose();}
+});
+
+for(const change of ['identity','client','binding','namespace','trust'] as const)test(`late journal initialization cannot install its old scope after ${change} changes`,async()=>{
+    const f=fixture();
+    try{
+        await f.controller.refresh();const internal=f.controller as any,oldJournal=internal.journal;
+        let entered!:()=>void,release!:()=>void;
+        const started=new Promise<void>(resolve=>{entered=resolve;}),gate=new Promise<void>(resolve=>{release=resolve;});
+        f.host.storage.initialize=async()=>{entered();await gate;};
+        const work=internal.restoreJournal('bc'.repeat(16));await started;
+        if(change==='identity')internal.observationToken='changed-owner';
+        if(change==='client')internal.client=undefined;
+        if(change==='binding')internal.binding={...internal.binding};
+        if(change==='namespace')internal.registryNamespace='de'.repeat(16);
+        if(change==='trust')f.setTrusted(false);
+        release();await assert.rejects(work,change==='trust'?/runtime_client_no_longer_authorized/:/stale_intent_store_binding/);
+        assert.equal(internal.journal,oldJournal,'a stale ready callback never replaces the current journal');
+        assert.equal(internal.registryNamespace,change==='namespace'?'de'.repeat(16):namespace);
+    }finally{f.controller.dispose();}
+});
+
+test('named index set orchestration crosses real console journal updates and reactive catalog snapshots without retaining its own intents',async()=>{
+    for(const foreignPending of [false,true]){
+        const f=fixture(),base=f.host.runtime.client({} as any),digest='43'.repeat(32),index='idx_'+'31'.repeat(16),source='src_'+'32'.repeat(16),host='33'.repeat(32),key='35'.repeat(32);
+        let revision=5,value:CatalogObject|undefined,membership:CatalogObject|undefined,injected=false;
+        const applied:string[]=[],pendingSnapshots:string[][]=[],updates:string[]=[];
+        let ui:IndexingCatalogController|undefined;
+        const observe=()=>{if(ui)pendingSnapshots.push([...(ui.snapshot().pending??[])]);};
+        const update=f.host.storage.update;
+        f.host.storage.update=async(storageKey,saved)=>{
+            // VS Code persists asynchronously while the same in-memory Memento
+            // and reactive readers remain visible throughout the acknowledgement.
+            observe();await Promise.resolve();await update(storageKey,saved);updates.push(saved===undefined?'forget':'save');observe();await Promise.resolve();
+        };
+        f.host.changed=()=>observe();
+        f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(input){
+            const method=record(typeof input==='string'?{}:input),name=typeof input==='string'?input:Object.keys(method)[0];
+            if(name==='catalog_preview'){
+                const request=record(record(method.catalog_preview).request);
+                return {status:name,preview_digest:digest,preview:{request_digest:digest,catalog_revision:revision,next_revision:revision+1,operation:request.operation,before:[],after:[],authority_fence_required:record(request.operation).operation==='set_membership',file_data_changes:false}};
+            }
+            if(name==='catalog_apply'){
+                const request=record(record(method.catalog_apply).request),operation=record(request.operation),kind=String(operation.operation);applied.push(kind);
+                assert.equal(request.expected_catalog_revision,revision);revision++;
+                if(kind==='create_project')value={id:operation.id,name:operation.name,definition_revision:1,scope_revision:1,defaults_revision:1,default_indexes:[]};
+                if(kind==='set_membership'){membership=record(operation.membership);value!.scope_revision=2;}
+                if(kind==='set_project_defaults'){value!.default_indexes=operation.index_ids;value!.defaults_revision=2;}
+                const receipt={schema:1,operation_id:instance,caller:request.caller,key:request.key,request_digest:digest,catalog_revision:revision,authority_fence_required:kind==='set_membership'};
+                const fenced_receipt=kind==='set_membership'?{request,metadata:receipt,preview_digest:digest,prepared_digest:digest,proof:{plan_digest:digest,service:instance,gate_generation:1,confirmations:[],worker_confirmations:[]}}:undefined;
+                observe();return {status:'catalog_applied',receipt,...(fenced_receipt?{fenced_receipt}:{})};
+            }
+            if(name==='catalog_detail'){
+                const detail=record(method.catalog_detail),entity=record(detail.entity);assert.equal(detail.expected_catalog_revision,revision);
+                if(foreignPending&&membership&&!injected){
+                    injected=true;
+                    await new IntentJournal(f.host.storage,'/control',namespace).prepare('Sibling unknown write',{catalog_apply:{request:{caller:'91'.repeat(16),key:{namespace,epoch:7,nonce:'92'.repeat(16)},expected_catalog_revision:revision,operation:{operation:'rename_project',id:String(value!.id),expected_definition_revision:1,name:'Sibling'}},preview_digest:digest},request_digest:digest});
+                }
+                return {status:name,detail:{namespace,revision,item:entity.kind==='index'?{kind:'index',value:{id:index,name:'Fixture index a',definition_revision:1,source_revision:1,source_import:'complete',tombstone:false,backing:{}}}:{kind:'project',value}}};
+            }
+            if(name==='catalog_page'){
+                const request=record(record(method.catalog_page).request);assert.equal(request.expected_catalog_revision,revision);
+                return {status:name,page:{namespace,revision,items:request.kind==='sources'?[{kind:'source',value:{id:source,index_id:index,canonical_path:'/src',aliases:[],owner:true,enabled:true}}]:membership?[{kind:'membership',value:membership}]:[],continuation:null}};
+            }
+            return base.transport.request(input);
+        }});
+        const descriptor=()=>({schema:1,namespace,host,key,catalog_revision:revision,context:null});
+        const adapter:LocalScopeAdapter={control:f.controller,current(){observe();},context:descriptor,managed:()=>undefined,saveManaged:async()=>{},refreshContext:async()=>{observe();},clear:async()=>({}),use:async()=>({})};
+        ui=new IndexingCatalogController({identity:()=> 'installed-window',authorized:()=>true,changed:observe,control:f.controller,windowContext:()=>({host,key,kind:'folder',name:'Fixture'}),windowContextObservation:()=>({status:'catalog_host_context',descriptor:descriptor()}),saveIndexSet:selection=>saveLocalIndexSet(adapter,selection)});
+        try{
+            await f.controller.refresh();
+            const work=ui.scopeApply({name:'Fixture index set a',index_ids:[index]},ui.snapshot().generation,true);
+            if(foreignPending){await assert.rejects(work,/catalog_outcome_unconfirmed_reconcile_first/);assert.deepEqual(applied,['create_project','set_membership']);assert.equal(f.controller.catalogPending().length,1,'a sibling unknown is preserved and never replayed');}
+            else {const result=await work;assert.equal(result.status,'index_set_saved');assert.deepEqual(applied,['create_project','set_membership','set_project_defaults']);assert.deepEqual(f.controller.catalogPending(),[]);assert.equal(updates.filter(value=>value==='forget').length,3);}
+            assert.ok(pendingSnapshots.some(rows=>rows.length===1),'reactive readers observed each admitted own intent, rather than an always-empty pending stub');
+        }finally{f.controller.dispose();}
+    }
+});
 
 test('lost split acceptance survives restart, missing/expired evidence and later terminal native status without replay',async()=>{
     const f=fixture(),base=f.host.runtime.client({} as any),split=splitFixture();let writes=0,lookup:'missing'|'expired'|'found'='missing',current=split.snapshot;
@@ -1361,6 +1485,18 @@ test('Management offers rebuilding before native upgrade review and cancellation
         await f.controller.refresh();await f.action('upgradeRuntime');assert.equal(reviewed,0);assert.equal(applied,0);
         mode='rebuild';await f.action('upgradeRuntime');assert.equal(reviewed,1);assert.equal(applied,1);
     }finally{f.controller.dispose();}
+});
+
+test('Management clean break review never offers legacy migration or reenrolls an old grant',async()=>{
+    const f=fixture(),binding=await f.host.runtime.ensure();let applied=0;
+    binding.version='1.8.11';f.host.version='1.8.16';
+    f.host.chooseUpgradeMode=async()=>{throw new Error('Migration choices are unavailable before the clean-break baseline');};
+    const base=await f.host.runtime.reviewTransition(binding,'upgrade');
+    f.host.runtime.reviewTransition=async(_binding,action,options)=>{assert.equal(action,'upgrade');assert.equal(options,undefined);return {...base,version:'1.8.16',cleanBreak:true};};
+    f.host.runtime.transition=async(_binding,review)=>{assert.equal(review.cleanBreak,true);assert.equal(review.rebuildIndexes,undefined);applied++;binding.version='1.8.16';return {};};
+    f.host.confirm=async message=>{assert.match(message,/clean installation/);assert.match(message,/Original sources and supported settings stay/);assert.match(message,/grants and unfinished operations are replaced/);assert.match(message,/new reviewed connection/);assert.doesNotMatch(message,/Previous state and indexes stay preserved/);return true;};
+    try{await f.controller.refresh();await f.action('upgradeRuntime');assert.equal(applied,1);assert.equal(f.sent.some(value=>typeof value==='object'&&value!==null&&'enqueue' in value),false);}
+    finally{f.controller.dispose();}
 });
 
 test('a different native version keeps installer observations without executing its console',async()=>{

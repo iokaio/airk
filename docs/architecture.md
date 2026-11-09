@@ -1,6 +1,11 @@
 # Architecture
 
-The unpublished **1.8.14 implementation** retains the existing crate and native
+**9 November 2026 checkpoint:** repair and qualification are stopped at the
+user's request. The [installer handoff](research/installer-stop-2026-11-09.md)
+records implemented changes, failures and an unresolved extension binding cancellation.
+The current VSIX has not passed installed acceptance.
+
+The unpublished **1.8.16 source**, building on the **1.8.14 implementation**, retains the existing crate and native
 service owners while replacing per-client launchers with service-owned local
 HTTPS ingress and moving bundled MiniLM inference into that service. The
 [implementation ledger](research/one-airk-implementation.md) and
@@ -31,6 +36,37 @@ continuations and source intents, and replace the service only after the native
 checkpoint barriers complete. Recovery validates the checkpoint before reopening
 admission. See [One AIRK](one-airk.md) for the migration and acceptance requirements.
 
+The approved 1.8.16 compatibility boundary replaces index migration for every
+earlier installation with a native clean reset and fresh indexing. CLI owns
+version/state-contract admission, reviewed source/preference capture, shutdown,
+reset recovery and cleanup of ownership-proven legacy artifacts. Store retains
+fresh namespace/catalog initialization and ordinary index-job ownership. Original
+sources are read-only; old index IDs, grants, credentials and accepted operations
+are not translated into successor authority. The 1.8.16+ state contract governs
+later ordinary upgrades independently of application version. Native fresh
+Genesis atomically qualifies `airk-state-contract.json` under the selected
+control root (schema 1, `airk-state/1`, baseline 1.8.16), bound to the exact
+installation/control/namespace. Complete saved-source capture is metadata-only
+and bounded; unsupported include/exclude/alias reconstruction refuses before
+mutation. Native cleanup guards all primary/additional source roots, including
+inactive registrations. Host-owned client-declaration/uninstall-receipt cleanup
+remains a separate compare-and-swap plan and completion observation. The prior narrow
+reconciliation continuation adapter is superseded. This changes no crate
+dependency direction and adds no orchestration owner. Implementation and installed
+qualification of this revised policy are in progress; public 1.9.0 is a future
+release target.
+
+The in-progress disposal correction keeps historical HTTP cleanup DTOs in Core,
+native snapshot capture and lookup in CLI, and durable client metadata/CAS in
+the extension. Purpose-bound predecessor proof grants disposal eligibility only,
+never live reads or credential renewal. The complete bounded original HTTP
+snapshot survives retirement; current-namespace collisions or unknown ownership
+block cleanup. Only the owning fresh HTTP service initializes its first empty
+ledger before endpoint publication; read paths never repair missing authority.
+Saved registry reads retain schema 2..13 support. The separate existing-state
+lifecycle writer validates only known schema 11..13 layouts; this narrow write
+path does not broaden ordinary maintenance or saved-read authority.
+
 Persistent in-process inference history and embedded-default model publications
 require registry contract 13. The first such write raises the existing SQLite
 version requirement; unchanged predecessor state can remain at contract 12.
@@ -49,6 +85,10 @@ extension's loader owns replacement of AIRK's JavaScript modules after an
 installed-payload change and restores the single Explorer panel if it was open.
 Native service/index ownership remains independent of extension disposal. Older
 already loaded code cannot acquire the loader until VS Code activates it.
+Terminal startup or upgrade failure is published to Explorer immediately even
+when early discovery remains pending; the header stops showing connecting.
+Progress text describes native preparation without claiming predecessor shutdown
+before preflight passes.
 
 The Indexing UI separates **Search scope**, **Index library** and **Index sets**.
 The extension host turns the user's explicit checkbox selection into existing
@@ -232,6 +272,21 @@ provider containment, authenticated admission and receipt reconciliation; the
 existing Supervisor owns worker/resource drainage. MCP and canonical native read
 handlers preserve complete scoped results. The extension renders reviewed forms
 and explicitly selects a grant for one index; preferences grant no authority.
+The in-progress host correction moves request tracking from Memento to one
+lazy private per-request journal shared by the console and extension at
+`globalStorageUri/service-intents`. Preferences remain in Memento. Immutable
+request preparation precedes dispatch; separate observations retain complete
+native replies. Local tracking failure cannot authorize replay. Bounded one-way
+legacy import excludes fully validated predecessor-namespace Memento rows only
+after an authenticated fresh-Genesis retirement fence binds the exact operation,
+store, root, control and namespace. Late rows then neither consume active quota
+nor block a new Stop, and are never imported or replayed. This does not drain
+other windows' queued Memento writers. Exact-observed cleanup separately reports
+late removals and remaining rows; uncaptured physical journal files stay blocked
+and untouched. Before that fence, or for foreign/malformed/wrong-namespace state,
+uncertainty remains preserved and blocking. Compatible upgrades retain unknowns.
+This host journal supplements native receipt authority; it is not a second
+native catalog or a qualified crash-proof backend.
 Fresh managed reservations settle Genesis under actual native exclusion before
 service admission. External policies still cannot elect a service from health
 checks. No new scheduler, database service or source mutation is introduced. The

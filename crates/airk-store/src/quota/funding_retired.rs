@@ -5,6 +5,150 @@ use super::*;
 use crate::service::registry::catalog::setup::storage::{SetupDirectory, SetupFileMode};
 use std::ffi::{OsStr, OsString};
 
+/// Whole-root reset validates every participant, including zero-credit pending
+/// work, against the complete original registry. No state conversion or recovery
+/// is implied. The reset owner separately excludes all native holders and proves
+/// complete logical collection absence before it disposes this exact inventory.
+pub(in crate::quota) fn clean_break_inventory(
+    control: &SetupDirectory,
+    root: &SetupDirectory,
+    logical_root: &Path,
+    registrations: &[ProjectRegistration],
+    namespace: Incarnation,
+) -> Result<super::super::clean_break::CleanBreakInventory> {
+    let directory = control.open_dir(OsStr::new(DIRECTORY))?;
+    ensure!(
+        directory.identity()?.0 == root.identity()?.0,
+        "funding cleanup crosses filesystem"
+    );
+    let mut result = super::super::clean_break::CleanBreakInventory::default();
+    let mut leases_seen = std::collections::BTreeSet::new();
+    let mut reservation_children = std::collections::BTreeSet::new();
+    let mut open_reservation_children = std::collections::BTreeSet::new();
+    result.directory(&[".quota-1.4", DIRECTORY]);
+    for (count, name) in directory.entries()?.enumerate() {
+        ensure!(
+            count < MAX_OPERATIONS * 2 + 1,
+            "funding cleanup inventory exceeds bound"
+        );
+        let name = name?;
+        let text = name.to_str().context("invalid funding name")?;
+        if text == "leases" {
+            let leases = directory.open_dir(&name)?;
+            ensure!(
+                leases.identity()?.0 == root.identity()?.0,
+                "funding leases cross filesystem"
+            );
+            result.directory(&[".quota-1.4", DIRECTORY, text]);
+            for (count, name) in leases.entries()?.enumerate() {
+                ensure!(count < MAX_RESERVATIONS * 2, "funding cleanup lease limit");
+                let name = name?;
+                validate_lease_name(&name)?;
+                let lease: Sha256Digest = name
+                    .to_str()
+                    .context("funding lease UTF-8")?
+                    .strip_prefix("l-")
+                    .and_then(|name| name.strip_suffix(".lease"))
+                    .context("invalid funding lease identity")?
+                    .parse()?;
+                leases_seen.insert(lease);
+                ensure!(
+                    leases
+                        .open_file(&name, SetupFileMode::Read)?
+                        .metadata()?
+                        .len()
+                        == 0,
+                    "unknown funding lease contents"
+                );
+                result.file(
+                    &[
+                        ".quota-1.4",
+                        DIRECTORY,
+                        text,
+                        name.to_str().context("funding lease UTF-8")?,
+                    ],
+                    0,
+                    true,
+                );
+            }
+            continue;
+        }
+        let bytes = directory.read_file(&name, MAX_RECORD_BYTES)?;
+        let record: FundingReceipt = serde_json::from_slice(&bytes)?;
+        record.validate()?;
+        ensure!(
+            text == record.filename()
+                && record.request.namespace == namespace
+                && record.data_root == logical_root
+                && record.root_identity == pinned_identity(root, logical_root, namespace)?,
+            "foreign clean-break funding identity"
+        );
+        ensure!(
+            registrations.contains(&record.request.original)
+                && registrations.contains(&record.request.destination),
+            "foreign clean-break funding request participant"
+        );
+        for part in &record.participants {
+            let registration = record
+                .request
+                .registration(part.index_id)
+                .context("missing funding participant")?;
+            ensure!(
+                registrations.contains(registration),
+                "foreign clean-break funding participant"
+            );
+        }
+        for child in &record.children {
+            if matches!(child.kind, FundingChildKind::Reservation { .. }) {
+                ensure!(
+                    reservation_children.insert(child.id),
+                    "duplicate funding reservation authority"
+                );
+                if !child.closed {
+                    open_reservation_children.insert(child.id);
+                }
+                if let FundingChildKind::Reservation { staging_name } = &child.kind {
+                    let registration = record
+                        .request
+                        .registration(child.index_id)
+                        .context("funded staging registration missing")?;
+                    ensure!(
+                        Path::new(&registration.data_root) == logical_root,
+                        "funded staging crosses data root"
+                    );
+                    let quota = Quota {
+                        root: logical_root.to_path_buf(),
+                        namespace: Namespace::Service,
+                        funding: None,
+                    };
+                    let stage = staging_path(
+                        &quota,
+                        &registration.collection,
+                        &logical_root
+                            .join(".quota-1.4/reservations")
+                            .join(staging_name),
+                    )?;
+                    result
+                        .staging
+                        .entry(registration.binding)
+                        .or_default()
+                        .insert(stage);
+                }
+            }
+        }
+        result.file(&[".quota-1.4", DIRECTORY, text], MAX_RECORD_BYTES, false);
+    }
+    ensure!(
+        leases_seen.is_subset(&reservation_children),
+        "orphan or foreign funding lease is preserved"
+    );
+    ensure!(
+        open_reservation_children.is_subset(&leases_seen),
+        "open funding reservation is missing native lease custody"
+    );
+    Ok(result)
+}
+
 pub(super) fn participant(
     record: &FundingReceipt,
     registration: &ProjectRegistration,

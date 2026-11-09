@@ -58,6 +58,7 @@ pub struct JobCheckpoint {
     pub original_engine: Option<Sha256Digest>,
     pub configuration_kind: Option<String>,
 }
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UnfinishedWork {
@@ -117,7 +118,10 @@ pub struct CheckpointSnapshot {
     pub publications: Vec<PublicationCheckpoint>,
     pub indexes: Vec<CatalogIndexCheckpoint>,
     pub tables: Vec<TableCheckpoint>,
+    /// Schema 1 expands all history; schema 2 expands only pending/running jobs.
+    /// Complete history remains authenticated by the table commitments.
     pub jobs: Vec<JobCheckpoint>,
+    /// Schema 2 expands only requests attached to the expanded accepted jobs.
     pub requests: Vec<RequestCheckpoint>,
     pub unfinished: Vec<UnfinishedWork>,
     pub retained_intent_contract: u32,
@@ -142,10 +146,28 @@ impl CheckpointSnapshot {
         candidate_engine: Sha256Digest,
     ) -> Result<()> {
         ensure!(
-            self.schema == 1 && self.complete,
+            matches!(self.schema, 1 | 2) && self.complete,
             "incomplete checkpoint snapshot"
         );
         self.digest()?;
+        self.require_work_compatible(predecessor_engine, candidate_engine)
+    }
+
+    fn require_work_compatible(
+        &self,
+        predecessor_engine: Option<Sha256Digest>,
+        candidate_engine: Sha256Digest,
+    ) -> Result<()> {
+        self.require_retained_intents()?;
+        ensure!(
+            predecessor_engine == Some(candidate_engine) || self.unfinished.is_empty(),
+            "checkpoint_job_compatibility_blocked: {} unfinished accepted operations require completion under their original engine or explicit reviewed recovery; no automatic engine adapter is installed",
+            self.unfinished.len()
+        );
+        Ok(())
+    }
+
+    fn require_retained_intents(&self) -> Result<()> {
         ensure!(
             self.retained_intent_contract == 1
                 && self.retained_intents.iter().all(|intent| {
@@ -165,11 +187,6 @@ impl CheckpointSnapshot {
                 }),
             "unsupported checkpoint desired-state intent contract"
         );
-        ensure!(
-            predecessor_engine == Some(candidate_engine) || self.unfinished.is_empty(),
-            "checkpoint_job_compatibility_blocked: {} unfinished accepted operations require completion under their original engine or explicit reviewed recovery; no automatic engine adapter is installed",
-            self.unfinished.len()
-        );
         Ok(())
     }
 }
@@ -178,7 +195,17 @@ impl CheckpointSnapshot {
 /// never initializes or migrates a registry/index, reads source files, grants
 /// work or claims writer quiescence. Final capture requires external exclusion.
 pub fn snapshot(control: &Path) -> Result<CheckpointSnapshot> {
-    snapshot_with_publications(control, true)
+    snapshot_for_schema(control, 2)
+}
+
+/// Reobserve immutable predecessor packets and interrupted journals without
+/// changing their original encoding or digest. New captures use schema 2.
+pub fn snapshot_for_schema(control: &Path, schema: u32) -> Result<CheckpointSnapshot> {
+    ensure!(
+        matches!(schema, 1 | 2),
+        "unsupported checkpoint snapshot schema"
+    );
+    snapshot_with_publications(control, true, schema)
 }
 
 /// Early complete registry-capacity observation while accepted index writers
@@ -186,7 +213,28 @@ pub fn snapshot(control: &Path) -> Result<CheckpointSnapshot> {
 /// The 4 KiB/publication reserve is an estimate: the actual full manifest bound
 /// must still pass after durable worker acknowledgment and before old-owner stop.
 pub fn preflight_capacity(control: &Path) -> Result<()> {
-    let state = snapshot_with_publications(control, false)?;
+    preflight_snapshot(control).map(|_| ())
+}
+
+/// Registry-only live observation. This cannot be serialized or used as a final
+/// checkpoint: collection publications have not been inspected or fenced.
+pub struct PreflightSnapshot(CheckpointSnapshot);
+
+impl PreflightSnapshot {
+    pub fn require_compatible(
+        &self,
+        predecessor_engine: Option<Sha256Digest>,
+        candidate_engine: Sha256Digest,
+    ) -> Result<()> {
+        self.0
+            .require_work_compatible(predecessor_engine, candidate_engine)
+    }
+}
+
+/// Observe capacity and accepted-work compatibility without opening collections
+/// still owned by the running predecessor. Final capture remains mandatory.
+pub fn preflight_snapshot(control: &Path) -> Result<PreflightSnapshot> {
+    let state = snapshot_with_publications(control, false, 2)?;
     let bytes = serde_json::to_vec(&state)?.len();
     let reserve = state
         .project_bindings
@@ -198,7 +246,7 @@ pub fn preflight_capacity(control: &Path) -> Result<()> {
         reserve <= MAX_SNAPSHOT_BYTES,
         CheckpointLimit("estimated publication metadata")
     );
-    Ok(())
+    Ok(PreflightSnapshot(state))
 }
 
 /// Retry only an observation against native lease or SQLite read contention.
@@ -212,10 +260,14 @@ pub fn is_read_contention(error: &anyhow::Error) -> bool {
         )
 }
 
-fn snapshot_with_publications(control: &Path, publications: bool) -> Result<CheckpointSnapshot> {
+fn snapshot_with_publications(
+    control: &Path,
+    publications: bool,
+    schema: u32,
+) -> Result<CheckpointSnapshot> {
     let control = control.canonicalize()?;
     let mut result = CheckpointSnapshot {
-        schema: 1,
+        schema,
         control: control.clone(),
         registry_schema: None,
         namespace: None,
@@ -533,25 +585,32 @@ fn capture_jobs(registry: &ServiceRegistry, snapshot: &mut CheckpointSnapshot) -
                 payload_digest: job.configuration_digest,
             });
         }
-        snapshot.jobs.push(job);
+        // Parse and validate every retained job/configuration before reducing
+        // duplicate expansion. The complete table digest still covers them all.
+        if snapshot.schema == 1 || matches!(job.record.state, JobState::Pending | JobState::Running)
+        {
+            snapshot.jobs.push(job);
+        }
     }
     Ok(())
 }
 fn capture_requests(connection: &Connection, snapshot: &mut CheckpointSnapshot) -> Result<()> {
     let mut statement = connection.prepare("SELECT namespace,epoch,nonce,caller,job FROM service_requests ORDER BY namespace,epoch,nonce,caller")?;
     let mut rows = statement.query([])?;
+    let mut count = 0;
     while let Some(row) = rows.next()? {
-        ensure!(
-            snapshot.requests.len() < 4096,
-            CheckpointLimit("request count")
-        );
-        snapshot.requests.push(RequestCheckpoint {
+        count += 1;
+        ensure!(count <= 4096, CheckpointLimit("request count"));
+        let request = RequestCheckpoint {
             namespace: row.get::<_, String>(0)?.parse()?,
             epoch: u64::try_from(row.get::<_, i64>(1)?)?,
             nonce: row.get::<_, String>(2)?.parse()?,
             caller: row.get::<_, String>(3)?.parse()?,
             job: row.get::<_, String>(4)?.parse()?,
-        });
+        };
+        if snapshot.schema == 1 || snapshot.jobs.iter().any(|job| job.record.id == request.job) {
+            snapshot.requests.push(request);
+        }
     }
     Ok(())
 }
@@ -627,6 +686,10 @@ mod receipts;
 use receipts::capture_operation_receipts;
 #[cfg(test)]
 pub(crate) use receipts::terminal as terminal_operation_receipt;
+
+#[cfg(test)]
+#[path = "service_checkpoint_history_tests.rs"]
+mod history_tests;
 
 #[cfg(test)]
 mod tests {
@@ -813,12 +876,17 @@ mod tests {
         }
         retained.require_compatible(Some(old), new)?;
         assert_eq!(registry.job(job.id)?.state, JobState::Canceled);
+        assert!(retained.requests.is_empty());
+        let legacy = snapshot_for_schema(&control, 1)?;
         assert!(
-            retained
+            legacy
                 .requests
                 .iter()
                 .any(|saved| saved.job == job.id && saved.nonce == key.nonce)
         );
+        assert_eq!(legacy.jobs.len(), 1);
+        assert_eq!(legacy.tables, retained.tables);
+        legacy.require_compatible(Some(old), new)?;
         let mut unsupported = retained.clone();
         unsupported.retained_intent_contract = 2;
         assert!(unsupported.require_compatible(Some(old), new).is_err());

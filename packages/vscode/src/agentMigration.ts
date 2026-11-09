@@ -2,12 +2,13 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import {credentialEnvironment,httpUrl,validateHttpConnection,sameHttpAuthority,standaloneHttpServerKey,preservedImportedHttpServerKey,type HttpConnectionInfo} from './serviceHttp';
-import { consolidateJson, consolidateToml } from './unifiedAgentConfig';
+import {credentialEnvironment,httpUrl,validateHttpConnection,sameHttpAuthority,standaloneHttpServerKey,preservedImportedHttpServerKey,validateOwnedPredecessorHttpProof,type OwnedPredecessorHttpProof,type HttpConnectionInfo} from './serviceHttp';
+import { consolidateJson, consolidateToml, globalConfigDeclarations, transformGlobalContainer, type ConfigurationFile as GlobalConfigFile } from './unifiedAgentConfig';
 import { LaunchSpec, unifiedEntry, httpServerFields } from './model';
 import { launchDescriptorPath } from './explorerAssistanceLaunch';
-import { readJsonConfig, syncVscodeHttpInput } from './agentConfig';
+import { readJsonConfig, syncVscodeHttpInput,removeVscodeHttpInputForId } from './agentConfig';
 import { parse } from 'jsonc-parser';
+import { createHash } from 'node:crypto';
 
 export type LocalAgent = 'codex' | 'claude' | 'copilot' | 'gemini' | 'antigravity' | 'cursor' | 'roo' | 'junie';
 export const locations: Record<LocalAgent, string[]> = { codex: ['.codex', 'config.toml'], claude: ['.mcp.json'], copilot: ['.vscode', 'mcp.json'],
@@ -190,4 +191,163 @@ export async function migrateLocalAgents(spec: LaunchSpec, storage: string, chec
         }
     }
     return messages;
+}
+
+export interface CleanBreakClientFile { agent: LocalAgent; destination: string; source: string }
+interface CleanBreakRemoval { serverKey: string; containerPath: string[]; fields: Record<string, unknown>; http?: OwnedPredecessorHttpProof }
+interface CleanBreakClientEdit { agent: LocalAgent; destination: string; beforeSha256: string; afterSha256: string; removals: CleanBreakRemoval[] }
+export interface CleanBreakClientPlan {
+    schema: 1; installDir: string; files: CleanBreakClientEdit[];
+    blockers: { destination: string; serverKey?: string; code: string }[];
+}
+const clientHash = (source: string) => createHash('sha256').update(source, 'utf8').digest('hex');
+const clientFields = (value: Record<string, unknown>): Record<string, unknown> => JSON.parse(JSON.stringify(value));
+const inventoryAgent = (agent: LocalAgent) => agent === 'codex' ? 'codex' : agent === 'copilot' ? 'copilot' : 'claude';
+
+export function validateCleanBreakClientPlan(value: unknown, installDir: string): CleanBreakClientPlan {
+    const plan = value as CleanBreakClientPlan;
+    if (!plan || plan.schema !== 1 || typeof plan.installDir !== 'string' || !path.isAbsolute(plan.installDir) || !same(plan.installDir, installDir)
+        || !Array.isArray(plan.files) || plan.files.length > 64 || !Array.isArray(plan.blockers) || plan.blockers.length > 512
+        || Buffer.byteLength(JSON.stringify(plan)) > 8 * 1_048_576) { throw new Error('invalid_clean_break_client_plan'); }
+    const destinations = new Set<string>(); let removals = 0;
+    const destination = (name: unknown): name is string => typeof name === 'string' && path.isAbsolute(name) && name.length <= 4096 && !/[\x00-\x1f]/.test(name);
+    for (const file of plan.files) {
+        if (!file || !Object.hasOwn(locations, file.agent) || !destination(file.destination) || destinations.has(file.destination)
+            || !/^[a-f0-9]{64}$/.test(file.beforeSha256) || !/^[a-f0-9]{64}$/.test(file.afterSha256)
+            || !Array.isArray(file.removals) || !file.removals.length || (removals += file.removals.length) > 512) { throw new Error('invalid_clean_break_client_plan'); }
+        destinations.add(file.destination);
+        for (const removal of file.removals) {
+            if (!removal || typeof removal.serverKey !== 'string' || !removal.serverKey || removal.serverKey.length > 256
+                || !Array.isArray(removal.containerPath) || !removal.containerPath.length || removal.containerPath.length > 3
+                || removal.containerPath.some(part => typeof part !== 'string' || !part || part.length > 4096)
+                || !removal.fields || typeof removal.fields !== 'object' || Array.isArray(removal.fields)) { throw new Error('invalid_clean_break_client_plan'); }
+            if (removal.http && !ownedHttpRemoval(file.agent, removal.fields, validateOwnedPredecessorHttpProof(removal.http))) { throw new Error('invalid_clean_break_client_http_proof'); }
+        }
+    }
+    if (plan.blockers.some(blocker => !blocker || !destination(blocker.destination) || typeof blocker.code !== 'string' || blocker.code.length > 256)) { throw new Error('invalid_clean_break_client_plan'); }
+    return plan;
+}
+
+function ownedLegacyRemoval(spec: LaunchSpec, storage: string, fields: Record<string, unknown>): boolean {
+    // Cleanup requires the exact command supplied by the native inventory.
+    // Migration's derived launcher/cache paths confer no removal authority.
+    if (!spec.service || typeof fields.command !== 'string' || !path.isAbsolute(fields.command) || !same(fields.command, spec.command)) { return false; }
+    if (['url', 'serverUrl', 'headers', 'http_headers', 'env_http_headers', 'bearer_token_env_var'].some(key => key in fields)) { return false; }
+    if (recognizedAssistance(spec, storage, fields.command, fields.args)) { return true; }
+    if (!strings(fields.args)) { return false; }
+    const args = [...fields.args], at = args.indexOf('--explorer-descriptor');
+    if (at >= 0) {
+        if (at !== args.length - 2 || !same(args[at + 1], launchDescriptorPath(storage))) { return false; }
+        args.splice(at, 2);
+    }
+    const selected = forwarded(spec, args);
+    if (!selected) { return false; }
+    for (const [flag, expected] of [['--data-dir', spec.dataDir], ['--service-project', spec.service.project]] as const) {
+        const at = selected.indexOf(flag);
+        if (at >= 0 && (selected.lastIndexOf(flag) !== at || at + 1 >= selected.length
+            || (flag === '--data-dir' ? !path.isAbsolute(selected[at + 1]) || !same(selected[at + 1], expected) : selected[at + 1] !== expected))) { return false; }
+    }
+    return recognized(spec, storage, fields.command, args);
+}
+
+function ownedHttpRemoval(agent: LocalAgent, fields: Record<string, unknown>, info: OwnedPredecessorHttpProof): boolean {
+    if (httpConfigurationConnectionId(agent, fields) !== info.connection_id || !['codex', 'claude', 'copilot'].includes(agent)) { return false; }
+    const environment='AIRK_MCP_TOKEN_'+info.connection_id.toUpperCase();
+    const expected={type:agent==='codex'?undefined:'http',url:info.endpoint.url,bearer_token_env_var:environment,headers:{Authorization:agent==='copilot'?`Bearer \${input:airkToken_${info.connection_id}}`:`Bearer \${${environment}}`}};
+    if ('command' in fields || 'args' in fields || 'serverUrl' in fields || fields.type !== expected.type || fields.url !== expected.url) { return false; }
+    if (agent === 'codex') {
+        const headers = fields.http_headers as Record<string, unknown> | undefined;
+        return fields.bearer_token_env_var === expected.bearer_token_env_var && fields.headers === undefined && fields.env_http_headers === undefined
+            && (!headers || typeof headers === 'object' && !Array.isArray(headers) && Object.keys(headers).every(key => key === 'X-AIRK-Response-Mode')
+                && ['terse', 'full'].includes(String(headers['X-AIRK-Response-Mode'])));
+    }
+    const headers = fields.headers;
+    if (!headers || typeof headers !== 'object' || Array.isArray(headers)) { return false; }
+    const { ['X-AIRK-Response-Mode']: mode, ...actual } = headers as Record<string, unknown>;
+    return (mode === undefined || mode === 'terse' || mode === 'full') && (isDeepStrictEqual(actual, { Authorization: (expected.headers as Record<string, unknown>).Authorization })
+        || agent === 'copilot' && isDeepStrictEqual(actual, { Authorization: 'Bearer ${env:' + environment + '}' }));
+}
+
+/** Remove only exact captured declarations. It never creates a replacement server or credential. */
+function applyCleanBreakRemovals(agent: LocalAgent, source: string, removals: readonly CleanBreakRemoval[]): string {
+    let current = source;
+    for (const removal of removals) {
+        const mapped = inventoryAgent(agent), declarations = globalConfigDeclarations(mapped, current);
+        const row = declarations.find(entry => entry.serverKey === removal.serverKey && isDeepStrictEqual(entry.containerPath, removal.containerPath));
+        if (!row || !isDeepStrictEqual(clientFields(row.fields), clientFields(removal.fields))) { throw new Error('clean_break_client_declaration_changed'); }
+        const file: GlobalConfigFile = { agent: mapped, destination: '', source: current, sha256: clientHash(current), declarations };
+        current = transformGlobalContainer(file, row.containerPath, wrapped => {
+            const options = { retrievalKey: row.serverKey, targetKey: row.serverKey, onlyKey: true, selectedFamily: 'unified' as const,
+                entry: { key: row.serverKey, label: 'AIRK', command: '', args: [] }, remove: true,removeHttp:!!removal.http, warn: () => undefined,
+                recognizes: (_family: unknown, fields: Record<string, unknown>) => isDeepStrictEqual(clientFields(fields), clientFields(removal.fields)) };
+            return agent === 'codex' ? consolidateToml(wrapped, options) : consolidateJson(wrapped, agent === 'copilot' ? 'servers' : 'mcpServers', options);
+        });
+        if (agent === 'copilot' && removal.http) { current = removeVscodeHttpInputForId(current, removal.http.connection_id); }
+    }
+    return current;
+}
+
+/** Capture while the original native credential owner still exists. Serialized
+ * plans contain only removed declarations and hashes, never unrelated config bytes. */
+export async function captureCleanBreakClientCleanup(installDir: string, storage: string, files: readonly CleanBreakClientFile[], specs: readonly LaunchSpec[],
+    check: () => void, lookupHttp?: (agent: LocalAgent, connectionId: string) => Promise<OwnedPredecessorHttpProof | undefined>, verifiedLaunchers: readonly string[] = []): Promise<CleanBreakClientPlan> {
+    if (!path.isAbsolute(installDir) || files.length > 64 || specs.length > 1024 || verifiedLaunchers.length > 4) { throw new Error('clean_break_client_inventory_bound'); }
+    if (specs.some(spec => !spec.service || !same(spec.service.installDir, installDir)) || verifiedLaunchers.some(command => !path.isAbsolute(command))) { throw new Error('clean_break_client_installation_changed'); }
+    const candidates = specs.flatMap(spec => [spec, ...verifiedLaunchers.map(command => ({ ...spec, command }))]);
+    const plan: CleanBreakClientPlan = { schema: 1, installDir, files: [], blockers: [] };
+    let bytes = 0, count = 0;
+    const destinations = new Set<string>();
+    for (const file of files) {
+        check(); bytes += Buffer.byteLength(file.source);
+        if (!path.isAbsolute(file.destination) || destinations.has(file.destination) || bytes > 8 * 1_048_576) { throw new Error('clean_break_client_inventory_bound'); }
+        destinations.add(file.destination);
+        const removals: CleanBreakRemoval[] = [], rows = globalConfigDeclarations(inventoryAgent(file.agent), file.source);
+        count += rows.length; if (count > 512) { throw new Error('clean_break_client_declaration_bound'); }
+        for (const row of rows) {
+            let http: OwnedPredecessorHttpProof | undefined;
+            const id = httpConfigurationConnectionId(file.agent, row.fields);
+            if (id && lookupHttp) { const value = await lookupHttp(file.agent, id); check(); if (value) { http = validateOwnedPredecessorHttpProof(value); } }
+            const httpOwned = http && ownedHttpRemoval(file.agent, row.fields, http);
+            if (candidates.some(spec => ownedLegacyRemoval(spec, storage, row.fields)) || httpOwned) {
+                removals.push({ serverKey: row.serverKey, containerPath: [...row.containerPath], fields: clientFields(row.fields), ...(httpOwned ? { http } : {}) });
+            } else if (/^airk(?:$|[-_])/.test(row.serverKey) || id || typeof row.fields.command === 'string' && candidates.some(spec => ownLauncher(spec, row.fields.command))) {
+                plan.blockers.push({ destination: file.destination, serverKey: row.serverKey, code: 'clean_break_client_ownership_unconfirmed' });
+            }
+        }
+        if (!removals.length) { continue; }
+        try {
+            const after = applyCleanBreakRemovals(file.agent, file.source, removals);
+            plan.files.push({ agent: file.agent, destination: file.destination, beforeSha256: clientHash(file.source), afterSha256: clientHash(after), removals });
+        } catch { plan.blockers.push({ destination: file.destination, code: 'clean_break_client_configuration_requires_review' }); }
+    }
+    check(); if (Buffer.byteLength(JSON.stringify(plan)) > 8 * 1_048_576) { throw new Error('clean_break_client_plan_bound'); }
+    return plan;
+}
+
+/** Host-owned inventory restricts destinations; save must implement the editor's
+ * unsaved-edit/CAS guards. Repeated calls verify already saved exact results. */
+export async function applyCleanBreakClientCleanup(plan: CleanBreakClientPlan, installDir: string, allowedDestinations: ReadonlySet<string>, check: () => void,
+    read: (destination: string) => Promise<string | undefined>, save: (destination: string, before: string, after: string) => Promise<void>): Promise<{ complete: boolean; removed: string[]; blockers: CleanBreakClientPlan['blockers'] }> {
+    validateCleanBreakClientPlan(plan, installDir);
+    const removed: string[] = [], blockers = [...plan.blockers];
+    for (const file of plan.files) {
+        check();
+        if (!allowedDestinations.has(file.destination) || !/^[a-f0-9]{64}$/.test(file.beforeSha256) || !/^[a-f0-9]{64}$/.test(file.afterSha256)) { throw new Error('clean_break_client_destination_unconfirmed'); }
+        try {
+            const before = await read(file.destination); check();
+            if (before !== undefined && clientHash(before) === file.afterSha256) { removed.push(file.destination); continue; }
+            const declarations = before === undefined ? [] : globalConfigDeclarations(inventoryAgent(file.agent), before);
+            if (file.removals.every(removal => !declarations.some(row => row.serverKey === removal.serverKey && isDeepStrictEqual(row.containerPath, removal.containerPath)))) {
+                removed.push(file.destination); continue;
+            }
+            if (before === undefined || clientHash(before) !== file.beforeSha256) { throw new Error('clean_break_client_configuration_changed'); }
+            const after = applyCleanBreakRemovals(file.agent, before, file.removals);
+            if (clientHash(after) !== file.afterSha256) { throw new Error('clean_break_client_plan_changed'); }
+            check(); await save(file.destination, before, after); check();
+            const confirmed = await read(file.destination); check();
+            if (confirmed === undefined || clientHash(confirmed) !== file.afterSha256) { throw new Error('clean_break_client_save_unconfirmed'); }
+            removed.push(file.destination);
+        } catch (error) { blockers.push({ destination: file.destination, code: error instanceof Error ? error.message : 'clean_break_client_cleanup_failed' }); }
+    }
+    return { complete: blockers.length === 0, removed, blockers };
 }

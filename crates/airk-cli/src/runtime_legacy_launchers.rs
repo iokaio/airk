@@ -12,6 +12,10 @@ pub(super) fn require_settled(root: &Path) -> Result<()> {
     Ok(())
 }
 
+pub(super) fn pending(root: &Path) -> Result<bool> {
+    present(&root.join(INTENT))
+}
+
 pub(super) fn require_absent(root: &Path) -> Result<()> {
     require_settled(root)?;
     let (_, channel) = layout::retained_parameters(root)?;
@@ -70,6 +74,42 @@ pub(super) fn inspect(root: &Path, expected: &str) -> Result<serde_json::Value> 
     let root = canonical.as_path();
     let _lock = existing_install_lock(root)?;
     selected_https(root, expected)?;
+    inspect_owned_locked(root, expected)
+}
+
+pub(super) fn inspect_predecessor_cleanup(
+    root: &Path,
+    expected: &str,
+) -> Result<serde_json::Value> {
+    let canonical = root.canonicalize()?;
+    let root = canonical.as_path();
+    let _lock = existing_install_lock(root)?;
+    ensure!(
+        selection_record(root)?.active == expected && state_contract::required(root)?,
+        "predecessor launcher cleanup requires the exact selected prebaseline installation"
+    );
+    if let Some(metadata) = activation::rebuild::client_metadata(root)? {
+        ensure!(
+            metadata["predecessor"].as_str() == Some(expected),
+            "saved predecessor launcher binding changed"
+        );
+        return Ok(metadata["legacy_launchers"].clone());
+    }
+    inspect_clean_break_locked(root, expected)
+}
+
+/// The owning reset already holds the installation lock. Historical approved
+/// pair layouts are disposal metadata here, never permission to start them.
+pub(super) fn inspect_clean_break_locked(root: &Path, expected: &str) -> Result<serde_json::Value> {
+    ensure!(
+        selection_record(root)?.active == expected,
+        "clean-break predecessor selection changed"
+    );
+    verify_runtime(root, expected)?;
+    inspect_owned_locked(root, expected)
+}
+
+fn inspect_owned_locked(root: &Path, expected: &str) -> Result<serde_json::Value> {
     let launcher = if present(&launcher_path(root))? {
         let path = verified_launcher(root)?;
         Some(serde_json::json!({"sha256":runtime_pair::digest_file(&path)?,"path":path}))
@@ -388,6 +428,19 @@ pub(super) async fn retire(root: &Path, expected: &str) -> Result<serde_json::Va
     let canonical = root.canonicalize()?;
     let root = canonical.as_path();
     let _lock = install_lock(root)?;
+    retire_locked(root, expected)
+}
+
+/// The native reset continuation already holds this installation's lock.
+pub(super) fn retire_locked(root: &Path, expected: &str) -> Result<serde_json::Value> {
+    retire_locked_recording(root, expected, &mut |_| Ok(()))
+}
+
+pub(super) fn retire_locked_recording(
+    root: &Path,
+    expected: &str,
+    record: &mut dyn FnMut(&serde_json::Value) -> Result<()>,
+) -> Result<serde_json::Value> {
     activation::rebuild::require_retirement_allowed(root)?;
     selected_https(root, expected)?;
     require_issuer_rotation_settled(root)?;
@@ -449,12 +502,12 @@ pub(super) async fn retire(root: &Path, expected: &str) -> Result<serde_json::Va
         selection_record(root)?.active == expected,
         "legacy_launcher_retirement_selection_changed"
     );
+    let result = serde_json::json!({"schema":1,"active":expected,"legacy_launchers_retired":true,
+        "launcher":null,"universal_launcher":null,"processes":{"scope":"verified_launcher_images","remaining":0,"observations":observations,"image_roster":images,"image_exclusions":intent.image_exclusions}});
+    record(&result)?;
     fs::remove_file(root.join(INTENT))?;
     sync_directory(root)?;
-    Ok(
-        serde_json::json!({"schema":1,"active":expected,"legacy_launchers_retired":true,
-        "launcher":null,"universal_launcher":null,"processes":{"scope":"verified_launcher_images","remaining":0,"observations":observations,"image_roster":images,"image_exclusions":intent.image_exclusions}}),
-    )
+    Ok(result)
 }
 
 #[cfg(test)]

@@ -9,6 +9,183 @@ use airk_core::{
     },
 };
 
+#[cfg(test)]
+mod workbench_catalog_metadata {
+    use super::*;
+    use crate::{Kernel, workbench};
+    use airk_core::workbench::{REQUEST_SCHEMA, Request};
+    use std::{
+        cell::Cell,
+        future::Future,
+        task::{Context, Poll, Waker},
+    };
+
+    fn ready<T>(future: impl Future<Output = T>) -> T {
+        let mut context = Context::from_waker(Waker::noop());
+        match std::pin::pin!(future).as_mut().poll(&mut context) {
+            Poll::Ready(value) => value,
+            Poll::Pending => panic!("bounded in-memory callback must finish without scheduling"),
+        }
+    }
+    fn selection() -> QuerySelection {
+        QuerySelection {
+            project_ids: vec![project(1)],
+            index_ids: Some(vec![index(1)]),
+            member_availability: MemberAvailability::Report,
+        }
+    }
+    fn metadata_request() -> Result<Request> {
+        Ok(serde_json::from_value(
+            json!({"schema":REQUEST_SCHEMA,"mode":"execute","text":"/capabilities","verification":"off"}),
+        )?)
+    }
+    fn metadata_legacy(
+        kernel: &Kernel,
+        value: &Value,
+    ) -> Result<airk_core::workbench::ResultEnvelope> {
+        kernel.evidence_plan_with_reader(
+            metadata_request()?,
+            &Value::Null,
+            Some(&|tool, _, _| {
+                assert_eq!(tool, "capabilities");
+                Ok(value.clone())
+            }),
+        )
+    }
+    fn metadata_combined(value: &Value) -> Result<airk_core::workbench::ResultEnvelope> {
+        ready(workbench::combined::execute(
+            metadata_request()?,
+            selection(),
+            Sha256Digest::from_bytes([4; 32]),
+            |tool, _| {
+                assert_eq!(tool, "capabilities");
+                std::future::ready(Ok(value.clone()))
+            },
+        ))
+    }
+    #[test]
+    fn canonical_workbench_catalog_schemas_are_complete_in_legacy_and_combined_plans() -> Result<()>
+    {
+        let temp = tempfile::tempdir()?;
+        let root = temp.path().join("source");
+        std::fs::create_dir(&root)?;
+        let kernel = Kernel::open(&root, Some(temp.path().join("state")))?;
+        for catalog in [
+            workbench::operation_catalog(),
+            workbench::combined::operation_catalog(),
+        ] {
+            assert!(catalog["operations"]["query_scope"]["properties"]["cursor"].is_object());
+            let value =
+                json!({"workbench":catalog,"nested":{"page":{"cursor":null,"truncated":false}}});
+            for result in [
+                metadata_legacy(&kernel, &value)?,
+                metadata_combined(&value)?,
+            ] {
+                assert_eq!(result.status, "complete");
+                assert!(!result.truncated);
+                assert!(result.completeness.is_empty());
+                assert_eq!(result.steps[0].result.as_ref(), Some(&value));
+            }
+        }
+        Ok(())
+    }
+    #[test]
+    fn real_continuations_and_flags_remain_visible_beside_catalog_schemas() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let root = temp.path().join("source");
+        std::fs::create_dir(&root)?;
+        let kernel = Kernel::open(&root, Some(temp.path().join("state")))?;
+        for page in [
+            json!({"cursor":"next-page"}),
+            json!({"cursor":{"next":"opaque-object"}}),
+            json!({"truncated":true}),
+        ] {
+            let value = json!({"workbench":workbench::operation_catalog(),"nested":{"page":page}});
+            for result in [
+                metadata_legacy(&kernel, &value)?,
+                metadata_combined(&value)?,
+            ] {
+                assert!(result.truncated);
+                assert_eq!(result.status, "partial");
+                assert!(
+                    result
+                        .completeness
+                        .iter()
+                        .any(|reason| reason.contains("upstream truncation or continuation"))
+                );
+            }
+        }
+        for mut catalog in [
+            workbench::operation_catalog(),
+            workbench::combined::operation_catalog(),
+        ] {
+            catalog["cursor"] = json!({"next":"real-catalog-root-page"});
+            let result = metadata_combined(&json!({"workbench":catalog}))?;
+            assert!(result.truncated);
+        }
+        let mut unknown = workbench::operation_catalog();
+        unknown["catalog"] = json!("unknown-catalog");
+        assert!(metadata_combined(&json!({"workbench":unknown}))?.truncated);
+        let mut malformed = workbench::operation_catalog();
+        malformed["operations"]["query_scope"]["additionalProperties"] = json!(true);
+        assert!(metadata_combined(&json!({"workbench":malformed}))?.truncated);
+        let partial = json!({"partial":true,"workbench":workbench::combined::operation_catalog()});
+        let result = metadata_combined(&partial)?;
+        assert_eq!(result.status, "partial");
+        assert!(!result.truncated);
+        Ok(())
+    }
+    #[test]
+    fn both_definition_bindings_still_refuse_real_upstream_continuations() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let source_dir = temp.path().join("source");
+        std::fs::create_dir(&source_dir)?;
+        std::fs::write(source_dir.join("file.rs"), "pub struct Queue;\n")?;
+        let kernel = Kernel::open(&source_dir, Some(temp.path().join("state")))?;
+        kernel.configure_vectors(false)?;
+        kernel.index()?;
+        let plan = json!({"steps":[{"id":"find","tool":"symbols","args":{"name":"Queue"}},{"id":"outline","tool":"outline","bind":[{"arg":"path","from":"find","select":"unique_definition_path"}]}]});
+        for cursor in [json!("next-page"), json!({"next":"opaque-object"})] {
+            let review = kernel.evidence_plan(serde_json::from_value(
+                json!({"schema":REQUEST_SCHEMA,"plan":plan,"verification":"off"}),
+            )?)?;
+            let publication = review.plan.publication.clone();
+            let calls = Cell::new(0);
+            let value = json!({"publication":publication,"hits":[hit("file.rs","Queue")],"workbench":workbench::operation_catalog(),"nested":{"cursor":cursor}});
+            let result=kernel.evidence_plan_with_reader(serde_json::from_value(json!({"schema":REQUEST_SCHEMA,"mode":"execute","plan":review.plan,"verification":"off"}))?,&Value::Null,Some(&|tool,_,_|{
+                calls.set(calls.get()+1);assert_eq!(tool,"symbols");Ok(value.clone())
+            }))?;
+            assert_eq!(calls.get(), 1);
+            assert!(result.steps.iter().any(|step| {
+                step.error
+                    .as_deref()
+                    .is_some_and(|error| error.contains("definition enumeration is incomplete"))
+            }));
+            let value = json!({"schema":airk_core::combined_reads::COMBINED_READ_SCHEMA,"members":[{"index_id":index(1),"result":{"structuredContent":{"hits":[hit("file.rs","Queue")],"nested":{"cursor":cursor}}}}],"ranking":[{"index_id":index(1),"result_pointer":"/members/0/result/structuredContent/hits/0","origin":{"index_id":index(1),"source_root_id":root(1),"project_ids":[project(1)],"source_relative_path":"file.rs","publication":revision(1)}}]});
+            let calls = Cell::new(0);
+            let result = ready(workbench::combined::execute(
+                serde_json::from_value(
+                    json!({"schema":REQUEST_SCHEMA,"mode":"execute","plan":plan,"verification":"off"}),
+                )?,
+                selection(),
+                Sha256Digest::from_bytes([4; 32]),
+                |tool, _| {
+                    calls.set(calls.get() + 1);
+                    assert_eq!(tool, "symbols");
+                    std::future::ready(Ok(value.clone()))
+                },
+            ))?;
+            assert_eq!(calls.get(), 1);
+            assert!(result.steps.iter().any(|step| {
+                step.error
+                    .as_deref()
+                    .is_some_and(|error| error.contains("definition enumeration is incomplete"))
+            }));
+        }
+        Ok(())
+    }
+}
+
 fn index(n: u8) -> IndexId {
     IndexId::from_identity(Incarnation::from_bytes([n; 16]))
 }

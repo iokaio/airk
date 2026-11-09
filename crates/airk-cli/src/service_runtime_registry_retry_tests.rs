@@ -138,3 +138,13 @@ async fn registry_busy_retry_never_redispatches_after_original_window_or_unknown
     assert_eq!(error.to_string(), "transport outcome unknown");
     Ok(())
 }
+
+#[test]
+fn clean_break_prebaseline_control_allows_only_diagnostic_shutdown_not_evidence_or_admission()
+-> Result<()> {
+    assert!(prebaseline_metadata_method(&ControlMethod::Health)?);
+    assert!(prebaseline_metadata_method(&ControlMethod::Shutdown)?);
+    assert!(prebaseline_metadata_method(&ControlMethod::Resources)?);
+    assert!(!prebaseline_metadata_method(&ControlMethod::RequestEpoch)?);
+    Ok(())
+}

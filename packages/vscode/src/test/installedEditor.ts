@@ -593,11 +593,11 @@ async function runEditor(): Promise<void> {
                 let wire:any;try{await parityClient.start();wire=await parityClient.request('tools/call',{name:'airk_parse',arguments:turn.request});}
                 catch(error){transport.failure={code:'installed_parity_native_request_failed'};throw error;}
                 finally{await finishInstalledClient(parityClient,transport,()=>mark('retained-evidence',evidence));}
-                const mcp=installedToolBody(wire);
+                const mcp=installedToolBody(wire,{tool:'airk_parse',request:turn.request});
                 const spec={command:runtimeBinding.executable,root:selection.backing.root,dataDir:selection.backing.data_root,collection:selection.backing.collection,name:'Installed parity',combinedSession:selection.session,service:{installDir:runtimeBinding.installDir,project:selection.backing.binding,direct:true}};
                 const counter=path.join(folder,'native-request-budget');await fs.appendFile(counter,'x');assert.ok((await fs.stat(counter)).size<=512,'Shared scenario CLI read budget');
                 const cliEnvelope=await nativeRunner(runtimeBinding.executable,[...launchArgs(spec,'tools'),'call','airk_parse','--args',JSON.stringify(turn.request)],Math.min(35000,sharedDeadline-Date.now()));
-                const cli=installedToolBody({result:cliEnvelope});
+                const cli=installedToolBody({result:cliEnvelope},{tool:'airk_parse',request:turn.request});
                 const observed={tool,arguments:arguments_,ui:rendered,copies,request:turn.request,mcp_wire:wire,cli_envelope:cliEnvelope};evidence.workbenchParity.cases.push(observed);await mark('retained-evidence',evidence);
                 for(const result of [turn.envelope,mcp,cli]){
                     assert.equal(result.status,'complete');assert.equal(result.executed,true);assert.ok(Array.isArray(result.steps)&&result.steps.length===1,'Full single-step parse result');

@@ -264,6 +264,10 @@ fn prepare_and_start(
         runtime.block_on(ensure_running_locked_checked(&owned.view(), Some(&cancel)))?;
         anyhow::bail!("repeat_same_approved_managed_configure_to_resume");
     }
+    ensure!(
+        !state_contract::required(&root)?,
+        "clean_break_required: install the baseline before opening an evidence connection"
+    );
     let check = || cancel.checkpoint();
     let preflight = selected_preflight(&root)?;
     cancel.checkpoint()?;

@@ -1,5 +1,42 @@
 // SPDX-License-Identifier: Apache-2.0
 import { identifier, record, RecordValue, ServiceError } from './serviceClient';
+import * as path from 'node:path';
+
+/** Compare approved runtime scope using the platform's path classes on any host. */
+export function predecessorExecutableInRuntime(install:string,predecessor:string,executable:string,platform:NodeJS.Platform=process.platform):boolean{
+    const paths=platform==='win32'?path.win32:path.posix;
+    if(!/^[a-f0-9]{64}$/.test(predecessor)||!paths.isAbsolute(install)||!paths.isAbsolute(executable))return false;
+    const canonical=(value:string)=>platform==='win32'?paths.toNamespacedPath(paths.resolve(value)):paths.resolve(value);
+    const root=paths.join(install,'runtimes',predecessor);
+    return ['airk.exe','airk','AIRK.app/Contents/MacOS/airk'].some(leaf=>paths.relative(canonical(paths.join(root,leaf)),canonical(executable))==='');
+}
+
+export const CLEAN_BREAK_BASELINE='1.8.16';
+export type RuntimeCleanBreakPolicy=RecordValue&{required:boolean;baseline_version:'1.8.16';state_contract:'airk-state/1'};
+export function validateCleanBreakPolicy(input:unknown):RuntimeCleanBreakPolicy {
+    const value=record(input);
+    if(typeof value.required!=='boolean'||value.baseline_version!==CLEAN_BREAK_BASELINE||value.state_contract!=='airk-state/1')throw new ServiceError('invalid_native_clean_break_policy',false,value);
+    return value as RuntimeCleanBreakPolicy;
+}
+/** Presentation only. Native activation independently checks the selected
+ * version and persisted state contract before deciding reset or upgrade. */
+export function runtimeCleanBreakRequired(installed:string,bundled:string,policy?:unknown):boolean {
+    const parse=(value:string)=>{
+        if(value.length>64||!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(value))throw new ServiceError('invalid_runtime_version');
+        return value.split('.').map(part=>BigInt(part));
+    };
+    const from=parse(installed),to=parse(bundled),baseline=parse(CLEAN_BREAK_BASELINE);
+    const compare=(left:bigint[],right:bigint[])=>{for(let i=0;i<3;i++){if(left[i]!==right[i])return left[i]<right[i]?-1:1;}return 0;};
+    if(compare(to,baseline)<0||compare(to,from)<0)return false;
+    if(policy!==undefined&&policy!==null){
+        const native=validateCleanBreakPolicy(policy);
+        if(compare(from,baseline)<0&&!native.required)throw new ServiceError('invalid_native_clean_break_policy',false,native);
+        return native.required;
+    }
+    // A version alone cannot prove that a copied executable initialized the
+    // new state contract. Missing native policy never authorizes legacy reuse.
+    return true;
+}
 
 export const RUNTIME_UPGRADE_CHOICES = [
     {label:'Migrate saved indexes',description:'Keep the existing indexes and their saved configuration',mode:'migrate' as const},
@@ -15,13 +52,35 @@ export async function chooseRuntimeUpgradeMode(
 }
 
 export type NativeRebuildObservation=RecordValue & {schema:1;operation_id:string;stage:'accepted'|'preparing'|'indexing'|'paused'|'ready'|'failed'|'unavailable';indexes:RecordValue[]};
+/** Native exposes a successor namespace only after opening its activated
+ * registry. The native stop/drain and selected-control switch precede Genesis.
+ * This settles discarded predecessor request authority; index/artifact cleanup
+ * and installation completion still require their independent readiness proof. */
+export function cleanBreakSuccessorPublished(observed:NativeRebuildObservation,binding:{runtimeSha256:string;controlDir:string},platform:NodeJS.Platform=process.platform):boolean{
+    if(observed.mode!=='clean_break'||observed.stage==='accepted'||observed.indexes_complete!==true||observed.candidate!==binding.runtimeSha256
+        ||typeof observed.original_namespace!=='string'||!/^[0-9a-f]{32}$/.test(observed.original_namespace)
+        ||typeof observed.successor_namespace!=='string'||!/^[0-9a-f]{32}$/.test(observed.successor_namespace)||observed.successor_namespace===observed.original_namespace
+        ||typeof observed.successor_control!=='string'||typeof observed.preserved_control!=='string')return false;
+    const paths=platform==='win32'?path.win32:path.posix;
+    if(![binding.controlDir,observed.successor_control,observed.preserved_control].every(value=>paths.isAbsolute(value)))return false;
+    const canonical=(value:string)=>platform==='win32'?paths.toNamespacedPath(paths.resolve(value)):paths.resolve(value);
+    const same=(left:string,right:string)=>paths.relative(canonical(left),canonical(right))==='';
+    return same(observed.successor_control,binding.controlDir)&&!same(observed.successor_control,observed.preserved_control);
+}
 /** Validate the native presentation boundary while preserving every field. This
  * never constructs a recovery roster, a grant or native mutation authority. */
 export function validateRebuildObservation(input:unknown):NativeRebuildObservation {
     const value=record(input);
     if(value.schema!==1||!['accepted','preparing','indexing','paused','ready','failed','unavailable'].includes(String(value.stage))
         ||value.provenance!=='native_rebuild_from_saved_configuration'||Buffer.byteLength(JSON.stringify(value))>512*1024
-        ||!Array.isArray(value.indexes)||!value.indexes.length||value.indexes.length>64)throw new ServiceError('invalid_native_rebuild_observation',false,value);
+        ||!Array.isArray(value.indexes)||(!value.indexes.length&&value.mode!=='clean_break')||value.indexes.length>64)throw new ServiceError('invalid_native_rebuild_observation',false,value);
+    if(value.mode==='clean_break'){
+        const cleanup=record(value.cleanup??{});
+        if(typeof cleanup.complete!=='boolean'||!['waiting_for_indexes','removing','blocked','complete'].includes(String(cleanup.state))||cleanup.complete!==(cleanup.state==='complete'))throw new ServiceError('invalid_native_clean_break_observation',false,value);
+        if(typeof value.indexes_complete!=='boolean'||!Number.isSafeInteger(value.expected_indexes)||Number(value.expected_indexes)<0||Number(value.expected_indexes)>64||value.indexes.length>Number(value.expected_indexes)
+            ||value.indexes_complete&&value.index_scope===null&&value.indexes.length!==value.expected_indexes
+            ||value.stage==='ready'&&(!value.indexes_complete||value.successor_namespace===null||value.successor_namespace===value.original_namespace||!value.indexes.length&&value.expected_indexes!==0))throw new ServiceError('invalid_native_clean_break_roster',false,value);
+    }
     identifier(value.operation_id,16);identifier(value.candidate,32);identifier(value.predecessor,32);identifier(value.original_namespace,16);
     if(value.successor_namespace!==null)identifier(value.successor_namespace,16);
     if(value.index_scope!==null)identifier(value.index_scope,32);
@@ -44,6 +103,18 @@ export function validateRebuildObservation(input:unknown):NativeRebuildObservati
 
 export function rebuildNotice(input:unknown):{key:string;message:string;warning:boolean;value:NativeRebuildObservation}{
     const value=validateRebuildObservation(input),distinct=['ready','paused','failed','unavailable'].includes(value.stage),stage=distinct?value.stage:'started';
+    if(value.mode==='clean_break'){
+        const cleanup=record(value.cleanup??{}),complete=value.stage==='ready'&&cleanup.complete===true;
+        const message=complete?'AIRK fresh indexes are ready and owned legacy native artifacts were removed. Client configuration cleanup must also be confirmed before connecting coding agents.'
+            :cleanup.state==='blocked'?'AIRK fresh index and legacy cleanup completion is blocked. Original sources are unchanged; review the complete cleanup failure in Management → Service.'
+            :value.indexes_complete!==true?`AIRK is capturing the complete source roster for ${value.expected_indexes} expected indexes. Original sources are unchanged; fresh readiness and legacy cleanup are unconfirmed.`
+            :value.stage==='failed'?'AIRK clean installation needs attention. Fresh indexing or cleanup failed; original sources are unchanged. Review Management → Service.'
+            :value.stage==='paused'?'AIRK fresh indexing is paused. Original sources are unchanged; legacy cleanup waits until every replacement index is ready.'
+            :value.stage==='unavailable'?'AIRK cannot verify fresh index readiness. Original sources are unchanged; clean-install completion is unconfirmed.'
+            :value.stage==='ready'?'AIRK fresh indexes are ready. Owned legacy installation cleanup is pending; the clean installation is not complete.'
+            :'AIRK is building fresh indexes from saved sources and supported settings. Original sources are unchanged. Legacy cleanup follows verified readiness; coding agents require a new reviewed connection.';
+        return {key:`${value.operation_id}:${complete?'ready':value.stage==='ready'?'cleanup':stage}`,message,warning:value.stage==='failed'||cleanup.state==='blocked',value};
+    }
     const message=value.stage==='ready'?'AIRK rebuilt replacement indexes. Previous state is preserved. Saved agent connections require reconnection.'
         :value.stage==='paused'?'AIRK preserved previous state. Replacement indexing is paused; review its saved and current preferences in Management.'
         :value.stage==='failed'?'AIRK could not finish rebuilding replacement indexes. Previous state and the failure details are preserved. Review Management → Service.'
@@ -62,7 +133,7 @@ export class RebuildNotices {
         const notice=rebuildNotice(input);
         const write=this.writes.then(async()=>{
             const saved=this.storage.get<unknown>('airk.rebuildNotices.1');
-            if(saved!==undefined&&(!Array.isArray(saved)||saved.length>256||saved.some(key=>typeof key!=='string'||!/^[a-f0-9]{32}:(started|paused|ready|failed|unavailable)$/.test(key))))throw new ServiceError('invalid_saved_rebuild_notices');
+            if(saved!==undefined&&(!Array.isArray(saved)||saved.length>256||saved.some(key=>typeof key!=='string'||!/^[a-f0-9]{32}:(started|paused|ready|failed|unavailable|cleanup)$/.test(key))))throw new ServiceError('invalid_saved_rebuild_notices');
             const keys=new Set<string>(saved as string[]|undefined);
             if(keys.has(notice.key))return;
             if(keys.size>=256)throw new ServiceError('rebuild_notice_capacity');
