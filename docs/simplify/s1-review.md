@@ -403,3 +403,28 @@ candidates for removal in step 3.
 code. Ordinary activation still calls `catalog_upgrade::begin_if_enabled` and
 `resume_if_enabled` for the selected installation's own upgrade (inventory Q7).
 Confirm those are no-ops on `airk-state/1` before deleting that path.
+
+### S2 steps 3–5: blocked pending decisions (not started)
+
+The plan allows deletion only where a surviving owner is proven. Both
+remaining deletions are blocked on that rule.
+
+- **Step 3: delete adoption.**
+  - After step 1, the only remaining duty of the adoption code is resuming an
+    interrupted adoption (a batch journal or `legacy-maintenance.json`).
+  - That resume path is the code being deleted, so it has no other owner.
+  - An unresumed maintenance journal also blocks manager changes
+    (`require_manager_change_settled`) and activation (`require_settled`).
+  - **Decision needed:** refuse a pending adoption journal with a typed error
+    and manual guidance, as Q3 does. Deletion could then follow.
+- **Step 4: delete P5 recovery.**
+  - `upgrade::PRODUCTION_ACTIVATION_ENABLED` is `true`.
+  - Ordinary activation (`catalog_upgrade::begin_if_enabled`,
+    `resume_if_enabled` and `resume_catalog_before_lifecycle`) can still start
+    or resume a catalog upgrade for the selected installation.
+  - `resume_if_enabled` also resumes a pending Genesis, which is the live
+    fresh-install path.
+  - **Needed:** a trace showing that no admitted `airk-state/1` or clean-break
+    path can begin a P5 upgrade. Then a behavior step disables P5 begin and
+    resume (keeping Genesis resume), and only after that the deletion.
+- **Step 5: delete the extension paths.** Follows steps 3 and 4.
