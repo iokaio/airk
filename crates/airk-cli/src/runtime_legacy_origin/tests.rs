@@ -12,91 +12,6 @@ fn cache_image_bound_includes_authentic_pre_service_release_images() -> Result<(
 use serde_json::json;
 
 #[test]
-fn intermediate_native_identity_guard_does_not_reread_image_bytes_and_detects_changes() {
-    let f = Fixture::new("1.3.1");
-    let mut proof = f.inspect().unwrap();
-    proof.executable.file.seek(SeekFrom::Start(3)).unwrap();
-    proof.revalidate_identity().unwrap();
-    assert_eq!(
-        proof.executable.file.stream_position().unwrap(),
-        3,
-        "intermediate copy guard reread executable bytes"
-    );
-    proof.revalidate().unwrap();
-    assert_eq!(
-        proof.executable.file.stream_position().unwrap(),
-        fs::metadata(&f.executable).unwrap().len(),
-        "transaction-boundary full digest was omitted"
-    );
-    fs::write(&f.executable, b"changed image size and identity metadata").unwrap();
-    assert!(proof.revalidate_identity().is_err());
-}
-
-#[test]
-fn withdrawn_cache_identity_guard_is_bound_to_original_inode_size_and_change_metadata() {
-    let f = Fixture::new("1.0.0");
-    let observed = inspect_caches_at_global_storage(&f.global)
-        .unwrap()
-        .pop()
-        .unwrap();
-    let operation = "d".repeat(32);
-    let mut held = resume_cache(&observed).unwrap();
-    held.withdraw(&operation).unwrap();
-    revalidate_withdrawn_cache_identity(&observed, &operation).unwrap();
-    let target = withdrawal_path(&f.executable, &operation).unwrap();
-    fs::write(&target, b"changed withheld image").unwrap();
-    assert!(revalidate_withdrawn_cache_identity(&observed, &operation).is_err());
-    assert!(held.revalidate().is_err());
-}
-
-#[test]
-fn withdrawn_image_fences_original_command_and_retains_actual_origin_across_resume() {
-    let f = Fixture::new("1.3.1");
-    let mut proof = f.inspect().unwrap();
-    let original = proof.observation().clone();
-    let original_bytes = fs::read(&f.executable).unwrap();
-    let config_bytes = fs::read(&f.config).unwrap();
-    let operation = "a".repeat(32);
-    let target = proof.withdraw(&operation).unwrap();
-    assert!(!f.executable.exists());
-    assert_eq!(fs::read(&target).unwrap(), original_bytes);
-    assert_eq!(proof.observation(), &original);
-    proof.revalidate().unwrap();
-    drop(proof);
-    let mut resumed = resume_withdrawn(&f.locator(), &original, &operation).unwrap();
-    resumed.revalidate().unwrap();
-    fs::write(&f.executable, b"foreign image reappeared").unwrap();
-    assert!(resumed.revalidate().is_err());
-    assert!(resumed.restore_withdrawn(&operation).is_err());
-    assert_eq!(
-        fs::read(&f.executable).unwrap(),
-        b"foreign image reappeared"
-    );
-    fs::remove_file(&f.executable).unwrap();
-    resumed.restore_withdrawn(&operation).unwrap();
-    assert!(!target.exists());
-    assert_eq!(fs::read(&f.executable).unwrap(), original_bytes);
-    assert_eq!(fs::read(&f.config).unwrap(), config_bytes);
-}
-
-#[test]
-fn withdrawal_never_clobbers_foreign_target_or_accepts_another_operation() {
-    let f = Fixture::new("1.0.0");
-    let mut proof = f.inspect().unwrap();
-    let operation = "b".repeat(32);
-    let target = withdrawal_path(&f.executable, &operation).unwrap();
-    fs::write(&target, b"unrelated existing bytes").unwrap();
-    assert!(proof.withdraw(&operation).is_err());
-    assert!(f.executable.exists());
-    assert_eq!(fs::read(&target).unwrap(), b"unrelated existing bytes");
-    fs::remove_file(&target).unwrap();
-    let original = proof.observation().clone();
-    proof.withdraw(&operation).unwrap();
-    assert!(resume_withdrawn(&f.locator(), &original, &"c".repeat(32)).is_err());
-    assert!(withdrawal_path(&f.executable, "../foreign").is_err());
-}
-
-#[test]
 fn cache_only_inventory_captures_unreferenced_versions_without_approving_execution_or_scope() {
     let f = Fixture::new("0.2.1-build.4");
     let original = fs::read(&f.executable).unwrap();
@@ -211,7 +126,10 @@ fn nested_claude_entry_keeps_whole_original_file_hash_and_exact_container_identi
         nested.observation().selected_entry_sha256,
         root.observation().selected_entry_sha256
     );
-    assert_ne!(nested.identity().unwrap(), root.identity().unwrap());
+    assert_ne!(
+        nested.observation().identity().unwrap(),
+        root.observation().identity().unwrap()
+    );
     assert!(
         !serde_json::to_string(nested.observation())
             .unwrap()
@@ -239,7 +157,7 @@ fn standalone_defaults_follow_verified_layout_families_and_never_current_working
         let source = f._temp.path().join("missing-original-source");
         fs::write(&f.config,serde_json::to_vec(&json!({"mcpServers":{"airk-old":{"command":f.executable,"args":["--root",source,"mcp"]}}})).unwrap()).unwrap();
         let origin = f.inspect().unwrap();
-        let scope = origin.standalone_scope().unwrap();
+        let scope = origin.observation().standalone_scope().unwrap();
         assert_eq!(scope.root, source);
         assert_eq!(scope.data_dir, source.join(".airk"));
         assert_eq!(scope.collection, "default");
@@ -248,10 +166,6 @@ fn standalone_defaults_follow_verified_layout_families_and_never_current_working
         assert!(
             !source.exists(),
             "scope resolution created original source directories"
-        );
-        assert_eq!(
-            scope.collection_path(),
-            source.join(".airk").join(namespace).join("default")
         );
         fs::write(
             &f.config,
@@ -262,7 +176,11 @@ fn standalone_defaults_follow_verified_layout_families_and_never_current_working
         )
         .unwrap();
         assert!(
-            f.inspect().unwrap().standalone_scope().is_err(),
+            f.inspect()
+                .unwrap()
+                .observation()
+                .standalone_scope()
+                .is_err(),
             "current process CWD substituted for historical CWD"
         );
     }

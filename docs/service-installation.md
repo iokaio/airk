@@ -330,12 +330,43 @@ original declarations. Other custom profiles without native context or recorded
 lineage cannot be discovered automatically. VS Code owns its extension-package
 directories; this operation does not delete those or unrelated downloads.
 
-**9 November 2026 (simplification S2, decision Q1):** standalone adoption is
-no longer offered. The extension leaves original standalone agent entries
-unchanged for review and keeps their helper caches. Both adoption commands
-refuse a new operation with `standalone_adoption_unsupported`, and only resume
-an operation that already left a batch or maintenance journal. The following
-describes the historical adoption behavior that such a resume completes.
+**9 November 2026 (simplification S2, decision Q1 and step 3):** standalone
+adoption is no longer offered. The extension leaves original standalone agent
+entries unchanged for review and keeps their helper caches. Both adoption
+commands refuse every operation with `standalone_adoption_unsupported`; the
+adoption implementation is removed. An interrupted adoption is never resumed.
+Its leftovers are settled automatically, correcting where possible and deleting
+otherwise:
+
+- Cache commands (`inspect`, `prepare`, `reprepare` and `retire-legacy-caches`)
+  first move a withheld helper image back to its empty original path, or remove
+  a withheld duplicate when the original is present, then clear the withdrawal
+  from `legacy-cache-retirement.json`.
+- Activation and manager changes (login install/uninstall, managed configure
+  and detach) clear the adoption's own native admission fence only while the
+  service is stopped under installer exclusion. A fence owned by another
+  operation is never cleared. The service is restarted with the currently
+  selected runtime only if the adoption had stopped it while it was running and
+  not user-stopped, and starting is still allowed.
+- They delete `legacy-maintenance*.json`, `legacy-index-adoption-batch-*.json`
+  and `<state>/legacy-adoption/` (only when its `owner.json` names this
+  installation and state and it contains no link or reparse point).
+- They keep catalog rows, adopted index data (`airk-adopted-indexes-*`),
+  original standalone data and sources, agent configurations and the cache
+  retirement journal. Catalog rows of an adoption interrupted before Ready are
+  reported and kept: no rollback API survives, and changing persisted catalog
+  state needs the plan's D8 decision. Each such row is reported with code
+  `interrupted_adoption_rebuild_required` and this guidance: rebuild the index
+  by setting it up again from its original sources in Indexing, retiring the
+  inert entry if needed, and keep the machine and AIRK running (no shutdown or
+  sleep) until that rebuild completes.
+
+Settlement reports what it restored, deleted and left, with reasons, as one
+`legacy_adoption_settled` JSON line on standard error. If the adoption's fence
+cannot be cleared because the service is running, activation and manager
+changes refuse with `legacy_maintenance_pending_before_manager_change` until
+the service is stopped. The following describes the historical adoption
+behavior for reference only.
 
 `runtime adopt-legacy-indexes --install-dir PATH --expected-active SHA
 --operation-id BATCH_ID --locators-file PRIVATE_JSON_ARRAY
@@ -382,9 +413,9 @@ It retains full process/absence receipts and preserves sources and old index dat
 A newly appeared cache prevents completion. Explicit bounded
 `runtime reprepare-legacy-caches` with the previous inspection digest archives the
 original proofs and returns a new accepted inventory; configuration review and
-guarded saves must run again against that inventory. Pending withdrawals,
-changed file identities and unknown entries require recovery rather than silent
-inventory widening. Final real predecessor, process, Windows and Mac acceptance
+guarded saves must run again against that inventory. An interrupted
+adoption's withdrawal is settled first (see above); changed file identities and
+unknown entries require recovery rather than silent inventory widening. Final real predecessor, process, Windows and Mac acceptance
 remain separate qualification gates recorded in the working release ledger.
 
 The source owners are [runtime verification](../crates/airk-cli/src/runtime_install.rs),

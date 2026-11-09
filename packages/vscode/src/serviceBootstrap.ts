@@ -29,8 +29,7 @@ export interface RuntimeOptions {
 export type NativeRunner = (command: string, args: string[], timeout?: number,input?:string) => Promise<RecordValue>;
 export const nativeRunner: NativeRunner = async (command,args,timeout=60000,input) => {
     const text=await runText(command,args,path.dirname(command),timeout,undefined,undefined,input);
-    const adoption=args[0]==='runtime'&&args[1]==='adopt-legacy-indexes',maximum=adoption?16*1024*1024:2*1024*1024;
-    if(Buffer.byteLength(text)>maximum){throw new ServiceError('bootstrap_response_oversize',adoption);}
+    if(Buffer.byteLength(text)>2*1024*1024){throw new ServiceError('bootstrap_response_oversize',false);}
     return record(JSON.parse(text));
 };
 export interface VerifiedBundle { main: string; helper?: string; source: string; digest: string; version: string; platform: string }
@@ -504,46 +503,6 @@ export class RuntimeHost {
             if(next.scope!==prepared.scope||(prepared.global_storage_roots as string[]).some(root=>!(next.global_storage_roots as string[]).includes(root))||(prepared.caches as unknown[]).some(cache=>!(next.caches as unknown[]).some(value=>isDeepStrictEqual(value,cache)))||(prepared.origin_proofs as unknown[]).some(proof=>!(next.origin_proofs as unknown[]).some(value=>isDeepStrictEqual(value,proof)))||(prepared.origin_locators as unknown[]).some(locator=>!(next.origin_locators as unknown[]).some(value=>isDeepStrictEqual(value,locator))))throw Error('changed_accepted_cache_preimage');
             return next;
         }catch{throw new ServiceError('legacy_cache_reprepare_unconfirmed',true,result);}
-    }
-    /** One native batch owns grouping, archive publication and original claims.
-     * Frontend paths never decide whether two declarations share an index. */
-    async adoptLegacyIndexes(binding:RuntimeBinding,preparation:RecordValue,batchOperation:string,locatorsFile:string,acceptedLocators?:readonly LegacyOriginLocator[]):Promise<RecordValue>{
-        this.active();const prepared=validateLegacyCachePreparation(preparation,binding);identifier(batchOperation,16);safePath(locatorsFile);
-        const available=(prepared.adoption_locators as unknown[]).map(validateLegacyOriginLocator),locators=acceptedLocators?[...acceptedLocators].map(validateLegacyOriginLocator):available;
-        if(locators.some(locator=>!available.some(value=>legacyOriginLocatorIdentity(value)===legacyOriginLocatorIdentity(locator)))||new Set(locators.map(legacyOriginLocatorIdentity)).size!==locators.length)throw new ServiceError('legacy_batch_input_unconfirmed');
-        if(!locators.length||locators.length>32)throw new ServiceError('legacy_adoption_claim_budget_exceeded');
-        const bundle=await this.verified(),result=await this.invoke(bundle.main,['runtime','adopt-legacy-indexes','--install-dir',binding.installDir,'--expected-active',binding.runtimeSha256,'--operation-id',batchOperation,'--locators-file',locatorsFile,'--expected-cache-inspection-sha256',String(prepared.inspection_sha256)],1850000);
-        try{
-            if(result.schema!==1||result.active!==binding.runtimeSha256||result.status!=='ready'||result.operation_id!==batchOperation||result.batch_operation_id!==batchOperation||result.cache_inspection_sha256!==prepared.inspection_sha256||typeof result.retained_completed_operation!=='boolean'||!Array.isArray(result.groups)||!result.groups.length||result.groups.length>32||!Array.isArray(result.claims)||result.claims.length!==locators.length)throw Error('invalid_adoption_batch');
-            const groups=new Map<string,RecordValue>();
-            for(const input of result.groups){
-                const group=record(input);identifier(group.operation_id,16);
-                if(groups.has(String(group.operation_id))||group.schema!==1||group.active!==binding.runtimeSha256||group.status!=='ready'||group.batch_operation_id!==batchOperation||group.source_availability!=='not_observed_saved_only')throw Error('invalid_adoption_group');
-                const original=record(group.original_registration),registration=record(group.registration),grant=record(group.grant),provenance=record(grant.provenance),adoption=record(provenance.adoption),plan=record(adoption.plan),setup=record(plan.setup),key=record(setup.key),publication=record(adoption.publication),receipt=record(group.adoption_receipt),completed=record(receipt.setup);
-                if(provenance.kind!=='imported_standalone_adoption'||!isDeepStrictEqual(plan.original_registration,original)||!isDeepStrictEqual(setup.registration,registration)||plan.config_sha256!==group.original_config_sha256||key.nonce!==group.operation_id||receipt.schema!==1||receipt.plan_digest!==publication.plan_digest||completed.schema!==1||completed.stage!=='ready'||!isDeepStrictEqual(completed.request,setup)||completed.operation_id!==adoption.operation_id||completed.legacy_adoption!==receipt.plan_digest||record(completed.preparation).legacy_adoption!==receipt.plan_digest||!isDeepStrictEqual(record(completed.completion).legacy_adoption,publication))throw Error('crossed_adoption_publication');
-                validateNativeLegacyBinding({status:'catalog_legacy_binding',observation:{schema:1,namespace:key.namespace,catalog_revision:completed.catalog_revision,project:registration.binding,eligibility:{kind:'imported_snapshot',registration,grant}}},String(registration.binding),Number(completed.catalog_revision));
-                const members=record(grant.grant).memberships;
-                if(!Array.isArray(members)||members.length!==1||record(record(members[0]).membership).index_id!==completed.index_id||record(members[0]).source_revision!==completed.source_revision)throw Error('crossed_adoption_membership');
-                record(group.conversion);groups.set(String(group.operation_id),group);
-            }
-            const expected=new Set(locators.map(legacyOriginLocatorIdentity)),seen=new Set<string>(),groupClaims=new Map<string,Set<string>>();
-            for(const input of result.claims){
-                const mapped=record(input),locator=validateLegacyOriginLocator(mapped.locator),key=legacyOriginLocatorIdentity(locator),group=groups.get(String(mapped.group_operation_id)),claim=record(mapped.claim);identifier(mapped.origin_sha256,32);identifier(mapped.config_sha256,32);
-                if(!expected.has(key)||seen.has(key)||!group)throw Error('crossed_adoption_claim_locator');seen.add(key);
-                const adoption=record(record(record(group.grant).provenance).adoption),claims=adoption.configuration_claims as RecordValue[];
-                if(mapped.origin_sha256!==claim.origin_sha256||mapped.config_sha256!==claim.config_sha256||claim.original_server!==locator.server||!isDeepStrictEqual(mapped.original_registration,group.original_registration)||!isDeepStrictEqual(mapped.registration,group.registration)||!claims.some(candidate=>isDeepStrictEqual(candidate,claim)))throw Error('crossed_adoption_claim');
-                const container=locator.container_path??[locator.format==='codex_toml'?'mcp_servers':locator.format==='vscode_servers_json'?'servers':locator.format==='open_code_json'?'mcp':'mcpServers'];
-                if(!isDeepStrictEqual(claim.container_path,container)||!(prepared.origin_proofs as unknown[]).some(value=>{const origin=record(value);return sameNativeLocation(String(origin.config_path),locator.path)&&origin.server===locator.server&&origin.config_sha256===claim.config_sha256&&origin.executable_sha256===claim.executable_sha256&&origin.selected_entry_sha256===claim.selected_entry_sha256&&isDeepStrictEqual(origin.container_path,container);}))throw Error('crossed_adoption_origin');
-                const origins=groupClaims.get(String(group.operation_id))??new Set<string>();if(origins.has(String(claim.origin_sha256)))throw Error('duplicate_adoption_claim');origins.add(String(claim.origin_sha256));groupClaims.set(String(group.operation_id),origins);
-            }
-            for(const [id,group]of groups){const claims=record(record(record(group.grant).provenance).adoption).configuration_claims as RecordValue[],origins=groupClaims.get(id);if(!origins||origins.size!==claims.length||claims.some(claim=>!origins.has(String(claim.origin_sha256))))throw Error('incomplete_adoption_group_claims');}
-            const maintenance=record(result.maintenance);identifier(maintenance.execution_sha256,32);count(maintenance.observed_unix_ms);
-            if(maintenance.operation!==batchOperation||typeof maintenance.originally_running!=='boolean'||typeof maintenance.originally_explicitly_stopped!=='boolean'||maintenance.restarted!==(maintenance.originally_running&&!maintenance.originally_explicitly_stopped))throw Error('unconfirmed_adoption_restoration');
-            if(maintenance.restarted)identifier(maintenance.service_instance,16);else if(maintenance.service_instance!==null)throw Error('unconfirmed_adoption_restoration');
-            const withdrawal=record(result.withdrawal),held=record(withdrawal.held),restored=record(withdrawal.restored);
-            if(held.schema!==1||held.operation_id!==batchOperation||held.inspection_sha256!==prepared.inspection_sha256||held.scope!=='verified_legacy_cache_images'||held.remaining!==0||!Array.isArray(held.image_roster)||!Array.isArray(held.image_exclusions)||!Array.isArray(held.observations)||restored.schema!==1||restored.operation_id!==batchOperation||restored.inspection_sha256!==prepared.inspection_sha256||restored.original_image_paths_restored!==true||restored.retirement_pending!==true)throw Error('unconfirmed_adoption_cache_restore');
-            return result;
-        }catch{throw new ServiceError('legacy_index_adoption_unconfirmed',true,result);}
     }
     /** Final absence proof consumes exactly the native accepted inventory. It
      * cannot discover additional roots after original declarations were saved. */

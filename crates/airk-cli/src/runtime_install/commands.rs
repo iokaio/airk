@@ -256,6 +256,9 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             } else {
                 Some(install_lock(install_dir)?)
             };
+            if matches!(action, LoginCommand::Install | LoginCommand::Uninstall) {
+                legacy_maintenance::settle_locked(install_dir).await?;
+            }
             require_login_registration_change(install_dir, action)?;
             if !matches!(
                 action,
@@ -623,37 +626,10 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             origin_locators_file.as_deref(),
             expected_inspection_sha256,
         )?,
-        RuntimeCommand::AdoptLegacyIndex {
-            install_dir,
-            expected_active,
-            operation_id,
-            locator_file,
-            expected_cache_inspection_sha256,
-        } => {
-            legacy_index_adoption::adopt(
-                install_dir,
-                expected_active,
-                operation_id,
-                locator_file,
-                expected_cache_inspection_sha256,
-            )
-            .await?
-        }
-        RuntimeCommand::AdoptLegacyIndexes {
-            install_dir,
-            expected_active,
-            operation_id,
-            locators_file,
-            expected_cache_inspection_sha256,
-        } => {
-            legacy_index_adoption::adopt_many(
-                install_dir,
-                expected_active,
-                operation_id,
-                locators_file,
-                expected_cache_inspection_sha256,
-            )
-            .await?
+        // S2 decision Q1: refused before any input or installation access. An
+        // interrupted adoption is settled by activation and manager changes.
+        RuntimeCommand::AdoptLegacyIndex { .. } | RuntimeCommand::AdoptLegacyIndexes { .. } => {
+            bail!("{STANDALONE_ADOPTION_UNSUPPORTED}")
         }
         RuntimeCommand::Uninstall { install_dir } => {
             let _lock = install_lock(install_dir)?;

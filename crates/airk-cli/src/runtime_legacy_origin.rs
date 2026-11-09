@@ -76,11 +76,6 @@ pub(crate) struct StandaloneScope {
     pub data_dir_defaulted: bool,
     pub collection_defaulted: bool,
 }
-impl StandaloneScope {
-    pub(crate) fn collection_path(&self) -> PathBuf {
-        self.data_dir.join(&self.namespace).join(&self.collection)
-    }
-}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct LegacyOriginObservation {
@@ -141,24 +136,6 @@ pub(crate) struct NativeLegacyCacheImage {
     directories: Vec<(PathBuf, File, String)>,
 }
 impl NativeLegacyCacheImage {
-    pub(crate) fn withdraw(&mut self, operation: &str) -> Result<()> {
-        self.revalidate()?;
-        let image = self
-            .executable
-            .as_mut()
-            .context("cannot withdraw an absent legacy image")?;
-        let target = withdrawal_path(&self.observation.executable, operation)?;
-        ensure!(
-            image.path == self.observation.executable,
-            "legacy cache already withdrawn"
-        );
-        move_new(&image.path, &target)?;
-        image.path = target;
-        self.revalidate()?;
-        #[cfg(unix)]
-        open_directory(&self.observation.cache_directory)?.sync_all()?;
-        Ok(())
-    }
     pub(crate) fn restore_withdrawn(&mut self, operation: &str) -> Result<()> {
         self.revalidate()?;
         let image = self
@@ -330,60 +307,6 @@ pub(crate) fn resume_withdrawn_cache(
         Some(observed),
         Some(&target),
     )
-}
-
-/// Cheap intermediate archive guard over previously fully hashed native
-/// observations. Full digests are checked again at transaction boundaries.
-pub(crate) fn revalidate_withdrawn_cache_identity(
-    cache: &LegacyCacheObservation,
-    operation: &str,
-) -> Result<()> {
-    ensure!(
-        cache.user == crate::local_ipc::current_user()?
-            && cache.schema == 1
-            && !cache.artifact_approved,
-        "legacy cache identity user/schema changed"
-    );
-    let directories = [
-        cache.global_storage.clone(),
-        cache.global_storage.join("iokaio.airk"),
-        cache.global_storage.join("iokaio.airk/helpers"),
-        cache.cache_directory.clone(),
-    ];
-    for (index, path) in directories.iter().enumerate() {
-        let directory = open_directory(path)?;
-        require_owned_directory(&directory)?;
-        let expected = match index {
-            0 => Some(&cache.global_storage_identity),
-            2 => Some(&cache.helpers_identity),
-            3 => Some(&cache.cache_directory_identity),
-            _ => None,
-        };
-        if let Some(expected) = expected {
-            ensure!(
-                directory_identity(&directory)? == *expected,
-                "legacy cache directory identity changed during archive copy"
-            );
-        }
-    }
-    ensure!(
-        fs::symlink_metadata(&cache.executable)
-            .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound),
-        "old command reappeared during archive copy"
-    );
-    let target = withdrawal_path(&cache.executable, operation)?;
-    let held = CapturedFile::open_inner(
-        &target,
-        MAX_CACHE_IMAGE_BYTES,
-        Some(&cache.executable_sha256),
-    )?;
-    ensure!(
-        held.identity == cache.executable_identity
-            && held.bytes == cache.executable_bytes
-            && modified_stamp(held.modified)? == cache.executable_modified_unix_ns,
-        "legacy cache image identity or change metadata changed during archive copy"
-    );
-    held.revalidate_identity()
 }
 
 fn modified_stamp(time: std::time::SystemTime) -> Result<String> {
@@ -600,76 +523,11 @@ impl LegacyOriginObservation {
     }
 }
 impl NativeLegacyOrigin {
-    pub(crate) fn revalidate_identity(&self) -> Result<()> {
-        ensure!(
-            crate::local_ipc::current_user()? == self.observation.user,
-            "legacy origin user changed"
-        );
-        self.config.revalidate_identity()?;
-        if self.executable.path != self.observation.executable {
-            ensure!(
-                fs::symlink_metadata(&self.observation.executable)
-                    .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound),
-                "original legacy command reappeared during saved capture"
-            );
-        }
-        self.executable.revalidate_identity()
-    }
-    pub(crate) fn identity(&self) -> Result<airk_core::identity::Sha256Digest> {
-        self.observation.identity()
-    }
-    /// Source-verified official standalone families: root was launch-CWD based
-    /// when omitted, so only an explicit absolute root can migrate unattended.
-    pub(crate) fn standalone_scope(&self) -> Result<StandaloneScope> {
-        self.observation.standalone_scope()
-    }
     pub(crate) fn observation(&self) -> &LegacyOriginObservation {
         &self.observation
     }
     pub(crate) fn executable(&self) -> &Path {
         &self.observation.executable
-    }
-    /// The caller first durably records the complete original observation and
-    /// operation. Only that exact image can be withdrawn; no executable runs.
-    #[cfg(test)]
-    pub(crate) fn withdraw(&mut self, operation: &str) -> Result<PathBuf> {
-        self.revalidate()?;
-        let target = withdrawal_path(&self.observation.executable, operation)?;
-        ensure!(
-            self.executable.path == self.observation.executable,
-            "legacy image already withdrawn"
-        );
-        move_new(&self.observation.executable, &target)?;
-        self.executable.path = target.clone();
-        self.revalidate()?;
-        #[cfg(unix)]
-        open_directory(
-            target
-                .parent()
-                .context("legacy withdrawal parent missing")?,
-        )?
-        .sync_all()?;
-        Ok(target)
-    }
-    #[cfg(test)]
-    pub(crate) fn restore_withdrawn(&mut self, operation: &str) -> Result<()> {
-        self.revalidate()?;
-        let target = withdrawal_path(&self.observation.executable, operation)?;
-        ensure!(
-            self.executable.path == target,
-            "legacy withdrawn image binding changed"
-        );
-        move_new(&target, &self.observation.executable)?;
-        self.executable.path = self.observation.executable.clone();
-        self.revalidate()?;
-        #[cfg(unix)]
-        open_directory(
-            target
-                .parent()
-                .context("legacy withdrawal parent missing")?,
-        )?
-        .sync_all()?;
-        Ok(())
     }
     pub(crate) fn revalidate(&mut self) -> Result<()> {
         ensure!(
@@ -700,40 +558,6 @@ pub(crate) fn withdrawal_path(original: &Path, operation: &str) -> Result<PathBu
         .parent()
         .context("legacy image parent missing")?
         .join(format!(".airk-withheld-{operation}")))
-}
-
-pub(crate) fn resume_withdrawn(
-    locator: &ConfigLocator,
-    previous: &LegacyOriginObservation,
-    operation: &str,
-) -> Result<NativeLegacyOrigin> {
-    let target = withdrawal_path(&previous.executable, operation)?;
-    let mut proof = inspect_in_image(
-        locator,
-        std::slice::from_ref(&previous.global_storage),
-        Some(&target),
-    )?;
-    ensure!(
-        matches!(
-            previous.location_basis.as_str(),
-            "native_default" | "explicit_owned_editor_storage"
-        ),
-        "unknown original storage provenance"
-    );
-    if previous.location_basis == "native_default" {
-        ensure!(
-            native_cache_roots()?
-                .iter()
-                .any(|root| same_directory(root, &previous.global_storage)),
-            "original native-default storage is no longer a native user editor location"
-        );
-    }
-    proof.observation.location_basis = previous.location_basis.clone();
-    ensure!(
-        &proof.observation == previous,
-        "withdrawn legacy origin differs from original durable observation"
-    );
-    Ok(proof)
 }
 
 /// Checks actual saved configuration bytes without creating HTTP authority.

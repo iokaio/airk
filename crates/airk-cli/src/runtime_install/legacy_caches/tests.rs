@@ -381,3 +381,67 @@ fn a_new_cache_after_preparation_is_preserved_and_cannot_be_added_to_the_frozen_
     );
     f.assert_preserved()
 }
+
+/// S2: an interrupted saved-index adoption may have withheld cache images.
+/// Each cache command settles that withdrawal before reading its journal.
+#[test]
+fn interrupted_adoption_withdrawal_is_settled_before_cache_commands() -> Result<()> {
+    let f = Fixture::new()?;
+    let plan = f.inspect(None, true)?;
+    let inspection = plan["inspection_sha256"].as_str().unwrap().to_owned();
+    let operation = "e".repeat(32);
+    let withheld = origin::withdrawal_path(&f.image, &operation)?;
+    let interrupt = |move_image: bool| -> Result<()> {
+        let mut journal: Journal = serde_json::from_slice(&fs::read(f.root.join(JOURNAL))?)?;
+        journal.withdrawal_operation = Some(operation.clone());
+        save(&f.root, &journal)?;
+        if move_image {
+            fs::rename(&f.image, &withheld)?;
+        } else {
+            fs::copy(&f.image, &withheld)?;
+        }
+        assert!(
+            read(&f.root, &f.selected).is_err(),
+            "unsettled journal is refused"
+        );
+        Ok(())
+    };
+
+    // Withheld image with an empty original path: moved back.
+    interrupt(true)?;
+    assert!(!f.image.exists());
+    assert_eq!(f.inspect(None, true)?, plan);
+    assert_eq!(fs::read(&f.image)?, ORIGINAL_IMAGE);
+    assert!(!withheld.exists());
+    assert!(
+        read(&f.root, &f.selected)?
+            .unwrap()
+            .withdrawal_operation
+            .is_none()
+    );
+    let settled = fs::read(f.root.join(JOURNAL))?;
+    settle_withdrawal(&f.root)?;
+    assert_eq!(
+        fs::read(f.root.join(JOURNAL))?,
+        settled,
+        "settlement is idempotent"
+    );
+
+    // Withheld duplicate beside the present original: the duplicate goes,
+    // and an explicit replan no longer refuses.
+    interrupt(false)?;
+    assert_eq!(
+        reprepare(&f.root, &f.selected, &f.global, None, &inspection)?,
+        plan
+    );
+    assert!(!withheld.exists());
+    assert_eq!(fs::read(&f.image)?, ORIGINAL_IMAGE);
+
+    // Retirement no longer refuses an interrupted adoption.
+    interrupt(false)?;
+    let outcome = retire(&f.root, &f.selected, &inspection)?;
+    assert_eq!(outcome["caches_retired"], true);
+    assert!(!f.image.exists() && !withheld.exists());
+    assert!(!f.root.join(JOURNAL).exists());
+    f.assert_preserved()
+}

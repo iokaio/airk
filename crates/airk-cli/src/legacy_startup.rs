@@ -156,16 +156,6 @@ pub struct Review {
     workers: crate::legacy_processes::Audit,
 }
 impl Review {
-    pub(crate) fn approval(&self) -> Option<Sha256Digest> {
-        self.approval
-    }
-    pub(crate) fn absence_proven(&self) -> bool {
-        self.preview.definition.is_none()
-            && self.preview.receipt.is_none()
-            && self.preview.observation.loaded == Some(false)
-            && self.preview.observation.running == Some(false)
-            && self.preview.observation.diagnostic.is_none()
-    }
     fn digest(&self) -> Result<Sha256Digest> {
         Ok(framed_digest(
             b"legacy-startup-removal/1.4",

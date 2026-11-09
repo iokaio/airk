@@ -7,10 +7,9 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { parse } from 'jsonc-parser';
-import { LaunchSpec, unifiedEntry, assistanceEntry, serializeServers, RETRIEVAL_TOOLS } from '../model';
+import { LaunchSpec, unifiedEntry, assistanceEntry, serializeServers } from '../model';
 import { launchDescriptorPath } from '../explorerAssistanceLaunch';
-import { LocalAgent, migrateStandaloneHttpEntry, httpConfigurationConnectionId, refreshHttpAgentConfig, hasUnifiedVscodeConfig, migrateAgentConfig, migrateLocalAgents, captureCleanBreakClientCleanup, applyCleanBreakClientCleanup } from '../agentMigration';
-import { httpAuthorityDigest } from '../serviceHttp';
+import { LocalAgent, httpConfigurationConnectionId, refreshHttpAgentConfig, hasUnifiedVscodeConfig, migrateAgentConfig, migrateLocalAgents, captureCleanBreakClientCleanup, applyCleanBreakClientCleanup } from '../agentMigration';
 import {predecessorHttpFixture} from './fixtures/predecessorHttpFixture';
 
 const storage=path.resolve('fixture-storage');
@@ -86,7 +85,8 @@ test('clean break confirms already absent captured keys without overwriting unre
 
 test('clean break removes only native-owned HTTP credentials and preserves external declarations',async()=>{
     const original={command:path.resolve('old-helper'),args:['mcp']},raw=JSON.stringify({mcpServers:{saved:original}}),receipt=createHash('sha256').update(raw).digest('hex');
-    const info=adoptedAliasInfo('saved','a'.repeat(32),receipt),source=migrateStandaloneHttpEntry('claude',raw,'saved',original,info,receipt);
+    // The standalone HTTP entry an earlier adoption wrote under the original server key.
+    const info=adoptedAliasInfo('saved','a'.repeat(32),receipt),source=JSON.stringify({mcpServers:{saved:{type:'http',url:info.endpoint.url,headers:{Authorization:'Bearer ${AIRK_MCP_TOKEN_'+info.connection_id.toUpperCase()+'}','X-AIRK-Response-Mode':'terse'}}}});
     const destination=path.join(spec.root,'.mcp.json');let lookups=0;
     const lookup=predecessorHttpFixture(path.join(spec.service!.installDir,'old-control'),'ab'.repeat(32),info.connection_id);lookup.endpoint=info.endpoint;lookup.namespace=info.endpoint.namespace;lookup.snapshot.endpoint=info.endpoint;lookup.snapshot.namespace=info.endpoint.namespace;lookup.qualification.current_namespace=info.endpoint.namespace;
     const {snapshot,...proof}=lookup;
@@ -276,51 +276,3 @@ function adoptedAliasInfo(serverKey:string,id:string,configurationReceipt:string
     const adoption={schema:1,operation_id:'d'.repeat(32),plan,publication:{schema:1,plan_digest:digest,archive_inventory_sha256:digest,original_publication_sha256:digest,current:`airk-r1:${namespace}:2:${digest}`,resource_sha256:digest,compatibility_sha256:digest},original_server:serverKey,no_default_project:true,configuration_claims:[{schema:1,origin_sha256:plan.origin_sha256,config_sha256:configurationReceipt,executable_sha256:plan.executable_sha256,selected_entry_sha256:digest,container_path:container,original_server:serverKey,no_default_project:true}]};
     return {schema:1,connection_id:id,endpoint:{schema:1,installation:digest,user:'fixture',namespace,generation:1,service_instance:'d'.repeat(32),executable_sha256:digest,url:'https://127.0.0.1:57421/mcp',ca_sha256:digest,certificate_sha256:digest,state:'ready',predecessor_digest:null},selection:{kind:'imported_legacy',selection:{namespace,expected_catalog_revision:2,registration,configuration_receipt:configurationReceipt,grant:{grant:{id:'grt_'+'91'.repeat(16),host:digest,revision:1,revoked:false,memberships:[]},provenance:{kind:'imported_standalone_adoption',adoption}}}},ca_certificate_file:path.join(directory,'ca.pem'),credential_file:path.join(directory,'credential-'+id+'.token')};
 }
-for(const agent of ['codex','claude','copilot'] as const)test(`native standalone ${agent} aliases retain disjoint scopes, original names, comments and policies`,()=>{
-    const keys=['old.first','second_old'],fields=keys.map((key,index)=>({command:path.resolve('original-helper-'+index),args:['--root',path.resolve('source-'+index),'--collection','saved-'+index,'mcp'],env:{AIRK_CLIENT:agent,AIRK_MCP_RESPONSE_MODE:index?'terse':'full'},disabled:true,enabled_tools:['airk_search'],custom_setting:'keep-'+key}));
-    const prefix=agent==='codex'?'instructions = """unrelated instructions\n[mcp_servers.fake]\nstay unchanged"""\n':'// Original comment remains\n';
-    const before=agent==='codex'?prefix+fields.map((entry,index)=>`[mcp_servers.${JSON.stringify(keys[index])}]\ncommand = ${JSON.stringify(entry.command)}\nargs = ${JSON.stringify(entry.args)}\ndisabled = true\nenabled_tools = ["airk_search"]\ncustom_setting = ${JSON.stringify(entry.custom_setting)}\n[mcp_servers.${JSON.stringify(keys[index])}.env]\nAIRK_CLIENT = ${JSON.stringify(agent)}\nAIRK_MCP_RESPONSE_MODE = ${JSON.stringify(entry.env.AIRK_MCP_RESPONSE_MODE)}\n`).join('')+'[mcp_servers.airk]\ncommand = "foreign"\n':prefix+JSON.stringify({keep:'unchanged',[agent==='copilot'?'servers':'mcpServers']:{[keys[0]]:fields[0],[keys[1]]:fields[1],airk:{command:'foreign'}}});
-    const digest=createHash('sha256').update(before).digest('hex'),originalRows=globalConfigDeclarations(agent,before),connections=keys.map((key,index)=>adoptedAliasInfo(key,(index?'b':'a').repeat(32),digest,[agent==='codex'?'mcp_servers':agent==='copilot'?'servers':'mcpServers']));
-    let after=before;
-    for(const [index,key]of keys.entries())after=migrateStandaloneHttpEntry(agent,after,key,originalRows.find(row=>row.serverKey===key)!.fields,connections[index],digest);
-    assert.ok(after.startsWith(prefix));const rows=globalConfigDeclarations(agent,after);
-    assert.deepEqual(rows.find(row=>row.serverKey==='airk')?.fields,originalRows.find(row=>row.serverKey==='airk')?.fields);
-    for(const [index,key]of keys.entries()){
-        const row=rows.find(row=>row.serverKey===key)!;assert.ok(row);assert.equal(row.fields.command,undefined);assert.equal(row.fields.url,connections[index].endpoint.url);assert.equal(row.fields.disabled,true);assert.deepEqual(row.fields.enabled_tools,['search']);assert.equal(row.fields.custom_setting,fields[index].custom_setting);
-        const headers=row.fields[agent==='codex'?'http_headers':'headers'] as Record<string,string>;assert.equal(headers['X-AIRK-Response-Mode'],index?'terse':'full');assert.equal(httpConfigurationConnectionId(agent,row.fields),connections[index].connection_id);
-    }
-    const next={...connections[0],endpoint:{...connections[0].endpoint,url:'https://127.0.0.1:57422/mcp'}};
-    const refreshed=refreshHttpAgentConfig(agent,after,next,connections[0].endpoint.url,keys[0]),nextRows=globalConfigDeclarations(agent,refreshed);
-    assert.equal(nextRows.find(row=>row.serverKey===keys[0])!.fields.url,next.endpoint.url);assert.deepEqual(nextRows.find(row=>row.serverKey===keys[1])!.fields,rows.find(row=>row.serverKey===keys[1])!.fields);
-    assert.throws(()=>refreshHttpAgentConfig(agent,after,connections[1],connections[0].endpoint.url,keys[0]),/alias_unconfirmed/);
-    assert.throws(()=>migrateStandaloneHttpEntry(agent,before,keys[0],{...fields[0],command:'crossed'},connections[0],digest),/Unrecognized/);
-    assert.throws(()=>migrateStandaloneHttpEntry(agent,before,keys[0],fields[0],connections[1],digest),/origin_unconfirmed/);
-    assert.throws(()=>migrateStandaloneHttpEntry(agent,before,keys[0],fields[0],connections[0],'0'.repeat(64)),/origin_unconfirmed/);
-});
-
-test('a pre-service native alias literally named airk translates wildcard approval only from the old retrieval catalog',()=>{
-    const original={command:path.resolve('old-helper'),args:['mcp'],alwaysAllow:['*']},source=JSON.stringify({mcpServers:{airk:original}}),digest=createHash('sha256').update(source).digest('hex'),info=adoptedAliasInfo('airk','a'.repeat(32),digest);
-    const after=migrateStandaloneHttpEntry('claude',source,'airk',original,info,digest),value=parse(after);
-    assert.deepEqual(value.mcpServers.airk.alwaysAllow,[...RETRIEVAL_TOOLS]);assert.ok(!value.mcpServers.airk.alwaysAllow.includes('draft_plan'));
-});
-
-for(const agent of ['codex','claude','copilot'] as const)test(`standalone ${agent} reattachment replaces only the exact owned credential under unchanged native authority`,()=>{
-    const alias='old_saved',fields={command:path.resolve('old-helper'),args:['mcp'],disabled:true,enabled_tools:['airk_search'],custom_setting:'keep-original-policy'};
-    const source=agent==='codex'?`# Keep original comment\n[mcp_servers.old_saved]\ncommand = ${JSON.stringify(fields.command)}\nargs = ["mcp"]\ndisabled = true\nenabled_tools = ["airk_search"]\ncustom_setting = "keep-original-policy"\n`:JSON.stringify({keep:'foreign',[agent==='copilot'?'servers':'mcpServers']:{[alias]:fields,other:{command:'other-tool'}}});
-    const receipt=createHash('sha256').update(source).digest('hex'),old=adoptedAliasInfo(alias,'a'.repeat(32),receipt,[agent==='codex'?'mcp_servers':agent==='copilot'?'servers':'mcpServers']);
-    const nested=structuredClone(old.selection);nested.selection.grant.provenance.adoption.plan.setup.expected_catalog_revision++;
-    assert.notEqual(httpAuthorityDigest(nested),httpAuthorityDigest(old.selection),'Only the selected minimum clock is normalized; original adoption intent stays exact');
-    const before=migrateStandaloneHttpEntry(agent,source,alias,fields,old,receipt),next=structuredClone(old);next.connection_id='b'.repeat(32);next.credential_file=path.join(path.dirname(old.credential_file),'credential-'+next.connection_id+'.token');next.endpoint.url='https://127.0.0.1:57422/mcp';next.endpoint.generation++;
-    const untouched=structuredClone({old,next}),after=refreshHttpAgentConfig(agent,before,next,old.endpoint.url,alias,old),rows=globalConfigDeclarations(agent,after),row=rows.find(value=>value.serverKey===alias)!;
-    assert.equal(httpConfigurationConnectionId(agent,row.fields),next.connection_id);assert.equal(row.fields.url,next.endpoint.url);assert.equal(row.fields.disabled,true);assert.deepEqual(row.fields.enabled_tools,['search']);assert.equal(row.fields.custom_setting,fields.custom_setting);assert.deepEqual({old,next},untouched);
-    if(agent==='codex')assert.ok(after.startsWith('# Keep original comment'));else assert.deepEqual(JSON.parse(JSON.stringify(rows.find(value=>value.serverKey==='other')?.fields)),{command:'other-tool'});
-    for(const mutate of [
-        (value:any)=>{value.endpoint.installation='0'.repeat(64);},
-        (value:any)=>{value.endpoint.user='other-user';},
-        (value:any)=>{value.selection.selection.grant.grant.id='grt_'+'0'.repeat(32);},
-        (value:any)=>{value.selection.selection.registration.data_root=path.resolve('crossed-backing');},
-        (value:any)=>{value.selection.selection.grant.provenance.adoption.configuration_claims[0].origin_sha256='0'.repeat(64);},
-    ]){const crossed=structuredClone(next);mutate(crossed);assert.throws(()=>refreshHttpAgentConfig(agent,before,crossed,old.endpoint.url,alias,old));}
-    assert.throws(()=>refreshHttpAgentConfig(agent,before,next,'https://127.0.0.1:57423/mcp',alias,old),/reattachment_unconfirmed/);
-    assert.throws(()=>refreshHttpAgentConfig(agent,before.replaceAll(old.connection_id, 'c'.repeat(32)).replaceAll(old.connection_id.toUpperCase(),'C'.repeat(32)),next,old.endpoint.url,alias,old),/Unrecognized/);
-});

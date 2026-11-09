@@ -727,7 +727,12 @@ pub(super) fn reviewed_request(root: &Path, candidate: &str, expected: &str) -> 
     bail!("runtime selection changed since review")
 }
 
+/// The caller holds the installer lock.
 pub(super) async fn begin(root: &Path, candidate: &str) -> Result<Selection> {
+    // An interrupted standalone adoption may still hold its own native
+    // admission fence; settle it rather than letting it block this activation.
+    legacy_maintenance::settle_locked(root).await?;
+    legacy_maintenance::require_settled(root)?;
     if state_contract::required(root)? {
         let selected = selection(root)?.context("clean-break predecessor missing")?;
         return rebuild::activate(root, candidate, &selected.active).await;

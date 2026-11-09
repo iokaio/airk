@@ -181,12 +181,9 @@ pub(crate) fn reprepare(
     activation::require_settled(&root)?;
     payload_repair::require_settled(&root)?;
     lifecycle::require_settled(&root)?;
+    settle_withdrawal(&root)?;
     let previous =
         read(&root, expected)?.context("cache replan requires an accepted native inspection")?;
-    ensure!(
-        previous.withdrawal_operation.is_none(),
-        "cache replan cannot cross pending withdrawal/adoption"
-    );
     ensure!(
         previous.inspection.context_global_storage == origin::verified_global_storage(context)?,
         "cache replan context changed"

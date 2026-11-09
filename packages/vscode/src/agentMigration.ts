@@ -2,7 +2,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import {credentialEnvironment,httpUrl,validateHttpConnection,sameHttpAuthority,standaloneHttpServerKey,preservedImportedHttpServerKey,validateOwnedPredecessorHttpProof,type OwnedPredecessorHttpProof,type HttpConnectionInfo} from './serviceHttp';
+import {credentialEnvironment,httpUrl,validateHttpConnection,sameHttpAuthority,preservedImportedHttpServerKey,validateOwnedPredecessorHttpProof,type OwnedPredecessorHttpProof,type HttpConnectionInfo} from './serviceHttp';
 import { consolidateJson, consolidateToml, globalConfigDeclarations, transformGlobalContainer, type ConfigurationFile as GlobalConfigFile } from './unifiedAgentConfig';
 import { LaunchSpec, unifiedEntry, httpServerFields } from './model';
 import { launchDescriptorPath } from './explorerAssistanceLaunch';
@@ -58,20 +58,6 @@ function recognizedAssistance(spec: LaunchSpec, storage: string, command: unknow
     if (!spec.service || !ownLauncher(spec, command) || !strings(args)) { return false; }
     const rest = forwarded(spec, args);
     return !!rest && rest.length === 3 && rest[0] === 'explorer-assistance' && rest[1] === '--descriptor' && same(rest[2], launchDescriptorPath(storage));
-}
-
-/** One original native-authenticated standalone declaration changes transport
- * under the same server key. Disjoint scopes and aliases are never merged. */
-export function migrateStandaloneHttpEntry(agent:LocalAgent,source:string,serverKey:string,originalFields:Record<string,unknown>,connection:HttpConnectionInfo,originalConfigurationSha256:string,originSha256?:string,originContainer?:readonly string[]):string{
-    const info=validateHttpConnection(connection);
-    if(!['codex','claude','copilot'].includes(agent)||info.selection.kind!=='imported_legacy'||info.selection.selection.configuration_receipt!==originalConfigurationSha256)throw Error('standalone_http_origin_unconfirmed');
-    const provenance=info.selection.selection.grant.provenance;
-    if(provenance?.kind!=='imported_standalone_adoption'||standaloneHttpServerKey(info,serverKey,originContainer)!==serverKey||!(provenance.adoption.configuration_claims as Record<string,unknown>[]).some(claim=>claim.config_sha256===originalConfigurationSha256&&claim.original_server===serverKey&&(originSha256===undefined||claim.origin_sha256===originSha256)&&(originContainer===undefined||isDeepStrictEqual(claim.container_path,originContainer))))throw Error('standalone_http_origin_unconfirmed');
-    const options={retrievalKey:serverKey,targetKey:serverKey,onlyKey:true,selectedFamily:'retrieval' as const,entry:{key:serverKey,label:serverKey,command:'',args:[],http:info},fields:httpServerFields(agent==='copilot'?'vscode':agent,info),warn:()=>undefined,
-        recognizes:(_family:unknown,fields:Record<string,unknown>)=>isDeepStrictEqual(JSON.parse(JSON.stringify(fields)),JSON.parse(JSON.stringify(originalFields)))};
-    if(agent==='codex')return consolidateToml(source,options);
-    const transformed=consolidateJson(source,agent==='copilot'?'servers':'mcpServers',options);
-    return agent==='copilot'?syncVscodeHttpInput(transformed,info):transformed;
 }
 
 /** Consolidate only recognized connections in one guarded file save. */

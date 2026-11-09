@@ -34,7 +34,7 @@ fn explicit_cache_replan_retains_removed_images_and_adds_new_owned_caches() -> R
 }
 
 #[test]
-fn cache_replan_refuses_crossed_preimage_unknown_empty_leaf_and_pending_withdrawal() -> Result<()> {
+fn cache_replan_refuses_crossed_preimage_and_unknown_empty_leaf() -> Result<()> {
     let fixture = Fixture::new()?;
     let initial = fixture.inspect(None, true)?;
     let old = initial["inspection_sha256"].as_str().unwrap();
@@ -53,10 +53,6 @@ fn cache_replan_refuses_crossed_preimage_unknown_empty_leaf_and_pending_withdraw
     let original_journal = fs::read(fixture.root.join(JOURNAL))?;
     assert!(reprepare(&fixture.root, &fixture.selected, &fixture.global, None, old).is_err());
     assert_eq!(fs::read(fixture.root.join(JOURNAL))?, original_journal);
-    let mut journal = read(&fixture.root, &fixture.selected)?.unwrap();
-    journal.withdrawal_operation = Some("e".repeat(32));
-    save(&fixture.root, &journal)?;
-    assert!(reprepare(&fixture.root, &fixture.selected, &fixture.global, None, old).is_err());
     assert!(fixture.image.exists());
     fixture.assert_preserved()
 }

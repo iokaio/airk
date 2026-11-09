@@ -101,6 +101,12 @@ pub(crate) fn admission_closed(control: &Path) -> Result<bool> {
     Ok(fence(control)?.is_some())
 }
 
+/// The operation that owns a closed admission fence, read without changing it.
+/// Settlement still goes through `settle`, which refuses any other operation.
+pub(crate) fn fence_operation(control: &Path) -> Result<Option<Incarnation>> {
+    Ok(fence(control)?.map(|saved| saved.operation_id))
+}
+
 fn immutable(control: &Path, name: &str, data: &[u8]) -> Result<()> {
     ensure!(
         data.len() as u64 <= MAX_PACKET,

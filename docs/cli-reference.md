@@ -2458,8 +2458,8 @@ Commands:
   prepare-legacy-caches         Freeze the exact owned helper-cache inventory before changing MCP configurations
   reprepare-legacy-caches       Explicitly re-review a pending cache inventory after newly appeared owned caches; preserve original proofs and require configuration migration against the new inspection
   retire-legacy-caches          After HTTPS migration, stop and remove only caches in the accepted native ownership inventory
-  adopt-legacy-index            Resume only an interrupted standalone adoption; a new one is refused (standalone_adoption_unsupported)
-  adopt-legacy-indexes          Resume only an interrupted standalone adoption batch; a new one is refused (standalone_adoption_unsupported)
+  adopt-legacy-index            Refused (standalone_adoption_unsupported): standalone saved indexes are no longer adopted, and an interrupted adoption is settled automatically, never resumed
+  adopt-legacy-indexes          Refused (standalone_adoption_unsupported): standalone saved indexes are no longer adopted, and an interrupted adoption batch is settled automatically, never resumed
   abort-stage                   Abort an ownership-proven interrupted copy; preserve promoted runtimes and unknown files
   repair-launcher               Repair an absent or known older launcher from the selected approved payload; requires stopped owners
   abort-launcher-repair         Abort an owned unfinished launcher copy; an already replaced image must be finalized
@@ -2819,7 +2819,7 @@ Options:
 ## airk runtime adopt-legacy-index
 
 ```text
-Resume only an interrupted standalone adoption; a new one is refused (standalone_adoption_unsupported)
+Refused (standalone_adoption_unsupported): standalone saved indexes are no longer adopted, and an interrupted adoption is settled automatically, never resumed
 
 Usage: airk runtime adopt-legacy-index [OPTIONS] --install-dir <INSTALL_DIR> --expected-active <EXPECTED_ACTIVE> --operation-id <OPERATION_ID> --locator-file <LOCATOR_FILE> --expected-cache-inspection-sha256 <EXPECTED_CACHE_INSPECTION_SHA256>
 
@@ -2878,7 +2878,7 @@ Options:
 ## airk runtime adopt-legacy-indexes
 
 ```text
-Resume only an interrupted standalone adoption batch; a new one is refused (standalone_adoption_unsupported)
+Refused (standalone_adoption_unsupported): standalone saved indexes are no longer adopted, and an interrupted adoption batch is settled automatically, never resumed
 
 Usage: airk runtime adopt-legacy-indexes [OPTIONS] --install-dir <INSTALL_DIR> --expected-active <EXPECTED_ACTIVE> --operation-id <OPERATION_ID> --locators-file <LOCATORS_FILE> --expected-cache-inspection-sha256 <EXPECTED_CACHE_INSPECTION_SHA256>
 

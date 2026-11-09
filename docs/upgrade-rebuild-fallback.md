@@ -44,8 +44,11 @@ decisions Q1 and Q3, 9 November 2026):
   `catalog-authority-probe --native-host`, refuse with the same code before
   touching any state. Fresh Genesis and the clean-break rebuild are unchanged.
 - **Standalone saved indexes are never adopted.** Their original agent entries
-  stay unchanged for review, and new `adopt-legacy-index(es)` operations are
-  refused with `standalone_adoption_unsupported`.
+  stay unchanged for review, and `adopt-legacy-index(es)` operations are
+  refused with `standalone_adoption_unsupported`. An interrupted adoption is
+  never resumed; activation, manager changes and the cache commands settle its
+  leftovers automatically (see
+  [service installation](service-installation.md)).
 
 The extension, standalone CLI and native installer must use the same native
 boundary decision. Native lifecycle management remains authenticated local IPC;

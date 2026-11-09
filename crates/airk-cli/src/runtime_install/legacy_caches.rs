@@ -270,6 +270,10 @@ fn validate(root: &Path, expected: &str, journal: &Journal) -> Result<()> {
             .contains(&plan.context_global_storage),
         "legacy cache context absent from frozen roots"
     );
+    ensure!(
+        journal.withdrawal_operation.is_none(),
+        "settle the interrupted saved-index cache withdrawal before using this journal"
+    );
     let mut names = std::collections::BTreeSet::new();
     for cache in &plan.caches {
         ensure!(
@@ -279,7 +283,7 @@ fn validate(root: &Path, expected: &str, journal: &Journal) -> Result<()> {
         );
         // This checks exact known producer path, owner, full hash/FileID and
         // ancestor identities, including an image/leaf removed by this journal.
-        resume(cache, journal.withdrawal_operation.as_deref())?.revalidate()?;
+        origin::resume_cache(cache)?.revalidate()?;
     }
     let roster = images(plan);
     for (index, proof) in journal.image_exclusions.iter().enumerate() {
@@ -317,6 +321,7 @@ pub(super) fn inspect(
     let root = canonical.as_path();
     let _lock = existing_install_lock(root)?;
     selected(root, expected)?;
+    settle_withdrawal(root)?;
     if let Some(saved) = read(root, expected)? {
         ensure!(
             saved.inspection.context_global_storage == origin::verified_global_storage(context)?,
@@ -342,174 +347,76 @@ pub(super) fn inspect(
     }
     plan.reply()
 }
-fn resume(
-    cache: &LegacyCacheObservation,
-    operation: Option<&str>,
-) -> Result<origin::NativeLegacyCacheImage> {
-    if let Some(operation) = operation {
-        let target = origin::withdrawal_path(&cache.executable, operation)?;
-        if target.try_exists()? {
-            ensure!(
-                !cache.executable.try_exists()?,
-                "old command reappeared while its original image was withheld"
-            );
-            return origin::resume_withdrawn_cache(cache, operation);
+/// Simplification S2: standalone adoption is no longer offered and an
+/// interrupted one is never resumed. Its cache withdrawal is corrected where
+/// possible: a withheld image whose original path is empty is moved back with
+/// the exact native identity checks; a withheld duplicate beside a present
+/// original is removed. The journal then records no withdrawal. The caller
+/// holds the installer lock. Repeating this after a crash at any point is safe:
+/// each image is handled from its current files, and the journal changes last.
+fn settle_withdrawal(root: &Path) -> Result<()> {
+    let path = root.join(JOURNAL);
+    if !path.try_exists()? {
+        return Ok(());
+    }
+    let mut journal: Journal = serde_json::from_slice(&read_bounded(&path, MAX_BYTES)?)?;
+    let Some(operation) = journal.withdrawal_operation.clone() else {
+        return Ok(());
+    };
+    let plan = &journal.inspection;
+    ensure!(
+        journal.schema == 1
+            && plan.schema == 1
+            && plan.user == local_ipc::current_user()?
+            && journal.inspection_sha256 == plan.digest()?
+            && plan.caches.len() <= 128,
+        "legacy cache journal binding changed; interrupted cache withdrawal preserved"
+    );
+    let mut settlement = legacy_maintenance::Settlement::default();
+    for cache in &plan.caches {
+        let withheld = origin::withdrawal_path(&cache.executable, &operation)?;
+        ensure!(
+            withheld.parent() == Some(cache.cache_directory.as_path()),
+            "withheld legacy image is outside its accepted cache directory"
+        );
+        match (present(&withheld)?, present(&cache.executable)?) {
+            (true, false) => {
+                origin::resume_withdrawn_cache(cache, &operation)?.restore_withdrawn(&operation)?;
+                settlement.restored(
+                    &cache.executable,
+                    "withheld legacy helper image moved back to its original path",
+                );
+            }
+            (true, true) => {
+                safe_file(&withheld)?;
+                fs::remove_file(&withheld)?;
+                sync_directory(&cache.cache_directory)?;
+                settlement.deleted(
+                    &withheld,
+                    "withheld duplicate removed because the original image is present",
+                );
+            }
+            (false, _) => {}
         }
     }
-    origin::resume_cache(cache)
+    journal.withdrawal_operation = None;
+    save(root, &journal)?;
+    settlement.restored(
+        &path,
+        &format!(
+            "cleared the interrupted saved-index cache withdrawal {operation}; the accepted cache inventory is kept"
+        ),
+    );
+    settlement.report();
+    Ok(())
 }
 
-/// This capability is created only while the caller holds installer maintenance
-/// exclusion. The private journal binds every image before the first rename.
-pub(super) struct CacheWithdrawal {
-    root: PathBuf,
-    expected: String,
-    operation: String,
-    journal: Journal,
-    _exclusion: legacy_launchers::ImageExclusion,
-    observation: serde_json::Value,
-}
-impl CacheWithdrawal {
-    pub(super) fn revalidate_identity(&self) -> Result<()> {
-        let saved: Journal =
-            serde_json::from_slice(&read_bounded(&self.root.join(JOURNAL), MAX_BYTES)?)?;
-        ensure!(
-            serde_json::to_vec(&saved)? == serde_json::to_vec(&self.journal)?,
-            "native cache withdrawal journal changed during archive copy"
-        );
-        ensure!(
-            selection_record(&self.root)?.active == self.expected,
-            "native selected runtime changed during archive copy"
-        );
-        for cache in &self.journal.inspection.caches {
-            origin::revalidate_withdrawn_cache_identity(cache, &self.operation)?;
-        }
-        Ok(())
+fn present(path: &Path) -> Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
     }
-    pub(super) fn origin(&self, locator: &ConfigLocator) -> Result<LegacyOriginObservation> {
-        let mut matches = self
-            .journal
-            .inspection
-            .origin_proofs
-            .iter()
-            .filter(|proof| origin::matches_locator(proof, locator).unwrap_or(false));
-        let origin = matches
-            .next()
-            .context("original declaration was not part of accepted native cache preparation")?;
-        ensure!(
-            matches.next().is_none(),
-            "ambiguous original declaration in native cache preparation"
-        );
-        Ok(origin.clone())
-    }
-    pub(super) fn revalidate(&mut self) -> Result<()> {
-        let saved =
-            read(&self.root, &self.expected)?.context("native cache preparation disappeared")?;
-        ensure!(
-            saved.inspection_sha256 == self.journal.inspection_sha256
-                && saved.withdrawal_operation.as_deref() == Some(self.operation.as_str()),
-            "native cache withdrawal binding changed"
-        );
-        for cache in &saved.inspection.caches {
-            let mut held = origin::resume_withdrawn_cache(cache, &self.operation)?;
-            held.revalidate()?;
-            ensure!(held.exists(), "withheld legacy image disappeared");
-        }
-        Ok(())
-    }
-    pub(super) fn observation(&self) -> Result<serde_json::Value> {
-        Ok(self.observation.clone())
-    }
-}
-pub(super) fn withhold_locked(
-    root: &Path,
-    expected: &str,
-    inspection: &str,
-    operation: &str,
-) -> Result<CacheWithdrawal> {
-    selected(root, expected)?;
-    let mut journal = read(root, expected)?
-        .context("prepare original cache ownership before saved-index adoption")?;
-    ensure!(
-        journal.inspection_sha256 == inspection,
-        "saved-index cache preparation preimage changed"
-    );
-    if let Some(previous) = &journal.withdrawal_operation {
-        ensure!(
-            previous == operation,
-            "another cache withdrawal operation is pending"
-        );
-    } else {
-        // Validate the exact operation before its intent is persisted.
-        if let Some(cache) = journal.inspection.caches.first() {
-            origin::withdrawal_path(&cache.executable, operation)?;
-        }
-        journal.withdrawal_operation = Some(operation.into());
-        save(root, &journal)?;
-    }
-    let original = images(&journal.inspection);
-    #[cfg(windows)]
-    let original_paths: Vec<_> = original.iter().map(|image| image.path.clone()).collect();
-    // Windows image write exclusion prevents a new execution while each image
-    // is moved. Unix exclusive rename withdraws configured names first; exact
-    // process census plus historical writer/admission proof is still required.
-    #[cfg(windows)]
-    stop_legacy(&original_paths)?;
-    #[cfg(windows)]
-    let exclusion = image_exclusion(&original)?;
-    for cache in &journal.inspection.caches {
-        let target = origin::withdrawal_path(&cache.executable, operation)?;
-        if !target.try_exists()? {
-            resume(cache, Some(operation))?.withdraw(operation)?;
-        }
-        origin::resume_withdrawn_cache(cache, operation)?.revalidate()?;
-    }
-    let mut roster = original.clone();
-    for cache in &journal.inspection.caches {
-        roster.push(Image {
-            path: origin::withdrawal_path(&cache.executable, operation)?,
-            sha256: cache.executable_sha256.clone(),
-        });
-    }
-    let paths: Vec<_> = roster.iter().map(|image| image.path.clone()).collect();
-    stop_legacy(&paths)?;
-    #[cfg(not(windows))]
-    let exclusion = image_exclusion(&roster)?;
-    let mut proofs = journal.image_exclusions.clone();
-    proofs.extend(exclusion.images.clone());
-    #[cfg(windows)]
-    for image in &original {
-        proofs.push(Image {
-            path: origin::withdrawal_path(&image.path, operation)?,
-            sha256: image.sha256.clone(),
-        });
-    }
-    proofs.sort_by(|left, right| left.path.cmp(&right.path));
-    proofs.dedup();
-    let observations = observe(&roster, &proofs)?;
-    let observation = serde_json::json!({"schema":1,"inspection_sha256":inspection,"operation_id":operation,
-        "scope":"verified_legacy_cache_images","image_roster":roster,"image_exclusions":proofs,"remaining":0,"observations":observations});
-    let mut cap = CacheWithdrawal {
-        root: root.into(),
-        expected: expected.into(),
-        operation: operation.into(),
-        journal,
-        _exclusion: exclusion,
-        observation,
-    };
-    cap.revalidate()?;
-    Ok(cap)
-}
-pub(super) fn restore_locked(mut cap: CacheWithdrawal) -> Result<serde_json::Value> {
-    cap.revalidate()?;
-    for cache in &cap.journal.inspection.caches {
-        origin::resume_withdrawn_cache(cache, &cap.operation)?.restore_withdrawn(&cap.operation)?;
-    }
-    cap.journal.withdrawal_operation = None;
-    save(&cap.root, &cap.journal)?;
-    Ok(
-        serde_json::json!({"schema":1,"operation_id":cap.operation,"inspection_sha256":cap.journal.inspection_sha256,"original_image_paths_restored":true,"retirement_pending":true}),
-    )
 }
 
 pub(super) fn retire(
@@ -525,12 +432,9 @@ pub(super) fn retire(
     activation::require_settled(root)?;
     payload_repair::require_settled(root)?;
     lifecycle::require_settled(root)?;
+    settle_withdrawal(root)?;
     let mut journal = read(root, expected)?
         .context("prepare the actual legacy cache inspection before migration")?;
-    ensure!(
-        journal.withdrawal_operation.is_none(),
-        "complete pending saved-index adoption before retiring legacy caches"
-    );
     let (_, _, classifications) = journal.inspection.classifications()?;
     ensure!(
         classifications

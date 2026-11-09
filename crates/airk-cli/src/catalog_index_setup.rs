@@ -82,15 +82,6 @@ impl PreparedIndexSetup {
             Self::Anchored(storage) => storage.record(registry),
         }
     }
-    pub(crate) fn record_legacy_adoption(
-        self,
-        registry: &mut ServiceRegistry,
-        plan: &airk_core::catalog_legacy_adoption::LegacyAdoptionPlan,
-    ) -> Result<IndexSetupReceipt> {
-        match self {
-            Self::Anchored(storage) => storage.record_legacy_adoption(registry, plan),
-        }
-    }
 }
 
 /// Read-only review. New custom storage requires an existing canonical parent;
@@ -98,10 +89,6 @@ impl PreparedIndexSetup {
 pub(crate) fn review(control: &Path, request: &IndexSetupRequest) -> Result<NativeSetupReview> {
     review_inner(control, request, None)
 }
-mod legacy_adoption;
-pub(crate) use legacy_adoption::review as review_legacy_adoption;
-pub(crate) use legacy_adoption::validate_origin as validate_legacy_adoption_origin;
-pub(crate) use legacy_adoption::validate_scope as validate_legacy_adoption_origin_scope;
 fn review_inner(
     control: &Path,
     request: &IndexSetupRequest,
@@ -662,65 +649,6 @@ impl DirectoryPin {
         self.check()?;
         Ok(())
     }
-}
-
-/// Retains native parent/child identities while an installer uses its private
-/// derived-data container. The shared parent is never chmodded or adopted.
-pub(crate) struct PrivateDirectoryPin {
-    parent: DirectoryPin,
-    child: DirectoryPin,
-}
-impl PrivateDirectoryPin {
-    pub(crate) fn check(&self) -> Result<()> {
-        self.parent.check()?;
-        self.child.check()?;
-        crate::local_ipc::require_existing_root(&self.child.path)
-    }
-}
-pub(crate) fn pin_private_directory(path: &Path, create: bool) -> Result<PrivateDirectoryPin> {
-    let parent = DirectoryPin::open(path.parent().context("private data parent missing")?)?;
-    #[cfg(unix)]
-    let name = path.file_name().context("private data leaf missing")?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        // SAFETY: geteuid has no arguments or failure mode.
-        let uid = unsafe { libc::geteuid() };
-        for ancestor in parent.path.ancestors() {
-            let metadata = fs::symlink_metadata(ancestor)?;
-            ensure!(
-                metadata.is_dir()
-                    && !metadata.file_type().is_symlink()
-                    && (metadata.uid() == uid || metadata.uid() == 0)
-                    && (metadata.mode() & 0o022 == 0
-                        || (metadata.uid() == 0 && metadata.mode() & 0o1000 != 0)),
-                "unsafe adopted-data parent"
-            );
-        }
-    }
-    if create {
-        #[cfg(unix)]
-        {
-            use std::os::{fd::AsRawFd, unix::ffi::OsStrExt};
-            let name = std::ffi::CString::new(name.as_bytes())?;
-            // SAFETY: pinned parent and a single terminated native leaf name.
-            ensure!(
-                unsafe { libc::mkdirat(parent.file.as_raw_fd(), name.as_ptr(), 0o700) } == 0,
-                "create private adopted-data root: {}",
-                std::io::Error::last_os_error()
-            );
-        }
-        #[cfg(windows)]
-        {
-            crate::local_ipc::create_root(path)?;
-        }
-    }
-    parent.check()?;
-    crate::local_ipc::require_existing_root(path)?;
-    let child = DirectoryPin::open(path)?;
-    let pin = PrivateDirectoryPin { parent, child };
-    pin.check()?;
-    Ok(pin)
 }
 
 #[cfg(windows)]

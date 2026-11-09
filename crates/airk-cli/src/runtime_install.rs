@@ -48,7 +48,6 @@ pub use managed::ManagedLifecycle;
 mod http_rotation;
 mod issuer_lifecycle;
 mod legacy_caches;
-mod legacy_index_adoption;
 mod legacy_launchers;
 mod legacy_maintenance;
 mod lifecycle;
@@ -65,6 +64,7 @@ mod staging;
 const MAX_MANIFEST: u64 = 512 * 1024;
 /// Typed refusal for `adopt-legacy-index(es)`: the 1.8.16 clean-break baseline
 /// rebuilds from original sources and never adopts standalone saved indexes.
+/// An interrupted adoption is settled, never resumed (`legacy_maintenance`).
 const STANDALONE_ADOPTION_UNSUPPORTED: &str = "standalone_adoption_unsupported: AIRK no longer adopts standalone saved indexes; set up a new index from the original sources in Indexing";
 /// Typed refusal for every in-place P5 catalog upgrade entry point: a raw
 /// registry is never migrated in place; the 1.8.16 clean break creates fresh
@@ -470,7 +470,7 @@ pub enum RuntimeCommand {
         #[arg(long)]
         expected_inspection_sha256: String,
     },
-    /// Resume only an interrupted standalone adoption; a new one is refused (standalone_adoption_unsupported).
+    /// Refused (standalone_adoption_unsupported): standalone saved indexes are no longer adopted, and an interrupted adoption is settled automatically, never resumed.
     AdoptLegacyIndex {
         #[arg(long)]
         install_dir: PathBuf,
@@ -483,7 +483,7 @@ pub enum RuntimeCommand {
         #[arg(long)]
         expected_cache_inspection_sha256: String,
     },
-    /// Resume only an interrupted standalone adoption batch; a new one is refused (standalone_adoption_unsupported).
+    /// Refused (standalone_adoption_unsupported): standalone saved indexes are no longer adopted, and an interrupted adoption batch is settled automatically, never resumed.
     AdoptLegacyIndexes {
         #[arg(long)]
         install_dir: PathBuf,
@@ -2411,7 +2411,14 @@ fn require_issuer_rotation_settled(root: &Path) -> Result<()> {
 /// their separate ownership checks and do not call this admission gate.
 fn require_manager_change_settled(root: &Path) -> Result<()> {
     require_issuer_rotation_settled(root)?;
-    legacy_maintenance::require_manager_change_settled(root)
+    legacy_maintenance::require_settled(root)
+}
+
+/// Caller holds the installer lock. Settle an interrupted standalone adoption
+/// first, then refuse only what settlement could not clear.
+async fn settle_manager_change(root: &Path) -> Result<()> {
+    legacy_maintenance::settle_locked(root).await?;
+    require_manager_change_settled(root)
 }
 
 pub async fn activate(root: &Path, identity: &str) -> Result<Selection> {

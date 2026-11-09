@@ -429,6 +429,35 @@ remaining deletions are blocked on that rule.
     resume (keeping Genesis resume), and only after that the deletion.
 - **Step 5: delete the extension paths.** Follows steps 3 and 4.
 
+### S2 step 3 (decision: settle an interrupted adoption, then delete adoption)
+
+User decision: an interrupted standalone adoption "should be corrected if
+possible and deleted otherwise to keep an uninterrupted flow".
+
+- A settlement routine replaces the resume path:
+  - the cache commands restore or deduplicate withheld helper images and clear
+    the journal's withdrawal;
+  - activation `begin` and the manager-change callers clear the adoption's own
+    native fence under installer exclusion, restart only a service the
+    adoption stopped, and delete the adoption journals and the owner-verified
+    private archive copies.
+- `require_manager_change_settled` now refuses only a maintenance journal that
+  settlement had to keep (its own fence while the service runs, or an
+  unverifiable journal).
+- Catalog rows of an adoption interrupted before Ready are reported and kept;
+  changing persisted catalog state needs D8. User decision: the report carries
+  code `interrupted_adoption_rebuild_required` with guidance to rebuild the
+  index from its original sources in Indexing, retire the inert entry if
+  needed, and keep the machine and AIRK running until the rebuild completes.
+- `adopt-legacy-index(es)` refuse unconditionally. The adoption implementation
+  is deleted from `airk-cli` (`legacy_index_adoption.rs`,
+  `runtime_legacy_authority.rs`, the maintenance capability, cache withdrawal,
+  the catalog adoption helpers and `record_legacy_adoption`) and from the
+  extension (`RuntimeHost.adoptLegacyIndexes`, its 16 MiB reply budget and
+  `migrateStandaloneHttpEntry`).
+- Kept for the next wave: `NativeSetupReview.legacy_adoption` and its digest
+  domain, and every public store, kernel and core adoption API.
+
 ### S2 step 4a (decision: no in-place catalog upgrade; behavior, CLI side)
 
 - P5 can no longer begin or resume: `activation::resume`,

@@ -111,6 +111,20 @@ test('native cache preparation freezes real cleanup scope and retirement require
         for(const change of [(v:any)=>v.active='00'.repeat(32),(v:any)=>v.scope='native-defaults',(v:any)=>v.global_storage_roots.push(install),(v:any)=>v.inspection_sha256='00'.repeat(32),(v:any)=>v.caches_retired=false,(v:any)=>v.remaining=1,(v:any)=>v.processes.scope='all_processes',(v:any)=>v.processes.remaining=1,(v:any)=>delete v.processes.image_exclusions,(v:any)=>v.retired_caches=[]]){
             retired=structuredClone(complete);change(retired);await assert.rejects(host.retireLegacyCaches(binding,original),(error:unknown)=>error instanceof ServiceError&&error.outcomeUnknown&&error.nativeResponse===retired);
         }
+        // Origin classification rules (formerly covered only through adoption):
+        // equivalent literal locators share one complete native proof, a
+        // native-origin SHA cannot collapse different observations, and an
+        // explicit nested container never becomes a wildcard.
+        const originLocator={path:path.join(f.root,'.mcp.json'),format:'mcp_servers_json' as const,server:'old-1'},explicit={...originLocator,container_path:['mcpServers']},origin='ab'.repeat(32);
+        const proof={config_path:originLocator.path,server:originLocator.server,container_path:['mcpServers'],config_sha256:origin,executable:cache.executable,executable_sha256:f.digest,selected_entry_sha256:origin,future_native_proof:{retained:true}};
+        const withOrigins:any={...structuredClone(original),origin_locators:[originLocator,explicit],origin_proofs:[proof],adoption_locators:[originLocator],managed_locators:[],
+            origin_classifications:[originLocator,explicit].map(item=>({locator:item,origin_sha256:origin,kind:'standalone',authority:'not_observed'}))};
+        prepared=withOrigins;assert.equal(await host.prepareLegacyCaches(binding,context,locator),withOrigins);
+        const crossed=structuredClone(withOrigins);crossed.origin_locators[1]={...crossed.origin_locators[1],server:'different-server'};crossed.origin_classifications[1].locator=crossed.origin_locators[1];crossed.origin_proofs.push({...proof,server:'different-server'});
+        const nested=structuredClone(withOrigins);nested.origin_locators[1]={...nested.origin_locators[1],container_path:['projects','different','mcpServers']};nested.origin_classifications[1].locator=nested.origin_locators[1];
+        for(const changed of [crossed,nested]){
+            prepared=changed;await assert.rejects(host.prepareLegacyCaches(binding,context,locator),(error:unknown)=>error instanceof ServiceError&&error.code==='legacy_cache_inspection_unconfirmed'&&error.outcomeUnknown&&error.nativeResponse===changed);
+        }
         prepared={...original,scope:'native-defaults'};assert.equal((await host.prepareLegacyCaches(binding,context,locator)).scope,'native-defaults','Frontend never infers scope from HOME or a mock custom path');
     }finally{await f.cleanup();}
 });
@@ -132,7 +146,7 @@ test('legacy HTTP enrollment accepts only native standalone original-to-adopted 
     let response:any=singleton,observedArgs:readonly string[]=[];
     const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable'},async(_command,args)=>{
         if(args[1]==='self-test')return {protocol:1,version:'1.4.0',self_test:'passed',metadata_console:1};
-        assert.ok(['http-legacy-connection','http-legacy-union-connection','adopt-legacy-indexes'].includes(args[1]));observedArgs=args;return response;
+        assert.ok(['http-legacy-connection','http-legacy-union-connection'].includes(args[1]));observedArgs=args;return response;
     });
     const file=path.join(f.root,'protected-original-registration.json');
     try{
@@ -147,23 +161,6 @@ test('legacy HTTP enrollment accepts only native standalone original-to-adopted 
         await assert.rejects(host.httpLegacyConnection(binding,first.original,file,receipt,id,'claude'),/crossed_http_legacy_connection/);
         response=structuredClone(singleton);response.selection.selection.grant.provenance.adoption.publication.archive_inventory_sha256=f.digest;
         await assert.rejects(host.httpLegacyConnection(binding,first.original,file,receipt,id,'claude'),(error:unknown)=>error instanceof ServiceError&&error.outcomeUnknown&&error.nativeResponse===response);
-        const batchOperation='98'.repeat(16),catalogOperation='12'.repeat(16),locator={path:path.join(f.root,'.mcp.json'),format:'mcp_servers_json' as const,server:'old-1'},explicit={...locator,container_path:['mcpServers']};
-        const adoption=first.selected.grant.provenance.adoption;adoption.operation_id=catalogOperation;
-        const cacheDirectory=path.join(f.root,'User','globalStorage','iokaio.airk','helpers','1.3.1-windows-x64-'+f.digest.slice(0,16)),contextStorage=path.join(f.root,'User','globalStorage');
-        const cache={schema:1,provenance:'owned_legacy_helper_cache',user:'fixture',global_storage:contextStorage,global_storage_identity:'global-id',helpers_identity:'helpers-id',cache_directory:cacheDirectory,cache_directory_identity:'cache-id',executable:path.join(cacheDirectory,'airk.exe'),executable_sha256:f.digest,executable_identity:'image-id',cache_version:'1.3.1',platform:'windows-x64',digest_prefix:f.digest.slice(0,16),artifact_approved:false};
-        const originalProof={config_path:locator.path,server:locator.server,container_path:['mcpServers'],config_sha256:receipt,executable:cache.executable,executable_sha256:f.digest,selected_entry_sha256:receipt,future_native_proof:{retained:true}};
-        const prepared:any={schema:1,active:f.digest,scope:'context-only',context_global_storage:contextStorage,global_storage_roots:[contextStorage],caches:[cache],inspection_sha256:'ab'.repeat(32),origin_locators:[locator,explicit],origin_proofs:[originalProof],adoption_locators:[locator],managed_locators:[],origin_classifications:[locator,explicit].map(locator=>({locator,origin_sha256:receipt,kind:'standalone',authority:'not_observed'}))};
-        const setupReceipt={schema:1,operation_id:catalogOperation,request:adoption.plan.setup,request_digest:receipt,index_id:first.selected.grant.grant.memberships[0].membership.index_id,source_ids:['src_'+'33'.repeat(16)],stage:'ready',catalog_revision:2,source_revision:1,legacy_adoption:adoption.publication.plan_digest,preparation:{legacy_adoption:adoption.publication.plan_digest},completion:{legacy_adoption:adoption.publication}};
-        const mapping={locator,origin_sha256:receipt,config_sha256:receipt,group_operation_id:id,original_registration:first.original,registration:first.adopted,claim:adoption.configuration_claims[0]},group={schema:1,active:f.digest,status:'ready',operation_id:id,batch_operation_id:batchOperation,original_registration:first.original,registration:first.adopted,original_config_sha256:receipt,source_availability:'not_observed_saved_only',adoption_receipt:{schema:1,plan_digest:adoption.publication.plan_digest,setup:setupReceipt},conversion:{saved_only:true},grant:first.selected.grant,claims:[mapping],future_group_metadata:{retained:true}};
-        const ready={schema:1,status:'ready',active:f.digest,operation_id:batchOperation,batch_operation_id:batchOperation,cache_inspection_sha256:prepared.inspection_sha256,retained_completed_operation:false,groups:[group],claims:[mapping],maintenance:{operation:batchOperation,originally_running:false,originally_explicitly_stopped:true,restarted:false,service_instance:null,execution_sha256:f.digest,observed_unix_ms:1},withdrawal:{held:{schema:1,operation_id:batchOperation,inspection_sha256:prepared.inspection_sha256,scope:'verified_legacy_cache_images',remaining:0,image_roster:[cache],image_exclusions:[cache],observations:[{full_raw_proof:'retained'}]},restored:{schema:1,operation_id:batchOperation,inspection_sha256:prepared.inspection_sha256,original_image_paths_restored:true,retirement_pending:true}},future_batch_field:{retained:true}};
-        response=ready;assert.equal(await host.adoptLegacyIndexes(binding,prepared,batchOperation,file),ready,'Full batch metadata is retained, with equivalent literal locators sharing one complete native origin proof');
-        const crossed=structuredClone(prepared);crossed.origin_locators[1].server='different-server';crossed.origin_classifications[1].locator=crossed.origin_locators[1];crossed.origin_proofs.push({...originalProof,server:'different-server'});
-        await assert.rejects(host.adoptLegacyIndexes(binding,crossed,batchOperation,file),/legacy_origin_classification_unconfirmed/,'A native-origin SHA cannot collapse different complete observations');
-        const wrongContainer=structuredClone(prepared);wrongContainer.origin_locators[1].container_path=['projects','different','mcpServers'];wrongContainer.origin_classifications[1].locator=wrongContainer.origin_locators[1];
-        await assert.rejects(host.adoptLegacyIndexes(binding,wrongContainer,batchOperation,file),/legacy_cache_inspection_unconfirmed/,'Explicit nested containers never become a wildcard');
-        for(const mutate of [(value:any)=>value.groups[0].operation_id=batchOperation,(value:any)=>value.claims[0].config_sha256=f.digest,(value:any)=>value.claims[0].locator={...locator,container_path:['projects','other','mcpServers']},(value:any)=>value.groups[0].adoption_receipt.setup.completion.legacy_adoption=null,(value:any)=>value.maintenance.restarted=true,(value:any)=>value.withdrawal.restored.retirement_pending=false]){
-            response=structuredClone(ready);mutate(response);await assert.rejects(host.adoptLegacyIndexes(binding,prepared,batchOperation,file),(error:unknown)=>error instanceof ServiceError&&error.outcomeUnknown&&error.nativeResponse===response);
-        }
     }finally{await f.cleanup();}
 });
 
@@ -1049,12 +1046,10 @@ test('modern previous-runtime retirement proves all superseded images gone witho
     }finally{await f.cleanup();}
 });
 
-test('only the complete plural native adoption result receives the explicit 16 MiB wire budget',async context=>{
-    let text=JSON.stringify({padding:'x'.repeat(2*1024*1024)});
+test('every native bootstrap reply has one 2 MiB wire budget; the refused adoption command has no larger one',async context=>{
+    const text=JSON.stringify({padding:'x'.repeat(2*1024*1024)});
     context.mock.method(require('../native'),'runText',async()=>text);
-    await assert.rejects(nativeRunner('fixture-native',['runtime','inspect']),(error:unknown)=>error instanceof ServiceError&&error.code==='bootstrap_response_oversize'&&!error.outcomeUnknown);
-    assert.equal((await nativeRunner('fixture-native',['runtime','adopt-legacy-indexes'])).padding,(JSON.parse(text) as any).padding);
-    await assert.rejects(nativeRunner('fixture-native',['tool','call','adopt-legacy-indexes']),/bootstrap_response_oversize/);
-    text=JSON.stringify({padding:'x'.repeat(16*1024*1024)});
-    await assert.rejects(nativeRunner('fixture-native',['runtime','adopt-legacy-indexes']),(error:unknown)=>error instanceof ServiceError&&error.code==='bootstrap_response_oversize'&&error.outcomeUnknown);
+    for(const args of [['runtime','inspect'],['runtime','adopt-legacy-indexes']]){
+        await assert.rejects(nativeRunner('fixture-native',args),(error:unknown)=>error instanceof ServiceError&&error.code==='bootstrap_response_oversize'&&!error.outcomeUnknown);
+    }
 });

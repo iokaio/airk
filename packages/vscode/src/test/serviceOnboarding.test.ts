@@ -1301,7 +1301,7 @@ test('one install leaves a standalone sibling unchanged for review and still mig
         const {registration,configuration}=legacyConfiguration(f),destination=path.join(registration.root,'.mcp.json'),alias='old_standalone',digest='ba'.repeat(32),cached=path.join(f.root,'private-editor','User','globalStorage','iokaio.airk','helpers','1.3.1-windows-x64-'+digest.slice(0,16),'airk.exe');
         const fields={command:cached,args:['--root',registration.root,'--data-dir',path.join(f.root,'old-standalone-data'),'--collection','old-saved','mcp'],disabled:true,alwaysAllow:['airk_search']};
         const initial={...configuration,mcpServers:{...configuration.mcpServers,[alias]:fields}};await fs.writeFile(destination,JSON.stringify(initial));migrationEditor(f);
-        let inspections=0,preparations=0,retirements=0,adoptions=0;
+        let inspections=0,preparations=0,retirements=0;
         context.mock.method(RuntimeHost.prototype,'inspectLegacyCaches',async(selected:typeof f.binding,storage:string,input?:string)=>{
             inspections++;const locators=input?JSON.parse(await fs.readFile(input,'utf8')):[];
             assert.equal(locators.length,1,'the scanned standalone declaration is offered to native inspection');assert.equal(locators[0].server,alias);
@@ -1311,7 +1311,6 @@ test('one install leaves a standalone sibling unchanged for review and still mig
         });
         context.mock.method(RuntimeHost.prototype,'prepareLegacyCaches',async()=>{preparations++;throw new Error('no cache retirement journal while a standalone entry remains');});
         context.mock.method(RuntimeHost.prototype,'retireLegacyCaches',async()=>{retirements++;throw new Error('retained standalone caches are not retired');});
-        context.mock.method(RuntimeHost.prototype,'adoptLegacyIndexes',async()=>{adoptions++;throw new Error('standalone adoption is not supported');});
         await f.commands.get('airk.installCli')!();
         const after=JSON.parse(await fs.readFile(destination,'utf8')),managedKey='airk';
         // The single managed stdio entry becomes the one HTTP entry; the standalone and unrelated entries keep their keys.
@@ -1319,7 +1318,7 @@ test('one install leaves a standalone sibling unchanged for review and still mig
         assert.deepEqual(after.mcpServers[alias],fields,'The standalone entry is byte-for-byte unchanged');
         assert.equal(after.mcpServers[managedKey].url,f.httpUrl,'The managed sibling still migrates to HTTP');assert.equal(after.mcpServers[managedKey].command,undefined);
         assert.deepEqual(after.mcpServers.other,initial.mcpServers.other);
-        assert.equal(adoptions,0);assert.equal(preparations,0);assert.equal(retirements,0);assert.ok(inspections>=1);
+        assert.equal(preparations,0);assert.equal(retirements,0);assert.ok(inspections>=1);
         assert.ok(f.calls.some(value=>value.includes(`Standalone AIRK agent entry "${alias}"`)&&value.includes('left unchanged for review')),'The user is told which entry needs review');
         assert.ok(f.calls.some(value=>value.includes('AIRK kept old helper caches: 1 standalone agent entry')),'Cache retention is reported');
         assert.ok([...f.values.keys()].some(key=>key.startsWith('airk.installComplete.2.')),'Installation completes with the entry retained');

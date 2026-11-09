@@ -250,7 +250,7 @@ pub(super) async fn configure(
         "managed payload must be separate from writable metadata and state"
     );
     let lock = install_lock(root)?;
-    require_manager_change_settled(root)?;
+    settle_manager_change(root).await?;
     let authority = InstallerAuthority { root, _lock: &lock };
     ensure!(
         !exists(&root.join(DETACH))? && !exists(&root.join("uninstall.json"))?,
@@ -485,7 +485,8 @@ mod setup_tests {
 }
 
 pub(super) async fn detach(root: &Path) -> Result<serde_json::Value> {
-    require_manager_change_settled(root)?;
+    // The uninstall caller holds the installer lock.
+    settle_manager_change(root).await?;
     layout::require_managed_ready(root)
         .context("managed_catalog_detach_requires_supported_transition")?;
     lifecycle::require_settled(root)?;
