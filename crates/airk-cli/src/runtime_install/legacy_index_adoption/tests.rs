@@ -305,3 +305,24 @@ fn legacy_adoption_data_container_is_separate_owned_and_never_adopts_unknown_mar
     }
     Ok(())
 }
+
+#[test]
+fn only_an_already_journaled_operation_may_resume_after_adoption_refusal() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let operation: Incarnation = "11".repeat(16).parse()?;
+    let refused = refuse_new_adoption(root.path(), &operation.to_string())
+        .expect_err("a new standalone adoption must be refused");
+    assert!(
+        refused
+            .to_string()
+            .starts_with("standalone_adoption_unsupported:"),
+        "{refused:#}"
+    );
+    // A batch journal for this exact operation proves an interrupted adoption;
+    // its validation and resumption stay with the existing native owner.
+    fs::write(root.path().join(journal_name(operation)), b"{}")?;
+    refuse_new_adoption(root.path(), &operation.to_string())?;
+    let other: Incarnation = "22".repeat(16).parse()?;
+    assert!(refuse_new_adoption(root.path(), &other.to_string()).is_err());
+    Ok(())
+}

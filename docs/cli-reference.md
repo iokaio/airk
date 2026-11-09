@@ -139,6 +139,7 @@ Every public command and subcommand, exactly as `airk <command> --help` prints i
 - [`airk tools call`](#airk-tools-call)
 - [`airk tools list`](#airk-tools-list)
 - [`airk tools shell`](#airk-tools-shell)
+- [`airk uninstall`](#airk-uninstall)
 - [`airk usage`](#airk-usage)
 - [`airk usage calibrate`](#airk-usage-calibrate)
 - [`airk usage clear`](#airk-usage-clear)
@@ -169,7 +170,8 @@ Commands:
   changes        Report indexed changes since a revision token: added, modified and removed files, symbols and documents
   code-facts     Inspect code facts and signatures with exact default name matching and bounded continuation
   relationships  Follow indexed relationships of a symbol in --direction, optionally of one --kind, up to --hops levels
-  setup          Enroll an explicit existing catalog selection for HTTPS and print configuration references
+  setup          Guided standalone installation, index selection and coding-agent MCP setup
+  uninstall      Uninstall the native per-user service and owned runtime files; preserve source files and indexes
   init           Acknowledge an existing reviewed index mapping and prepare its reserved storage
   status         Print the project's publication, freshness, coverage and job status
   search         Search indexed evidence; results carry file, line and revision citations
@@ -2456,8 +2458,8 @@ Commands:
   prepare-legacy-caches         Freeze the exact owned helper-cache inventory before changing MCP configurations
   reprepare-legacy-caches       Explicitly re-review a pending cache inventory after newly appeared owned caches; preserve original proofs and require configuration migration against the new inspection
   retire-legacy-caches          After HTTPS migration, stop and remove only caches in the accepted native ownership inventory
-  adopt-legacy-index            Adopt an original pre-managed saved index under native exclusion; preserve original sources and index bytes without reindexing or creating a reviewed grant
-  adopt-legacy-indexes          Adopt original saved indexes once per verified physical backing, retaining every original client configuration claim
+  adopt-legacy-index            Resume only an interrupted standalone adoption; a new one is refused (standalone_adoption_unsupported)
+  adopt-legacy-indexes          Resume only an interrupted standalone adoption batch; a new one is refused (standalone_adoption_unsupported)
   abort-stage                   Abort an ownership-proven interrupted copy; preserve promoted runtimes and unknown files
   repair-launcher               Repair an absent or known older launcher from the selected approved payload; requires stopped owners
   abort-launcher-repair         Abort an owned unfinished launcher copy; an already replaced image must be finalized
@@ -2784,6 +2786,9 @@ Options:
       --expected-active <EXPECTED_ACTIVE>
           Refuse if the reviewed preceding selection changed; exact completed replay does not start a service
 
+      --rebuild-indexes
+          Preserve previous state and automatically rebuild indexes in fresh storage from saved sources
+
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
@@ -2814,7 +2819,7 @@ Options:
 ## airk runtime adopt-legacy-index
 
 ```text
-Adopt an original pre-managed saved index under native exclusion; preserve original sources and index bytes without reindexing or creating a reviewed grant
+Resume only an interrupted standalone adoption; a new one is refused (standalone_adoption_unsupported)
 
 Usage: airk runtime adopt-legacy-index [OPTIONS] --install-dir <INSTALL_DIR> --expected-active <EXPECTED_ACTIVE> --operation-id <OPERATION_ID> --locator-file <LOCATOR_FILE> --expected-cache-inspection-sha256 <EXPECTED_CACHE_INSPECTION_SHA256>
 
@@ -2873,7 +2878,7 @@ Options:
 ## airk runtime adopt-legacy-indexes
 
 ```text
-Adopt original saved indexes once per verified physical backing, retaining every original client configuration claim
+Resume only an interrupted standalone adoption batch; a new one is refused (standalone_adoption_unsupported)
 
 Usage: airk runtime adopt-legacy-indexes [OPTIONS] --install-dir <INSTALL_DIR> --expected-active <EXPECTED_ACTIVE> --operation-id <OPERATION_ID> --locators-file <LOCATORS_FILE> --expected-cache-inspection-sha256 <EXPECTED_CACHE_INSPECTION_SHA256>
 
@@ -3398,6 +3403,9 @@ Options:
       --index-ids <INDEX_IDS>
           Narrow a combined read to member indexes; requires explicit Project scope
 
+      --reattach-connection-id <REATTACH_CONNECTION_ID>
+
+
       --member-availability <MEMBER_AVAILABILITY>
           Report member failures or require every selected member to answer
 
@@ -3747,6 +3755,9 @@ Options:
 
       --collection <COLLECTION>
           [default: default]
+
+      --purpose <PURPOSE>
+          [possible values: predecessor-cleanup]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
@@ -4555,11 +4566,17 @@ Options:
       --connection-id <CONNECTION_ID>
 
 
+      --purpose <PURPOSE>
+          [possible values: predecessor-cleanup]
+
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --predecessor <PREDECESSOR>
+
 
       --combined-session <COMBINED_SESSION>
           Frozen reviewed multi-Project session JSON; indexes are executed once each
@@ -7139,13 +7156,16 @@ Options:
 ## airk setup
 
 ```text
-Enroll an explicit existing catalog selection for HTTPS and print configuration references
+Guided standalone installation, index selection and coding-agent MCP setup
 
-Usage: airk setup [OPTIONS]
+Usage: airk setup [OPTIONS] [-- <CLIENT_ARGS>...]
+
+Arguments:
+  [CLIENT_ARGS]...
+          Additional foreground client arguments, passed directly without a shell string
 
 Options:
       --client <CLIENT>
-          [default: claude]
           [possible values: claude, codex, vscode, cursor, gemini, cline, roo, junie, copilot-cli, opencode, opencode-v2, kilo]
 
       --root <ROOT>
@@ -7172,8 +7192,17 @@ Options:
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
 
+      --project <PROJECTS>
+          Select existing index sets by native ID; repeat or separate IDs with commas
+
       --combined-session <COMBINED_SESSION>
           Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --index <INDEXES>
+          Select indexes, or narrow explicitly selected index sets to these indexes
+
+      --create-root <CREATE_ROOT>
+          Review and create an index from this source folder through the native setup owner
 
       --project-ids <PROJECT_IDS>
           Narrow a combined read to explicit Projects from its reviewed session
@@ -7181,13 +7210,40 @@ Options:
       --index-ids <INDEX_IDS>
           Narrow a combined read to member indexes; requires explicit Project scope
 
+      --storage <STORAGE>
+          Storage for the explicitly created index; otherwise use the native installation's default
+
       --member-availability <MEMBER_AVAILABILITY>
           Report member failures or require every selected member to answer
 
           [possible values: report, require]
 
+      --name <NAME>
+
+
+      --watch
+          Watch the explicitly created source folder; defaults to off
+
       --service-project <SERVICE_PROJECT>
 
+
+      --yes
+          Confirm the explicitly supplied install and scope choices without prompting
+
+      --runtime-source <RUNTIME_SOURCE>
+          Native payload supplied by a trusted offline installer or explicit distributor policy
+
+      --approved-sha256 <APPROVED_SHA256>
+          Distributor-pinned install-manifest digest; never inferred from the same payload
+
+      --rebuild-indexes
+          Choose the native early rebuild option when upgrading an installed predecessor
+
+      --install-only
+          Install the reviewed native payload and leave client enrollment for a later setup invocation
+
+      --launch
+          Launch the selected client with protected credentials and additive trust in its process environment
 
   -h, --help
           Print help
@@ -7549,6 +7605,53 @@ Usage: airk tools shell [OPTIONS]
 Options:
       --root <ROOT>
           [default: .]
+
+      --data-dir <DATA_DIR>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --service-project <SERVICE_PROJECT>
+
+
+  -h, --help
+          Print help
+```
+
+## airk uninstall
+
+```text
+Uninstall the native per-user service and owned runtime files; preserve source files and indexes
+
+Usage: airk uninstall [OPTIONS]
+
+Options:
+      --root <ROOT>
+          [default: .]
+
+      --yes
+          Explicitly confirm uninstall without an interactive prompt
 
       --data-dir <DATA_DIR>
 

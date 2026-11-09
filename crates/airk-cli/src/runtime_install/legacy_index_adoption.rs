@@ -1161,6 +1161,18 @@ async fn adopt_locators(
     save(&root, &saved)?;
     Ok(result)
 }
+/// Simplification S2, decision Q1: standalone adoption is not supported. A new
+/// operation is refused before any input is read. An operation that already
+/// left a batch or maintenance journal resumes unchanged, so an interrupted
+/// adoption keeps its native owner until a later step proves none can remain.
+fn refuse_new_adoption(root: &Path, operation: &str) -> Result<()> {
+    let operation: Incarnation = operation.parse()?;
+    let pending = root.join(journal_name(operation)).try_exists()?
+        || legacy_maintenance::pending_operation(root, operation)?;
+    ensure!(pending, "{STANDALONE_ADOPTION_UNSUPPORTED}");
+    Ok(())
+}
+
 pub(super) async fn adopt_many(
     root: &Path,
     expected: &str,
@@ -1168,6 +1180,7 @@ pub(super) async fn adopt_many(
     locators_file: &Path,
     inspection: &str,
 ) -> Result<serde_json::Value> {
+    refuse_new_adoption(root, operation)?;
     let values = serde_json::from_slice(&input(locators_file)?)
         .map_err(|_| anyhow::anyhow!("invalid original locator batch metadata"))?;
     adopt_locators(root, expected, operation, values, inspection).await
@@ -1179,6 +1192,7 @@ pub(super) async fn adopt(
     locator_file: &Path,
     inspection: &str,
 ) -> Result<serde_json::Value> {
+    refuse_new_adoption(root, operation)?;
     let value = serde_json::from_slice(&input(locator_file)?)
         .map_err(|_| anyhow::anyhow!("invalid original locator metadata"))?;
     let result = adopt_locators(root, expected, operation, vec![value], inspection).await?;

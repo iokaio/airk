@@ -258,6 +258,11 @@ fn read(root: &Path) -> Result<Option<Journal>> {
     Ok(Some(journal))
 }
 
+/// True when an interrupted maintenance cycle for `operation` is pending.
+pub(super) fn pending_operation(root: &Path, operation: Incarnation) -> Result<bool> {
+    Ok(read(root)?.is_some_and(|journal| journal.operation == operation))
+}
+
 pub(super) fn require_manager_change_settled(root: &Path) -> Result<()> {
     let path = root.join(JOURNAL);
     match fs::symlink_metadata(&path) {

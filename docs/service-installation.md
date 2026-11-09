@@ -330,6 +330,13 @@ original declarations. Other custom profiles without native context or recorded
 lineage cannot be discovered automatically. VS Code owns its extension-package
 directories; this operation does not delete those or unrelated downloads.
 
+**9 November 2026 (simplification S2, decision Q1):** standalone adoption is
+no longer offered. The extension leaves original standalone agent entries
+unchanged for review and keeps their helper caches. Both adoption commands
+refuse a new operation with `standalone_adoption_unsupported`, and only resume
+an operation that already left a batch or maintenance journal. The following
+describes the historical adoption behavior that such a resume completes.
+
 `runtime adopt-legacy-indexes --install-dir PATH --expected-active SHA
 --operation-id BATCH_ID --locators-file PRIVATE_JSON_ARRAY
 --expected-cache-inspection-sha256 DIGEST` adopts saved evidence from the exact

@@ -287,7 +287,7 @@ commit that adds this record; its result is in that commit's message.
 |---|---|---|
 | Clock seam + W3 | `faf3060` | `CurrentRead` reads an injected `RequestClock`. F1 is now deterministic, and a deadline regression shows the reader is alive at 119 s and expired at 120 s. `readRetry.ts` refuses non-integer number literals. Store outcomes match the baseline. Mocked extension suite: 1,342 tests, 1,321 pass, 21 skipped, 0 fail. |
 | R39 repair (D10) | `7cd8840` | 15 binding staleness checks plus the HTTP health watch now compare request authority (`sameRuntimeAuthority`), not object identity. A genuine authority change fires the definitions event. The 2 former `todo` reproductions pass, and 3 cases were added (7/7). **Installed acceptance not rerun.** |
-| S4 module honesty | this commit | The committed script `scripts/dev/s4_module_honesty.py` made 339 file moves. Non-platform `#[path]` mounts went from 361 to 32. Test identities are unchanged: 69 binaries / 3,374 tests, the only difference being the deadline test from `faf3060`. Library outcomes equal the baseline except the expected additions and deletions. Python: 931 OK. Clippy is clean in both configurations. |
+| S4 module honesty | `2e1a8fb` | The committed script `scripts/dev/s4_module_honesty.py` made 339 file moves. Non-platform `#[path]` mounts went from 361 to 32. Test identities are unchanged: 69 binaries / 3,374 tests, the only difference being the deadline test from `faf3060`. Library outcomes equal the baseline except the expected additions and deletions. Python: 931 OK. Clippy is clean in both configurations. |
 
 **S4: what stays, and why** (each is listed by `--plan`):
 
@@ -331,3 +331,49 @@ standalone client configurations. The proposed order, one reviewed step each:
 4. **Deletion.** Remove P5 upgrade recovery, keeping the Genesis helpers that
    inventory §4 marks MIXED.
 5. **Deletion.** Remove the extension adoption and P5 recovery paths.
+
+### S2 step 1 (Q1: no standalone adoption)
+
+**Extension:**
+
+- Every migration first runs the non-journaling `inspect-legacy-caches`.
+- **While a standalone entry exists:**
+  - The entry stays byte-for-byte for review, and the output names it.
+  - No cache-retirement journal is prepared, so later activations are never
+    blocked.
+  - The cache retirement step is skipped.
+  - Every completion check exempts exactly that file, server and container
+    entry.
+- Installation still completes, because a retained user entry is not a
+  cleanup failure.
+- A locator from a pending inspection whose entry the user has already
+  removed is not retained, so its caches retire normally.
+- The adoption method and its two adoption-success tests are removed.
+
+**Native:**
+
+- `adopt-legacy-index(es)` refuse a new operation with
+  `standalone_adoption_unsupported` before reading any input.
+- An operation that already left a batch or maintenance journal still resumes,
+  so an interrupted adoption keeps its native owner. The CLI is that surviving
+  owner.
+- The adoption implementation therefore stays compiled. Deleting it (S2 step 3)
+  first needs proof that no such journal can remain.
+
+**Evidence:**
+
+- Mocked extension suite: 1,334 tests, 1,313 pass, 21 skipped, 0 fail. That is
+  11 adoption cases removed and 3 retention cases added.
+- One retention case proves that a retained entry does not waive native proof
+  for another entry launching a cached image. The non-journaling inspection
+  stays the cache evidence for those proof checks.
+- `airk-cli` library outcomes match the S4 baseline plus 2 refusal tests.
+- Clippy is clean in both configurations, and the CLI reference was
+  regenerated.
+- The reference had been stale since the standalone CLI installer commit (it
+  lacked `uninstall` and still showed the old `setup`), so this regeneration
+  also repairs that drift.
+
+**Left for later:** `scripts/check-standalone-adoption*.py` exercise new
+adoption end to end. They are now obsolete qualification harnesses and are
+candidates for removal in step 3.

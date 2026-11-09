@@ -13,7 +13,7 @@ import { setupAgent, AgentSetupHost } from './agentSetup';
 import { launchArgs, LaunchSpec, McpVerification, unifiedEntry, ServerEntry, UNIFIED_TOOLS } from './model';
 import { probeMcp, runText } from './native';
 import { LegacyRetirementSession, retirementJson, retirementMarkdown } from './runtimeLegacyRetirement';
-import { automaticUpgrade, BootstrapObservation, nativeRunner, RuntimeBinding, RuntimeHost, legacyOriginLocatorIdentity, runtimeBindingIdentity, sameRuntimeAuthority, type LegacyOriginLocator } from './serviceBootstrap';
+import { automaticUpgrade, BootstrapObservation, nativeRunner, RuntimeBinding, RuntimeHost, runtimeBindingIdentity, sameRuntimeAuthority, type LegacyOriginLocator } from './serviceBootstrap';
 import { ConsoleRuntime, ServiceConsole, serviceRuntimeOptions } from './serviceConsole';
 import { identifier, record, ServiceError, type RecordValue } from './serviceClient';
 import { IntentJournal } from './serviceIntents';
@@ -31,7 +31,7 @@ import type { SearchDraft } from './explorerDrafts';
 import { ExplorerSidebar } from './explorerSidebar';
 import { WorkbenchView } from './workbenchView';
 import type { ExplorerController, ExplorerHost } from './explorerController';
-import { hasUnifiedVscodeConfig, migrateAgentConfig, migrateLocalAgents, locations as localAgentLocations, LocalAgent, httpConfigurationConnectionId, refreshHttpAgentConfig, migrateStandaloneHttpEntry, captureCleanBreakClientCleanup, applyCleanBreakClientCleanup, validateCleanBreakClientPlan, type CleanBreakClientPlan, type CleanBreakClientFile } from './agentMigration';
+import { hasUnifiedVscodeConfig, migrateAgentConfig, migrateLocalAgents, locations as localAgentLocations, LocalAgent, httpConfigurationConnectionId, refreshHttpAgentConfig, captureCleanBreakClientCleanup, applyCleanBreakClientCleanup, validateCleanBreakClientPlan, type CleanBreakClientPlan, type CleanBreakClientFile } from './agentMigration';
 import { readJsonConfig, vscodeCredentialConfiguration, vscodeManualConnectionIds, vscodeManualConfiguration } from './agentConfig';
 import { AssistanceIpcHost } from './explorerAssistanceHost';
 import {ClientTrustPublicationError,IssuerRotationStatus,publishOwnedIssuerBundle,updateOwnedIssuerBundles} from './httpIssuerRotation';
@@ -77,6 +77,10 @@ function codeStamp(root:string|undefined,required:readonly string[]=['serviceExt
         const identity=process.platform==='win32'?path.toNamespacedPath(resolved).toLowerCase():resolved;
         return {stamp:JSON.stringify([identity,metadata]),files};
     }catch{return undefined;}
+}
+/** Container of an original legacy declaration, defaulting by file format. */
+function legacyLocatorContainer(locator:LegacyOriginLocator):readonly string[]{
+    return locator.container_path??[locator.format==='codex_toml'?'mcp_servers':locator.format==='vscode_servers_json'?'servers':locator.format==='open_code_json'?'mcp':'mcpServers'];
 }
 function same(left:string,right:string):boolean {
     return path.relative(process.platform==='win32'?path.toNamespacedPath(left):left,process.platform==='win32'?path.toNamespacedPath(right):right)==='';
@@ -147,6 +151,15 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     private migrationPredecessors:LaunchSpec[]=[];
     private legacyLauncherInspection?:Record<string,unknown>;
     private legacyCachePreparation?:Record<string,unknown>;
+    /** Standalone declarations kept unchanged for user review. Standalone index
+     * adoption is not supported (simplification S2, decision Q1), so their old
+     * helper caches stay until the user reviews them. */
+    private standaloneRetained:LegacyOriginLocator[]=[];
+    /** Non-journaling native inspection kept as cache evidence when no
+     * retirement journal is prepared because standalone entries remain. */
+    private legacyCacheInspection?:Record<string,unknown>;
+    /** Native cache evidence for proof checks, whether or not retirement was prepared. */
+    private legacyCacheEvidence():Record<string,unknown>|undefined{return this.legacyCachePreparation??this.legacyCacheInspection;}
     private legacyMigrationFiles=new Map<string,{agent:LocalAgent;file:GlobalConfigFile}>();
     private migrationAbsentConfigurations=new Set<string>();
     private migratedConfigurationSnapshots=new Map<string,string>();
@@ -1235,30 +1248,36 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     private async finalizeLegacyLauncherRemoval(binding:RuntimeBinding,publishCompletion=true,forcePayloadRetirement=false):Promise<void>{
         this.trusted();const generation=this.generation;
         await this.verifyMigrationSnapshots();
-        if(!this.legacyCachePreparation)throw new ServiceError('legacy_cache_inspection_unconfirmed');
-        let cacheReceipt:Record<string,unknown>;
-        try{cacheReceipt=await this.runtime().retireLegacyCaches(binding,this.legacyCachePreparation);}
-        catch(original){
-            this.output.appendLine('AIRK cache retirement was not confirmed: '+String(original));
-            if(original instanceof ServiceError&&original.nativeResponse)this.output.appendLine(JSON.stringify(original.nativeResponse));
-            // Explicit native recovery checks actual inventory and refuses
-            // pending/unknown work. An unchanged plan never authorizes replay.
-            const previous=this.legacyCachePreparation;
-            const recoveryCurrent=()=>{this.trusted();if(generation!==this.generation)throw new ServiceError('workspace_registration_changed');};
-            const client=await this.migrationClient(binding);let inventory:Awaited<ReturnType<typeof readWorkspaceRegistrations>>;
-            try{inventory=await readWorkspaceRegistrations(binding,async(after,revision,inactive)=>client.projects(after,revision,32,inactive));}finally{client.dispose();}recoveryCurrent();
-            const roots=[...this.folders().map(folder=>folder.uri.fsPath),...this.workspace.rememberedRoots(binding),...[...inventory.active,...inventory.inactive].map(row=>row.root)];
-            const locators=await this.scanLegacyCacheOrigins(roots,recoveryCurrent);
-            const replacement=await this.withLegacyOriginFile(binding,locators,recoveryCurrent,file=>this.runtime().reprepareLegacyCaches(binding,previous,file));recoveryCurrent();
-            if(generation!==this.generation)throw new ServiceError('workspace_registration_changed');
-            if(replacement.inspection_sha256===previous.inspection_sha256)throw original;
-            this.output.appendLine('AIRK native cache inventory changed; repeating the complete guarded configuration review once.');
-            await this.migrateAgentConnections(binding,this.migrationPredecessors);this.trusted();await this.verifyMigrationSnapshots();
-            if(!this.legacyCachePreparation||this.legacyCachePreparation.inspection_sha256!==replacement.inspection_sha256)throw new ServiceError('legacy_cache_reprepare_unconfirmed');
-            cacheReceipt=await this.runtime().retireLegacyCaches(binding,this.legacyCachePreparation);
+        if(this.standaloneRetained.length){
+            // Retained standalone entries still launch these images; cache
+            // retirement waits until the user reviews them (no journal exists).
+            this.output.appendLine(`AIRK kept old helper caches: ${this.standaloneRetained.length} standalone agent entr${this.standaloneRetained.length===1?'y':'ies'} still use them and remain for review.`);
+        }else{
+            if(!this.legacyCachePreparation)throw new ServiceError('legacy_cache_inspection_unconfirmed');
+            let cacheReceipt:Record<string,unknown>;
+            try{cacheReceipt=await this.runtime().retireLegacyCaches(binding,this.legacyCachePreparation);}
+            catch(original){
+                this.output.appendLine('AIRK cache retirement was not confirmed: '+String(original));
+                if(original instanceof ServiceError&&original.nativeResponse)this.output.appendLine(JSON.stringify(original.nativeResponse));
+                // Explicit native recovery checks actual inventory and refuses
+                // pending/unknown work. An unchanged plan never authorizes replay.
+                const previous=this.legacyCachePreparation;
+                const recoveryCurrent=()=>{this.trusted();if(generation!==this.generation)throw new ServiceError('workspace_registration_changed');};
+                const client=await this.migrationClient(binding);let inventory:Awaited<ReturnType<typeof readWorkspaceRegistrations>>;
+                try{inventory=await readWorkspaceRegistrations(binding,async(after,revision,inactive)=>client.projects(after,revision,32,inactive));}finally{client.dispose();}recoveryCurrent();
+                const roots=[...this.folders().map(folder=>folder.uri.fsPath),...this.workspace.rememberedRoots(binding),...[...inventory.active,...inventory.inactive].map(row=>row.root)];
+                const locators=await this.scanLegacyCacheOrigins(roots,recoveryCurrent);
+                const replacement=await this.withLegacyOriginFile(binding,locators,recoveryCurrent,file=>this.runtime().reprepareLegacyCaches(binding,previous,file));recoveryCurrent();
+                if(generation!==this.generation)throw new ServiceError('workspace_registration_changed');
+                if(replacement.inspection_sha256===previous.inspection_sha256)throw original;
+                this.output.appendLine('AIRK native cache inventory changed; repeating the complete guarded configuration review once.');
+                await this.migrateAgentConnections(binding,this.migrationPredecessors);this.trusted();await this.verifyMigrationSnapshots();
+                if(!this.legacyCachePreparation||this.legacyCachePreparation.inspection_sha256!==replacement.inspection_sha256)throw new ServiceError('legacy_cache_reprepare_unconfirmed');
+                cacheReceipt=await this.runtime().retireLegacyCaches(binding,this.legacyCachePreparation);
+            }
+            this.trusted();if(generation!==this.generation)throw new ServiceError('workspace_registration_changed');
+            this.output.appendLine('AIRK old helper cache removal ('+String(cacheReceipt.scope)+'): '+JSON.stringify(cacheReceipt));
         }
-        this.trusted();if(generation!==this.generation)throw new ServiceError('workspace_registration_changed');
-        this.output.appendLine('AIRK old helper cache removal ('+String(cacheReceipt.scope)+'): '+JSON.stringify(cacheReceipt));
         this.reportInstall('Removing old AIRK launchers...');
         const receipt=await this.runtime().retireLegacyLaunchers(binding);this.trusted();
         if(generation!==this.generation)throw new ServiceError('workspace_registration_changed');
@@ -1318,8 +1337,11 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         const inspected=this.legacyLauncherInspection,paths=[binding.executable,path.join(binding.installDir,process.platform==='win32'?'airk-launcher.exe':'airk-launcher'),...specs.map(spec=>spec.command),...this.migrationPredecessors.map(spec=>spec.command)];
         for(const field of ['launcher','universal_launcher'])if(inspected?.[field])paths.push(String(record(inspected[field]).path));
         if(Array.isArray(inspected?.legacy_runtime_images))for(const item of inspected.legacy_runtime_images)paths.push(String(record(item).path));
-        if(Array.isArray(this.legacyCachePreparation?.caches))for(const item of this.legacyCachePreparation.caches)paths.push(String(record(item).executable));
+        const evidence=this.legacyCacheEvidence();if(Array.isArray(evidence?.caches))for(const item of evidence.caches)paths.push(String(record(item).executable));
         return [...new Set(paths)];
+    }
+    private retainedStandalone(destination:string,row:{serverKey:string;containerPath:readonly string[]}):boolean{
+        return this.standaloneRetained.some(locator=>same(locator.path,destination)&&locator.server===row.serverKey&&isDeepStrictEqual(row.containerPath,legacyLocatorContainer(locator)));
     }
     private legacyCommandKnown(command:unknown,paths:readonly string[]):boolean{
         if(typeof command!=='string'||!path.isAbsolute(command))return false;
@@ -1485,7 +1507,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         return {source:result,owned};
     }
     private originalMigrationReceipt(destination:string,fallback:string):string{
-        const original=Array.isArray(this.legacyCachePreparation?.origin_proofs)?this.legacyCachePreparation.origin_proofs.map(record).filter(value=>same(String(value.config_path),destination)):[];
+        const evidence=this.legacyCacheEvidence(),original=Array.isArray(evidence?.origin_proofs)?evidence.origin_proofs.map(record).filter(value=>same(String(value.config_path),destination)):[];
         const digests=new Set(original.map(value=>String(value.config_sha256)));
         if(digests.size>1)throw new ServiceError('legacy_original_configuration_changed');
         return [...digests][0]??[...this.legacyMigrationFiles.values()].find(value=>same(value.file.destination,destination))?.file.sha256??fallback;
@@ -1493,14 +1515,15 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     private async migrateGeneratedServiceConfiguration(binding:RuntimeBinding,agent:LocalAgent,before:string,specs:readonly LaunchSpec[],restored:readonly LaunchSpec[],check:()=>void,configurationReceipt:string,destination:string,originContainer?:readonly string[]):Promise<{source:string;owned:boolean}>{
         const refreshed=await this.refreshOwnedHttpConfiguration(agent,before,binding,check);let source=refreshed.source,owned=refreshed.owned;
         const parser=agent==='codex'?'codex':agent==='copilot'?'copilot':'claude',commands=this.migrationCommandPaths(binding,specs),rows=globalConfigDeclarations(parser,source);
-        const ownedReadRows=rows.filter(row=>row.serverKey!=='airk_explorer'&&this.legacyCommandKnown(row.fields.command,commands));
+        const ownedReadRows=rows.filter(row=>row.serverKey!=='airk_explorer'&&this.legacyCommandKnown(row.fields.command,commands)&&!this.retainedStandalone(destination,row));
         const independent=rows.some(row=>typeof row.fields.url==='string')||ownedReadRows.length>1||rows.some(row=>row.serverKey==='airk'&&!this.legacyCommandKnown(row.fields.command,commands));
         for(const row of rows){
-            if(row.containerPath.length!==1||!this.legacyCommandKnown(row.fields.command,commands))continue;
+            if(row.containerPath.length!==1||!this.legacyCommandKnown(row.fields.command,commands)||this.retainedStandalone(destination,row))continue;
             if(!globalConfigDeclarations(parser,source).some(current=>current.serverKey===row.serverKey&&current.fields.command===row.fields.command))continue;
-            if(Array.isArray(this.legacyCachePreparation?.caches)&&this.legacyCachePreparation.caches.some(cache=>same(String(record(cache).executable),String(row.fields.command)))){
-                const managed=this.legacyCachePreparation?.managed_locators;
-                if(!Array.isArray(managed)||!managed.some(value=>{const locator=value as unknown as LegacyOriginLocator,container=locator.container_path??[locator.format==='codex_toml'?'mcp_servers':locator.format==='vscode_servers_json'?'servers':'mcpServers'];if(!same(locator.path,destination)||locator.server!==row.serverKey||!isDeepStrictEqual(container,originContainer??row.containerPath))return false;return (this.legacyCachePreparation!.origin_proofs as unknown[]).map(record).some(origin=>origin.config_path===locator.path&&origin.server===locator.server&&isDeepStrictEqual(origin.container_path,container)&&same(String(origin.executable),String(row.fields.command))&&isDeepStrictEqual(record(origin.declaration).argv,row.fields.args));}))throw new ServiceError('standalone_index_adoption_required');
+            const evidence=this.legacyCacheEvidence();
+            if(Array.isArray(evidence?.caches)&&evidence.caches.some(cache=>same(String(record(cache).executable),String(row.fields.command)))){
+                const managed=evidence?.managed_locators;
+                if(!Array.isArray(managed)||!managed.some(value=>{const locator=value as unknown as LegacyOriginLocator,container=locator.container_path??[locator.format==='codex_toml'?'mcp_servers':locator.format==='vscode_servers_json'?'servers':'mcpServers'];if(!same(locator.path,destination)||locator.server!==row.serverKey||!isDeepStrictEqual(container,originContainer??row.containerPath))return false;return (evidence!.origin_proofs as unknown[]).map(record).some(origin=>origin.config_path===locator.path&&origin.server===locator.server&&isDeepStrictEqual(origin.container_path,container)&&same(String(origin.executable),String(row.fields.command))&&isDeepStrictEqual(record(origin.declaration).argv,row.fields.args));}))throw new ServiceError('standalone_index_adoption_required');
             }
             const args=row.fields.args;if(!Array.isArray(args)||args.some(value=>typeof value!=='string'))throw new ServiceError('owned_global_scope_unproven');
             if(args[0]==='runtime'&&(args[1]!=='launch'||args[2]!=='--install-dir'||!same(String(args[3]),binding.installDir)||args[4]!=='--'))throw new ServiceError('owned_global_scope_unproven');
@@ -1529,7 +1552,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             const containers=[...new Map(file.declarations.map(row=>[JSON.stringify(row.containerPath),row.containerPath])).values()];
             for(const container of containers){
                 const declarations=file.declarations.filter(row=>JSON.stringify(row.containerPath)===JSON.stringify(container));
-                const ownedCommand=declarations.some(row=>sameCommand(row.fields.command));
+                const ownedCommand=declarations.some(row=>sameCommand(row.fields.command)&&!this.retainedStandalone(file.destination,row));
                 if(file.agent==='codex'&&(container.length!==1||container[0]!=='mcp_servers')){
                     const knownHttp=await this.hasOwnedHttpDeclarations(file.agent,declarations,binding,check);
                     if(ownedCommand||knownHttp)throw new ServiceError('agent_http_migration_incomplete',false,{destination:file.destination,reason:'owned_profile_transform_unverified'});
@@ -1543,14 +1566,14 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             if(file.source!==original.source){const saved=await this.saveMigrationConfiguration(file.destination,original.source,file.source,check);file={...file,source:saved,declarations:globalConfigDeclarations(file.agent,saved)};this.migratedConnections=true;}
             // A recognized old image under an unsupported alias cannot escape
             // finalization merely because it was not a canonical AIRK key.
-            if(file.declarations.some(row=>sameCommand(row.fields.command)))throw new ServiceError('agent_http_migration_incomplete',false,{destination:file.destination,reason:'legacy_global_declaration_remains'});
+            if(file.declarations.some(row=>sameCommand(row.fields.command)&&!this.retainedStandalone(file.destination,row)))throw new ServiceError('agent_http_migration_incomplete',false,{destination:file.destination,reason:'legacy_global_declaration_remains'});
             if(relevant)observe(file.destination,file.source);
         }
         this.migrationGlobalVerifier=async()=>{
             const fresh=await inventoryGlobalAgentConfigs(options);check();
             if(fresh.blockers.length)throw new ServiceError('agent_http_migration_incomplete',false,{blockers:fresh.blockers});
             for(const file of fresh.files){
-                if(file.declarations.some(row=>sameCommand(row.fields.command)))throw new ServiceError('agent_http_migration_incomplete',false,{destination:file.destination,reason:'legacy_global_declaration_appeared'});
+                if(file.declarations.some(row=>sameCommand(row.fields.command)&&!this.retainedStandalone(file.destination,row)))throw new ServiceError('agent_http_migration_incomplete',false,{destination:file.destination,reason:'legacy_global_declaration_appeared'});
                 if(!this.migratedConfigurationSnapshots.has(file.destination)&&file.declarations.some(row=>{const id=httpConfigurationConnectionId(file.agent,row.fields);return !!id&&this.migrationHttpConnections.has(id);}))throw new ServiceError('agent_http_migration_incomplete',false,{destination:file.destination,reason:'owned_global_configuration_appeared'});
             }
         };
@@ -1587,113 +1610,23 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     private async prepareLegacyCacheMigration(binding:RuntimeBinding,roots:readonly string[],check:()=>void):Promise<void>{
         const locators=await this.scanLegacyCacheOrigins(roots,check);
         const storage=await fs.realpath(this.context.globalStorageUri.fsPath);check();
-        this.legacyCachePreparation=await this.withLegacyOriginFile(binding,locators,check,file=>this.runtime().prepareLegacyCaches(binding,path.dirname(storage),file));check();
-    }
-    private async adoptStandaloneConfigurations(binding:RuntimeBinding,checkOwner:()=>void,observe:(destination:string,source:string)=>void):Promise<void>{
-        await this.waitForAssistance();
-        const explorerDescriptor=this.httpAttachment(),check=()=>{checkOwner();if(explorerDescriptor!==this.httpAttachment())throw new ServiceError('workspace_registration_changed');};
-        const prepared=this.legacyCachePreparation;if(!prepared)throw new ServiceError('legacy_cache_inspection_unconfirmed');
-        const classifications=Array.isArray(prepared.origin_classifications)?prepared.origin_classifications.map(record):[];
-        if(classifications.some(value=>value.kind==='unsupported'))throw new ServiceError('legacy_original_configuration_unsupported',false,prepared);
-        const candidates=Array.isArray(prepared.adoption_locators)?prepared.adoption_locators as unknown as LegacyOriginLocator[]:[];
-        if(!candidates.length)return;
-        const container=(locator:LegacyOriginLocator)=>locator.container_path??[locator.format==='codex_toml'?'mcp_servers':locator.format==='vscode_servers_json'?'servers':locator.format==='open_code_json'?'mcp':'mcpServers'];
-        const standaloneParts=(locator:LegacyOriginLocator,origin:string,client:string)=>['standalone-http/1',binding.installDir,legacyOriginLocatorIdentity(locator),origin,client];
-        const retainedHttp=new Map<string,HttpConnectionInfo>(),originProofs=new Map<string,Record<string,unknown>>();
-        const previousConnection=(parts:unknown[],id:string):HttpConnectionInfo|undefined=>{
-            const base=httpEnrollmentKey(parts,undefined);
-            for(const key of ['airk.http.standalone.connection.1.'+base+'.'+id,'airk.http.standalone.1.'+base]){
-                const raw=this.context.globalState.get<unknown>(key);if(raw===undefined)continue;
-                const info=validateHttpConnection(raw,undefined,path.join(binding.controlDir,'http-1'));if(info.connection_id===id)return info;
-                if(key.startsWith('airk.http.standalone.connection.1.'))throw new ServiceError('standalone_http_authority_changed');
-            }
-        };
-        const files=new Map<string,{agent:LocalAgent;file:GlobalConfigFile;locators:LegacyOriginLocator[]}>(),needed:LegacyOriginLocator[]=[];
-        for(const locator of candidates){
+        // Inspect without a retirement journal first. Standalone declarations are
+        // never adopted; while any still exists, its cache stays and no journal is
+        // prepared (a pending journal would block every later activation).
+        const inspection=await this.withLegacyOriginFile(binding,locators,check,file=>this.runtime().inspectLegacyCaches(binding,path.dirname(storage),file));check();
+        const standalone=Array.isArray(inspection.adoption_locators)?inspection.adoption_locators as unknown as LegacyOriginLocator[]:[];
+        this.standaloneRetained=standalone.filter(locator=>{
             const current=[...this.legacyMigrationFiles.values()].find(value=>same(value.file.destination,locator.path));
-            if(!current){if(await readJsonConfig(locator.path)===undefined){this.migrationAbsentConfigurations.add(locator.path);continue;}throw new ServiceError('legacy_client_configuration_location_unverified');}
-            if(!['codex','claude','copilot'].includes(current.agent))throw new ServiceError('http_client_compatibility_unverified');
-            const row=current.file.declarations.find(row=>row.serverKey===locator.server&&isDeepStrictEqual(row.containerPath,container(locator)));
-            if(!row)continue;
-            const origin=(prepared.origin_proofs as unknown[]).map(record).find(value=>value.config_path===locator.path&&value.server===locator.server&&isDeepStrictEqual(value.container_path,container(locator)));
-            if(!origin)throw new ServiceError('legacy_original_configuration_changed',false,prepared);
-            const locatorKey=legacyOriginLocatorIdentity(locator);
-            if(typeof row.fields.command==='string'){
-                if(!same(row.fields.command,String(origin.executable))||current.file.sha256!==origin.config_sha256)throw new ServiceError('legacy_original_configuration_changed',false,prepared);
-            }else{
-                // A prior file CAS can precede window replacement. Only the
-                // exact connection saved for this native original claim may
-                // resume its attachment; arbitrary/manual HTTP entries still
-                // go through the ordinary ownership lookup and its refusals.
-                const classification=classifications.find(value=>legacyOriginLocatorIdentity(value.locator as unknown as LegacyOriginLocator)===locatorKey);
-                const id=httpConfigurationConnectionId(current.agent,row.fields);if(!id||classification?.kind!=='standalone')continue;
-                const prior=previousConnection(standaloneParts(locator,String(classification.origin_sha256),current.agent==='copilot'?'vscode':current.agent),id);if(!prior)continue;
-                if(prior.selection.kind!=='imported_legacy'||prior.selection.selection.grant.provenance.kind!=='imported_standalone_adoption'
-                    ||prior.selection.selection.configuration_receipt!==origin.config_sha256
-                    ||!prior.selection.selection.grant.provenance.adoption.configuration_claims.some((claim:Record<string,unknown>)=>claim.origin_sha256===classification.origin_sha256&&claim.config_sha256===origin.config_sha256&&claim.original_server===locator.server&&isDeepStrictEqual(claim.container_path,container(locator))))throw new ServiceError('standalone_http_authority_changed');
-                // Recognize the complete existing transport before native
-                // enrollment, including exact ID, endpoint and header policy.
-                transformGlobalContainer(current.file,container(locator),source=>refreshHttpAgentConfig(current.agent,source,prior,prior.endpoint.url,locator.server));
-                retainedHttp.set(locatorKey,prior);
-            }
-            originProofs.set(locatorKey,origin);
-            if(vscode.workspace.textDocuments.some(document=>same(document.uri.fsPath,locator.path)&&document.isDirty))throw new ServiceError('agent_configuration_has_unsaved_edits');
-            const group=files.get(current.file.destination)??{...current,locators:[]};group.locators.push(locator);files.set(current.file.destination,group);needed.push(locator);
+            return !!current&&current.file.declarations.some(row=>row.serverKey===locator.server&&isDeepStrictEqual(row.containerPath,legacyLocatorContainer(locator)));
+        });
+        if(this.standaloneRetained.length){
+            this.legacyCacheInspection=inspection;
+            // A retained user entry is not a cleanup failure: installation can
+            // complete, and every later start reports the entry again.
+            for(const locator of this.standaloneRetained)this.output.appendLine(`Standalone AIRK agent entry "${locator.server}" in ${locator.path} was left unchanged for review. AIRK ${this.runningVersion} does not adopt standalone indexes; set up an index in Indexing → Index library and update or remove that entry.`);
+            return;
         }
-        if(!needed.length)return;
-        const storage=await fs.realpath(this.context.globalStorageUri.fsPath);check();
-        const input=await publishNativeInput(binding.controlDir,JSON.stringify(needed),check,'native-input-legacy-batch-'+String(prepared.inspection_sha256)+'.json');let accepted:LegacyOriginLocator[];
-        const stat=await fs.lstat(input);if(!stat.isFile()||stat.isSymbolicLink()||stat.nlink!==1||stat.size>1048576||!same(await fs.realpath(input),input))throw new ServiceError('legacy_batch_input_unconfirmed');accepted=JSON.parse(await fs.readFile(input,'utf8'));
-
-        const allowed=new Set(candidates.map(legacyOriginLocatorIdentity));
-        if(!Array.isArray(accepted)||!accepted.length||accepted.length>32||new Set(accepted.map(legacyOriginLocatorIdentity)).size!==accepted.length||accepted.some(locator=>!allowed.has(legacyOriginLocatorIdentity(locator)))||needed.some(locator=>!accepted.some(value=>legacyOriginLocatorIdentity(value)===legacyOriginLocatorIdentity(locator))))throw new ServiceError('legacy_batch_input_changed');
-        const operation=createHash('sha256').update(JSON.stringify(['airk-standalone-batch/1',binding.installDir,binding.runtimeSha256,prepared.inspection_sha256])).digest('hex').slice(0,32);
-        // The native owner chooses shared physical backings and retains the
-        // complete frozen batch; all authority checks precede any config save.
-        const batch=await this.runtime().adoptLegacyIndexes(binding,prepared,operation,input,accepted);check();
-        this.output.appendLine('AIRK saved evidence adoption: '+JSON.stringify(batch));
-        const mapped=(batch.claims as unknown[]).map(record),pending=new Map<string,GlobalConfigFile>();
-        for(const [destination,entry]of files){
-            let file=entry.file;
-            if(await readJsonConfig(destination)!==entry.file.source)throw new ServiceError('agent_configuration_changed');check();
-            for(const locator of entry.locators){
-                const locatorKey=legacyOriginLocatorIdentity(locator),mapping=mapped.find(value=>legacyOriginLocatorIdentity(value.locator as unknown as LegacyOriginLocator)===locatorKey);if(!mapping||mapping.config_sha256!==originProofs.get(locatorKey)?.config_sha256)throw new ServiceError('legacy_original_configuration_changed');
-                const original=record(mapping.original_registration),origin=String(mapping.origin_sha256),client=entry.agent==='copilot'?'vscode':entry.agent;
-                const parts=standaloneParts(locator,origin,client),retained=retainedHttp.get(locatorKey),base=httpEnrollmentKey(parts,undefined);
-                // The new ID domain cannot collide with a historical attached
-                // credential that used the old headless-looking base ID.
-                const key=httpEnrollmentKey(['standalone-http/2',...parts.slice(1)],explorerDescriptor),newId=key.slice(0,32),savedKey='airk.http.standalone.2.'+key;
-                const raw=retained??this.context.globalState.get<unknown>(savedKey)
-                    ??this.context.globalState.get<unknown>('airk.http.standalone.2.'+httpEnrollmentKey(parts,explorerDescriptor))
-                    ??this.context.globalState.get<unknown>('airk.http.standalone.origin.1.'+base)
-                    ??this.context.globalState.get<unknown>('airk.http.standalone.1.'+base);
-                const prior=raw===undefined?undefined:validateHttpConnection(raw,undefined,path.join(binding.controlDir,'http-1'));
-                let info:HttpConnectionInfo|undefined,reattach:string|undefined;
-                if(prior){
-                    const lookup=await this.runtime().lookupHttpConnection(binding,prior.connection_id,{connection:prior,client});check();
-                    if(lookup.status==='owned')info=validateHttpConnection(lookup.connection,prior.selection,path.join(binding.controlDir,'http-1'));
-                    else if(lookup.status==='unavailable'&&lookup.code==='owned_connection_attachment_retired'){
-                        if(!explorerDescriptor)throw new ServiceError('http_attachment_reconnect_requires_live_window');
-                        reattach=prior.connection_id;
-                    }
-                    else throw new ServiceError('standalone_http_ownership_unconfirmed');
-                }
-                if(!info){const registrationFile=await publishNativeInput(binding.controlDir,JSON.stringify(original),check);try{check();info=await this.runtime().httpLegacyConnection(binding,original as unknown as {binding:string;root:string;data_root:string;collection:string},registrationFile,String(mapping.config_sha256),newId,client,explorerDescriptor,origin,reattach);}finally{await removeNativeInput(registrationFile);}}
-                check();if(info.connection_id!==(reattach||!prior?newId:prior.connection_id)||info.selection.kind!=='imported_legacy'||!matchesImportedHttpOrigin(info.selection.selection,original as unknown as {binding:string;root:string;data_root:string;collection:string},String(mapping.config_sha256))||!isDeepStrictEqual(info.selection.selection.registration,mapping.registration)||!((info.selection.selection.grant.provenance.adoption.configuration_claims as Record<string,unknown>[]).some(claim=>claim.origin_sha256===origin&&claim.config_sha256===mapping.config_sha256)))throw new ServiceError('standalone_http_authority_changed');
-                if(prior&&(info.endpoint.installation!==prior.endpoint.installation||info.endpoint.user!==prior.endpoint.user||!sameHttpAuthority(info.selection,prior.selection)))throw new ServiceError('standalone_http_authority_changed');
-                if(retained)validateHttpConnection(info,retained.selection,path.join(binding.controlDir,'http-1'));
-                const originalRow=entry.file.declarations.find(row=>row.serverKey===locator.server&&isDeepStrictEqual(row.containerPath,container(locator)));if(!originalRow)throw new ServiceError('legacy_original_configuration_changed');
-                const after=transformGlobalContainer(file,container(locator),source=>retained?refreshHttpAgentConfig(entry.agent,source,info,retained.endpoint.url,locator.server,retained):migrateStandaloneHttpEntry(entry.agent,source,locator.server,originalRow.fields,info,String(mapping.config_sha256),origin,container(locator)));
-                await this.provisionHttpInfo(info,client,check,storage);check();await this.context.globalState.update(savedKey,info);check();this.migrationHttpConnections.set(info.connection_id,info);
-                await this.context.globalState.update('airk.http.standalone.connection.1.'+base+'.'+info.connection_id,info);check();
-                if(this.context.globalState.get<unknown>('airk.http.standalone.origin.1.'+base)===undefined){await this.context.globalState.update('airk.http.standalone.origin.1.'+base,info);check();}
-                file={...file,source:after,declarations:globalConfigDeclarations(file.agent,after)};
-            }
-            pending.set(destination,file);
-        }
-        // One CAS per complete original file, preserving distinct entries and
-        // policies even when several claims share one native publication.
-        for(const [destination,file]of pending){const before=files.get(destination)!.file.source,saved=await this.saveMigrationConfiguration(destination,before,file.source,check);check();observe(destination,saved);this.migratedConnections=true;this.output.appendLine('Updated '+destination);}
+        this.legacyCachePreparation=await this.withLegacyOriginFile(binding,locators,check,file=>this.runtime().prepareLegacyCaches(binding,path.dirname(storage),file));check();
     }
     private cleanBreakClientKey(installDir:string):string{
         const key=process.platform==='win32'?path.toNamespacedPath(installDir).toLowerCase():installDir;
@@ -2047,7 +1980,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     private async migrateAgentConnections(binding:RuntimeBinding,restored:readonly LaunchSpec[]=[]):Promise<void>{
         this.trusted();
         const generation=this.generation,host=this.host,folders=this.folders().map(folder=>folder.uri.fsPath);
-        this.legacyCachePreparation=undefined;this.migrationAbsentConfigurations.clear();this.migrationHttpConnections=new Map();this.migrationGlobalVerifier=undefined;this.httpOwnershipLookups.clear();
+        this.legacyCachePreparation=undefined;this.legacyCacheInspection=undefined;this.standaloneRetained=[];this.migrationAbsentConfigurations.clear();this.migrationHttpConnections=new Map();this.migrationGlobalVerifier=undefined;this.httpOwnershipLookups.clear();
         this.legacyLauncherInspection=await this.runtime().inspectLegacyLaunchers(binding);this.trusted();
         if(generation!==this.generation||host!==this.host)throw new ServiceError('workspace_registration_changed');
         const known=[...new Set([...folders,...this.workspace.rememberedRoots(binding)])];
@@ -2055,7 +1988,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         const observed=(destination:string,source:string,terminal=true)=>{
             const agent=destination.endsWith('.toml')?'codex':path.basename(path.dirname(destination))==='.vscode'?'copilot':'claude';
             const rows=globalConfigDeclarations(agent,source);
-            if(terminal&&rows.some(row=>this.legacyCommandKnown(row.fields.command,this.migrationCommandPaths(binding,specs))))throw new ServiceError('agent_http_migration_incomplete',false,{destination,reason:'legacy_owned_declaration_remains'});
+            if(terminal&&rows.some(row=>this.legacyCommandKnown(row.fields.command,this.migrationCommandPaths(binding,specs))&&!this.retainedStandalone(destination,row)))throw new ServiceError('agent_http_migration_incomplete',false,{destination,reason:'legacy_owned_declaration_remains'});
             snapshots.set(destination,createHash('sha256').update(source).digest('hex'));
         };
         const inventoryClient=await this.migrationClient(binding);let inventory:Awaited<ReturnType<typeof readWorkspaceRegistrations>>;
@@ -2066,7 +1999,6 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         // Capture original cache/config preimages before either legacy migration
         // or a modern endpoint-only rewrite saves any configuration bytes.
         await this.prepareLegacyCacheMigration(binding,[...known,...specs.map(spec=>spec.root)],preparationCurrent);
-        await this.adoptStandaloneConfigurations(binding,preparationCurrent,(destination,source)=>observed(destination,source,false));
         const localFiles=new Set<string>();
         for(const root of new Set([...known,...specs.map(spec=>spec.root)]))for(const [agent,parts]of Object.entries(localAgentLocations)){
             const destination=path.join(root,...parts);if(localFiles.has(destination))continue;localFiles.add(destination);

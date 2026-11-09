@@ -2031,3 +2031,40 @@ fn login_registration_changes_refuse_pending_issuer_but_preserve_stop_and_observ
     assert_eq!(fs::read(journal)?, original);
     Ok(())
 }
+
+#[test]
+fn standalone_adoption_commands_refuse_before_any_installation_access() {
+    // S2 decision Q1: both commands stay in the catalog and refuse a new
+    // operation with a typed code before any locator input is read.
+    let missing = std::env::temp_dir().join("airk-adoption-refusal-never-created");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    for command in [
+        RuntimeCommand::AdoptLegacyIndex {
+            install_dir: missing.clone(),
+            expected_active: "00".repeat(32),
+            operation_id: "11".repeat(16),
+            locator_file: missing.join("locator.json"),
+            expected_cache_inspection_sha256: "22".repeat(32),
+        },
+        RuntimeCommand::AdoptLegacyIndexes {
+            install_dir: missing.clone(),
+            expected_active: "00".repeat(32),
+            operation_id: "11".repeat(16),
+            locators_file: missing.join("locators.json"),
+            expected_cache_inspection_sha256: "22".repeat(32),
+        },
+    ] {
+        let error = runtime
+            .block_on(run(&command))
+            .expect_err("standalone adoption must be refused");
+        assert!(
+            error
+                .to_string()
+                .starts_with("standalone_adoption_unsupported:"),
+            "{error:#}"
+        );
+    }
+    assert!(!missing.exists());
+}

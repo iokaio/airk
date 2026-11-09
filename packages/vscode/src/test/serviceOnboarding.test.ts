@@ -1292,148 +1292,75 @@ test('upgrade migrates exact owned configuration before retiring launchers and p
         assert.equal(f.calls.some(value=>value.includes('upgrade completion blocked')),false);
     }finally{await f.close();}
 });
-for(const appearedDuringCleanup of [false,true])test(`one install adopts a standalone sibling and migrates managed stdio without collapsing scope (${appearedDuringCleanup?'fresh original declaration appears during cache retirement':'same original file'})`,async context=>{
+test('one install leaves a standalone sibling unchanged for review and still migrates managed stdio',async context=>{
+    // Simplification S2, decision Q1: standalone saved indexes are never adopted.
+    // The entry, its cached image and the user's other entries stay unchanged;
+    // no cache retirement journal is prepared while the entry remains.
     const f=await serviceTestHost(context,{automatic:false});
     try{
-        const {registration,configuration}=legacyConfiguration(f),destination=path.join(registration.root,'.mcp.json'),alias='old_standalone',digest='ba'.repeat(32),origin='10'.repeat(32),cached=path.join(f.root,'private-editor','User','globalStorage','iokaio.airk','helpers','1.3.1-windows-x64-'+digest.slice(0,16),'airk.exe');
+        const {registration,configuration}=legacyConfiguration(f),destination=path.join(registration.root,'.mcp.json'),alias='old_standalone',digest='ba'.repeat(32),cached=path.join(f.root,'private-editor','User','globalStorage','iokaio.airk','helpers','1.3.1-windows-x64-'+digest.slice(0,16),'airk.exe');
         const fields={command:cached,args:['--root',registration.root,'--data-dir',path.join(f.root,'old-standalone-data'),'--collection','old-saved','mcp'],disabled:true,alwaysAllow:['airk_search']};
-        const initial={...configuration,mcpServers:{...configuration.mcpServers,[alias]:fields}},before=JSON.stringify(initial),sha=createHash('sha256').update(before).digest('hex');if(!appearedDuringCleanup)await fs.writeFile(destination,before);migrationEditor(f);
-        const original={binding:'f0'.repeat(32),root:registration.root,data_root:path.join(f.root,'old-standalone-data'),collection:'old-saved'},adopted={...original,binding:'f1'.repeat(32),data_root:path.join(f.root,'converted-saved-data')},namespace='34'.repeat(16);
-        const claim={schema:1,origin_sha256:origin,config_sha256:sha,executable_sha256:digest,selected_entry_sha256:digest,container_path:['mcpServers'],original_server:alias,no_default_project:false};
-        const setup={caller:'11'.repeat(16),key:{namespace,epoch:1,nonce:'22'.repeat(16)},expected_catalog_revision:1,name:'Original saved index',registration:adopted,sources:[{canonical_path:registration.root,aliases:[],owner:true}],setup_watch:false};
-        const plan={schema:1,setup,original_registration:original,origin_sha256:origin,config_sha256:sha,executable_sha256:digest,quiescence_sha256:digest,archive_inventory_sha256:digest,original_publication_sha256:digest,source_inventory_sha256:digest};
-        const adoption={schema:1,operation_id:'33'.repeat(16),plan,publication:{schema:1,plan_digest:digest,archive_inventory_sha256:digest,original_publication_sha256:digest,current:`airk-r1:${namespace}:2:${digest}`,resource_sha256:digest,compatibility_sha256:digest},original_server:alias,no_default_project:false,configuration_claims:[claim]};
-        const grant={grant:{id:'grt_'+'92'.repeat(16),host:digest,revision:1,revoked:false,memberships:[{membership:{project_id:'prj_'+'44'.repeat(16),index_id:'idx_'+'55'.repeat(16),revision:1,scope:[{source_root_id:'src_'+'66'.repeat(16),kind:'subtree',path:''}]},source_revision:1,policy_epoch:0,policy_digest:null}]},provenance:{kind:'imported_standalone_adoption',adoption}};
-        let accepted:any,adoptions=0,replans=0,retirements=0,originalPlan:any;
-        const oldLocator={path:path.join(registration.root,'previous-original.json'),format:'mcp_servers_json',server:'previous_original',container_path:['mcpServers']},oldProof={config_path:oldLocator.path,server:oldLocator.server,container_path:['mcpServers'],config_sha256:'81'.repeat(32),executable:path.join(f.root,'previous-cache','airk.exe'),executable_sha256:'82'.repeat(32),selected_entry_sha256:'83'.repeat(32),declaration:{argv:['mcp']}};
-        const newPlan=(selected:typeof f.binding,storage:string,locators:any[])=>({schema:1,active:selected.runtimeSha256,scope:'context-only',context_global_storage:storage,global_storage_roots:[storage],caches:[{executable:cached}],inspection_sha256:'ad'.repeat(32),origin_locators:locators,adoption_locators:locators,managed_locators:[],origin_classifications:[{locator:locators[0],origin_sha256:origin,kind:'standalone',authority:'not_observed'}],origin_proofs:[{config_path:destination,server:alias,container_path:['mcpServers'],config_sha256:sha,executable:cached,executable_sha256:digest,selected_entry_sha256:digest,declaration:{argv:fields.args}}]});
-        context.mock.method(RuntimeHost.prototype,'prepareLegacyCaches',async(selected:typeof f.binding,storage:string,input?:string)=>{
-            const locators=input?JSON.parse(await fs.readFile(input,'utf8')):[];
-            if(accepted)return accepted;
-            if(appearedDuringCleanup){assert.deepEqual(locators,[]);accepted={schema:1,active:selected.runtimeSha256,scope:'context-only',context_global_storage:storage,global_storage_roots:[storage],caches:[{executable:oldProof.executable}],inspection_sha256:'ac'.repeat(32),origin_locators:[oldLocator],adoption_locators:[],managed_locators:[oldLocator],origin_classifications:[{locator:oldLocator,origin_sha256:'84'.repeat(32),kind:'managed',authority:'not_observed'}],origin_proofs:[oldProof]};originalPlan=structuredClone(accepted);return accepted;}
-            assert.equal(locators.length,1);assert.equal(await fs.readFile(destination,'utf8'),before);accepted=newPlan(selected,storage,locators);return accepted;
+        const initial={...configuration,mcpServers:{...configuration.mcpServers,[alias]:fields}};await fs.writeFile(destination,JSON.stringify(initial));migrationEditor(f);
+        let inspections=0,preparations=0,retirements=0,adoptions=0;
+        context.mock.method(RuntimeHost.prototype,'inspectLegacyCaches',async(selected:typeof f.binding,storage:string,input?:string)=>{
+            inspections++;const locators=input?JSON.parse(await fs.readFile(input,'utf8')):[];
+            assert.equal(locators.length,1,'the scanned standalone declaration is offered to native inspection');assert.equal(locators[0].server,alias);
+            return {schema:1,active:selected.runtimeSha256,scope:'context-only',context_global_storage:storage,global_storage_roots:[storage],caches:[{executable:cached}],
+                inspection_sha256:'ad'.repeat(32),origin_locators:locators,adoption_locators:locators,managed_locators:[],origin_proofs:[],
+                origin_classifications:locators.map((locator:unknown)=>({locator,origin_sha256:'10'.repeat(32),kind:'standalone',authority:'not_observed'}))};
         });
-        if(appearedDuringCleanup){
-            context.mock.method(RuntimeHost.prototype,'retireLegacyCaches',async(_selected:typeof f.binding,prepared:any)=>{assert.equal(prepared,accepted);if(++retirements===1){await fs.writeFile(destination,before);throw new ServiceError('legacy_cache_retirement_unconfirmed',true,{code:'new_native_cache_observed'});}assert.equal(adoptions,1);assert.equal(prepared.origin_proofs[0],oldProof);return {scope:'context-only',caches_retired:true,remaining:0};});
-            context.mock.method(RuntimeHost.prototype,'reprepareLegacyCaches',async(selected:typeof f.binding,previous:any,input?:string)=>{replans++;assert.deepEqual(previous,originalPlan);assert.ok(input,'A fresh protected native locator input must accompany explicit reprepare');const locators=JSON.parse(await fs.readFile(input,'utf8'));assert.deepEqual(locators,[{path:destination,format:'mcp_servers_json',server:alias,container_path:['mcpServers']}]);assert.equal(await fs.readFile(destination,'utf8'),before);const fresh=newPlan(selected,String(previous.context_global_storage),locators);accepted={...fresh,caches:[...previous.caches,...fresh.caches],origin_locators:[...previous.origin_locators,...fresh.origin_locators],managed_locators:previous.managed_locators,origin_classifications:[...previous.origin_classifications,...fresh.origin_classifications],origin_proofs:[...previous.origin_proofs,...fresh.origin_proofs]};return accepted;});
-        }
-        context.mock.method(RuntimeHost.prototype,'adoptLegacyIndexes',async(_selected:typeof f.binding,prepared:any,_operation:string,input:string)=>{adoptions++;assert.equal(prepared,accepted);assert.equal(await fs.readFile(destination,'utf8'),before);assert.deepEqual(JSON.parse(await fs.readFile(input,'utf8')),accepted.adoption_locators);return {schema:1,status:'ready',claims:[{locator:accepted.adoption_locators[0],origin_sha256:origin,config_sha256:sha,group_operation_id:setup.key.nonce,original_registration:original,registration:adopted,claim}],groups:[{grant}],future_native_metadata:{retained:true}};});
-        const fixtureLegacy=RuntimeHost.prototype.httpLegacyConnection,fixtureHttp=RuntimeHost.prototype.httpConnection;
-        context.mock.method(RuntimeHost.prototype,'httpLegacyConnection',async function(this:RuntimeHost,selected:typeof f.binding,saved:any,file:string,receipt:string,id:string,client:string,descriptor?:string,originSha?:string){
-            if(saved.binding!==original.binding)return fixtureLegacy.call(this,selected,saved,file,receipt,id,client,descriptor,originSha);
-            assert.equal(originSha,origin);assert.equal(receipt,sha);assert.deepEqual(saved,original);
-            return fixtureHttp.call(this,selected,{kind:'imported_legacy',selection:{namespace,expected_catalog_revision:2,registration:adopted,configuration_receipt:sha,grant}},file,id,client,descriptor);
-        });
+        context.mock.method(RuntimeHost.prototype,'prepareLegacyCaches',async()=>{preparations++;throw new Error('no cache retirement journal while a standalone entry remains');});
+        context.mock.method(RuntimeHost.prototype,'retireLegacyCaches',async()=>{retirements++;throw new Error('retained standalone caches are not retired');});
+        context.mock.method(RuntimeHost.prototype,'adoptLegacyIndexes',async()=>{adoptions++;throw new Error('standalone adoption is not supported');});
         await f.commands.get('airk.installCli')!();
-        const after=JSON.parse(await fs.readFile(destination,'utf8')),managedKey='airk-'+registration.collection;
-        assert.equal(adoptions,1);assert.equal(after.mcpServers[alias].url,f.httpUrl);assert.equal(after.mcpServers[managedKey].url,f.httpUrl);assert.equal(after.mcpServers[alias].disabled,true);assert.deepEqual(after.mcpServers[alias].alwaysAllow,['search']);
-        assert.deepEqual(after.mcpServers.other,initial.mcpServers.other);assert.equal(after.mcpServers[alias].command,undefined);assert.equal(after.mcpServers[managedKey].command,undefined);
-        const clients=f.state.httpConnections.filter(value=>value.client==='claude');assert.equal(clients.length,2);assert.notEqual(clients[0].id,clients[1].id);assert.equal(clients[0].selection.kind,'imported_legacy');assert.equal(clients[1].selection.kind,'imported_legacy');
-        for(const client of clients)assert.equal((client.selection.selection as any).configuration_receipt,sha,'Both original claims retain the original complete file SHA before either CAS');
-        assert.ok([...f.values.keys()].some(key=>key.startsWith('airk.installComplete.2.')));assert.equal(f.calls.some(value=>value.includes('upgrade completion blocked')),false,'A managed sibling does not prematurely terminate standalone snapshot tracking');
-        assert.equal(replans,appearedDuringCleanup?1:0);if(appearedDuringCleanup){assert.equal(retirements,2);assert.deepEqual(accepted.origin_proofs[0],originalPlan.origin_proofs[0]);assert.deepEqual(accepted.origin_locators[0],originalPlan.origin_locators[0]);}
+        const after=JSON.parse(await fs.readFile(destination,'utf8')),managedKey='airk';
+        // The single managed stdio entry becomes the one HTTP entry; the standalone and unrelated entries keep their keys.
+        assert.deepEqual(Object.keys(after.mcpServers).sort(),['airk',alias,'other'].sort());
+        assert.deepEqual(after.mcpServers[alias],fields,'The standalone entry is byte-for-byte unchanged');
+        assert.equal(after.mcpServers[managedKey].url,f.httpUrl,'The managed sibling still migrates to HTTP');assert.equal(after.mcpServers[managedKey].command,undefined);
+        assert.deepEqual(after.mcpServers.other,initial.mcpServers.other);
+        assert.equal(adoptions,0);assert.equal(preparations,0);assert.equal(retirements,0);assert.ok(inspections>=1);
+        assert.ok(f.calls.some(value=>value.includes(`Standalone AIRK agent entry "${alias}"`)&&value.includes('left unchanged for review')),'The user is told which entry needs review');
+        assert.ok(f.calls.some(value=>value.includes('AIRK kept old helper caches: 1 standalone agent entry')),'Cache retention is reported');
+        assert.ok([...f.values.keys()].some(key=>key.startsWith('airk.installComplete.2.')),'Installation completes with the entry retained');
     }finally{await f.close();}
 });
 
-const standaloneResumeCases:{reattach:boolean;partial:boolean;headless:boolean;historical:boolean;disable:boolean;refusal?:string}[]=[
-    {reattach:false,partial:true,headless:true,historical:false,disable:false},
-    {reattach:true,partial:false,headless:false,historical:false,disable:false},
-    {reattach:true,partial:true,headless:false,historical:false,disable:false},
-    {reattach:true,partial:true,headless:true,historical:false,disable:false},
-    {reattach:true,partial:true,headless:false,historical:true,disable:false},
-    {reattach:true,partial:true,headless:false,historical:true,disable:true},
-    ...['owned_connection_revoked','owned_connection_unavailable','owned_connection_expired'].map(refusal=>({reattach:true,partial:true,headless:false,historical:true,disable:false,refusal})),
-];
-for(const {reattach,partial,headless,historical,disable,refusal}of standaloneResumeCases)test(`two clients sharing one adopted index resume the frozen batch and per-file SHA (${reattach?'new':'same'} attachment, ${partial?'partial':'no'} file CAS, ${headless?'headless':historical?'historical-base-ID-attached':'attached'} original${disable?', disable Assistance':''}${refusal?', '+refusal:''})`,async context=>{
-    const f=await serviceTestHost(context,{automatic:false,registered:false,assistance:!headless});
+test('a retained standalone entry does not waive native proof for another entry that launches a cached image',async context=>{
+    const f=await serviceTestHost(context,{automatic:false});
     try{
-        const root=f.folders[0].uri.fsPath,files=[path.join(root,'.codex','config.toml'),path.join(root,'.mcp.json')],keys=['old_codex','old_claude'],digest='bc'.repeat(32),cached=path.join(f.root,'User','globalStorage','iokaio.airk','helpers','1.3.1-windows-x64-'+digest.slice(0,16),'airk.exe'),args=['--root',root,'--data-dir',path.join(f.root,'original-data'),'--collection','saved','mcp'];
-        const sources=[`# Original Codex policy\n[mcp_servers.old_codex]\ncommand = ${JSON.stringify(cached)}\nargs = ${JSON.stringify(args)}\nenabled = false\n`,JSON.stringify({keep:'untouched',mcpServers:{old_claude:{command:cached,args,disabled:true}}})];
-        for(const [index,file]of files.entries()){await fs.mkdir(path.dirname(file),{recursive:true});await fs.writeFile(file,sources[index]);}const documents=migrationEditor(f);
-        const locators:LegacyOriginLocator[]=files.map((file,index)=>({path:file,format:index?'mcp_servers_json':'codex_toml',server:keys[index],container_path:[index?'mcpServers':'mcp_servers']})),shas=sources.map(source=>createHash('sha256').update(source).digest('hex')),origins=['10'.repeat(32),'20'.repeat(32)],namespace='34'.repeat(16),original={binding:'f2'.repeat(32),root,data_root:path.join(f.root,'original-data'),collection:'saved'},adopted={...original,binding:'f3'.repeat(32),data_root:path.join(f.root,'converted-data')};
-        const claims=locators.map((locator,index)=>({schema:1,origin_sha256:origins[index],config_sha256:shas[index],executable_sha256:digest,selected_entry_sha256:digest,container_path:locator.container_path,original_server:locator.server,no_default_project:false}));
-        const setup={caller:'11'.repeat(16),key:{namespace,epoch:1,nonce:'22'.repeat(16)},expected_catalog_revision:1,name:'Shared saved index',registration:adopted,sources:[{canonical_path:root,aliases:[],owner:true}],setup_watch:false},plan={schema:1,setup,original_registration:original,origin_sha256:origins[0],config_sha256:shas[0],executable_sha256:digest,quiescence_sha256:digest,archive_inventory_sha256:digest,original_publication_sha256:digest,source_inventory_sha256:digest};
-        const adoption={schema:1,operation_id:'33'.repeat(16),plan,publication:{schema:1,plan_digest:digest,archive_inventory_sha256:digest,original_publication_sha256:digest,current:`airk-r1:${namespace}:2:${digest}`,resource_sha256:digest,compatibility_sha256:digest},original_server:keys[0],no_default_project:false,configuration_claims:claims},grant={grant:{id:'grt_'+'93'.repeat(16),host:digest,revision:1,revoked:false,memberships:[{membership:{project_id:'prj_'+'44'.repeat(16),index_id:'idx_'+'55'.repeat(16),revision:1,scope:[{source_root_id:'src_'+'66'.repeat(16),kind:'subtree',path:''}]},source_revision:1,policy_epoch:0,policy_digest:null}]},provenance:{kind:'imported_standalone_adoption',adoption}};
-        const prepared:any={schema:1,active:f.binding.runtimeSha256,scope:'context-only',context_global_storage:f.root,global_storage_roots:[f.root],caches:[{executable:cached}],inspection_sha256:'ae'.repeat(32),origin_locators:locators,adoption_locators:locators,managed_locators:[],origin_classifications:locators.map((locator,index)=>({locator,origin_sha256:origins[index],kind:'standalone',authority:'not_observed'})),origin_proofs:locators.map((locator,index)=>({config_path:locator.path,server:locator.server,container_path:locator.container_path,config_sha256:shas[index],executable:cached,executable_sha256:digest,selected_entry_sha256:digest,declaration:{argv:args}}))};
-        context.mock.method(RuntimeHost.prototype,'prepareLegacyCaches',async()=>prepared);
-        const owner=f.context.subscriptions.find((value:any)=>typeof value.adoptStandaloneConfigurations==='function');assert.ok(owner);
-        const seed=async()=>{owner.legacyCachePreparation=prepared;owner.legacyMigrationFiles=new Map(await Promise.all(files.map(async(file,index)=>{const source=await fs.readFile(file,'utf8'),agent=index?'claude':'codex';return [file,{agent,file:{agent,destination:file,source,sha256:createHash('sha256').update(source).digest('hex'),declarations:globalInventory.globalConfigDeclarations(agent,source)}}] as const;})));};await seed();
-        const requests:{operation:string;bytes:string}[]=[];let conversions=0;
-        context.mock.method(RuntimeHost.prototype,'adoptLegacyIndexes',async(_binding:typeof f.binding,accepted:any,operation:string,input:string)=>{assert.equal(accepted,prepared);requests.push({operation,bytes:await fs.readFile(input,'utf8')});if(requests.length===1)conversions++;return {retained_completed_operation:requests.length>1,groups:[{grant}],claims:locators.map((locator,index)=>({locator,origin_sha256:origins[index],config_sha256:shas[index],group_operation_id:setup.key.nonce,original_registration:original,registration:adopted,claim:claims[index]}))};});
-        const fixtureHttp=RuntimeHost.prototype.httpConnection;
-        const reattachments:string[]=[];
-        context.mock.method(RuntimeHost.prototype,'httpLegacyConnection',async function(this:RuntimeHost,binding:typeof f.binding,saved:any,file:string,receipt:string,id:string,client:string,descriptor?:string,origin?:string,reattachId?:string){const index=origins.indexOf(origin!);assert.ok(index>=0);assert.equal(receipt,shas[index]);assert.deepEqual(saved,original);if(reattachId){reattachments.push(reattachId);assert.notEqual(id,reattachId,'A retired native credential ID is never reused');}return fixtureHttp.call(this,binding,{kind:'imported_legacy',selection:{namespace,expected_catalog_revision:2,registration:adopted,configuration_receipt:receipt,grant}},file,id,client,descriptor);});
-        const open=f.stub.workspace.openTextDocument;let fail=true;
-        f.stub.workspace.openTextDocument=async(uri:any)=>{if(uri.fsPath===files[partial?1:0]&&fail){fail=false;throw Error('fixture editor stopped before file CAS');}return open(uri);};
-        await assert.rejects(owner.adoptStandaloneConfigurations(f.binding,()=>{},()=>{}),/editor stopped/);
-        if(partial)assert.ok((await fs.readFile(files[0],'utf8')).includes(f.httpUrl));else assert.equal(await fs.readFile(files[0],'utf8'),sources[0]);
-        assert.equal(await fs.readFile(files[1],'utf8'),sources[1]);
-        if(historical){
-            // The actual HEAD predecessor used the base ID even when it
-            // attached to an Explorer window. Native provenance, not ID shape,
-            // must distinguish that credential from an active manual one.
-            const originalConnections=[...f.state.httpConnections];
-            for(const [index,locator]of locators.entries()){
-                const parts=['standalone-http/1',f.binding.installDir,legacyOriginLocatorIdentity(locator),origins[index],index?'claude':'codex'],id=createHash('sha256').update(JSON.stringify(parts)).digest('hex').slice(0,32),oldRecord=originalConnections[index];
-                const old=[...f.values.values()].find((value:any)=>value?.connection_id===oldRecord.id) as any;assert.ok(old);
-                const info=await fixtureHttp.call(owner.runtime(),f.binding,oldRecord.selection,'fixture-native-input',id,oldRecord.client,oldRecord.descriptor);
-                for(const [key,value]of f.values)if(key.startsWith('airk.http.standalone.')&&(value as any)?.connection_id===oldRecord.id)f.values.set(key,structuredClone(info));
-                if(partial&&index===0){const document=documents.get(files[index]);document.replace(refreshHttpAgentConfig('codex',document.getText(),info,old.endpoint.url,keys[index],old));await document.save();}
-            }
-            f.state.httpConnections.splice(0,originalConnections.length);
-        }
-        const issued=f.state.httpConnections.length;
-        const historicalMetadata=new Map<string,unknown>(),retired=new Set(f.state.httpConnections.map(value=>value.id));
-        // Model the predecessor's attachment-independent records left by an
-        // interrupted installation. Exact headless identities stay reusable;
-        // a replacement window preserves the old metadata and enrolls its own.
-        for(const [index,locator]of locators.entries()){
-            const parts=['standalone-http/1',f.binding.installDir,legacyOriginLocatorIdentity(locator),origins[index],index?'claude':'codex'];
-            const key='airk.http.standalone.1.'+createHash('sha256').update(JSON.stringify(parts)).digest('hex');
-            const previous=[...f.values.values()].find((value:any)=>value?.connection_id===f.state.httpConnections[index].id);
-            assert.ok(previous);f.values.set(key,structuredClone(previous));historicalMetadata.set(key,structuredClone(previous));
-            for(const [savedKey,value]of f.values)if(savedKey.startsWith('airk.http.standalone.2.')&&(value as any)?.connection_id===f.state.httpConnections[index].id)f.values.delete(savedKey);
-            f.values.delete('airk.http.standalone.origin.1.'+createHash('sha256').update(JSON.stringify(parts)).digest('hex'));
-        }
-        if(reattach){
-            const lookup=RuntimeHost.prototype.httpConnectionInfo;
-            context.mock.method(RuntimeHost.prototype,'httpConnectionInfo',async function(this:RuntimeHost,binding:typeof f.binding,id:string){if(!headless&&retired.has(id))throw new ServiceError('owned_connection_revoked');return lookup.call(this,binding,id);});
-            const ownership=RuntimeHost.prototype.lookupHttpConnection;
-            context.mock.method(RuntimeHost.prototype,'lookupHttpConnection',async function(this:RuntimeHost,binding:typeof f.binding,id:string,expected?:Parameters<RuntimeHost['lookupHttpConnection']>[2]){
-                if(!headless&&retired.has(id)){
-                    if(refusal)throw new ServiceError(refusal);
-                    if(!expected)throw new ServiceError('owned_connection_attachment_retired');
-                    const old=expected.connection;assert.equal(old.connection_id,id);
-                    return {schema:1,active:binding.runtimeSha256,connection_id:id,status:'unavailable',code:'owned_connection_attachment_retired',attachment_retirement:{schema:1,connection_id:id,installation:old.endpoint.installation,namespace,client:expected.client==='claude'?'claude_code':expected.client,expires_unix_ms:Date.now()+60_000,explorer_descriptor_sha256:'ab'.repeat(32),authority_sha256:httpAuthorityDigest(old.selection)}};
-                }
-                return ownership.call(this,binding,id,expected);
-            });
-            f.settings.set('explorer.assistance.enabled',!disable);
-            await owner.startAssistance();
-            assert.notEqual(owner.httpAttachment(),f.state.httpConnections[0].descriptor);
-        }
-        if(disable||refusal){
-            const before=await Promise.all(files.map(file=>fs.readFile(file,'utf8')));
-            await assert.rejects(owner.migrateAgentConnections(f.binding),(error:unknown)=>error instanceof ServiceError&&error.code===(refusal??'http_attachment_reconnect_requires_live_window'));
-            assert.deepEqual(await Promise.all(files.map(file=>fs.readFile(file,'utf8'))),before,'Refused recovery preserves each exact config preimage');
-            assert.equal(f.state.httpConnections.length,issued);assert.deepEqual(reattachments,[],'No uncertain, explicitly revoked, expired or headless-fallback credential is reissued');
-            for(const [key,value]of historicalMetadata)assert.deepEqual(f.values.get(key),value);
-            return;
-        }
-        await owner.migrateAgentConnections(f.binding);
-        assert.equal(conversions,1,'Native completed publication is retained, not copied once per client or retry');assert.equal(requests.length,2);assert.deepEqual(requests[1],requests[0],'Original complete batch request survives a prior file already becoming HTTPS');
-        const added=reattach&&!headless?2:0;assert.equal(f.state.httpConnections.length,issued+added,'Only proven retired attachments enroll new credentials; existing live headless/manual credentials remain');
-        assert.equal(reattachments.length,added,'Every replacement passes the exact old ID for native mutation-side retirement recheck');
-        for(const [key,value]of historicalMetadata)assert.deepEqual(f.values.get(key),value,'Historical credential metadata remains untouched');
-        const after=JSON.parse(await fs.readFile(files[1],'utf8'));assert.equal(after.keep,'untouched');assert.equal(after.mcpServers.old_claude.disabled,true);assert.equal(after.mcpServers.old_claude.url,f.httpUrl);
-        const finalIds=await Promise.all(files.map(async(file,index)=>{const agent=index?'claude':'codex',row=globalInventory.globalConfigDeclarations(agent,await fs.readFile(file,'utf8')).find(row=>row.serverKey===keys[index])!;return httpConfigurationConnectionId(agent,row.fields);}));
-        const selected=finalIds.map(id=>f.state.httpConnections.find(value=>value.id===id)!.selection as any);assert.deepEqual(selected.map(value=>value.selection.registration),[adopted,adopted]);assert.deepEqual(selected.map(value=>value.selection.configuration_receipt),shas);assert.deepEqual(selected.map(value=>value.selection.grant),[grant,grant]);
-        if(reattach){
-            const resumed=added?f.state.httpConnections.slice(-added):[];assert.ok(resumed.every(value=>!retired.has(value.id)&&value.descriptor===owner.httpAttachment()));
-            if(headless)assert.equal(finalIds[0],f.state.httpConnections[0].id,'Enabling Assistance does not replace the already saved headless/manual credential');
-            await seed();await owner.adoptStandaloneConfigurations(f.binding,()=>{},()=>{});
-            assert.equal(f.state.httpConnections.length,issued+added,'A retry under the current attachment reuses its own credentials');
-        }
+        const {registration,configuration}=legacyConfiguration(f),destination=path.join(registration.root,'.mcp.json'),alias='old_standalone',digest='ba'.repeat(32),cached=path.join(f.root,'private-editor','User','globalStorage','iokaio.airk','helpers','1.3.1-windows-x64-'+digest.slice(0,16),'airk.exe');
+        const standalone={command:cached,args:['--root',registration.root,'--data-dir',path.join(f.root,'old-standalone-data'),'--collection','old-saved','mcp']};
+        const unproven={command:cached,args:['--root',registration.root,'--data-dir',path.join(f.root,'other-data'),'--collection','other','mcp']};
+        const initial={...configuration,mcpServers:{...configuration.mcpServers,[alias]:standalone,'airk-unproven':unproven}},before=JSON.stringify(initial);await fs.writeFile(destination,before);migrationEditor(f);
+        context.mock.method(RuntimeHost.prototype,'inspectLegacyCaches',async(selected:typeof f.binding,storage:string,input?:string)=>{
+            const locators=(input?JSON.parse(await fs.readFile(input,'utf8')):[]) as {server:string}[];
+            return {schema:1,active:selected.runtimeSha256,scope:'context-only',context_global_storage:storage,global_storage_roots:[storage],caches:[{executable:cached}],inspection_sha256:'af'.repeat(32),
+                origin_locators:locators,adoption_locators:locators.filter(locator=>locator.server===alias),managed_locators:[],origin_proofs:[],origin_classifications:[]};
+        });
+        await f.commands.get('airk.installCli')!();
+        assert.ok(f.calls.some(value=>value.includes('standalone_index_adoption_required')),'The unproven cached-image entry is refused with its existing typed error');
+        assert.equal([...f.values.keys()].some(key=>key.startsWith('airk.installComplete.2.')),false,'Installation does not complete over an unproven entry');
+        const after=JSON.parse(await fs.readFile(destination,'utf8'));
+        assert.deepEqual(after.mcpServers[alias],standalone);assert.deepEqual(after.mcpServers['airk-unproven'],unproven);
+    }finally{await f.close();}
+});
+
+test('a standalone locator whose entry was already removed does not hold the caches back',async context=>{
+    // A pending native inspection can still list a reviewed-and-removed entry.
+    // Only declarations that exist now are retained; otherwise retirement proceeds.
+    const f=await serviceTestHost(context,{automatic:false});
+    try{
+        const {registration,configuration}=legacyConfiguration(f),destination=path.join(registration.root,'.mcp.json');
+        await fs.writeFile(destination,JSON.stringify(configuration));migrationEditor(f);
+        const removed={path:destination,format:'mcp_servers_json',server:'old_standalone',container_path:['mcpServers']};
+        context.mock.method(RuntimeHost.prototype,'inspectLegacyCaches',async(selected:typeof f.binding,storage:string)=>({schema:1,active:selected.runtimeSha256,scope:'context-only',context_global_storage:storage,
+            global_storage_roots:[storage],caches:[],inspection_sha256:'ae'.repeat(32),origin_locators:[removed],adoption_locators:[removed],managed_locators:[],origin_proofs:[],origin_classifications:[]}));
+        await f.commands.get('airk.installCli')!();
+        assert.ok(f.calls.includes('legacy-caches-prepared'),'Cache retirement is prepared once no standalone entry remains');
+        assert.ok(f.calls.includes('legacy-caches-retired'));
+        assert.equal(f.calls.some(value=>value.includes('left unchanged for review')),false);
+        assert.ok([...f.values.keys()].some(key=>key.startsWith('airk.installComplete.2.')));
     }finally{await f.close();}
 });
 

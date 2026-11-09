@@ -64,6 +64,9 @@ mod snapshot;
 mod staging;
 
 const MAX_MANIFEST: u64 = 512 * 1024;
+/// Typed refusal for `adopt-legacy-index(es)`: the 1.8.16 clean-break baseline
+/// rebuilds from original sources and never adopts standalone saved indexes.
+const STANDALONE_ADOPTION_UNSUPPORTED: &str = "standalone_adoption_unsupported: AIRK no longer adopts standalone saved indexes; set up a new index from the original sources in Indexing";
 const MAX_FILES: usize = 2048;
 const MAX_PAYLOAD: u64 = 4 * 1024 * 1024 * 1024;
 pub use crate::user_paths::Channel as RuntimeChannel;
@@ -463,7 +466,7 @@ pub enum RuntimeCommand {
         #[arg(long)]
         expected_inspection_sha256: String,
     },
-    /// Adopt an original pre-managed saved index under native exclusion; preserve original sources and index bytes without reindexing or creating a reviewed grant.
+    /// Resume only an interrupted standalone adoption; a new one is refused (standalone_adoption_unsupported).
     AdoptLegacyIndex {
         #[arg(long)]
         install_dir: PathBuf,
@@ -476,7 +479,7 @@ pub enum RuntimeCommand {
         #[arg(long)]
         expected_cache_inspection_sha256: String,
     },
-    /// Adopt original saved indexes once per verified physical backing, retaining every original client configuration claim.
+    /// Resume only an interrupted standalone adoption batch; a new one is refused (standalone_adoption_unsupported).
     AdoptLegacyIndexes {
         #[arg(long)]
         install_dir: PathBuf,
