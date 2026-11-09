@@ -780,6 +780,11 @@ A step that fails sends the work back to the component under rule 0.2-6.
       `AIRK_EDITOR_LEGACY_FIXTURE` to its retained receipt. The six-scenario
       harness rejects missing input before starting and includes actual
       Workbench result/export and owned-config endpoint refresh observations.
+      (9 November 2026: the `legacy` scenario, its producer and
+      `AIRK_EDITOR_LEGACY_FIXTURE` were retired after the in-place catalog
+      upgrade was removed; the harness now runs five scenarios and old-install
+      upgrades are tested manually. See
+      [the Windows guide](windows-local-build.md#installed-editor-legacy-scenario-retired).)
    3. Client campaign `benchmark-service.py --clients 1 10 64 --projects 1
       --rounds 1 --semantic` (about 6.5 min). Run all three cohorts on r28 so the
       evidence comes from one identity.

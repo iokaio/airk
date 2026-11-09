@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import {reviewCombinedScopeSelection} from '../scopeSelection';
 import {InstalledHttpFailure} from './installedEditorHttp';
 import {test} from 'node:test';import {strict as assert} from 'node:assert';
-import {installedDeliveryFence,installedSelector,installedToolBody,installedMember,installedRevocation,finishInstalledClient,InstalledNativeReplyError,installedLegacyLifecycle,installedSourceReview,installedPolicyReady,installedRestoredDefinition,installedDefinitionContinuity} from './installedEditorContracts';
+import {installedDeliveryFence,installedSelector,installedToolBody,installedMember,installedRevocation,finishInstalledClient,InstalledNativeReplyError,installedSourceReview,installedPolicyReady,installedRestoredDefinition,installedDefinitionContinuity} from './installedEditorContracts';
 const id=(prefix:string,byte:string)=>prefix+byte.repeat(32),hash=(byte:string)=>byte.repeat(64);
 
 const planWire=(body:any)=>({result:{isError:false,content:[{type:'text',text:JSON.stringify(body)}],structuredContent:structuredClone(body)}});
@@ -343,26 +343,6 @@ test('plaintext native refusal retains complete raw envelope without a compatibi
     assert.ok(refusal instanceof InstalledNativeReplyError);assert.equal(refusal.reply,reply);assert.equal(refusal.code,undefined);
     assert.throws(()=>installedToolBody({result:{...reply.result,isError:false}}),SyntaxError);
     assert.throws(()=>installedToolBody({result:{...reply.result,isError:'true'}}));
-});
-test('legacy lifecycle explicitly starts once and closes the manual read before one Stop',async()=>{
-    const order:string[]=[],evidence:any={};
-    await installedLegacyLifecycle(async()=>{order.push('start');},async()=>{order.push('read');order.push('transport closed');},async()=>{order.push('stop');},evidence,async()=>{});
-    assert.deepEqual(order,['start','read','transport closed','stop']);assert.deepEqual(evidence,{});
-});
-test('failed legacy read remains primary when its single Stop also fails',async()=>{
-    const primary=new Error('manual read failed'),stopFailure=new Error('Stop unconfirmed'),order:string[]=[],evidence:any={},saved:any[]=[];
-    await assert.rejects(installedLegacyLifecycle(async()=>{order.push('start');},async()=>{order.push('read closed');throw primary;},async()=>{order.push('stop');throw stopFailure;},evidence,async(_name,value)=>{saved.push(structuredClone(value));}),error=>error===primary);
-    assert.deepEqual(order,['start','read closed','stop']);assert.equal(saved[0].legacy_stop_failure.primary_preserved,true);
-    assert.match(saved[0].legacy_stop_failure.error,/Stop unconfirmed/);
-    await assert.rejects(installedLegacyLifecycle(async()=>{},async()=>{},async()=>{throw stopFailure;},{},async()=>{}),error=>error===stopFailure);
-});
-
-test('legacy failure identity survives failure to retain the Stop failure',async()=>{
-    const primary=new Error('original manual failure'),stopFailure=new Error('exact Stop failure'),retention=new Error('retention unavailable '.repeat(500)),evidence:any={};
-    const failMark=async()=>{throw retention;};
-    await assert.rejects(installedLegacyLifecycle(async()=>{},async()=>{throw primary;},async()=>{throw stopFailure;},evidence,failMark),error=>error===primary);
-    assert.equal(evidence.legacy_stop_failure.primary_preserved,true);assert.ok(evidence.legacy_stop_retention_failure.length<=4096);
-    await assert.rejects(installedLegacyLifecycle(async()=>{},async()=>{},async()=>{throw stopFailure;},{},failMark),error=>error===stopFailure);
 });
 
 function completedDeletion(){const f=fixture(),review={request:{operation:{operation:'delete_project',id:f.selection.project},caller:'vscode',key:{nonce:'f'.repeat(32)},expected_catalog_revision:2},requestDigest:hash('6')};

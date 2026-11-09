@@ -219,14 +219,14 @@ test('actual driver preserves the complete existing consumed-input roster when a
     const actual=vm.runInNewContext(declaration[1],{}, {timeout:1000});
     const expected=[
         'scripts/check-native-editor.cjs','scripts/editor-ui.cjs','scripts/native-editor-workbench.cjs',
-        'scripts/editor-mailbox.cjs','scripts/native-editor-legacy.cjs','scripts/native-editor-receipts.cjs',
+        'scripts/editor-mailbox.cjs','scripts/native-editor-receipts.cjs',
         'scripts/native-editor-idle.cjs','packages/vscode/out/test/installedEditor.js',
         'packages/vscode/out/test/installedCompletion.js','packages/vscode/out/test/installedControlTrace.js',
         'packages/vscode/out/test/installedEditorC8.js','packages/vscode/out/test/installedEditorContracts.js',
         'packages/vscode/out/test/installedEditorHttp.js','scripts/native-editor-failure.cjs',
     ];
-    assert.equal(actual.length,14,'All 13 existing consumed inputs plus failure disposal must be frozen');
-    assert.equal(new Set(actual).size,14,'Consumed-input roster must contain no duplicates');
+    assert.equal(actual.length,13,'All 12 existing consumed inputs plus failure disposal must be frozen');
+    assert.equal(new Set(actual).size,13,'Consumed-input roster must contain no duplicates');
     assert.deepEqual([...actual].sort(),expected.sort(),'A new helper must not displace an existing consumed input');
 });
 
@@ -257,7 +257,7 @@ for(const editorsClosed of [true,false])test(`actual failure driver passes closu
     assert.ok(begin>=0&&end>begin);
     const folder=path.resolve('inert-owned-fixture'),retained=new Set();let calls=0;
     const handler=vm.runInNewContext('('+source.slice(begin,end).trim()+')',{
-        services:[folder],retainedProfileFolders:retained,legacyServices:new Map(),path,
+        services:[folder],retainedProfileFolders:retained,path,
         fs:{lstat:async()=>({}),readFile:async()=>{throw Object.assign(Error('missing normal receipt'),{code:'ENOENT'});}},
         bundle:{digest:'a'.repeat(64)},environment:{private:true},invokeNativeJson:()=>assert.fail('Do not execute native in driver contract'),
         stopOwnedFixture:async value=>{calls++;assert.equal(value.fixture,folder);assert.equal(value.install,path.join(folder,'native-service'));

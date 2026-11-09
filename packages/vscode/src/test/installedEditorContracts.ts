@@ -138,20 +138,6 @@ export async function installedSourceReview(index:string,review:()=>Promise<any>
         throw error;
     }
 }
-/** Start is an explicit user action; close the manual transport before Stop. */
-export async function installedLegacyLifecycle(start:()=>Promise<unknown>,read:()=>Promise<void>,stop:()=>Promise<void>,evidence:any,mark:(name:string,value:any)=>Promise<unknown>):Promise<void>{
-    await start();
-    let hasPrimary=false;
-    try{await read();}catch(error){hasPrimary=true;throw error;}finally{
-        try{await stop();}catch(error){
-            evidence.legacy_stop_failure={error:String(error).slice(0,4096),primary_preserved:hasPrimary};
-            try{await mark('retained-evidence',evidence);}catch(retention){
-                evidence.legacy_stop_retention_failure=String(retention).slice(0,4096);
-            }
-            if(!hasPrimary)throw error;
-        }
-    }
-}
 export function installedSelector(definition:any,result:any,selection:any):any{
     const identity=installedHttpIdentity(definition),connection=validateHttpConnection(definition.nativeConnection);
     assert.equal(identity.credentialId,connection.connection_id);assert.equal(identity.url,connection.endpoint.url);

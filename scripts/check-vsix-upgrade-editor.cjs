@@ -322,11 +322,7 @@ with zipfile.ZipFile(sys.argv[1]) as z:
             return diagnosis.activation_result?.outcome==='aborted_or_failed'?[]:undefined;
         },'Actual old Setup completion or explicit failure',Math.min(deadline,Date.now()+240000));
         const oldObservation={definitions:oldDefinitions};try{oldObservation.inspect=await native(old,['runtime','inspect','--install-dir',installDir]);}catch(error){oldObservation.inspectError=String(error);}await save('old-observation',oldObservation);
-        let baseline,oldFailure,originalConfiguration;
-        if(oldObservation.definitions.length===1){
-            const bytes=Buffer.from(JSON.stringify({servers:{airk:oldObservation.definitions[0]}})),filename=path.join(run,'original-provider-configuration.json');
-            await fs.writeFile(filename,bytes,{flag:'wx',mode:0o600});originalConfiguration={path:filename,sha256:sha(bytes)};
-        }
+        let baseline,oldFailure;
         if(oldObservation.definitions.length===1){
             try{baseline=await mcp(oldObservation.definitions[0],async call=>{
                 const until=Math.min(deadline,Date.now()+180000);let symbols;
@@ -360,27 +356,6 @@ with zipfile.ZipFile(sys.argv[1]) as z:
         const observation=await native(current,['runtime','inspect','--install-dir',installDir]),diagnose=await native(current,['runtime','diagnose','--install-dir',installDir]);assert(observation.payload_verified===true&&observation.approval?.manifest_sha256===current.digest&&diagnose.pending_activation===null&&diagnose.activation_error===null&&observation.control_dir===path.join(installDir,'control'),'Current native installation/activation is not verified');
         const health=await native(current,['service','rpc','--runtime-dir',observation.control_dir,'--stdin'],'health'),pair=JSON.parse(await fs.readFile(path.join(current.source,'airk-runtime.json'),'utf8'));
         assert(health.status==='health'&&health.observation?.version===CURRENT_VERSION&&health.observation.protocol===1&&health.observation.runtime_sha256===current.digest&&health.observation.executable_sha256===pair.airk_sha256&&/^[a-f0-9]{64}$/.test(health.observation.build?.source_sha256)&&Number.isSafeInteger(health.observation.build?.source_files),'Missing authenticated current native version/pair/build health');await save('current-native',{observation,diagnose,health});
-        if(baseline){
-            const rosterFile=path.join(observation.control_dir,'index-catalog-upgrade.json'),rosterStat=await fs.lstat(rosterFile);assert(rosterStat.isFile()&&!rosterStat.isSymbolicLink()&&rosterStat.size<=33554432,'Native upgrade roster is not one bounded regular file');
-            const roster=JSON.parse(await fs.readFile(rosterFile,'utf8')),definition=oldObservation.definitions[0],at=definition.args.indexOf('--service-project');assert(at>=0,'Original definition lacks native registration binding');
-            const imported=roster.plan?.indexes?.find(row=>row.registration.binding===definition.args[at+1]);
-            assert(imported&&roster.plan.control===observation.control_dir&&roster.plan.namespace===oldObservation.inspect.registry_namespace&&imported.registration.root===source&&imported.registration.data_root===storage&&imported.registration.collection===baseline.status.collection,'Native upgrade roster crossed original registration/source/storage/collection');
-            assert(originalConfiguration&&sha(await fs.readFile(originalConfiguration.path))===originalConfiguration.sha256,'Original provider configuration preimage changed');
-            const registrationFile=path.join(run,'original-registration.json');await fs.writeFile(registrationFile,JSON.stringify(imported.registration),{flag:'wx',mode:0o600});
-            const connection=await native(current,['runtime','http-legacy-connection','--install-dir',installDir,'--registration-file',registrationFile,'--configuration-receipt',originalConfiguration.sha256,'--connection-id',crypto.randomBytes(16).toString('hex'),'--client','vscode']);
-            const {validateHttpConnection,httpMaterial}=require(path.join(root,'packages/vscode/out/serviceHttp.js'));validateHttpConnection(connection);
-            const selected=connection.selection.selection,provenance=selected.grant?.provenance;
-            assert(connection.selection.kind==='imported_legacy'&&isDeepStrictEqual(selected.registration,imported.registration)&&selected.configuration_receipt===originalConfiguration.sha256&&selected.namespace===roster.plan.namespace&&provenance?.kind==='imported_legacy_snapshot'&&provenance.legacy_binding===imported.registration.binding&&provenance.upgrade_id===roster.plan.id&&provenance.plan_digest===roster.plan_digest,'Native HTTPS migration lacks the exact original sealed imported authority');
-            const material=await httpMaterial(connection),httpDefinition=httpDefinitionSnapshot({uri:{toString:()=>material.url},headers:{Authorization:'Bearer '+material.credential,'X-AIRK-Response-Mode':'full'}},connection,material);
-            const retained=await mcp(httpDefinition,async call=>({status:await call('status',{}),symbols:await call('symbols',{name:'UpgradeOriginalEvidence',compact:false}),search:await call('search',{query:'UpgradeOriginalEvidence',mode:'lexical',limit:5})}));
-            for(const body of [retained.symbols,retained.search]){
-                assertEvidence(body,sourceHash);const scope=body.scope_observation;
-                assert(isDeepStrictEqual(scope.grant,{id:selected.grant.grant.id,revision:selected.grant.grant.revision}),'Imported HTTPS read crossed persisted native grant');
-                assert(scope?.provenance==='imported_legacy_snapshot'&&scope.members?.length===1&&scope.members[0].index_id===imported.index_id&&isDeepStrictEqual(scope.members[0].memberships.map(row=>row.project_id),[imported.project_id]),'Legacy scope differs from exact native upgrade roster');
-            }
-            assert(isDeepStrictEqual(baseline.symbols.publication,retained.symbols.publication)&&baseline.symbols.publication!==undefined,'Original artifact publication was not retained');await save('retained-original-definition',{transport:'https_imported_migration',originalConfiguration,connection,httpDefinition,retained,imported,roster});
-            assert(sha(await fs.readFile(originalConfiguration.path))===originalConfiguration.sha256,'Migration rewrote original configuration');
-        }
         await next.rpc('open',{route:'#indexing/library'});let library=await boundedUi(()=>ui.indexing({action:'page',kind:'indexes'})),index,name;
         if(baseline){const rows=library.page?.page?.items??[];const matches=rows.filter(row=>row.kind==='index'&&row.value?.backing?.root===source);assert(matches.length===1,'Original imported source index must be unique');index=matches[0].value.id;name=matches[0].value.name;}
         else{

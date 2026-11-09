@@ -1071,7 +1071,8 @@ ownership; it must not silently weaken the existing offline container contract.
   `check-service-clients.py`, `check-service-install.py`, `check-runtime-upgrade.py`,
   `check-runtime-legacy-retirement.py` and `benchmark-mcp-investigation.py`.
   (9 November 2026: `check-runtime-legacy-retirement.py` was removed with the
-  in-place catalog upgrade.)
+  in-place catalog upgrade, and `native-editor-legacy.cjs` with the retired
+  installed-editor legacy scenario.)
   Audit other benchmark/native CLI consumers for transport and provenance changes.
 - Current frontend/session lifetime acceptance belongs to
   `check-service-install.py` (actual HTTPS MCP/JSON reads, shared-service lifetime

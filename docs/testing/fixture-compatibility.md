@@ -10,6 +10,14 @@ source/preference capture, fresh authority and indexing, source preservation,
 client reconnection and exact ownership-checked cleanup. Compatible-line
 1.8.16+ upgrades retain their separate state-contract tests.
 
+**9 November 2026:** the producer `scripts/prepare-native-editor-legacy.py`, the
+consumer `scripts/native-editor-legacy.cjs`, the installed-editor `legacy`
+scenario and their synthetic tests (`test_fixture_journey_contract.py`,
+`test_native_editor_fixture.py`, `test_native_editor_legacy.py`,
+`native-editor-retired.test.cjs`) were removed with the in-place catalog upgrade.
+Commands and results below that name them are historical and can no longer be
+rerun from the current tree.
+
 The original unpublished 1.8.14 matrix follows. Packaging schema identifies
 executable topology, not registration authority; those ownership distinctions
 still matter when collecting supported reset inputs or retiring old artifacts.

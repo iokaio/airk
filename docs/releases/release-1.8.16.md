@@ -45,7 +45,11 @@ upgrade and standalone-index adoption were removed; their CLI commands remain as
 typed refusals (`catalog_upgrade_unsupported`, `standalone_adoption_unsupported`).
 The extension no longer contributes **AIRK: Review unavailable legacy upgrade
 index retirement**, and the obsolete `check-runtime-legacy-retirement` and
-`check-standalone-adoption-failure` qualification scripts were deleted.
+`check-standalone-adoption-failure` qualification scripts were deleted. The
+automated `legacy` installed-editor scenario (`prepare-native-editor-legacy.py`,
+`native-editor-legacy.cjs`, `AIRK_EDITOR_LEGACY_FIXTURE`) was retired as well;
+by user decision, upgrades from old installations are tested manually in
+installed editors.
 
 The selected control root's `airk-state-contract.json` records schema 1,
 `state_contract: "airk-state/1"`, baseline 1.8.16 and exact installation/control/

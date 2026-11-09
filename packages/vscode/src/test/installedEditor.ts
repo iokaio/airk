@@ -6,7 +6,6 @@ import { createHash, randomBytes } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { parse as parseJsonc, type ParseError } from 'jsonc-parser';
 import { UNIFIED_TOOLS,launchArgs } from '../model';
 import {ASSISTANCE_TOOLS} from '../explorerContracts';
 import {launchDescriptorPath} from '../explorerAssistanceLaunch';
@@ -17,7 +16,7 @@ import {httpMaterial,sameHttpAuthority,publishNativeInput,removeNativeInput,type
 import {ownedConfigurationSource,assertOwnedConfigurationRefresh,assertInstalledWorkbenchCopies,installedWorkbenchCopy,installedParityValue,assertInstalledInputCatalog,assertInstalledEnvelopeParity,type InstalledAgent} from './installedCompletion';
 import {refreshHttpAgentConfig} from '../agentMigration';
 import {toolFormFields,type WorkbenchSession} from '../workbenchContracts';
-import { installedDeliveryFence, installedSelector, installedToolBody, installedMember, installedRevocation, finishInstalledClient, InstalledNativeReplyError as NativeReplyError, installedLegacyLifecycle,installedSourceReview,installedPolicyReady,installedRestoredDefinition,installedDefinitionContinuity } from './installedEditorContracts';
+import { installedDeliveryFence, installedSelector, installedToolBody, installedMember, installedRevocation, finishInstalledClient, InstalledNativeReplyError as NativeReplyError, installedSourceReview,installedPolicyReady,installedRestoredDefinition,installedDefinitionContinuity } from './installedEditorContracts';
 import {checkInstalledEditorC8,checkInstalledEditorC8Endpoint} from './installedEditorC8';
 import {installInstalledControlTrace} from './installedControlTrace';
 const {publishMailbox,readMailbox}: {publishMailbox(file:string,value:unknown):Promise<void>;readMailbox(file:string):Promise<any>} = require(path.resolve(__dirname,'../../../../scripts/editor-mailbox.cjs'));
@@ -163,7 +162,7 @@ let restoreControlTrace:(()=>void)|undefined;
 export async function run():Promise<void>{try{await runEditor();}finally{restoreControlTrace?.();restoreControlTrace=undefined;}}
 async function runEditor(): Promise<void> {
     const runRoot=process.env.AIRK_EDITOR_RUN!,role=process.env.AIRK_EDITOR_ROLE!,scenario=process.env.AIRK_EDITOR_SCENARIO!;
-    assert.ok(runRoot&&['a','b'].includes(role)&&['same','different','multi','usage','untrusted','legacy'].includes(scenario));
+    assert.ok(runRoot&&['a','b'].includes(role)&&['same','different','multi','usage','untrusted'].includes(scenario));
     const allowed=path.resolve(__dirname,'../../../../artifacts/editor-qualification');
     const relative=path.relative(allowed,path.resolve(runRoot));
     assert.ok(relative&&!relative.startsWith('..')&&!path.isAbsolute(relative),'Private qualification directory');
@@ -247,71 +246,6 @@ async function runEditor(): Promise<void> {
     const scoped=(body:any,selection:any,denied=false)=>installedMember(body,selection,denied);
     const finish=async()=>{await mark('result',evidence);await mark('capture');await waitFor(path.join(folder,'capture-complete.json'));};
     await vscode.commands.executeCommand('airk.dashboard.focus');
-    if(scenario==='legacy'){
-        const fixture=JSON.parse(await fs.readFile(path.join(folder,'legacy-fixture.json'),'utf8'));
-        assert.equal(fixture.qualification?.status,'qualified_native_fixture','Legacy editor execution requires the verified actual native producer observations');
-        assert.equal(fixture.fixture_kind,'managed_native_catalog_upgrade');
-        const configBytes=await fs.readFile(fixture.legacy_config.path);
-        assert.equal(createHash('sha256').update(configBytes).digest('hex'),fixture.legacy_config.sha256);
-        const errors:ParseError[]=[],parsed=parseJsonc(configBytes.toString('utf8'),errors,{allowTrailingComma:true}),entry=parsed.servers[fixture.legacy_config.entry_key];assert.equal(errors.length,0);
-        assert.equal(entry.command,fixture.legacy_config.command);assert.deepEqual(entry.args,fixture.legacy_config.args);
-        assert.deepEqual(entry.env??{},fixture.legacy_config.env??{});
-        const definition=new vscode.McpStdioServerDefinition('Retained manual legacy configuration',entry.command,entry.args,entry.env);
-        definition.cwd=vscode.Uri.file(fixture.legacy_config.cwd);
-        await noSelection('Existing manual agent configuration owns its connection before explicit service start');
-        await vscode.commands.executeCommand('airk.collections');
-        await installedLegacyLifecycle(
-        async()=>{await ui('startService',{installDir:fixture.install_dir,runtimeSha256:fixture.candidate.install_manifest_sha256},'#manage/service');checks.push('explicit trusted Start service on the verified legacy installation');},
-        async()=>{
-        let client:LegacyMcp|Mcp;
-        const at=fixture.legacy_config.args.indexOf('--service-project');assert.ok(at>=0);
-        const imported=fixture.native.upgrade_receipt.plan.indexes.find((index:any)=>index.registration.binding===fixture.legacy_config.args[at+1]);assert.ok(imported);
-        if(fixture.legacy_config.binding_kind==='pinned_predecessor'){
-            client=new LegacyMcp(definition);evidence.legacyTransport='retained_pinned_stdio_refusal';
-        }else{
-            const registration=imported.registration,host=hostFor(fixture.install_dir),observed=await host.discover();assert.ok(observed.inspection);
-            const binding=host.binding(observed.inspection,observed.installDir),file=await publishNativeInput(binding.controlDir,JSON.stringify(registration),()=>{assert.ok(Date.now()<sharedDeadline&&vscode.workspace.isTrusted);});
-            const connection=await (async()=>{try{return await host.httpLegacyConnection(binding,registration,file,fixture.legacy_config.sha256,randomBytes(16).toString('hex'),'vscode');}finally{await removeNativeInput(file);}})();
-            assert.equal(connection.selection.kind,'imported_legacy');
-            if(connection.selection.kind!=='imported_legacy')throw Error('Imported authority required');
-            const provenance=connection.selection.selection.grant.provenance;
-            assert.equal(provenance.kind,'imported_legacy_snapshot');assert.equal(provenance.legacy_binding,registration.binding);
-            assert.equal(provenance.upgrade_id,fixture.native.upgrade_receipt.plan.id);assert.equal(provenance.plan_digest,fixture.native.upgrade_receipt.plan_digest);
-            const material=await httpMaterial(connection),http=new vscode.McpHttpServerDefinition('Imported original legacy connection',vscode.Uri.parse(material.url),{Authorization:'Bearer '+material.credential,'X-AIRK-Response-Mode':'full'});
-            client=new Mcp(http,material.ca);evidence.legacyTransport='https_imported_migration';
-            evidence.legacyMigration={original_config_sha256:fixture.legacy_config.sha256,original_config_unchanged:true,registration,connection,authority_basis:'sealed_imported_snapshot'};
-        }
-        try{
-            if(fixture.legacy_config.binding_kind==='pinned_predecessor'){
-                let refusal:unknown;try{await client.start();await client.call('symbols',{name:fixture.probe.symbol,compact:false});}catch(error){refusal=error;}
-                assert.ok(refusal instanceof NativeReplyError&&refusal.code&&fixture.expected_refusal_codes.includes(refusal.code),'A timeout or arbitrary failure is not incompatible-format proof');
-                evidence.native.push({predecessorRefusal:refusal.reply,code:refusal.code});evidence.legacyRetrievalParity=false;
-            }else{
-                await client.start();const result=await client.call('symbols',{name:fixture.probe.symbol,compact:false});
-                assert.equal(result.scope_observation?.provenance,'imported_legacy_snapshot');
-                const original=evidence.legacyMigration.connection.selection.selection;
-                assert.equal(result.scope_observation.grant.id,original.grant.grant.id);assert.equal(result.scope_observation.grant.revision,original.grant.grant.revision);
-                const at=fixture.legacy_config.args.indexOf('--service-project');
-                const imported=fixture.native.upgrade_receipt.plan.indexes.find((index:any)=>index.registration.binding===fixture.legacy_config.args[at+1]);
-                assert.ok(imported,'Original connection must belong to the native upgrade roster');
-                assert.equal(result.scope_observation.members.length,1);
-                assert.equal(result.scope_observation.members[0].index_id,imported.index_id);
-                assert.deepEqual(result.scope_observation.members[0].memberships.map((member:any)=>member.project_id),[imported.project_id]);
-                assert.equal(result.items.length,1);assert.equal(result.items[0].citation.path,fixture.probe.path);
-                assert.equal(result.items[0].citation.content_hash,fixture.probe.content_sha256);
-                evidence.native.push({legacyProbe:result});evidence.legacyRetrievalParity=true;
-            }
-        }catch(error){evidence.failure={error:String(error),stack:error instanceof Error?error.stack:undefined,native:error instanceof NativeReplyError?error.reply:error instanceof InstalledHttpFailure?{kind:error.kind,...error.detail}:undefined};throw error;}finally{await finishInstalledClient(client,evidence,mark);}
-        },async()=>{
-            const stop=await ui('serviceStop',{installDir:fixture.install_dir,runtimeSha256:fixture.candidate.install_manifest_sha256},'#manage/service');
-            await publishMailbox(path.join(folder,'native-stop.json'),stop);
-            evidence.native.push({ownedLegacyServiceStop:stop});
-        },evidence,mark);
-        assert.equal(createHash('sha256').update(await fs.readFile(fixture.legacy_config.path)).digest('hex'),fixture.legacy_config.sha256);
-        await noSelection('Existing manual agent configuration owns its connection; no duplicate automatic definition');
-        evidence.legacyUpgradeCoverage=evidence.legacyRetrievalParity===true;checks.push(fixture.legacy_config.binding_kind==='pinned_predecessor'?'unchanged incapable pinned predecessor refuses upgraded format':'unchanged original configuration explicitly migrates to HTTPS through its sealed imported scope');
-        await finish();return;
-    }
     if(scenario==='untrusted'){
         assert.equal(vscode.workspace.isTrusted,false);await noSelection('Restricted Mode advertises no native scope');
         await assert.rejects(Promise.resolve(vscode.commands.executeCommand('airk.index')),/workspace_untrusted/);

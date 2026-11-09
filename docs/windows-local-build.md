@@ -234,7 +234,7 @@ Repeating the earlier package exposed intermittent concurrent-start failures: a 
 
 The 1.1.3 harness also includes a `usage` scenario. It clicks the installed report's date selector, exports CSV and Markdown through VS Code's built-in simple file dialogs, imports a fictional measurement through preview/confirmation, enters model prices, toggles recording, opens two collection reports, cancels and confirms clearing, and rejects an old panel after a storage change. Native readback verifies the other collection's imported measurement survives and the source files/indexes remain intact. The untrusted scenario also rejects the reporting command. These test profiles select VS Code's simple dialogs; OS-native dialogs and a live trust-revocation/reload remain separate from these checks.
 
-To run just the reporting and untrusted scenarios, set `AIRK_EDITOR_SCENARIOS=usage,untrusted` in the harness process environment. The default now names `same,different,multi,usage,untrusted,legacy`; the legacy path still requires its separately qualified native fixture. The test driver, fixtures, screenshots and receipts stay in the private qualification directory; none are packaged with the extension.
+To run just the reporting and untrusted scenarios, set `AIRK_EDITOR_SCENARIOS=usage,untrusted` in the harness process environment. The default names `same,different,multi,usage,untrusted`; the former `legacy` scenario was retired on 9 November 2026 (see below) and is now rejected as an unknown scenario. The test driver, fixtures, screenshots and receipts stay in the private qualification directory; none are packaged with the extension.
 
 On October 18, 2026, the final 1.1.3 candidate passed all five scenarios across seven installed VS Code 1.142.0 windows. See [1.1.3 validation](releases/release-1.1.3.md#installed-vs-code-acceptance) for the package digest, reporting checks and qualification limits.
 
@@ -273,53 +273,26 @@ Run `python scripts/check-runtime-upgrade.py --runtime <new-native-payload> --pr
 
 The fixture creates both roots required by `register`, lets the stable launcher supply installation context, completes the MCP handshake and explicitly closes read-only SQLite connections before teardown. Bounded client startup diagnostics distinguish setup errors from upgrade failures.
 
-### Installed-editor legacy configuration evidence
+### Installed-editor legacy scenario (retired)
 
-**9 November 2026:** the native in-place catalog upgrade (P5) was removed. The
-legacy scenario below, its producer `scripts/prepare-native-editor-legacy.py`
-and the indexed-upgrade branch of `scripts/check-vsix-upgrade-editor.cjs` still
-expect that upgrade's native roster (`index-catalog-upgrade.json`) and imported
-legacy scope, so they cannot produce or qualify a fixture against the current
-runtime. Redesigning them around the clean break is part of the stopped
-installed-editor work and awaits authorization; the description below is
-historical.
-
-`AIRK_EDITOR_LEGACY_FIXTURE`, required when the legacy scenario is selected,
-names an actual native managed-upgrade
-receipt under the owned artifact directory. The harness verifies every retained
-payload/evidence digest, original configuration bytes and source hashes before
-the editor runs. A modern candidate has schema-2 main-only metadata and a null
-launcher observation; the old configuration's launcher ownership remains
-predecessor evidence, not a promise that modern stdio still works.
-
-For a schema-2 candidate, `scripts/prepare-native-editor-legacy.py` prepares a
-stopped retained fixture from reviewed predecessor and candidate manifests. The
-`retired_installation_launcher` binding retains JSON-only original manifest,
-runtime metadata, native inspection and launcher ownership evidence. Verification
-requires the old launcher, its receipt and superseded runtime to be absent, with
-only the selected candidate payload remaining. It preserves original config and
-source hashes and retains failed fixtures. Selecting legacy without its receipt
-fails before scenarios start; the complete supplied fixture is verified before
-the first editor journey. This producer is itself a T2 native journey and must
-wait for the combined source review and input freeze.
-
-The positive editor migration uses that exact original configuration SHA and
-full original registration to enroll an existing sealed imported HTTPS scope.
-It preserves the configuration file and sources, makes no new reviewed grant,
-and requires a real native scoped retrieval with complete provenance and cited
-content hashes. Retained pinned-predecessor stdio refusal is a separate negative
-observation. It cannot set `legacyUpgradeCoverage` or qualify the complete
-legacy HTTPS scenario; negative-only selection remains partial. The summaries
-retain both the original preimage and the separate new connection evidence.
-
-Source contracts and synthetic fixture tests do not constitute an executed
-installed-editor upgrade. The actual current Windows/Mac journey, CA/credential
-host behavior, lifecycle cleanup and source preservation remain separately
-recorded acceptance gates.
+**9 November 2026:** the native in-place catalog upgrade (P5) was removed, and
+every pre-1.8.16 installation now takes the
+[clean break](upgrade-rebuild-fallback.md). The automated `legacy` installed-editor
+scenario depended on that upgrade's native roster (`index-catalog-upgrade.json`)
+and imported legacy scope, so it could no longer produce or qualify a fixture.
+By user decision it was retired: `scripts/prepare-native-editor-legacy.py`,
+`scripts/native-editor-legacy.cjs`, the `AIRK_EDITOR_LEGACY_FIXTURE` input, the
+`legacyUpgradeCoverage` summary field and their synthetic tests were removed.
+Upgrades from old installations are tested manually in installed editors. The
+earlier design and evidence remain in the
+[fixture compatibility record](testing/fixture-compatibility.md) and Git history.
 
 ### Reviewed old-VSIX upgrade helper
 
 `scripts/check-vsix-upgrade-editor.cjs` implements a separate reviewed real
 old-VSIX/new-VSIX upgrade journey with a private driver. It has not been executed
-for this checkpoint. It does not supply or qualify the native harness's
-prequalified legacy fixture, and its contract tests are not upgrade acceptance.
+for this checkpoint, and its contract tests are not upgrade acceptance.
+**9 November 2026:** its imported-legacy HTTPS migration check (which read the
+removed upgrade roster) was removed. When the old 1.8.7 setup indexed the
+fixture, the journey now goes straight to the current Index library and reviewed
+selection; it does not yet qualify the clean-break rebuild.
