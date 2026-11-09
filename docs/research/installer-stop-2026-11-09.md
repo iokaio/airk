@@ -194,3 +194,41 @@ fixtures remain ignored and local. The separately edited user documents
 `docs/simplify-plan.md` and `docs/airk-feature-review.md` are preserved outside
 this repair commit. The checkpoint does not approve their proposals or erase
 unrelated work. No PR is to be created.
+
+## Follow-up: source correction (9 November 2026, after the S1 review)
+
+The user authorized the repair (decision D10 in the
+[S1 review record](../simplify/s1-review.md#10-review-decisions-user-9-november-2026)).
+This section records a source correction only. **No installed-editor journey,
+VSIX, runtime build or Neo batch has run since this stop.** The
+`clean-break-r39-installed-editor-r3` gate is still unqualified.
+
+**Root cause, confirmed by a deterministic regression:**
+
+- `refreshOnce` publishes a new binding object on every refresh.
+- Fifteen staleness checks in `serviceExtension.ts` compared that object by
+  reference. These include `hasManualVscodeConnection`, `httpCredential` and
+  the HTTP owner-health watch.
+- So any equivalent refresh during their awaits cancelled them with
+  `workspace_registration_changed`.
+- During a clean-break rebuild, every refresh carries a newer `rebuild`
+  progress observation. That makes equivalent replacement routine in exactly
+  the R39 scenario.
+
+**Correction:**
+
+- All of those checks now use `sameRuntimeAuthority`, which compares
+  `runtimeBindingIdentity` and ignores only the progress-only `rebuild`
+  observation.
+- Genuine runtime, control-directory and generation changes still refuse.
+- A genuine authority change between two published bindings now fires the
+  definitions-change event, so a refused provider is asked again.
+- No cancellation is swallowed, no retry is widened, and no authority check
+  is removed.
+
+**Evidence:** `packages/vscode/src/test/serviceBindingIdentity.test.ts`. Its two
+former `todo` reproductions now pass as ordinary tests. It adds a
+rebuild-progress-only refresh case, an event assertion for a genuine runtime
+change, and unit cases for `sameRuntimeAuthority`. The installed fixture's exact
+old and new authority remains unobserved, so whether this was R39's only cause
+is established only by a future installed run.

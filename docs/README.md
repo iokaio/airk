@@ -1,9 +1,11 @@
 # AIRK documentation
 
 **Repair stopped, 9 November 2026:** the [installer handoff](research/installer-stop-2026-11-09.md)
-records the unfinished 1.8.16 checkpoint, retained evidence and remaining
+records the unfinished 1.8.16 checkpoint, retained evidence and the
 definition-read cancellation. The package-verified VSIX failed installed acceptance;
-qualification is stopped, and no release or PR is being prepared.
+qualification is stopped, and no release or PR is being prepared. A source
+correction for that cancellation (authority-based binding staleness checks) is
+committed with deterministic regressions. Installed acceptance has not been rerun.
 
 **Simplification, 9 November 2026:** the [simplification plan](simplify-plan.md)
 separates release stabilization (Track R) from restructuring (Track S).

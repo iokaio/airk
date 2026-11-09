@@ -140,6 +140,11 @@ export interface NativeSourceScope {
 const exactScopeOwners=new WeakMap<NativeSourceScope,{binding:string;root:string;collection:string|null}>();
 /** Recovery progress is an observation, not part of a connection's identity. */
 export const runtimeBindingIdentity=(binding:RuntimeBinding)=>{const {rebuild:_rebuild,...identity}=binding;return JSON.stringify(identity);};
+/** Equal request authority: the same binding identity, ignoring only the
+ * progress-only rebuild observation. Refreshes publish a new binding object
+ * every time, so staleness checks compare this rather than object references. */
+export const sameRuntimeAuthority=(left:RuntimeBinding|undefined,right:RuntimeBinding|undefined):boolean=>
+    left===right||!!left&&!!right&&runtimeBindingIdentity(left)===runtimeBindingIdentity(right);
 const exactBindingIdentity=runtimeBindingIdentity;
 export function exactScopeMatches(value:NativeSourceScope,binding:RuntimeBinding,root:string,collection:string|null):boolean {
     const owner=exactScopeOwners.get(value);

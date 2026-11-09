@@ -13,7 +13,7 @@ import { setupAgent, AgentSetupHost } from './agentSetup';
 import { launchArgs, LaunchSpec, McpVerification, unifiedEntry, ServerEntry, UNIFIED_TOOLS } from './model';
 import { probeMcp, runText } from './native';
 import { LegacyRetirementSession, retirementJson, retirementMarkdown } from './runtimeLegacyRetirement';
-import { automaticUpgrade, BootstrapObservation, nativeRunner, RuntimeBinding, RuntimeHost, legacyOriginLocatorIdentity, runtimeBindingIdentity, type LegacyOriginLocator } from './serviceBootstrap';
+import { automaticUpgrade, BootstrapObservation, nativeRunner, RuntimeBinding, RuntimeHost, legacyOriginLocatorIdentity, runtimeBindingIdentity, sameRuntimeAuthority, type LegacyOriginLocator } from './serviceBootstrap';
 import { ConsoleRuntime, ServiceConsole, serviceRuntimeOptions } from './serviceConsole';
 import { identifier, record, ServiceError, type RecordValue } from './serviceClient';
 import { IntentJournal } from './serviceIntents';
@@ -478,7 +478,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         if(!legacy&&keys!=='expected_grant_revision,grant_id,project_ids'&&keys!=='expected_grant_revision,grant_id,index_ids,project_ids')throw new ServiceError('invalid_scope_selection');
         if(!Array.isArray(input.project_ids)||!input.project_ids.length||input.project_ids.length>32||new Set(input.project_ids).size!==input.project_ids.length)throw new ServiceError('invalid_scope_selection');
         const common={grant_id:catalogId(input.grant_id,'grt_'),expected_grant_revision:catalogRevision(input.expected_grant_revision),project_ids:input.project_ids.map(id=>catalogId(id,'prj_'))};
-        const current=()=>{this.trusted();if(!valid()||generation!==this.generation||binding!==this.binding||controller!==this.console.controller||controlIdentity!==controller.observationIdentity||context!==this.currentWindowContext())throw new ServiceError('stale_scope_selection');};
+        const current=()=>{this.trusted();if(!valid()||generation!==this.generation||!sameRuntimeAuthority(binding,this.binding)||controller!==this.console.controller||controlIdentity!==controller.observationIdentity||context!==this.currentWindowContext())throw new ServiceError('stale_scope_selection');};
         current();const grant=await controller.catalogRead({catalog_detail:{entity:{kind:'grant',id:common.grant_id},expected_catalog_revision:revision}});current();
         let selection:ReviewedWindowScopeSelection,index:CatalogObject|undefined,indexes:CatalogObject[]|undefined;
         if(legacy){
@@ -570,7 +570,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     private localScopeAdapter():LocalScopeAdapter{
         this.trusted();const controller=this.console.controller,binding=this.binding,generation=this.generation,window=this.windowIdentity().identity,identity=controller.observationIdentity;
         if(!binding||!this.currentWindowContext()||!controller.state.connected)throw new ServiceError('read_current_native_window_context');
-        const current=()=>{this.trusted();if(this.disposed||controller!==this.console.controller||identity!==controller.observationIdentity||generation!==this.generation||binding!==this.binding||window!==this.windowIdentity().identity)throw new ServiceError('stale_search_scope_selection');};
+        const current=()=>{this.trusted();if(this.disposed||controller!==this.console.controller||identity!==controller.observationIdentity||generation!==this.generation||!sameRuntimeAuthority(binding,this.binding)||window!==this.windowIdentity().identity)throw new ServiceError('stale_search_scope_selection');};
         const context=()=>{current();const observed=this.currentWindowContext();if(!observed)throw new ServiceError('read_current_native_window_context');return catalogObject(observed.response.descriptor);};
         return {control:controller,current,context,managed:fingerprint=>this.managedScope(fingerprint),saveManaged:async(value,fingerprint)=>{current();const key=this.managedScopeKey(validateNativeHostContext(context()));await this.context.globalState.update(`${key}.${value.id}`,value);current();if(fingerprint){await this.context.globalState.update(`${key}.cache.${catalogHex(fingerprint,64)}`,value);current();}await this.context.globalState.update(key,value);current();},
             refreshContext:()=>this.prepareWindowContext(),use:(choice,namespace,revision)=>this.useGrant(choice,namespace,revision,()=>{try{current();return true;}catch{return false;}}),
@@ -695,7 +695,10 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             const had=this.specs.length>0;this.specs=[];this.roots=[];this.binding=undefined;this.renderNativeDisabled();
             if(!this.disposed){this.treeChanges.fire();if(had)this.definitions.fire();}return;
         }
-        const previous=JSON.stringify(this.specs.map(spec=>[spec.command,launchArgs(spec)]));
+        // Definitions change when launch arguments or the request authority change;
+        // a provider refused by a genuine authority change then has a retry signal.
+        const definitionKey=()=>JSON.stringify(this.specs.map(spec=>[spec.command,launchArgs(spec)]));
+        const previous=definitionKey(),previousBinding=this.binding;
         const folderIdentity=JSON.stringify(this.folders().map(folder=>folder.uri.fsPath));
         const generation=this.generation;
         // Observe into locals and publish once: readers never see an empty registration
@@ -746,7 +749,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
                 this.status.text='AIRK: selected project ready';this.output.appendLine(`Other workspace preparation needs attention: ${String(error)}`);
             }else{clear();if(!this.renderSetupFailed())this.status.text='AIRK: inspect service';this.output.appendLine(String(error));}
         }}
-        finally{if(!this.disposed&&generation===this.generation){this.syncHttpEndpointWatcher();this.treeChanges.fire();if(previous!==JSON.stringify(this.specs.map(spec=>[spec.command,launchArgs(spec)])))this.definitions.fire();}}
+        finally{if(!this.disposed&&generation===this.generation){this.syncHttpEndpointWatcher();this.treeChanges.fire();if(previous!==definitionKey()||previousBinding&&this.binding&&!sameRuntimeAuthority(previousBinding,this.binding))this.definitions.fire();}}
     }
     async registerWorkspace():Promise<void>{
         this.trusted();await this.showManagement('#indexing/library');
@@ -819,7 +822,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         const explorerDescriptor=this.httpAttachment(),key=httpEnrollmentKey([client,selection.kind,identity,binding.installDir],explorerDescriptor);
         const active=this.httpSetups.get(key);if(active)return active;
         const pending=(async()=>{
-            const current=()=>{this.trusted();if(binding!==this.binding||generation!==this.generation||explorerDescriptor!==this.httpAttachment())throw new ServiceError('workspace_registration_changed');};current();
+            const current=()=>{this.trusted();if(!sameRuntimeAuthority(binding,this.binding)||generation!==this.generation||explorerDescriptor!==this.httpAttachment())throw new ServiceError('workspace_registration_changed');};current();
             const saved=this.context.globalState.get<string>('airk.http.connection.1.'+key),connectionId=saved&&/^[a-f0-9]{32}$/.test(saved)?saved:randomBytes(16).toString('hex');
             if(connectionId!==saved)await this.context.globalState.update('airk.http.connection.1.'+key,connectionId);current();
             const storage=await fs.realpath(this.context.globalStorageUri.fsPath);
@@ -881,7 +884,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         const explorerDescriptor=this.httpAttachment(),key=legacyHttpEnrollmentKey([client,binding.installDir,registration],explorerDescriptor);
         const active=this.httpSetups.get(key);if(active)return active;
         const pending=(async()=>{
-            const current=()=>{this.trusted();migration?.valid();if(explorerDescriptor!==this.httpAttachment()||generation!==this.generation||!migration&&(binding!==this.binding||!this.isCurrent(spec)))throw new ServiceError('workspace_registration_changed');};current();
+            const current=()=>{this.trusted();migration?.valid();if(explorerDescriptor!==this.httpAttachment()||generation!==this.generation||!migration&&(!sameRuntimeAuthority(binding,this.binding)||!this.isCurrent(spec)))throw new ServiceError('workspace_registration_changed');};current();
             const prior=this.context.globalState.get<unknown>('airk.http.legacy.1.'+key);
             let previous:HttpConnectionInfo|undefined;
             if(prior!==undefined){previous=validateHttpConnection(prior,undefined,path.join(binding.controlDir,'http-1'));if(previous.selection.kind!=='imported_legacy'||!matchesImportedHttpOrigin(previous.selection.selection,registration))throw new ServiceError('crossed_http_legacy_record');}
@@ -964,7 +967,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         const generation=this.generation,ownerBinding=this.binding;
         for(const id of referenced??[]){
             const lookup=await this.lookupHttpOwnership(binding,id);this.trusted();
-            if(generation!==this.generation||this.binding!==ownerBinding)throw new ServiceError('workspace_registration_changed');
+            if(generation!==this.generation||!sameRuntimeAuthority(this.binding,ownerBinding))throw new ServiceError('workspace_registration_changed');
             if(lookup.status==='not_owned')continue;
             const info=validateHttpConnection(lookup.connection,undefined,path.join(binding.controlDir,'http-1'));
             if(info.connection_id!==id)throw new ServiceError('crossed_http_legacy_connection');
@@ -1009,17 +1012,17 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         try{
             const selected=await this.workspace.resolveConnection(binding,spec,async(after,revision)=>{
                 const page=await client.projects(after,revision,32);this.trusted();
-                if(generation!==this.generation||this.binding!==binding||!this.isCurrent(spec))throw new ServiceError('workspace_registration_changed');
+                if(generation!==this.generation||!sameRuntimeAuthority(this.binding,binding)||!this.isCurrent(spec))throw new ServiceError('workspace_registration_changed');
                 return page;
             });
             this.trusted();
-            if(generation!==this.generation||this.binding!==binding||!this.isCurrent(spec))throw new ServiceError('workspace_registration_changed');
+            if(generation!==this.generation||!sameRuntimeAuthority(this.binding,binding)||!this.isCurrent(spec))throw new ServiceError('workspace_registration_changed');
             // Saved registration metadata does not establish a legacy read grant.
             // New library indexes require explicit Use Grant before agent export.
             const controller=this.console.controller;
             if(!controller.state.connected){await controller.whenIdle();this.trusted();if(!controller.state.connected)await controller.refresh();this.trusted();if(!controller.state.connected)throw new ServiceError('catalog_control_connection_unavailable');}
             const identity=controller.observationIdentity,response=await controller.catalogRead({catalog_legacy_binding:{project:selected.service!.project,expected_catalog_revision:null}});
-            this.trusted();if(generation!==this.generation||this.binding!==binding||controller!==this.console.controller||identity!==controller.observationIdentity||!this.isCurrent(spec))throw new ServiceError('workspace_registration_changed');
+            this.trusted();if(generation!==this.generation||!sameRuntimeAuthority(this.binding,binding)||controller!==this.console.controller||identity!==controller.observationIdentity||!this.isCurrent(spec))throw new ServiceError('workspace_registration_changed');
             const eligibility=catalogObject(catalogObject(response.observation).eligibility);
             if(eligibility.kind==='unavailable')throw new ServiceError('legacy_connection_unavailable_use_reviewed_grant',false,response);
             const registration=catalogObject(eligibility.registration);
@@ -1175,7 +1178,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         this.trusted();const selected=this.currentCatalogScope(),context=this.currentWindowContext(),binding=this.binding,controller=this.console.controller,generation=this.generation,controlIdentity=controller.observationIdentity;
         if(!selected||!context||!binding||(!spec.catalogSession&&!spec.combinedSession)||!this.isUiCurrent(spec))throw new ServiceError('explicit_scope_selection_changed');
         const descriptor=validateNativeHostContext(context.response.descriptor);
-        const current=()=>{this.trusted();if(!valid()||generation!==this.generation||binding!==this.binding||context!==this.currentWindowContext()||selected!==this.currentCatalogScope()||controlIdentity!==controller.observationIdentity)throw new ServiceError('stale_index_administration_selection');};
+        const current=()=>{this.trusted();if(!valid()||generation!==this.generation||!sameRuntimeAuthority(binding,this.binding)||context!==this.currentWindowContext()||selected!==this.currentCatalogScope()||controlIdentity!==controller.observationIdentity)throw new ServiceError('stale_index_administration_selection');};
         current();
         const chosen='indexes' in selected.selection?await vscode.window.showQuickPick(selected.selection.indexes.map(index=>({label:index.name,description:index.id,index})),{title:'Choose an index for administration'}).then(value=>value?.index):selected.selection.index;
         current();if(!chosen)return;
@@ -1386,7 +1389,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         try{
             client=this.runtime().client(binding,3000);this.httpWatchRead=client;
             const response=await client.rpc('health','health');this.httpWatchFailures=0;
-            if(!this.disposed&&this.httpWatchKey===key&&this.binding===binding)this.observeHttpIdentity(record(response.observation),binding);
+            if(!this.disposed&&this.httpWatchKey===key&&sameRuntimeAuthority(this.binding,binding))this.observeHttpIdentity(record(response.observation),binding);
         }catch(error){
             // A publication hint may precede listener readiness. Bound retries;
             // stopped owners remain stopped, and healthy watches need no polling.
@@ -2483,7 +2486,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     }
     async reviewHttpTrust(remove=false):Promise<Record<string,unknown>|undefined>{
         this.trusted();const binding=this.binding,generation=this.generation;if(!binding)throw new ServiceError('native_service_connection_required');
-        const current=()=>{this.trusted();if(binding!==this.binding||generation!==this.generation)throw new ServiceError('workspace_registration_changed');};
+        const current=()=>{this.trusted();if(!sameRuntimeAuthority(binding,this.binding)||generation!==this.generation)throw new ServiceError('workspace_registration_changed');};
         const observed=await this.runtime().httpTrust(binding,'inspect');current();
         this.output.appendLine('AIRK HTTPS issuer trust: '+JSON.stringify(observed));
         if(observed.outcome==='unsupported'){void vscode.window.showWarningMessage('Automatic per-user VS Code trust is unavailable on this platform. Linux VS Code requires the reviewed issuer in the distro system store and user NSS store, installed by an administrator. Keep TLS verification enabled. '+String(observed.guidance));return observed;}
@@ -2499,12 +2502,12 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     }
     async httpIssuerRotationStatus():Promise<IssuerRotationStatus>{
         this.trusted();const binding=this.binding,generation=this.generation;if(!binding)throw new ServiceError('native_service_connection_required');
-        const result=await this.runtime().httpIssuerRotation(binding,'status');this.trusted();if(binding!==this.binding||generation!==this.generation)throw new ServiceError('workspace_registration_changed');
+        const result=await this.runtime().httpIssuerRotation(binding,'status');this.trusted();if(!sameRuntimeAuthority(binding,this.binding)||generation!==this.generation)throw new ServiceError('workspace_registration_changed');
         const document=await vscode.workspace.openTextDocument({content:JSON.stringify(result,null,2),language:'json'});await vscode.window.showTextDocument(document,{preview:true});return result;
     }
     async reviewHttpIssuerRotation():Promise<Record<string,unknown>|undefined>{
         this.trusted();const binding=this.binding,generation=this.generation;if(!binding)throw new ServiceError('native_service_connection_required');
-        const current=()=>{this.trusted();if(binding!==this.binding||generation!==this.generation)throw new ServiceError('workspace_registration_changed');};
+        const current=()=>{this.trusted();if(!sameRuntimeAuthority(binding,this.binding)||generation!==this.generation)throw new ServiceError('workspace_registration_changed');};
         const runtime=this.runtime(),observed=await runtime.httpIssuerRotation(binding,'status');current();
         const options=[{label:'Open complete native rotation receipt',action:'status'},...(!observed.rotation||['finalized','aborted'].includes(observed.rotation.phase)?[{label:'Prepare a new issuer rotation',action:'prepare'},...(observed.rotation?[{label:'Finish this window’s terminal rotation bundle cleanup',action:'cleanup'}]:[])]:[
             {label:'Prepare old/new trust in this window’s owned client bundles',action:'bundles'},
@@ -2581,7 +2584,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         this.trusted();const value=record(input);if(Object.keys(value).join(',')!=='connection_id'||typeof value.connection_id!=='string'||!/^[a-f0-9]{32}$/.test(value.connection_id))throw new ServiceError('invalid_http_credential_input');
         if(!this.currentBinding())await this.refresh();this.trusted();const binding=this.binding,generation=this.generation;
         if(!binding)throw new ServiceError('native_service_connection_required');
-        const current=()=>{this.trusted();if(binding!==this.binding||generation!==this.generation)throw new ServiceError('workspace_registration_changed');};
+        const current=()=>{this.trusted();if(!sameRuntimeAuthority(binding,this.binding)||generation!==this.generation)throw new ServiceError('workspace_registration_changed');};
         const info=await this.runtime().httpConnectionInfo(binding,value.connection_id);current();
         const sources=await this.vscodeCredentialSources(current),matches=sources.filter(value=>vscodeCredentialConfiguration(value.before,info));
         if(matches.length!==1)throw new ServiceError('http_credential_requires_matching_workspace_configuration');
@@ -2595,7 +2598,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         // The file owns client policies, including explicit disable. Do not bypass
         // it by registering a second copy through the extension provider.
         const binding=this.binding,generation=this.generation;
-        const check=()=>{this.trusted();if(binding!==this.binding||generation!==this.generation)throw new ServiceError('workspace_registration_changed');};
+        const check=()=>{this.trusted();if(!sameRuntimeAuthority(binding,this.binding)||generation!==this.generation)throw new ServiceError('workspace_registration_changed');};
         const sources=await this.vscodeCredentialSources(check);
         for(const {root,before:source}of sources){
             try{
@@ -2776,7 +2779,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         const specs=[...this.specs],binding=this.binding,generation=this.generation,controller=this.console.controller;
         if(!binding||!specs.length)return undefined;
         if(specs.length>32)throw new ServiceError('legacy_mcp_binding_capacity_exceeded');
-        const current=()=>{this.trusted();if(binding!==this.binding||generation!==this.generation||controller!==this.console.controller||this.explicitCatalogScope||this.hasScopeWithdrawal()||specs.length!==this.specs.length||!specs.every(spec=>this.isCurrent(spec)))throw new ServiceError('workspace_registration_changed');};
+        const current=()=>{this.trusted();if(!sameRuntimeAuthority(binding,this.binding)||generation!==this.generation||controller!==this.console.controller||this.explicitCatalogScope||this.hasScopeWithdrawal()||specs.length!==this.specs.length||!specs.every(spec=>this.isCurrent(spec)))throw new ServiceError('workspace_registration_changed');};
         current();if(!controller.state.connected){await controller.whenIdle();current();if(!controller.state.connected)await controller.refresh();current();if(!controller.state.connected)throw new ServiceError('catalog_control_connection_unavailable');}
         const controlIdentity=controller.observationIdentity,resolved:LaunchSpec[]=[];let namespace:string|undefined,revision:number|null|undefined;
         for(const spec of specs){
