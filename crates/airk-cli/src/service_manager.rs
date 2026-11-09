@@ -217,7 +217,7 @@ impl ServiceManager {
     /// A separate shared-service identity never overwrites an old root scheduler.
     pub fn for_runtime(root: &Path) -> Result<Self> {
         let root = root.canonicalize()?;
-        let launcher = crate::runtime_install::launcher_path(&root);
+        let launcher = crate::install_files::launcher_path(&root);
         Self::for_command(
             &root,
             launcher,
@@ -396,7 +396,7 @@ impl ServiceManager {
         let expected = Path::new(&self.data)
             .join("runtimes")
             .join(&captured.runtime_sha256)
-            .join(crate::runtime_install::main_name());
+            .join(crate::install_files::main_name());
         ensure!(
             captured.executable == expected && captured.arguments == self.runtime_arguments(),
             "captured runtime manager command differs from its installation"
@@ -1180,7 +1180,7 @@ fn read_config(path: &Path) -> Result<Option<Vec<u8>>> {
         metadata.is_file() && !metadata.file_type().is_symlink() && metadata.len() <= MAX_CONFIG,
         "invalid, linked or oversized service configuration"
     );
-    crate::runtime_install::safe_file(path)?;
+    crate::install_files::safe_file(path)?;
     let mut bytes = Vec::new();
     fs::File::open(path)?
         .take(MAX_CONFIG + 1)

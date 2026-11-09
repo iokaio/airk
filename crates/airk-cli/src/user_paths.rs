@@ -36,6 +36,18 @@ impl Channel {
     }
 }
 
+/// Installation facts that path discovery consults but does not own. The
+/// installer supplies them (`runtime_install::INSTALLATION_PROBE`), so this
+/// module depends on no installer or launcher module.
+#[derive(Clone, Copy)]
+pub(crate) struct InstallationProbe {
+    /// Control root recorded by the claimed state layout of an installation root.
+    pub(crate) saved_control: fn(&Path) -> Result<PathBuf>,
+    /// The installation selected by the universal launcher in a launcher
+    /// directory, or `None` when that directory has no launcher configuration.
+    pub(crate) universal_selection: fn(&Path) -> Result<Option<PathBuf>>,
+}
+
 #[derive(Serialize)]
 pub(crate) struct UserPaths {
     pub channel: Channel,
@@ -258,9 +270,9 @@ fn mac_directories(
 }
 
 impl UserPaths {
-    pub(crate) fn discover(channel: Channel) -> Result<Self> {
+    pub(crate) fn discover(channel: Channel, probe: InstallationProbe) -> Result<Self> {
         let mut paths = Self::historical(channel)?;
-        paths.select_layout()?;
+        paths.select_layout(probe)?;
         Ok(paths)
     }
 
@@ -325,24 +337,19 @@ impl UserPaths {
         }
     }
 
-    fn select_layout(&mut self) -> Result<()> {
+    fn select_layout(&mut self, probe: InstallationProbe) -> Result<()> {
         let install = self.install.with_file_name(self.channel.leaf("runtime"));
         // Preserve existing ownership locations. If both layouts exist, a
         // verified universal launcher already selecting the new installation
         // takes precedence over leftovers from an older one.
         let new_selected = self.install.try_exists()?
             && install.try_exists()?
-            && self
-                .launcher
-                .join(crate::universal_launcher::CONFIG)
-                .try_exists()?
-            && crate::universal_launcher::resolve(
-                &self
-                    .launcher
-                    .join(crate::universal_launcher::launcher_name()),
-            )? == install.canonicalize()?;
+            && match (probe.universal_selection)(&self.launcher)? {
+                Some(selected) => selected == install.canonicalize()?,
+                None => false,
+            };
         if self.install.try_exists()? && !new_selected {
-            self.select_migrated_data()?;
+            self.select_migrated_data(probe.saved_control)?;
             return Ok(());
         }
         self.install = checked(install)?;
@@ -363,11 +370,14 @@ impl UserPaths {
         Ok(())
     }
 
-    pub(crate) fn select_migrated_data(&mut self) -> Result<()> {
+    pub(crate) fn select_migrated_data(
+        &mut self,
+        saved_control: fn(&Path) -> Result<PathBuf>,
+    ) -> Result<()> {
         if !self.install.join("runtime-layout.json").try_exists()? {
             return Ok(());
         }
-        let control = crate::runtime_install::saved_control_root(&self.install)?;
+        let control = saved_control(&self.install)?;
         let migration = airk_store::service::registry::data_relocation::require_settled(&control);
         if migration.is_err() {
             // Installation resumes its exact journal; discovery never starts a second root.
@@ -409,7 +419,7 @@ mod tests {
         let owner = tempfile::tempdir()?;
         for channel in [Channel::Stable, Channel::Preview] {
             let mut fresh = fixture_paths(owner.path(), channel);
-            fresh.select_layout()?;
+            fresh.select_layout(crate::runtime_install::INSTALLATION_PROBE)?;
             assert!(!fresh.legacy_locations);
             assert_eq!(
                 fresh.install.file_name().unwrap(),
@@ -428,7 +438,7 @@ mod tests {
             let mut existing = fixture_paths(owner.path(), channel);
             std::fs::create_dir(&existing.install)?;
             let before = serde_json::to_value(&existing)?;
-            existing.select_layout()?;
+            existing.select_layout(crate::runtime_install::INSTALLATION_PROBE)?;
             assert_eq!(serde_json::to_value(existing)?, before);
         }
         Ok(())
@@ -453,7 +463,7 @@ mod tests {
                 launcher_sha256: crate::runtime_pair::digest_file(&executable)?,
             })?,
         )?;
-        paths.select_layout()?;
+        paths.select_layout(crate::runtime_install::INSTALLATION_PROBE)?;
         assert!(!paths.legacy_locations);
         assert_eq!(paths.install, new_install);
         assert_eq!(paths.data, owner.path().join("data/index-v1"));
@@ -495,8 +505,10 @@ mod tests {
             owner.path()
         );
         assert!(!fake_home.exists());
-        let stable = UserPaths::discover(Channel::Stable)?;
-        let preview = UserPaths::discover(Channel::Preview)?;
+        let stable =
+            UserPaths::discover(Channel::Stable, crate::runtime_install::INSTALLATION_PROBE)?;
+        let preview =
+            UserPaths::discover(Channel::Preview, crate::runtime_install::INSTALLATION_PROBE)?;
         for (left, right) in [
             (stable.install, preview.install),
             (stable.configuration, preview.configuration),
@@ -518,7 +530,10 @@ mod tests {
             let expected: serde_json::Value =
                 serde_json::from_str(&std::env::var("AIRK_NATIVE_PATHS_FIXTURE")?)?;
             assert_eq!(
-                serde_json::to_value(UserPaths::discover(Channel::Stable)?)?,
+                serde_json::to_value(UserPaths::discover(
+                    Channel::Stable,
+                    crate::runtime_install::INSTALLATION_PROBE
+                )?)?,
                 expected
             );
         }
@@ -539,7 +554,10 @@ mod tests {
             .env("AIRK_NATIVE_HOME_FIXTURE", home()?)
             .env(
                 "AIRK_NATIVE_PATHS_FIXTURE",
-                serde_json::to_string(&UserPaths::discover(Channel::Stable)?)?,
+                serde_json::to_string(&UserPaths::discover(
+                    Channel::Stable,
+                    crate::runtime_install::INSTALLATION_PROBE,
+                )?)?,
             )
             .env("HOME", &fake)
             .env("USERPROFILE", &fake)

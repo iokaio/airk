@@ -135,7 +135,7 @@ mod tests {
             logs: base.join("logs"),
         };
         run_for(&root, RuntimeChannel::Stable, &paths)?;
-        paths.select_migrated_data()?;
+        paths.select_migrated_data(crate::runtime_install::saved_control_root)?;
         assert_eq!(paths.data, base.join("data/index-v1"));
         assert!(!data.exists());
         run_for(&root, RuntimeChannel::Stable, &paths)?;

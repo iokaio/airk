@@ -100,7 +100,7 @@ fn digest(bytes: &[u8]) -> Sha256Digest {
 }
 
 fn private_file(path: &Path) -> Result<()> {
-    crate::runtime_install::safe_file(path)?;
+    crate::install_files::safe_file(path)?;
     #[cfg(windows)]
     crate::local_ipc::require_owner_private(path)?;
     #[cfg(unix)]

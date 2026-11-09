@@ -85,7 +85,7 @@ fn copied_main_exposes_catalog_and_reports_its_actual_embedded_inference_capabil
     let owner = tempfile::tempdir()?;
     let root = tempfile::tempdir()?;
     let data = root.path().join("missing-state");
-    let binary = owner.path().join(airk_cli::runtime_install::main_name());
+    let binary = owner.path().join(airk_cli::install_files::main_name());
     fs::create_dir_all(binary.parent().unwrap())?;
     fs::copy(env!("CARGO_BIN_EXE_airk"), &binary)?;
     let report = Command::new(&binary)

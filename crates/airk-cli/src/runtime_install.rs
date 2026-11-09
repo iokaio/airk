@@ -2,6 +2,7 @@
 //! Offline installation, immutable runtime selection and same-user on-demand election.
 //! Approval is supplied by a trusted distributor or an explicit machine/user policy;
 //! neither a workspace path nor a manifest's own checksum establishes that approval.
+use crate::install_files::{MAC_LAUNCHER_IMAGE, launcher_path, main_name, safe_file};
 use crate::{local_ipc, runtime_pair, service_runtime};
 use airk_core::service::{ControlMethod, ControlResponse, ServiceHealth};
 use anyhow::{Context, Result, bail, ensure};
@@ -648,7 +649,7 @@ pub(crate) fn log_parent(control: &Path) -> Result<PathBuf> {
 }
 
 pub fn default_install_root() -> Result<PathBuf> {
-    Ok(crate::user_paths::UserPaths::discover(RuntimeChannel::Stable)?.install)
+    Ok(discover_user_paths(RuntimeChannel::Stable)?.install)
 }
 
 /// An owned stable launcher also identifies custom installations without PATH or environment guesses.
@@ -696,7 +697,7 @@ pub fn default_project_data(root: &Path) -> Result<PathBuf> {
         return Ok(data);
     }
     let (_, channel) = layout::retained_parameters(root)?;
-    Ok(crate::user_paths::UserPaths::discover(channel)?.data)
+    Ok(discover_user_paths(channel)?.data)
 }
 
 /// Installed frontends use the elected broker and direct project transport.
@@ -780,6 +781,18 @@ pub fn installed_metadata_control(root: &Path) -> Result<PathBuf> {
 
 pub(crate) fn saved_control_root(root: &Path) -> Result<PathBuf> {
     layout::saved_control(root)
+}
+
+/// Installer-owned facts consulted by user path discovery.
+pub(crate) const INSTALLATION_PROBE: crate::user_paths::InstallationProbe =
+    crate::user_paths::InstallationProbe {
+        saved_control: saved_control_root,
+        universal_selection: crate::universal_launcher::configured_selection,
+    };
+
+/// Native user paths for `channel`, with this installer's layout facts.
+pub(crate) fn discover_user_paths(channel: RuntimeChannel) -> Result<crate::user_paths::UserPaths> {
+    crate::user_paths::UserPaths::discover(channel, INSTALLATION_PROBE)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -965,44 +978,6 @@ fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-pub(crate) fn safe_file(path: &Path) -> Result<()> {
-    let metadata = fs::symlink_metadata(path)?;
-    ensure!(
-        metadata.is_file() && !metadata.file_type().is_symlink(),
-        "runtime file is not a regular unlinked file"
-    );
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        ensure!(metadata.nlink() == 1, "aliased runtime file");
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        use std::os::windows::io::AsRawHandle;
-        ensure!(
-            metadata.file_attributes() & 0x400 == 0,
-            "redirected runtime file"
-        );
-        let file = File::open(path)?;
-        // SAFETY: initialized output storage and a live read-only file handle.
-        let mut information: windows_sys::Win32::Storage::FileSystem::BY_HANDLE_FILE_INFORMATION =
-            unsafe { std::mem::zeroed() };
-        // SAFETY: native API writes exactly the fixed output structure.
-        ensure!(
-            unsafe {
-                windows_sys::Win32::Storage::FileSystem::GetFileInformationByHandle(
-                    file.as_raw_handle(),
-                    &mut information,
-                )
-            } != 0,
-            "cannot inspect runtime file aliases"
-        );
-        ensure!(information.nNumberOfLinks == 1, "aliased runtime file");
-    }
-    Ok(())
-}
-
 fn payload_path(root: &Path, name: &str) -> Result<PathBuf> {
     ensure!(
         !name.is_empty()
@@ -1091,17 +1066,6 @@ pub(crate) fn installed_identity(main: &Path) -> Result<Option<String>> {
     Ok(Some(format!("{:x}", Sha256::digest(bytes))))
 }
 
-pub fn main_name() -> &'static str {
-    if cfg!(windows) {
-        "airk.exe"
-    } else if cfg!(target_os = "macos") {
-        "AIRK.app/Contents/MacOS/airk"
-    } else {
-        "airk"
-    }
-}
-pub(crate) const MAC_LAUNCHER_IMAGE: &str = "AIRK.app/Contents/MacOS/airk-launcher-image";
-
 /// The separately signed Mac image survives copying outside the sealed bundle.
 /// Legacy payloads keep their original inventory and launcher source.
 fn standalone_launcher_name(os: &str, version: &str) -> Result<Option<&'static str>> {
@@ -1144,14 +1108,6 @@ fn helper_name() -> &'static str {
         "airk-embed"
     }
 }
-pub fn launcher_path(root: &Path) -> PathBuf {
-    root.join(if cfg!(windows) {
-        "airk-launcher.exe"
-    } else {
-        "airk-launcher"
-    })
-}
-
 fn open_install_lock(root: &Path) -> Result<File> {
     ensure!(
         root.is_absolute(),

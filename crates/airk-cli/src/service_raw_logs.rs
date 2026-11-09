@@ -178,7 +178,7 @@ pub fn export_to(root: &Path, output: &mut impl Write) -> Result<u64> {
         if !exists(&path)? {
             continue;
         }
-        crate::runtime_install::safe_file(&path)?;
+        crate::install_files::safe_file(&path)?;
         let mut file = File::open(&path)?;
         let mut remaining = file.metadata()?.len();
         ensure!(remaining <= FILE_BYTES, "raw diagnostic file exceeds bound");

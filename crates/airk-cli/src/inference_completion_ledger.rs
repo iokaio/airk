@@ -69,7 +69,7 @@ fn hash(bytes: &[u8]) -> Sha256Digest {
     Sha256Digest::from_bytes(Sha256::digest(bytes).into())
 }
 fn read(path: &Path, maximum: usize) -> Result<Vec<u8>> {
-    crate::runtime_install::safe_file(path)?;
+    crate::install_files::safe_file(path)?;
     ensure!(
         fs::metadata(path)?.len() <= maximum as u64,
         "native completion evidence exceeds capacity"
@@ -229,7 +229,7 @@ impl NativeLedger {
         temporary.write_all(&desired_head)?;
         temporary.as_file().sync_all()?;
         if head_path.try_exists()? {
-            crate::runtime_install::safe_file(&head_path)?;
+            crate::install_files::safe_file(&head_path)?;
         }
         temporary.persist(&head_path)?;
         sync(&self.directory)?;

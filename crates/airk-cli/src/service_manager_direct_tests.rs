@@ -5,7 +5,7 @@ use super::*;
 fn shared(platform: Platform, root: &Path) -> ServiceManager {
     let mut manager = super::tests::fixture(platform, root);
     manager.id = "airksvc-direct-fixture".into();
-    manager.executable = crate::runtime_install::launcher_path(root);
+    manager.executable = crate::install_files::launcher_path(root);
     manager.args = vec![
         "runtime".into(),
         "foreground".into(),
@@ -21,7 +21,7 @@ fn captured(manager: &ServiceManager) -> RuntimeExecution {
         executable: Path::new(&manager.data)
             .join("runtimes")
             .join(&runtime_sha256)
-            .join(crate::runtime_install::main_name()),
+            .join(crate::install_files::main_name()),
         arguments: manager.runtime_arguments(),
         runtime_sha256,
         executable_sha256: "cd".repeat(32),

@@ -80,7 +80,7 @@ fn native_supervisor_repairs_missing_grant_without_restarting_owners() -> Result
         PathBuf::from(std::env::var_os("AIRK_TEST_RUNTIME").context("AIRK_TEST_RUNTIME required")?)
             .canonicalize()?;
     let main = staged
-        .join(crate::runtime_install::main_name())
+        .join(crate::install_files::main_name())
         .canonicalize()?;
     crate::runtime_pair::verify_helper(&main)?;
     let engine = crate::runtime_pair::engine_identity_at(&main)?;

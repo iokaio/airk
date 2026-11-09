@@ -705,7 +705,7 @@ impl NativeFixture {
         )?)
         .canonicalize()?;
         let main = staged
-            .join(crate::runtime_install::main_name())
+            .join(crate::install_files::main_name())
             .canonicalize()?;
         Self::build_with_image(main, false)
     }

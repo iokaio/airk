@@ -60,7 +60,7 @@ fn fixture_candidate(base: &Path, inference: bool) -> Result<PathBuf> {
         // This disposable component fixture seals only the current main image.
         // It is not an installed-payload or deployment qualification fixture.
         let payload = base.join("runtime");
-        let main = payload.join(airk_cli::runtime_install::main_name());
+        let main = payload.join(airk_cli::install_files::main_name());
         fs::create_dir_all(main.parent().context("owned main parent missing")?)?;
         fs::copy(&candidate, &main)?;
         let receipt = airk_cli::runtime_pair::RuntimePair {

@@ -58,7 +58,7 @@ fn checksum(value: &impl Serialize) -> Result<Sha256Digest> {
     ))
 }
 fn read<T: DeserializeOwned + Serialize>(path: &Path) -> Result<T> {
-    crate::runtime_install::safe_file(path)?;
+    crate::install_files::safe_file(path)?;
     ensure!(
         fs::metadata(path)?.len() <= MAX_BYTES,
         "legacy receipt exceeds bound"
@@ -200,7 +200,7 @@ impl Journal {
         let mut journal = Self::saved(control)?;
         let path = journal.root.join("legacy-retirement-1.4.lock");
         if exists(&path)? {
-            crate::runtime_install::safe_file(&path)?;
+            crate::install_files::safe_file(&path)?;
             ensure!(
                 fs::metadata(&path)?.len() == 0,
                 "changed legacy lock preserved"
@@ -212,7 +212,7 @@ impl Journal {
             .create(true)
             .truncate(false)
             .open(&path)?;
-        crate::runtime_install::safe_file(&path)?;
+        crate::install_files::safe_file(&path)?;
         file.try_lock()
             .context("another legacy removal operation is active")?;
         journal = Self::saved(&journal.root)?;

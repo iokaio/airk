@@ -1540,7 +1540,7 @@ impl CapturedFile {
                 directory_identity(&held)?,
             ));
         }
-        crate::runtime_install::safe_file(path)?;
+        crate::install_files::safe_file(path)?;
         let mut options = OpenOptions::new();
         options.read(true);
         #[cfg(unix)]
@@ -1630,7 +1630,7 @@ impl CapturedFile {
                 );
             }
         }
-        crate::runtime_install::safe_file(&self.path)?;
+        crate::install_files::safe_file(&self.path)?;
         let current = File::open(&self.path)?;
         ensure!(
             file_identity(&current)? == self.identity

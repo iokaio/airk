@@ -109,7 +109,7 @@ fn named_owner(root: &Path, create: bool, name: &str, owner_name: &str) -> Resul
             Err(error) => return Err(error.into()),
         }
     }
-    crate::runtime_install::safe_file(&receipt)?;
+    crate::install_files::safe_file(&receipt)?;
     let mut bytes = Vec::new();
     File::open(receipt)?.take(4097).read_to_end(&mut bytes)?;
     ensure!(
@@ -135,7 +135,7 @@ fn preflight(directory: &Path) -> Result<u64> {
             FILES.contains(&name) || name == "writer.lock",
             "unknown diagnostic log file"
         );
-        crate::runtime_install::safe_file(&entry.path())?;
+        crate::install_files::safe_file(&entry.path())?;
         let length = entry.metadata()?.len();
         ensure!(
             length <= if name == "writer.lock" { 0 } else { FILE_BYTES },
@@ -163,7 +163,7 @@ impl Sink {
         let directory = named_owner(root, true, name, receipt)?;
         preflight(&directory)?;
         let lock = open_file(&directory.join("writer.lock"), true)?;
-        crate::runtime_install::safe_file(&directory.join("writer.lock"))?;
+        crate::install_files::safe_file(&directory.join("writer.lock"))?;
         Ok(Self {
             directory,
             lock,
@@ -238,7 +238,7 @@ impl Sink {
                 let path = self.directory.join(name);
                 if exists(&path)? {
                     let length = fs::metadata(&path)?.len();
-                    crate::runtime_install::safe_file(&path)?;
+                    crate::install_files::safe_file(&path)?;
                     fs::remove_file(path)?;
                     stored = stored.saturating_sub(length);
                 }
@@ -283,7 +283,7 @@ fn open_file(path: &Path, create: bool) -> Result<File> {
         options.custom_flags(0x00200000);
     }
     let file = options.open(path)?;
-    crate::runtime_install::safe_file(path)?;
+    crate::install_files::safe_file(path)?;
     Ok(file)
 }
 

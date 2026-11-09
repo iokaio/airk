@@ -62,7 +62,7 @@ pub(crate) fn packet_digest(control: &Path, operation: Incarnation) -> Result<Sh
 }
 
 fn bytes(path: &Path, maximum: u64) -> Result<Vec<u8>> {
-    crate::runtime_install::safe_file(path)?;
+    crate::install_files::safe_file(path)?;
     ensure!(
         std::fs::metadata(path)?.len() <= maximum,
         "checkpoint metadata capacity exceeded"
@@ -495,7 +495,7 @@ pub(crate) fn settle(control: &Path, operation: Incarnation) -> Result<()> {
         saved.operation_id == operation,
         "another checkpoint owns admission"
     );
-    crate::runtime_install::safe_file(&control.join(FENCE))?;
+    crate::install_files::safe_file(&control.join(FENCE))?;
     std::fs::remove_file(control.join(FENCE))?;
     #[cfg(unix)]
     std::fs::File::open(control)?.sync_all()?;

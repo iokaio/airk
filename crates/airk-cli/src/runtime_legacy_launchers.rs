@@ -221,7 +221,7 @@ fn prepare(root: &Path, expected: &str) -> Result<Intent> {
 fn validate_roster(intent: &Intent) -> Result<()> {
     let images = intent.images.as_deref().unwrap_or(&[]);
     let (_, channel) = layout::retained_parameters(&intent.install)?;
-    let universal = crate::user_paths::UserPaths::discover(channel)?
+    let universal = crate::runtime_install::discover_user_paths(channel)?
         .launcher
         .join(crate::universal_launcher::launcher_name());
     ensure!(

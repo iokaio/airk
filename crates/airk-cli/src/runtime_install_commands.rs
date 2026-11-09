@@ -229,7 +229,7 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
                     == source.join(main_name()).canonicalize()?,
                 "container host must run the approved image's own main executable"
             );
-            let paths = crate::user_paths::UserPaths::discover(*channel)?;
+            let paths = crate::runtime_install::discover_user_paths(*channel)?;
             managed::configure(
                 &source,
                 &paths.install,
@@ -245,7 +245,7 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             return service_runtime::serve(&layout::control(&paths.install)?).await;
         }
         RuntimeCommand::Location { channel } => {
-            let paths = crate::user_paths::UserPaths::discover(*channel)?;
+            let paths = crate::runtime_install::discover_user_paths(*channel)?;
             serde_json::json!({"install_dir":paths.install,"os":std::env::consts::OS,"arch":std::env::consts::ARCH,"channel":channel,"protocol":1,"storage_formats":airk_core::storage_format::CURRENT,"user_paths":paths})
         }
         RuntimeCommand::Login {

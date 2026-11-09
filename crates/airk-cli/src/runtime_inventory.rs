@@ -114,7 +114,7 @@ pub(super) fn inventory(root: &Path) -> Result<serde_json::Value> {
         crate::user_paths::Channel::Stable,
         crate::user_paths::Channel::Preview,
     ] {
-        let paths = crate::user_paths::UserPaths::discover(channel)?;
+        let paths = crate::runtime_install::discover_user_paths(channel)?;
         let name = serde_json::to_value(channel)?
             .as_str()
             .unwrap_or("unknown")

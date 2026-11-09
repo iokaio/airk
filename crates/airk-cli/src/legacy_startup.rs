@@ -275,7 +275,7 @@ fn proof(path: &Path) -> Result<Option<FileProof>> {
     if !exists(path)? {
         return Ok(None);
     }
-    crate::runtime_install::safe_file(path)?;
+    crate::install_files::safe_file(path)?;
     let metadata = fs::metadata(path)?;
     ensure!(
         metadata.len() <= 128 * 1024,
@@ -289,7 +289,7 @@ fn proof(path: &Path) -> Result<Option<FileProof>> {
         bytes.len() <= 128 * 1024 && bytes.len() as u64 == metadata.len(),
         "legacy metadata changed while reading"
     );
-    crate::runtime_install::safe_file(path)?;
+    crate::install_files::safe_file(path)?;
     ensure!(
         fs::metadata(path)?.modified()? == metadata.modified()?,
         "legacy metadata changed while reading"

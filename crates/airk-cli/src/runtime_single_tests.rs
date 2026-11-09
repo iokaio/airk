@@ -5,7 +5,7 @@ use super::*;
 fn retired_stdio_rejects_modern_missing_and_malformed_receipts_but_preserves_legacy() -> Result<()>
 {
     let owner = tempfile::tempdir()?;
-    let main = owner.path().join(crate::runtime_install::main_name());
+    let main = owner.path().join(crate::install_files::main_name());
     fs::create_dir_all(main.parent().unwrap())?;
     fs::write(&main, b"entry guard fixture")?;
     let root = payload_root(&main)?;
@@ -39,7 +39,7 @@ fn retired_stdio_rejects_modern_missing_and_malformed_receipts_but_preserves_leg
 fn single_executable_receipt_verifies_main_without_helper_or_role_copies() -> Result<()> {
     let owner = tempfile::tempdir()?;
     let root = owner.path().join("payload");
-    let main = root.join(crate::runtime_install::main_name());
+    let main = root.join(crate::install_files::main_name());
     fs::create_dir_all(main.parent().unwrap())?;
     fs::write(&main, b"single executable fixture")?;
     let pair = RuntimePair {

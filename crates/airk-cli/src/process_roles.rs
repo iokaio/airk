@@ -38,10 +38,10 @@ pub(crate) fn inventory(files: &mut BTreeMap<String, String>) {
     }) {
         return; // schema-2 main owns every native role; never invent alias files.
     }
-    if cfg!(target_os = "macos") && files.contains_key(crate::runtime_install::MAC_LAUNCHER_IMAGE) {
+    if cfg!(target_os = "macos") && files.contains_key(crate::install_files::MAC_LAUNCHER_IMAGE) {
         return; // The sealed Mac main must run in its bundle, not as role copies.
     }
-    if let Some(hash) = files.get(crate::runtime_install::main_name()).cloned() {
+    if let Some(hash) = files.get(crate::install_files::main_name()).cloned() {
         for role in ROLES {
             files.insert(role.name().into(), hash.clone());
         }
@@ -95,10 +95,10 @@ fn standalone_mac_layout(main: &Path) -> Result<bool> {
         return Ok(false);
     }
     let image =
-        crate::runtime_pair::payload_root(main)?.join(crate::runtime_install::MAC_LAUNCHER_IMAGE);
+        crate::runtime_pair::payload_root(main)?.join(crate::install_files::MAC_LAUNCHER_IMAGE);
     match fs::symlink_metadata(&image) {
         Ok(_) => {
-            crate::runtime_install::safe_file(&image)?;
+            crate::install_files::safe_file(&image)?;
             Ok(true)
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
@@ -130,7 +130,7 @@ pub(crate) fn main_image(executable: &Path) -> Result<PathBuf> {
     let main = executable
         .parent()
         .context("process alias parent missing")?
-        .join(crate::runtime_install::main_name());
+        .join(crate::install_files::main_name());
     ensure!(
         !crate::runtime_pair::single_executable(&main)?,
         "single executable runtime does not own copied process aliases"
@@ -194,12 +194,12 @@ mod tests {
     fn sealed_mac_payload_runs_in_bundle_without_copying_process_roles() -> Result<()> {
         let owner = tempfile::tempdir()?;
         let root = owner.path().join("payload");
-        let main = root.join(crate::runtime_install::main_name());
+        let main = root.join(crate::install_files::main_name());
         fs::create_dir_all(main.parent().unwrap())?;
         fs::write(&main, b"sealed main fixture")?;
         legacy_receipt(&main)?;
         fs::write(
-            root.join(crate::runtime_install::MAC_LAUNCHER_IMAGE),
+            root.join(crate::install_files::MAC_LAUNCHER_IMAGE),
             b"standalone fixture",
         )?;
         install(&main)?;
@@ -219,7 +219,7 @@ mod tests {
     fn roles_share_bytes_resolve_metadata_and_refuse_changed_aliases() -> Result<()> {
         let owner = tempfile::tempdir()?;
         let root = owner.path().join("payload");
-        let main = root.join(crate::runtime_install::main_name());
+        let main = root.join(crate::install_files::main_name());
         fs::create_dir_all(main.parent().unwrap())?;
         fs::write(&main, b"approved engine fixture")?;
         legacy_receipt(&main)?;

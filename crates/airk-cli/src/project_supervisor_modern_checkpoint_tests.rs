@@ -36,7 +36,7 @@ pub(super) fn verify_modern_fixture_inputs(
     }
     fn metadata_bytes(path: &Path, limit: u64) -> Result<Vec<u8>> {
         use std::io::Read;
-        crate::runtime_install::safe_file(path)?;
+        crate::install_files::safe_file(path)?;
         ensure!(
             std::fs::metadata(path)?.len() <= limit,
             "fixture metadata exceeds writer bound"
@@ -76,7 +76,7 @@ pub(super) fn verify_modern_fixture_inputs(
         "fixture inventory count differs from bounded writer contract"
     );
     for required in [
-        crate::runtime_install::main_name(),
+        crate::install_files::main_name(),
         "airk-runtime.json",
         "airk-build.json",
         "LICENSE",
@@ -134,7 +134,7 @@ pub(super) fn verify_modern_fixture_inputs(
         );
         let _: airk_core::identity::Sha256Digest = expected.parse()?;
         let file = runtime.join(name);
-        crate::runtime_install::safe_file(&file)?;
+        crate::install_files::safe_file(&file)?;
         total = total
             .checked_add(std::fs::metadata(&file)?.len())
             .context("fixture inventory byte overflow")?;
@@ -201,7 +201,7 @@ pub(super) fn verify_modern_fixture_inputs(
             if metadata.is_dir() {
                 pending.push(path);
             } else {
-                crate::runtime_install::safe_file(&path)?;
+                crate::install_files::safe_file(&path)?;
             }
         }
     }
@@ -260,7 +260,7 @@ fn modern_candidate_receipts_match_pinned_build_without_starting_process() -> Re
 fn modern_checkpoint_fixture_accepts_independent_install_runtime_and_build_schemas() -> Result<()> {
     let owner = tempfile::tempdir()?;
     let runtime = owner.path().canonicalize()?;
-    let main = runtime.join(crate::runtime_install::main_name());
+    let main = runtime.join(crate::install_files::main_name());
     std::fs::create_dir_all(main.parent().unwrap())?;
     std::fs::write(&main, b"modern fixture image; never executed")?;
     std::fs::write(runtime.join("LICENSE"), b"original fixture license")?;
@@ -287,7 +287,7 @@ fn modern_checkpoint_fixture_accepts_independent_install_runtime_and_build_schem
     std::fs::write(runtime.join("airk-build.json"), &build_bytes)?;
     let mut files = BTreeMap::new();
     for name in [
-        crate::runtime_install::main_name(),
+        crate::install_files::main_name(),
         "airk-runtime.json",
         "airk-build.json",
         "LICENSE",
@@ -431,7 +431,7 @@ fn modern_checkpoint_fixture_accepts_independent_install_runtime_and_build_schem
 fn modern_checkpoint_fixture_verifies_single_main_and_legacy_requires_helper() -> Result<()> {
     use sha2::{Digest, Sha256};
     let owner = tempfile::tempdir()?;
-    let main = owner.path().join(crate::runtime_install::main_name());
+    let main = owner.path().join(crate::install_files::main_name());
     std::fs::create_dir_all(main.parent().context("fixture main has no parent")?)?;
     let helper = main.parent().unwrap().join(if cfg!(windows) {
         "airk-embed.exe"

@@ -436,7 +436,7 @@ fn manage_with(
         Host::Unsupported => unreachable!(),
     };
     if matches!(host, Host::Macos) {
-        crate::runtime_install::safe_file(&store)?;
+        crate::install_files::safe_file(&store)?;
     }
     status.store = Some(store.clone());
     status.guidance = "Normal TLS validation is required. Verify the actual MCP host connection; an already running host may retain cached trust. Retry its connection after installing the reviewed issuer.";

@@ -126,7 +126,7 @@ pub async fn install_payload(
 ) -> Result<()> {
     approved.parse::<Sha256Digest>()?;
     ensure!(
-        crate::runtime_pair::digest_file(&source.join(crate::runtime_install::main_name()))?
+        crate::runtime_pair::digest_file(&source.join(crate::install_files::main_name()))?
             == crate::runtime_pair::current_executable_sha256()?,
         "run setup using the reviewed payload's own AIRK executable before installing it"
     );
@@ -658,7 +658,7 @@ fn write_private_file(
         file.persist_noclobber(&target)
             .map_err(|error| error.error)?;
     }
-    crate::runtime_install::safe_file(&target)?;
+    crate::install_files::safe_file(&target)?;
     #[cfg(unix)]
     std::fs::File::open(root)?.sync_all()?;
     Ok(())

@@ -291,8 +291,7 @@ fn payload(owner: &Path) -> Result<(PathBuf, String)> {
         );
         ensure!(
             manifest.files.len() <= 2048
-                && manifest.files.get(airk_cli::runtime_install::main_name())
-                    == Some(&current_hash),
+                && manifest.files.get(airk_cli::install_files::main_name()) == Some(&current_hash),
             "external fixture does not contain current Cargo main"
         );
         for (name, hash) in &manifest.files {
@@ -322,7 +321,7 @@ fn payload(owner: &Path) -> Result<(PathBuf, String)> {
             .canonicalize()?;
         copy_file(
             current,
-            &root.join(airk_cli::runtime_install::main_name()),
+            &root.join(airk_cli::install_files::main_name()),
             2 * 1024 * 1024 * 1024,
         )?;
         for name in ["LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"] {
@@ -360,7 +359,7 @@ fn payload(owner: &Path) -> Result<(PathBuf, String)> {
         )?;
     }
     airk_cli::runtime_pair::verify_installed_pair(
-        &root.join(airk_cli::runtime_install::main_name()),
+        &root.join(airk_cli::install_files::main_name()),
         env!("CARGO_PKG_VERSION"),
     )?;
     let manifest = root.join("airk-runtime.json");
@@ -622,7 +621,7 @@ pub(super) fn start(
         "fixture data overlaps source or owner"
     );
     let (payload, digest) = payload(&owner)?;
-    let executable = payload.join(airk_cli::runtime_install::main_name());
+    let executable = payload.join(airk_cli::install_files::main_name());
     let install = owner.join("install");
     let state = owner.join("state");
     let path = |path: &Path| {

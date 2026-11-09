@@ -31,7 +31,7 @@ fn publication_lock(directory: &Path) -> Result<fs::File> {
     let path = directory.join(PUBLICATION_LOCK);
     match fs::symlink_metadata(&path) {
         Ok(_) => {
-            crate::runtime_install::safe_file(&path)?;
+            crate::install_files::safe_file(&path)?;
             ensure!(
                 fs::metadata(&path)?.len() == 0,
                 "unrecognized universal publication lock"
@@ -48,7 +48,7 @@ fn publication_lock(directory: &Path) -> Result<fs::File> {
         options.mode(0o600);
     }
     let file = options.open(&path)?;
-    crate::runtime_install::safe_file(&path)?;
+    crate::install_files::safe_file(&path)?;
     ensure!(
         file.metadata()?.len() == 0,
         "unrecognized universal publication lock"
@@ -57,7 +57,7 @@ fn publication_lock(directory: &Path) -> Result<fs::File> {
         "universal launcher publication or retirement is in progress; retry after it finishes",
     )?;
     crate::local_ipc::require_existing_root(directory)?;
-    crate::runtime_install::safe_file(&path)?;
+    crate::install_files::safe_file(&path)?;
     Ok(file)
 }
 
@@ -116,6 +116,16 @@ fn owner_only(path: &Path) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// The install root selected by the universal launcher in `directory`, or
+/// `None` when that directory has no launcher configuration. Supplied to user
+/// path discovery through `runtime_install::INSTALLATION_PROBE`.
+pub(crate) fn configured_selection(directory: &Path) -> Result<Option<PathBuf>> {
+    if !directory.join(CONFIG).try_exists()? {
+        return Ok(None);
+    }
+    resolve(&directory.join(launcher_name())).map(Some)
 }
 
 /// Resolve the install root for a universal launcher at `executable`, reading the pointer now.
@@ -318,7 +328,7 @@ pub fn publish_for_default(
     if crate::runtime_pair::single_executable(&main)? {
         return Ok(None);
     }
-    let paths = crate::user_paths::UserPaths::discover(channel)?;
+    let paths = crate::runtime_install::discover_user_paths(channel)?;
     if crate::user_paths::canonical_location(&paths.install)? != install.canonicalize()? {
         return Ok(None);
     }
@@ -327,7 +337,7 @@ pub fn publish_for_default(
 
 /// The published universal launcher that currently forwards to `install`, if any.
 pub fn current_for(install: &Path, channel: crate::user_paths::Channel) -> Result<Option<PathBuf>> {
-    let paths = crate::user_paths::UserPaths::discover(channel)?;
+    let paths = crate::runtime_install::discover_user_paths(channel)?;
     let executable = paths.launcher.join(launcher_name());
     if !executable.is_file() {
         return Ok(None);
@@ -348,7 +358,7 @@ pub(crate) fn retirement_image_for(
     install: &Path,
     channel: crate::user_paths::Channel,
 ) -> Result<Option<PathBuf>> {
-    let paths = crate::user_paths::UserPaths::discover(channel)?;
+    let paths = crate::runtime_install::discover_user_paths(channel)?;
     retirement_image_at(&paths.launcher, install)
 }
 
@@ -390,21 +400,21 @@ fn retirement_image_at(directory: &Path, install: &Path) -> Result<Option<PathBu
         }
     };
     if exists(&receipt)? {
-        crate::runtime_install::safe_file(&receipt)?;
+        crate::install_files::safe_file(&receipt)?;
         let saved: Pointer = serde_json::from_slice(&read_bounded(&receipt)?)?;
         ensure!(
             saved.schema == 1 && saved.install == install.canonicalize()?,
             "universal retirement receipt changed"
         );
         if exists(&executable)? {
-            crate::runtime_install::safe_file(&executable)?;
+            crate::install_files::safe_file(&executable)?;
             ensure!(
                 digest(&executable)? == saved.launcher_sha256,
                 "changed universal launcher preserved"
             );
         }
         if exists(&config)? {
-            crate::runtime_install::safe_file(&config)?;
+            crate::install_files::safe_file(&config)?;
             ensure!(
                 serde_json::from_slice::<Pointer>(&read_bounded(&config)?)? == saved,
                 "changed universal pointer preserved"
@@ -421,15 +431,15 @@ fn retirement_image_at(directory: &Path, install: &Path) -> Result<Option<PathBu
         image && pointer,
         "partial universal launcher publication preserved; repair ownership before retirement"
     );
-    crate::runtime_install::safe_file(&executable)?;
-    crate::runtime_install::safe_file(&config)?;
+    crate::install_files::safe_file(&executable)?;
+    crate::install_files::safe_file(&config)?;
     Ok((resolve(&executable)? == install.canonicalize()?).then_some(executable))
 }
 
 /// Remove only the verified universal entry point for this installation. A saved
 /// receipt resumes interruption between deleting the executable and its pointer.
 pub(crate) fn retire_for(install: &Path, channel: crate::user_paths::Channel) -> Result<()> {
-    let paths = crate::user_paths::UserPaths::discover(channel)?;
+    let paths = crate::runtime_install::discover_user_paths(channel)?;
     retire_at(&paths.launcher, install)
 }
 
@@ -454,7 +464,7 @@ fn retire_at(directory: &Path, install: &Path) -> Result<()> {
     // every ownership/identity check before recording or removing anything.
     let _publication = publication_lock(directory)?;
     let pointer: Pointer = if receipt.try_exists()? {
-        crate::runtime_install::safe_file(&receipt)?;
+        crate::install_files::safe_file(&receipt)?;
         serde_json::from_slice(&read_bounded(&receipt)?)?
     } else {
         if !executable.try_exists()? || !config.try_exists()? {
@@ -463,7 +473,7 @@ fn retire_at(directory: &Path, install: &Path) -> Result<()> {
         if resolve(&executable)? != install.canonicalize()? {
             return Ok(());
         }
-        crate::runtime_install::safe_file(&config)?;
+        crate::install_files::safe_file(&config)?;
         let bytes = read_bounded(&config)?;
         let pointer: Pointer = serde_json::from_slice(&bytes)?;
         use std::io::Write;
@@ -478,14 +488,14 @@ fn retire_at(directory: &Path, install: &Path) -> Result<()> {
         "universal uninstall receipt names another installation"
     );
     if config.try_exists()? {
-        crate::runtime_install::safe_file(&config)?;
+        crate::install_files::safe_file(&config)?;
         ensure!(
             serde_json::from_slice::<Pointer>(&read_bounded(&config)?)? == pointer,
             "changed universal launcher configuration preserved during uninstall"
         );
     }
     if executable.try_exists()? {
-        crate::runtime_install::safe_file(&executable)?;
+        crate::install_files::safe_file(&executable)?;
         ensure!(
             digest(&executable)? == pointer.launcher_sha256,
             "changed universal launcher preserved during uninstall"

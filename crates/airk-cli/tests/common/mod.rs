@@ -274,7 +274,7 @@ impl Service {
             {
                 let payload = owner.path().join("pair");
                 std::fs::create_dir(&payload).unwrap();
-                let main = airk_cli::runtime_install::main_name();
+                let main = airk_cli::install_files::main_name();
                 let embed = Path::new(main).with_file_name(if cfg!(windows) {
                     "airk-embed.exe"
                 } else {

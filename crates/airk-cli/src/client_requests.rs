@@ -95,7 +95,7 @@ fn lock(control: &Path) -> Result<File> {
     namespace(control)?;
     let path = control.join("client-requests.lock");
     if path.try_exists()? {
-        crate::runtime_install::safe_file(&path)?;
+        crate::install_files::safe_file(&path)?;
         ensure!(
             fs::metadata(&path)?.len() == 0,
             "changed CLI journal lock preserved"
@@ -107,7 +107,7 @@ fn lock(control: &Path) -> Result<File> {
         .create(true)
         .truncate(false)
         .open(&path)?;
-    crate::runtime_install::safe_file(&path)?;
+    crate::install_files::safe_file(&path)?;
     file.try_lock()
         .context("another CLI request journal operation is active")?;
     Ok(file)
@@ -189,7 +189,7 @@ fn fields(saved: &Saved) -> Result<(Incarnation, ProjectBinding, JobKind)> {
 }
 fn read(control: &Path, nonce: Incarnation) -> Result<Saved> {
     let path = directory(control).join(format!("{nonce}.json"));
-    crate::runtime_install::safe_file(&path)?;
+    crate::install_files::safe_file(&path)?;
     ensure!(
         fs::metadata(&path)?.len() <= BYTES,
         "CLI request exceeds byte bound"

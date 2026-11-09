@@ -248,7 +248,7 @@ pub(super) fn planned_state(
         return Ok(existing.state);
     }
     let install = crate::user_paths::canonical_location(root)?;
-    let native = crate::user_paths::UserPaths::discover(channel)?;
+    let native = crate::runtime_install::discover_user_paths(channel)?;
     if crate::user_paths::canonical_location(&native.install)? == install {
         crate::user_paths::canonical_location(&native.state)
     } else {
@@ -310,7 +310,7 @@ fn initialize_with_origin(
         // elsewhere under this installation; never start writing into them.
         None
     } else {
-        let native = crate::user_paths::UserPaths::discover(channel).ok();
+        let native = crate::runtime_install::discover_user_paths(channel).ok();
         let native_logs = native
             .as_ref()
             .filter(|native| {
