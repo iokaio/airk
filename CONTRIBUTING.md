@@ -52,7 +52,7 @@ If formatting already passed for the same edits, `--skip-fmt` reuses that comple
 
 The helper defaults to Windows development incremental compilation on (`CARGO_INCREMENTAL=1`) and off on other hosts (`0`); use `--incremental on` or `--incremental off` for an explicit per-run override. This is a local development choice, with no change to release profiles or CI qualification. Avoid routine Windows `cargo clean` or fresh target directories. Batch required Mac Neo checks over its existing SSH connection, preserve the complete results/timing reports, and run `cargo clean` there after testing even if a check failed, to recover its limited drive space.
 
-Structural steps ([simplification plan](docs/simplify-plan.md)) compare selected test identities and outcomes, never counts: `python scripts/dev/test_identities.py record --output <file> -- <cargo test selection>` records them per test binary, and `compare` reports added, removed and changed identities. `python scripts/dev/simplify_metrics.py` prints the plan's structural metrics; they are reported, never gates.
+Structural steps ([simplification plan](docs/simplify-plan.md)) compare selected test identities and outcomes, never counts: `python scripts/dev/test_identities.py record --output <file> -- <cargo test selection>` records them per test binary, and `compare` reports added, removed and changed identities. `python scripts/dev/simplify_metrics.py` prints the plan's structural metrics; they are reported, never gates. The S5 boundary gates are enforced: `python scripts/dev/boundary_check.py` fails on an unreviewed `#[path]` mount, `include!` of Rust source or orphan file, a workspace crate edge outside the allowed list, or a module joining or merging a top-level module cycle. Its expectations live in `scripts/dev/boundary-exceptions.json`. A change there is a reviewed diff; `--write-baseline` regenerates it from the tree only for that review, keeping existing reasons. Leaving a cycle always passes, so shrink the baseline in the same change that untangles a module.
 
 Every helper invocation includes Cargo `--timings`. On the next necessary build or Clippy run, record the exact command, selected packages/features/targets, persistent target directory, incremental setting, elapsed time, result and timing-report location. Retain evidence outside the target before Neo cleanup. Use those observations to investigate cost; do not launch speculative benchmarks or broad builds just to compare workflow settings. A scoped pass proves only its selected configuration. Required workspace, lightweight component, in-process inference, applicable legacy-helper, runtime, packaging and release checks below remain in force.
 
@@ -67,6 +67,8 @@ cargo build --workspace --locked
 cargo test --workspace --all-features --locked
 python scripts/check-service-clients.py --runtime-dir target/service-runtime --files 16 --model
 pwsh -NoProfile -File scripts/check-repo.ps1
+python scripts/dev/boundary_check.py
+python scripts/dev/d6_archive_docs.py --check
 python scripts/license-notices.py --output target/notices --release
 python scripts/dependency-audit.py
 python -m unittest discover -s scripts/tests -v

@@ -95,6 +95,10 @@ jobs:
       - name: Public files, documentation links and contributor guidance
         shell: pwsh
         run: ./scripts/check-repo.ps1
+      - name: Boundary gates and documentation archive
+        run: |
+          python scripts/dev/boundary_check.py
+          python scripts/dev/d6_archive_docs.py --check
       - run: git diff --check
   contracts:
     name: Contracts / ${{ matrix.os }}

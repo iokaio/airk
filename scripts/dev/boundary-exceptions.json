@@ -1,0 +1,598 @@
+{
+  "schema": "airk-boundary-exceptions/1",
+  "note": "Reviewed expectations for scripts/dev/boundary_check.py. Changing any entry is a reviewed diff; never edit it to make a check pass without review. Identities are line-independent.",
+  "crate_edges": {
+    "note": "Allowed normal (non-dev, non-build) dependencies between workspace crates, seeded from the edges present when the gate was introduced. Adding an edge is a reviewed diff against docs/architecture.md and docs/simplify-plan.md section 4.1.",
+    "allowed": {
+      "airk-cli": [
+        "airk-core",
+        "airk-kernel",
+        "airk-mcp",
+        "airk-process",
+        "airk-retrieval",
+        "airk-store"
+      ],
+      "airk-core": [],
+      "airk-ingest": [
+        "airk-core",
+        "airk-process"
+      ],
+      "airk-kernel": [
+        "airk-core",
+        "airk-ingest",
+        "airk-retrieval",
+        "airk-store"
+      ],
+      "airk-mcp": [
+        "airk-core",
+        "airk-kernel"
+      ],
+      "airk-process": [],
+      "airk-retrieval": [
+        "airk-core"
+      ],
+      "airk-store": [
+        "airk-core"
+      ]
+    }
+  },
+  "module_cycles": {
+    "note": "Ratchet baseline of top-level module cycles per library crate. A module may leave a cycle without review; joining a cycle, a new cycle or a merge of cycles fails.",
+    "airk-cli": [
+      [
+        "catalog_admission",
+        "catalog_coordinator",
+        "catalog_index_setup",
+        "catalog_index_setup_control",
+        "catalog_source_change_control",
+        "catalog_split_control",
+        "combined_frontend",
+        "console_client",
+        "embedding_pool_bootstrap",
+        "embedding_pool_process",
+        "explorer_assistance",
+        "http_backend",
+        "http_endpoint",
+        "http_gateway",
+        "native_admin_connections",
+        "native_process",
+        "project_client",
+        "project_protocol",
+        "project_supervisor",
+        "reference_refresh_control",
+        "runtime_install",
+        "runtime_metadata",
+        "service_frontend",
+        "service_inference",
+        "service_logs",
+        "service_management",
+        "service_manager",
+        "service_registration",
+        "service_runtime",
+        "source_supervisor",
+        "unified_mcp",
+        "universal_launcher",
+        "unix_guardian",
+        "usage_client"
+      ],
+      [
+        "client_requests",
+        "service_configuration"
+      ],
+      [
+        "process_roles",
+        "runtime_pair"
+      ]
+    ],
+    "airk-core": [
+      [
+        "binding",
+        "mapped_binding"
+      ],
+      [
+        "catalog_fences",
+        "catalog_host",
+        "catalog_legacy_adoption",
+        "catalog_legacy_authority",
+        "catalog_management",
+        "catalog_policy",
+        "catalog_refresh",
+        "catalog_setup",
+        "catalog_source_change",
+        "catalog_source_draft",
+        "catalog_split",
+        "catalog_split_draft",
+        "combined_reads",
+        "grant_provenance",
+        "index_catalog",
+        "inference_provider",
+        "native_reads",
+        "scoped_reads",
+        "service",
+        "service_checkpoint",
+        "service_configuration",
+        "service_console",
+        "service_events",
+        "service_http",
+        "service_inspection",
+        "service_maintenance",
+        "service_progress",
+        "service_resources",
+        "source_policy",
+        "verification",
+        "workbench"
+      ],
+      [
+        "changes",
+        "evidence"
+      ],
+      [
+        "continuity",
+        "extraction",
+        "location",
+        "retention"
+      ]
+    ],
+    "airk-ingest": [
+      [
+        "actions",
+        "adapters",
+        "build_cmake",
+        "build_facts",
+        "build_make",
+        "compose",
+        "composite",
+        "continuity",
+        "documents",
+        "header_context",
+        "host_components",
+        "host_html",
+        "host_prose",
+        "languages_a",
+        "languages_b_data",
+        "languages_b_functional",
+        "languages_b_r_perl_groovy",
+        "msbuild",
+        "notebook",
+        "ocr",
+        "pdf_worker",
+        "project_build",
+        "project_schemas",
+        "providers",
+        "razor",
+        "repository_binding",
+        "retention",
+        "scss",
+        "specialist_business",
+        "specialist_gpu",
+        "specialist_hardware",
+        "specialist_vendor",
+        "spreadsheets",
+        "structured_view",
+        "structured_yaml",
+        "syntax",
+        "syntax_repairs",
+        "tables"
+      ],
+      [
+        "permanent_policy",
+        "policy_ignore"
+      ]
+    ],
+    "airk-kernel": [
+      [
+        "continuity",
+        "current",
+        "diagnostics",
+        "extraction"
+      ],
+      [
+        "execution",
+        "limits",
+        "service_execution"
+      ],
+      [
+        "remote_tokenization",
+        "tokenization",
+        "usage"
+      ]
+    ],
+    "airk-mcp": [
+      [
+        "combined",
+        "unified"
+      ]
+    ],
+    "airk-process": [],
+    "airk-retrieval": [
+      [
+        "embedding_batch",
+        "embedding_worker",
+        "model",
+        "model_catalog",
+        "onnx",
+        "remote_model",
+        "vector"
+      ]
+    ],
+    "airk-store": [
+      [
+        "blobs",
+        "capacity",
+        "checkpoints",
+        "compression",
+        "current",
+        "diagnostics",
+        "durability",
+        "extraction_policy",
+        "history",
+        "history_policy",
+        "maintenance",
+        "model_objects",
+        "quota",
+        "reset",
+        "retention",
+        "roots",
+        "scheduler",
+        "service",
+        "sqlite",
+        "usage",
+        "vector_cache"
+      ]
+    ]
+  },
+  "module_honesty": [
+    {
+      "kind": "path",
+      "file": "crates/airk-cli/src/inference_engine.rs",
+      "value": "embed_request.rs",
+      "reason_class": "multi-declaration",
+      "reason": "The file is reached from more than one module declaration, so it has no single canonical location."
+    },
+    {
+      "kind": "path",
+      "file": "crates/airk-cli/src/local_ipc_windows.rs",
+      "value": "local_ipc_windows_job.rs",
+      "reason_class": "platform-switch-child",
+      "reason": "Declared by a file loaded through a kept platform-switch mount; its canonical location follows the switch, so it moves only with that switch."
+    },
+    {
+      "kind": "path",
+      "file": "crates/airk-cli/src/local_ipc_windows.rs",
+      "value": "local_ipc_windows_path_tests.rs",
+      "reason_class": "platform-switch-child",
+      "reason": "Declared by a file loaded through a kept platform-switch mount; its canonical location follows the switch, so it moves only with that switch."
+    },
+    {
+      "kind": "path",
+      "file": "crates/airk-cli/src/project_supervisor/guarded_qualification_tests/engine_gate.rs",
+      "value": "../../../tests/fixtures/guarded_provider_gate_protocol.rs",
+      "reason_class": "parent-dir-mount",
+      "reason": "A ../ mount that leaves its directory or Cargo target (shared test protocol or source)."
+    },
+    {
+      "kind": "path",
+      "file": "crates/airk-cli/tests/catalog_upgrade.rs",
+      "value": "common/read_retry.rs",
+      "reason_class": "multi-declaration",
+      "reason": "The file is reached from more than one module declaration, so it has no single canonical location."
+    },
+    {
+      "kind": "path",
+      "file": "crates/airk-cli/tests/combined_reads.rs",
+      "value": "combined_reads/changes_verification.rs",
+      "reason_class": "integration-test-root-child",
+      "reason": "Declared by an integration-test, bench or example root; at its canonical location beside the root it would become another Cargo target."
+    },
+    {
+      "kind": "path",
+      "file": "crates/airk-cli/tests/combined_reads.rs",
+      "value": "combined_reads/permanent_trim.rs",
+      "reason_class": "integration-test-root-child",
+      "reason": "Declared by an integration-test, bench or example root; at its canonical location beside the root it would become another Cargo target."
+    },
+    {
+      "kind": "path",
+      "file": "crates/airk-cli/tests/combined_reads.rs",
+      "value": "combined_reads/profile_families.rs",
+      "reason_class": "integration-test-root-child",
+      "reason": "Declared by an integration-test, bench or example root; at its canonical location beside the root it would become another Cargo target."
+    },
+    {
+      "kind": "path",
+      "file": "crates/airk-cli/tests/combined_reads.rs",
+      "value": "combined_reads/reference_refresh.rs",
+      "reason_class": "integration-test-root-child",
+      "reason": "Declared by an integration-test, bench or example root; at its canonical location beside the root it would become another Cargo target."
+    },
+    {
+      "kind": "path",
+      "file": "crates/airk-cli/tests/combined_reads.rs",
+      "value": "combined_reads/retention.rs",
+      "reason_class": "integration-test-root-child",
+      "reason": "Declared by an integration-test, bench or example root; at its canonical location beside the root it would become another Cargo target."
+    },
+    {
+      "kind": "path",
+      "file": "crates/airk-cli/tests/combined_reads.rs",
+      "value": "combined_reads/single_member_retry.rs",
+      "reason_class": "integration-test-root-child",
+      "reason": "Declared by an integration-test, bench or example root; at its canonical location beside the root it would become another Cargo target."
+    },
+    {
+      "kind": "path",
+      "file": "crates/airk-cli/tests/combined_reads.rs",
+      "value": "combined_reads/split.rs",
+      "reason_class": "integration-test-root-child",
+      "reason": "Declared by an integration-test, bench or example root; at its canonical location beside the root it would become another Cargo target."
+    },
+    {
+      "kind": "path",
+      "file": "crates/airk-cli/tests/combined_reads.rs",
+      "value": "common/http.rs",
+      "reason_class": "multi-declaration",
+      "reason": "The file is reached from more than one module declaration, so it has no single canonical location."
+    },
+    {
+      "kind": "path",
+      "file": "crates/airk-cli/tests/combined_reads.rs",
+      "value": "common/read_retry.rs",
+      "reason_class": "multi-declaration",
+      "reason": "The file is reached from more than one module declaration, so it has no single canonical location."
+    },
+    {
+      "kind": "path",
+      "file": "crates/airk-cli/tests/combined_reads/permanent_trim.rs",
+      "value": "deleted_source_recovery.rs",
+      "reason_class": "kept-mount-child",
+      "reason": "Declared by a file that is itself loaded through a kept #[path] mount."
+    },
+    {
+      "kind": "path",
+      "file": "crates/airk-cli/tests/combined_reads/split.rs",
+      "value": "split_metrics.rs",
+      "reason_class": "kept-mount-child",
+      "reason": "Declared by a file that is itself loaded through a kept #[path] mount."
+    },
+    {
+      "kind": "path",
+      "file": "crates/airk-cli/tests/fixtures/guarded_provider_fixture.rs",
+      "value": "../../src/embed_request.rs",
+      "reason_class": "parent-dir-mount",
+      "reason": "A ../ mount that leaves its directory or Cargo target (shared test protocol or source)."
+    },
+    {
+      "kind": "path",
+      "file": "crates/airk-cli/tests/fixtures/guarded_provider_fixture.rs",
+      "value": "guarded_provider_gate_protocol.rs",
+      "reason_class": "multi-declaration",
+      "reason": "The file is reached from more than one module declaration, so it has no single canonical location."
+    },
+    {
+      "kind": "path",
+      "file": "crates/airk-cli/tests/helper_outage_reads.rs",
+      "value": "mcp/source_runtime.rs",
+      "reason_class": "multi-declaration",
+      "reason": "The file is reached from more than one module declaration, so it has no single canonical location."
+    },
+    {
+      "kind": "path",
+      "file": "crates/airk-cli/tests/mcp.rs",
+      "value": "mcp/source_runtime.rs",
+      "reason_class": "multi-declaration",
+      "reason": "The file is reached from more than one module declaration, so it has no single canonical location."
+    },
+    {
+      "kind": "path",
+      "file": "crates/airk-cli/tests/mcp.rs",
+      "value": "support/current_recovery.rs",
+      "reason_class": "integration-test-root-child",
+      "reason": "Declared by an integration-test, bench or example root; at its canonical location beside the root it would become another Cargo target."
+    },
+    {
+      "kind": "path",
+      "file": "crates/airk-cli/tests/service_runtime.rs",
+      "value": "common/f12_held_helper.rs",
+      "reason_class": "integration-test-root-child",
+      "reason": "Declared by an integration-test, bench or example root; at its canonical location beside the root it would become another Cargo target."
+    },
+    {
+      "kind": "path",
+      "file": "crates/airk-cli/tests/service_runtime.rs",
+      "value": "common/mod.rs",
+      "reason_class": "multi-declaration",
+      "reason": "The file is reached from more than one module declaration, so it has no single canonical location."
+    },
+    {
+      "kind": "path",
+      "file": "crates/airk-kernel/tests/current_foundation.rs",
+      "value": "current_foundation/grants.rs",
+      "reason_class": "integration-test-root-child",
+      "reason": "Declared by an integration-test, bench or example root; at its canonical location beside the root it would become another Cargo target."
+    },
+    {
+      "kind": "path",
+      "file": "crates/airk-kernel/tests/current_foundation.rs",
+      "value": "current_foundation/update.rs",
+      "reason_class": "integration-test-root-child",
+      "reason": "Declared by an integration-test, bench or example root; at its canonical location beside the root it would become another Cargo target."
+    },
+    {
+      "kind": "path",
+      "file": "crates/airk-kernel/tests/integration/file_continuity_v2.rs",
+      "value": "../../src/reconciliation.rs",
+      "reason_class": "parent-dir-mount",
+      "reason": "A ../ mount that leaves its directory or Cargo target (shared test protocol or source)."
+    },
+    {
+      "kind": "path",
+      "file": "crates/airk-process/src/child_job_named.rs",
+      "value": "child_job_named_tests.rs",
+      "reason_class": "platform-switch-child",
+      "reason": "Declared by a file loaded through a kept platform-switch mount; its canonical location follows the switch, so it moves only with that switch."
+    },
+    {
+      "kind": "path",
+      "file": "crates/airk-retrieval/src/lib.rs",
+      "value": "remote_onnx.rs",
+      "reason_class": "feature-switched-alternative",
+      "reason": "A feature-switched alternative module; the canonical location is occupied by the other alternative."
+    },
+    {
+      "kind": "path",
+      "file": "crates/airk-store/src/service/registry/catalog/service_catalog_setup_storage.rs",
+      "value": "service_catalog_setup_storage_split.rs",
+      "reason_class": "platform-switch-child",
+      "reason": "Declared by a file loaded through a kept platform-switch mount; its canonical location follows the switch, so it moves only with that switch."
+    },
+    {
+      "kind": "path",
+      "file": "crates/airk-store/src/service/registry/catalog/service_catalog_setup_storage_windows.rs",
+      "value": "service_catalog_setup_storage_windows_tests.rs",
+      "reason_class": "platform-switch-child",
+      "reason": "Declared by a file loaded through a kept platform-switch mount; its canonical location follows the switch, so it moves only with that switch."
+    },
+    {
+      "kind": "path",
+      "file": "crates/airk-store/src/service/service_data_scope_clean_break.rs",
+      "value": "service_data_scope_clean_break_tests.rs",
+      "reason_class": "platform-switch-child",
+      "reason": "Declared by a file loaded through a kept platform-switch mount; its canonical location follows the switch, so it moves only with that switch."
+    },
+    {
+      "kind": "path",
+      "file": "crates/airk-store/src/service/service_data_scope_clean_break_tests.rs",
+      "value": "service_data_scope_clean_break_replay_tests.rs",
+      "reason_class": "platform-switch-child",
+      "reason": "Declared by a file loaded through a kept platform-switch mount; its canonical location follows the switch, so it moves only with that switch."
+    },
+    {
+      "kind": "include",
+      "file": "crates/airk-cli/src/embed_pool.rs",
+      "value": "embed_pool_core.rs",
+      "reason_class": "embed-pool-include",
+      "reason": "Part of the embed-pool include! scheme; replacing it needs feature-build checks (docs/simplify-plan.md S4)."
+    },
+    {
+      "kind": "include",
+      "file": "crates/airk-cli/src/embed_pool.rs",
+      "value": "embed_pool_legacy_context.rs",
+      "reason_class": "embed-pool-include",
+      "reason": "Part of the embed-pool include! scheme; replacing it needs feature-build checks (docs/simplify-plan.md S4)."
+    },
+    {
+      "kind": "include",
+      "file": "crates/airk-cli/src/embed_pool.rs",
+      "value": "embed_pool_legacy_entry.rs",
+      "reason_class": "embed-pool-include",
+      "reason": "Part of the embed-pool include! scheme; replacing it needs feature-build checks (docs/simplify-plan.md S4)."
+    },
+    {
+      "kind": "include",
+      "file": "crates/airk-cli/src/embed_pool.rs",
+      "value": "embed_pool_retirement.rs",
+      "reason_class": "embed-pool-include",
+      "reason": "Part of the embed-pool include! scheme; replacing it needs feature-build checks (docs/simplify-plan.md S4)."
+    },
+    {
+      "kind": "include",
+      "file": "crates/airk-cli/src/embed_pool.rs",
+      "value": "embed_pool_retirement_tests.rs",
+      "reason_class": "embed-pool-include",
+      "reason": "Part of the embed-pool include! scheme; replacing it needs feature-build checks (docs/simplify-plan.md S4)."
+    },
+    {
+      "kind": "include",
+      "file": "crates/airk-cli/src/embed_pool.rs",
+      "value": "embed_pool_tests.rs",
+      "reason_class": "embed-pool-include",
+      "reason": "Part of the embed-pool include! scheme; replacing it needs feature-build checks (docs/simplify-plan.md S4)."
+    },
+    {
+      "kind": "include",
+      "file": "crates/airk-cli/src/embed_pool_core.rs",
+      "value": "embed_pool_accounting.rs",
+      "reason_class": "embed-pool-include",
+      "reason": "Part of the embed-pool include! scheme; replacing it needs feature-build checks (docs/simplify-plan.md S4)."
+    },
+    {
+      "kind": "include",
+      "file": "crates/airk-cli/src/inference_engine.rs",
+      "value": "embed_pool_core.rs",
+      "reason_class": "embed-pool-include",
+      "reason": "Part of the embed-pool include! scheme; replacing it needs feature-build checks (docs/simplify-plan.md S4)."
+    },
+    {
+      "kind": "include",
+      "file": "crates/airk-cli/src/inference_engine.rs",
+      "value": "embed_pool_retirement.rs",
+      "reason_class": "embed-pool-include",
+      "reason": "Part of the embed-pool include! scheme; replacing it needs feature-build checks (docs/simplify-plan.md S4)."
+    },
+    {
+      "kind": "include",
+      "file": "crates/airk-cli/src/inference_engine.rs",
+      "value": "embed_pool_retirement_tests.rs",
+      "reason_class": "embed-pool-include",
+      "reason": "Part of the embed-pool include! scheme; replacing it needs feature-build checks (docs/simplify-plan.md S4)."
+    },
+    {
+      "kind": "include",
+      "file": "crates/airk-cli/src/inference_engine.rs",
+      "value": "embed_pool_tests.rs",
+      "reason_class": "embed-pool-include",
+      "reason": "Part of the embed-pool include! scheme; replacing it needs feature-build checks (docs/simplify-plan.md S4)."
+    },
+    {
+      "kind": "include",
+      "file": "crates/airk-cli/src/inference_engine.rs",
+      "value": "inference_owner.rs",
+      "reason_class": "embed-pool-include",
+      "reason": "Part of the embed-pool include! scheme; replacing it needs feature-build checks (docs/simplify-plan.md S4)."
+    },
+    {
+      "kind": "include",
+      "file": "crates/airk-cli/src/inference_engine.rs",
+      "value": "inference_owner_tests.rs",
+      "reason_class": "embed-pool-include",
+      "reason": "Part of the embed-pool include! scheme; replacing it needs feature-build checks (docs/simplify-plan.md S4)."
+    },
+    {
+      "kind": "include",
+      "file": "crates/airk-cli/tests/fixtures/guarded_provider_fixture.rs",
+      "value": "../../src/embed_pool_core.rs",
+      "reason_class": "embed-pool-include",
+      "reason": "Part of the embed-pool include! scheme; replacing it needs feature-build checks (docs/simplify-plan.md S4)."
+    },
+    {
+      "kind": "include",
+      "file": "crates/airk-cli/tests/fixtures/guarded_provider_fixture.rs",
+      "value": "../../src/embed_pool_legacy_context.rs",
+      "reason_class": "embed-pool-include",
+      "reason": "Part of the embed-pool include! scheme; replacing it needs feature-build checks (docs/simplify-plan.md S4)."
+    },
+    {
+      "kind": "include",
+      "file": "crates/airk-cli/tests/fixtures/guarded_provider_fixture.rs",
+      "value": "../../src/embed_pool_legacy_entry.rs",
+      "reason_class": "embed-pool-include",
+      "reason": "Part of the embed-pool include! scheme; replacing it needs feature-build checks (docs/simplify-plan.md S4)."
+    },
+    {
+      "kind": "include",
+      "file": "crates/airk-cli/tests/fixtures/guarded_provider_fixture.rs",
+      "value": "../../src/embed_pool_retirement.rs",
+      "reason_class": "embed-pool-include",
+      "reason": "Part of the embed-pool include! scheme; replacing it needs feature-build checks (docs/simplify-plan.md S4)."
+    }
+  ],
+  "reason_classes": {
+    "integration-test-root-child": "Declared by an integration-test, bench or example root; at its canonical location beside the root it would become another Cargo target.",
+    "platform-switch-child": "Declared by a file loaded through a kept platform-switch mount; its canonical location follows the switch, so it moves only with that switch.",
+    "kept-mount-child": "Declared by a file that is itself loaded through a kept #[path] mount.",
+    "multi-declaration": "The file is reached from more than one module declaration, so it has no single canonical location.",
+    "parent-dir-mount": "A ../ mount that leaves its directory or Cargo target (shared test protocol or source).",
+    "feature-switched-alternative": "A feature-switched alternative module; the canonical location is occupied by the other alternative.",
+    "embed-pool-include": "Part of the embed-pool include! scheme; replacing it needs feature-build checks (docs/simplify-plan.md S4)."
+  }
+}

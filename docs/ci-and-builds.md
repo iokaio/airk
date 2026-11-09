@@ -264,6 +264,8 @@ Use Python 3.11+ locally (the native builder imports standard-library `tomllib`)
 
 Every PR starts the complete-diff classifier and quick checks. The classifier uses the PR merge base and both paths of moves/deletions. Unknown paths, workflow/build inputs and Rust changes select full validation, which on a PR means the three PR native hosts plus container, extension and four-host contract checks. Manual CI always builds complete candidates.
 
+Quick checks include the S5 boundary gates (`scripts/dev/boundary_check.py`: module honesty, allowed crate edges and the module-cycle ratchet, against the reviewed `scripts/dev/boundary-exceptions.json`) and the documentation archive check (`scripts/dev/d6_archive_docs.py --check`). Both are Python only and run in seconds.
+
 On a main push, the plan job tries to promote the merged PR's candidates before selecting work:
 
 1. The main commit must be the merge commit of exactly one merged PR from `iokaio/airk`; forks are never promoted.
