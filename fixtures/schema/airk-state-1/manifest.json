@@ -1,0 +1,117 @@
+{
+  "command": "python scripts/dev/s3_capture_schema.py --revision 43d7005d7c5638734198984e7e895bcae1342bf6",
+  "databases": {
+    "catalog-schema11-backup": {
+      "created_by": "CatalogGenesis::backup qualified backup catalog-schema11-<operation>-<slot>.sqlite3",
+      "meta": "catalog-schema11-backup.meta.json",
+      "objects": "catalog-schema11-backup.objects.json"
+    },
+    "current.service": {
+      "created_by": "collections-1.4 CurrentWriter::initialize (service WAL, user_version 140)",
+      "meta": "current.service.meta.json",
+      "objects": "current.service.objects.json"
+    },
+    "current.standalone": {
+      "created_by": "collections-1.2 CurrentWriter::initialize (rollback journal, user_version 126)",
+      "meta": "current.standalone.meta.json",
+      "objects": "current.standalone.objects.json"
+    },
+    "scheduler-1.2": {
+      "created_by": "scheduler::Queue::enqueue on a fresh data root",
+      "meta": "scheduler-1.2.meta.json",
+      "objects": "scheduler-1.2.objects.json"
+    },
+    "service-1.4.adopted-policy0": {
+      "created_by": "completed_authority_fixture, then apply_adopted_authority_layout (user_version 13)",
+      "meta": "service-1.4.adopted-policy0.meta.json",
+      "objects": "service-1.4.adopted-policy0.objects.json"
+    },
+    "service-1.4.adopted-policy1": {
+      "created_by": "completed_authority_fixture, policy layer 1, then apply_adopted_authority_layout (user_version 13)",
+      "meta": "service-1.4.adopted-policy1.meta.json",
+      "objects": "service-1.4.adopted-policy1.objects.json"
+    },
+    "service-1.4.adopted-policy2": {
+      "created_by": "completed_authority_fixture, policy layer 2, then apply_adopted_authority_layout (user_version 13)",
+      "meta": "service-1.4.adopted-policy2.meta.json",
+      "objects": "service-1.4.adopted-policy2.objects.json"
+    },
+    "service-1.4.adopted-policy3": {
+      "created_by": "completed_authority_fixture, policy layer 3, then apply_adopted_authority_layout (user_version 13)",
+      "meta": "service-1.4.adopted-policy3.meta.json",
+      "objects": "service-1.4.adopted-policy3.objects.json"
+    },
+    "service-1.4.authority0": {
+      "created_by": "CatalogGenesis::migrate (user_version 12, authority 0, inactive)",
+      "meta": "service-1.4.authority0.meta.json",
+      "objects": "service-1.4.authority0.objects.json"
+    },
+    "service-1.4.authority1": {
+      "created_by": "promote_authority_v1, record_authority_v1_readiness, settle_authority_v1; reopened by ServiceRegistry::open",
+      "meta": "service-1.4.authority1.meta.json",
+      "objects": "service-1.4.authority1.objects.json"
+    },
+    "service-1.4.authority1-armed": {
+      "created_by": "settled registry; then runtime_contract::arm_in_transaction (registry user_version 13)",
+      "meta": "service-1.4.authority1-armed.meta.json",
+      "objects": "service-1.4.authority1-armed.objects.json"
+    },
+    "service-1.4.policy1": {
+      "created_by": "settled registry, then apply_policy_v1_layout",
+      "meta": "service-1.4.policy1.meta.json",
+      "objects": "service-1.4.policy1.objects.json"
+    },
+    "service-1.4.policy1-armed": {
+      "created_by": "settled registry; then runtime_contract::arm_in_transaction (registry user_version 13), then apply_policy_v1_layout",
+      "meta": "service-1.4.policy1-armed.meta.json",
+      "objects": "service-1.4.policy1-armed.objects.json"
+    },
+    "service-1.4.policy2": {
+      "created_by": "settled registry, then apply_split_v2_layout",
+      "meta": "service-1.4.policy2.meta.json",
+      "objects": "service-1.4.policy2.objects.json"
+    },
+    "service-1.4.policy2-armed": {
+      "created_by": "settled registry; then runtime_contract::arm_in_transaction (registry user_version 13), then apply_split_v2_layout",
+      "meta": "service-1.4.policy2-armed.meta.json",
+      "objects": "service-1.4.policy2-armed.objects.json"
+    },
+    "service-1.4.policy3": {
+      "created_by": "settled registry, then apply_split_extraction_v3_layout",
+      "meta": "service-1.4.policy3.meta.json",
+      "objects": "service-1.4.policy3.objects.json"
+    },
+    "service-1.4.policy3-armed": {
+      "created_by": "settled registry; then runtime_contract::arm_in_transaction (registry user_version 13), then apply_split_extraction_v3_layout",
+      "meta": "service-1.4.policy3-armed.meta.json",
+      "objects": "service-1.4.policy3-armed.objects.json"
+    },
+    "service-1.4.schema11": {
+      "created_by": "Fresh ServiceRegistry::open (registry steps 1-11) at CatalogGenesis::begin admission",
+      "meta": "service-1.4.schema11.meta.json",
+      "objects": "service-1.4.schema11.objects.json"
+    },
+    "usage.base": {
+      "created_by": "UsageStore::open on a fresh managed collection",
+      "meta": "usage.base.meta.json",
+      "objects": "usage.base.objects.json"
+    },
+    "usage.supplemental": {
+      "created_by": "UsageStore::record then record_supplement (lazy supplemental tables)",
+      "meta": "usage.supplemental.meta.json",
+      "objects": "usage.supplemental.objects.json"
+    }
+  },
+  "groups": [
+    "registry",
+    "adopted",
+    "current",
+    "collection"
+  ],
+  "normalization": "sqlite_master rows sorted by type, name, tbl_name; CRLF -> LF in sql; rootpage omitted",
+  "producer_sqlite_version": "3.53.3",
+  "schema": "airk.s3-schema-capture/1",
+  "source_revision": "43d7005d7c5638734198984e7e895bcae1342bf6",
+  "source_version": "1.8.16",
+  "state_contract": "airk-state/1"
+}

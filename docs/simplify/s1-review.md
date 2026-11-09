@@ -623,3 +623,33 @@ pool and owner tests. That waits for the full ladder.
 - the no-`local-inference` helper-spawn path.
 
 The help text that still names the helper is corrected separately.
+
+### S3: retained schema fixtures, layering kept
+
+See [s3-schema.md](s3-schema.md).
+
+**Capture:** `scripts/dev/s3_capture_schema.py` captured 20 `airk-state/1`
+database states from `43d7005`, in a temporary worktree with a separate
+target directory (cold build 1m19s). A second capture with `--check` found 0
+differences.
+
+**Compare-only tests (5 airk-store tests, all pass):**
+
+- Current Genesis and every catalog layer, both unarmed and armed;
+- the current reader, against every retained registry layout including the
+  adopted ones;
+- `current.sqlite3`, service and standalone;
+- the scheduler queue;
+- the usage ledger, before and after supplements.
+
+A one-character change to a fixture makes its test fail.
+
+**Container inputs:** the 40 fixture files are admitted, and the
+container-input check passes.
+
+**Decision:** keep the layering. Write order, lazy upgrades of existing
+installations and the persisted Genesis receipt digests all make a direct
+final-layout Genesis either identical in code or a D8 change.
+
+**Plan correction:** the armed catalog contract raises `user_version` to 13
+lazily. Appendix D's "Genesis 12 + layers" row omits it.

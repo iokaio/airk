@@ -1,0 +1,62 @@
+[
+  {
+    "name": "sqlite_autoindex_diagnostics_1",
+    "sql": null,
+    "tbl_name": "diagnostics",
+    "type": "index"
+  },
+  {
+    "name": "sqlite_autoindex_feedback_1",
+    "sql": null,
+    "tbl_name": "feedback",
+    "type": "index"
+  },
+  {
+    "name": "sqlite_autoindex_meta_1",
+    "sql": null,
+    "tbl_name": "meta",
+    "type": "index"
+  },
+  {
+    "name": "sqlite_autoindex_seen_1",
+    "sql": null,
+    "tbl_name": "seen",
+    "type": "index"
+  },
+  {
+    "name": "daily",
+    "sql": "CREATE TABLE daily (day INTEGER PRIMARY KEY, summary TEXT NOT NULL)",
+    "tbl_name": "daily",
+    "type": "table"
+  },
+  {
+    "name": "diagnostics",
+    "sql": "CREATE TABLE diagnostics (id BLOB PRIMARY KEY, timestamp INTEGER NOT NULL, event TEXT NOT NULL)",
+    "tbl_name": "diagnostics",
+    "type": "table"
+  },
+  {
+    "name": "feedback",
+    "sql": "CREATE TABLE feedback (id BLOB PRIMARY KEY, usefulness TEXT NOT NULL)",
+    "tbl_name": "feedback",
+    "type": "table"
+  },
+  {
+    "name": "meta",
+    "sql": "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+    "tbl_name": "meta",
+    "type": "table"
+  },
+  {
+    "name": "seen",
+    "sql": "CREATE TABLE seen (sequence INTEGER PRIMARY KEY AUTOINCREMENT, id BLOB UNIQUE NOT NULL, timestamp INTEGER NOT NULL)",
+    "tbl_name": "seen",
+    "type": "table"
+  },
+  {
+    "name": "sqlite_sequence",
+    "sql": "CREATE TABLE sqlite_sequence(name,seq)",
+    "tbl_name": "sqlite_sequence",
+    "type": "table"
+  }
+]

@@ -1,0 +1,122 @@
+[
+  {
+    "name": "current_lexical_paths",
+    "sql": "CREATE INDEX current_lexical_paths ON current_lexical_docs(path)",
+    "tbl_name": "current_lexical_docs",
+    "type": "index"
+  },
+  {
+    "name": "sqlite_autoindex_current_lexical_docs_1",
+    "sql": null,
+    "tbl_name": "current_lexical_docs",
+    "type": "index"
+  },
+  {
+    "name": "current_fts",
+    "sql": "CREATE VIRTUAL TABLE current_fts USING fts5(terms,content='current_lexical_docs',content_rowid='id',tokenize='ascii tokenchars ''_''',detail=none,columnsize=0)",
+    "tbl_name": "current_fts",
+    "type": "table"
+  },
+  {
+    "name": "current_fts_config",
+    "sql": "CREATE TABLE 'current_fts_config'(k PRIMARY KEY, v) WITHOUT ROWID",
+    "tbl_name": "current_fts_config",
+    "type": "table"
+  },
+  {
+    "name": "current_fts_data",
+    "sql": "CREATE TABLE 'current_fts_data'(id INTEGER PRIMARY KEY, block BLOB)",
+    "tbl_name": "current_fts_data",
+    "type": "table"
+  },
+  {
+    "name": "current_fts_idx",
+    "sql": "CREATE TABLE 'current_fts_idx'(segid, term, pgno, PRIMARY KEY(segid, term)) WITHOUT ROWID",
+    "tbl_name": "current_fts_idx",
+    "type": "table"
+  },
+  {
+    "name": "current_lexical_docs",
+    "sql": "CREATE TABLE current_lexical_docs(id INTEGER PRIMARY KEY,path TEXT NOT NULL,local INTEGER NOT NULL,stable_id TEXT NOT NULL UNIQUE,payload TEXT NOT NULL,terms TEXT NOT NULL)",
+    "tbl_name": "current_lexical_docs",
+    "type": "table"
+  },
+  {
+    "name": "current_lexical_manifest",
+    "sql": "CREATE TABLE current_lexical_manifest(id INTEGER PRIMARY KEY CHECK(id=1),content BLOB NOT NULL CHECK(typeof(content)='blob' AND length(content) BETWEEN 1 AND 1048576))",
+    "tbl_name": "current_lexical_manifest",
+    "type": "table"
+  },
+  {
+    "name": "current_map_buckets",
+    "sql": "CREATE TABLE current_map_buckets(prefix INTEGER PRIMARY KEY CHECK(prefix BETWEEN 0 AND 65535),content BLOB NOT NULL CHECK(length(content) BETWEEN 2 AND 524288))",
+    "tbl_name": "current_map_buckets",
+    "type": "table"
+  },
+  {
+    "name": "current_map_nodes",
+    "sql": "CREATE TABLE current_map_nodes(height INTEGER NOT NULL CHECK(height BETWEEN 0 AND 15),idx INTEGER NOT NULL CHECK(idx BETWEEN 0 AND 65535),digest BLOB NOT NULL CHECK(length(digest)=32),PRIMARY KEY(height,idx)) WITHOUT ROWID",
+    "tbl_name": "current_map_nodes",
+    "type": "table"
+  },
+  {
+    "name": "current_pending",
+    "sql": "CREATE TABLE current_pending(id INTEGER PRIMARY KEY CHECK(id=1),transaction_id TEXT NOT NULL,descriptor BLOB NOT NULL CHECK(length(descriptor)<=196608),digest TEXT NOT NULL)",
+    "tbl_name": "current_pending",
+    "type": "table"
+  },
+  {
+    "name": "current_pending_fts",
+    "sql": "CREATE TABLE current_pending_fts(path TEXT PRIMARY KEY CHECK(length(path) BETWEEN 1 AND 8192),metadata BLOB CHECK(metadata IS NULL OR (typeof(metadata)='blob' AND length(metadata)<=262144))) WITHOUT ROWID",
+    "tbl_name": "current_pending_fts",
+    "type": "table"
+  },
+  {
+    "name": "current_pending_inputs",
+    "sql": "CREATE TABLE current_pending_inputs(path TEXT PRIMARY KEY,metadata BLOB NOT NULL CHECK(length(metadata)<=262144)) WITHOUT ROWID",
+    "tbl_name": "current_pending_inputs",
+    "type": "table"
+  },
+  {
+    "name": "current_pending_lexical",
+    "sql": "CREATE TABLE current_pending_lexical(id INTEGER PRIMARY KEY CHECK(id=1),content BLOB NOT NULL CHECK(typeof(content)='blob' AND length(content) BETWEEN 1 AND 1048576))",
+    "tbl_name": "current_pending_lexical",
+    "type": "table"
+  },
+  {
+    "name": "current_pending_map",
+    "sql": "CREATE TABLE current_pending_map(key BLOB PRIMARY KEY CHECK(typeof(key)='blob' AND length(key)=32),value BLOB CHECK(value IS NULL OR (typeof(value)='blob' AND length(value)<=262144))) WITHOUT ROWID",
+    "tbl_name": "current_pending_map",
+    "type": "table"
+  },
+  {
+    "name": "current_state",
+    "sql": "CREATE TABLE current_state(id INTEGER PRIMARY KEY CHECK(id=1),phase TEXT NOT NULL CHECK(phase IN('ready','prepared','applying')),head BLOB NOT NULL CHECK(length(head)<=65536))",
+    "tbl_name": "current_state",
+    "type": "table"
+  },
+  {
+    "name": "graph_merkle",
+    "sql": "CREATE TABLE graph_merkle(height INTEGER NOT NULL CHECK(height BETWEEN 0 AND 32),\n idx INTEGER NOT NULL CHECK(idx BETWEEN 0 AND 4294967295),\n digest BLOB NOT NULL CHECK(typeof(digest)='blob' AND length(digest)=32), PRIMARY KEY(height,idx)) WITHOUT ROWID",
+    "tbl_name": "graph_merkle",
+    "type": "table"
+  },
+  {
+    "name": "graph_records",
+    "sql": "CREATE TABLE graph_records(\n id INTEGER PRIMARY KEY CHECK(id BETWEEN 0 AND 4294967295),\n embedding_key BLOB CHECK(embedding_key IS NULL OR (typeof(embedding_key)='blob' AND length(embedding_key)=32)),\n live INTEGER NOT NULL CHECK(live IN (0,1)), record BLOB NOT NULL CHECK(typeof(record)='blob' AND length(record)<=16384))",
+    "tbl_name": "graph_records",
+    "type": "table"
+  },
+  {
+    "name": "pending_graph_merkle",
+    "sql": "CREATE TABLE pending_graph_merkle(txn BLOB NOT NULL CHECK(typeof(txn)='blob' AND length(txn)=32),\n height INTEGER NOT NULL CHECK(height BETWEEN 0 AND 32),idx INTEGER NOT NULL CHECK(idx BETWEEN 0 AND 4294967295),\n digest BLOB NOT NULL CHECK(typeof(digest)='blob' AND length(digest)=32), PRIMARY KEY(txn,height,idx)) WITHOUT ROWID",
+    "tbl_name": "pending_graph_merkle",
+    "type": "table"
+  },
+  {
+    "name": "pending_graph_records",
+    "sql": "CREATE TABLE pending_graph_records(txn BLOB NOT NULL CHECK(typeof(txn)='blob' AND length(txn)=32),\n id INTEGER NOT NULL CHECK(id BETWEEN 0 AND 4294967295), embedding_key BLOB,\n live INTEGER NOT NULL CHECK(live IN (0,1)),record BLOB NOT NULL CHECK(typeof(record)='blob' AND length(record)<=16384),\n PRIMARY KEY(txn,id)) WITHOUT ROWID",
+    "tbl_name": "pending_graph_records",
+    "type": "table"
+  }
+]

@@ -582,3 +582,110 @@ fn existing_native_allowance_does_not_recreate_missing_ledger_owner() -> Result<
     assert!(!lock.exists());
     Ok(())
 }
+
+// ---- S3: retained airk-state/1 current.sqlite3 schema (compare-only) ----
+const S3_CURRENT_FIXTURES: &[(&str, &str, &str)] = &[
+    (
+        "current.service",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schema/airk-state-1/current.service.objects.json"
+        )),
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schema/airk-state-1/current.service.meta.json"
+        )),
+    ),
+    (
+        "current.standalone",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schema/airk-state-1/current.standalone.objects.json"
+        )),
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schema/airk-state-1/current.standalone.meta.json"
+        )),
+    ),
+];
+
+fn s3_fixture(
+    table: &[(&str, &str, &str)],
+    label: &str,
+) -> anyhow::Result<(serde_json::Value, serde_json::Value)> {
+    use anyhow::Context as _;
+    let (_, objects, meta) = table
+        .iter()
+        .find(|(name, _, _)| *name == label)
+        .with_context(|| format!("retained schema fixture {label} is not listed"))?;
+    Ok((serde_json::from_str(objects)?, serde_json::from_str(meta)?))
+}
+
+/// Same rendering as scripts/dev/s3_capture_schema.py: rows sorted by
+/// (type, name, tbl_name), CRLF -> LF in sql only, rootpage omitted.
+fn s3_observed(
+    connection: &rusqlite::Connection,
+) -> anyhow::Result<(serde_json::Value, serde_json::Value)> {
+    let mut statement = connection.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master")?;
+    let mut rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    rows.sort_by(|a, b| (&a.0, &a.1, &a.2).cmp(&(&b.0, &b.1, &b.2)));
+    let objects = rows
+        .into_iter()
+        .map(|(kind, name, table, sql)| {
+            serde_json::json!({
+                "type": kind,
+                "name": name,
+                "tbl_name": table,
+                "sql": sql.map(|sql| sql.replace("\r\n", "\n")),
+            })
+        })
+        .collect();
+    let meta = serde_json::json!({
+        "user_version": connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))?,
+        "application_id": connection.pragma_query_value(None, "application_id", |row| row.get::<_, i64>(0))?,
+    });
+    Ok((serde_json::Value::Array(objects), meta))
+}
+
+fn s3_assert(
+    table: &[(&str, &str, &str)],
+    connection: &rusqlite::Connection,
+    label: &str,
+) -> anyhow::Result<()> {
+    let (objects, meta) = s3_fixture(table, label)?;
+    let observed = s3_observed(connection)?;
+    assert_eq!(
+        observed.0, objects,
+        "{label}: sqlite_master differs from the retained 1.8.16 fixture"
+    );
+    assert_eq!(
+        observed.1, meta,
+        "{label}: user_version/application_id differ from the retained 1.8.16 fixture"
+    );
+    Ok(())
+}
+
+#[test]
+fn current_initialization_reproduces_retained_airk_state_1_current_schema() -> Result<()> {
+    let service = service_fixture()?;
+    let standalone = Fixture::new()?;
+    for (label, fixture) in [
+        ("current.service", &service),
+        ("current.standalone", &standalone),
+    ] {
+        let path = fixture.store.directory().join("current.sqlite3");
+        // The canonical reader handles the service WAL VFS and version checks.
+        let connection = crate::current::database::open_reader(&path)?;
+        s3_assert(S3_CURRENT_FIXTURES, &connection, label)?;
+    }
+    Ok(())
+}

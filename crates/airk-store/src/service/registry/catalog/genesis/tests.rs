@@ -279,3 +279,432 @@ fn unexplained_journal_refuses_before_initial_admission() -> Result<()> {
     assert!(pending(root.path())?.is_none());
     Ok(())
 }
+
+// ---- S3: retained airk-state/1 registry schema (compare-only) ----
+// Fixtures: fixtures/schema/airk-state-1, captured from the 1.8.16 baseline
+// (43d7005) by scripts/dev/s3_capture_schema.py. Never rewritten by tests.
+
+const S3_REGISTRY_FIXTURES: &[(&str, &str, &str)] = &[
+    (
+        "service-1.4.schema11",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schema/airk-state-1/service-1.4.schema11.objects.json"
+        )),
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schema/airk-state-1/service-1.4.schema11.meta.json"
+        )),
+    ),
+    (
+        "catalog-schema11-backup",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schema/airk-state-1/catalog-schema11-backup.objects.json"
+        )),
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schema/airk-state-1/catalog-schema11-backup.meta.json"
+        )),
+    ),
+    (
+        "service-1.4.authority0",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schema/airk-state-1/service-1.4.authority0.objects.json"
+        )),
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schema/airk-state-1/service-1.4.authority0.meta.json"
+        )),
+    ),
+    (
+        "service-1.4.authority1",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schema/airk-state-1/service-1.4.authority1.objects.json"
+        )),
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schema/airk-state-1/service-1.4.authority1.meta.json"
+        )),
+    ),
+    (
+        "service-1.4.policy1",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schema/airk-state-1/service-1.4.policy1.objects.json"
+        )),
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schema/airk-state-1/service-1.4.policy1.meta.json"
+        )),
+    ),
+    (
+        "service-1.4.policy2",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schema/airk-state-1/service-1.4.policy2.objects.json"
+        )),
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schema/airk-state-1/service-1.4.policy2.meta.json"
+        )),
+    ),
+    (
+        "service-1.4.policy3",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schema/airk-state-1/service-1.4.policy3.objects.json"
+        )),
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schema/airk-state-1/service-1.4.policy3.meta.json"
+        )),
+    ),
+    (
+        "service-1.4.authority1-armed",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schema/airk-state-1/service-1.4.authority1-armed.objects.json"
+        )),
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schema/airk-state-1/service-1.4.authority1-armed.meta.json"
+        )),
+    ),
+    (
+        "service-1.4.policy1-armed",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schema/airk-state-1/service-1.4.policy1-armed.objects.json"
+        )),
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schema/airk-state-1/service-1.4.policy1-armed.meta.json"
+        )),
+    ),
+    (
+        "service-1.4.policy2-armed",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schema/airk-state-1/service-1.4.policy2-armed.objects.json"
+        )),
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schema/airk-state-1/service-1.4.policy2-armed.meta.json"
+        )),
+    ),
+    (
+        "service-1.4.policy3-armed",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schema/airk-state-1/service-1.4.policy3-armed.objects.json"
+        )),
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schema/airk-state-1/service-1.4.policy3-armed.meta.json"
+        )),
+    ),
+    (
+        "service-1.4.adopted-policy0",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schema/airk-state-1/service-1.4.adopted-policy0.objects.json"
+        )),
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schema/airk-state-1/service-1.4.adopted-policy0.meta.json"
+        )),
+    ),
+    (
+        "service-1.4.adopted-policy1",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schema/airk-state-1/service-1.4.adopted-policy1.objects.json"
+        )),
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schema/airk-state-1/service-1.4.adopted-policy1.meta.json"
+        )),
+    ),
+    (
+        "service-1.4.adopted-policy2",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schema/airk-state-1/service-1.4.adopted-policy2.objects.json"
+        )),
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schema/airk-state-1/service-1.4.adopted-policy2.meta.json"
+        )),
+    ),
+    (
+        "service-1.4.adopted-policy3",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schema/airk-state-1/service-1.4.adopted-policy3.objects.json"
+        )),
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/schema/airk-state-1/service-1.4.adopted-policy3.meta.json"
+        )),
+    ),
+];
+
+fn s3_fixture(
+    table: &[(&str, &str, &str)],
+    label: &str,
+) -> anyhow::Result<(serde_json::Value, serde_json::Value)> {
+    use anyhow::Context as _;
+    let (_, objects, meta) = table
+        .iter()
+        .find(|(name, _, _)| *name == label)
+        .with_context(|| format!("retained schema fixture {label} is not listed"))?;
+    Ok((serde_json::from_str(objects)?, serde_json::from_str(meta)?))
+}
+
+/// Same rendering as scripts/dev/s3_capture_schema.py: rows sorted by
+/// (type, name, tbl_name), CRLF -> LF in sql only, rootpage omitted.
+fn s3_observed(
+    connection: &rusqlite::Connection,
+) -> anyhow::Result<(serde_json::Value, serde_json::Value)> {
+    let mut statement = connection.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master")?;
+    let mut rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    rows.sort_by(|a, b| (&a.0, &a.1, &a.2).cmp(&(&b.0, &b.1, &b.2)));
+    let objects = rows
+        .into_iter()
+        .map(|(kind, name, table, sql)| {
+            serde_json::json!({
+                "type": kind,
+                "name": name,
+                "tbl_name": table,
+                "sql": sql.map(|sql| sql.replace("\r\n", "\n")),
+            })
+        })
+        .collect();
+    let meta = serde_json::json!({
+        "user_version": connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))?,
+        "application_id": connection.pragma_query_value(None, "application_id", |row| row.get::<_, i64>(0))?,
+    });
+    Ok((serde_json::Value::Array(objects), meta))
+}
+
+fn s3_assert(
+    table: &[(&str, &str, &str)],
+    connection: &rusqlite::Connection,
+    label: &str,
+) -> anyhow::Result<()> {
+    let (objects, meta) = s3_fixture(table, label)?;
+    let observed = s3_observed(connection)?;
+    assert_eq!(
+        observed.0, objects,
+        "{label}: sqlite_master differs from the retained 1.8.16 fixture"
+    );
+    assert_eq!(
+        observed.1, meta,
+        "{label}: user_version/application_id differ from the retained 1.8.16 fixture"
+    );
+    Ok(())
+}
+
+struct S3Producer {
+    root: PathBuf,
+    operation: Incarnation,
+}
+
+impl activation::AuthorityV1ReadinessProducer for S3Producer {
+    fn required_predecessor_identities(&self) -> Result<Vec<Sha256Digest>> {
+        Ok(Vec::new())
+    }
+    fn qualify(
+        &self,
+        expected: &activation::AuthorityV1CandidateObservation,
+    ) -> Result<activation::AuthorityV1NativeQualification> {
+        Ok(activation::AuthorityV1NativeQualification {
+            candidate: observe_authority_v1(&self.root, self.operation, expected.nonce)?,
+            predecessor_refusals: Vec::new(),
+        })
+    }
+}
+
+/// Current Genesis through settlement, asserting each intermediate stage when
+/// `check_stages`. Mirrors the capture driver's sequence exactly.
+fn s3_settled(root: &Path, check_stages: bool) -> Result<super::super::super::ServiceRegistry> {
+    let mut genesis = begin(root)?;
+    let receipt = genesis.receipt()?;
+    if check_stages {
+        s3_assert(
+            S3_REGISTRY_FIXTURES,
+            &registry(&receipt.root, false)?,
+            "service-1.4.schema11",
+        )?;
+    }
+    let backed = genesis.backup()?;
+    if check_stages {
+        let attempt = backed
+            .backups
+            .iter()
+            .find(|attempt| attempt.complete)
+            .context("qualified genesis backup missing")?;
+        let path = backup::validate(&backed.root, backed.operation, attempt)?;
+        let saved = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        s3_assert(S3_REGISTRY_FIXTURES, &saved, "catalog-schema11-backup")?;
+    }
+    genesis.migrate()?;
+    if check_stages {
+        s3_assert(
+            S3_REGISTRY_FIXTURES,
+            &registry(&receipt.root, false)?,
+            "service-1.4.authority0",
+        )?;
+    }
+    genesis.promote_authority_v1()?;
+    genesis.record_authority_v1_readiness(
+        Incarnation::from_bytes([119; 16]),
+        &S3Producer {
+            root: receipt.root.clone(),
+            operation: receipt.operation,
+        },
+    )?;
+    assert_eq!(genesis.settle_authority_v1()?.stage, GenesisStage::Settled);
+    drop(genesis);
+    super::super::super::ServiceRegistry::open(root, receipt.namespace)
+}
+
+type S3Layer = (&'static str, fn(&Connection) -> Result<()>);
+
+#[test]
+fn current_genesis_and_layers_reproduce_retained_airk_state_1_registry_schema() -> Result<()> {
+    let layers: [S3Layer; 3] = [
+        ("policy1", super::super::apply_policy_v1_layout),
+        ("policy2", super::super::apply_split_v2_layout),
+        ("policy3", super::super::apply_split_extraction_v3_layout),
+    ];
+    for armed in [false, true] {
+        let temp = tempfile::tempdir()?;
+        let mut saved = s3_settled(temp.path(), !armed)?;
+        let suffix = if armed { "-armed" } else { "" };
+        if armed {
+            let tx = saved.connection.transaction()?;
+            crate::service::registry::runtime_contract::arm_in_transaction(&tx)?;
+            tx.commit()?;
+        }
+        s3_assert(
+            S3_REGISTRY_FIXTURES,
+            &saved.connection,
+            &format!("service-1.4.authority1{suffix}"),
+        )?;
+        for (name, apply) in layers {
+            let tx = saved.connection.transaction()?;
+            apply(&tx)?;
+            tx.commit()?;
+            s3_assert(
+                S3_REGISTRY_FIXTURES,
+                &saved.connection,
+                &format!("service-1.4.{name}{suffix}"),
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Reader acceptance: the current compiled layout recognizer accepts every
+/// retained 1.8.16 registry shape, including adopted (schema 13) layouts that
+/// current code no longer produces. The layout/version pairs are reviewed
+/// values, not derived from the code under test.
+#[test]
+fn current_reader_recognizes_every_retained_airk_state_1_registry_layout() -> Result<()> {
+    use super::super::CatalogLayout::*;
+    let cases = [
+        ("service-1.4.schema11", None, 11),
+        ("catalog-schema11-backup", None, 11),
+        ("service-1.4.authority0", Some(Schema12Authority0), 12),
+        ("service-1.4.authority1", Some(Schema12Authority1), 12),
+        ("service-1.4.policy1", Some(Schema12Authority1Policy1), 12),
+        ("service-1.4.policy2", Some(Schema12Authority1Policy2), 12),
+        ("service-1.4.policy3", Some(Schema12Authority1Policy3), 12),
+        ("service-1.4.authority1-armed", Some(Schema12Authority1), 13),
+        (
+            "service-1.4.policy1-armed",
+            Some(Schema12Authority1Policy1),
+            13,
+        ),
+        (
+            "service-1.4.policy2-armed",
+            Some(Schema12Authority1Policy2),
+            13,
+        ),
+        (
+            "service-1.4.policy3-armed",
+            Some(Schema12Authority1Policy3),
+            13,
+        ),
+        ("service-1.4.adopted-policy0", Some(Schema12Authority1), 13),
+        (
+            "service-1.4.adopted-policy1",
+            Some(Schema12Authority1Policy1),
+            13,
+        ),
+        (
+            "service-1.4.adopted-policy2",
+            Some(Schema12Authority1Policy2),
+            13,
+        ),
+        (
+            "service-1.4.adopted-policy3",
+            Some(Schema12Authority1Policy3),
+            13,
+        ),
+    ];
+    assert_eq!(cases.len(), S3_REGISTRY_FIXTURES.len());
+    for (label, layout, version) in cases {
+        let (objects, meta) = s3_fixture(S3_REGISTRY_FIXTURES, label)?;
+        let text = |object: &serde_json::Value, field: &str| -> Result<String> {
+            Ok(object[field]
+                .as_str()
+                .with_context(|| format!("{label}: {field} is not text"))?
+                .to_owned())
+        };
+        let objects = objects
+            .as_array()
+            .context("fixture objects must be an array")?
+            .iter()
+            .map(|object| {
+                Ok(super::super::SchemaObject {
+                    kind: text(object, "type")?,
+                    name: text(object, "name")?,
+                    table: text(object, "tbl_name")?,
+                    // schema_objects() reads NULL sql as an empty string.
+                    sql: object["sql"].as_str().unwrap_or_default().to_owned(),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        match layout {
+            None => assert_eq!(&objects, super::super::expected(11)?, "{label}"),
+            Some(layout) => assert_eq!(
+                super::super::physical_catalog_layout(&objects)?,
+                layout,
+                "{label}"
+            ),
+        }
+        assert_eq!(
+            meta,
+            serde_json::json!({
+                "user_version": version,
+                "application_id": super::super::super::APPLICATION,
+            }),
+            "{label}"
+        );
+    }
+    Ok(())
+}

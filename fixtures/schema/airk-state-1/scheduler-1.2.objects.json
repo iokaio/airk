@@ -1,0 +1,26 @@
+[
+  {
+    "name": "sqlite_autoindex_completed_reports_1",
+    "sql": null,
+    "tbl_name": "completed_reports",
+    "type": "index"
+  },
+  {
+    "name": "sqlite_autoindex_jobs_1",
+    "sql": null,
+    "tbl_name": "jobs",
+    "type": "index"
+  },
+  {
+    "name": "completed_reports",
+    "sql": "CREATE TABLE completed_reports (\n                id INTEGER PRIMARY KEY, collection TEXT NOT NULL, root TEXT NOT NULL,\n                first_revision INTEGER NOT NULL, revision INTEGER NOT NULL, report TEXT NOT NULL,\n                UNIQUE(collection,root,revision))",
+    "tbl_name": "completed_reports",
+    "type": "table"
+  },
+  {
+    "name": "jobs",
+    "sql": "CREATE TABLE jobs (\n                collection TEXT PRIMARY KEY, root TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 0,\n                completed INTEGER NOT NULL DEFAULT 0, running INTEGER NOT NULL DEFAULT 0,\n                paused INTEGER NOT NULL DEFAULT 0, blocked INTEGER NOT NULL DEFAULT 0,\n                full_revision INTEGER NOT NULL DEFAULT 0, manual_revision INTEGER NOT NULL DEFAULT 0,\n                first_pending INTEGER NOT NULL DEFAULT 0, last_event INTEGER NOT NULL DEFAULT 0,\n                last_completed INTEGER NOT NULL DEFAULT 0, error TEXT, report TEXT,\n                scan_started INTEGER NOT NULL DEFAULT 0, scan_completed INTEGER NOT NULL DEFAULT 0, scan_error TEXT, path_hints TEXT NOT NULL DEFAULT '{}', inventory_revision INTEGER NOT NULL DEFAULT 0, debounced_revision INTEGER NOT NULL DEFAULT 0, inventory_completed INTEGER NOT NULL DEFAULT 0)",
+    "tbl_name": "jobs",
+    "type": "table"
+  }
+]

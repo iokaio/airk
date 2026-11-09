@@ -1,0 +1,1616 @@
+[
+  {
+    "name": "adopted_config_claim_lookup",
+    "sql": "CREATE INDEX adopted_config_claim_lookup ON index_adopted_configuration_claims(config_sha256,grant_id)",
+    "tbl_name": "index_adopted_configuration_claims",
+    "type": "index"
+  },
+  {
+    "name": "context_import_receipts",
+    "sql": "CREATE INDEX context_import_receipts ON index_context_imports(context_identity)",
+    "tbl_name": "index_context_imports",
+    "type": "index"
+  },
+  {
+    "name": "index_alias_source",
+    "sql": "CREATE INDEX index_alias_source ON index_source_aliases(source_id)",
+    "tbl_name": "index_source_aliases",
+    "type": "index"
+  },
+  {
+    "name": "index_context_defaults",
+    "sql": "CREATE INDEX index_context_defaults ON context_default_indexes(index_id,context_id)",
+    "tbl_name": "context_default_indexes",
+    "type": "index"
+  },
+  {
+    "name": "index_grant_memberships",
+    "sql": "CREATE INDEX index_grant_memberships ON index_access_memberships(index_id,grant_id,project_id)",
+    "tbl_name": "index_access_memberships",
+    "type": "index"
+  },
+  {
+    "name": "index_grant_provenance_kind",
+    "sql": "CREATE INDEX index_grant_provenance_kind ON index_access_grants(provenance_kind)",
+    "tbl_name": "index_access_grants",
+    "type": "index"
+  },
+  {
+    "name": "index_imported_grant_binding",
+    "sql": "CREATE UNIQUE INDEX index_imported_grant_binding ON index_access_grants(import_legacy_binding) WHERE provenance_kind='imported_legacy'",
+    "tbl_name": "index_access_grants",
+    "type": "index"
+  },
+  {
+    "name": "index_project_memberships",
+    "sql": "CREATE INDEX index_project_memberships ON project_index_memberships(index_id,project_id)",
+    "tbl_name": "project_index_memberships",
+    "type": "index"
+  },
+  {
+    "name": "index_scope_sources",
+    "sql": "CREATE INDEX index_scope_sources ON project_index_scopes(source_id)",
+    "tbl_name": "project_index_scopes",
+    "type": "index"
+  },
+  {
+    "name": "index_sources_primary",
+    "sql": "CREATE UNIQUE INDEX index_sources_primary ON index_sources(index_id) WHERE owner=1",
+    "tbl_name": "index_sources",
+    "type": "index"
+  },
+  {
+    "name": "project_contexts",
+    "sql": "CREATE INDEX project_contexts ON context_projects(project_id,context_id)",
+    "tbl_name": "context_projects",
+    "type": "index"
+  },
+  {
+    "name": "service_events_project",
+    "sql": "CREATE INDEX service_events_project ON service_events(project,seq)",
+    "tbl_name": "service_events",
+    "type": "index"
+  },
+  {
+    "name": "service_jobs_pending",
+    "sql": "CREATE INDEX service_jobs_pending ON service_jobs(project,state,seq)",
+    "tbl_name": "service_jobs",
+    "type": "index"
+  },
+  {
+    "name": "service_lifecycle_active",
+    "sql": "CREATE UNIQUE INDEX service_lifecycle_active ON service_lifecycle((1)) WHERE phase NOT IN('complete','abandoned')",
+    "tbl_name": "service_lifecycle",
+    "type": "index"
+  },
+  {
+    "name": "service_plan_items_stage",
+    "sql": "CREATE INDEX service_plan_items_stage ON service_plan_items(plan,phase,project)",
+    "tbl_name": "service_plan_items",
+    "type": "index"
+  },
+  {
+    "name": "service_plan_jobs_job",
+    "sql": "CREATE INDEX service_plan_jobs_job ON service_plan_jobs(job)",
+    "tbl_name": "service_plan_jobs",
+    "type": "index"
+  },
+  {
+    "name": "source_grants",
+    "sql": "CREATE INDEX source_grants ON index_access_scopes(source_id,grant_id)",
+    "tbl_name": "index_access_scopes",
+    "type": "index"
+  },
+  {
+    "name": "sqlite_autoindex_index_adopted_authorities_2",
+    "sql": null,
+    "tbl_name": "index_adopted_authorities",
+    "type": "index"
+  },
+  {
+    "name": "sqlite_autoindex_index_adopted_authorities_3",
+    "sql": null,
+    "tbl_name": "index_adopted_authorities",
+    "type": "index"
+  },
+  {
+    "name": "sqlite_autoindex_index_adopted_configuration_claims_1",
+    "sql": null,
+    "tbl_name": "index_adopted_configuration_claims",
+    "type": "index"
+  },
+  {
+    "name": "sqlite_autoindex_index_contexts_2",
+    "sql": null,
+    "tbl_name": "index_contexts",
+    "type": "index"
+  },
+  {
+    "name": "sqlite_autoindex_index_definitions_2",
+    "sql": null,
+    "tbl_name": "index_definitions",
+    "type": "index"
+  },
+  {
+    "name": "sqlite_autoindex_index_definitions_3",
+    "sql": null,
+    "tbl_name": "index_definitions",
+    "type": "index"
+  },
+  {
+    "name": "sqlite_autoindex_index_sources_2",
+    "sql": null,
+    "tbl_name": "index_sources",
+    "type": "index"
+  },
+  {
+    "name": "sqlite_autoindex_index_sources_3",
+    "sql": null,
+    "tbl_name": "index_sources",
+    "type": "index"
+  },
+  {
+    "name": "sqlite_autoindex_legacy_index_projects_2",
+    "sql": null,
+    "tbl_name": "legacy_index_projects",
+    "type": "index"
+  },
+  {
+    "name": "sqlite_autoindex_service_background_audit_2",
+    "sql": null,
+    "tbl_name": "service_background_audit",
+    "type": "index"
+  },
+  {
+    "name": "sqlite_autoindex_service_configuration_1",
+    "sql": null,
+    "tbl_name": "service_configuration",
+    "type": "index"
+  },
+  {
+    "name": "sqlite_autoindex_service_jobs_1",
+    "sql": null,
+    "tbl_name": "service_jobs",
+    "type": "index"
+  },
+  {
+    "name": "sqlite_autoindex_service_lifecycle_1",
+    "sql": null,
+    "tbl_name": "service_lifecycle",
+    "type": "index"
+  },
+  {
+    "name": "sqlite_autoindex_service_plans_1",
+    "sql": null,
+    "tbl_name": "service_plans",
+    "type": "index"
+  },
+  {
+    "name": "context_default_indexes",
+    "sql": "CREATE TABLE context_default_indexes(\n context_id TEXT NOT NULL REFERENCES index_contexts(id) ON DELETE CASCADE,\n index_id TEXT NOT NULL REFERENCES index_definitions(id) ON DELETE RESTRICT,\n PRIMARY KEY(context_id,index_id)) WITHOUT ROWID",
+    "tbl_name": "context_default_indexes",
+    "type": "table"
+  },
+  {
+    "name": "context_projects",
+    "sql": "CREATE TABLE context_projects(\n context_id TEXT NOT NULL REFERENCES index_contexts(id) ON DELETE CASCADE,\n project_id TEXT NOT NULL REFERENCES query_projects(id) ON DELETE CASCADE,\n PRIMARY KEY(context_id,project_id)) WITHOUT ROWID",
+    "tbl_name": "context_projects",
+    "type": "table"
+  },
+  {
+    "name": "index_access_grants",
+    "sql": "CREATE TABLE \"index_access_grants\"(\n id TEXT PRIMARY KEY CHECK(substr(id,1,4)='grt_' AND length(id)=36 AND substr(id,5) NOT GLOB '*[^0-9a-f]*'),\n host TEXT NOT NULL CHECK(length(host)=64 AND host NOT GLOB '*[^0-9a-f]*'),\n revision INTEGER NOT NULL CHECK(revision>=1),\n revoked INTEGER NOT NULL CHECK(revoked IN(0,1)),\n provenance_kind TEXT NOT NULL DEFAULT 'reviewed' CHECK(provenance_kind IN('reviewed','imported_legacy','imported_standalone_adoption')),\n import_upgrade_id TEXT CHECK(import_upgrade_id IS NULL OR length(import_upgrade_id)=32 AND import_upgrade_id NOT GLOB '*[^0-9a-f]*'),\n import_plan_digest TEXT CHECK(import_plan_digest IS NULL OR length(import_plan_digest)=64 AND import_plan_digest NOT GLOB '*[^0-9a-f]*'),\n import_legacy_binding TEXT REFERENCES legacy_index_projects(legacy_binding) ON DELETE RESTRICT,\n import_configuration_digest TEXT CHECK(import_configuration_digest IS NULL OR length(import_configuration_digest)=64 AND import_configuration_digest NOT GLOB '*[^0-9a-f]*'),\n CHECK((provenance_kind='reviewed' AND substr(id,5,1) IN('0','1','2','3','4','5','6','7')\n     AND import_upgrade_id IS NULL AND import_plan_digest IS NULL AND import_legacy_binding IS NULL AND import_configuration_digest IS NULL)\n   OR (provenance_kind='imported_legacy' AND substr(id,5,1) IN('8','9','a','b','c','d','e','f')\n     AND import_upgrade_id IS NOT NULL AND import_plan_digest IS NOT NULL AND import_legacy_binding IS NOT NULL AND import_configuration_digest IS NOT NULL)\n   OR (provenance_kind='imported_standalone_adoption' AND substr(id,5,1) IN('8','9','a','b','c','d','e','f')\n     AND import_upgrade_id IS NULL AND import_plan_digest IS NULL AND import_legacy_binding IS NULL AND import_configuration_digest IS NULL))) WITHOUT ROWID",
+    "tbl_name": "index_access_grants",
+    "type": "table"
+  },
+  {
+    "name": "index_access_memberships",
+    "sql": "CREATE TABLE \"index_access_memberships\"(\n grant_id TEXT NOT NULL REFERENCES \"index_access_grants\"(id) ON DELETE CASCADE,\n project_id TEXT NOT NULL CHECK(substr(project_id,1,4)='prj_' AND length(project_id)=36 AND substr(project_id,5) NOT GLOB '*[^0-9a-f]*'),\n index_id TEXT NOT NULL REFERENCES index_definitions(id) ON DELETE RESTRICT,\n membership_revision INTEGER NOT NULL CHECK(membership_revision>=1),\n source_revision INTEGER NOT NULL CHECK(source_revision>=1),\n policy_epoch INTEGER NOT NULL CHECK(policy_epoch>=0),\n policy_digest TEXT CHECK(policy_digest IS NULL OR length(policy_digest)=64 AND policy_digest NOT GLOB '*[^0-9a-f]*'),\n CHECK((policy_epoch=0 AND policy_digest IS NULL) OR (policy_epoch>0 AND policy_digest IS NOT NULL)),\n PRIMARY KEY(grant_id,project_id,index_id)) WITHOUT ROWID",
+    "tbl_name": "index_access_memberships",
+    "type": "table"
+  },
+  {
+    "name": "index_access_scopes",
+    "sql": "CREATE TABLE \"index_access_scopes\"(\n grant_id TEXT NOT NULL, project_id TEXT NOT NULL, index_id TEXT NOT NULL, source_id TEXT NOT NULL,\n kind TEXT NOT NULL CHECK(kind IN('exact','subtree')),\n path TEXT NOT NULL CHECK(length(CAST(path AS BLOB))<=4096 AND (kind='subtree' OR path<>'')),\n PRIMARY KEY(grant_id,project_id,index_id,source_id,kind,path),\n FOREIGN KEY(grant_id,project_id,index_id) REFERENCES \"index_access_memberships\"(grant_id,project_id,index_id) ON DELETE CASCADE,\n FOREIGN KEY(index_id,source_id) REFERENCES index_sources(index_id,id) ON DELETE RESTRICT) WITHOUT ROWID",
+    "tbl_name": "index_access_scopes",
+    "type": "table"
+  },
+  {
+    "name": "index_adopted_authorities",
+    "sql": "CREATE TABLE index_adopted_authorities(\n grant_id TEXT PRIMARY KEY REFERENCES index_access_grants(id) ON DELETE RESTRICT,\n operation_id TEXT NOT NULL UNIQUE CHECK(length(operation_id)=32 AND operation_id NOT GLOB '*[^0-9a-f]*'),\n adopted_binding TEXT NOT NULL UNIQUE REFERENCES index_definitions(legacy_binding) ON DELETE RESTRICT,\n original_binding TEXT NOT NULL CHECK(length(original_binding)=64 AND original_binding NOT GLOB '*[^0-9a-f]*'),\n config_sha256 TEXT NOT NULL CHECK(length(config_sha256)=64 AND config_sha256 NOT GLOB '*[^0-9a-f]*'),\n payload BLOB NOT NULL CHECK(length(payload)<=65536)) WITHOUT ROWID",
+    "tbl_name": "index_adopted_authorities",
+    "type": "table"
+  },
+  {
+    "name": "index_adopted_configuration_claims",
+    "sql": "CREATE TABLE index_adopted_configuration_claims(\n grant_id TEXT NOT NULL REFERENCES index_adopted_authorities(grant_id) ON DELETE RESTRICT,\n origin_sha256 TEXT NOT NULL UNIQUE CHECK(length(origin_sha256)=64 AND origin_sha256 NOT GLOB '*[^0-9a-f]*'),\n config_sha256 TEXT NOT NULL CHECK(length(config_sha256)=64 AND config_sha256 NOT GLOB '*[^0-9a-f]*'),\n PRIMARY KEY(grant_id,origin_sha256)) WITHOUT ROWID",
+    "tbl_name": "index_adopted_configuration_claims",
+    "type": "table"
+  },
+  {
+    "name": "index_catalog_meta",
+    "sql": "CREATE TABLE index_catalog_meta(\n id INTEGER PRIMARY KEY CHECK(id=1),\n revision INTEGER NOT NULL CHECK(revision>=1),\n activated INTEGER NOT NULL CHECK(activated IN(0,1)),\n accepted_new_writes INTEGER NOT NULL CHECK(accepted_new_writes IN(0,1)),\n authority_contract INTEGER NOT NULL CHECK(authority_contract>=0),\n policy_contract INTEGER NOT NULL CHECK(policy_contract>=0),\n upgrade_id TEXT NOT NULL CHECK(length(upgrade_id)=32 AND upgrade_id NOT GLOB '*[^0-9a-f]*'),\n legacy_schema_digest TEXT NOT NULL CHECK(length(legacy_schema_digest)=64 AND legacy_schema_digest NOT GLOB '*[^0-9a-f]*'),\n backup_digest TEXT NOT NULL CHECK(length(backup_digest)=64 AND backup_digest NOT GLOB '*[^0-9a-f]*'))",
+    "tbl_name": "index_catalog_meta",
+    "type": "table"
+  },
+  {
+    "name": "index_context_imports",
+    "sql": "CREATE TABLE index_context_imports(\n import_key TEXT PRIMARY KEY CHECK(length(import_key)=64 AND import_key NOT GLOB '*[^0-9a-f]*'),\n request_digest TEXT NOT NULL CHECK(length(request_digest)=64 AND request_digest NOT GLOB '*[^0-9a-f]*'),\n catalog_revision INTEGER NOT NULL CHECK(catalog_revision>=1),\n context_id TEXT REFERENCES index_contexts(id) ON DELETE SET NULL,\n context_identity TEXT NOT NULL CHECK(substr(context_identity,1,4)='ctx_' AND length(context_identity)=36 AND substr(context_identity,5) NOT GLOB '*[^0-9a-f]*'),\n CHECK(context_id IS NULL OR context_id=context_identity)) WITHOUT ROWID",
+    "tbl_name": "index_context_imports",
+    "type": "table"
+  },
+  {
+    "name": "index_contexts",
+    "sql": "CREATE TABLE index_contexts(\n id TEXT PRIMARY KEY CHECK(substr(id,1,4)='ctx_' AND length(id)=36 AND substr(id,5) NOT GLOB '*[^0-9a-f]*'),\n host TEXT NOT NULL CHECK(length(host)=64 AND host NOT GLOB '*[^0-9a-f]*'),\n context_key TEXT NOT NULL CHECK(length(context_key)=64 AND context_key NOT GLOB '*[^0-9a-f]*'),\n kind TEXT NOT NULL CHECK(kind IN('folder','workspace','empty','untitled','legacy_pending')),\n name TEXT NOT NULL CHECK(length(CAST(name AS BLOB)) BETWEEN 1 AND 256),\n revision INTEGER NOT NULL CHECK(revision>=1),\n UNIQUE(host,context_key)) WITHOUT ROWID",
+    "tbl_name": "index_contexts",
+    "type": "table"
+  },
+  {
+    "name": "index_definitions",
+    "sql": "CREATE TABLE index_definitions(\n id TEXT PRIMARY KEY CHECK(substr(id,1,4)='idx_' AND length(id)=36 AND substr(id,5) NOT GLOB '*[^0-9a-f]*'),\n legacy_binding TEXT NOT NULL UNIQUE CHECK(length(legacy_binding)=64 AND legacy_binding NOT GLOB '*[^0-9a-f]*'),\n active_registration TEXT REFERENCES projects(binding) ON DELETE SET NULL,\n backing_root TEXT NOT NULL CHECK(length(CAST(backing_root AS BLOB)) BETWEEN 1 AND 4096),\n data_root TEXT NOT NULL CHECK(length(CAST(data_root AS BLOB)) BETWEEN 1 AND 4096),\n namespace TEXT NOT NULL CHECK(namespace='collections-1.4'),\n collection TEXT NOT NULL CHECK(length(CAST(collection AS BLOB)) BETWEEN 1 AND 128),\n name TEXT NOT NULL CHECK(length(CAST(name AS BLOB)) BETWEEN 1 AND 256),\n definition_revision INTEGER NOT NULL CHECK(definition_revision>=1),\n source_revision INTEGER NOT NULL CHECK(source_revision>=1),\n policy_epoch INTEGER NOT NULL CHECK(policy_epoch>=0),\n policy_digest TEXT CHECK(policy_digest IS NULL OR length(policy_digest)=64 AND policy_digest NOT GLOB '*[^0-9a-f]*'),\n tombstone INTEGER NOT NULL CHECK(tombstone IN(0,1)),\n source_import_state TEXT NOT NULL CHECK(source_import_state IN('complete','pending_metadata')),\n CHECK(active_registration IS NULL OR active_registration=legacy_binding),\n CHECK((policy_epoch=0 AND policy_digest IS NULL) OR (policy_epoch>0 AND policy_digest IS NOT NULL)),\n UNIQUE(data_root,namespace,collection)) WITHOUT ROWID",
+    "tbl_name": "index_definitions",
+    "type": "table"
+  },
+  {
+    "name": "index_operation_receipts",
+    "sql": "CREATE TABLE index_operation_receipts(\n id TEXT PRIMARY KEY CHECK(length(id)=32 AND id NOT GLOB '*[^0-9a-f]*'),\n kind TEXT NOT NULL CHECK(length(CAST(kind AS BLOB)) BETWEEN 1 AND 32),\n stage TEXT NOT NULL CHECK(length(CAST(stage AS BLOB)) BETWEEN 1 AND 64),\n revision INTEGER NOT NULL CHECK(revision>=1),\n payload BLOB NOT NULL CHECK(length(payload)<=16384)) WITHOUT ROWID",
+    "tbl_name": "index_operation_receipts",
+    "type": "table"
+  },
+  {
+    "name": "index_source_aliases",
+    "sql": "CREATE TABLE index_source_aliases(\n index_id TEXT NOT NULL,\n source_id TEXT NOT NULL,\n alias TEXT NOT NULL CHECK(length(CAST(alias AS BLOB)) BETWEEN 1 AND 128),\n PRIMARY KEY(index_id,alias),\n FOREIGN KEY(index_id,source_id) REFERENCES index_sources(index_id,id) ON DELETE CASCADE) WITHOUT ROWID",
+    "tbl_name": "index_source_aliases",
+    "type": "table"
+  },
+  {
+    "name": "index_source_policies",
+    "sql": "CREATE TABLE index_source_policies(\n index_id TEXT PRIMARY KEY REFERENCES index_definitions(id) ON DELETE RESTRICT,\n payload BLOB NOT NULL CHECK(length(payload)<=1048576),\n completion_reserve BLOB NOT NULL CHECK(length(completion_reserve)<=16384)) WITHOUT ROWID",
+    "tbl_name": "index_source_policies",
+    "type": "table"
+  },
+  {
+    "name": "index_sources",
+    "sql": "CREATE TABLE index_sources(\n id TEXT PRIMARY KEY CHECK(substr(id,1,4)='src_' AND length(id)=36 AND substr(id,5) NOT GLOB '*[^0-9a-f]*'),\n index_id TEXT NOT NULL REFERENCES index_definitions(id) ON DELETE RESTRICT,\n canonical_path TEXT NOT NULL CHECK(length(CAST(canonical_path AS BLOB)) BETWEEN 1 AND 32768),\n owner INTEGER NOT NULL CHECK(owner IN(0,1)),\n enabled INTEGER NOT NULL CHECK(enabled IN(0,1)),\n UNIQUE(index_id,id), UNIQUE(index_id,canonical_path)) WITHOUT ROWID",
+    "tbl_name": "index_sources",
+    "type": "table"
+  },
+  {
+    "name": "legacy_index_projects",
+    "sql": "CREATE TABLE legacy_index_projects(\n legacy_binding TEXT PRIMARY KEY REFERENCES index_definitions(legacy_binding) ON DELETE RESTRICT,\n project_id TEXT REFERENCES query_projects(id) ON DELETE SET NULL,\n project_identity TEXT NOT NULL UNIQUE CHECK(substr(project_identity,1,4)='prj_' AND length(project_identity)=36 AND substr(project_identity,5) NOT GLOB '*[^0-9a-f]*'),\n CHECK(project_id IS NULL OR project_id=project_identity)) WITHOUT ROWID",
+    "tbl_name": "legacy_index_projects",
+    "type": "table"
+  },
+  {
+    "name": "project_default_indexes",
+    "sql": "CREATE TABLE project_default_indexes(\n project_id TEXT NOT NULL, index_id TEXT NOT NULL,\n PRIMARY KEY(project_id,index_id),\n FOREIGN KEY(project_id,index_id) REFERENCES project_index_memberships(project_id,index_id) ON DELETE CASCADE) WITHOUT ROWID",
+    "tbl_name": "project_default_indexes",
+    "type": "table"
+  },
+  {
+    "name": "project_index_memberships",
+    "sql": "CREATE TABLE project_index_memberships(\n project_id TEXT NOT NULL REFERENCES query_projects(id) ON DELETE CASCADE,\n index_id TEXT NOT NULL REFERENCES index_definitions(id) ON DELETE RESTRICT,\n revision INTEGER NOT NULL CHECK(revision>=1),\n PRIMARY KEY(project_id,index_id)) WITHOUT ROWID",
+    "tbl_name": "project_index_memberships",
+    "type": "table"
+  },
+  {
+    "name": "project_index_scopes",
+    "sql": "CREATE TABLE project_index_scopes(\n project_id TEXT NOT NULL, index_id TEXT NOT NULL, source_id TEXT NOT NULL,\n kind TEXT NOT NULL CHECK(kind IN('exact','subtree')),\n path TEXT NOT NULL CHECK(length(CAST(path AS BLOB))<=4096 AND (kind='subtree' OR path<>'')),\n PRIMARY KEY(project_id,index_id,source_id,kind,path),\n FOREIGN KEY(project_id,index_id) REFERENCES project_index_memberships(project_id,index_id) ON DELETE CASCADE,\n FOREIGN KEY(index_id,source_id) REFERENCES index_sources(index_id,id) ON DELETE RESTRICT) WITHOUT ROWID",
+    "tbl_name": "project_index_scopes",
+    "type": "table"
+  },
+  {
+    "name": "projects",
+    "sql": "CREATE TABLE projects(binding TEXT PRIMARY KEY, payload BLOB NOT NULL CHECK(length(payload)<=20480),\n                epoch INTEGER NOT NULL CHECK(epoch>=0), paused INTEGER NOT NULL CHECK(paused IN(0,1)), registered INTEGER NOT NULL DEFAULT 1 CHECK(registered IN(0,1)), cleanup_guard TEXT CHECK(cleanup_guard IS NULL OR length(cleanup_guard)=64)) WITHOUT ROWID",
+    "tbl_name": "projects",
+    "type": "table"
+  },
+  {
+    "name": "query_projects",
+    "sql": "CREATE TABLE query_projects(\n id TEXT PRIMARY KEY CHECK(substr(id,1,4)='prj_' AND length(id)=36 AND substr(id,5) NOT GLOB '*[^0-9a-f]*'),\n name TEXT NOT NULL CHECK(length(CAST(name AS BLOB)) BETWEEN 1 AND 256),\n definition_revision INTEGER NOT NULL CHECK(definition_revision>=1),\n scope_revision INTEGER NOT NULL CHECK(scope_revision>=1),\n defaults_revision INTEGER NOT NULL CHECK(defaults_revision>=1)) WITHOUT ROWID",
+    "tbl_name": "query_projects",
+    "type": "table"
+  },
+  {
+    "name": "service_background",
+    "sql": "CREATE TABLE service_background(\n project TEXT PRIMARY KEY REFERENCES projects(binding),\n revision INTEGER NOT NULL CHECK(revision>=0),\n source_pending INTEGER NOT NULL CHECK(source_pending IN(0,1)),\n semantic_pending INTEGER NOT NULL CHECK(semantic_pending IN(0,1))) WITHOUT ROWID",
+    "tbl_name": "service_background",
+    "type": "table"
+  },
+  {
+    "name": "service_background_audit",
+    "sql": "CREATE TABLE service_background_audit(\n project TEXT PRIMARY KEY REFERENCES projects(binding) ON DELETE CASCADE,\n revision INTEGER NOT NULL CHECK(revision>=0),\n campaign INTEGER NOT NULL CHECK(campaign>=0),\n job TEXT UNIQUE REFERENCES service_jobs(id) ON DELETE SET NULL,\n parked INTEGER NOT NULL CHECK(parked IN(0,1)),\n manual INTEGER NOT NULL CHECK(manual IN(0,1)),\n intent BLOB CHECK(intent IS NULL OR length(intent)<=4096),\n coverage BLOB CHECK(coverage IS NULL OR length(coverage)<=4096),\n blocked BLOB CHECK(blocked IS NULL OR length(blocked)<=4096),\n next_ms INTEGER NOT NULL CHECK(next_ms>=0),\n CHECK(parked=0 OR job IS NOT NULL)) WITHOUT ROWID",
+    "tbl_name": "service_background_audit",
+    "type": "table"
+  },
+  {
+    "name": "service_configuration",
+    "sql": "CREATE TABLE service_configuration(\n    job TEXT PRIMARY KEY REFERENCES service_jobs(id) ON DELETE CASCADE,\n    payload BLOB NOT NULL CHECK(length(payload)<=16640),\n    result BLOB NOT NULL CHECK(length(result)=16392))",
+    "tbl_name": "service_configuration",
+    "type": "table"
+  },
+  {
+    "name": "service_events",
+    "sql": "CREATE TABLE service_events(\n    seq INTEGER PRIMARY KEY AUTOINCREMENT, observed_ms INTEGER NOT NULL CHECK(observed_ms>=0),\n    project TEXT NOT NULL CHECK(length(project)=64), kind TEXT NOT NULL CHECK(length(kind)<=32),\n    job TEXT CHECK(job IS NULL OR length(job)=64), job_kind TEXT CHECK(job_kind IS NULL OR length(job_kind)<=16),\n    epoch INTEGER CHECK(epoch IS NULL OR epoch>=0), attempts INTEGER CHECK(attempts IS NULL OR attempts BETWEEN 0 AND 3),\n    code TEXT CHECK(code IS NULL OR length(code)<=128))",
+    "tbl_name": "service_events",
+    "type": "table"
+  },
+  {
+    "name": "service_inspections",
+    "sql": "CREATE TABLE service_inspections(\n    project TEXT PRIMARY KEY REFERENCES projects(binding),payload BLOB NOT NULL CHECK(length(payload)<=9216)) WITHOUT ROWID",
+    "tbl_name": "service_inspections",
+    "type": "table"
+  },
+  {
+    "name": "service_job_cancellation",
+    "sql": "CREATE TABLE service_job_cancellation(\n        job TEXT PRIMARY KEY REFERENCES service_jobs(id) ON DELETE CASCADE) WITHOUT ROWID",
+    "tbl_name": "service_job_cancellation",
+    "type": "table"
+  },
+  {
+    "name": "service_job_recovery",
+    "sql": "CREATE TABLE service_job_recovery(\n job TEXT PRIMARY KEY REFERENCES service_jobs(id) ON DELETE CASCADE,\n reason TEXT NOT NULL CHECK(length(reason)<=128),condition BLOB NOT NULL CHECK(length(condition)<=1024),\n waiting INTEGER NOT NULL CHECK(waiting IN(0,1)),next_ms INTEGER NOT NULL,started_ms INTEGER NOT NULL) WITHOUT ROWID",
+    "tbl_name": "service_job_recovery",
+    "type": "table"
+  },
+  {
+    "name": "service_job_source",
+    "sql": "CREATE TABLE service_job_source(\n        job TEXT PRIMARY KEY REFERENCES service_jobs(id) ON DELETE CASCADE,\n        revision INTEGER NOT NULL CHECK(revision>=0)) WITHOUT ROWID",
+    "tbl_name": "service_job_source",
+    "type": "table"
+  },
+  {
+    "name": "service_jobs",
+    "sql": "CREATE TABLE service_jobs(\n        seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,\n        project TEXT NOT NULL REFERENCES projects(binding), kind TEXT NOT NULL,\n        state TEXT NOT NULL, epoch INTEGER NOT NULL CHECK(epoch>=0),\n        attempts INTEGER NOT NULL CHECK(attempts>=0 AND attempts<=3),\n        outcome BLOB CHECK(outcome IS NULL OR length(outcome)<=2048))",
+    "tbl_name": "service_jobs",
+    "type": "table"
+  },
+  {
+    "name": "service_lifecycle",
+    "sql": "CREATE TABLE service_lifecycle(\n        seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,\n        request BLOB NOT NULL CHECK(length(request)<=2048),\n        phase TEXT NOT NULL CHECK(phase IN('draining','starting','complete','abandoned')))",
+    "tbl_name": "service_lifecycle",
+    "type": "table"
+  },
+  {
+    "name": "service_lifecycle_state",
+    "sql": "CREATE TABLE service_lifecycle_state(\n        id INTEGER PRIMARY KEY CHECK(id=1), stopped INTEGER NOT NULL CHECK(stopped IN(0,1)),\n        instance TEXT CHECK(instance IS NULL OR length(instance)=32))",
+    "tbl_name": "service_lifecycle_state",
+    "type": "table"
+  },
+  {
+    "name": "service_maintenance",
+    "sql": "CREATE TABLE service_maintenance(\n        project TEXT PRIMARY KEY REFERENCES projects(binding),\n        observation BLOB NOT NULL CHECK(length(observation)<=4096),\n        pending INTEGER,failed INTEGER NOT NULL CHECK(failed IN(0,1)),\n        retries INTEGER NOT NULL CHECK(retries BETWEEN 0 AND 7),next_ms INTEGER NOT NULL) WITHOUT ROWID",
+    "tbl_name": "service_maintenance",
+    "type": "table"
+  },
+  {
+    "name": "service_meta",
+    "sql": "CREATE TABLE service_meta(id INTEGER PRIMARY KEY CHECK(id=1), incarnation TEXT NOT NULL,\n                revision INTEGER NOT NULL CHECK(revision>=0), request_epoch INTEGER NOT NULL CHECK(request_epoch>=0))",
+    "tbl_name": "service_meta",
+    "type": "table"
+  },
+  {
+    "name": "service_plan_items",
+    "sql": "CREATE TABLE service_plan_items(\n    plan TEXT NOT NULL REFERENCES service_plans(id) ON DELETE CASCADE,\n    project TEXT NOT NULL REFERENCES projects(binding),phase TEXT NOT NULL,payload BLOB NOT NULL CHECK(length(payload)<=16384),\n    attempts INTEGER NOT NULL CHECK(attempts BETWEEN 0 AND 3),next_ms INTEGER NOT NULL CHECK(next_ms>=0),\n    PRIMARY KEY(plan,project)) WITHOUT ROWID",
+    "tbl_name": "service_plan_items",
+    "type": "table"
+  },
+  {
+    "name": "service_plan_jobs",
+    "sql": "CREATE TABLE service_plan_jobs(\n    plan TEXT NOT NULL,project TEXT NOT NULL,step TEXT NOT NULL CHECK(step IN('inspect','action')),\n    job TEXT NOT NULL REFERENCES service_jobs(id) ON DELETE CASCADE,\n    FOREIGN KEY(plan,project) REFERENCES service_plan_items(plan,project) ON DELETE CASCADE,\n    PRIMARY KEY(plan,project,step)) WITHOUT ROWID",
+    "tbl_name": "service_plan_jobs",
+    "type": "table"
+  },
+  {
+    "name": "service_plan_requests",
+    "sql": "CREATE TABLE service_plan_requests(\n    namespace TEXT NOT NULL,epoch INTEGER NOT NULL,nonce TEXT NOT NULL,caller TEXT NOT NULL,\n    plan TEXT NOT NULL REFERENCES service_plans(id) ON DELETE CASCADE,\n    PRIMARY KEY(namespace,epoch,nonce,caller)) WITHOUT ROWID",
+    "tbl_name": "service_plan_requests",
+    "type": "table"
+  },
+  {
+    "name": "service_plans",
+    "sql": "CREATE TABLE service_plans(\n    seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE NOT NULL CHECK(length(id)=64),\n    request BLOB NOT NULL CHECK(length(request)<=20000),engine TEXT NOT NULL CHECK(length(engine)=64),phase TEXT NOT NULL,\n    paused INTEGER NOT NULL CHECK(paused IN(0,1)),paused_at INTEGER NOT NULL CHECK(paused_at>=0),canceled INTEGER NOT NULL CHECK(canceled IN(0,1)),\n    preview TEXT,fallback_approved INTEGER NOT NULL CHECK(fallback_approved IN(0,1)),outcome TEXT,\n    inspection_until INTEGER NOT NULL CHECK(inspection_until>=0),created_ms INTEGER NOT NULL CHECK(created_ms>=0),updated_ms INTEGER NOT NULL CHECK(updated_ms>=0))",
+    "tbl_name": "service_plans",
+    "type": "table"
+  },
+  {
+    "name": "service_private_paths",
+    "sql": "CREATE TABLE service_private_paths(\n    path TEXT PRIMARY KEY CHECK(length(path)<=4096)) WITHOUT ROWID",
+    "tbl_name": "service_private_paths",
+    "type": "table"
+  },
+  {
+    "name": "service_progress",
+    "sql": "CREATE TABLE service_progress(\n    project TEXT PRIMARY KEY REFERENCES projects(binding),\n    job TEXT NOT NULL REFERENCES service_jobs(id) ON DELETE CASCADE,\n    observation BLOB NOT NULL CHECK(length(observation)<=4096)) WITHOUT ROWID",
+    "tbl_name": "service_progress",
+    "type": "table"
+  },
+  {
+    "name": "service_provider_drains",
+    "sql": "CREATE TABLE service_provider_drains(\n id TEXT PRIMARY KEY CHECK(length(id)=32),\n payload BLOB NOT NULL CHECK(length(payload)<=4096),\n digest TEXT NOT NULL CHECK(length(digest)=64)) WITHOUT ROWID",
+    "tbl_name": "service_provider_drains",
+    "type": "table"
+  },
+  {
+    "name": "service_recovery_budget",
+    "sql": "CREATE TABLE service_recovery_budget(\n scope TEXT PRIMARY KEY,engine TEXT NOT NULL,failures INTEGER NOT NULL CHECK(failures BETWEEN 0 AND 3),\n next_ms INTEGER NOT NULL,started_ms INTEGER NOT NULL,suppressed INTEGER NOT NULL CHECK(suppressed IN(0,1))) WITHOUT ROWID",
+    "tbl_name": "service_recovery_budget",
+    "type": "table"
+  },
+  {
+    "name": "service_removed_projects",
+    "sql": "CREATE TABLE service_removed_projects(binding TEXT PRIMARY KEY CHECK(length(binding)=64),root_identity TEXT NOT NULL CHECK(length(root_identity)=64),removed_ms INTEGER NOT NULL CHECK(removed_ms>=0)) WITHOUT ROWID",
+    "tbl_name": "service_removed_projects",
+    "type": "table"
+  },
+  {
+    "name": "service_requests",
+    "sql": "CREATE TABLE service_requests(\n        namespace TEXT NOT NULL, epoch INTEGER NOT NULL CHECK(epoch>=0), nonce TEXT NOT NULL,\n        caller TEXT NOT NULL, job TEXT NOT NULL REFERENCES service_jobs(id) ON DELETE CASCADE,\n        PRIMARY KEY(namespace,epoch,nonce,caller)) WITHOUT ROWID",
+    "tbl_name": "service_requests",
+    "type": "table"
+  },
+  {
+    "name": "service_retry_requests",
+    "sql": "CREATE TABLE service_retry_requests(\n        namespace TEXT NOT NULL,epoch INTEGER NOT NULL,nonce TEXT NOT NULL,caller TEXT NOT NULL,\n        source_job TEXT NOT NULL CHECK(length(source_job)=64),\n        PRIMARY KEY(namespace,epoch,nonce,caller),\n        FOREIGN KEY(namespace,epoch,nonce,caller) REFERENCES service_requests(namespace,epoch,nonce,caller) ON DELETE CASCADE) WITHOUT ROWID",
+    "tbl_name": "service_retry_requests",
+    "type": "table"
+  },
+  {
+    "name": "service_semantic_review",
+    "sql": "CREATE TABLE service_semantic_review(\n project TEXT PRIMARY KEY REFERENCES projects(binding),signature TEXT NOT NULL CHECK(length(signature)<=129)) WITHOUT ROWID",
+    "tbl_name": "service_semantic_review",
+    "type": "table"
+  },
+  {
+    "name": "service_setup_pending",
+    "sql": "CREATE TABLE service_setup_pending(project TEXT PRIMARY KEY REFERENCES projects(binding)) WITHOUT ROWID",
+    "tbl_name": "service_setup_pending",
+    "type": "table"
+  },
+  {
+    "name": "service_source_outcomes",
+    "sql": "CREATE TABLE service_source_outcomes(\n        project TEXT PRIMARY KEY REFERENCES projects(binding) ON DELETE CASCADE,\n        seq INTEGER NOT NULL CHECK(typeof(seq)='integer' AND seq>0),\n        job TEXT NOT NULL CHECK(length(job)=64),\n        state TEXT NOT NULL CHECK(state IN('succeeded','failed','canceled')),\n        outcome BLOB NOT NULL CHECK(length(outcome)<=2048)) WITHOUT ROWID",
+    "tbl_name": "service_source_outcomes",
+    "type": "table"
+  },
+  {
+    "name": "service_watch",
+    "sql": "CREATE TABLE service_watch(\n        project TEXT PRIMARY KEY REFERENCES projects(binding),\n        enabled INTEGER NOT NULL CHECK(enabled IN(0,1)),\n        requested INTEGER NOT NULL CHECK(requested>=0),\n        indexed INTEGER NOT NULL CHECK(indexed>=0 AND indexed<=requested),\n        configuration_epoch INTEGER NOT NULL CHECK(configuration_epoch>=0),\n        roots BLOB NOT NULL CHECK(length(roots)<=98304),roots_observed INTEGER NOT NULL CHECK(roots_observed IN(0,1)),\n        native_roots INTEGER NOT NULL CHECK(native_roots BETWEEN 0 AND 17),\n        backend TEXT NOT NULL,failure TEXT,observed_ms INTEGER,last_reconciled_ms INTEGER,\n        attempts INTEGER NOT NULL CHECK(attempts BETWEEN 0 AND 3),next_ms INTEGER NOT NULL,\n        blocked_revision INTEGER) WITHOUT ROWID",
+    "tbl_name": "service_watch",
+    "type": "table"
+  },
+  {
+    "name": "service_watch_events",
+    "sql": "CREATE TABLE service_watch_events(\n        project TEXT PRIMARY KEY REFERENCES projects(binding),worker TEXT NOT NULL,\n        configuration_epoch INTEGER NOT NULL CHECK(configuration_epoch>=0),\n        sequence INTEGER NOT NULL CHECK(sequence>0)) WITHOUT ROWID",
+    "tbl_name": "service_watch_events",
+    "type": "table"
+  },
+  {
+    "name": "service_watch_traversal",
+    "sql": "CREATE TABLE service_watch_traversal(\n        project TEXT PRIMARY KEY REFERENCES projects(binding) ON DELETE CASCADE,\n        configuration_epoch INTEGER NOT NULL CHECK(configuration_epoch>=0),\n        observation BLOB NOT NULL CHECK(length(observation)<=8192),\n        observed_ms INTEGER NOT NULL CHECK(observed_ms>=0)) WITHOUT ROWID",
+    "tbl_name": "service_watch_traversal",
+    "type": "table"
+  },
+  {
+    "name": "sqlite_sequence",
+    "sql": "CREATE TABLE sqlite_sequence(name,seq)",
+    "tbl_name": "sqlite_sequence",
+    "type": "table"
+  },
+  {
+    "name": "adopted_configuration_claim_immutable",
+    "sql": "CREATE TRIGGER adopted_configuration_claim_immutable BEFORE UPDATE ON index_adopted_configuration_claims\n BEGIN SELECT RAISE(ABORT,'standalone configuration claim is immutable'); END",
+    "tbl_name": "index_adopted_configuration_claims",
+    "type": "trigger"
+  },
+  {
+    "name": "adopted_configuration_claim_retained",
+    "sql": "CREATE TRIGGER adopted_configuration_claim_retained BEFORE DELETE ON index_adopted_configuration_claims\n BEGIN SELECT RAISE(ABORT,'standalone configuration claim is retained'); END",
+    "tbl_name": "index_adopted_configuration_claims",
+    "type": "trigger"
+  },
+  {
+    "name": "adopted_configuration_claims_capacity",
+    "sql": "CREATE TRIGGER adopted_configuration_claims_capacity BEFORE INSERT ON index_adopted_configuration_claims\n WHEN (SELECT count(*) FROM index_adopted_configuration_claims WHERE grant_id=NEW.grant_id)>=32\n BEGIN SELECT RAISE(ABORT,'standalone configuration claim capacity exceeded'); END",
+    "tbl_name": "index_adopted_configuration_claims",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_context_default_indexes_delete",
+    "sql": "CREATE TRIGGER catalog_write_context_default_indexes_delete AFTER DELETE ON context_default_indexes WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "context_default_indexes",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_context_default_indexes_insert",
+    "sql": "CREATE TRIGGER catalog_write_context_default_indexes_insert AFTER INSERT ON context_default_indexes WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "context_default_indexes",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_context_default_indexes_update",
+    "sql": "CREATE TRIGGER catalog_write_context_default_indexes_update AFTER UPDATE ON context_default_indexes WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "context_default_indexes",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_context_projects_delete",
+    "sql": "CREATE TRIGGER catalog_write_context_projects_delete AFTER DELETE ON context_projects WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "context_projects",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_context_projects_insert",
+    "sql": "CREATE TRIGGER catalog_write_context_projects_insert AFTER INSERT ON context_projects WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "context_projects",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_context_projects_update",
+    "sql": "CREATE TRIGGER catalog_write_context_projects_update AFTER UPDATE ON context_projects WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "context_projects",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_index_access_grants_delete",
+    "sql": "CREATE TRIGGER catalog_write_index_access_grants_delete AFTER DELETE ON index_access_grants WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "index_access_grants",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_index_access_grants_insert",
+    "sql": "CREATE TRIGGER catalog_write_index_access_grants_insert AFTER INSERT ON index_access_grants WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "index_access_grants",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_index_access_grants_update",
+    "sql": "CREATE TRIGGER catalog_write_index_access_grants_update AFTER UPDATE ON index_access_grants WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "index_access_grants",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_index_access_memberships_delete",
+    "sql": "CREATE TRIGGER catalog_write_index_access_memberships_delete AFTER DELETE ON index_access_memberships WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "index_access_memberships",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_index_access_memberships_insert",
+    "sql": "CREATE TRIGGER catalog_write_index_access_memberships_insert AFTER INSERT ON index_access_memberships WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "index_access_memberships",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_index_access_memberships_update",
+    "sql": "CREATE TRIGGER catalog_write_index_access_memberships_update AFTER UPDATE ON index_access_memberships WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "index_access_memberships",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_index_access_scopes_delete",
+    "sql": "CREATE TRIGGER catalog_write_index_access_scopes_delete AFTER DELETE ON index_access_scopes WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "index_access_scopes",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_index_access_scopes_insert",
+    "sql": "CREATE TRIGGER catalog_write_index_access_scopes_insert AFTER INSERT ON index_access_scopes WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "index_access_scopes",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_index_access_scopes_update",
+    "sql": "CREATE TRIGGER catalog_write_index_access_scopes_update AFTER UPDATE ON index_access_scopes WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "index_access_scopes",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_index_adopted_authorities_delete",
+    "sql": "CREATE TRIGGER catalog_write_index_adopted_authorities_delete AFTER DELETE ON index_adopted_authorities WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "index_adopted_authorities",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_index_adopted_authorities_insert",
+    "sql": "CREATE TRIGGER catalog_write_index_adopted_authorities_insert AFTER INSERT ON index_adopted_authorities WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "index_adopted_authorities",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_index_adopted_authorities_update",
+    "sql": "CREATE TRIGGER catalog_write_index_adopted_authorities_update AFTER UPDATE ON index_adopted_authorities WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "index_adopted_authorities",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_index_adopted_configuration_claims_delete",
+    "sql": "CREATE TRIGGER catalog_write_index_adopted_configuration_claims_delete AFTER DELETE ON index_adopted_configuration_claims WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "index_adopted_configuration_claims",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_index_adopted_configuration_claims_insert",
+    "sql": "CREATE TRIGGER catalog_write_index_adopted_configuration_claims_insert AFTER INSERT ON index_adopted_configuration_claims WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "index_adopted_configuration_claims",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_index_adopted_configuration_claims_update",
+    "sql": "CREATE TRIGGER catalog_write_index_adopted_configuration_claims_update AFTER UPDATE ON index_adopted_configuration_claims WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "index_adopted_configuration_claims",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_index_context_imports_delete",
+    "sql": "CREATE TRIGGER catalog_write_index_context_imports_delete AFTER DELETE ON index_context_imports WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "index_context_imports",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_index_context_imports_insert",
+    "sql": "CREATE TRIGGER catalog_write_index_context_imports_insert AFTER INSERT ON index_context_imports WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "index_context_imports",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_index_context_imports_update",
+    "sql": "CREATE TRIGGER catalog_write_index_context_imports_update AFTER UPDATE ON index_context_imports WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "index_context_imports",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_index_contexts_delete",
+    "sql": "CREATE TRIGGER catalog_write_index_contexts_delete AFTER DELETE ON index_contexts WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "index_contexts",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_index_contexts_insert",
+    "sql": "CREATE TRIGGER catalog_write_index_contexts_insert AFTER INSERT ON index_contexts WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "index_contexts",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_index_contexts_update",
+    "sql": "CREATE TRIGGER catalog_write_index_contexts_update AFTER UPDATE ON index_contexts WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "index_contexts",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_index_definitions_delete",
+    "sql": "CREATE TRIGGER catalog_write_index_definitions_delete AFTER DELETE ON index_definitions WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "index_definitions",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_index_definitions_insert",
+    "sql": "CREATE TRIGGER catalog_write_index_definitions_insert AFTER INSERT ON index_definitions WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "index_definitions",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_index_definitions_update",
+    "sql": "CREATE TRIGGER catalog_write_index_definitions_update AFTER UPDATE ON index_definitions WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "index_definitions",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_index_operation_receipts_delete",
+    "sql": "CREATE TRIGGER catalog_write_index_operation_receipts_delete AFTER DELETE ON index_operation_receipts WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "index_operation_receipts",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_index_operation_receipts_insert",
+    "sql": "CREATE TRIGGER catalog_write_index_operation_receipts_insert AFTER INSERT ON index_operation_receipts WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "index_operation_receipts",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_index_operation_receipts_update",
+    "sql": "CREATE TRIGGER catalog_write_index_operation_receipts_update AFTER UPDATE ON index_operation_receipts WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "index_operation_receipts",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_index_source_aliases_delete",
+    "sql": "CREATE TRIGGER catalog_write_index_source_aliases_delete AFTER DELETE ON index_source_aliases WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "index_source_aliases",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_index_source_aliases_insert",
+    "sql": "CREATE TRIGGER catalog_write_index_source_aliases_insert AFTER INSERT ON index_source_aliases WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "index_source_aliases",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_index_source_aliases_update",
+    "sql": "CREATE TRIGGER catalog_write_index_source_aliases_update AFTER UPDATE ON index_source_aliases WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "index_source_aliases",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_index_sources_delete",
+    "sql": "CREATE TRIGGER catalog_write_index_sources_delete AFTER DELETE ON index_sources WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "index_sources",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_index_sources_insert",
+    "sql": "CREATE TRIGGER catalog_write_index_sources_insert AFTER INSERT ON index_sources WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "index_sources",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_index_sources_update",
+    "sql": "CREATE TRIGGER catalog_write_index_sources_update AFTER UPDATE ON index_sources WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "index_sources",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_legacy_index_projects_delete",
+    "sql": "CREATE TRIGGER catalog_write_legacy_index_projects_delete AFTER DELETE ON legacy_index_projects WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "legacy_index_projects",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_legacy_index_projects_insert",
+    "sql": "CREATE TRIGGER catalog_write_legacy_index_projects_insert AFTER INSERT ON legacy_index_projects WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "legacy_index_projects",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_legacy_index_projects_update",
+    "sql": "CREATE TRIGGER catalog_write_legacy_index_projects_update AFTER UPDATE ON legacy_index_projects WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "legacy_index_projects",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_project_default_indexes_delete",
+    "sql": "CREATE TRIGGER catalog_write_project_default_indexes_delete AFTER DELETE ON project_default_indexes WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "project_default_indexes",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_project_default_indexes_insert",
+    "sql": "CREATE TRIGGER catalog_write_project_default_indexes_insert AFTER INSERT ON project_default_indexes WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "project_default_indexes",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_project_default_indexes_update",
+    "sql": "CREATE TRIGGER catalog_write_project_default_indexes_update AFTER UPDATE ON project_default_indexes WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "project_default_indexes",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_project_index_memberships_delete",
+    "sql": "CREATE TRIGGER catalog_write_project_index_memberships_delete AFTER DELETE ON project_index_memberships WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "project_index_memberships",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_project_index_memberships_insert",
+    "sql": "CREATE TRIGGER catalog_write_project_index_memberships_insert AFTER INSERT ON project_index_memberships WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "project_index_memberships",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_project_index_memberships_update",
+    "sql": "CREATE TRIGGER catalog_write_project_index_memberships_update AFTER UPDATE ON project_index_memberships WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "project_index_memberships",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_project_index_scopes_delete",
+    "sql": "CREATE TRIGGER catalog_write_project_index_scopes_delete AFTER DELETE ON project_index_scopes WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "project_index_scopes",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_project_index_scopes_insert",
+    "sql": "CREATE TRIGGER catalog_write_project_index_scopes_insert AFTER INSERT ON project_index_scopes WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "project_index_scopes",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_project_index_scopes_update",
+    "sql": "CREATE TRIGGER catalog_write_project_index_scopes_update AFTER UPDATE ON project_index_scopes WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "project_index_scopes",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_projects_delete",
+    "sql": "CREATE TRIGGER catalog_write_projects_delete AFTER DELETE ON projects WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "projects",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_projects_insert",
+    "sql": "CREATE TRIGGER catalog_write_projects_insert AFTER INSERT ON projects WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "projects",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_projects_update",
+    "sql": "CREATE TRIGGER catalog_write_projects_update AFTER UPDATE ON projects WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "projects",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_query_projects_delete",
+    "sql": "CREATE TRIGGER catalog_write_query_projects_delete AFTER DELETE ON query_projects WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "query_projects",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_query_projects_insert",
+    "sql": "CREATE TRIGGER catalog_write_query_projects_insert AFTER INSERT ON query_projects WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "query_projects",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_query_projects_update",
+    "sql": "CREATE TRIGGER catalog_write_query_projects_update AFTER UPDATE ON query_projects WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "query_projects",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_background_audit_delete",
+    "sql": "CREATE TRIGGER catalog_write_service_background_audit_delete AFTER DELETE ON service_background_audit WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_background_audit",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_background_audit_insert",
+    "sql": "CREATE TRIGGER catalog_write_service_background_audit_insert AFTER INSERT ON service_background_audit WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_background_audit",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_background_audit_update",
+    "sql": "CREATE TRIGGER catalog_write_service_background_audit_update AFTER UPDATE ON service_background_audit WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_background_audit",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_background_delete",
+    "sql": "CREATE TRIGGER catalog_write_service_background_delete AFTER DELETE ON service_background WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_background",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_background_insert",
+    "sql": "CREATE TRIGGER catalog_write_service_background_insert AFTER INSERT ON service_background WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_background",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_background_update",
+    "sql": "CREATE TRIGGER catalog_write_service_background_update AFTER UPDATE ON service_background WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_background",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_configuration_delete",
+    "sql": "CREATE TRIGGER catalog_write_service_configuration_delete AFTER DELETE ON service_configuration WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_configuration",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_configuration_insert",
+    "sql": "CREATE TRIGGER catalog_write_service_configuration_insert AFTER INSERT ON service_configuration WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_configuration",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_configuration_update",
+    "sql": "CREATE TRIGGER catalog_write_service_configuration_update AFTER UPDATE ON service_configuration WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_configuration",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_events_delete",
+    "sql": "CREATE TRIGGER catalog_write_service_events_delete AFTER DELETE ON service_events WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_events",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_events_insert",
+    "sql": "CREATE TRIGGER catalog_write_service_events_insert AFTER INSERT ON service_events WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_events",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_events_update",
+    "sql": "CREATE TRIGGER catalog_write_service_events_update AFTER UPDATE ON service_events WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_events",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_inspections_delete",
+    "sql": "CREATE TRIGGER catalog_write_service_inspections_delete AFTER DELETE ON service_inspections WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_inspections",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_inspections_insert",
+    "sql": "CREATE TRIGGER catalog_write_service_inspections_insert AFTER INSERT ON service_inspections WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_inspections",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_inspections_update",
+    "sql": "CREATE TRIGGER catalog_write_service_inspections_update AFTER UPDATE ON service_inspections WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_inspections",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_job_cancellation_delete",
+    "sql": "CREATE TRIGGER catalog_write_service_job_cancellation_delete AFTER DELETE ON service_job_cancellation WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_job_cancellation",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_job_cancellation_insert",
+    "sql": "CREATE TRIGGER catalog_write_service_job_cancellation_insert AFTER INSERT ON service_job_cancellation WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_job_cancellation",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_job_cancellation_update",
+    "sql": "CREATE TRIGGER catalog_write_service_job_cancellation_update AFTER UPDATE ON service_job_cancellation WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_job_cancellation",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_job_recovery_delete",
+    "sql": "CREATE TRIGGER catalog_write_service_job_recovery_delete AFTER DELETE ON service_job_recovery WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_job_recovery",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_job_recovery_insert",
+    "sql": "CREATE TRIGGER catalog_write_service_job_recovery_insert AFTER INSERT ON service_job_recovery WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_job_recovery",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_job_recovery_update",
+    "sql": "CREATE TRIGGER catalog_write_service_job_recovery_update AFTER UPDATE ON service_job_recovery WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_job_recovery",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_job_source_delete",
+    "sql": "CREATE TRIGGER catalog_write_service_job_source_delete AFTER DELETE ON service_job_source WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_job_source",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_job_source_insert",
+    "sql": "CREATE TRIGGER catalog_write_service_job_source_insert AFTER INSERT ON service_job_source WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_job_source",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_job_source_update",
+    "sql": "CREATE TRIGGER catalog_write_service_job_source_update AFTER UPDATE ON service_job_source WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_job_source",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_jobs_delete",
+    "sql": "CREATE TRIGGER catalog_write_service_jobs_delete AFTER DELETE ON service_jobs WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_jobs",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_jobs_insert",
+    "sql": "CREATE TRIGGER catalog_write_service_jobs_insert AFTER INSERT ON service_jobs WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_jobs",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_jobs_update",
+    "sql": "CREATE TRIGGER catalog_write_service_jobs_update AFTER UPDATE ON service_jobs WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_jobs",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_lifecycle_delete",
+    "sql": "CREATE TRIGGER catalog_write_service_lifecycle_delete AFTER DELETE ON service_lifecycle WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_lifecycle",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_lifecycle_insert",
+    "sql": "CREATE TRIGGER catalog_write_service_lifecycle_insert AFTER INSERT ON service_lifecycle WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_lifecycle",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_lifecycle_state_delete",
+    "sql": "CREATE TRIGGER catalog_write_service_lifecycle_state_delete AFTER DELETE ON service_lifecycle_state WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_lifecycle_state",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_lifecycle_state_insert",
+    "sql": "CREATE TRIGGER catalog_write_service_lifecycle_state_insert AFTER INSERT ON service_lifecycle_state WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_lifecycle_state",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_lifecycle_state_update",
+    "sql": "CREATE TRIGGER catalog_write_service_lifecycle_state_update AFTER UPDATE ON service_lifecycle_state WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_lifecycle_state",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_lifecycle_update",
+    "sql": "CREATE TRIGGER catalog_write_service_lifecycle_update AFTER UPDATE ON service_lifecycle WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_lifecycle",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_maintenance_delete",
+    "sql": "CREATE TRIGGER catalog_write_service_maintenance_delete AFTER DELETE ON service_maintenance WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_maintenance",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_maintenance_insert",
+    "sql": "CREATE TRIGGER catalog_write_service_maintenance_insert AFTER INSERT ON service_maintenance WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_maintenance",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_maintenance_update",
+    "sql": "CREATE TRIGGER catalog_write_service_maintenance_update AFTER UPDATE ON service_maintenance WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_maintenance",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_meta_delete",
+    "sql": "CREATE TRIGGER catalog_write_service_meta_delete AFTER DELETE ON service_meta WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_meta",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_meta_insert",
+    "sql": "CREATE TRIGGER catalog_write_service_meta_insert AFTER INSERT ON service_meta WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_meta",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_meta_update",
+    "sql": "CREATE TRIGGER catalog_write_service_meta_update AFTER UPDATE ON service_meta WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_meta",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_plan_items_delete",
+    "sql": "CREATE TRIGGER catalog_write_service_plan_items_delete AFTER DELETE ON service_plan_items WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_plan_items",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_plan_items_insert",
+    "sql": "CREATE TRIGGER catalog_write_service_plan_items_insert AFTER INSERT ON service_plan_items WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_plan_items",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_plan_items_update",
+    "sql": "CREATE TRIGGER catalog_write_service_plan_items_update AFTER UPDATE ON service_plan_items WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_plan_items",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_plan_jobs_delete",
+    "sql": "CREATE TRIGGER catalog_write_service_plan_jobs_delete AFTER DELETE ON service_plan_jobs WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_plan_jobs",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_plan_jobs_insert",
+    "sql": "CREATE TRIGGER catalog_write_service_plan_jobs_insert AFTER INSERT ON service_plan_jobs WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_plan_jobs",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_plan_jobs_update",
+    "sql": "CREATE TRIGGER catalog_write_service_plan_jobs_update AFTER UPDATE ON service_plan_jobs WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_plan_jobs",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_plan_requests_delete",
+    "sql": "CREATE TRIGGER catalog_write_service_plan_requests_delete AFTER DELETE ON service_plan_requests WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_plan_requests",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_plan_requests_insert",
+    "sql": "CREATE TRIGGER catalog_write_service_plan_requests_insert AFTER INSERT ON service_plan_requests WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_plan_requests",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_plan_requests_update",
+    "sql": "CREATE TRIGGER catalog_write_service_plan_requests_update AFTER UPDATE ON service_plan_requests WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_plan_requests",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_plans_delete",
+    "sql": "CREATE TRIGGER catalog_write_service_plans_delete AFTER DELETE ON service_plans WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_plans",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_plans_insert",
+    "sql": "CREATE TRIGGER catalog_write_service_plans_insert AFTER INSERT ON service_plans WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_plans",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_plans_update",
+    "sql": "CREATE TRIGGER catalog_write_service_plans_update AFTER UPDATE ON service_plans WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_plans",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_private_paths_delete",
+    "sql": "CREATE TRIGGER catalog_write_service_private_paths_delete AFTER DELETE ON service_private_paths WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_private_paths",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_private_paths_insert",
+    "sql": "CREATE TRIGGER catalog_write_service_private_paths_insert AFTER INSERT ON service_private_paths WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_private_paths",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_private_paths_update",
+    "sql": "CREATE TRIGGER catalog_write_service_private_paths_update AFTER UPDATE ON service_private_paths WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_private_paths",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_progress_delete",
+    "sql": "CREATE TRIGGER catalog_write_service_progress_delete AFTER DELETE ON service_progress WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_progress",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_progress_insert",
+    "sql": "CREATE TRIGGER catalog_write_service_progress_insert AFTER INSERT ON service_progress WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_progress",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_progress_update",
+    "sql": "CREATE TRIGGER catalog_write_service_progress_update AFTER UPDATE ON service_progress WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_progress",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_provider_drains_delete",
+    "sql": "CREATE TRIGGER catalog_write_service_provider_drains_delete AFTER DELETE ON service_provider_drains WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_provider_drains",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_provider_drains_insert",
+    "sql": "CREATE TRIGGER catalog_write_service_provider_drains_insert AFTER INSERT ON service_provider_drains WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_provider_drains",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_provider_drains_update",
+    "sql": "CREATE TRIGGER catalog_write_service_provider_drains_update AFTER UPDATE ON service_provider_drains WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_provider_drains",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_recovery_budget_delete",
+    "sql": "CREATE TRIGGER catalog_write_service_recovery_budget_delete AFTER DELETE ON service_recovery_budget WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_recovery_budget",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_recovery_budget_insert",
+    "sql": "CREATE TRIGGER catalog_write_service_recovery_budget_insert AFTER INSERT ON service_recovery_budget WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_recovery_budget",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_recovery_budget_update",
+    "sql": "CREATE TRIGGER catalog_write_service_recovery_budget_update AFTER UPDATE ON service_recovery_budget WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_recovery_budget",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_removed_projects_delete",
+    "sql": "CREATE TRIGGER catalog_write_service_removed_projects_delete AFTER DELETE ON service_removed_projects WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_removed_projects",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_removed_projects_insert",
+    "sql": "CREATE TRIGGER catalog_write_service_removed_projects_insert AFTER INSERT ON service_removed_projects WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_removed_projects",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_removed_projects_update",
+    "sql": "CREATE TRIGGER catalog_write_service_removed_projects_update AFTER UPDATE ON service_removed_projects WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_removed_projects",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_requests_delete",
+    "sql": "CREATE TRIGGER catalog_write_service_requests_delete AFTER DELETE ON service_requests WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_requests",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_requests_insert",
+    "sql": "CREATE TRIGGER catalog_write_service_requests_insert AFTER INSERT ON service_requests WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_requests",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_requests_update",
+    "sql": "CREATE TRIGGER catalog_write_service_requests_update AFTER UPDATE ON service_requests WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_requests",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_retry_requests_delete",
+    "sql": "CREATE TRIGGER catalog_write_service_retry_requests_delete AFTER DELETE ON service_retry_requests WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_retry_requests",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_retry_requests_insert",
+    "sql": "CREATE TRIGGER catalog_write_service_retry_requests_insert AFTER INSERT ON service_retry_requests WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_retry_requests",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_retry_requests_update",
+    "sql": "CREATE TRIGGER catalog_write_service_retry_requests_update AFTER UPDATE ON service_retry_requests WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_retry_requests",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_semantic_review_delete",
+    "sql": "CREATE TRIGGER catalog_write_service_semantic_review_delete AFTER DELETE ON service_semantic_review WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_semantic_review",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_semantic_review_insert",
+    "sql": "CREATE TRIGGER catalog_write_service_semantic_review_insert AFTER INSERT ON service_semantic_review WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_semantic_review",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_semantic_review_update",
+    "sql": "CREATE TRIGGER catalog_write_service_semantic_review_update AFTER UPDATE ON service_semantic_review WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_semantic_review",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_setup_pending_delete",
+    "sql": "CREATE TRIGGER catalog_write_service_setup_pending_delete AFTER DELETE ON service_setup_pending WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_setup_pending",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_setup_pending_insert",
+    "sql": "CREATE TRIGGER catalog_write_service_setup_pending_insert AFTER INSERT ON service_setup_pending WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_setup_pending",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_setup_pending_update",
+    "sql": "CREATE TRIGGER catalog_write_service_setup_pending_update AFTER UPDATE ON service_setup_pending WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_setup_pending",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_source_outcomes_delete",
+    "sql": "CREATE TRIGGER catalog_write_service_source_outcomes_delete AFTER DELETE ON service_source_outcomes WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_source_outcomes",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_source_outcomes_insert",
+    "sql": "CREATE TRIGGER catalog_write_service_source_outcomes_insert AFTER INSERT ON service_source_outcomes WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_source_outcomes",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_source_outcomes_update",
+    "sql": "CREATE TRIGGER catalog_write_service_source_outcomes_update AFTER UPDATE ON service_source_outcomes WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_source_outcomes",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_watch_delete",
+    "sql": "CREATE TRIGGER catalog_write_service_watch_delete AFTER DELETE ON service_watch WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_watch",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_watch_events_delete",
+    "sql": "CREATE TRIGGER catalog_write_service_watch_events_delete AFTER DELETE ON service_watch_events WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_watch_events",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_watch_events_insert",
+    "sql": "CREATE TRIGGER catalog_write_service_watch_events_insert AFTER INSERT ON service_watch_events WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_watch_events",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_watch_events_update",
+    "sql": "CREATE TRIGGER catalog_write_service_watch_events_update AFTER UPDATE ON service_watch_events WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_watch_events",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_watch_insert",
+    "sql": "CREATE TRIGGER catalog_write_service_watch_insert AFTER INSERT ON service_watch WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_watch",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_watch_traversal_delete",
+    "sql": "CREATE TRIGGER catalog_write_service_watch_traversal_delete AFTER DELETE ON service_watch_traversal WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_watch_traversal",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_watch_traversal_insert",
+    "sql": "CREATE TRIGGER catalog_write_service_watch_traversal_insert AFTER INSERT ON service_watch_traversal WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_watch_traversal",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_watch_traversal_update",
+    "sql": "CREATE TRIGGER catalog_write_service_watch_traversal_update AFTER UPDATE ON service_watch_traversal WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_watch_traversal",
+    "type": "trigger"
+  },
+  {
+    "name": "catalog_write_service_watch_update",
+    "sql": "CREATE TRIGGER catalog_write_service_watch_update AFTER UPDATE ON service_watch WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0) BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "service_watch",
+    "type": "trigger"
+  },
+  {
+    "name": "context_default_indexes_capacity",
+    "sql": "CREATE TRIGGER context_default_indexes_capacity BEFORE INSERT ON context_default_indexes WHEN (SELECT count(*) FROM context_default_indexes WHERE context_id=NEW.context_id)>=32 BEGIN SELECT RAISE(ABORT,'index catalog group capacity exceeded'); END",
+    "tbl_name": "context_default_indexes",
+    "type": "trigger"
+  },
+  {
+    "name": "context_projects_capacity",
+    "sql": "CREATE TRIGGER context_projects_capacity BEFORE INSERT ON context_projects WHEN (SELECT count(*) FROM context_projects WHERE context_id=NEW.context_id)>=32 BEGIN SELECT RAISE(ABORT,'index catalog group capacity exceeded'); END",
+    "tbl_name": "context_projects",
+    "type": "trigger"
+  },
+  {
+    "name": "index_access_index_id_capacity",
+    "sql": "CREATE TRIGGER index_access_index_id_capacity BEFORE INSERT ON index_access_memberships WHEN NOT EXISTS(SELECT 1 FROM index_access_memberships WHERE grant_id=NEW.grant_id AND index_id=NEW.index_id) AND (SELECT count(DISTINCT index_id) FROM index_access_memberships WHERE grant_id=NEW.grant_id)>=32 BEGIN SELECT RAISE(ABORT,'grant selection capacity exceeded'); END",
+    "tbl_name": "index_access_memberships",
+    "type": "trigger"
+  },
+  {
+    "name": "index_access_memberships_capacity",
+    "sql": "CREATE TRIGGER index_access_memberships_capacity BEFORE INSERT ON index_access_memberships WHEN (SELECT count(*) FROM index_access_memberships WHERE grant_id=NEW.grant_id)>=1024 BEGIN SELECT RAISE(ABORT,'index catalog group capacity exceeded'); END",
+    "tbl_name": "index_access_memberships",
+    "type": "trigger"
+  },
+  {
+    "name": "index_access_project_id_capacity",
+    "sql": "CREATE TRIGGER index_access_project_id_capacity BEFORE INSERT ON index_access_memberships WHEN NOT EXISTS(SELECT 1 FROM index_access_memberships WHERE grant_id=NEW.grant_id AND project_id=NEW.project_id) AND (SELECT count(DISTINCT project_id) FROM index_access_memberships WHERE grant_id=NEW.grant_id)>=32 BEGIN SELECT RAISE(ABORT,'grant selection capacity exceeded'); END",
+    "tbl_name": "index_access_memberships",
+    "type": "trigger"
+  },
+  {
+    "name": "index_access_scopes_capacity",
+    "sql": "CREATE TRIGGER index_access_scopes_capacity BEFORE INSERT ON index_access_scopes WHEN (SELECT count(*) FROM index_access_scopes WHERE grant_id=NEW.grant_id AND project_id=NEW.project_id AND index_id=NEW.index_id)>=128 BEGIN SELECT RAISE(ABORT,'index catalog group capacity exceeded'); END",
+    "tbl_name": "index_access_scopes",
+    "type": "trigger"
+  },
+  {
+    "name": "index_adopted_authorities_capacity",
+    "sql": "CREATE TRIGGER index_adopted_authorities_capacity BEFORE INSERT ON index_adopted_authorities WHEN (SELECT count(*) FROM index_adopted_authorities)>=1024 BEGIN SELECT RAISE(ABORT,'adopted authority capacity exceeded'); END",
+    "tbl_name": "index_adopted_authorities",
+    "type": "trigger"
+  },
+  {
+    "name": "index_adopted_authority_immutable",
+    "sql": "CREATE TRIGGER index_adopted_authority_immutable BEFORE UPDATE ON index_adopted_authorities\n BEGIN SELECT RAISE(ABORT,'standalone adoption authority is immutable'); END",
+    "tbl_name": "index_adopted_authorities",
+    "type": "trigger"
+  },
+  {
+    "name": "index_adopted_authority_kind",
+    "sql": "CREATE TRIGGER index_adopted_authority_kind BEFORE INSERT ON index_adopted_authorities\n WHEN NOT EXISTS(SELECT 1 FROM index_access_grants WHERE id=NEW.grant_id AND provenance_kind='imported_standalone_adoption')\n BEGIN SELECT RAISE(ABORT,'standalone adoption authority requires native imported grant'); END",
+    "tbl_name": "index_adopted_authorities",
+    "type": "trigger"
+  },
+  {
+    "name": "index_adopted_authority_retained",
+    "sql": "CREATE TRIGGER index_adopted_authority_retained BEFORE DELETE ON index_adopted_authorities\n BEGIN SELECT RAISE(ABORT,'standalone adoption authority is retained'); END",
+    "tbl_name": "index_adopted_authorities",
+    "type": "trigger"
+  },
+  {
+    "name": "index_context_imports_capacity",
+    "sql": "CREATE TRIGGER index_context_imports_capacity BEFORE INSERT ON index_context_imports WHEN (SELECT count(*) FROM index_context_imports)>=1024 BEGIN SELECT RAISE(ABORT,'index catalog capacity exceeded'); END",
+    "tbl_name": "index_context_imports",
+    "type": "trigger"
+  },
+  {
+    "name": "index_contexts_capacity",
+    "sql": "CREATE TRIGGER index_contexts_capacity BEFORE INSERT ON index_contexts WHEN (SELECT count(*) FROM index_contexts)>=1024 BEGIN SELECT RAISE(ABORT,'index catalog capacity exceeded'); END",
+    "tbl_name": "index_contexts",
+    "type": "trigger"
+  },
+  {
+    "name": "index_definition_identity",
+    "sql": "CREATE TRIGGER index_definition_identity BEFORE UPDATE OF id,legacy_binding,backing_root,data_root,namespace,collection ON index_definitions\n BEGIN SELECT RAISE(ABORT,'index backing identity is immutable'); END",
+    "tbl_name": "index_definitions",
+    "type": "trigger"
+  },
+  {
+    "name": "index_definitions_capacity",
+    "sql": "CREATE TRIGGER index_definitions_capacity BEFORE INSERT ON index_definitions WHEN (SELECT count(*) FROM index_definitions)>=1024 BEGIN SELECT RAISE(ABORT,'index catalog capacity exceeded'); END",
+    "tbl_name": "index_definitions",
+    "type": "trigger"
+  },
+  {
+    "name": "index_grant_provenance_identity",
+    "sql": "CREATE TRIGGER index_grant_provenance_identity BEFORE UPDATE OF id,host,provenance_kind,import_upgrade_id,import_plan_digest,import_legacy_binding,import_configuration_digest ON index_access_grants\n BEGIN SELECT RAISE(ABORT,'index grant provenance identity is immutable'); END",
+    "tbl_name": "index_access_grants",
+    "type": "trigger"
+  },
+  {
+    "name": "index_grant_source_ready",
+    "sql": "CREATE TRIGGER index_grant_source_ready BEFORE INSERT ON index_access_memberships\n WHEN NOT EXISTS(SELECT 1 FROM index_definitions WHERE id=NEW.index_id AND tombstone=0 AND source_import_state='complete')\n BEGIN SELECT RAISE(ABORT,'index source metadata is unavailable'); END",
+    "tbl_name": "index_access_memberships",
+    "type": "trigger"
+  },
+  {
+    "name": "index_imported_grants_capacity",
+    "sql": "CREATE TRIGGER index_imported_grants_capacity BEFORE INSERT ON index_access_grants\n WHEN NEW.provenance_kind IN('imported_legacy','imported_standalone_adoption') AND (SELECT count(*) FROM index_access_grants WHERE provenance_kind IN('imported_legacy','imported_standalone_adoption'))>=1024\n BEGIN SELECT RAISE(ABORT,'imported compatibility grant capacity exceeded'); END",
+    "tbl_name": "index_access_grants",
+    "type": "trigger"
+  },
+  {
+    "name": "index_operation_receipts_capacity",
+    "sql": "CREATE TRIGGER index_operation_receipts_capacity BEFORE INSERT ON index_operation_receipts WHEN (SELECT count(*) FROM index_operation_receipts)>=1024 BEGIN SELECT RAISE(ABORT,'index catalog capacity exceeded'); END",
+    "tbl_name": "index_operation_receipts",
+    "type": "trigger"
+  },
+  {
+    "name": "index_reviewed_grants_capacity",
+    "sql": "CREATE TRIGGER index_reviewed_grants_capacity BEFORE INSERT ON index_access_grants\n WHEN NEW.provenance_kind='reviewed' AND (SELECT count(*) FROM index_access_grants WHERE provenance_kind='reviewed')>=1024\n BEGIN SELECT RAISE(ABORT,'reviewed project grant capacity exceeded'); END",
+    "tbl_name": "index_access_grants",
+    "type": "trigger"
+  },
+  {
+    "name": "index_source_aliases_capacity",
+    "sql": "CREATE TRIGGER index_source_aliases_capacity BEFORE INSERT ON index_source_aliases WHEN (SELECT count(*) FROM index_source_aliases WHERE source_id=NEW.source_id)>=16 BEGIN SELECT RAISE(ABORT,'index catalog group capacity exceeded'); END",
+    "tbl_name": "index_source_aliases",
+    "type": "trigger"
+  },
+  {
+    "name": "index_source_identity",
+    "sql": "CREATE TRIGGER index_source_identity BEFORE UPDATE OF id,index_id,canonical_path,owner ON index_sources\n BEGIN SELECT RAISE(ABORT,'source identity is immutable'); END",
+    "tbl_name": "index_sources",
+    "type": "trigger"
+  },
+  {
+    "name": "index_source_policies_write_insert",
+    "sql": "CREATE TRIGGER index_source_policies_write_insert AFTER INSERT ON index_source_policies\n WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0)\n BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "index_source_policies",
+    "type": "trigger"
+  },
+  {
+    "name": "index_source_policies_write_update",
+    "sql": "CREATE TRIGGER index_source_policies_write_update AFTER UPDATE ON index_source_policies\n WHEN EXISTS(SELECT 1 FROM index_catalog_meta WHERE id=1 AND activated=1 AND accepted_new_writes=0)\n BEGIN UPDATE index_catalog_meta SET accepted_new_writes=1 WHERE id=1; END",
+    "tbl_name": "index_source_policies",
+    "type": "trigger"
+  },
+  {
+    "name": "index_sources_capacity",
+    "sql": "CREATE TRIGGER index_sources_capacity BEFORE INSERT ON index_sources WHEN (SELECT count(*) FROM index_sources WHERE index_id=NEW.index_id)>=17 BEGIN SELECT RAISE(ABORT,'index catalog group capacity exceeded'); END",
+    "tbl_name": "index_sources",
+    "type": "trigger"
+  },
+  {
+    "name": "project_index_memberships_capacity",
+    "sql": "CREATE TRIGGER project_index_memberships_capacity BEFORE INSERT ON project_index_memberships WHEN (SELECT count(*) FROM project_index_memberships WHERE project_id=NEW.project_id)>=32 BEGIN SELECT RAISE(ABORT,'index catalog group capacity exceeded'); END",
+    "tbl_name": "project_index_memberships",
+    "type": "trigger"
+  },
+  {
+    "name": "project_index_scopes_capacity",
+    "sql": "CREATE TRIGGER project_index_scopes_capacity BEFORE INSERT ON project_index_scopes WHEN (SELECT count(*) FROM project_index_scopes WHERE project_id=NEW.project_id AND index_id=NEW.index_id)>=128 BEGIN SELECT RAISE(ABORT,'index catalog group capacity exceeded'); END",
+    "tbl_name": "project_index_scopes",
+    "type": "trigger"
+  },
+  {
+    "name": "query_projects_capacity",
+    "sql": "CREATE TRIGGER query_projects_capacity BEFORE INSERT ON query_projects WHEN (SELECT count(*) FROM query_projects)>=1024 BEGIN SELECT RAISE(ABORT,'index catalog capacity exceeded'); END",
+    "tbl_name": "query_projects",
+    "type": "trigger"
+  },
+  {
+    "name": "service_event_accept",
+    "sql": "CREATE TRIGGER service_event_accept AFTER INSERT ON service_jobs BEGIN\n    INSERT INTO service_events(observed_ms,project,kind,job,job_kind,epoch,attempts)\n    VALUES(CAST(unixepoch('subsec')*1000 AS INTEGER),NEW.project,'job_pending',NEW.id,NEW.kind,NEW.epoch,NEW.attempts);\nEND",
+    "tbl_name": "service_jobs",
+    "type": "trigger"
+  },
+  {
+    "name": "service_event_cancel",
+    "sql": "CREATE TRIGGER service_event_cancel AFTER INSERT ON service_job_cancellation BEGIN\n    INSERT INTO service_events(observed_ms,project,kind,job,job_kind,epoch,attempts)\n    SELECT CAST(unixepoch('subsec')*1000 AS INTEGER),project,'cancellation_requested',id,kind,epoch,attempts\n    FROM service_jobs WHERE id=NEW.job;\nEND",
+    "tbl_name": "service_job_cancellation",
+    "type": "trigger"
+  },
+  {
+    "name": "service_event_pause",
+    "sql": "CREATE TRIGGER service_event_pause AFTER UPDATE OF paused ON projects WHEN NEW.paused<>OLD.paused BEGIN\n    INSERT INTO service_events(observed_ms,project,kind) VALUES(CAST(unixepoch('subsec')*1000 AS INTEGER),NEW.binding,CASE WHEN NEW.paused=1 THEN 'paused' ELSE 'resumed' END);\nEND",
+    "tbl_name": "projects",
+    "type": "trigger"
+  },
+  {
+    "name": "service_event_registration",
+    "sql": "CREATE TRIGGER service_event_registration AFTER INSERT ON projects BEGIN\n    INSERT INTO service_events(observed_ms,project,kind) VALUES(CAST(unixepoch('subsec')*1000 AS INTEGER),NEW.binding,'registered');\nEND",
+    "tbl_name": "projects",
+    "type": "trigger"
+  },
+  {
+    "name": "service_event_retry",
+    "sql": "CREATE TRIGGER service_event_retry AFTER INSERT ON service_retry_requests BEGIN\n    INSERT INTO service_events(observed_ms,project,kind,job,job_kind,epoch,attempts)\n    SELECT CAST(unixepoch('subsec')*1000 AS INTEGER),j.project,'job_retry_requested',j.id,j.kind,j.epoch,j.attempts\n    FROM service_jobs j JOIN service_requests r ON r.job=j.id WHERE r.namespace=NEW.namespace AND r.epoch=NEW.epoch AND r.nonce=NEW.nonce AND r.caller=NEW.caller;\nEND",
+    "tbl_name": "service_retry_requests",
+    "type": "trigger"
+  },
+  {
+    "name": "service_event_transition",
+    "sql": "CREATE TRIGGER service_event_transition AFTER UPDATE ON service_jobs\nWHEN NEW.state<>OLD.state OR NEW.epoch<>OLD.epoch OR NEW.attempts<>OLD.attempts BEGIN\n    INSERT INTO service_events(observed_ms,project,kind,job,job_kind,epoch,attempts,code)\n    VALUES(CAST(unixepoch('subsec')*1000 AS INTEGER),NEW.project,'job_'||NEW.state,NEW.id,NEW.kind,NEW.epoch,NEW.attempts,\n    CASE WHEN NEW.state='failed' THEN json_extract(CAST(NEW.outcome AS TEXT),'$.code') ELSE NULL END);\nEND",
+    "tbl_name": "service_jobs",
+    "type": "trigger"
+  },
+  {
+    "name": "service_event_watch",
+    "sql": "CREATE TRIGGER service_event_watch AFTER UPDATE OF enabled ON service_watch WHEN NEW.enabled<>OLD.enabled BEGIN\n    INSERT INTO service_events(observed_ms,project,kind) VALUES(CAST(unixepoch('subsec')*1000 AS INTEGER),NEW.project,\n    CASE WHEN NEW.enabled=1 THEN 'watch_enabled' ELSE 'watch_disabled' END);\nEND",
+    "tbl_name": "service_watch",
+    "type": "trigger"
+  },
+  {
+    "name": "service_events_bound",
+    "sql": "CREATE TRIGGER service_events_bound AFTER INSERT ON service_events BEGIN\n    DELETE FROM service_events WHERE seq <= NEW.seq-1024;\nEND",
+    "tbl_name": "service_events",
+    "type": "trigger"
+  },
+  {
+    "name": "service_source_outcome_updated",
+    "sql": "CREATE TRIGGER service_source_outcome_updated AFTER UPDATE OF state,outcome ON service_jobs\n    WHEN NEW.state IN('succeeded','failed','canceled') AND EXISTS(SELECT 1 FROM service_job_source WHERE job=NEW.id)\n    BEGIN\n        INSERT INTO service_source_outcomes(project,seq,job,state,outcome) VALUES(NEW.project,NEW.seq,NEW.id,NEW.state,NEW.outcome)\n        ON CONFLICT(project) DO UPDATE SET seq=excluded.seq,job=excluded.job,state=excluded.state,outcome=excluded.outcome\n        WHERE excluded.seq>=service_source_outcomes.seq;\n    END",
+    "tbl_name": "service_jobs",
+    "type": "trigger"
+  }
+]
