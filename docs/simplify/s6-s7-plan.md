@@ -275,3 +275,33 @@ boundary checks: every remaining feature combination, the runtime builder's
 sealed-main/model/import verification, the affected process tests, and a
 test-identity comparison in which only `embedding-worker` tests may
 disappear.
+
+## Linux verification of the moved Unix code (10 November 2026)
+
+**Environment:** WSL Ubuntu 24.04, toolchain 1.98.0, in a local clone of
+`feat/simplify`.
+
+**First Clippy run (`9b382fd2`):** Clippy with no default features found two
+defects that the Windows host cannot see:
+
+- an unconditional `file_identity` import left by S7.5;
+- the injected-clock test seam, gated only on `cfg(test)` although its sole
+  consumer is a Windows-only test module. This one dates from the S1
+  follow-up.
+
+Both were fixed in `3e03802d`.
+
+**After the fix:** Linux Clippy is clean for airk-store, airk-cli, airk-kernel
+and airk-core. Focused Linux tests of the moved Unix code all pass:
+
+| Tests | Passed |
+|---|---|
+| Store setup storage | 14 |
+| Store service | 3 |
+| CLI `runtime_install::layout` | 31 |
+| `checkpoint` | 24, plus 1 ignored |
+| `service_manager::tests` | 12 |
+
+**Not covered:** macOS-only code (`renamex_np`/`renameatx_np`, the login item)
+has not been compiled. All-features Linux Clippy needs Linux ONNX Runtime
+provisioning and was not run.
