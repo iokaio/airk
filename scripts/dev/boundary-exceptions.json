@@ -42,29 +42,27 @@
       [
         "catalog_admission",
         "catalog_coordinator",
-        "catalog_source_change_control",
+        "project_supervisor"
+      ],
+      [
+        "client_requests",
+        "service_configuration"
+      ],
+      [
         "combined_frontend",
         "console_client",
         "http_backend",
-        "http_gateway",
         "native_admin_connections",
         "project_client",
-        "project_supervisor",
-        "reference_refresh_control",
         "runtime_install",
         "runtime_metadata",
         "service_frontend",
         "service_management",
         "service_manager",
         "service_runtime",
-        "source_supervisor",
         "unified_mcp",
         "universal_launcher",
         "usage_client"
-      ],
-      [
-        "client_requests",
-        "service_configuration"
       ],
       [
         "embedding_pool_bootstrap",

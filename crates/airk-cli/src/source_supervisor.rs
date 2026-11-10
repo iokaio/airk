@@ -791,7 +791,7 @@ impl SourceSupervisor {
         let source_result = checkpoint_result.clone();
         let checkpoint_error = Arc::new(Mutex::new(None));
         let source_error = checkpoint_error.clone();
-        let recovery_fenced = crate::service_runtime::checkpoint::admission_closed(&root)?;
+        let recovery_fenced = crate::checkpoint_fence::admission_closed(&root)?;
         let process_id = Arc::new(AtomicU32::new(0));
         let pid = process_id.clone();
         let telemetry_complete = Arc::new(AtomicBool::new(false));
@@ -912,7 +912,7 @@ impl SourceSupervisor {
                     }
                     // Keep exact already accepted policy-fence coordination
                     // above alive, but create no new source observations/work.
-                    if recovery_fenced && crate::service_runtime::checkpoint::admission_closed(&root).unwrap_or(true) {
+                    if recovery_fenced && crate::checkpoint_fence::admission_closed(&root).unwrap_or(true) {
                         checkpoint_admission_ack.store(true,Ordering::Release);
                         checkpoint_ack.store(true, Ordering::Release);
                         continue;

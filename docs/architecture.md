@@ -44,6 +44,7 @@ Rules:
   external database or cloud provider.
 - DiskANN is the selected disk-backed vector engine.
 - Components with a `CONTRACT.md` (currently
+  `crates/airk-cli/src/checkpoint_fence/`,
   `crates/airk-cli/src/install_files/`,
   `crates/airk-cli/src/install_layout/` and
   `crates/airk-cli/src/native_command/`) state their interface, owned state,

@@ -100,6 +100,28 @@ the same commit, as a reviewed diff.
 - The fence JSON is persisted (schema 1): capture its exact bytes.
 - It only pays off after S7.1 and S7.2: predicted 21→14. Alone it does
   nothing (34→34).
+- **Measured:** largest CLI cycle 21→14, modules in cycles 28→24, edges
+  288→291, top-level modules 67→68. `catalog_source_change_control`,
+  `http_gateway`, `reference_refresh_control` and `source_supervisor` left
+  the cycle; `catalog_admission`, `catalog_coordinator` and
+  `project_supervisor` split off into their own 3-cycle. The read and write
+  sides were not mutually dependent: the writer imports `Fence`,
+  `FenceOrigin`, `FENCE`, `fence` and the bounded reader `bytes` from the
+  leaf, and the leaf depends only on `install_files`. The callers in
+  `runtime_install/legacy_maintenance` (`fence_operation`) also moved to the
+  leaf. The tests stayed in `service_runtime::checkpoint`. Call sites:
+  `python scripts/dev/s7_3_checkpoint_fence.py --check`. Contract:
+  [`checkpoint_fence/CONTRACT.md`](../../crates/airk-cli/src/checkpoint_fence/CONTRACT.md).
+  Exact fence bytes were identical before and after. The written fence is
+  hashed with its temporary control path replaced by `"<control>"`:
+
+  | Golden | SHA-256 |
+  |---|---|
+  | Fence, `installer_after_verified_exit` | `d142db07d73a2188ea4503972b78d7e481acf4e13e102c30b0af3bc6ae74aa6c` |
+  | Fence, `running_service` | `416ececd27612f56c71582c17a2e8d39d3fe9b312667c51e88f1a281635ac8a0` |
+  | Fence written by the writer path | `f11bd78c1471e855e06c28a37e486d77579992474472075dc2fad99374fb734f` |
+  | Read-back observations (`admission_closed`, `fence_operation`, instance, round trip) | `3baf8f562bba4bd6f8c5c9b50bc9c4b808a1183e00b587feb31a19ee5c51e0db` |
+  | Fence file name | `180ed65db3e4b75b98394ca960da9dc21c68fdd2dbfdfa74c3e3f04f93f58e1d` |
 
 ## S7.4 (S6 in place) Core: `read_limits` and `service_records`
 

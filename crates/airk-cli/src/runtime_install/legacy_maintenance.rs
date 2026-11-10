@@ -139,7 +139,7 @@ async fn settle_maintenance(root: &Path, settlement: &mut Settlement) -> Result<
         return Ok(false);
     }
     let control = layout::control(root)?;
-    let fence = service_runtime::checkpoint::fence_operation(&control)?;
+    let fence = crate::checkpoint_fence::fence_operation(&control)?;
     let journal = match read(root, &control) {
         Ok(journal) => journal,
         Err(error) => {

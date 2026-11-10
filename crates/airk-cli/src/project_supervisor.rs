@@ -1323,7 +1323,7 @@ impl Supervisor {
         let (sender, receiver) = mpsc::sync_channel::<Envelope>(32);
         let checkpoint_closed = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let checkpoint_pause = checkpoint_closed.clone();
-        let recovery_fenced = crate::service_runtime::checkpoint::admission_closed(&root)?;
+        let recovery_fenced = crate::checkpoint_fence::admission_closed(&root)?;
         let loaded = crate::service_resource_policy::load(&root);
         let configuration_error = loaded.is_err();
         let mut initial =
@@ -2174,7 +2174,7 @@ WorkerAdmission {
                         .duration_since(std::time::UNIX_EPOCH)
                         .map_or(0, |time| time.as_millis().min(u64::MAX as u128) as u64);
                     if let Some(registry) = registry.as_mut() {
-                        let recovering = recovery_fenced && crate::service_runtime::checkpoint::admission_closed(&root).unwrap_or(true);
+                        let recovering = recovery_fenced && crate::checkpoint_fence::admission_closed(&root).unwrap_or(true);
                         let checkpointing = checkpoint_pause.load(std::sync::atomic::Ordering::Acquire) || recovering;
                         if !checkpointing && Instant::now() >= next_receipt_maintenance {
                             let _ = registry.maintain_job_receipts();

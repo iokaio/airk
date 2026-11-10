@@ -234,9 +234,7 @@ async fn fresh_activation_has_no_upgrade_journal_or_recovery_fence() -> Result<(
     assert!(status(&root)?.is_none());
     assert!(!root.join(JOURNAL).try_exists()?);
     assert!(!intent.control.join("service-1.4.sqlite3").try_exists()?);
-    assert!(!service_runtime::checkpoint::admission_closed(
-        &intent.control
-    )?);
+    assert!(!crate::checkpoint_fence::admission_closed(&intent.control)?);
     Ok(())
 }
 

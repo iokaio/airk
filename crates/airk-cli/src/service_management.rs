@@ -1272,7 +1272,7 @@ impl Management {
         let checkpoint_observed = Arc::new(AtomicBool::new(false));
         let checkpoint_freeze = checkpoint_pause.clone();
         let checkpoint_ack = checkpoint_observed.clone();
-        let recovery_fenced = crate::service_runtime::checkpoint::admission_closed(&root)?;
+        let recovery_fenced = crate::checkpoint_fence::admission_closed(&root)?;
         let (ready, initialized) = sync_channel::<std::result::Result<(), String>>(1);
         let thread = std::thread::Builder::new()
             .name("airk-registry".into())
@@ -1309,7 +1309,7 @@ impl Management {
                     std::env::current_exe().ok(), std::time::Instant::now());
                 let mut clean_break_failed = false;
                 loop {
-                    if recovery_fenced && crate::service_runtime::checkpoint::admission_closed(&root).unwrap_or(true)
+                    if recovery_fenced && crate::checkpoint_fence::admission_closed(&root).unwrap_or(true)
                         || checkpoint_freeze.load(Ordering::Acquire)
                         && active.load(Ordering::Acquire) == 0
                         && !runnable_plans.load(Ordering::Acquire)

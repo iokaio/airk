@@ -193,7 +193,7 @@ async fn foreign_fence_is_kept_and_own_fence_is_cleared_only_under_exclusion() -
     f.journal(op, own, "quiescent")?;
     let settled = settle_locked(&f.root).await?;
     assert_eq!(
-        service_runtime::checkpoint::fence_operation(&f.control)?,
+        crate::checkpoint_fence::fence_operation(&f.control)?,
         Some(other),
         "a fence of another operation is never cleared"
     );
@@ -210,7 +210,7 @@ async fn foreign_fence_is_kept_and_own_fence_is_cleared_only_under_exclusion() -
     let settled = settle_locked(&f.root).await?;
     assert!(f.root.join(JOURNAL).exists());
     assert_eq!(
-        service_runtime::checkpoint::fence_operation(&f.control)?,
+        crate::checkpoint_fence::fence_operation(&f.control)?,
         Some(own)
     );
     assert_eq!(settled.left.len(), 1, "{:?}", settled.left);
@@ -219,7 +219,7 @@ async fn foreign_fence_is_kept_and_own_fence_is_cleared_only_under_exclusion() -
 
     drop(owner);
     let settled = settle_locked(&f.root).await?;
-    assert!(!service_runtime::checkpoint::admission_closed(&f.control)?);
+    assert!(!crate::checkpoint_fence::admission_closed(&f.control)?);
     assert!(!f.root.join(JOURNAL).exists());
     assert_eq!(settled.restored.len(), 1);
     require_settled(&f.root)?;

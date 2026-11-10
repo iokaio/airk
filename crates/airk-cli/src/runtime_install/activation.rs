@@ -359,7 +359,7 @@ async fn probe(root: &Path, approval: &Approval, main: &Path, manager: bool) -> 
     let observed = start_selected(root, approval, main, Some(manager)).await?;
     if let Some(intent) = pending(root)?
         && let Some(operation) = &intent.checkpoint
-        && service_runtime::checkpoint::admission_closed(&intent.control)?
+        && crate::checkpoint_fence::admission_closed(&intent.control)?
     {
         let operation = operation.parse()?;
         let response = service_runtime::request_for_version_and_instance(
