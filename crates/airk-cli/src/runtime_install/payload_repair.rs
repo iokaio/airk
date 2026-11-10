@@ -277,7 +277,7 @@ pub(super) fn apply(
         approved,
         expected,
         |source, root, approval| {
-            let (state, channel) = layout::retained_parameters(root)?;
+            let (state, channel) = crate::install_layout::retained_parameters(root)?;
             staging::stage_locked(
                 source,
                 root,

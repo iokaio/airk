@@ -297,7 +297,7 @@ pub async fn resolve_scoped(
     selection.validate()?;
     let (install, control) = if let Some(control) = control {
         let control = control.canonicalize()?;
-        crate::runtime_install::validate_control_root(&control)?;
+        crate::install_layout::validate_control_root(&control)?;
         (None, control)
     } else {
         let install = install
@@ -359,7 +359,7 @@ pub fn resolve_mcp(
 ) -> Result<Project> {
     if let Some(control) = control {
         let control = control.canonicalize()?;
-        crate::runtime_install::validate_control_root(&control)?;
+        crate::install_layout::validate_control_root(&control)?;
         let registration = saved(
             &control,
             Some(binding.context("project binding required")?),
@@ -424,7 +424,7 @@ pub async fn resolve(
 /// Explicit development transport; it never selects or starts another service.
 pub async fn resolve_control(control: &Path, binding: ProjectBinding) -> Result<Project> {
     let control = control.canonicalize()?;
-    crate::runtime_install::validate_control_root(&control)?;
+    crate::install_layout::validate_control_root(&control)?;
     anyhow::ensure!(
         matches!(
             crate::console_client::request(&control, airk_core::service::ControlMethod::Health)

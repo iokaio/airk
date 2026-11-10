@@ -257,7 +257,7 @@ fn prepare_and_start(
         require_matching_health(&approval, &health)?;
         return layout::control(&owned.root);
     }
-    if layout::managed_origin(&root)?.is_some() {
+    if crate::install_layout::managed_origin(&root)?.is_some() {
         let owned = OwnedInstallerAuthority::acquire(root, &cancel)?;
         // Authenticate any saved STOP first, then return the explicit
         // same-configure recovery reason; never use copied selection fallback.

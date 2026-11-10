@@ -407,7 +407,7 @@ fn manage_with(
             let control = root
                 .parent()
                 .context("active issuer control root missing")?;
-            crate::runtime_install::validate_control_root(control)?;
+            crate::install_layout::validate_control_root(control)?;
             let lock = super::rotation::lock(control)?;
             super::rotation::require_trust_change_allowed(control)?;
             Some(lock)

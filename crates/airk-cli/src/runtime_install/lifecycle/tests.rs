@@ -55,12 +55,12 @@ fn lifecycle_mutation_uses_existing_registry_while_native_service_owner_is_live(
     let control = layout::control(&root)?;
     local_ipc::prepare_root(&control)?;
     let lease = airk_store::service::ServiceLease::acquire(&control)?;
-    layout::record_control(&lease)?;
+    crate::install_layout::record_control(&lease)?;
     let namespace = Incarnation::from_bytes([81; 16]);
     let instance = Incarnation::from_bytes([82; 16]);
     let mut native = ServiceRegistry::open(&control, namespace)?;
     native.record_service_instance(&lease, instance)?;
-    layout::record_registry(&lease, namespace)?;
+    crate::install_layout::record_registry(&lease, namespace)?;
     let (namespace, epoch) = native.saved_request_epoch()?;
     drop(native);
     // Durable lifecycle admission must work while the actual service owner
@@ -105,10 +105,10 @@ fn lifecycle_observation_preserves_an_older_completed_registry_without_migration
     let control = layout::control(&root)?;
     local_ipc::prepare_root(&control)?;
     let lease = airk_store::service::ServiceLease::acquire(&control)?;
-    layout::record_control(&lease)?;
+    crate::install_layout::record_control(&lease)?;
     let registry = ServiceRegistry::open(&control, Incarnation::from_bytes([86; 16]))?;
     let namespace = registry.incarnation()?;
-    layout::record_registry(&lease, namespace)?;
+    crate::install_layout::record_registry(&lease, namespace)?;
     drop(registry);
     let database = control.join("service-1.4.sqlite3");
     rusqlite::Connection::open(&database)?

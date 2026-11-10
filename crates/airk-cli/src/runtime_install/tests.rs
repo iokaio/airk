@@ -1448,7 +1448,7 @@ async fn valid_control_rebind_while_connection_waits_refuses_before_connection_e
 -> Result<()> {
     use std::future::Future;
     let (_owner, root, identity) = selected_connection_fixture()?;
-    let old_control = layout::saved_control(&root)?;
+    let old_control = crate::install_layout::saved_control(&root)?;
     let lock = install_lock(&root)?;
     let mut future = Box::pin(installed_control(&root));
     let mut context = std::task::Context::from_waker(std::task::Waker::noop());
@@ -1460,7 +1460,7 @@ async fn valid_control_rebind_while_connection_waits_refuses_before_connection_e
     saved["state"] = serde_json::to_value(&state)?;
     replace_json(&state, "airk-state-1.4.owner.json", &saved)?;
     replace_json(&root, "runtime-layout.json", &saved)?;
-    let rebound = layout::saved_control(&root)?;
+    let rebound = crate::install_layout::saved_control(&root)?;
     assert_eq!(rebound, state.join("control"));
     assert_ne!(
         rebound, old_control,
@@ -1868,13 +1868,13 @@ fn issuer_gate_fixture() -> Result<(
     let control = layout::control(&root)?;
     local_ipc::prepare_root(&control)?;
     let lease = airk_store::service::ServiceLease::acquire(&control)?;
-    layout::record_control(&lease)?;
+    crate::install_layout::record_control(&lease)?;
     let registry = airk_store::service::registry::ServiceRegistry::open(
         &control,
         Incarnation::from_bytes([31; 16]),
     )?;
     let namespace = registry.incarnation()?;
-    layout::record_registry(&lease, namespace)?;
+    crate::install_layout::record_registry(&lease, namespace)?;
     drop(registry);
     drop(lease);
     let binding = http_endpoint::installation_binding(&control, namespace)?;

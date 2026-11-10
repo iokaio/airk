@@ -73,7 +73,7 @@ fn run_empty_native_split(
     let lease = Arc::new(airk_store::service::ServiceLease::acquire(
         &fixture.control,
     )?);
-    crate::runtime_install::record_control_root(&lease)?;
+    crate::install_layout::record_control_root(&lease)?;
     fixture.registry.record_service_instance(&lease, instance)?;
     fixture.registry = ServiceRegistry::open(&fixture.control, instance)?;
     let state = fixture

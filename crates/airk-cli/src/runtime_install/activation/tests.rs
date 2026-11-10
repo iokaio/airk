@@ -411,11 +411,11 @@ async fn ordinary_update_refuses_a_registry_without_a_catalog_and_keeps_existing
         let namespace = Incarnation::from_bytes([187; 16]);
         {
             let lease = airk_store::service::ServiceLease::acquire(&control)?;
-            layout::record_control(&lease)?;
+            crate::install_layout::record_control(&lease)?;
             drop(airk_store::service::registry::ServiceRegistry::open(
                 &control, namespace,
             )?);
-            layout::record_registry(&lease, namespace)?;
+            crate::install_layout::record_registry(&lease, namespace)?;
         }
         if catalog {
             drop(crate::catalog_test_fixture::authority_one(

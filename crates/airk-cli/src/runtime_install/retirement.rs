@@ -664,7 +664,7 @@ fn uninstall_process_paths(root: &Path, runtimes: &[String]) -> Result<Vec<PathB
     if present(&launcher_path(root))? {
         paths.push(verified_launcher(root)?);
     }
-    let (_, channel) = layout::retained_parameters(root)?;
+    let (_, channel) = crate::install_layout::retained_parameters(root)?;
     if let Some(universal) = crate::universal_launcher::current_for(root, channel)? {
         safe_file(&universal)?;
         paths.push(universal);
@@ -750,11 +750,11 @@ pub(crate) async fn uninstall(root: &Path) -> Result<serde_json::Value> {
         let (main, approval, _) = owned_inventory(root, &selection.active)?;
         drain(root, &main, &approval).await?;
     }
-    let (_, channel) = layout::retained_parameters(root)?;
+    let (_, channel) = crate::install_layout::retained_parameters(root)?;
     crate::universal_launcher::retire_for(root, channel)?;
     let _quiescence = quiescent(root)
         .context("service/project/embedding ownership must release before runtime removal")?;
-    crate::http_endpoint::trust::remove_owned(&layout::saved_control(root)?)?;
+    crate::http_endpoint::trust::remove_owned(&crate::install_layout::saved_control(root)?)?;
     let selected = root.join("selected.json");
     if present(&selected)? {
         let selection: Selection = serde_json::from_slice(&read_bounded(&selected, 4096)?)?;

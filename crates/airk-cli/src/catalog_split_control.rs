@@ -213,7 +213,7 @@ fn draft_native(
     caller: Incarnation,
 ) -> Result<SplitDraft> {
     selection.validate()?;
-    crate::runtime_install::validate_control_root(control)?;
+    crate::install_layout::validate_control_root(control)?;
     ensure!(
         !expired(registry, &selection.key)?,
         "split draft request epoch expired"

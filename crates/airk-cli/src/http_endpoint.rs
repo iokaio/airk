@@ -47,7 +47,7 @@ impl InstallationBinding {
 
 /// Reconstruct from the verified native control root, not from untrusted JSON.
 pub fn installation_binding(control: &Path, namespace: Incarnation) -> Result<InstallationBinding> {
-    crate::runtime_install::validate_control_root(control)?;
+    crate::install_layout::validate_control_root(control)?;
     let control = control.canonicalize()?;
     let user = crate::local_ipc::current_user()?;
     let bytes = serde_json::to_vec(&control)?;

@@ -58,6 +58,7 @@ mod project_worker_split;
 mod service_resource_policy;
 
 pub mod install_files;
+mod install_layout;
 mod legacy_processes;
 pub mod legacy_startup;
 pub mod runtime_install;

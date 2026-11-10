@@ -93,7 +93,7 @@ fn review_inner(
     request: &IndexSetupRequest,
     legacy_adoption: Option<Sha256Digest>,
 ) -> Result<NativeSetupReview> {
-    crate::runtime_install::validate_control_root(control)?;
+    crate::install_layout::validate_control_root(control)?;
     let control = control.canonicalize()?;
     validate_request(&control, request)?;
     let registry = ServiceRegistry::open_saved(&control)?;
@@ -131,7 +131,7 @@ pub(crate) fn review_split(
     control: &Path,
     request: &airk_core::catalog_split::SplitRequest,
 ) -> Result<NativeSetupReview> {
-    crate::runtime_install::validate_control_root(control)?;
+    crate::install_layout::validate_control_root(control)?;
     request.validate()?;
     let context = split_format_request(request)?;
     let mut review = review_filesystem(control.canonicalize()?, &context, false)?;

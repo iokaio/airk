@@ -43,7 +43,7 @@ fn activate_genesis(root: &Path, intent: &Intent, successor: bool) -> Result<()>
         .map(|receipt| receipt.operation)
         .map_or_else(airk_kernel::service_broker::new_instance_id, Ok)?;
     ensure!(
-        layout::initialization_control(root)? == intent.control,
+        crate::install_layout::initialization_control(root)? == intent.control,
         "fresh control binding changed"
     );
     let service = ServiceLease::acquire(&intent.control)?;
@@ -52,7 +52,7 @@ fn activate_genesis(root: &Path, intent: &Intent, successor: bool) -> Result<()>
         "fresh control directory was redirected"
     );
     if let Some(receipt) = &saved {
-        layout::validate_catalog_control(&intent.control, receipt.namespace)?;
+        crate::install_layout::validate_catalog_control(&intent.control, receipt.namespace)?;
     } else {
         // Initialize only this owned layout before the Genesis admission fence.
         // Existing metadata is validated read-only before the normal initializer
@@ -62,12 +62,12 @@ fn activate_genesis(root: &Path, intent: &Intent, successor: bool) -> Result<()>
                 &intent.control,
             )?);
         }
-        layout::record_control(&service)?;
+        crate::install_layout::record_control(&service)?;
         let registry =
             airk_store::service::registry::ServiceRegistry::open(&intent.control, operation)?;
         let namespace = registry.incarnation()?;
         drop(registry);
-        layout::record_registry(&service, namespace)?;
+        crate::install_layout::record_registry(&service, namespace)?;
     }
     let mut owner = CatalogGenesis::begin(service, producer.installer, operation)?;
     let mut receipt = owner.receipt()?;

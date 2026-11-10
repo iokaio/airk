@@ -134,7 +134,7 @@ pub(super) fn read(
             Err(_) => serde_json::json!({"mode":"unavailable"}),
         }
     };
-    let log_control = layout::saved_control(root).ok();
+    let log_control = crate::install_layout::saved_control(root).ok();
     let logs = log_control
         .as_ref()
         .and_then(|control| crate::service_logs::recent(control, 32).ok());
@@ -274,7 +274,7 @@ mod tests {
         let control = layout::control(&root)?;
         local_ipc::prepare_root(&control)?;
         let lease = airk_store::service::ServiceLease::acquire(&control)?;
-        layout::record_control(&lease)?;
+        crate::install_layout::record_control(&lease)?;
         let mut registry =
             ServiceRegistry::open(&control, airk_kernel::service_broker::new_instance_id()?)?;
         let source_root = base.join("unavailable-originals");
@@ -288,7 +288,7 @@ mod tests {
         let namespace = registry.incarnation()?;
         registry
             .record_service_instance(&lease, airk_kernel::service_broker::new_instance_id()?)?;
-        layout::record_registry(&lease, namespace)?;
+        crate::install_layout::record_registry(&lease, namespace)?;
         drop(registry);
         assert!(
             !slot.join(helper_name()).exists(),

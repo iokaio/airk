@@ -70,7 +70,7 @@ pub(super) fn require_unmanaged(root: &Path) -> Result<()> {
     ensure!(
         read(root)?.is_none()
             && !exists(&root.join(DETACH))?
-            && layout::managed_origin(root)?.is_none(),
+            && crate::install_layout::managed_origin(root)?.is_none(),
         "managed runtime is pinned by policy; user payload installation, selection changes and login/launcher management are disabled"
     );
     Ok(())
@@ -78,7 +78,7 @@ pub(super) fn require_unmanaged(root: &Path) -> Result<()> {
 pub(super) fn is_configured(root: &Path) -> Result<bool> {
     Ok(exists(&root.join(POLICY))?
         || exists(&root.join(DETACH))?
-        || layout::managed_origin(root)?.is_some())
+        || crate::install_layout::managed_origin(root)?.is_some())
 }
 
 pub(super) fn detaching(root: &Path) -> Result<bool> {
@@ -273,7 +273,7 @@ pub(super) async fn configure(
         lifecycle,
     };
     let prior = read(root)?;
-    let reserved = layout::managed_origin(root)?;
+    let reserved = crate::install_layout::managed_origin(root)?;
     if let Some(prior) = &prior {
         ensure!(
             prior == &policy,
@@ -314,7 +314,7 @@ pub(super) async fn configure(
         layout::initialize(root, requested_state, channel)?;
     }
     ensure!(
-        layout::saved_control(root)?.parent() == Some(state.as_path()),
+        crate::install_layout::saved_control(root)?.parent() == Some(state.as_path()),
         "state layout changed during managed approval"
     );
     if prior.is_none() {
@@ -390,7 +390,7 @@ pub(super) async fn ensure_checked(
         );
     }
     catalog::before_start(authority, &policy, cancel)?;
-    state_contract::require_initialized(root, &layout::saved_control(root)?)?;
+    state_contract::require_initialized(root, &crate::install_layout::saved_control(root)?)?;
     after_settlement()?;
     let observation = async {
         match policy.lifecycle {
@@ -483,7 +483,7 @@ mod setup_tests {
 pub(super) async fn detach(root: &Path) -> Result<serde_json::Value> {
     // The uninstall caller holds the installer lock.
     settle_manager_change(root).await?;
-    layout::require_managed_ready(root)
+    crate::install_layout::require_managed_ready(root)
         .context("managed_catalog_detach_requires_supported_transition")?;
     lifecycle::require_settled(root)?;
     let intent_path = root.join(DETACH);
@@ -519,7 +519,7 @@ pub(super) async fn detach(root: &Path) -> Result<serde_json::Value> {
         None
     };
     if policy.lifecycle == ManagedLifecycle::UserOnDemand {
-        crate::http_endpoint::trust::remove_owned(&layout::saved_control(root)?)?;
+        crate::http_endpoint::trust::remove_owned(&crate::install_layout::saved_control(root)?)?;
     }
     let selection_path = root.join("selected.json");
     if exists(&selection_path)? {

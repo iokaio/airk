@@ -524,7 +524,7 @@ async fn native_mcp_pending_health_eof_drains_without_late_startup() -> Result<(
         fs::write(source.join("README.md"),content)?;
         let registry=airk_store::service::registry::ServiceRegistry::open_saved(&fixture.control)?;
         ensure!(!registry.service_explicitly_stopped()?,"STOP barrier masks pending EOF admission");drop(registry);
-        layout::validate_control(&fixture.control)?;
+        crate::install_layout::validate_control(&fixture.control)?;
         let mut listener=local_ipc::Listener::bind(&local_ipc::endpoint(&fixture.control,"control")?)?;
         let (entered,began)=tokio::sync::oneshot::channel();
         let (release,released)=tokio::sync::oneshot::channel();let mut release=Some(release);

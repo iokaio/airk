@@ -313,7 +313,7 @@ mod copied_genesis_recovery_tests {
                 };
                 intent.save(&root)?;
                 let service = ServiceLease::acquire(&control)?;
-                layout::record_control(&service)?;
+                crate::install_layout::record_control(&service)?;
                 let operation = airk_kernel::service_broker::new_instance_id()?;
                 let namespace = if prefix >= 1 {
                     let saved = ServiceRegistry::open(&control, operation)?;
@@ -322,7 +322,7 @@ mod copied_genesis_recovery_tests {
                     None
                 };
                 if prefix >= 2 {
-                    layout::record_registry(&service, namespace.unwrap())?;
+                    crate::install_layout::record_registry(&service, namespace.unwrap())?;
                 }
                 if prefix == 3 {
                     let mut owner = CatalogGenesis::begin(service, installer, operation)?;

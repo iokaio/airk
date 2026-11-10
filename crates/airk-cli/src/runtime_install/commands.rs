@@ -155,10 +155,10 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
                     && approval.manifest_sha256 == *expected_runtime,
                 "source scope runtime changed"
             );
-            let control = layout::saved_control(install_dir)?;
+            let control = crate::install_layout::saved_control(install_dir)?;
             local_ipc::require_existing_root(control.parent().context("control parent missing")?)?;
             local_ipc::require_existing_root(&control)?;
-            layout::validate_control(&control)?;
+            crate::install_layout::validate_control(&control)?;
             ensure!(control == *expected_control, "source scope control changed");
             let observed = scope.metadata_before(
                 &control,
@@ -174,7 +174,7 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             #[cfg(target_os = "macos")]
             {
                 let root = macos_login::direct_root(*channel)?;
-                let control = layout::saved_control(&root)?;
+                let control = crate::install_layout::saved_control(&root)?;
                 return service_runtime::serve(&control).await;
             }
             #[cfg(not(target_os = "macos"))]
@@ -345,7 +345,7 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
         RuntimeCommand::AbortLayout { install_dir } => {
             let _lock = install_lock(install_dir)?;
             require_issuer_rotation_settled(install_dir)?;
-            layout::abort(install_dir)?;
+            crate::install_layout::abort(install_dir)?;
             serde_json::json!({"pending_layout_aborted":true,"state_preserved":true})
         }
         RuntimeCommand::AbortActivation {
@@ -425,7 +425,7 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
                 value["universal_launcher"] = serde_json::Value::Null;
             } else if managed::read(install_dir)?.is_none() && value.is_object() {
                 let published = install_lock(install_dir).and_then(|_lock| {
-                    let (_, channel) = layout::retained_parameters(install_dir)?;
+                    let (_, channel) = crate::install_layout::retained_parameters(install_dir)?;
                     crate::universal_launcher::publish_for_default(install_dir, channel)
                 });
                 match published {
@@ -523,7 +523,7 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
                         .and_then(|registry| registry.incarnation())
                 })
                 .transpose()?;
-            let universal_launcher = match layout::retained_parameters(install_dir) {
+            let universal_launcher = match crate::install_layout::retained_parameters(install_dir) {
                 Ok((_, channel)) if policy.is_none() => {
                     crate::universal_launcher::current_for(install_dir, channel)
                         .ok()
@@ -701,7 +701,7 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
                 .as_ref()
                 .err()
                 .map(|error| error.to_string().chars().take(512).collect::<String>());
-            let state_layout = layout::inspect(install_dir);
+            let state_layout = crate::install_layout::inspect(install_dir);
             let layout_error = state_layout
                 .as_ref()
                 .err()
@@ -791,7 +791,10 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
                 runtime_pair::engine_identity()? == observation.installer_identity,
                 "catalog authority candidate differs from the admitted installer"
             );
-            layout::validate_catalog_control(control_root, observation.catalog.namespace)?;
+            crate::install_layout::validate_catalog_control(
+                control_root,
+                observation.catalog.namespace,
+            )?;
             serde_json::to_value(observation)?
         }
         RuntimeCommand::SelfTest => {
@@ -917,7 +920,7 @@ mod connection_observation_tests {
         drop(install_lock(&root)?);
         let source = owner.path().canonicalize()?.join("source");
         fs::create_dir(&source)?;
-        let control = layout::saved_control(&root)?;
+        let control = crate::install_layout::saved_control(&root)?;
         local_ipc::prepare_root(&control)?;
         let before = inventory(&root)?;
         run(&query(&root, &source, control.clone(), digest.clone())).await?;
@@ -966,7 +969,7 @@ mod connection_observation_tests {
             },
         )?;
         drop(install_lock(&root)?);
-        let control = layout::saved_control(&root)?;
+        let control = crate::install_layout::saved_control(&root)?;
         local_ipc::prepare_root(&control)?;
         let source = owner.path().canonicalize()?.join("source");
         fs::create_dir(&source)?;
@@ -1015,7 +1018,7 @@ mod connection_observation_tests {
         for lifecycle in ["external", "user_on_demand"] {
             let (owner, root, digest) = super::super::tests::unselected_fixture()?;
             drop(install_lock(&root)?);
-            let control = layout::saved_control(&root)?;
+            let control = crate::install_layout::saved_control(&root)?;
             local_ipc::prepare_root(&control)?;
             let source = owner.path().canonicalize()?.join("source");
             fs::create_dir(&source)?;

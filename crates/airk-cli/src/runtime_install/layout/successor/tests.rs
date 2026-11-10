@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
+use crate::install_layout::{record_control, record_registry};
 
 #[test]
 fn clean_break_private_union_refuses_seventeenth_path_before_transition() -> Result<()> {
@@ -175,7 +176,7 @@ fn successor_layout_resumes_each_pointer_and_claim_boundary_without_touching_old
                 .incarnation()?,
             namespace,
         );
-        assert!(super::super::retained_private_paths(&root)?.contains(&old_state));
+        assert!(crate::install_layout::retained_private_paths(&root)?.contains(&old_state));
     }
     Ok(())
 }
@@ -242,7 +243,7 @@ fn successor_layout_keeps_prior_recovery_state_private_and_refuses_a_lost_receip
         &root,
         &prepare(&root, second, &first_control, &second_state)?,
     )?;
-    let private = super::super::retained_private_paths(&root)?;
+    let private = crate::install_layout::retained_private_paths(&root)?;
     assert!(private.contains(&old_state) && private.contains(&first_state));
     let receipt = root.join(receipt_name(second));
     let saved = fs::read(&receipt)?;
@@ -304,7 +305,10 @@ fn successor_layout_preserves_active_inactive_and_saved_external_private_roots()
     let mut registry =
         airk_store::service::registry::ServiceRegistry::open(&control, new_namespace)?;
     record_registry(&lease, new_namespace)?;
-    registry.preserve_private_paths(&lease, &super::super::retained_private_paths(&root)?)?;
+    registry.preserve_private_paths(
+        &lease,
+        &crate::install_layout::retained_private_paths(&root)?,
+    )?;
     for protected in [
         active.data_root.as_str(),
         inactive.data_root.as_str(),

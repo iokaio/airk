@@ -43,12 +43,12 @@ fn fixture() -> Result<(tempfile::TempDir, PathBuf, PathBuf, String)> {
     let control = layout::control(&root)?;
     local_ipc::prepare_root(&control)?;
     let lease = ServiceLease::acquire(&control)?;
-    layout::record_control(&lease)?;
+    crate::install_layout::record_control(&lease)?;
     let instance = Incarnation::from_bytes([1; 16]);
     let mut registry = ServiceRegistry::open(&control, instance)?;
     registry.record_service_instance(&lease, instance)?;
     let (namespace, epoch) = registry.request_epoch()?;
-    layout::record_registry(&lease, namespace)?;
+    crate::install_layout::record_registry(&lease, namespace)?;
     let request = LifecycleRequest {
         action: LifecycleAction::Stop,
         expected_instance: instance,
@@ -83,7 +83,7 @@ fn replace_fixture(_: &Path, root: &Path, approval: &Approval) -> Result<Approva
     Ok(approval.clone())
 }
 fn stage_fixture(source: &Path, root: &Path, approval: &Approval) -> Result<Approval> {
-    let (state, channel) = layout::retained_parameters(root)?;
+    let (state, channel) = crate::install_layout::retained_parameters(root)?;
     // The inert fixture cannot execute. Only its native self-test is injected;
     // admission, copy, promotion and durable staging receipts remain canonical.
     super::super::staging::stage_locked_with_verifier(
@@ -152,7 +152,7 @@ fn reviewed_repair_restores_its_reserved_slot_even_with_five_retained_payloads()
             |source, root, approval| {
                 assert!(reserved_restore(root, &approval.manifest_sha256)?);
                 assert!(!reserved_restore(root, &"f".repeat(64))?);
-                let (state, channel) = layout::retained_parameters(root)?;
+                let (state, channel) = crate::install_layout::retained_parameters(root)?;
                 super::super::staging::stage_locked_with_verifier(
                     source,
                     root,
@@ -300,7 +300,7 @@ async fn repair_preserves_modified_and_unknown_files_and_resumes_after_copy_fail
     assert_eq!(fs::read(root.join("selected.json"))?, selected_before);
     assert_eq!(lifecycle::inspect(&root)?["explicitly_stopped"], true);
     assert_eq!(
-        layout::retained_parameters(&root)?.1,
+        crate::install_layout::retained_parameters(&root)?.1,
         RuntimeChannel::Preview
     );
     assert!(

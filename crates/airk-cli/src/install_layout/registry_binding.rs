@@ -1,14 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Independent state-level namespace pin, completed before accepting service work.
-use super::*;
+use super::{Layout, MAX_LAYOUT, exists, publish_new, require_control};
+use crate::install_files::{read_bounded, sync_directory};
 use airk_core::identity::{Incarnation, Sha256Digest, framed_digest};
 use airk_store::service::{
     ServiceLease,
     registry::{ServiceRegistry, retained_namespace},
 };
+use anyhow::{Context, Result, bail, ensure};
+use serde::{Deserialize, Serialize};
+#[cfg(unix)]
+use std::fs;
+use std::{fs::OpenOptions, io::Write};
 
-pub(super) const PIN: &str = "airk-registry-1.4.owner.json";
-pub(super) const PART: &str = "airk-registry-1.4.owner.part";
+pub(crate) const PIN: &str = "airk-registry-1.4.owner.json";
+pub(crate) const PART: &str = "airk-registry-1.4.owner.part";
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Binding {

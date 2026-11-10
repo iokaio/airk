@@ -79,7 +79,7 @@ pub(super) fn required(root: &Path) -> Result<bool> {
     } else {
         return Ok(false);
     };
-    let control = layout::saved_control(root)?;
+    let control = crate::install_layout::saved_control(root)?;
     let marker = read(root, &control)?;
     Ok(
         requires_reset_for_version(&approval.version, marker.is_some())?
@@ -166,7 +166,7 @@ pub(super) fn require_initialized(root: &Path, control: &Path) -> Result<()> {
 }
 
 pub(super) fn require_control(control: &Path) -> Result<()> {
-    if let Some(root) = layout::installation_for_control(control)? {
+    if let Some(root) = crate::install_layout::installation_for_control(control)? {
         require_initialized(&root, control)?;
         ensure!(
             !required(&root)?,
@@ -196,7 +196,7 @@ pub(super) fn initialized_probe(
     executable_sha256: &str,
 ) -> Result<Option<InitializedProbe>> {
     let root = root.canonicalize()?;
-    let control = layout::saved_control(&root)?;
+    let control = crate::install_layout::saved_control(&root)?;
     let Some(operation) =
         activation::rebuild::initialized_probe_operation(&root, &control, candidate)?
     else {
@@ -240,7 +240,7 @@ impl InitializedProbe {
 }
 
 pub(super) fn require_service(control: &Path) -> Result<()> {
-    let Some(root) = layout::installation_for_control(control)? else {
+    let Some(root) = crate::install_layout::installation_for_control(control)? else {
         return Ok(());
     };
     require_initialized(&root, control)?;
@@ -290,7 +290,7 @@ fn registrations(control: &Path) -> Result<Vec<airk_core::service::ProjectRegist
 
 pub(super) fn report(root: &Path) -> Result<serde_json::Value> {
     let required = required(root)?;
-    let control = layout::saved_control(root)?;
+    let control = crate::install_layout::saved_control(root)?;
     let installed = read(root, &control)?.map(|marker| marker.state_contract);
     let saved_registrations = activation::rebuild::client_registrations(root)?;
     let retained_registrations = saved_registrations.is_some();

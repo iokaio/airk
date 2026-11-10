@@ -746,7 +746,7 @@ impl NativeFixture {
         // Complete compiled native component activation, not managed promotion.
         let mut registry = crate::catalog_test_fixture::authority_one(&root, instance)?;
         let lease = Arc::new(airk_store::service::ServiceLease::acquire(&root)?);
-        crate::runtime_install::record_control_root(&lease)?;
+        crate::install_layout::record_control_root(&lease)?;
         registry.record_service_instance(&lease, instance)?;
         let state = registry
             .catalog_state()?

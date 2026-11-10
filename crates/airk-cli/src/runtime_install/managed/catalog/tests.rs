@@ -153,7 +153,7 @@ fn actual_control_registry_and_genesis_prefixes_resume_one_reserved_namespace() 
         if prefix >= 1 {
             layout::prepare_managed_control(&authority, origin)?;
             let lease = ServiceLease::acquire(&origin.control)?;
-            layout::record_control(&lease)?;
+            crate::install_layout::record_control(&lease)?;
             if prefix >= 2 {
                 drop(airk_store::service::registry::ServiceRegistry::open(
                     &origin.control,
@@ -311,7 +311,7 @@ fn settled_some_checks_current_policy_and_pair() -> Result<()> {
     settled_format_fixture(&authority, &policy, reservation.origin())?;
     replace_json(&root, POLICY, &policy)?;
     verify_origin(&authority, &policy, reservation.origin())?;
-    layout::require_managed_ready(&root)?;
+    crate::install_layout::require_managed_ready(&root)?;
     let mut changed = policy.clone();
     changed.lifecycle = ManagedLifecycle::External;
     replace_json(&root, POLICY, &changed)?;
@@ -501,7 +501,12 @@ fn lost_initialized_control_is_not_recreated_or_assigned_another_namespace() -> 
     for (path, bytes) in markers {
         assert_eq!(fs::read(path)?, bytes);
     }
-    assert_eq!(layout::managed_origin(&root)?.unwrap().namespace, namespace);
+    assert_eq!(
+        crate::install_layout::managed_origin(&root)?
+            .unwrap()
+            .namespace,
+        namespace
+    );
     Ok(())
 }
 
@@ -536,8 +541,8 @@ async fn actual_managed_first_pin_settles_before_connection_and_external_health(
                 RuntimeChannel::Stable,
             )
             .await?;
-            let origin =
-                layout::managed_origin(&root)?.context("actual first pin lacks reservation")?;
+            let origin = crate::install_layout::managed_origin(&root)?
+                .context("actual first pin lacks reservation")?;
             let receipt =
                 genesis::pending(&origin.control)?.context("actual Genesis receipt missing")?;
             assert_eq!(receipt.stage, genesis::GenesisStage::Settled);
@@ -806,7 +811,10 @@ fn settled_managed_detach_rejects_crossed_policy_and_resumes_missing_provider() 
     assert_eq!(fs::read(&retained)?, before);
     assert!(!root.join(POLICY).exists());
     assert!(!root.join(DETACH).exists());
-    assert_eq!(layout::managed_origin(&root)?.as_ref(), Some(origin));
+    assert_eq!(
+        crate::install_layout::managed_origin(&root)?.as_ref(),
+        Some(origin)
+    );
     genesis::require_managed_settled(&origin.control, origin)?;
     drop(lock);
     let error = runtime

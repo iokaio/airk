@@ -68,10 +68,10 @@ fn fixture(lifecycle: managed::ManagedLifecycle, historical: bool) -> Result<Fix
     let control = layout::control(&root)?;
     local_ipc::prepare_root(&control)?;
     let lease = ServiceLease::acquire(&control)?;
-    layout::record_control(&lease)?;
+    crate::install_layout::record_control(&lease)?;
     let namespace = Incarnation::from_bytes([151; 16]);
     drop(ServiceRegistry::open(&control, namespace)?);
-    layout::record_registry(&lease, namespace)?;
+    crate::install_layout::record_registry(&lease, namespace)?;
     let mut genesis = CatalogGenesis::begin(
         lease,
         approval.manifest_sha256.parse()?,

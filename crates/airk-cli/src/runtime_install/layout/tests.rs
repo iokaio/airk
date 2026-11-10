@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
+use crate::install_layout::{
+    CLAIM, CONTROL_OWNER, CONTROL_PART, OWNER, abort, inspect, log_parent, publish_new,
+    record_control, record_registry, registry_binding, validate_catalog_control,
+};
 
 fn fixture() -> Result<(tempfile::TempDir, PathBuf, PathBuf)> {
     let owner = tempfile::tempdir()?;

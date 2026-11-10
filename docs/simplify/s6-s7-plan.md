@@ -55,6 +55,40 @@ the same commit, as a reviewed diff.
 - Persisted receipts (`airk-state-1.4.*`, `Layout`) get exact-byte golden
   captures before the move. Commit a re-runnable move script with `--check`.
 - Predicted: `runtime_install` fan-in ≤10; largest cycle 28→21.
+- **Deviation (approved):** `Layout::read` and `retained_private_paths` call
+  the successor receipt reader, so leaving all of `successor` in
+  `runtime_install` would have put the leaf back in the cycle (replayed: 29).
+  `successor` was split by read and write. The receipt reader (`Transition`,
+  `read`, `validate_binding`, `preserved_private_paths` and their helpers)
+  moved to `install_layout::successor_receipt`. The writer and admission
+  (`successor_handoff_started`, `preflight_clean_break`, `prepare`,
+  `capture_private_paths`, `apply`, `admit_successor`) stay. `sync_directory`
+  moved to `install_files` next to `read_bounded`. The
+  `explorer_assistance` and `universal_launcher` bounded readers stay
+  separate, because their error text differs. The duplicate
+  `runtime_install::log_parent` facade was removed in favor of the leaf's.
+- **Measured:** largest CLI cycle 28→21, modules in cycles 35→28, edges
+  279→288, top-level modules 66→67, `runtime_install` fan-in 10 modules.
+  Exact-byte goldens of `Layout`, the state and control owner receipts, the
+  registry pin and the `Transition` receipt (with their framed digests) were
+  identical before and after. SHA-256 of the captured bytes:
+
+  | Golden | SHA-256 |
+  |---|---|
+  | `Layout` pending | `abdabaeb19ae82f128f84c9d0e6f03ac6756553b4d6c49ffdd01e45ee0c2d85f` |
+  | `Layout` ready, and the owner receipts for pending and ready | `e278deac79ec518627e0885fc35b3897176c9f9f24dab5dd4759092c7f003195` |
+  | `Layout` managed preview | `75d54b654be7b6787953da9c996ef231090d21917cab933fe7807b28abf9567e` |
+  | owner receipt, managed preview | `241b4afdca472f39a43e166f874892eea9610a5d5e47b9efcfbff8ead0601704` |
+  | `Layout` and owner receipt without logs | `efa1685abd5ee3f0d3b3e0a80df52d4807320293d83f1f2bf7bfe011c823300d` |
+  | receipt name constants and `MAX_LAYOUT` | `7b1a70d4f31af76c3775dd45b1139838c63fda5ea41a93e2dd372ff0c124af8c` |
+  | registry pin: none / ready / managed | `de4a20bb…bec62` / `16d416f9…4651` / `a8148c2d…c25c3` |
+  | registry pin digests: none / ready / managed | `124e2970…ece9e` / `d68252ba…89c8` / `7d975f8d…21d7` |
+  | `rebuild-layout` `Transition` receipt | `a427e893bcdf3e100b269cae2c378c8550c0294628e0b84a11c13637c74ea1f2` |
+  | `Transition` framed digest (`airk/rebuild-layout/1`) | `9eb837f974f52b6bcf9aa83838a191b1248c33ca003918677fc8e7036b744812` |
+
+  The tests stayed in `runtime_install::layout`.
+  Call sites: `python scripts/dev/s7_2_install_layout.py --check`. Contract:
+  [`install_layout/CONTRACT.md`](../../crates/airk-cli/src/install_layout/CONTRACT.md).
 
 ## S7.3 Supervisor and catalog control: `checkpoint_fence` read leaf
 

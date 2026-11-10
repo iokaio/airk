@@ -18,7 +18,7 @@ pub(super) fn pending(root: &Path) -> Result<bool> {
 
 pub(super) fn require_absent(root: &Path) -> Result<()> {
     require_settled(root)?;
-    let (_, channel) = layout::retained_parameters(root)?;
+    let (_, channel) = crate::install_layout::retained_parameters(root)?;
     ensure!(
         !present(&launcher_path(root))?
             && !present(&root.join("launcher.json"))?
@@ -116,7 +116,7 @@ fn inspect_owned_locked(root: &Path, expected: &str) -> Result<serde_json::Value
     } else {
         None
     };
-    let (_, channel) = layout::retained_parameters(root)?;
+    let (_, channel) = crate::install_layout::retained_parameters(root)?;
     let universal = crate::universal_launcher::retirement_image_for(root, channel)?
         .filter(|path| path.is_file());
     let universal = universal
@@ -220,7 +220,7 @@ fn prepare(root: &Path, expected: &str) -> Result<Intent> {
 
 fn validate_roster(intent: &Intent) -> Result<()> {
     let images = intent.images.as_deref().unwrap_or(&[]);
-    let (_, channel) = layout::retained_parameters(&intent.install)?;
+    let (_, channel) = crate::install_layout::retained_parameters(&intent.install)?;
     let universal = crate::runtime_install::discover_user_paths(channel)?
         .launcher
         .join(crate::universal_launcher::launcher_name());
@@ -449,7 +449,7 @@ pub(super) fn retire_locked_recording(
     payload_repair::require_settled(root)?;
     launcher_repair::require_settled(root)?;
     lifecycle::require_settled(root)?;
-    let (_, channel) = layout::retained_parameters(root)?;
+    let (_, channel) = crate::install_layout::retained_parameters(root)?;
     let mut intent = prepare(root, expected)?;
     let mut current = Vec::new();
     if let Some(hash) = &intent.launcher_sha256 {

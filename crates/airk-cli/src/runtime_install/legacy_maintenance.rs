@@ -309,7 +309,7 @@ fn report_batch(path: &Path, settlement: &mut Settlement) {
 /// and it contains no symbolic link or reparse point; otherwise it is kept.
 fn remove_private_archives(root: &Path, settlement: &mut Settlement) -> Result<()> {
     // Adoption required a claimed layout; without one there is nothing here.
-    let Ok((state, _)) = layout::retained_parameters(root) else {
+    let Ok((state, _)) = crate::install_layout::retained_parameters(root) else {
         return Ok(());
     };
     let private = state.join(PRIVATE_ARCHIVES);

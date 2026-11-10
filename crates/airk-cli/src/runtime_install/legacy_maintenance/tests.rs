@@ -16,7 +16,7 @@ impl Fixture {
         let (owner, root, _identity) = super::super::tests::unselected_fixture()?;
         local_ipc::prepare_root(&root.join("control"))?;
         let lock = install_lock(&root)?;
-        let (state, _) = layout::retained_parameters(&root)?;
+        let (state, _) = crate::install_layout::retained_parameters(&root)?;
         let control = layout::control(&root)?;
         Ok(Self {
             owner,

@@ -311,7 +311,7 @@ pub async fn resolve(
     selection.validate()?;
     let (install, control) = if let Some(control) = control {
         let control = control.canonicalize()?;
-        crate::runtime_install::validate_control_root(&control)?;
+        crate::install_layout::validate_control_root(&control)?;
         (None, control)
     } else {
         let install = install

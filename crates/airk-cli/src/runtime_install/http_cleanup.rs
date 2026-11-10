@@ -93,7 +93,7 @@ fn current_namespace_ownership(
 ) {
     let mut namespace = None;
     let observed = (|| -> Result<&'static str> {
-        let control = layout::saved_control(root)?;
+        let control = crate::install_layout::saved_control(root)?;
         let current =
             airk_store::service::registry::ServiceRegistry::open_saved(&control)?.incarnation()?;
         namespace = Some(current);
@@ -152,7 +152,7 @@ pub(super) fn lookup(
             active == predecessor && state_contract::required(root)?,
             "HTTP cleanup requires the exact prebaseline predecessor or its retained reset snapshot"
         );
-        let control = layout::saved_control(root)?;
+        let control = crate::install_layout::saved_control(root)?;
         (
             None,
             capture(root, predecessor, &control),

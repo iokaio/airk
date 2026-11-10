@@ -2,7 +2,9 @@
 //! Offline installation, immutable runtime selection and same-user on-demand election.
 //! Approval is supplied by a trusted distributor or an explicit machine/user policy;
 //! neither a workspace path nor a manifest's own checksum establishes that approval.
-use crate::install_files::{MAC_LAUNCHER_IMAGE, launcher_path, main_name, safe_file};
+use crate::install_files::{
+    MAC_LAUNCHER_IMAGE, launcher_path, main_name, read_bounded, safe_file, sync_directory,
+};
 use crate::{local_ipc, runtime_pair, service_runtime};
 use airk_core::service::{ControlMethod, ControlResponse, ServiceHealth};
 use anyhow::{Context, Result, bail, ensure};
@@ -605,30 +607,11 @@ pub enum RuntimeCommand {
     },
 }
 
-pub(crate) fn validate_control_root(control: &Path) -> Result<()> {
-    layout::validate_control(control)?;
-    layout::require_managed_control_ready(control)?;
-    airk_store::service::registry::data_relocation::require_settled(control)
-}
 pub(crate) fn require_baseline_control(control: &Path) -> Result<()> {
     state_contract::require_control(control)
 }
 pub(crate) fn require_baseline_service(control: &Path) -> Result<()> {
     state_contract::require_service(control)
-}
-
-pub(crate) fn record_control_root(lease: &airk_store::service::ServiceLease) -> Result<()> {
-    layout::record_control(lease)
-}
-pub(crate) fn record_registry_root(
-    lease: &airk_store::service::ServiceLease,
-    namespace: airk_core::identity::Incarnation,
-) -> Result<()> {
-    layout::record_registry(lease, namespace)
-}
-
-pub(crate) fn log_parent(control: &Path) -> Result<PathBuf> {
-    layout::log_parent(control)
 }
 
 pub fn default_install_root() -> Result<PathBuf> {
@@ -679,7 +662,7 @@ pub fn default_project_data(root: &Path) -> Result<PathBuf> {
     if let Some(data) = activation::rebuild::successor_default_data(root)? {
         return Ok(data);
     }
-    let (_, channel) = layout::retained_parameters(root)?;
+    let (_, channel) = crate::install_layout::retained_parameters(root)?;
     Ok(discover_user_paths(channel)?.data)
 }
 
@@ -699,7 +682,7 @@ pub async fn installed_control(root: &Path) -> Result<PathBuf> {
     if let Some(policy) = managed::read(root)? {
         return installed_control_legacy(root, policy.approval.clone()).await;
     }
-    if layout::managed_origin(root)?.is_some() {
+    if crate::install_layout::managed_origin(root)?.is_some() {
         ensure_running(root).await?;
         bail!("repeat_same_approved_managed_configure_to_resume");
     }
@@ -763,7 +746,7 @@ pub fn installed_metadata_control(root: &Path) -> Result<PathBuf> {
 }
 
 pub(crate) fn saved_control_root(root: &Path) -> Result<PathBuf> {
-    layout::saved_control(root)
+    crate::install_layout::saved_control(root)
 }
 
 /// Installer-owned facts consulted by user path discovery.
@@ -944,21 +927,6 @@ fn digest(value: &str) -> Result<()> {
         "invalid approved SHA-256 identity"
     );
     Ok(())
-}
-
-fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>> {
-    safe_file(path)?;
-    ensure!(
-        fs::metadata(path)?.len() <= limit,
-        "runtime metadata exceeds byte limit"
-    );
-    let mut bytes = Vec::new();
-    File::open(path)?.take(limit + 1).read_to_end(&mut bytes)?;
-    ensure!(
-        bytes.len() as u64 <= limit,
-        "runtime metadata grew beyond byte limit"
-    );
-    Ok(bytes)
 }
 
 fn payload_path(root: &Path, name: &str) -> Result<PathBuf> {
@@ -1205,14 +1173,6 @@ fn replace_json<T: Serialize>(root: &Path, name: &str, value: &T) -> Result<()> 
     temporary.as_file().sync_all()?;
     temporary.persist(path)?;
     sync_directory(root)
-}
-
-fn sync_directory(path: &Path) -> Result<()> {
-    #[cfg(unix)]
-    File::open(path)?.sync_all()?;
-    #[cfg(not(unix))]
-    let _ = path;
-    Ok(())
 }
 
 fn manifest(root: &Path, approved: &str) -> Result<(Vec<u8>, InstallManifest)> {
@@ -2023,7 +1983,7 @@ fn selected_preflight(root: &Path) -> Result<SelectedPreflight> {
     );
     Ok(SelectedPreflight {
         root: root.canonicalize()?,
-        control: layout::saved_control(root)?,
+        control: crate::install_layout::saved_control(root)?,
         approval,
     })
 }
@@ -2048,7 +2008,7 @@ fn prepare_connection_with<'a>(
     let root = authority.root;
     ensure!(
         root.canonicalize()? == preflight.root
-            && layout::saved_control(root)? == preflight.control
+            && crate::install_layout::saved_control(root)? == preflight.control
             && managed::read(root)?.is_none(),
         "installed service changed; reconnect through the selected launcher"
     );
@@ -2160,7 +2120,7 @@ async fn ensure_running_locked_checked_after_settlement(
         return managed::ensure_checked(authority, cancel, after_settlement).await;
     }
     ensure!(
-        layout::managed_origin(root)?.is_none(),
+        crate::install_layout::managed_origin(root)?.is_none(),
         "repeat_same_approved_managed_configure_to_resume"
     );
     if activation::pending(root)?.is_some() {
@@ -2182,7 +2142,7 @@ async fn ensure_running_locked_checked_after_settlement(
 
 pub(crate) fn startup_selected(root: &Path) -> Result<(PathBuf, Approval)> {
     payload_repair::require_settled(root)?;
-    layout::require_managed_ready(root)?;
+    crate::install_layout::require_managed_ready(root)?;
     lifecycle::require_start_allowed(root)?;
     if let Some(selected) = activation::startup(root)? {
         return Ok(selected);
@@ -2356,7 +2316,7 @@ fn quiescent(root: &Path) -> Result<Quiescence> {
     let control = layout::control(root)?;
     local_ipc::prepare_root(&control)?;
     let service = airk_store::service::ServiceLease::acquire(&control)?;
-    layout::validate_control(&control)?;
+    crate::install_layout::validate_control(&control)?;
     let (bindings, catalog) = if control.join("service-1.4.sqlite3").try_exists()? {
         let registry = airk_store::service::registry::ServiceRegistry::open_saved(&control)?;
         (registry.bindings()?, registry.catalog_state()?)
@@ -2391,7 +2351,7 @@ fn quiescent(root: &Path) -> Result<Quiescence> {
 /// Call under the installer lock before accepting any competing installer
 /// transaction. Ordinary Start and the issuer operation itself do not use it.
 fn require_issuer_rotation_settled(root: &Path) -> Result<()> {
-    if let Some(control) = layout::issuer_rotation_control(root)?
+    if let Some(control) = crate::install_layout::issuer_rotation_control(root)?
         && let Some(record) = crate::http_endpoint::rotation::read(&control)?
     {
         ensure!(

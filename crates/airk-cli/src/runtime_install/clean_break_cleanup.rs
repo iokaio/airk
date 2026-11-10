@@ -103,7 +103,7 @@ fn validate_scope(root: &Path, plan: &Plan) -> Result<()> {
     ensure!(
         plan.schema == 1
             && plan.install == root.canonicalize()?
-            && plan.successor_control == layout::saved_control(root)?
+            && plan.successor_control == crate::install_layout::saved_control(root)?
             && plan.old_control != plan.successor_control
             && plan
                 .old_control
@@ -285,7 +285,7 @@ fn capture(root: &Path, old_control: &Path, selected: &[ProjectRegistration]) ->
     let plan = Plan {
         schema: 1,
         install: root.canonicalize()?,
-        successor_control: layout::saved_control(root)?,
+        successor_control: crate::install_layout::saved_control(root)?,
         old_control,
         namespace,
         registrations,

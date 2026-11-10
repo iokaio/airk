@@ -22,7 +22,7 @@ pub(super) struct Input {
 
 fn registry(root: &Path) -> Result<ServiceRegistry> {
     let control = layout::control(root)?;
-    layout::validate_control(&control)?;
+    crate::install_layout::validate_control(&control)?;
     // Lifecycle never creates a replacement registry in order to stop something.
     ensure!(
         control.join("service-1.4.sqlite3").try_exists()?,
@@ -60,7 +60,7 @@ pub(super) fn inspect(root: &Path) -> Result<serde_json::Value> {
         );
         return Ok(serde_json::json!({"explicitly_stopped":false,"pending":null}));
     }
-    layout::validate_control(&control)?;
+    crate::install_layout::validate_control(&control)?;
     let registry = ServiceRegistry::open_saved(&control)?;
     Ok(
         serde_json::json!({"explicitly_stopped":registry.service_explicitly_stopped()?,"pending":registry.pending_lifecycle()?,
@@ -154,7 +154,8 @@ pub(super) async fn explicit_start(root: &Path) -> Result<ServiceHealth> {
             resume(&authority, record, false).await?;
         }
         ensure!(
-            managed::read(root)?.is_some() || layout::managed_origin(root)?.is_none(),
+            managed::read(root)?.is_some()
+                || crate::install_layout::managed_origin(root)?.is_none(),
             "repeat_same_approved_managed_configure_to_resume"
         );
         with_lifecycle(&authority, |ledger| ledger.clear_service_stop())?;

@@ -32,7 +32,7 @@ pub(crate) fn channel_name(channel: RuntimeChannel) -> &'static str {
     }
 }
 pub(crate) fn channel(root: &Path) -> Result<RuntimeChannel> {
-    Ok(layout::retained_parameters(root)?.1)
+    Ok(crate::install_layout::retained_parameters(root)?.1)
 }
 pub(crate) fn candidate(root: &Path) -> Result<(PathBuf, Approval)> {
     if let Some(candidate) = activation::startup(root)? {
@@ -255,7 +255,7 @@ fn approved_main(root: &Path, identity: &str, full: bool) -> Result<PathBuf> {
     digest(identity)?;
     managed::require_unmanaged(root)?;
     let root = root.canonicalize()?;
-    layout::saved_control(&root)?;
+    crate::install_layout::saved_control(&root)?;
     let directory = payload_path(&root, &format!("runtimes/{identity}/airk-install.json"))?
         .parent()
         .context("Mac payload parent missing")?

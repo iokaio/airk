@@ -85,7 +85,7 @@ fn image_present(path: &Path) -> Result<bool> {
 
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn all_predecessor_images(root: &Path, candidate: &str) -> Result<Vec<PathBuf>> {
-    let (_, channel) = layout::retained_parameters(root)?;
+    let (_, channel) = crate::install_layout::retained_parameters(root)?;
     all_predecessor_images_with_universal(root, candidate, || {
         let Some(image) = crate::universal_launcher::retirement_image_for(root, channel)? else {
             return Ok(None);

@@ -344,7 +344,7 @@ pub(in crate::runtime_install) fn initialized_probe_operation(
     };
     ensure!(
         serde_json::to_value(&intent)? == serde_json::to_value(journal.intent())?
-            && layout::saved_control(root)? == control
+            && crate::install_layout::saved_control(root)? == control
             && layout::successor_handoff_started(root, journal.operation, journal.layout_sha256)?,
         "clean-break bootstrap does not match the exact admitted Probe operation"
     );
@@ -738,7 +738,7 @@ async fn advance(root: &Path, journal: &mut Journal) -> Result<Selection> {
                 upgrade_stop::preflight_all_predecessors(root, &journal.candidate)?;
             }
             ensure!(
-                layout::saved_control(root)? == journal.old_control,
+                crate::install_layout::saved_control(root)? == journal.old_control,
                 "rebuild original control changed"
             );
             require_issuer_rotation_settled(root)?;
@@ -865,7 +865,7 @@ async fn advance(root: &Path, journal: &mut Journal) -> Result<Selection> {
         let namespace = registry.incarnation()?;
         drop(registry);
         registry = ServiceRegistry::open(&journal.control(), namespace)?;
-        let mut preserved = layout::retained_private_paths(root)?;
+        let mut preserved = crate::install_layout::retained_private_paths(root)?;
         preserved.sort();
         preserved.dedup();
         registry.preserve_private_paths(&_service, &preserved)?;
@@ -1129,7 +1129,7 @@ pub(super) fn require_genesis(root: &Path, intent: &Intent) -> Result<()> {
             && journal.control() == intent.control
             && journal.candidate == intent.candidate
             && intent.prior == Some(journal.prior.clone())
-            && layout::saved_control(root)? == journal.control(),
+            && crate::install_layout::saved_control(root)? == journal.control(),
         "successor Genesis binding changed"
     );
     Ok(())
@@ -1362,7 +1362,7 @@ pub(in crate::runtime_install) fn observation_for_control(
     control: &Path,
     binding: airk_core::service::ProjectBinding,
 ) -> Result<Option<RebuildObservation>> {
-    let Some(root) = layout::installation_for_control(control)? else {
+    let Some(root) = crate::install_layout::installation_for_control(control)? else {
         return Ok(None);
     };
     let Some(value) = observation(&root)? else {
@@ -1420,7 +1420,7 @@ fn continue_clean_break_observing(
     journal = read(root)?.context("clean-break operation disappeared")?;
     ensure!(
         journal.control() == control
-            && layout::saved_control(root)? == control
+            && crate::install_layout::saved_control(root)? == control
             && selection_record(root)?.active == journal.candidate
             && !state_contract::required(root)?,
         "clean-break continuation crossed selected state authority"
@@ -1696,7 +1696,7 @@ pub(in crate::runtime_install) fn require_retirement_allowed(root: &Path) -> Res
             "rebuild recovery evidence is preserved; separate reviewed cleanup is required"
         );
         ensure!(
-            layout::saved_control(root)? == journal.control(),
+            crate::install_layout::saved_control(root)? == journal.control(),
             "historical rebuild successor state changed before retirement"
         );
         // Subsequent ordinary upgrades may retire their own predecessor and
@@ -1710,7 +1710,7 @@ pub(in crate::runtime_install) fn successor_default_data(root: &Path) -> Result<
     let Some(journal) = read(root)? else {
         return Ok(None);
     };
-    if layout::saved_control(root)? != journal.control() {
+    if crate::install_layout::saved_control(root)? != journal.control() {
         return Ok(None);
     }
     Ok(Some(

@@ -11,7 +11,7 @@ pub fn prepare(root: &Path, data: &Path, collection: &str) -> Result<ProjectRegi
 /// Only a completed authenticated registry reservation authorizes creation.
 /// A failed creation leaves that exact reservation intact for explicit retry.
 pub fn prepare_storage(control: &Path, binding: ProjectBinding) -> Result<ProjectRegistration> {
-    crate::runtime_install::validate_control_root(control)?;
+    crate::install_layout::validate_control_root(control)?;
     let registry = airk_store::service::registry::ServiceRegistry::open_saved(control)?;
     let project = registry.get(binding)?.registration;
     create_reserved_storage(&project)?;

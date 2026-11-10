@@ -211,7 +211,7 @@ pub async fn lookup_connection(
         "HTTP lookup selected runtime changed"
     );
     let (main, approval) = verify_runtime(install, expected)?;
-    let control = layout::saved_control(install)?;
+    let control = crate::install_layout::saved_control(install)?;
     local_ipc::require_existing_root(&control)?;
     let ControlResponse::Health {
         observation: health,
@@ -365,7 +365,7 @@ pub async fn setup(
     let client = client(label)?;
     let (control, health) = if let Some(saved) = runtime_control {
         let saved = saved.canonicalize()?;
-        validate_control_root(&saved)?;
+        crate::install_layout::validate_control_root(&saved)?;
         let response = service_runtime::request(&saved, ControlMethod::Health).await?;
         let ControlResponse::Health { observation } = response else {
             return refused(response);

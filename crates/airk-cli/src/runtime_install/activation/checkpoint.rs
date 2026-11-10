@@ -215,7 +215,7 @@ pub(super) fn initialize(root: &Path, intent: &mut Intent) -> Result<()> {
         // Genesis retains sole ownership of creating its namespace. Validate
         // the retained layout before considering absence: a lost initialized
         // control directory must never be reclassified as a fresh install.
-        layout::validate_control(&intent.control)?;
+        crate::install_layout::validate_control(&intent.control)?;
         match fs::symlink_metadata(&intent.control) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 ensure!(
@@ -988,7 +988,7 @@ pub(super) fn require_target(control: &Path, main: &Path) -> Result<()> {
     // A claimed fresh installation has no control directory yet. Validate its
     // retained layout first: a lost initialized directory must never become a
     // fresh-install exemption from the target format check.
-    layout::validate_control(control)?;
+    crate::install_layout::validate_control(control)?;
     match fs::symlink_metadata(control) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error.into()),

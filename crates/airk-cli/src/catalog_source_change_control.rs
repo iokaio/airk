@@ -492,7 +492,7 @@ pub(crate) fn draft(
     control: &Path,
     selection: &SourceMutationDraftSelection,
 ) -> Result<SourceMutationDraft> {
-    crate::runtime_install::validate_control_root(control)?;
+    crate::install_layout::validate_control_root(control)?;
     draft_native(
         registry,
         control,
@@ -638,7 +638,7 @@ pub(crate) fn review_request(
     request: &CatalogRequest,
     expected_preview: Option<Sha256Digest>,
 ) -> Result<SourceMutationDraft> {
-    crate::runtime_install::validate_control_root(control)?;
+    crate::install_layout::validate_control_root(control)?;
     review_request_native(
         registry,
         control,
@@ -903,7 +903,7 @@ pub(crate) fn draft_missing_from_event(
     selection: &SourceMutationDraftSelection,
     event: &crate::source_supervisor::NativeMissingSourceEvent,
 ) -> Result<SourceMutationDraft> {
-    crate::runtime_install::validate_control_root(control)?;
+    crate::install_layout::validate_control_root(control)?;
     ensure!(
         selection.change == SourceMutationSelection::RetireIndex,
         "native missing event requires index retirement"

@@ -485,7 +485,7 @@ pub(super) async fn resume(root: &Path) -> Result<()> {
         // Only this accepted fresh installer operation may resume its native
         // initialization before the ordinary registry binding is ready. The
         // Genesis owner rechecks the exact layout/namespace under exclusion.
-        layout::initialization_control(root)?
+        crate::install_layout::initialization_control(root)?
     } else {
         layout::control(root)?
     };

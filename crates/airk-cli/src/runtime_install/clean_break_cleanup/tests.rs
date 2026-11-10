@@ -286,7 +286,7 @@ fn cleanup_scope_fixture(root: &Path, old_control: PathBuf) -> Result<Plan> {
     Ok(Plan {
         schema: 1,
         install: root.canonicalize()?,
-        successor_control: layout::saved_control(root)?,
+        successor_control: crate::install_layout::saved_control(root)?,
         old_control,
         namespace: Incarnation::from_bytes([91; 16]),
         registrations: Vec::new(),

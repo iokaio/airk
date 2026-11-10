@@ -129,7 +129,7 @@ fn selected(root: &Path, expected: &str) -> Result<()> {
     Ok(())
 }
 fn scope(root: &Path) -> Result<&'static str> {
-    let (_, channel) = layout::retained_parameters(root)?;
+    let (_, channel) = crate::install_layout::retained_parameters(root)?;
     let native = crate::runtime_install::discover_user_paths(channel)?;
     Ok(
         if crate::user_paths::canonical_location(&native.install)? == root.canonicalize()? {

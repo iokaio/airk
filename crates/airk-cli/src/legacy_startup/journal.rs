@@ -112,7 +112,7 @@ fn write_at<T: Serialize>(staging: &Path, directory: &Path, name: &str, value: &
 impl Journal {
     pub fn saved(control: &Path) -> Result<Self> {
         let root = control.canonicalize()?;
-        crate::runtime_install::validate_control_root(&root)?;
+        crate::install_layout::validate_control_root(&root)?;
         let namespace =
             airk_store::service::registry::ServiceRegistry::open_saved(&root)?.incarnation()?;
         let directory = root.join("legacy-retirement-1.4");

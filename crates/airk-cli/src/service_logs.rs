@@ -85,7 +85,7 @@ fn owner(root: &Path, create: bool) -> Result<PathBuf> {
     named_owner(root, create, DIRECTORY, OWNER)
 }
 fn named_owner(root: &Path, create: bool, name: &str, owner_name: &str) -> Result<PathBuf> {
-    let parent = crate::runtime_install::log_parent(root)?;
+    let parent = crate::install_layout::log_parent(root)?;
     if !exists(&parent)? {
         ensure!(create, "diagnostic log location missing");
         crate::local_ipc::prepare_root(&parent)?;

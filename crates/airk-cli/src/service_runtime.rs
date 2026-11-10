@@ -482,12 +482,12 @@ pub async fn serve(root: &Path) -> Result<()> {
 }
 
 pub async fn serve_with_idle(root: &Path, idle_grace: Option<Duration>) -> Result<()> {
-    crate::runtime_install::validate_control_root(root)?;
+    crate::install_layout::validate_control_root(root)?;
     crate::runtime_install::require_baseline_service(root)?;
     local_ipc::prepare_root(root)?;
     let _ownership = Arc::new(airk_store::service::ServiceLease::acquire(root)?);
     crate::http_endpoint::rotation::require_start_allowed(root)?;
-    crate::runtime_install::record_control_root(&_ownership)?;
+    crate::install_layout::record_control_root(&_ownership)?;
     if root.join("service-1.4.sqlite3").try_exists()? {
         match airk_store::service::registry::ServiceRegistry::open(root, new_instance_id()?) {
             Ok(registry) => ensure!(

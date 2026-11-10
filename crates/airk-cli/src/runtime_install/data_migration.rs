@@ -4,7 +4,7 @@ use super::*;
 use airk_store::service::{ServiceLease, registry::data_relocation};
 
 pub(super) fn run(root: &Path) -> Result<()> {
-    let (_, channel) = layout::retained_parameters(root)?;
+    let (_, channel) = crate::install_layout::retained_parameters(root)?;
     let Some(paths) = default_paths(root, channel)? else {
         return Ok(());
     };
@@ -31,7 +31,7 @@ fn default_paths(
 }
 
 pub(super) fn needed(root: &Path) -> Result<bool> {
-    let (_, channel) = layout::retained_parameters(root)?;
+    let (_, channel) = crate::install_layout::retained_parameters(root)?;
     let Some(paths) = default_paths(root, channel)? else {
         return Ok(false);
     };
@@ -107,10 +107,10 @@ mod tests {
         let control = layout::control(&root)?;
         local_ipc::prepare_root(&control)?;
         let lease = ServiceLease::acquire(&control)?;
-        layout::record_control(&lease)?;
+        crate::install_layout::record_control(&lease)?;
         let namespace = Incarnation::from_bytes([1; 16]);
         let mut registry = ServiceRegistry::open(&control, namespace)?;
-        layout::record_registry(&lease, namespace)?;
+        crate::install_layout::record_registry(&lease, namespace)?;
         let data = base.join("data/service-1.4");
         let source = base.join("source");
         fs::create_dir_all(&data)?;

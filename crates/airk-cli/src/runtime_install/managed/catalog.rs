@@ -23,7 +23,7 @@ impl VerifiedManagedReservation {
         policy: &Managed,
         state: &Path,
     ) -> Result<Self> {
-        let existing = layout::managed_origin(authority.root)?;
+        let existing = crate::install_layout::managed_origin(authority.root)?;
         let operation = match &existing {
             Some(origin) => origin.operation,
             None => airk_kernel::service_broker::new_instance_id()?,
@@ -89,12 +89,12 @@ fn policy_digest(policy: &Managed) -> Result<Sha256Digest> {
 
 pub(super) fn saved_policy(root: &Path) -> Result<Option<Managed>> {
     if let Some(policy) = read(root)? {
-        if let Some(origin) = layout::managed_origin(root)? {
+        if let Some(origin) = crate::install_layout::managed_origin(root)? {
             require_policy_identity(&policy, &origin)?;
         }
         return Ok(Some(policy));
     }
-    let Some(origin) = layout::managed_origin(root)? else {
+    let Some(origin) = crate::install_layout::managed_origin(root)? else {
         return Ok(None);
     };
     // This recovers saved STOP identity only after positive native settlement.
@@ -128,12 +128,12 @@ pub(super) fn saved_policy(root: &Path) -> Result<Option<Managed>> {
 /// positively settled original operation can release the user references; no
 /// provider file needs to remain available merely to stop its saved identity.
 pub(super) fn require_detach_policy(root: &Path, policy: &Managed) -> Result<()> {
-    if let Some(origin) = layout::managed_origin(root)? {
+    if let Some(origin) = crate::install_layout::managed_origin(root)? {
         genesis::require_managed_settled(&origin.control, &origin)
             .context("managed_catalog_detach_requires_supported_transition")?;
         require_policy_identity(policy, &origin)?;
         ensure!(
-            layout::saved_control(root)? == origin.control,
+            crate::install_layout::saved_control(root)? == origin.control,
             "managed detach control binding changed"
         );
     }
@@ -173,7 +173,7 @@ pub(in crate::runtime_install) fn verify_origin(
     origin.validate()?;
     ensure!(
         authority.root.canonicalize()? == origin.install
-            && layout::managed_origin(authority.root)?.as_ref() == Some(origin)
+            && crate::install_layout::managed_origin(authority.root)?.as_ref() == Some(origin)
             && policy_digest(policy)? == origin.policy_sha256,
         "managed catalog reservation or approved policy changed"
     );
@@ -203,7 +203,7 @@ pub(in crate::runtime_install) fn verify_origin(
         "managed catalog approved executable contract changed"
     );
     ensure!(
-        layout::saved_control(authority.root)? == origin.control,
+        crate::install_layout::saved_control(authority.root)? == origin.control,
         "managed catalog control binding changed"
     );
     Ok(())
@@ -226,7 +226,7 @@ pub(super) fn before_start(
     policy: &Managed,
     cancel: Option<&setup::SetupCancellation>,
 ) -> Result<ManagedCatalogDisposition> {
-    let Some(origin) = layout::managed_origin(authority.root)? else {
+    let Some(origin) = crate::install_layout::managed_origin(authority.root)? else {
         let control = layout::control(authority.root)?;
         // Do not reinterpret crossed, pending or damaged metadata as legacy.
         lifecycle::inspect(authority.root)?;
@@ -283,12 +283,12 @@ pub(super) fn admit(
     let lease = ServiceLease::acquire(&origin.control)
         .context("acquire reserved managed control ownership")?;
     if genesis::pending(&origin.control)?.is_some() {
-        layout::validate_catalog_control(&origin.control, origin.namespace)?;
+        crate::install_layout::validate_catalog_control(&origin.control, origin.namespace)?;
         return CatalogGenesis::begin_managed(lease, origin);
     }
     // Native state/registry ownership is initialized before Genesis, using the
     // namespace durably reserved by the INITIAL layout, including crash retry.
-    layout::record_control(&lease)?;
+    crate::install_layout::record_control(&lease)?;
     let registry =
         airk_store::service::registry::ServiceRegistry::open(&origin.control, origin.namespace)?;
     ensure!(
@@ -296,7 +296,7 @@ pub(super) fn admit(
         "managed namespace changed"
     );
     drop(registry);
-    layout::record_registry(&lease, origin.namespace)?;
+    crate::install_layout::record_registry(&lease, origin.namespace)?;
     CatalogGenesis::begin_managed(lease, origin)
 }
 
@@ -319,7 +319,7 @@ pub(in crate::runtime_install) fn resume_before_lifecycle(
     authority: &InstallerAuthority<'_>,
     cancel: Option<&setup::SetupCancellation>,
 ) -> Result<()> {
-    let Some(origin) = layout::managed_origin(authority.root)? else {
+    let Some(origin) = crate::install_layout::managed_origin(authority.root)? else {
         return Ok(());
     };
     if let Some(receipt) = saved_genesis(&origin)?

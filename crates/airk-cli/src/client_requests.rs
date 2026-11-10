@@ -85,7 +85,7 @@ pub struct Pending {
     pub kind: JobKind,
 }
 fn namespace(control: &Path) -> Result<Incarnation> {
-    crate::runtime_install::validate_control_root(control)?;
+    crate::install_layout::validate_control_root(control)?;
     airk_store::service::registry::ServiceRegistry::open_saved(control)?.incarnation()
 }
 fn directory(control: &Path) -> PathBuf {

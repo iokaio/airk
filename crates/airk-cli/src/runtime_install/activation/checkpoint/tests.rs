@@ -275,7 +275,7 @@ fn fresh_exemption_preserves_existing_journal_and_lost_initialized_control() -> 
             &intent.control,
             airk_kernel::service_broker::new_instance_id()?,
         )?);
-        layout::record_control(&lease)?;
+        crate::install_layout::record_control(&lease)?;
     }
     fs::rename(&intent.control, root.join("retained-initialized-control"))?;
     assert!(initialize(&root, &mut intent).is_err());
@@ -304,7 +304,7 @@ fn target_contract_preflight_allows_fresh_control_but_preserves_lost_owner() -> 
             &control,
             airk_kernel::service_broker::new_instance_id()?,
         )?);
-        layout::record_control(&lease)?;
+        crate::install_layout::record_control(&lease)?;
     }
     let retained = root.join("retained-control-evidence");
     fs::rename(&control, &retained)?;

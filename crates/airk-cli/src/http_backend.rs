@@ -49,7 +49,7 @@ async fn validate_details(
     let guard = context.lifetime_guard();
     let task = tokio::task::spawn_blocking(move || -> Result<(HttpSelection, Option<airk_core::service::ProjectRegistration>)> {
         let _guard = guard;
-        crate::runtime_install::validate_control_root(&control)?;
+        crate::install_layout::validate_control_root(&control)?;
         let mut registry = airk_store::service::registry::ServiceRegistry::open_saved_before(
             &control,
             Some(deadline),

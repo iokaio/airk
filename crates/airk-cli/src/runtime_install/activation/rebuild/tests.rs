@@ -38,10 +38,10 @@ fn fixture(paused: bool) -> Result<(tempfile::TempDir, PathBuf, Journal)> {
     let old_control = layout::control(&root)?;
     local_ipc::prepare_root(&old_control)?;
     let service = ServiceLease::acquire(&old_control)?;
-    layout::record_control(&service)?;
+    crate::install_layout::record_control(&service)?;
     let namespace = Incarnation::from_bytes([11; 16]);
     drop(ServiceRegistry::open(&old_control, namespace)?);
-    layout::record_registry(&service, namespace)?;
+    crate::install_layout::record_registry(&service, namespace)?;
     drop(service);
     let source = base.join("source");
     fs::create_dir(&source)?;
@@ -198,10 +198,10 @@ fn finish_successor_fixture(
     journal.save(&root)?;
     local_ipc::prepare_root(&journal.control())?;
     let service = ServiceLease::acquire(&journal.control())?;
-    layout::record_control(&service)?;
+    crate::install_layout::record_control(&service)?;
     let namespace = Incarnation::from_bytes([15; 16]);
     drop(ServiceRegistry::open(&journal.control(), namespace)?);
-    layout::record_registry(&service, namespace)?;
+    crate::install_layout::record_registry(&service, namespace)?;
     let mut genesis = CatalogGenesis::begin(
         service,
         Sha256Digest::from_bytes([16; 32]),
@@ -216,7 +216,10 @@ fn finish_successor_fixture(
     drop(genesis);
     let lease = ServiceLease::acquire(&journal.control())?;
     let mut registry = ServiceRegistry::open(&journal.control(), namespace)?;
-    registry.preserve_private_paths(&lease, &layout::retained_private_paths(&root)?)?;
+    registry.preserve_private_paths(
+        &lease,
+        &crate::install_layout::retained_private_paths(&root)?,
+    )?;
     let malicious = ProjectRegistration::new(
         journal.roster.indexes[0].registration.data_root.clone(),
         root.parent()
@@ -838,7 +841,10 @@ fn rebuild_ordinary_input_keeps_canonical_state_through_genesis_and_setup() -> R
         let (_owner, input, mut journal) = successor_fixture_for_input(false, true)?;
         let canonical = input.canonicalize()?;
         assert_eq!(journal.state, rebuild_state(&canonical, journal.operation)?);
-        assert_eq!(layout::saved_control(&input)?, journal.control());
+        assert_eq!(
+            crate::install_layout::saved_control(&input)?,
+            journal.control()
+        );
         assert_eq!(read(&canonical)?.unwrap().operation, journal.operation);
         let namespace = ServiceRegistry::open_saved(&journal.control())?.incarnation()?;
         let mut registry = ServiceRegistry::open(&journal.control(), namespace)?;
