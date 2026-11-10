@@ -5,7 +5,9 @@
 use super::metadata::Metadata;
 use super::{IndexSetupReceipt, NativeIndexPreparation, SetupPreparationReview, SetupStage};
 use crate::service::{ProjectLease, data_scope, registry::ServiceRegistry};
-use crate::store_fs::{SetupDirectory, SetupFileMode, file_identity};
+#[cfg(windows)]
+use crate::store_fs::file_identity;
+use crate::store_fs::{SetupDirectory, SetupFileMode};
 use airk_core::identity::{Incarnation, Sha256Digest, framed_digest};
 use anyhow::{Context, Result, ensure};
 use std::path::PathBuf;

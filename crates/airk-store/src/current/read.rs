@@ -511,8 +511,8 @@ impl FileStore {
                 .map_err(read_error)
         })
     }
-    /// A request reader whose deadline follows `clock` (tests only).
-    #[cfg(test)]
+    /// A request reader whose deadline follows `clock` (Windows tests only).
+    #[cfg(all(test, windows))]
     pub(crate) fn current_read_with_clock(
         &self,
         scope: &CurrentScope,

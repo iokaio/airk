@@ -23,14 +23,15 @@ pub(crate) fn system() -> Arc<dyn RequestClock> {
     Arc::new(SystemClock)
 }
 
-/// A clock that moves only when a test advances it.
-#[cfg(test)]
+/// A clock that moves only when a test advances it. Its consumers, the
+/// private-consumer collection tests, are Windows-only.
+#[cfg(all(test, windows))]
 pub(crate) struct ManualClock {
     start: Instant,
     elapsed: std::sync::Mutex<std::time::Duration>,
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 impl ManualClock {
     pub(crate) fn new() -> Arc<Self> {
         Arc::new(Self {
@@ -44,7 +45,7 @@ impl ManualClock {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 impl RequestClock for ManualClock {
     fn now(&self) -> Instant {
         self.start + *self.elapsed.lock().expect("manual clock poisoned")
