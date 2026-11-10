@@ -35,11 +35,13 @@ fn approved_slot(root: &Path, label: &str) -> Result<String> {
 }
 
 #[test]
-fn fifth_modern_escrow_preserves_four_approved_predecessors_and_resumes_only_same_candidate()
--> Result<()> {
+fn staging_is_not_limited_by_retained_payloads_or_a_pending_activation() -> Result<()> {
+    // Shape of an installation where earlier updates failed: the selected
+    // payload, several unselected ones and an unfinished pre-probe activation.
     let (_owner, root, active) = super::super::tests::unselected_fixture()?;
-    for label in ["second", "third", "fourth"] {
-        approved_slot(&root, label)?;
+    let mut retained = Vec::new();
+    for label in ["second", "third", "fourth", "fifth", "sixth"] {
+        retained.push(approved_slot(&root, label)?);
     }
     replace_json(
         &root,
@@ -50,13 +52,21 @@ fn fifth_modern_escrow_preserves_four_approved_predecessors_and_resumes_only_sam
             previous: None,
         },
     )?;
-    let incoming = "f".repeat(64);
-    assert_eq!(occupied_slots(&root)?, 4);
-    assert_eq!(slot_limit(&root, &incoming, true, false)?, 5);
-    assert_eq!(slot_limit(&root, &incoming, false, false)?, 4);
+    replace_json(
+        &root,
+        "activation.json",
+        &serde_json::json!({"schema":1,"install":root.canonicalize()?,"control":layout::control(&root)?,
+            "candidate":retained[4],"prior":{"schema":1,"active":active,"previous":null},
+            "manager":false,"phase":"drain"}),
+    )?;
     let source = root.join("incoming-source");
     local_ipc::prepare_root(&source)?;
     super::super::tests::fixture(&source)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(source.join("notices"), fs::Permissions::from_mode(0o700))?;
+    }
     fs::write(
         source.join("LICENSE"),
         b"distinct incoming modern candidate",
@@ -69,53 +79,29 @@ fn fifth_modern_escrow_preserves_four_approved_predecessors_and_resumes_only_sam
     );
     let raw = serde_json::to_vec(&inventory)?;
     let identity = format!("{:x}", Sha256::digest(&raw));
-    let intent = StageIntent {
-        schema: 1,
-        root: root.to_str().unwrap().into(),
-        leaf: format!("stage-{}", "9".repeat(32)),
-        approval: Approval {
-            schema: 1,
-            manifest_sha256: identity.clone(),
-            version: inventory.version,
-            verification_basis: VerificationBasis::OrganizationDigest,
-        },
-        manifest_json: String::from_utf8(raw)?,
-        lengths: inventory
-            .files
-            .keys()
-            .map(|name| Ok((name.clone(), fs::metadata(source.join(name))?.len())))
-            .collect::<Result<_>>()?,
-    };
-    replace_json(
+    fs::write(source.join("airk-install.json"), raw)?;
+    let (state, channel) = crate::install_layout::retained_parameters(&root)?;
+    // The inert fixture cannot execute; only its native self-test is injected.
+    let approval = stage_locked_with_verifier(
+        &source,
         &root,
-        StageIntent::path(&root, &identity)
-            .file_name()
-            .unwrap()
-            .to_str()
-            .unwrap(),
-        &intent,
+        &identity,
+        VerificationBasis::OrganizationDigest,
+        Some(&state),
+        channel,
+        (false, |_| Ok(())),
     )?;
-    assert_eq!(occupied_slots(&root)?, 5);
-    assert_eq!(slot_limit(&root, &identity, true, true)?, 5);
-    assert_eq!(slot_limit(&root, &incoming, true, false)?, 4);
-    local_ipc::prepare_root(&intent.directory(&root))?;
-    assert_eq!(slot_limit(&root, &identity, true, true)?, 5);
-    assert_eq!(fs::read_dir(root.join("runtimes"))?.count(), 5);
-    let unknown = root
-        .join("runtimes")
-        .join(&active)
-        .join("unknown-user-file");
-    fs::write(&unknown, b"preserve")?;
-    assert!(slot_limit(&root, &identity, true, true).is_err());
-    assert_eq!(fs::read(unknown)?, b"preserve");
-    fs::remove_file(
-        root.join("runtimes")
-            .join(&active)
-            .join("unknown-user-file"),
-    )?;
-    approved_slot(&root, "unexpected-sixth-payload")?;
-    assert!(occupied_slots(&root).is_err());
-    assert!(slot_limit(&root, &identity, true, true).is_err());
+    assert_eq!(approval.manifest_sha256, identity);
+    assert_eq!(fs::read_dir(root.join("runtimes"))?.count(), 7);
+    verify_runtime_inventory(&root, &identity)?;
+    for kept in retained.iter().chain([&active]) {
+        verify_runtime_inventory(&root, kept)?;
+    }
+    assert!(
+        root.join("activation.json").try_exists()?,
+        "staging never discards an intent"
+    );
+    assert!(pending(&root)?.is_empty());
     Ok(())
 }
 
@@ -262,7 +248,6 @@ fn interrupted_intents_reserve_slots_before_creating_directories() -> Result<()>
             serde_json::to_vec(&intent)?,
         )?;
     }
-    assert_eq!(occupied_slots(&root)?, 4);
     assert_eq!(pending(&root)?.len(), 4);
     assert!(
         stage(
@@ -273,13 +258,13 @@ fn interrupted_intents_reserve_slots_before_creating_directories() -> Result<()>
         )
         .unwrap_err()
         .to_string()
-        .contains("four retained")
+        .contains("four interrupted staging reservations")
     );
     assert_eq!(fs::read_dir(root.join("runtimes"))?.count(), 0);
     for identity in pending(&root)? {
         abort(&root, &identity)?;
     }
-    assert_eq!(occupied_slots(&root)?, 0);
+    assert!(pending(&root)?.is_empty());
     Ok(())
 }
 

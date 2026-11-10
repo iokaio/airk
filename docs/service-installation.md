@@ -287,13 +287,15 @@ The native transaction freezes the complete original manifests and process-image
 roster before removal. Missing files in an interrupted cleanup remain part of
 that roster; a reduced list, changed inventory, newly appeared payload or unknown
 file blocks completion. Removal resumes under the same selected-runtime binding.
-One bounded fifth candidate slot allows an installation already retaining four
-approved payloads to stage its modern replacement before deleting predecessors.
-Unknown directories and unresolved staging do not earn this allowance. A crash
-resumes the same candidate; an additional candidate cannot accumulate another
-slot. Startup must finish the current migration/cleanup before another upgrade.
-Reviewed payload repair can restore its exact preserved active slot at this
-bound, without starting the service or deleting the damaged original.
+Since 1.8.18 the number of retained runtime payloads does not limit staging,
+payload repair, uninstall or cleanup; an installation where earlier updates
+failed can stage its replacement before predecessors are removed, and cleanup
+retires every superseded payload it finds. At most four interrupted staging
+reservations may exist; resume or abort them first. A crash resumes the same
+candidate. Startup must finish the current migration/cleanup before another
+upgrade. A reviewed payload repair's reserved restore cannot be shared with an
+unrelated staging. Repair restores its exact preserved active payload without
+starting the service or deleting the damaged original.
 
 Modified/unknown repair quarantines remain explicit
 `preserved_damaged_payload_requires_review` blockers to complete obsolete-image

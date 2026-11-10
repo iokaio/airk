@@ -174,6 +174,37 @@ fn read(root: &Path) -> Result<Option<Envelope>> {
     Ok(Some(envelope))
 }
 
+/// Clean-break reset only. An unfinished ordinary update bound to the discarded
+/// predecessor control root is retained as dated evidence under a name that no
+/// activation reads. A finished journal, or none, needs no change.
+pub(super) fn retire_for_clean_break(root: &Path, old_control: &Path) -> Result<()> {
+    let Some(envelope) = read(root)? else {
+        return Ok(());
+    };
+    if matches!(
+        envelope.journal.stage,
+        Stage::Committed | Stage::Retiring | Stage::Aborted
+    ) {
+        return Ok(());
+    }
+    ensure!(
+        crate::user_paths::canonical_location(&envelope.journal.control)?
+            == crate::user_paths::canonical_location(old_control)?,
+        "clean break found an unfinished upgrade journal for another control root"
+    );
+    name(&envelope.journal.operation)?; // validated identifier, used below as text
+    let evidence = root.join(format!(
+        "upgrade-journal.superseded-{}.json",
+        envelope.journal.operation
+    ));
+    ensure!(
+        !exists(&evidence)?,
+        "superseded upgrade journal evidence already exists"
+    );
+    fs::rename(root.join(JOURNAL), &evidence)?;
+    sync_directory(root)
+}
+
 fn save(root: &Path, journal: Journal, expected: Option<&str>) -> Result<()> {
     ensure!(
         read(root)?.as_ref().map(|value| value.sha256.as_str()) == expected,

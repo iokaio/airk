@@ -487,3 +487,35 @@ fn predecessor_rollback_bytes_remain_strict_schema_one_while_new_installer_recov
     assert!(reattach_legacy_rollback(&root, &mut crossed).is_err());
     Ok(())
 }
+
+#[test]
+fn clean_break_retains_an_unfinished_predecessor_journal_as_evidence_only_for_its_control()
+-> Result<()> {
+    let (_owner, root, candidate) = crate::runtime_install::tests::unselected_fixture()?;
+    let mut intent = fresh_intent(&root, candidate)?;
+    local_ipc::prepare_root(&intent.control)?;
+    initialize(&root, &mut intent)?;
+    let original = fs::read(root.join(JOURNAL))?;
+    let operation = read(&root)?.context("journal missing")?.journal.operation;
+    assert_eq!(read(&root)?.unwrap().journal.stage, Stage::StagedVerified);
+    // A journal for another control root is never discarded by this reset.
+    let other = root.join("other-control");
+    local_ipc::prepare_root(&other)?;
+    assert!(retire_for_clean_break(&root, &other).is_err());
+    assert_eq!(fs::read(root.join(JOURNAL))?, original);
+    retire_for_clean_break(&root, &intent.control)?;
+    assert!(
+        read(&root)?.is_none(),
+        "a later update must start its own journal"
+    );
+    let evidence = root.join(format!("upgrade-journal.superseded-{operation}.json"));
+    assert_eq!(
+        fs::read(&evidence)?,
+        original,
+        "original journal bytes retained"
+    );
+    // Repeating after completion or a crash is a no-op.
+    retire_for_clean_break(&root, &intent.control)?;
+    assert_eq!(fs::read(&evidence)?, original);
+    Ok(())
+}

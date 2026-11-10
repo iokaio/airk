@@ -1,5 +1,34 @@
 # Local VSIX release readiness
 
+## First real-machine install and direction change (10 November 2026)
+
+The first install of the committed 1.8.18 VSIX on the maintainer's own Windows
+installation (selected 1.8.11; five retained payloads 1.5.3, 1.8.11, 1.8.14 ×2,
+1.8.15; an unfinished 1.8.15 update with its checkpoint journal) refused at
+staging: `runtime activation is pending`. The fixtures had never staged with an
+unfinished update already present or with five payloads.
+
+At the user's direction the retained-payload count no longer limits staging,
+repair, uninstall or clean-break retirement, and the reset retires an
+unfinished predecessor journal as evidence. A reproduction with five authentic
+payloads, a genuine journal and the observed order passed (debug build,
+`r19-debug-full-machine-repro-r3`; optimized build `r19-full-machine-repro`).
+
+The second real install (VSIX SHA-256
+`e05e0dd1866dd645761e852126683f0656c81105d01f326333e98504460e6a43`) refused in
+the clean-break preflight before any reset step:
+`clean_break_predecessor_process_observation_unsupported` for the 1.5.3
+payload's never-materialized `airk-service.exe` role alias, because 176 of 410
+processes could not be observed. The installation was left unchanged with
+1.8.11 running. During that install a background qualification run was still
+launching private VS Code windows on the same desktop; it was stopped
+(`hot-update` had failed in that run and was not investigated).
+
+The user then decided that installed predecessors do not justify an upgrade
+path: everything before 1.9.0 is to be stopped and removed, and no index is
+created until the user asks for one. That replacement supersedes the in-place
+clean-break rebuild and is the next change; this 1.8.18 record is historical.
+
 ## Resumed and completed: 1.8.18 Windows candidate (9–10 November 2026)
 
 At about 23:15 Mountain Time on 9 November the user instructed that the work be

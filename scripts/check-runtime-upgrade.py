@@ -11,6 +11,7 @@ from pathlib import Path
 import platform
 import queue
 import re
+import secrets
 import sqlite3
 import stat
 import subprocess
@@ -190,7 +191,7 @@ def validate_clean_break_cleanup(rebuild, originals, old_control, candidate, pre
     def processes(value, scope):
         return (isinstance(value, dict) and value.get("scope") == scope
             and type(value.get("remaining")) is int and value["remaining"] == 0
-            and all(isinstance(value.get(field), list) and len(value[field]) <= 20
+            and all(isinstance(value.get(field), list)
                 for field in ("observations", "image_roster", "image_exclusions")))
     retired = runtimes.get("retired_runtimes")
     if (launchers.get("schema") != 1 or launchers.get("active") != candidate
@@ -200,7 +201,7 @@ def validate_clean_break_cleanup(rebuild, originals, old_control, candidate, pre
             or not processes(launchers.get("processes"), "verified_launcher_images")
             or runtimes.get("active") != candidate or runtimes.get("complete") is not True
             or runtimes.get("selected_service_restarted") is not False
-            or not isinstance(retired, list) or not 1 <= len(retired) <= 4
+            or not isinstance(retired, list) or not retired
             or any(not isinstance(item, str) or not re.fullmatch(r"[0-9a-f]{64}", item) for item in retired)
             or len(set(retired)) != len(retired) or predecessor not in retired or candidate in retired
             or not processes(runtimes.get("processes"), "verified_superseded_runtime_images")):
@@ -426,7 +427,7 @@ def retire_obsolete_runtime(invoke, binary, install, expected, previous):
     def processes(value, scope):
         return (isinstance(value, dict) and value.get("scope") == scope
                 and type(value.get("remaining")) is int and value["remaining"] == 0
-                and all(isinstance(value.get(field), list) and len(value[field]) <= 20
+                and all(isinstance(value.get(field), list)
                         for field in ("observations", "image_roster", "image_exclusions")))
 
     launchers = invoke(binary, "runtime", "retire-legacy-launchers", "--install-dir", install,
@@ -443,7 +444,7 @@ def retire_obsolete_runtime(invoke, binary, install, expected, previous):
     roster = retired.get("retired_runtimes")
     if (retired.get("active") != expected or retired.get("complete") is not True
             or retired.get("selected_service_restarted") is not False
-            or not isinstance(roster, list) or not 1 <= len(roster) <= 4
+            or not isinstance(roster, list) or not roster
             or any(not isinstance(item, str) or not re.fullmatch(r"[0-9a-f]{64}", item) for item in roster)
             or len(set(roster)) != len(roster) or expected in roster or previous not in roster
             or not processes(retired.get("processes"), "verified_superseded_runtime_images")):
@@ -1242,31 +1243,58 @@ def run_clean_break(args, new, old):
             receipt["predecessor_processes_before"] = census.before
         else:
             receipt["predecessor_processes_before"] = {"held_kernel_census": False, "native_health": old_health, "owned_client_pid": client.pid}
-        candidate_staged = True
-        invoke(binary, "runtime", "stage", "--source", new, "--install-dir", install, "--state-dir", old_state,
-            "--approved-sha256", new_identity, "--verification-basis", "organization-digest")
+        seeded_journal = None
+        if args.interrupted_runtime or args.retained_runtime:
+            # Reproduce an installation where earlier updates failed: extra
+            # retained payloads and an unfinished ordinary update recorded by the
+            # predecessor before the replacement is staged (the observed order).
+            for retained in args.retained_runtime:
+                retained = retained.resolve(strict=True)
+                invoke(binary, "runtime", "stage", "--source", retained, "--install-dir", install,
+                       "--state-dir", old_state, "--approved-sha256", digest(retained / "airk-install.json"),
+                       "--verification-basis", "organization-digest")
         if args.interrupted_runtime:
-            # A pre-baseline installation can retain an unfinished ordinary update.
-            # Seed only synthetic fixture metadata for a separately staged candidate;
-            # the reset itself must supersede this exact pre-probe intent.
             interrupted = args.interrupted_runtime.resolve(strict=True)
             interrupted_identity = digest(interrupted / "airk-install.json")
             invoke(binary, "runtime", "stage", "--source", interrupted, "--install-dir", install,
                    "--state-dir", old_state, "--approved-sha256", interrupted_identity,
                    "--verification-basis", "organization-digest")
             layout = json.loads((install / "runtime-layout.json").read_text(encoding="utf-8"))
-            intent = {"schema": 1, "install": layout["install"],
-                      "control": str(Path(layout["state"]) / "control"), "candidate": interrupted_identity,
+            control_text = str(Path(layout["state"]) / "control")
+            operation = secrets.token_hex(16)
+            # The exact native checkpoint journal an activation writes before draining:
+            # compact serde field order, digest over the journal's own bytes.
+            journal = {"schema": 1, "operation": operation, "install": layout["install"], "control": control_text,
+                       "candidate": interrupted_identity, "predecessor": old_identity, "manager_owned": False,
+                       "manager_definition_sha256": hashlib.sha256(b"airk/checkpoint-manager/no-owned-restart/1").hexdigest(),
+                       "stage": "staged_verified", "revision": 0, "previous_digest": None, "checkpoint_sha256": None,
+                       "observed_unix_ms": int(time.time() * 1000)}
+            compact = lambda value: json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+            envelope = compact({"journal": journal, "sha256": hashlib.sha256(compact(journal)).hexdigest()})
+            (install / "upgrade-journal.json").write_bytes(envelope)
+            seeded_journal = {"operation": operation, "sha256": hashlib.sha256(envelope).hexdigest()}
+            intent = {"schema": 1, "install": layout["install"], "control": control_text,
+                      "candidate": interrupted_identity,
                       "prior": {"schema": 1, "active": old_identity, "previous": None},
-                      "manager": False, "phase": "drain"}
+                      "manager": False, "phase": "drain", "checkpoint": operation}
             (install / "activation.json").write_text(json.dumps(intent), encoding="utf-8")
-            receipt["superseded_activation"] = {"candidate": interrupted_identity, "phase": "drain"}
+            receipt["superseded_activation"] = {"candidate": interrupted_identity, "phase": "drain", "journal": seeded_journal}
+        receipt["retained_payloads_before_stage"] = sorted(path.name for path in (install / "runtimes").iterdir())
+        candidate_staged = True
+        invoke(binary, "runtime", "stage", "--source", new, "--install-dir", install, "--state-dir", old_state,
+            "--approved-sha256", new_identity, "--verification-basis", "organization-digest")
         started = time.monotonic()
         selected = invoke(binary, "runtime", "activate", "--install-dir", install, "--runtime-sha256", new_identity,
             "--expected-active", old_identity)
         receipt["activation_elapsed_seconds"] = time.monotonic()-started
         if os.path.lexists(install / "activation.json"):
             raise RuntimeError("Clean break left an ordinary activation intent pending")
+        if os.path.lexists(install / "upgrade-journal.json"):
+            raise RuntimeError("Clean break left the predecessor's unfinished upgrade journal active")
+        if seeded_journal is not None:
+            evidence = install / f"upgrade-journal.superseded-{seeded_journal['operation']}.json"
+            if hashlib.sha256(evidence.read_bytes()).hexdigest() != seeded_journal["sha256"]:
+                raise RuntimeError("Clean break did not retain the superseded upgrade journal bytes")
         if selected.get("active") != new_identity:
             raise RuntimeError("Clean break did not select the reviewed candidate")
         client.wait(timeout=10)
@@ -1303,6 +1331,9 @@ def run_clean_break(args, new, old):
         validate_clean_break_baseline(marker, rebuild, control, install)
         receipt["state_contract"] = marker
         receipt["obsolete_cleanup"] = validate_clean_break_cleanup(rebuild, originals, old_control, new_identity, old_identity)
+        # Exactly every payload present before the replacement was staged is retired.
+        if sorted(receipt["obsolete_cleanup"]["runtimes"]["retired_runtimes"]) != receipt["retained_payloads_before_stage"]:
+            raise RuntimeError("Clean break did not retire exactly the payloads present before replacement")
         if census is not None:
             receipt["predecessor_processes_after"] = census.verify_retired_gone(receipt["obsolete_cleanup"], timeout=10)
         if os.path.lexists(old_state) or os.path.lexists(old_control) or any(os.path.lexists(item["registration"]["data_root"]) for item in originals):
@@ -1412,6 +1443,8 @@ def main():
     parser.add_argument("--previous-runtime", type=Path, required=True)
     parser.add_argument("--interrupted-runtime", type=Path,
                         help="Stage a superseded candidate and seed its exact pre-probe intent in this fictional fixture")
+    parser.add_argument("--retained-runtime", type=Path, action="append", default=[],
+                        help="Clean break only: also stage this authentic payload before the replacement (repeatable)")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--check-inputs", action="store_true",
                         help="Verify accessible fixture runtime roots and complete bounded seals, write a receipt, and execute no runtime")
@@ -1429,6 +1462,8 @@ def main():
         parser.error("Reviewed setup is only supported for the positive indexed upgrade fixture")
     if args.semantic_old and args.source_state != "indexed":
         parser.error("Semantic predecessor qualification requires an explicitly indexed old fixture")
+    if args.retained_runtime and not args.clean_break:
+        parser.error("--retained-runtime applies only to the clean-break fixture")
     if args.clean_break and (args.source_state != "indexed" or args.semantic_old):
         parser.error("Clean-break qualification requires the indexed fixture without the retained-semantic campaign")
     if sys.platform not in ("win32","linux","darwin"):

@@ -88,6 +88,18 @@ Corrections made while qualifying the installed candidate (10 November 2026):
 - **Per-index Usage administration opens again.** That view still launched the
   runtime through the launcher route retired in 1.8.14 and was refused with
   `stdio_mcp_retired`; it now uses the direct service route.
+- **The clean-break replacement no longer refuses an installation where earlier
+  updates failed** (found by the first install on a real 1.8.11 machine,
+  10 November 2026). That installation held five runtime payloads and an
+  unfinished 1.8.15 update with its checkpoint journal, and staging refused
+  with "runtime activation is pending". At the user's direction, the number of
+  retained runtime payloads no longer limits staging, payload repair,
+  uninstall or the clean-break retirement; the reset retires every payload
+  present before the replacement. Bounds on individual payload contents and
+  on interrupted staging records remain. The reset supersedes the unfinished
+  update and keeps its checkpoint journal as
+  `upgrade-journal.superseded-<operation>.json`, so a later ordinary update
+  starts its own journal.
 - **An unterminated final request on the bounded stdio component is answered
   again.** After the MCP SDK security upgrade a last request without a trailing
   newline at end of input received no reply; the bounded reader now terminates

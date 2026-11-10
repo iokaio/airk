@@ -4,7 +4,9 @@ use super::super::legacy_launchers::{Image, image_exclusion, observe, stop_legac
 use super::*;
 
 const JOURNAL: &str = "superseded-retirement.json";
-const LIMIT: u64 = 4 * MAX_MANIFEST + 256 * 1024;
+// The receipt embeds one frozen manifest per superseded payload. This bounds
+// the receipt file's size; it does not limit how many payloads are retired.
+const LIMIT: u64 = 64 * MAX_MANIFEST + 1024 * 1024;
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -34,8 +36,7 @@ pub(super) fn pending(root: &Path) -> Result<bool> {
 fn all_identities(root: &Path, active: &str) -> Result<Vec<String>> {
     let mut identities = BTreeSet::new();
     let directory = root.join("runtimes");
-    for (count, entry) in fs::read_dir(&directory)?.take(6).enumerate() {
-        ensure!(count < 5, "runtime cleanup directory count exceeds bound");
+    for entry in fs::read_dir(&directory)? {
         let path = entry?.path();
         let name = path
             .file_name()
@@ -65,10 +66,6 @@ fn all_identities(root: &Path, active: &str) -> Result<Vec<String>> {
             identities.insert(identity.into());
         }
     }
-    ensure!(
-        identities.len() <= 4,
-        "superseded runtime count exceeds bound"
-    );
     Ok(identities.into_iter().collect())
 }
 
@@ -185,12 +182,6 @@ fn validate(root: &Path, intent: &Intent, expected: &str) -> Result<()> {
                 .as_ref()
                 .is_none_or(|prior| Some(prior) == intent.previous.as_ref()),
         "superseded runtime selection or transaction changed"
-    );
-    ensure!(
-        intent.runtimes.len() <= 4
-            && intent.images.len() <= 20
-            && intent.image_exclusions.len() <= 20,
-        "superseded retirement roster exceeds bound"
     );
     for (index, identity) in intent.runtimes.iter().enumerate() {
         digest(identity)?;

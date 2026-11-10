@@ -381,11 +381,11 @@ class Census:
         def processes(value, scope):
             return (isinstance(value, dict) and value.get("scope") == scope
                 and type(value.get("remaining")) is int and value["remaining"] == 0
-                and all(isinstance(value.get(name), list) and len(value[name]) <= 20
+                and all(isinstance(value.get(name), list)
                     for name in ("observations", "image_roster", "image_exclusions")))
         if (runtimes.get("complete") is not True or runtimes.get("selected_service_restarted") is not False
                 or not isinstance(active, str) or not re.fullmatch(r"[0-9a-f]{64}", active) or active == self.identity
-                or not isinstance(retired, list) or not 1 <= len(retired) <= 4
+                or not isinstance(retired, list) or not retired
                 or self.identity not in retired or active in retired or len(set(retired)) != len(retired)
                 or any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value) for value in retired)
                 or not processes(runtimes.get("processes"), "verified_superseded_runtime_images")

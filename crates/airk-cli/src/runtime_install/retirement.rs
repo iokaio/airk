@@ -700,8 +700,7 @@ pub(crate) async fn uninstall(root: &Path) -> Result<serde_json::Value> {
         let directory = root.join("runtimes");
         if present(&directory)? {
             local_ipc::prepare_root(&directory)?;
-            for (count, entry) in fs::read_dir(directory)?.take(6).enumerate() {
-                ensure!(count < 5, "runtime uninstall inventory exceeds bound");
+            for entry in fs::read_dir(directory)? {
                 let entry = entry?;
                 if preserved_payload.as_ref().is_some_and(|preserved| {
                     entry.file_name() == preserved.file_name().unwrap_or_default()
@@ -718,10 +717,6 @@ pub(crate) async fn uninstall(root: &Path) -> Result<serde_json::Value> {
                 runtimes.push(identity);
             }
         }
-        ensure!(
-            runtimes.len() <= 5,
-            "runtime uninstall inventory exceeds bound"
-        );
         let intent = UninstallIntent {
             schema: 1,
             runtimes,
@@ -729,10 +724,7 @@ pub(crate) async fn uninstall(root: &Path) -> Result<serde_json::Value> {
         replace_json(root, "uninstall.json", &intent)?;
         intent
     };
-    ensure!(
-        intent.schema == 1 && intent.runtimes.len() <= 5,
-        "invalid runtime uninstall intent"
-    );
+    ensure!(intent.schema == 1, "invalid runtime uninstall intent");
     // Persist uninstall intent before stopping clients: a racing launcher must
     // refuse another service start while the verified images are being retired.
     let paths = uninstall_process_paths(root, &intent.runtimes)?;

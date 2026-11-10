@@ -159,14 +159,6 @@ pub(super) fn reserved_restore(root: &Path, incoming: &str) -> Result<bool> {
     );
     Ok(true)
 }
-/// Only this pending, preview-bound restore may discount its intact archive.
-pub(super) fn reserved_backup(root: &Path, incoming: &str) -> Result<Option<PathBuf>> {
-    if reserved_restore(root, incoming)? {
-        Ok(Some(backup(root, incoming)?))
-    } else {
-        Ok(None)
-    }
-}
 pub(super) fn saved_identity(root: &Path) -> Result<Option<snapshot::SavedRuntime>> {
     let Some(intent) = pending(root)? else {
         return Ok(None);
@@ -375,8 +367,7 @@ fn apply_with(
             !exists(&preserved)?,
             "a preserved damaged slot already exists; review it before another repair"
         );
-        for (count, entry) in fs::read_dir(root.join("runtimes"))?.take(6).enumerate() {
-            ensure!(count < 5, "repair retained runtime count exceeds bound");
+        for entry in fs::read_dir(root.join("runtimes"))? {
             let path = entry?.path();
             let identity = path
                 .file_name()

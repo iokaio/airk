@@ -121,7 +121,7 @@ def launcher_observation(binary, install, approved):
                 and isinstance(record['path'], str) and Path(record['path']).is_absolute()
                 and re.fullmatch(r'[a-f0-9]{64}', record['sha256'] or ''), 'Invalid native launcher lineage')
     images = value.get('legacy_runtime_images', [])
-    require(isinstance(images,list) and len(images) <= 20, 'Invalid native legacy runtime image census')
+    require(isinstance(images,list), 'Invalid native legacy runtime image census')
     for record in images:
         require(isinstance(record,dict) and set(record) == {'path','sha256','runtime_sha256'}
                 and isinstance(record['path'],str) and Path(record['path']).is_absolute()
@@ -227,7 +227,6 @@ def retire_superseded_after_config(binary, install, approved, config, after, lau
         result = native_json(binary,['runtime','retire-previous','--install-dir',install,'--expected-active',approved])
         retired = result.get('retired_runtimes')
         require(result.get('active') == approved and result.get('complete') is True and isinstance(retired,list)
-                and len(retired) <= 4
                 and all(isinstance(identity,str) and re.fullmatch(r'[a-f0-9]{64}',identity) and identity != approved for identity in retired)
                 and len(set(retired)) == len(retired)
                 and result.get('selected_service_restarted') is False

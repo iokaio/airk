@@ -812,6 +812,10 @@ async fn advance(root: &Path, journal: &mut Journal) -> Result<Selection> {
                 journal.save(root)?;
             }
             journal.roster.check_clean_break(&journal.old_control)?;
+            // The reset discards the predecessor's unfinished ordinary update.
+            // Retire its checkpoint journal before its intent, so a later update
+            // starts its own journal instead of refusing a crossed binding.
+            checkpoint::retire_for_clean_break(root, &journal.old_control)?;
             if exists(&root.join(INTENT))? {
                 fs::remove_file(root.join(INTENT))?;
                 sync_directory(root)?;

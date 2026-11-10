@@ -104,12 +104,8 @@ fn all_predecessor_images_with_universal(
     let (candidate_main, _) = verify_runtime(root, candidate)?;
     let candidate_main = candidate_main.canonicalize()?;
     // This shared inventory authenticates every noncandidate manifest/approval,
-    // role copy and surviving image. Its existing four-runtime bound is retained.
+    // role copy and surviving image, however many predecessor payloads exist.
     let observed = retirement::superseded_images(root, candidate)?;
-    ensure!(
-        observed.len() <= 20,
-        "clean-break predecessor image roster exceeds bound"
-    );
     let mut images = Vec::new();
     for image in observed {
         let path = PathBuf::from(

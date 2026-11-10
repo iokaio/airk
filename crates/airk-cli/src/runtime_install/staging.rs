@@ -119,96 +119,18 @@ pub(super) fn pending(root: &Path) -> Result<Vec<String>> {
     Ok(identities)
 }
 
-#[cfg(test)]
-fn occupied_slots(root: &Path) -> Result<usize> {
-    occupied_slots_for(root, None)
-}
-
-fn occupied_slots_for(root: &Path, incoming: Option<&str>) -> Result<usize> {
-    let runtimes = root.join("runtimes");
-    let backup = incoming
-        .map(|identity| payload_repair::reserved_backup(root, identity))
-        .transpose()?
-        .flatten();
-    let mut physical = 0;
-    let mut slots = 0;
-    let mut backup_seen = false;
-    for entry in fs::read_dir(&runtimes)?.take(7) {
-        physical += 1;
-        ensure!(
-            physical <= 5 + usize::from(backup.is_some()),
-            "runtime directory count exceeds bound"
-        );
-        if backup.as_ref() == Some(&entry?.path()) {
-            backup_seen = true;
-        } else {
-            slots += 1;
-        }
-    }
-    ensure!(
-        backup.is_none() || backup_seen,
-        "reviewed repair archive disappeared"
-    );
-    ensure!(slots <= 5, "runtime slot count exceeds bound");
-    for identity in pending(root)? {
-        let (intent, _) = StageIntent::read(root, &identity)?;
-        if !intent.directory(root).try_exists()? && !runtimes.join(identity).try_exists()? {
-            slots += 1;
-        }
-    }
-    Ok(slots)
-}
-
-/// One modern candidate may temporarily coexist with four approved retained
-/// payloads so migration can finish before removal. Unknown/reserved slots never
-/// earn this allowance, and a crash can resume only the same staged candidate.
-fn slot_limit(root: &Path, incoming: &str, modern: bool, resume: bool) -> Result<usize> {
+/// A reviewed payload repair reserves its restore; no unrelated staging may
+/// begin or resume alongside it. Retained payload count never limits staging:
+/// cleanup after activation (or the clean-break reset) retires superseded ones.
+fn require_repair_reservation(root: &Path, incoming: &str, resume: bool) -> Result<()> {
     if payload_repair::reserved_restore(root, incoming)? {
         let pending = pending(root)?;
         ensure!(
             pending.is_empty() || resume && pending.len() == 1 && pending[0] == incoming,
             "unrelated staging cannot use a reviewed repair reservation"
         );
-        return Ok(5);
     }
-    if !modern || !root.join("selected.json").try_exists()? {
-        return Ok(4);
-    }
-    let pending = pending(root)?;
-    if !(pending.is_empty() || resume && pending.len() == 1 && pending[0] == incoming) {
-        return Ok(4);
-    }
-    activation::require_settled(root)?;
-    retirement::require_previous_settled(root)?;
-    legacy_launchers::require_settled(root)?;
-    legacy_caches::require_settled(root)?;
-    payload_repair::require_settled(root)?;
-    let selected = selection_record(root)?;
-    let ignored = if resume {
-        Some(StageIntent::read(root, incoming)?.0.directory(root))
-    } else {
-        None
-    };
-    let mut approved = 0;
-    let mut selected_seen = false;
-    for (count, entry) in fs::read_dir(root.join("runtimes"))?.take(6).enumerate() {
-        ensure!(count < 5, "runtime escrow directory count exceeds bound");
-        let path = entry?.path();
-        if ignored.as_ref() == Some(&path) {
-            continue;
-        }
-        let identity = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .context("invalid runtime escrow directory")?;
-        if digest(identity).is_err() {
-            return Ok(4);
-        }
-        verify_runtime_inventory(root, identity)?;
-        selected_seen |= identity == selected.active;
-        approved += 1;
-    }
-    Ok(if approved == 4 && selected_seen { 5 } else { 4 })
+    Ok(())
 }
 
 fn validate(
@@ -435,16 +357,7 @@ pub(super) fn stage_locked_with_verifier(
         return Ok(approval);
     }
     let intent = if StageIntent::path(root, approved).try_exists()? {
-        let limit = slot_limit(
-            root,
-            approved,
-            runtime_pair::single_executable(&source.join(main_name()))?,
-            true,
-        )?;
-        ensure!(
-            occupied_slots_for(root, Some(approved))? <= limit,
-            "four retained runtimes/staging reservations occupy this installation"
-        );
+        require_repair_reservation(root, approved, true)?;
         let (intent, _) = StageIntent::read(root, approved)?;
         ensure!(
             intent.manifest_json.as_bytes() == bytes,
@@ -452,20 +365,11 @@ pub(super) fn stage_locked_with_verifier(
         );
         intent
     } else {
-        let slots = occupied_slots_for(root, Some(approved))?;
-        let limit = if slots >= 4 {
-            slot_limit(
-                root,
-                approved,
-                runtime_pair::single_executable(&source.join(main_name()))?,
-                false,
-            )?
-        } else {
-            4
-        };
+        require_repair_reservation(root, approved, false)?;
+        // Bounded interrupted staging records, not retained payloads.
         ensure!(
-            slots < limit,
-            "four retained runtimes/staging directories occupy this installation"
+            pending(root)?.len() < 4,
+            "four interrupted staging reservations occupy this installation; resume or abort them first"
         );
         let lengths = inventory
             .files
