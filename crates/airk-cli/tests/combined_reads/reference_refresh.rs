@@ -404,9 +404,25 @@ async fn assert_paused_pending(
     );
     Ok(())
 }
-#[tokio::test]
-async fn actual_native_refresh_keeps_profile_scope_shared_model_and_exact_receipts_across_restart()
+// This journey's unoptimized future exceeds the default 2 MiB test-thread stack.
+// Run the unchanged body on an owned thread with an explicit stack, as the CLI
+// itself does for its command futures; no process-wide stack setting is used.
+#[test]
+fn actual_native_refresh_keeps_profile_scope_shared_model_and_exact_receipts_across_restart()
 -> Result<()> {
+    std::thread::Builder::new()
+        .name("reference-refresh-journey".into())
+        .stack_size(16 << 20)
+        .spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?
+                .block_on(actual_native_refresh_journey())
+        })?
+        .join()
+        .map_err(|_| anyhow::anyhow!("reference refresh journey panicked"))?
+}
+async fn actual_native_refresh_journey() -> Result<()> {
     let mut f = Fixture::with_inference()?;
     f.session.project_ids = vec![f.projects[2]];
     f.session.index_ids = Some(vec![f.indexes[2]]);

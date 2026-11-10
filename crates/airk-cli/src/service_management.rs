@@ -8,7 +8,7 @@ use airk_store::service::registry::ServiceRegistry;
 use anyhow::Result;
 use std::{
     path::PathBuf,
-    sync::mpsc::{SyncSender, sync_channel},
+    sync::mpsc::{Receiver, SyncSender, sync_channel},
     sync::{
         Arc, Weak,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -41,6 +41,44 @@ enum Envelope {
         ProjectBinding,
         oneshot::Sender<Result<crate::project_supervisor::NativeAdministrativeRead>>,
     ),
+}
+
+/// Receive under a freeze already observed by the metadata actor. The native
+/// admission-release handler can clear recovery admission independently while
+/// this receive is pending. This branch retains its known, unexecuted refusal.
+fn receive_checkpoint_frozen(
+    receiver: &Receiver<Envelope>,
+    observed: &AtomicBool,
+    active: &AtomicUsize,
+    accepted_missing: &AtomicUsize,
+    after_observation: impl FnOnce(),
+) -> bool {
+    observed.store(true, Ordering::Release);
+    after_observation();
+    match receiver.recv_timeout(Duration::from_millis(250)) {
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => false,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => true,
+        Ok(envelope) => {
+            observed.store(false, Ordering::Release);
+            match envelope {
+                Envelope::Request(_, reply) => {
+                    active.fetch_sub(1, Ordering::AcqRel);
+                    let _ = reply.send(ControlResponse::Failure {
+                        code: "runtime_upgrade_in_progress".into(),
+                    });
+                }
+                Envelope::AdministrativeRead(_, reply) => {
+                    active.fetch_sub(1, Ordering::AcqRel);
+                    let _ = reply.send(Err(anyhow::anyhow!("runtime_upgrade_in_progress")));
+                }
+                Envelope::Missing(_) => {
+                    active.fetch_sub(1, Ordering::AcqRel);
+                    accepted_missing.fetch_sub(1, Ordering::AcqRel);
+                }
+            }
+            true
+        }
+    }
 }
 
 struct MissingReporter {
@@ -1315,22 +1353,12 @@ impl Management {
                         && !runnable_plans.load(Ordering::Acquire)
                         && missing_work.is_empty()
                     {
-                        checkpoint_ack.store(true, Ordering::Release);
                         // All accepted operations have settled. Keep ownership
                         // alive, without advancing/pruning metadata after capture.
-                        match receiver.recv_timeout(Duration::from_millis(250)) {
-                            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
-                            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
-                            Ok(envelope) => {
-                                checkpoint_ack.store(false, Ordering::Release);
-                                match envelope {
-                                    Envelope::Request(_, reply) => { active.fetch_sub(1,Ordering::AcqRel); let _=reply.send(ControlResponse::Failure {code:"runtime_upgrade_in_progress".into()}); },
-                                    Envelope::AdministrativeRead(_, reply) => { active.fetch_sub(1,Ordering::AcqRel); let _=reply.send(Err(anyhow::anyhow!("runtime_upgrade_in_progress"))); },
-                                    Envelope::Missing(_) => { active.fetch_sub(1,Ordering::AcqRel); accepted_missing.fetch_sub(1,Ordering::AcqRel); },
-                                }
-                                continue;
-                            }
+                        if !receive_checkpoint_frozen(&receiver, &checkpoint_ack, &active, &accepted_missing, || {}) {
+                            break;
                         }
+                        continue;
                     }
                     checkpoint_ack.store(false, Ordering::Release);
                     if std::time::Instant::now() >= next_tick {
@@ -1691,6 +1719,59 @@ mod tests {
         service::ProjectRegistration,
         service_console::{MAX_PAGE_BYTES, ObservationKind},
     };
+
+    #[test]
+    fn frozen_metadata_receive_retains_unexecuted_refusal_after_recovery_fence_release()
+    -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let root = owner.path().canonicalize()?.join("control");
+        crate::local_ipc::prepare_root(&root)?;
+        let operation = Incarnation::from_bytes([146; 16]);
+        crate::service_runtime::checkpoint::arm_recovery(
+            &root,
+            operation,
+            airk_core::identity::Sha256Digest::from_bytes([147; 32]),
+        )?;
+        // The real actor samples this before entering its frozen receive.
+        assert!(crate::checkpoint_fence::admission_closed(&root)?);
+        let (sender, receiver) = sync_channel(1);
+        let (reply, response) = oneshot::channel();
+        let observed = AtomicBool::new(false);
+        let active = AtomicUsize::new(1);
+        let missing = AtomicUsize::new(0);
+        assert!(receive_checkpoint_frozen(
+            &receiver,
+            &observed,
+            &active,
+            &missing,
+            || {
+                assert!(observed.load(Ordering::Acquire));
+                // Inject release strictly after the frozen observation and
+                // submit the epoch strictly after durable fence removal. No
+                // clock scheduling, process startup or mutation retry is used.
+                crate::service_runtime::checkpoint::settle(&root, operation).unwrap();
+                assert!(!crate::checkpoint_fence::admission_closed(&root).unwrap());
+                assert!(
+                    sender
+                        .send(Envelope::Request(
+                            Box::new(ControlMethod::RequestEpoch),
+                            ManagementReply::Control(reply),
+                        ))
+                        .is_ok()
+                );
+            },
+        ));
+        assert_eq!(
+            serde_json::to_value(response.blocking_recv()?)?,
+            serde_json::json!({"status":"failure","code":"runtime_upgrade_in_progress"})
+        );
+        assert_eq!(active.load(Ordering::Acquire), 0);
+        assert_eq!(missing.load(Ordering::Acquire), 0);
+        assert!(!observed.load(Ordering::Acquire));
+        assert!(!root.join("service-1.4.sqlite3").exists());
+        Ok(())
+    }
+
     #[tokio::test]
     async fn actual_connection_queue_distinguishes_full_from_closed_before_acceptance() -> Result<()>
     {

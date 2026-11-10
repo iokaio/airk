@@ -16,7 +16,7 @@ import {httpMaterial,sameHttpAuthority,publishNativeInput,removeNativeInput,type
 import {ownedConfigurationSource,assertOwnedConfigurationRefresh,assertInstalledWorkbenchCopies,installedWorkbenchCopy,installedParityValue,assertInstalledInputCatalog,assertInstalledEnvelopeParity,type InstalledAgent} from './installedCompletion';
 import {refreshHttpAgentConfig} from '../agentMigration';
 import {toolFormFields,type WorkbenchSession} from '../workbenchContracts';
-import { installedDeliveryFence, installedSelector, installedToolBody, installedMember, installedRevocation, finishInstalledClient, InstalledNativeReplyError as NativeReplyError, installedSourceReview,installedPolicyReady,installedRestoredDefinition,installedDefinitionContinuity } from './installedEditorContracts';
+import { installedDeliveryFence, installedSelector, installedToolBody, installedMember, installedRevocation, finishInstalledClient, InstalledNativeReplyError as NativeReplyError, installedSourceReview,installedPolicyReady,installedRestoredDefinition,installedDefinitionContinuity,installedPublicationBusy } from './installedEditorContracts';
 import {checkInstalledEditorC8,checkInstalledEditorC8Endpoint} from './installedEditorC8';
 import {installInstalledControlTrace} from './installedControlTrace';
 const {publishMailbox,readMailbox}: {publishMailbox(file:string,value:unknown):Promise<void>;readMailbox(file:string):Promise<any>} = require(path.resolve(__dirname,'../../../../scripts/editor-mailbox.cjs'));
@@ -366,8 +366,8 @@ async function runEditor(): Promise<void> {
         await vscode.window.showTextDocument(fixtureDocument);await vscode.commands.executeCommand('airk.index');
         let symbols:any;const until=Math.min(Date.now()+180000,sharedDeadline);
         do{
-            symbols=scoped(await client.call('symbols',{name:own,compact:false}),transportSelection);
-            if(symbols.items?.length===1)break;
+            const observed=await client.call('symbols',{name:own,compact:false});
+            if(!installedPublicationBusy(observed)){symbols=scoped(observed,transportSelection);if(symbols.items?.length===1)break;}
             assert.ok(Date.now()<until,'Explicit native indexing did not publish fixture');await sleep(500);
         }while(true);
         assert.equal(symbols.items[0].citation.path,'fixture.ts');
@@ -394,7 +394,7 @@ async function runEditor(): Promise<void> {
             await mark('edited');await waitFor(marker('edited',role==='a'?'b':'a'));
             const expected=scenario==='same'||role==='a'?1:0,end=Math.min(Date.now()+180000,sharedDeadline);
             let changed:any;
-            do{changed=scoped(await client.call('symbols',{name:'SharedEditEvidence',compact:false}),transportSelection);if(changed.items.length===expected)break;assert.ok(Date.now()<end);await sleep(500);}while(true);
+            do{const observed=await client.call('symbols',{name:'SharedEditEvidence',compact:false});if(!installedPublicationBusy(observed)){changed=scoped(observed,transportSelection);if(changed.items.length===expected)break;}assert.ok(Date.now()<end);await sleep(500);}while(true);
             assert.equal(changed.items.length,expected);
             if(expected)assert.equal(changed.items[0].citation.content_hash,createHash('sha256').update(await fs.readFile(path.join(source,'fixture.ts'))).digest('hex'));
             await mark('retrieved');await waitFor(marker('retrieved',role==='a'?'b':'a'));
@@ -466,7 +466,7 @@ async function runEditor(): Promise<void> {
             const secondaryDefinition=await use(secondary),otherClient=new Mcp(secondaryDefinition,secondaryDefinition.ca);
             try{await otherClient.start();await vscode.commands.executeCommand('airk.index');
                 const deadline=Math.min(Date.now()+180000,sharedDeadline);
-                while(!scoped(await otherClient.call('symbols',{name:'WindowBetaEvidence',compact:false}),secondary).items.length){assert.ok(Date.now()<deadline);await sleep(500);}
+                while(true){const observed=await otherClient.call('symbols',{name:'WindowBetaEvidence',compact:false});if(!installedPublicationBusy(observed)&&scoped(observed,secondary).items.length)break;assert.ok(Date.now()<deadline);await sleep(500);}
             }catch(error){evidence.failure={error:String(error),stack:error instanceof Error?error.stack:undefined,native:error instanceof NativeReplyError?error.reply:error instanceof InstalledHttpFailure?{kind:error.kind,...error.detail}:undefined};throw error;}finally{await finishInstalledClient(otherClient,evidence,mark);}
             const before=await report(secondary);assert.ok(BigInt(before.report.calls)>0n,'The other Index must have real recorded calls before testing preservation');
             const primaryBefore=await report(selection);assert.ok(BigInt(primaryBefore.report.calls)>0n,'Primary Index must have actual usage to clear');
@@ -481,8 +481,14 @@ async function runEditor(): Promise<void> {
             await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
             const after=await report(secondary);
             assert.ok(BigInt(after.report.calls)>=BigInt(before.report.calls),'Clearing one Index must preserve the other Index ledger');
-            await use(selection);
-            scoped(await client.call('symbols',{name:own,compact:false}),transportSelection);
+            const resumed=await use(selection);
+            // The scope selections above committed new catalog grants. That advances the
+            // native admission ticket, so the earlier MCP session is fenced (never rebound)
+            // and a client starts a new session with the current definition.
+            await assert.rejects(client.call('symbols',{name:own,compact:false}),(error:unknown)=>error instanceof InstalledHttpFailure&&(error.detail as {status?:number}|undefined)?.status===404,'Earlier session is fenced after catalog changes');
+            await finishInstalledClient(client,evidence,mark);
+            client=new Mcp(resumed,resumed.ca);await client.start();
+            scoped(await client.call('symbols',{name:own,compact:false}),selection);
             checks.push('scoped Usage remains unavailable until explicit entire-Index administration','actual clear preserves the other Index ledger and read grant');
         }
         if(scenario==='multi'){
@@ -536,10 +542,13 @@ async function runEditor(): Promise<void> {
                 for(const result of [turn.envelope,mcp,cli]){
                     assert.equal(result.status,'complete');assert.equal(result.executed,true);assert.ok(Array.isArray(result.steps)&&result.steps.length===1,'Full single-step parse result');
                     if(tool==='search'){
-                        scoped(result.steps[0].result,transportSelection);
-                        assert.equal(result.steps[0].result.delivery_observation?.digest_basis,'canonical_body_without_delivery_observation');
-                        assert.match(result.steps[0].result.delivery_observation?.receipt?.result_digest,/^[a-f0-9]{64}$/,'Original native delivery digest retained before comparison');
-                        assert.equal(result.steps[0].result.delivery_observation?.receipt?.service_instance,definition.nativeConnection.endpoint.service_instance,'Native delivery belongs to the selected actual service');
+                        // A selected-scope plan step retains its complete native tool envelope
+                        // (text and structured copies), as native combined-read parity verifies.
+                        const member=installedToolBody({result:result.steps[0].result});
+                        scoped(member,transportSelection);
+                        assert.equal(member.delivery_observation?.digest_basis,'canonical_body_without_delivery_observation');
+                        assert.match(member.delivery_observation?.receipt?.result_digest,/^[a-f0-9]{64}$/,'Original native delivery digest retained before comparison');
+                        assert.equal(member.delivery_observation?.receipt?.service_instance,definition.nativeConnection.endpoint.service_instance,'Native delivery belongs to the selected actual service');
                     }
                 }
                 assert.deepEqual(installedParityValue(mcp),installedParityValue(turn.envelope),'Complete actual Workbench/MCP parity');
@@ -607,7 +616,15 @@ async function runEditor(): Promise<void> {
                     catch(error){retained.failure={error:String(error),stack:error instanceof Error?error.stack:undefined,native:error instanceof NativeReplyError?error.reply:error instanceof InstalledHttpFailure?{kind:error.kind,...error.detail}:undefined};throw error;}
                     finally{await finishInstalledClient(fresh,retained,()=>mark('retained-evidence',evidence));}
                 }});
-            const refreshed=await definitions();assert.equal(refreshed.length,1);client=new Mcp(refreshed[0],refreshed[0].ca);await client.start();
+            // The refreshed owned .vscode/mcp.json now names the current endpoint, so it is a
+            // current manual VS Code connection and the provider must not add a second copy.
+            assert.equal((await definitions()).length,0,'A current manual VS Code configuration owns the connection');
+            const manual=ownedConfigurations.find(owned=>owned.agent==='copilot');assert.ok(manual,'Owned VS Code configuration');
+            assert.equal(path.toNamespacedPath(await fs.realpath(manual.file)),path.toNamespacedPath(manual.file));await fs.rm(manual.file);
+            // Removing that owned file returns the same saved selection to the provider.
+            const resumed=await installedRestoredDefinition(definitions,selection.session,observations=>mark('endpoint-refresh-definition-observations',observations),sharedDeadline);
+            assert.ok(sameHttpAuthority(resumed.nativeConnection.selection,{kind:'combined',selection:selection.session}),'Endpoint refresh preserves exact authority');
+            client=new Mcp(resumed,resumed.ca);await client.start();
             checks.push('actual installed endpoint refresh retains selection and trust after owned port collision');
             await vscode.commands.executeCommand('airk.explorer.search','return 42');await mark('explorer-ready');await waitFor(path.join(folder,'explorer-checked.json'));
             checks.push('installed Explorer cited search, current Index sets and live help');

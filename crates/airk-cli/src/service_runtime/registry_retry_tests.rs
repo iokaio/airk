@@ -16,8 +16,11 @@ fn busy() -> ControlResponse {
 async fn registry_busy_retry_retains_full_mutation_and_instance_on_all_request_variants()
 -> Result<()> {
     let owner = tempfile::tempdir()?;
-    local_ipc::prepare_root(owner.path())?;
-    let address = local_ipc::endpoint(owner.path(), "control")?;
+    // The temporary directory is a cleanup owner, not an AIRK runtime root.
+    // Create the actual root with AIRK's explicit owner-only ACL on Windows.
+    let root = owner.path().join("runtime");
+    local_ipc::prepare_root(&root)?;
+    let address = local_ipc::endpoint(&root, "control")?;
     let mut listener = Listener::bind(&address)?;
     let instance = Incarnation::from_bytes([31; 16]);
     let original = ControlMethod::Enqueue {
@@ -57,14 +60,12 @@ async fn registry_busy_retry_retains_full_mutation_and_instance_on_all_request_v
     });
     for variant in 0..4 {
         let response = match variant {
-            0 => request(owner.path(), original.clone()).await,
-            1 => {
-                request_for_version(owner.path(), original.clone(), env!("CARGO_PKG_VERSION")).await
-            }
-            2 => request_for_instance(owner.path(), original.clone(), instance).await,
+            0 => request(&root, original.clone()).await,
+            1 => request_for_version(&root, original.clone(), env!("CARGO_PKG_VERSION")).await,
+            2 => request_for_instance(&root, original.clone(), instance).await,
             _ => {
                 request_for_version_and_instance(
-                    owner.path(),
+                    &root,
                     original.clone(),
                     env!("CARGO_PKG_VERSION"),
                     instance,

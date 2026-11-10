@@ -1,0 +1,288 @@
+{
+  "schema": "airk.dependency-source-review-proposal/1",
+  "status": "PRIMARY_AGENT_REVIEWED_LIMITED_EXCEPTIONS",
+  "date": "2026-11-09",
+  "scope": "Exact locked archive integrity, manifests/licenses and targeted source review; no full audit or publisher authentication.",
+  "packages": [
+    {
+      "identity": {
+        "name": "block-buffer",
+        "version": "0.12.1",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "d2f6c7dbe95a6ed67ad9f18e57daf93a2f034c524b99fd2b76d18fdfeb6660aa"
+      },
+      "archive_bytes": 15902,
+      "archive_links": 0,
+      "packaged_files": 12,
+      "packaged_tree_sha256": "7ab096bd8ec1ee125a44a8113c65b5cdfc619a89db730d77576aa2a44af00ee2",
+      "manifest_sha256": "f21191120ab1d04327657b7125f25b0e3f2bce34af5e921d3c66d24de11d5e60",
+      "original_manifest_sha256": "6ccb29916ec67b7d6e3a86203a8296795e8f3e25ae94a307ede8fdc79f07aee1",
+      "declared_license": "MIT OR Apache-2.0",
+      "declared_repository": "https://github.com/RustCrypto/utils",
+      "build": false,
+      "license_files": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10849,
+          "sha256": "a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1082,
+          "sha256": "98181e7249d0c01737645ec982499ce99a0f07eb8f7d625b8840d799d10dbc01"
+        }
+      ],
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "cbd0963c685df025c42bed31f78c50d1bada3805"
+        },
+        "path_in_vcs": "block-buffer"
+      },
+      "review_rationale": "Reviewed limited exact-version exception for SHA-2 block buffering; source review supply-chain/reviews/rmcp-2026-11-09.md. no_std MaybeUninit/raw-pointer buffer paths inspect length/position invariants, sealed nonzero block sizes and panic-reset guards. No build script or I/O found. Not a complete unsafe-code proof."
+    },
+    {
+      "identity": {
+        "name": "const-oid",
+        "version": "0.10.2",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
+      },
+      "archive_bytes": 61449,
+      "archive_links": 0,
+      "packaged_files": 22,
+      "packaged_tree_sha256": "75c7b0d98e8668070a48c0a17b86522c7e8fbffb8e939a664180d6136e849da9",
+      "manifest_sha256": "591ac78fc8cd99d8a31110e8cb572534bb9d04af23bc48db855a34d4a6c78569",
+      "original_manifest_sha256": "5b1f18ecd9c18d9e4b68c01b6a3ec445e74bb17a3105c765a52bf81f3b627024",
+      "declared_license": "Apache-2.0 OR MIT",
+      "declared_repository": "https://github.com/RustCrypto/formats",
+      "build": false,
+      "license_files": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10849,
+          "sha256": "a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1082,
+          "sha256": "73b9dc2e79c7308998dd30296e073aefaefb944a68fb89aa412c23c0edcabcaa"
+        }
+      ],
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "385ef739bcec785472c7c971c57f26f87caca3b8"
+        },
+        "path_in_vcs": "const-oid"
+      },
+      "review_rationale": "Reviewed limited exact-version exception for digest OID metadata; source review supply-chain/reviews/rmcp-2026-11-09.md. no_std BER/DER encoding and validated borrowed OID newtypes; repr(transparent) slice cast inspected. No build script or I/O found. Not an exhaustive parser/unsafe audit."
+    },
+    {
+      "identity": {
+        "name": "crypto-common",
+        "version": "0.2.2",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "ce6e4c961d6cd6c9a86db418387425e8bdeaf05b3c8bc1411e6dca4c252f1453"
+      },
+      "archive_bytes": 15449,
+      "archive_links": 0,
+      "packaged_files": 11,
+      "packaged_tree_sha256": "ae052127c4363024b3b54c0e00471400eace38dd5d281beaf0df074d313cda91",
+      "manifest_sha256": "1b47561054dd2fe13246f2f6e19c29eac256269e02c96162fd6efed28247e78a",
+      "original_manifest_sha256": "641496dad5ec97068ad03afbd52510f1c3eefda372774a093f829d6dbb8bc768",
+      "declared_license": "MIT OR Apache-2.0",
+      "declared_repository": "https://github.com/RustCrypto/traits",
+      "build": false,
+      "license_files": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10849,
+          "sha256": "a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1070,
+          "sha256": "d2e7ec5355c96eeade56b09187ceb48a6a30299da3ce7531a66d3d11405ab963"
+        }
+      ],
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "93dee26c6bde3741a197f1c5f6b7baac277705f3"
+        },
+        "path_in_vcs": "crypto-common"
+      },
+      "review_rationale": "Reviewed limited exact-version exception for digest traits; source review supply-chain/reviews/rmcp-2026-11-09.md. no_std, forbids unsafe code, typed block/output traits; optional entropy features not requested by new SHA-2 path. No build script or I/O found in enabled core. Not a full API audit."
+    },
+    {
+      "identity": {
+        "name": "digest",
+        "version": "0.11.3",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "f1dd6dbb5841937940781866fa1281a1ff7bd3bf827091440879f9994983d5c2"
+      },
+      "archive_bytes": 28955,
+      "archive_links": 0,
+      "packaged_files": 26,
+      "packaged_tree_sha256": "2ef99c5d1cb384512f8e0a8942136ba7fac86f558be698f94c1f0844b026e699",
+      "manifest_sha256": "59c4f2cba7e34831c87e8f4844718d91d0f276af7bd192de76fda7d5a8978eb9",
+      "original_manifest_sha256": "2ed5b0bcc71fea312bab365473c67af110be4d18a8dca67bfdf8e9d46556d830",
+      "declared_license": "MIT OR Apache-2.0",
+      "declared_repository": "https://github.com/RustCrypto/traits",
+      "build": false,
+      "license_files": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10849,
+          "sha256": "a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1103,
+          "sha256": "af59cea35d7f5e2777a713b8d155d65efa2c339eb43f3c14e868c6ac8506edad"
+        }
+      ],
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "2fb9ed8922e244117040bb037a7d141a6a2b8228"
+        },
+        "path_in_vcs": "digest"
+      },
+      "review_rationale": "Reviewed limited exact-version exception for SHA-2 traits; source review supply-chain/reviews/rmcp-2026-11-09.md. no_std, forbids unsafe code, block API and OID metadata wrappers; no build script or runtime I/O found. Not a full trait/cryptographic audit."
+    },
+    {
+      "identity": {
+        "name": "hybrid-array",
+        "version": "0.4.15",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "27f864f10dfb56725ce5ce5472bc52252c8f93a4ab86327122cebf62c5f59a17"
+      },
+      "archive_bytes": 36801,
+      "archive_links": 0,
+      "packaged_files": 24,
+      "packaged_tree_sha256": "a852d8128e65152813671df7f3ce42906992c9f44b7f35cc854ca71e40f0f3e1",
+      "manifest_sha256": "0f4ca21a2707a25425c1b7f8977a7534bd350c0c650cdea4c49497397a5a8aa8",
+      "original_manifest_sha256": "5f49cd2617f1eb493920a63216c9ba9919f9aff99b2d309460629d7b7e632ab9",
+      "declared_license": "MIT OR Apache-2.0",
+      "declared_repository": "https://github.com/RustCrypto/hybrid-array",
+      "build": false,
+      "license_files": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10849,
+          "sha256": "a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1082,
+          "sha256": "70c9d40f1f9545c3f133b8a67206e89da850f6468eed072281bb3701514114a9"
+        }
+      ],
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "09310c55b75e2cd408951c7e2e86dba16c63fc68"
+        },
+        "path_in_vcs": ""
+      },
+      "review_rationale": "Reviewed limited exact-version exception for digest arrays; source review supply-chain/reviews/rmcp-2026-11-09.md. repr(transparent) typed arrays, unsafe slice/layout casts and MaybeUninit construction with initialized-prefix drop guard inspected. No build script or I/O found. Not a full unsafe/panic-safety audit."
+    },
+    {
+      "identity": {
+        "name": "rmcp",
+        "version": "3.9.0",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "d24a7e92f4bcaa36b97fa93c4fa7ca8f3e669eced949345b3462dba333c7f909"
+      },
+      "archive_bytes": 677294,
+      "archive_links": 0,
+      "packaged_files": 189,
+      "packaged_tree_sha256": "26361aeeed3c96754592df950e71992703dce303c5dd127337c046cd5846eda5",
+      "manifest_sha256": "93b3a36d62507f952882210d62a31108fe2a42dae4fada7a8616afad295b8495",
+      "original_manifest_sha256": "f2e75335f07b7b2d4b38939ca91320654936a37786609bd8ab26d70add67d697",
+      "declared_license": "Apache-2.0",
+      "declared_repository": "https://github.com/modelcontextprotocol/rust-sdk/",
+      "build": "build.rs",
+      "license_files": [
+        {
+          "path": "LICENSE",
+          "bytes": 12227,
+          "sha256": "0382b0057770ca05e9c350a50aa3b1c1fea84da0bc81d723bf00b9aa841be58a"
+        }
+      ],
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "5596a8a0bba2a1ec5519cc855cdadf23e4dcecdc"
+        },
+        "path_in_vcs": "crates/rmcp"
+      },
+      "review_rationale": "Reviewed limited exact-version exception for SDK security update; source review supply-chain/reviews/rmcp-2026-11-09.md. Server schema cache removed; bounded existing AIRK authentication/session/admission remains required. OAuth and built-in HTTP client features disabled. Unchanged build hook invokes git only when package grandparent has .git and .githooks. Not a full audit, publisher authentication or fresh advisory clearance."
+    },
+    {
+      "identity": {
+        "name": "rmcp-macros",
+        "version": "3.9.0",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "b3140f24a766f80f9ec1607bde85680959a69b83d46fa9ce87dadab7e67ab029"
+      },
+      "archive_bytes": 24500,
+      "archive_links": 0,
+      "packaged_files": 15,
+      "packaged_tree_sha256": "0fa441ba2fa90fd48efc28056fd379cd9f98cf04c767533e6b50cee76aef42e2",
+      "manifest_sha256": "47b74c9f300e3d385746a2d795dddccdfb89e0a4e45ee0b7a14872d3704d973f",
+      "original_manifest_sha256": "e5b43c9c585f987a71abfc2dca5a687cb6aae424c15615ff94e60a29547f99cb",
+      "declared_license": "Apache-2.0",
+      "declared_repository": "https://github.com/modelcontextprotocol/rust-sdk/",
+      "build": false,
+      "license_files": [
+        {
+          "path": "LICENSE",
+          "bytes": 12227,
+          "sha256": "0382b0057770ca05e9c350a50aa3b1c1fea84da0bc81d723bf00b9aa841be58a"
+        }
+      ],
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "5596a8a0bba2a1ec5519cc855cdadf23e4dcecdc"
+        },
+        "path_in_vcs": "crates/rmcp-macros"
+      },
+      "review_rationale": "Reviewed limited exact-version exception for SDK procedural macros; source review supply-chain/reviews/rmcp-2026-11-09.md. Host compile-time token/schema generation via syn/quote; no filesystem/network/process access found in inspected macro sources. No build script. Not a full macro expansion or security audit."
+    },
+    {
+      "identity": {
+        "name": "sha2",
+        "version": "0.11.1",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "47d7069beb7d6ac7b9acd1039986e73443f24234f41074da099d6f994ac9ad19"
+      },
+      "archive_bytes": 32748,
+      "archive_links": 0,
+      "packaged_files": 47,
+      "packaged_tree_sha256": "3a73e7f7adbe8a879595f7e1c958e844a3672a74f3105d270381e76868458ae7",
+      "manifest_sha256": "a2eb64ea4fa73cd686f453b7428c415dad6dda57c4e0b6825ffc6f6d765dcc05",
+      "original_manifest_sha256": "299b7d67eab3668223eb4f3f295a2120d1aeeddf5aa7ae19295ae1959600a8f0",
+      "declared_license": "MIT OR Apache-2.0",
+      "declared_repository": "https://github.com/RustCrypto/hashes",
+      "build": false,
+      "license_files": [
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10849,
+          "sha256": "a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1196,
+          "sha256": "831e0f43ad0bf014c1c4fec5767aae470434c1d66d6e671be2d823e729063e25"
+        }
+      ],
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "138dc5a05b93f8e49cda177fc6cfd7cc43673e5d"
+        },
+        "path_in_vcs": "sha2"
+      },
+      "review_rationale": "Reviewed limited exact-version exception for SDK skill manifest SHA-256 support; source review supply-chain/reviews/rmcp-2026-11-09.md. no_std digest implementation with checked CPU-feature dispatch and unsafe hardware intrinsics/raw block operations; software fallback retained. No build script or network/process access found. No cryptographic correctness, constant-time or full unsafe audit."
+    }
+  ],
+  "source_policy_before_sha256": "05405400ce8fb3e26e3e3bae0130a905df7b18f8436f566a7d86d2c0d08980e0",
+  "integration_review": "Primary agent reviewed exact lock/source-policy/exemption identities, source findings, SDK dispatch/cache/build-hook diff, API aliases and regressions independently of the implementing agent. User approved the narrow modern catalog cache-hint D8 exception. No human audit certification or exhaustive source audit is claimed."
+}

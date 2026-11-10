@@ -61,3 +61,18 @@ test('paused/pending work exhausts bounded reads without a policy retry or cance
     assert.equal(reads,2);assert.equal(mutations,0);
     await assert.rejects(waitForIndexIdle(async()=>value,expected,{deadline:0,now:()=>0}),/deadline/);
 });
+test('initial index-work proof observed earlier in the same wait survives automatic maintenance replacing the latest observation',async()=>{
+    // Sequence retained from the installed different-window run: vectors succeeded with verify pending, then verify succeeded and idle.
+    const first=idle();first.observation.job.kind='vectors';first.pending_job={id:'e'.repeat(64),project:expected.project,state:'pending'};first.pending_paused=false;
+    const later=idle();later.observation.job.kind='verify';later.observation.job.id='e'.repeat(64);later.observation.progress.job='e'.repeat(64);
+    let reads=0,time=0;const values=[first,later];
+    const result=await waitForIndexIdle(async()=>values[reads++],expected,{deadline:5000,now:()=>time,pause:async ms=>{time+=ms;}});
+    assert.equal(reads,2);assert.deepEqual(result.progress,later);assert.equal(result.initial_index_work.observation,1);assert.equal(result.initial_index_work.job.kind,'vectors');
+    // A new fencing generation discards the earlier proof.
+    const refenced=structuredClone(later);refenced.observation.current_fencing_generation=3;refenced.observation.worker.fencing_generation=3;refenced.observation.job.fencing_generation=3;
+    reads=0;time=0;const crossed=[first,refenced,refenced];
+    await assert.rejects(waitForIndexIdle(async()=>crossed[Math.min(reads++,2)],expected,{deadline:10000,maxObservations:3,now:()=>time,pause:async ms=>{time+=ms;}}),/request budget/);
+    // Failed initial work still refuses.
+    const failed=idle();failed.observation.job.state='failed';
+    await assert.rejects(waitForIndexIdle(async()=>failed,expected,{deadline:5000,now:()=>0}),/did not succeed/);
+});

@@ -9,8 +9,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream, ReadHal
 
 struct Catalog;
 impl ServerHandler for Catalog {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("airk", env!("CARGO_PKG_VERSION")))
     }
 
@@ -246,4 +246,46 @@ async fn metadata_validation_and_negotiation_survive_bad_requests() {
         json!({"client":"old-client","protocol":"2025-11-25"})
     );
     wire.server.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn catalog_cache_hints_are_modern_only_and_do_not_change_tool_results() {
+    let mut legacy = Wire::new();
+    legacy
+        .send(1, "initialize", initialize("legacy", "2025-11-25"))
+        .await;
+    assert!(legacy.reply(1).await.get("error").is_none());
+    legacy.send(2, "tools/list", json!({})).await;
+    let legacy_catalog = legacy.reply(2).await["result"].clone();
+    assert!(legacy_catalog.get("ttlMs").is_none());
+    assert!(legacy_catalog.get("cacheScope").is_none());
+
+    let mut modern = Wire::new();
+    modern
+        .send(1, "tools/list", json!({"_meta":metadata("modern")}))
+        .await;
+    let modern_catalog = modern.reply(1).await["result"].clone();
+    assert_eq!(modern_catalog["ttlMs"], 0);
+    assert_eq!(modern_catalog["cacheScope"], "private");
+    assert_eq!(modern_catalog["tools"], legacy_catalog["tools"]);
+    for (wire, params) in [
+        (&mut legacy, json!({"name":"projects","arguments":{}})),
+        (
+            &mut modern,
+            json!({"name":"projects","arguments":{},"_meta":metadata("modern")}),
+        ),
+    ] {
+        wire.send(3, "tools/call", params).await;
+        let result = wire.reply(3).await["result"].clone();
+        assert!(result.get("ttlMs").is_none());
+        assert!(result.get("cacheScope").is_none());
+        assert_eq!(result["content"][0]["type"], "text");
+        assert!(
+            serde_json::from_str::<Value>(result["content"][0]["text"].as_str().unwrap()).unwrap()
+                ["client"]
+                .is_string()
+        );
+    }
+    legacy.server.close().await.unwrap();
+    modern.server.close().await.unwrap();
 }

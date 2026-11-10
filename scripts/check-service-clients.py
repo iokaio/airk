@@ -11,6 +11,7 @@ import math
 import os
 from pathlib import Path
 import queue
+import re
 import sqlite3
 import subprocess
 import tempfile
@@ -368,13 +369,25 @@ def reviewed_runtime_contract(manifest_sha256, source_sha256, version):
 def classify_runtime(runtime):
     metadata_bytes = (runtime / "airk-runtime.json").read_bytes()
     metadata = json.loads(metadata_bytes)
+    if not isinstance(metadata, dict):
+        raise ValueError("Fixture runtime metadata must be an object")
     schema = metadata.get("schema")
-    if schema not in (1, 2):
+    if type(schema) is not int or schema not in (1, 2):
         raise ValueError("Unsupported fixture executable topology")
     if schema == 2:
+        version = metadata.get("version")
+        if (not isinstance(version, str)
+                or not re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", version)):
+            raise ValueError("Unsupported single-image runtime version")
+        # The builder owns executable topology. This classification does not
+        # approve persisted state, an upgrade or the payload's authenticity;
+        # native stage/activation still validates those independent contracts.
+        specification = importlib.util.spec_from_file_location("client_fixture_runtime_builder", Path(__file__).with_name("build-service-runtime.py"))
+        builder = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(builder)
         main_digest = metadata.get("airk_sha256")
         if (set(metadata) != {"schema", "version", "os", "arch", "airk_sha256"}
-                or metadata.get("version") != "1.8.14"
+                or not builder.single_image_version(version)
                 or metadata.get("os") not in ("windows", "macos", "linux")
                 or metadata.get("arch") not in ("x86_64", "aarch64")
                 or not isinstance(main_digest, str) or len(main_digest) != 64

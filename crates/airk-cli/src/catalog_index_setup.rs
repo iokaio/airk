@@ -119,6 +119,17 @@ fn review_inner(
             state.revision == request.expected_catalog_revision,
             "native setup review is stale"
         );
+        if legacy_adoption.is_none() {
+            // Refuse a source or data root inside AIRK-private locations at
+            // review time. The reservation repeats this in its transaction.
+            let additional = request
+                .sources
+                .iter()
+                .filter(|source| !source.owner)
+                .map(|source| source.canonical_path.clone())
+                .collect::<Vec<_>>();
+            registry.preflight_source_isolation(&request.registration, &additional)?;
+        }
     }
     let mut review = review_filesystem(control, request, previous.is_some())?;
     review.legacy_adoption = legacy_adoption;

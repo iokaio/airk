@@ -49,6 +49,32 @@ their SPDX requirement.
 
 ## Policy
 
+### Candidate MCP security update — 9 November 2026
+
+The working candidate pins `rmcp` and `rmcp-macros` to 3.9.0. This updates
+the dependency beyond the published affected ranges for
+[RUSTSEC-2026-0461](https://rustsec.org/advisories/RUSTSEC-2026-0461.html)
+(server schema cache),
+[RUSTSEC-2026-0457](https://rustsec.org/advisories/RUSTSEC-2026-0457.html)
+(OAuth SSRF), and
+[RUSTSEC-2026-0462](https://rustsec.org/advisories/RUSTSEC-2026-0462.html)
+(HTTP client response buffering). No advisory waiver is added. AIRK enables the
+server transport; its gateway authenticates before SDK dispatch. The OAuth and
+built-in HTTP client transport features are disabled. Authentication alone is
+not the disposition for the enabled server finding.
+
+The [source review](../supply-chain/reviews/rmcp-2026-11-09.md)
+and [exact archive inventory](../supply-chain/reviews/rmcp-2026-11-09.json)
+cover the SDK, macros and six new RustCrypto package identities. The primary
+independently reviewed their limited exact-version cargo-vet exceptions; these
+are not audit certifications or human approvals. The fresh dependency audit,
+release legal-notice bundle and all 171 MCP library tests passed. Existing dated
+advisory exceptions and publisher-declaration dispositions remain explicit.
+The user approved the narrow D8 exception for modern catalog cache-hint fields;
+complete transport replies retain them. Exact runtime/artifact and installed
+qualification remain pending in the
+[security readiness record](simplify/security-readiness.md).
+
 ### Contributor setup and offline checks
 
 Install the repository-pinned Rust toolchain and the three pinned policy tools

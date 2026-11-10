@@ -9,7 +9,7 @@ use rmcp::{
     ErrorData, RoleServer, ServerHandler,
     model::{
         ClientNotification, ClientRequest, InitializeRequestParams, PingRequestMethod,
-        ProtocolVersion, ServerInfo, ServerResult,
+        ProtocolVersion, ServerConfig, ServerResult,
     },
     service::{NotificationContext, RequestContext, Service},
 };
@@ -133,7 +133,7 @@ impl<H: ServerHandler> Service<RoleServer> for StdioLifecycle<H> {
         Service::handle_notification(&self.handler, notification, context).await
     }
 
-    fn get_info(&self) -> ServerInfo {
+    fn get_info(&self) -> ServerConfig {
         self.handler.get_info()
     }
 

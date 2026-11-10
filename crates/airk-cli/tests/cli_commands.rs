@@ -44,6 +44,36 @@ fn json_ok(args: &[&str]) -> Result<Value> {
         .with_context(|| format!("airk {} printed no JSON", args.join(" ")))
 }
 
+#[test]
+fn standalone_uninstall_without_confirmation_preserves_the_explicit_installation() -> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let install = owner.path().join("install");
+    fs::create_dir(&install)?;
+    let original = b"Unreviewed installation bytes must survive a declined uninstall.";
+    fs::write(install.join("unknown.bin"), original)?;
+    let output = airk()
+        .arg("--service-install-dir")
+        .arg(&install)
+        .arg("uninstall")
+        .stdin(Stdio::null())
+        .output()?;
+    ensure!(
+        !output.status.success(),
+        "noninteractive uninstall ran without confirmation"
+    );
+    ensure!(
+        String::from_utf8_lossy(&output.stderr).contains("interactive setup needs a terminal"),
+        "uninstall failed for an unrelated reason: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    ensure!(fs::read(install.join("unknown.bin"))? == original);
+    ensure!(
+        fs::read_dir(&install)?.count() == 1,
+        "unconfirmed uninstall changed installation metadata"
+    );
+    Ok(())
+}
+
 /// Direct reads can return a typed busy/retry refusal while workers start.
 fn headless_read(root: &Path, data: &Path, args: &[&str]) -> Result<Value> {
     let mut command = common::evidence_command(root, data, "demo");
@@ -1085,6 +1115,11 @@ const ELSEWHERE: &[(&str, &str, &str)] = &[
         "\"setup\"",
     ),
     (
+        "uninstall",
+        "this file",
+        "standalone_uninstall_without_confirmation_preserves_the_explicit_installation",
+    ),
+    (
         "setup-model",
         "scripts/check-service-clients.py",
         "setup-model",
@@ -1190,8 +1225,8 @@ const ELSEWHERE: &[(&str, &str, &str)] = &[
     ),
     (
         "runtime abort-layout",
-        "crates/airk-cli/src/runtime_install/layout.rs",
-        "abort",
+        "crates/airk-cli/src/runtime_install/layout/tests.rs",
+        "failed_or_abandoned_claim_preserves_foreign_state_and_permits_a_new_reviewed_location",
     ),
     (
         "runtime abort-stage",

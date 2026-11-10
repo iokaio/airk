@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import {reviewCombinedScopeSelection} from '../scopeSelection';
 import {InstalledHttpFailure} from './installedEditorHttp';
 import {test} from 'node:test';import {strict as assert} from 'node:assert';
-import {installedDeliveryFence,installedSelector,installedToolBody,installedMember,installedRevocation,finishInstalledClient,InstalledNativeReplyError,installedSourceReview,installedPolicyReady,installedRestoredDefinition,installedDefinitionContinuity} from './installedEditorContracts';
+import {installedDeliveryFence,installedSelector,installedToolBody,installedMember,installedRevocation,finishInstalledClient,InstalledNativeReplyError,installedSourceReview,installedPolicyReady,installedRestoredDefinition,installedDefinitionContinuity,installedPublicationBusy} from './installedEditorContracts';
 const id=(prefix:string,byte:string)=>prefix+byte.repeat(32),hash=(byte:string)=>byte.repeat(64);
 
 const planWire=(body:any)=>({result:{isError:false,content:[{type:'text',text:JSON.stringify(body)}],structuredContent:structuredClone(body)}});
@@ -356,4 +356,21 @@ test('completed exact native deletion plus empty TLS reset proves delivery fence
 test('versioned native HTTP refusal keeps its complete body and requires matching deletion proof',()=>{
     const {f,review,applied}=completedDeletion();for(const [status,code]of [[403,'native_grant_refused'],[503,'native_delivery_fenced']] as const){const body={schema:'airk.local-api-error/1',error:{code},future:{retained:true}},failure=new InstalledHttpFailure('http',{status,response_bytes:100,body});installedDeliveryFence(failure,review,applied,f.selection.session);assert.equal(failure.detail.body,body);}
     assert.throws(()=>installedDeliveryFence(new InstalledHttpFailure('http',{status:500,response_bytes:10,body:{schema:'airk.local-api-error/1',error:{code:'native_delivery_fenced'}}}),review,applied,f.selection.session));
+});
+test('publication wait polls through only the exact typed report-mode publication_busy member',()=>{
+    // Shape retained from the installed multi-scenario reply observed while an index was publishing.
+    const busy=()=>({schema:'airk.combined-read/1',partial:true,truncated:false,ranking:[],continuation_unavailable:'member_failure_or_budget_cutoff',
+        members:[{index_id:'idx_'+'15'.repeat(16),is_error:true,outcome:'failed',result:{action:'repeat_same_request',code:'publication_busy',retry_after_ms:25,retryable:true,status:'retry'}}]});
+    assert.equal(installedPublicationBusy(busy()),true);
+    for(const change of [(v:any)=>{v.members[0].result.code='source_denied';},(v:any)=>{v.members[0].result.retryable=false;},(v:any)=>{v.members[0].result.status='failure';},
+        (v:any)=>{v.members[0].result.action='review_scope';},(v:any)=>{v.members[0].result.retry_after_ms=25.5;},(v:any)=>{v.members[0].outcome='complete';},(v:any)=>{v.members[0].is_error=false;},
+        (v:any)=>{v.partial=false;},(v:any)=>{v.members.push(structuredClone(v.members[0]));},(v:any)=>{v.ranking=[{}];},(v:any)=>{v.schema='other';}]){
+        const value=busy();change(value);assert.equal(installedPublicationBusy(value),false);
+    }
+    for(const value of [undefined,null,{},[],'publication_busy'])assert.equal(installedPublicationBusy(value),false);
+    // Shape retained from the installed usage-scenario reply observed while the first publication replaced its projection.
+    const expired=()=>{const value=busy() as any;value.members[0].result={collection:'fixture-a',error:{code:'source_projection_expired',query_replay_safe:false,query_submitted:true,retryable:false}};return value;};
+    assert.equal(installedPublicationBusy(expired()),true);
+    for(const change of [(v:any)=>{v.members[0].result.error.code='source_denied';},(v:any)=>{v.members[0].result.error.retryable=true;},(v:any)=>{v.members[0].result.error.query_submitted=false;},
+        (v:any)=>{delete v.members[0].result.error;},(v:any)=>{v.members[0].outcome='complete';}]){const value=expired();change(value);assert.equal(installedPublicationBusy(value),false);}
 });

@@ -703,14 +703,94 @@ pub(super) fn start(
     result
 }
 
+/// Fresh private runtime for process tests that retain their own child handles.
+/// The caller retains its directory on failure and proves each later child exit.
+pub(super) fn installed_runtime(owner: &Path) -> Result<(PathBuf, PathBuf, PathBuf)> {
+    let owner = owner.canonicalize()?;
+    git_configuration(&owner)?;
+    let (payload, digest) = payload(&owner)?;
+    let executable = payload.join(airk_cli::install_files::main_name());
+    let install = owner.join("install");
+    let state = owner.join("state");
+    let path = |value: &Path| {
+        value
+            .to_str()
+            .context("non-UTF8 fixture path")
+            .map(str::to_owned)
+    };
+    cli(
+        &executable,
+        &[
+            "runtime",
+            "stage",
+            "--source",
+            &path(&payload)?,
+            "--install-dir",
+            &path(&install)?,
+            "--state-dir",
+            &path(&state)?,
+            "--approved-sha256",
+            &digest,
+            "--verification-basis",
+            "organization-digest",
+        ],
+        None,
+        &owner,
+    )?;
+    cli(
+        &executable,
+        &[
+            "runtime",
+            "activate",
+            "--install-dir",
+            &path(&install)?,
+            "--runtime-sha256",
+            &digest,
+        ],
+        None,
+        &owner,
+    )?;
+    let (control, executable) = installed_paths(&executable, &install, &state, &owner)?;
+    let stopped = Rpc::new(&control, &owner)?.call(json!("shutdown"))?;
+    ensure!(
+        stopped["status"] == "stopping",
+        "fixture bootstrap did not acknowledge shutdown: {stopped}"
+    );
+    let until = Instant::now() + Duration::from_secs(30);
+    loop {
+        if let Ok(lease) = airk_store::service::ServiceLease::acquire(&control) {
+            drop(lease);
+            break;
+        }
+        ensure!(
+            Instant::now() < until,
+            "fixture bootstrap retained native ownership"
+        );
+        std::thread::yield_now();
+    }
+    Ok((install, control, executable))
+}
+
 pub(super) fn additional_project(
     service: &ReviewedService,
     root: &Path,
     data: &Path,
     label: &str,
 ) -> Result<ProjectRegistration> {
+    setup_project(&service.control, root, data, label)
+}
+
+pub(super) fn setup_project(
+    control: &Path,
+    root: &Path,
+    data: &Path,
+    label: &str,
+) -> Result<ProjectRegistration> {
     let root = root.canonicalize()?;
-    let owner = service.install.parent().context("reviewed owner missing")?;
+    let owner = control
+        .parent()
+        .and_then(Path::parent)
+        .context("reviewed owner missing")?;
     ensure!(
         !root.starts_with(owner) && !owner.starts_with(&root),
         "additional fixture source overlaps service owner"
@@ -719,7 +799,7 @@ pub(super) fn additional_project(
         data.is_absolute(),
         "additional fixture data root must be explicit"
     );
-    let mut rpc = Rpc::new(&service.control, owner)?;
+    let mut rpc = Rpc::new(control, owner)?;
     let descriptor = rpc.call(json!({"catalog_host_context":{"key":format!("{}{}",nonce()?,nonce()?),"expected_catalog_revision":null}}))?;
     let key = rpc.key()?;
     let draft = rpc.call(json!({"catalog_index_setup_draft":{"selection":{"key":key,

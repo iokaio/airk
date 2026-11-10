@@ -864,6 +864,55 @@ fn unix_ms() -> Result<u64> {
     )?)
 }
 
+#[derive(Debug)]
+struct StartupCooldown {
+    observed_unix_ms: u64,
+    not_before_unix_ms: u64,
+}
+impl std::fmt::Display for StartupCooldown {
+    fn fmt(&self, output: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        output.write_str("on-demand restart backoff active; retry later")
+    }
+}
+impl std::error::Error for StartupCooldown {}
+
+trait StartupClock: Sync {
+    fn wall_ms(&self) -> Result<u64>;
+    fn monotonic(&self) -> tokio::time::Instant;
+    fn wait_until(
+        &self,
+        until: tokio::time::Instant,
+    ) -> impl std::future::Future<Output = Result<()>> + Send;
+}
+struct NativeStartupClock;
+impl StartupClock for NativeStartupClock {
+    fn wall_ms(&self) -> Result<u64> {
+        unix_ms()
+    }
+    fn monotonic(&self) -> tokio::time::Instant {
+        tokio::time::Instant::now()
+    }
+    async fn wait_until(&self, until: tokio::time::Instant) -> Result<()> {
+        tokio::time::sleep_until(until).await;
+        Ok(())
+    }
+}
+enum StartupAdmission<'a> {
+    Immediate,
+    Operation {
+        binding: &'a activation::StartupBinding<'a>,
+        deadline: tokio::time::Instant,
+    },
+}
+impl StartupAdmission<'_> {
+    fn deadline(&self) -> Option<tokio::time::Instant> {
+        match self {
+            Self::Immediate => None,
+            Self::Operation { deadline, .. } => Some(*deadline),
+        }
+    }
+}
+
 fn startup_attempt(root: &Path, identity: &str, now: u64) -> Result<()> {
     digest(identity)?;
     let name = format!("startup-{identity}.json");
@@ -887,10 +936,20 @@ fn startup_attempt(root: &Path, identity: &str, now: u64) -> Result<()> {
     );
     if let Some(last) = state.attempts_unix_ms.last() {
         let backoff = (1u64 << state.attempts_unix_ms.len()) * 1000;
-        ensure!(
-            now.saturating_sub(*last) >= backoff,
-            "on-demand restart backoff active; retry later"
-        );
+        if now.saturating_sub(*last) < backoff {
+            // Only a forward-clock, known pre-append cooldown may be scheduled.
+            // Backwards clocks and unrepresentable boundaries remain terminal.
+            if now >= *last
+                && let Some(not_before_unix_ms) = last.checked_add(backoff)
+            {
+                return Err(StartupCooldown {
+                    observed_unix_ms: now,
+                    not_before_unix_ms,
+                }
+                .into());
+            }
+            bail!("on-demand restart backoff active; retry later");
+        }
     }
     state.attempts_unix_ms.push(now);
     replace_json(root, &name, &state)
@@ -1801,19 +1860,78 @@ async fn start_with_observation(
     expected_sha256: &str,
     observation: impl std::future::Future<Output = Result<ServiceHealth>>,
 ) -> Result<ServiceHealth> {
+    start_with_observation_clock(
+        root,
+        approval,
+        main,
+        enforce_backoff,
+        cancel,
+        control,
+        expected_sha256,
+        observation,
+        &NativeStartupClock,
+        &StartupAdmission::Immediate,
+    )
+    .await
+}
+
+async fn start_for_operation(
+    root: &Path,
+    approval: &Approval,
+    main: &Path,
+    binding: activation::StartupBinding<'_>,
+) -> Result<ServiceHealth> {
+    let control = layout::control(root)?;
+    local_ipc::prepare_root(&control)?;
+    let expected = runtime_pair::digest_file(main)?;
+    let clock = NativeStartupClock;
+    let admission = StartupAdmission::Operation {
+        binding: &binding,
+        deadline: clock.monotonic() + Duration::from_secs(60),
+    };
+    start_with_observation_clock(
+        root,
+        approval,
+        main,
+        true,
+        None,
+        &control,
+        &expected,
+        health(root, approval, &expected),
+        &clock,
+        &admission,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)] // Keep the exact launch inputs, clock and admission owner explicit.
+async fn start_with_observation_clock(
+    root: &Path,
+    approval: &Approval,
+    main: &Path,
+    enforce_backoff: bool,
+    cancel: Option<&setup::SetupCancellation>,
+    control: &Path,
+    expected_sha256: &str,
+    observation: impl std::future::Future<Output = Result<ServiceHealth>>,
+    clock: &impl StartupClock,
+    admission: &StartupAdmission<'_>,
+) -> Result<ServiceHealth> {
     if cancel.is_some() {
         ensure!(
             enforce_backoff,
             "session startup requires a durable startup receipt"
         );
     }
-    let (observation, _attempt) = setup::observe_or_effect(observation, cancel, || {
-        if enforce_backoff {
-            startup_attempt(root, &approval.manifest_sha256, unix_ms()?)
-        } else {
-            Ok(())
-        }
-    })
+    let (observation, _attempt) = observe_startup_admission(
+        root,
+        &approval.manifest_sha256,
+        enforce_backoff,
+        cancel,
+        observation,
+        clock,
+        admission,
+    )
     .await?;
     if let Some(observation) = observation {
         if observation.uptime_ms >= 60_000 {
@@ -1852,6 +1970,12 @@ async fn start_with_observation(
             });
         }
     }
+    if let Some(deadline) = admission.deadline() {
+        ensure!(
+            clock.monotonic() < deadline,
+            "approved service startup admission exceeded its 60-second deadline"
+        );
+    }
     bootstrap(root, "starting", None, None)?;
     #[cfg(windows)]
     let launched = crate::native_process::spawn_detached(
@@ -1878,9 +2002,21 @@ async fn start_with_observation(
             return Err(error).context("cannot start approved user service; inspect execution policy and native dependencies");
         }
     };
-    let until = tokio::time::Instant::now() + Duration::from_secs(60);
+    let until = admission
+        .deadline()
+        .unwrap_or_else(|| clock.monotonic() + Duration::from_secs(60));
     loop {
-        if let Ok(observation) = health(root, approval, expected_sha256).await {
+        let observed = if admission.deadline().is_some() {
+            tokio::time::timeout_at(until, health(root, approval, expected_sha256))
+                .await
+                .map_err(anyhow::Error::from)
+                .and_then(|result| result)
+        } else {
+            health(root, approval, expected_sha256).await
+        };
+        if let Ok(observation) = observed
+            && (admission.deadline().is_none() || clock.monotonic() < until)
+        {
             let _ = bootstrap(root, "ready", Some(observation.process_id), None);
             // Reap if this host process remains alive after its detached child exits.
             let _ = std::thread::Builder::new()
@@ -1899,13 +2035,75 @@ async fn start_with_observation(
             );
             bail!("approved service exited before health: {status}");
         }
-        if tokio::time::Instant::now() >= until {
+        if clock.monotonic() >= until {
             let _ = child.kill();
             let _ = child.wait();
             let _ = bootstrap(root, "health_timeout", Some(child.id()), None);
             bail!("approved service did not become healthy within 60 seconds");
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        clock
+            .wait_until(until.min(clock.monotonic() + Duration::from_millis(100)))
+            .await?;
+    }
+}
+
+/// The actual health-to-startup-receipt boundary, with wall observation injected
+/// for deterministic composition of planned restarts and the durable circuit.
+/// No bootstrap or process effect precedes successful receipt admission.
+async fn observe_startup_admission<'a, T>(
+    root: &Path,
+    identity: &str,
+    enforce_backoff: bool,
+    cancel: Option<&'a setup::SetupCancellation>,
+    observation: impl std::future::Future<Output = Result<T>>,
+    clock: &impl StartupClock,
+    admission: &StartupAdmission<'_>,
+) -> Result<(Option<T>, Option<setup::OperationPermit<'a>>)> {
+    let StartupAdmission::Operation { binding, deadline } = admission else {
+        return setup::observe_or_effect(observation, cancel, || {
+            if enforce_backoff {
+                startup_attempt(root, identity, clock.wall_ms()?)
+            } else {
+                Ok(())
+            }
+        })
+        .await;
+    };
+    ensure!(
+        cancel.is_none() && enforce_backoff,
+        "operation startup scheduling requires its own durable admission"
+    );
+    if let Ok(healthy) = observation.await {
+        return Ok((Some(healthy), None));
+    }
+    // Only a typed, proven no-effect cooldown refusal is scheduled again. Each
+    // pass waits at least one millisecond inside the one startup deadline, so a
+    // wall/monotonic disagreement cannot spin or outlive the operation. Successful
+    // admission, bootstrap, spawn and unknown outcomes are never replayed.
+    loop {
+        ensure!(
+            clock.monotonic() < *deadline,
+            "approved service startup admission exceeded its 60-second deadline"
+        );
+        let error = match startup_attempt(root, identity, clock.wall_ms()?) {
+            Ok(()) => return Ok((None, None)),
+            Err(error) => error,
+        };
+        let Some(cooldown) = error.downcast_ref::<StartupCooldown>() else {
+            return Err(error);
+        };
+        let wait = cooldown
+            .not_before_unix_ms
+            .saturating_sub(cooldown.observed_unix_ms)
+            .max(1);
+        let until = clock.monotonic() + Duration::from_millis(wait);
+        ensure!(
+            until < *deadline,
+            "approved service startup cooldown exceeds its remaining 60-second deadline"
+        );
+        clock.wait_until(until).await?;
+        // The saved operation must still own this exact startup after waiting.
+        binding.validate(root, identity)?;
     }
 }
 

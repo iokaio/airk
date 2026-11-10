@@ -8,6 +8,12 @@ The snapshot contains **64 literal Rust ignore attributes**: **11 helper entry p
 This classification is not a passing test result or an assertion that qualified cases have no debt.
 The separate nextest CI filter excludes **4** long workload/measurement cases below.
 
+**9 November 2026 supplement:** the release-readiness change adds the explicit
+kernel quarantine row below. The dated snapshot totals above are retained as
+historical observations. This exclusion is unresolved coverage, not a pass;
+its owner and expiry are recorded with the test and must remain visible in
+qualification results.
+
 ## Commands and qualification boundaries
 
 Ordinary `cargo nextest run --workspace --all-features --locked --profile ci` preserves ignores and the default exclusions.
@@ -71,6 +77,7 @@ Do not automatically install a runtime, create an account, provision a share or 
 | qualification | [crates/airk-ingest/src/syntax/detail_tests.rs](../../crates/airk-ingest/src/syntax/detail_tests.rs) · `qualify_selected_syntax_work_and_time` | manual model-free extraction timing qualification |
 | qualification | [crates/airk-ingest/tests/extraction_execution.rs](../../crates/airk-ingest/tests/extraction_execution.rs) · `release_worker_qualification` | isolated release 1/2/4 extraction throughput qualification |
 | qualification | [crates/airk-kernel/src/workbench.rs](../../crates/airk-kernel/src/workbench.rs) · `role_inventory_plan_measurement` | explicit role-inventory measurement; set AIRK_PARSE_ROLE_REPORT to retain results |
+| quarantine | [crates/airk-kernel/src/current/indexing/tests.rs](../../crates/airk-kernel/src/current/indexing/tests.rs) · `optional_projection_quota_refusal_still_publishes_original_values_and_scalars` | Owner Tyler Jensen; expiry 2026-11-23. Handoff reports failure about 1 in 7 isolated runs, including before S7.4; original failure diagnostics are not linked. Observed publication allowance and fixed quota margin are an unconfirmed test assumption. Retain diagnostics and add a deterministic admission seam; all assertions remain unchanged. [Investigation and isolated follow-up command](../simplify/qualification-evidence.md#kernel-quota-flake-evidence-and-remaining-uncertainty). |
 | qualification | [crates/airk-kernel/tests/current_foundation.rs](../../crates/airk-kernel/tests/current_foundation.rs) · `authenticated_mutable_diskann_workload_measurement` | release timing qualification; run without competing builds or tests |
 | qualification | [crates/airk-kernel/tests/current_runtime.rs](../../crates/airk-kernel/tests/current_runtime.rs) · `twelve_thousand_files_publish_reopen_update_and_reclaim` | large repository capacity qualification; run explicitly in release mode |
 | qualification | [crates/airk-kernel/tests/vector_performance.rs](../../crates/airk-kernel/tests/vector_performance.rs) · `serial_parallel_and_incremental_vectors_preserve_retrieval` | requires AIRK_TEST_MODEL_DIR with verified local ONNX assets |
@@ -90,7 +97,7 @@ Do not automatically install a runtime, create an account, provision a share or 
 | qualification | [crates/airk-store/src/service_collection_tests.rs](../../crates/airk-store/src/service/collection/tests.rs) · `native_settlement_refuses_replaced_data_root_even_with_copied_clean_metadata` | requires AIRK_PRIVATE_CENSUS_BASE under protected user namespace; actual retained-fd root replacement |
 | helper | [crates/airk-store/tests/maintenance_faults_v2.rs](../../crates/airk-store/tests/maintenance_faults_v2.rs) · `maintenance_crash_child` | isolated child-process crash fixture |
 
-## Nextest CI default exclusions
+## Nextest CI default exclusions (8 November snapshot)
 
 These are not ignored attributes. Each is restored by `--ignore-default-filter` under the same CI profile.
 
@@ -98,6 +105,16 @@ These are not ignored attributes. Each is restored by `--ignore-default-filter` 
 - `compact_measurements_compare_small_reads_from_large_catalog`
 - `manual_backlog_larger_than_one_page_advances_without_unprotected_deletion`
 - `measure_small_and_larger_sparse_catalog_edits`
+
+**9 November 2026 correction:** the current filter has the first **three**
+campaigns above. Accepted R2 commit `69677a29` retired the uncalled private-copy
+catalog experiment and its six-test target, including the fourth measurement.
+See the [retained decision](../history/v2-incremental-catalog-experiment.md) and
+[current qualification scope](../ci-and-builds.md).
+The original snapshot/count remains historical evidence. The retired measurement
+has no live or renamed test and is not an executed qualification pass.
+`test_skip_inventory.py` checks the independently reviewed current owner map
+and proves each configured exclusion still names a live test function.
 
 ## Runtime/platform skips and remaining evidence
 

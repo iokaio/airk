@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Settlement of interrupted standalone adoption leftovers. No fixture starts
-//! a service: every journal records a service that was not running.
+//! Settlement of interrupted standalone adoption leftovers. The restart observer
+//! replaces process launch; journals, fences, leases and selected payloads are real.
 use super::*;
 
 struct Fixture {
@@ -8,12 +8,13 @@ struct Fixture {
     root: PathBuf,
     state: PathBuf,
     control: PathBuf,
+    identity: String,
     _lock: File,
 }
 
 impl Fixture {
     fn new() -> Result<Self> {
-        let (owner, root, _identity) = super::super::tests::unselected_fixture()?;
+        let (owner, root, identity) = super::super::tests::unselected_fixture()?;
         local_ipc::prepare_root(&root.join("control"))?;
         let lock = install_lock(&root)?;
         let (state, _) = crate::install_layout::retained_parameters(&root)?;
@@ -23,6 +24,7 @@ impl Fixture {
             root,
             state,
             control,
+            identity,
             _lock: lock,
         })
     }
@@ -51,6 +53,28 @@ impl Fixture {
     fn owner_record(&self) -> serde_json::Value {
         serde_json::json!({"schema":1,"install":self.root,"state":self.state})
     }
+
+    fn running_journal(&self, phase: &str, originally_stopped: bool) -> Result<()> {
+        self.journal(operation(61), operation(62), phase)?;
+        let mut journal: serde_json::Value =
+            serde_json::from_slice(&fs::read(self.root.join(JOURNAL))?)?;
+        journal["original_explicit_user_stop"] = serde_json::json!(originally_stopped);
+        // Historical observations must never select the executable to restart.
+        journal["cycle_health"] = serde_json::json!({"runtime":"f".repeat(64)});
+        replace_json(&self.root, JOURNAL, &journal)
+    }
+
+    fn select(&self) -> Result<()> {
+        replace_json(
+            &self.root,
+            "selected.json",
+            &Selection {
+                schema: 1,
+                active: self.identity.clone(),
+                previous: None,
+            },
+        )
+    }
 }
 
 fn operation(byte: u8) -> Incarnation {
@@ -59,6 +83,162 @@ fn operation(byte: u8) -> Incarnation {
 
 fn candidate() -> Result<airk_core::identity::Sha256Digest> {
     runtime_pair::current_executable_sha256()?.parse()
+}
+
+#[tokio::test]
+async fn restoration_restarts_current_selection_after_owned_fence_and_leases_are_released()
+-> Result<()> {
+    let f = Fixture::new()?;
+    f.running_journal("quiescent", false)?;
+    f.select()?;
+    service_runtime::checkpoint::arm_recovery(&f.control, operation(62), candidate()?)?;
+    let mut calls = 0;
+    let settled = settle_locked_with_start(&f.root, |root, approval, main| {
+        calls += 1;
+        assert_eq!(root, f.root);
+        assert_eq!(approval.manifest_sha256, f.identity);
+        assert_eq!(
+            main,
+            f.root.join("runtimes").join(&f.identity).join(main_name())
+        );
+        assert!(!crate::checkpoint_fence::admission_closed(&f.control).unwrap());
+        // The observer is after every quiescence lease has been dropped.
+        let exclusion = quiescent(&root).unwrap();
+        drop(exclusion);
+        std::future::ready(Ok(operation(63)))
+    })
+    .await?;
+    assert_eq!(calls, 1);
+    assert_eq!(
+        settled.restored[1],
+        serde_json::json!({"service":"restarted","runtime":f.identity,"instance":operation(63),
+            "reason":"the adoption had stopped this running service"})
+    );
+    assert!(!f.root.join(JOURNAL).exists());
+    require_settled(&f.root)?;
+    assert!(
+        settle_locked_with_start(
+            &f.root,
+            |_, _, _| -> std::future::Ready<Result<Incarnation>> {
+                panic!("completed restoration must not start again")
+            }
+        )
+        .await?
+        .is_empty()
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn restoration_eligibility_preserves_user_stop_restored_and_foreign_fence_cases() -> Result<()>
+{
+    for (phase, originally_stopped, running, foreign_fence) in [
+        ("restored", false, true, false),
+        ("quiescent", true, true, false),
+        ("quiescent", false, false, false),
+        ("quiescent", false, true, true),
+    ] {
+        let f = Fixture::new()?;
+        if running {
+            f.running_journal(phase, originally_stopped)?;
+        } else {
+            f.journal(operation(61), operation(62), phase)?;
+        }
+        if foreign_fence {
+            service_runtime::checkpoint::arm_recovery(&f.control, operation(65), candidate()?)?;
+        }
+        let settled = settle_locked_with_start(
+            &f.root,
+            |_, _, _| -> std::future::Ready<Result<Incarnation>> {
+                panic!("an ineligible restoration must not launch a process")
+            },
+        )
+        .await?;
+        assert!(settled.restored.is_empty());
+        assert!(!f.root.join(JOURNAL).exists());
+        assert_eq!(
+            crate::checkpoint_fence::fence_operation(&f.control)?,
+            foreign_fence.then_some(operation(65))
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn restoration_recovery_waits_for_native_owner_and_starter_refusal_is_reported_once()
+-> Result<()> {
+    let f = Fixture::new()?;
+    f.running_journal("quiescent", false)?;
+    f.select()?;
+    service_runtime::checkpoint::arm_recovery(&f.control, operation(62), candidate()?)?;
+    let owner = airk_store::service::ServiceLease::acquire(&f.control)?;
+    let retained = settle_locked_with_start(
+        &f.root,
+        |_, _, _| -> std::future::Ready<Result<Incarnation>> {
+            panic!("live native owner excludes restoration")
+        },
+    )
+    .await?;
+    assert_eq!(retained.left.len(), 1);
+    assert!(f.root.join(JOURNAL).exists());
+    assert!(require_settled(&f.root).is_err());
+    drop(owner);
+    let mut calls = 0;
+    let recovered = settle_locked_with_start(&f.root, |_, _, _| {
+        calls += 1;
+        std::future::ready(Err(anyhow::anyhow!("observed starter refusal")))
+    })
+    .await?;
+    assert_eq!(calls, 1);
+    assert_eq!(
+        recovered.left,
+        vec![serde_json::json!({"service":"stopped","reason":
+            "the adoption had stopped this service; restart was not possible (observed starter refusal)"})]
+    );
+    assert!(!f.root.join(JOURNAL).exists());
+    assert!(!crate::checkpoint_fence::admission_closed(&f.control)?);
+    require_settled(&f.root)?;
+    assert!(settle_locked(&f.root).await?.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn restoration_current_explicit_stop_refuses_before_the_start_observer() -> Result<()> {
+    use airk_core::service_lifecycle::{LifecycleAction, LifecycleRequest};
+    use airk_store::service::registry::ServiceRegistry;
+    let f = Fixture::new()?;
+    f.running_journal("quiescent", false)?;
+    f.select()?;
+    let mut registry = ServiceRegistry::open(&f.control, operation(66))?;
+    let (namespace, epoch) = registry.request_epoch()?;
+    registry.begin_lifecycle(&LifecycleRequest {
+        caller: operation(67),
+        key: airk_core::service::RequestKey {
+            namespace,
+            epoch,
+            nonce: operation(68),
+        },
+        action: LifecycleAction::Stop,
+        expected_instance: operation(69),
+        runtime: f.identity.parse()?,
+        manager: false,
+    })?;
+    drop(registry);
+    let settled = settle_locked_with_start(
+        &f.root,
+        |_, _, _| -> std::future::Ready<Result<Incarnation>> {
+            panic!("current explicit stop must be checked before process launch")
+        },
+    )
+    .await?;
+    assert_eq!(
+        settled.left,
+        vec![serde_json::json!({"service":"stopped","reason":
+            "the adoption had stopped this service; restart was not possible (service_explicitly_stopped)"})]
+    );
+    assert!(ServiceRegistry::open_saved(&f.control)?.service_explicitly_stopped()?);
+    assert!(!f.root.join(JOURNAL).exists());
+    Ok(())
 }
 
 #[tokio::test]

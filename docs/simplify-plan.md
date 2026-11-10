@@ -915,6 +915,15 @@ already exists. Separately authorize:
 - A later deliberate break needs a version bump and, for persisted state, a
   new state contract or rebuild boundary.
 
+**Narrow exception approved by the user, 9 November 2026:** the 1.8.17
+security update to `rmcp` 3.9.0 may add `ttlMs: 0` and
+`cacheScope: "private"` to MCP catalog replies for protocol 2026-07-28 and
+later. Keep these fields in complete transport results and test modern and
+legacy negotiation explicitly. This authorizes no change to tool-call data,
+digest inputs or persisted formats. See the
+[security review](simplify/security-readiness.md) and
+[release-readiness ledger](simplify/release-readiness.md).
+
 **D9. Report thresholds.** These are reported, not gated:
 
 - 20k lines per crate;

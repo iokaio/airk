@@ -178,7 +178,7 @@ fn superseding_a_saved_upgrade_requires_exact_preprobe_identity() -> Result<()> 
 }
 
 #[tokio::test]
-async fn completed_reviewed_activation_acknowledges_without_starting_or_reinitializing_state()
+async fn completed_reviewed_receipt_acknowledges_but_public_prebaseline_replay_refuses_without_changes()
 -> Result<()> {
     let (_owner, root, intent) = fixture()?;
     let expected = &intent.prior.as_ref().unwrap().active;
@@ -187,10 +187,23 @@ async fn completed_reviewed_activation_acknowledges_without_starting_or_reinitia
     let sentinel = b"Original invalid startup marker must not be interpreted by a completed replay";
     fs::write(root.join("bootstrap.json"), sentinel)?;
     assert!(reviewed_request(&root, &intent.candidate, expected)?);
+    // Receipt acknowledgment alone is not admission to reopen prebaseline state.
+    // The public API requires real initialized state and an executable candidate;
+    // the matching-runtime integration test exercises successful public replay.
+    drop(install_lock(&root)?);
+    let original = durable_files(&root)?;
+    let error = super::super::activate_reviewed(&root, &intent.candidate, expected)
+        .await
+        .err()
+        .context("prebaseline replay must still require clean-break review")?;
     assert!(
-        super::super::activate_reviewed(&root, &intent.candidate, expected).await?
-            == intent.selected()
+        error
+            .to_string()
+            .contains("clean-break selection changed since review"),
+        "{error:#}"
     );
+    assert_eq!(durable_files(&root)?, original);
+    assert!(selection(&root)? == Some(intent.selected()));
     assert_eq!(fs::read(root.join("bootstrap.json"))?, sentinel);
     assert!(!layout::control(&root)?.join("service-1.4.sqlite3").exists());
     assert!(reviewed_request(&root, &intent.candidate, &"f".repeat(64)).is_err());

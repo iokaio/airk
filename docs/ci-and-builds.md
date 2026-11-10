@@ -1,16 +1,19 @@
 # GitHub CI, native artifacts and spending controls
 
-A historical one-release exception covered the [pinned 1.4.4 tooling repair](release-workflow.md#pinned-144-release-tool-repair). That pinned repair required its complete cumulative diff to stay within an explicit release-tool/test/document allowlist, retain version 1.4.4 and match the original 664-file runtime identity. Only that exact repair allowed PR/main CI to run quick checks and Python contracts on all four hosts without repeating native/container builds. Other changes, missing history, manual CI dispatches and version 1.4.5 restore the ordinary plan. The original full main CI remained its authenticated producer. This exception does not apply to the current 1.8.16 source or its 1.8.14 implementation base.
+A historical one-release exception covered the [pinned 1.4.4 tooling repair](release-workflow.md#pinned-144-release-tool-repair). That pinned repair required its complete cumulative diff to stay within an explicit release-tool/test/document allowlist, retain version 1.4.4 and match the original 664-file runtime identity. Only that exact repair allowed PR/main CI to run quick checks and Python contracts on all four hosts without repeating native/container builds. Other changes, missing history, manual CI dispatches and version 1.4.5 restore the ordinary plan. The original full main CI remained its authenticated producer. This exception does not apply to the current 1.8.18 source or its 1.8.14 implementation base.
 
 For local development, use the [scoped Rust iteration workflow](../CONTRIBUTING.md#local-rust-iteration): one coordinated Cargo owner, warm per-checkout targets and retained timings. Its Windows incremental override applies to development Clippy only. Required CI/release scopes and checked-in compilation profiles below are unchanged; a local scoped pass does not qualify them.
 
-The current implementation version is **1.8.16**, the clean-break baseline for
-all earlier installations. Supported later upgrades require the persisted state
-contract; public 1.9.0 is a future release after qualification. Reset/rebuild and
-owned-artifact cleanup replace historical preserved-index migration acceptance.
+The current local candidate version is **1.8.18**. The clean-break baseline
+remains **1.8.16** for all earlier installations. Supported later upgrades
+require the persisted `airk-state/1` contract; public 1.9.0 is a future release
+after qualification. Reset/rebuild and owned-artifact cleanup replace historical
+preserved-index migration acceptance.
 The current implementation builds on the unpublished
 1.8.14 single-executable implementation; it is not a qualified release. See the
-[current baseline record](releases/release-1.8.16.md), the broader
+[current candidate record](releases/release-1.8.18.md), the
+[release-readiness ledger](simplify/release-readiness.md), the
+[1.8.16 baseline record](releases/release-1.8.16.md), the broader
 [1.8.14 working record](releases/release-1.8.14.md) and
 [implementation plan](one-airk.md). The 1.8.8 and 1.8.12 checkpoints below remain
 dated historical evidence. The separate [dependency audit](dependency-advisories.md)
@@ -135,7 +138,20 @@ Jobs install the repository-pinned Rust compiler/components, Python 3.11 and Nod
 - PR CI runs the Linux x64, Windows x64 and Apple Silicon native jobs. macOS Intel runs on main after merge. The [plan script](../scripts/ci-plan.py) emits the native matrix; manual and qualification dispatches always cover all four hosts.
 - The Linux container job builds the runtime image and runs the one-container collection smoke. It does not repeat workspace compilation/tests in routine builds. Container timing reports explicitly record this scope and contain no synthetic test results.
 
-Dispatch **Actions / CI** with `qualification` enabled to restore workspace Clippy/tests/doctests on every native host, the full real native extension lifecycle and multi-project suite, container workspace tests/doctests, and the long workload, performance and fault campaigns. Those campaigns include the 200-edit retention plateau, large-catalog measurements, multi-page maintenance backlog, sparse-catalog measurements, ignored real-model performance regressions, model retrieval, code benchmark, ranking/recall, quota/relocation lifecycle, usage calibration and process-termination checks. Full qualification uses `--ignore-default-filter`; its assertions and workloads remain intact. Local `cargo test` is still unfiltered. A local container qualification build uses `docker build --build-arg AIRK_QUALIFICATION=true .`; default container builds omit the duplicate workspace suite.
+Dispatch **Actions / CI** with `qualification` enabled to restore workspace Clippy/tests/doctests on every native host, the full real native extension lifecycle and multi-project suite, container workspace tests/doctests, and the long workload, performance and fault campaigns. Those campaigns include the 200-edit retention plateau, large-catalog measurements, multi-page maintenance backlog, ignored real-model performance regressions, model retrieval, code benchmark, ranking/recall, quota/relocation lifecycle, usage calibration and process-termination checks. Full qualification uses `--ignore-default-filter`; its assertions and workloads remain intact. Local `cargo test` is still unfiltered. A local container qualification build uses `docker build --build-arg AIRK_QUALIFICATION=true .`; default container builds omit the duplicate workspace suite.
+
+The three current routine exclusions are
+`two_hundred_current_edits_reach_object_and_database_plateau`,
+`compact_measurements_compare_small_reads_from_large_catalog`, and
+`manual_backlog_larger_than_one_page_advances_without_unprotected_deletion`.
+The historical fourth, `measure_small_and_larger_sparse_catalog_edits`, was a
+Store integration measurement of an uncalled private-copy prototype. Accepted
+R2 commit `69677a29` deleted that prototype and its test target; the
+[historical decision](history/v2-incremental-catalog-experiment.md) retains the
+evidence and the choice to keep full production catalog builds. Qualification
+reports the three surviving campaigns and this retirement explicitly, without
+claiming a fourth restored case or assigning it to CLI. The cheap skip-inventory
+contract checks the independent reviewed exclusion set and live source owners.
 
 The separate [Extended qualification workflow](../.github/workflows/qualification.yml)
 is an explicit Linux x64/Windows x64 scale and abrupt-publication-recovery
@@ -175,7 +191,7 @@ Main CI [41398425043](https://github.com/iokaio/airk/actions/runs/41398425043)
 runtime jobs. Each runtime job passed its full seven-test MCP smoke and both
 additional two-test cold-client passes, plus native/VSIX packaging. The exact
 PR-tip and first main source trees agree. These are results for those recorded
-sources; they do not qualify the current unpublished 1.8.12 tree or establish a
+sources; they do not qualify the current unpublished candidate or establish a
 runner-capacity diagnosis. The current repetition and release gates remain.
 
 The same recorded `0dbd2f0...` source passed both Mac signing jobs in
@@ -239,7 +255,7 @@ Usage accounting has a separate best-effort contract: successful and failed jobs
 
 ## Downloadable candidates
 
-Ordinary CI and local extension packaging default to the stable channel for the checked-in version. A stable candidate is still an unpublished build artifact; release workflows verify and publish it separately. The [1.8.14 working-build record](releases/release-1.8.14.md) describes current implementation and qualification limits, while the [October 17 release summary](releases/releases-2026-10-17.md) records earlier published versions. The container smoke verifies the exact unified 29-tool MCP catalog; the unsupported history endpoint remains absent. Future previews require an explicit channel and a distinct version.
+Ordinary CI and local extension packaging default to the stable channel for the checked-in version. A stable candidate is still an unpublished build artifact; release workflows verify and publish it separately. The [1.8.18 working-build record](releases/release-1.8.18.md) describes current candidate qualification limits, while the [October 17 release summary](releases/releases-2026-10-17.md) records earlier published versions. The container smoke verifies the exact unified 29-tool MCP catalog; the unsupported history endpoint remains absent. Future previews require an explicit channel and a distinct version.
 
 Successful native jobs upload an artifact named `airk-native-<target>-<commit>-<run-id>-<attempt>` to the workflow run's Artifacts section. It contains:
 

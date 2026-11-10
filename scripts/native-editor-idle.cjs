@@ -42,10 +42,20 @@ function progressIdle(value,expected,{requireIndexWork=true}={}){
 }
 async function waitForIndexIdle(read,expected,{deadline,maxObservations=128,record=async()=>{},now=Date.now,pause=ms=>new Promise(resolve=>setTimeout(resolve,ms)),requireIndexWork=true}){
     requireValue(typeof requireIndexWork==='boolean','Index work requirement must be explicit boolean');
+    // Automatic maintenance (for example verify) can replace the worker's latest
+    // observation before the queue drains. Retain the initial index-work proof
+    // observed earlier in this same wait for the same service and fencing
+    // generation; a wait that never observed it still cannot qualify.
+    let indexWork;
     for(let count=1;count<=maxObservations;count++){
         requireValue(now()<deadline,'Index idle observation deadline exhausted');
         const observed=await read();await record(observed,count);
-        if(progressIdle(observed,expected,{requireIndexWork}))return {observations:count,progress:observed,qualification:'dated_read_only_precondition_not_mutation_admission'};
+        const latest=observed?.observation;
+        if(indexWork&&latest&&(latest.worker?.service!==indexWork.worker.service||latest.current_fencing_generation!==indexWork.worker.fencing_generation))indexWork=undefined;
+        if(progressIdle(observed,expected,{requireIndexWork:requireIndexWork&&!indexWork}))return {observations:count,progress:observed,...(requireIndexWork&&indexWork?{initial_index_work:indexWork}:{}),qualification:'dated_read_only_precondition_not_mutation_admission'};
+        const seen=observed.observation;
+        if(requireIndexWork&&!indexWork&&seen&&seen.job.state==='succeeded'&&['model_setup','index','reconcile','vectors'].includes(seen.job.kind)
+            &&seen.worker.fencing_generation===seen.current_fencing_generation)indexWork={observation:count,job:structuredClone(seen.job),worker:structuredClone(seen.worker)};
         requireValue(now()<deadline,'Index idle observation deadline exhausted');await pause(Math.min(750,deadline-now()));
     }
     throw Error('Index idle observation request budget exhausted');

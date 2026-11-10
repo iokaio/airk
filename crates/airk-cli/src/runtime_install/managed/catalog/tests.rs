@@ -5,6 +5,25 @@ use super::*;
 use airk_core::identity::Incarnation;
 use airk_store::service::registry::ServiceRegistry;
 
+use genesis::activation::{
+    AuthorityV1CandidateObservation, AuthorityV1NativeQualification, AuthorityV1ReadinessProducer,
+};
+struct FixtureProducer;
+impl AuthorityV1ReadinessProducer for FixtureProducer {
+    fn required_predecessor_identities(&self) -> Result<Vec<Sha256Digest>> {
+        Ok(Vec::new())
+    }
+    fn qualify(
+        &self,
+        expected: &AuthorityV1CandidateObservation,
+    ) -> Result<AuthorityV1NativeQualification> {
+        Ok(AuthorityV1NativeQualification {
+            candidate: expected.clone(),
+            predecessor_refusals: Vec::new(),
+        })
+    }
+}
+
 // Isolated PHYSICAL-FORMAT fixture, not executed native activation, service
 // shutdown, provider containment, or a runtime qualification receipt. Only this
 // test leaf sets fixture activation markers; it is not native activation evidence.
@@ -14,21 +33,6 @@ fn settled_format_fixture(
     origin: &ManagedGenesisOrigin,
 ) -> Result<()> {
     use genesis::activation::*;
-    struct FixtureProducer;
-    impl AuthorityV1ReadinessProducer for FixtureProducer {
-        fn required_predecessor_identities(&self) -> Result<Vec<Sha256Digest>> {
-            Ok(Vec::new())
-        }
-        fn qualify(
-            &self,
-            expected: &AuthorityV1CandidateObservation,
-        ) -> Result<AuthorityV1NativeQualification> {
-            Ok(AuthorityV1NativeQualification {
-                candidate: expected.clone(),
-                predecessor_refusals: Vec::new(),
-            })
-        }
-    }
     let mut owner = admit(authority, policy, origin)?;
     owner.backup()?;
     owner.migrate()?;
@@ -250,7 +254,7 @@ fn legacy_none_dispositions_do_not_create_catalogs_or_claim_cutover() -> Result<
 }
 
 #[test]
-fn external_legacy_callback_runs_once_before_health_without_election() -> Result<()> {
+fn uninitialized_external_policy_refuses_before_callback_or_election() -> Result<()> {
     let (_owner, root, state, policy) = fixture(ManagedLifecycle::External)?;
     let lock = install_lock(&root)?;
     let authority = InstallerAuthority {
@@ -259,13 +263,61 @@ fn external_legacy_callback_runs_once_before_health_without_election() -> Result
     };
     layout::initialize(&root, Some(&state), RuntimeChannel::Stable)?;
     replace_json(&root, POLICY, &policy)?;
+    let original_policy = fs::read(root.join(POLICY))?;
+    let original_layout = fs::read(root.join("runtime-layout.json"))?;
+    let original_provider = fs::read(policy.saved_executable())?;
+    let called = std::cell::Cell::new(0);
+    let error = tokio::runtime::Runtime::new()?
+        .block_on(ensure_checked(&authority, None, || {
+            called.set(called.get() + 1);
+            Ok(())
+        }))
+        .err()
+        .context("uninitialized external policy must require a clean break")?;
+    assert!(
+        error.to_string().contains("clean_break_required"),
+        "{error:#}"
+    );
+    assert_eq!(called.get(), 0);
+    assert_eq!(fs::read(root.join(POLICY))?, original_policy);
+    assert_eq!(fs::read(root.join("runtime-layout.json"))?, original_layout);
+    assert_eq!(fs::read(policy.saved_executable())?, original_provider);
+    assert!(!state.join("control").exists());
+    assert!(!root.join("selected.json").exists());
+    assert!(!root.join("bootstrap.json").exists());
+    Ok(())
+}
+
+#[test]
+fn initialized_external_callback_runs_once_before_health_without_election() -> Result<()> {
+    let (_owner, root, state, policy) = fixture(ManagedLifecycle::External)?;
+    let lock = install_lock(&root)?;
+    let authority = InstallerAuthority {
+        root: &root,
+        _lock: &lock,
+    };
+    let reservation = VerifiedManagedReservation::prepare(&authority, &policy, &state)?;
+    layout::initialize_managed(&root, Some(&state), RuntimeChannel::Stable, &reservation)?;
+    let mut genesis = admit(&authority, &policy, reservation.origin())?;
+    genesis.backup()?;
+    genesis.migrate()?;
+    genesis.promote_authority_v1()?;
+    genesis.record_authority_v1_readiness(Incarnation::from_bytes([144; 16]), &FixtureProducer)?;
+    state_contract::initialize(&root, &genesis)?;
+    genesis.settle_authority_v1()?;
+    drop(genesis);
+    genesis::require_managed_settled(&reservation.origin().control, reservation.origin())?;
+    replace_json(&root, POLICY, &policy)?;
     let called = std::cell::Cell::new(0);
     let result = tokio::runtime::Runtime::new()?.block_on(ensure_checked(&authority, None, || {
         assert!(!root.join("selected.json").exists());
         called.set(called.get() + 1);
         Ok(())
     }));
-    assert!(result.is_err());
+    let error = result
+        .err()
+        .context("no external supervisor should report health")?;
+    assert!(error.is::<SupervisorUnavailable>(), "{error:#}");
     assert_eq!(called.get(), 1);
     assert!(!root.join("selected.json").exists());
     assert!(!root.join("bootstrap.json").exists());

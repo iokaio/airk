@@ -212,6 +212,21 @@ function installedPublication(actual:any,expected:any,collection:string):void{
         assert.equal(actual.token,expected.token,'Exact native summary publication');
     }else assert.deepEqual(actual,expected,'Complete native publication envelope');
 }
+/** A report-mode combined read returns a typed, repeatable `publication_busy`
+ * member while that index publishes. A publication wait may poll through exactly
+ * this reply; every other failed member remains a result for `installedMember`. */
+export function installedPublicationBusy(raw:any):boolean{
+    if(raw?.schema!=='airk.combined-read/1'||raw.partial!==true||!Array.isArray(raw.members)||raw.members.length!==1||!Array.isArray(raw.ranking)||raw.ranking.length!==0)return false;
+    const member=raw.members[0],result=member?.result;
+    if(member?.outcome!=='failed'||member.is_error!==true||!result||typeof result!=='object')return false;
+    if(result.status==='retry'&&result.code==='publication_busy'&&result.retryable===true
+        &&result.action==='repeat_same_request'&&Number.isSafeInteger(result.retry_after_ms)&&result.retry_after_ms>=0)return true;
+    // A read admitted against the projection that this publication then replaced is
+    // refused as expired and is not replayable. A publication wait makes a new,
+    // later observation; it never repeats that submitted query as a retry.
+    const error=result.error;
+    return !!error&&typeof error==='object'&&error.code==='source_projection_expired'&&error.retryable===false&&error.query_submitted===true&&error.query_replay_safe===false;
+}
 export function installedMember(raw:any,selection:any,denied=false):any{
     assert.equal(raw?.schema,'airk.combined-read/1');
     // This is the shipped lossless logical projection, not independent fullreply

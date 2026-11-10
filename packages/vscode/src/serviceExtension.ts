@@ -140,6 +140,11 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     private localScopeLabelChoice?:{index_ids:string[];project_ids:string[]};
     private restoringLocalScope=false;
     private localScopeRestoreAttempt?:string;
+    private localScopeRestoreRetries=0;
+    /** Injected in tests; production waits before re-reading a replaced control connection. */
+    localScopeRestorePause=(ms:number):Promise<void>=>new Promise(resolve=>{const timer=setTimeout(resolve,ms);(timer as {unref?:()=>void}).unref?.();});
+    /** The bounded restoration retry currently scheduled, if any. */
+    localScopeRestoreRetry?:Promise<void>;
     private refreshing?:{generation:number;promise:Promise<void>};
     private observedFolders?:string;
     private settingUp?:Promise<void>;
@@ -575,8 +580,27 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             }
             await this.useGrant(choice,native.namespace,native.catalog_revision,()=>!this.disposed&&!this.localScopeWorking&&epoch===this.localScopeEpoch);
             const active=this.currentCatalogScope();if(epoch===this.localScopeEpoch&&active)active.selection.label=this.scopeLabel(localScopeChoice(saved.selection));
-        }catch(error){if(epoch===this.localScopeEpoch){this.explicitCatalogScope=undefined;this.checks.clear();this.connectionCheck=undefined;this.treeChanges.fire();this.definitions.fire();this.output.appendLine(`Saved search scope needs Apply selection: ${error instanceof Error?error.message:String(error)}`);}}
+            if(active)this.localScopeRestoreRetries=0;
+        }catch(error){if(epoch===this.localScopeEpoch){this.explicitCatalogScope=undefined;this.checks.clear();this.connectionCheck=undefined;this.treeChanges.fire();this.definitions.fire();
+            const retrying=this.retryLocalScopeRestore(error,epoch);
+            this.output.appendLine(`${retrying?'Saved search scope restoration was interrupted and will be read again':'Saved search scope needs Apply selection'}: ${error instanceof Error?error.message:String(error)}`);}}
         finally{this.restoringLocalScope=false;if(epoch===this.localScopeEpoch)this.localScopeLabelChoice=undefined;}
+    }
+    /** A control connection replaced during startup closes in-flight reads. That
+     * interruption says nothing about the saved choice, so repeat the read-only
+     * revalidation of the same existing grant a bounded number of times. Changed
+     * or unavailable metadata is never retried and still requires Apply selection. */
+    private retryLocalScopeRestore(error:unknown,epoch:number):boolean{
+        const message=error instanceof Error?error.message:String(error);
+        if(this.disposed||this.localScopeRestoreRetries>=5||!/console_client_closed|catalog_control_connection_unavailable|window_context_changed|registry_busy/.test(message))return false;
+        const attempt=++this.localScopeRestoreRetries;this.localScopeRestoreAttempt=undefined;
+        const work:Promise<void>=(async()=>{
+            await this.localScopeRestorePause(1000*attempt);
+            if(this.disposed||epoch!==this.localScopeEpoch||this.currentCatalogScope()||this.localScopeWorking)return;
+            try{await this.prepareWindowContext();await this.restoreLocalSearchScope();}
+            catch(retry){if(!this.disposed&&epoch===this.localScopeEpoch&&!this.retryLocalScopeRestore(retry,epoch))this.output.appendLine(`Saved search scope needs Apply selection: ${retry instanceof Error?retry.message:String(retry)}`);}
+        })().finally(()=>{if(this.localScopeRestoreRetry===work)this.localScopeRestoreRetry=undefined;});
+        this.localScopeRestoreRetry=work;return true;
     }
     private localScopeAdapter():LocalScopeAdapter{
         this.trusted();const controller=this.console.controller,binding=this.binding,generation=this.generation,window=this.windowIdentity().identity,identity=controller.observationIdentity;
@@ -1202,7 +1226,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         const administration:AdministrativeIndexSelection & {nativeObservation:{host_context:CatalogObject;index_detail:CatalogObject}}={purpose:'index_administration',label:ADMINISTRATIVE_USAGE_LABEL,namespace:descriptor.namespace,catalogRevision:catalogRevision(detail.revision),indexId:String(index.id),backing:catalogHex(backing.binding,64),
             runtime:{installDir:binding.installDir,controlDir:binding.controlDir,runtimeSha256:binding.runtimeSha256},nativeObservation:{host_context:context.response,index_detail:response}};
         const administrativeSpec:LaunchSpec={command,root:chosen.backing.root,dataDir:chosen.backing.data_root,collection:chosen.backing.collection,
-            name:`${chosen.name} · Entire Index administration`,service:{installDir:binding.installDir,project:administration.backing}};
+            name:`${chosen.name} · Entire Index administration`,service:{installDir:binding.installDir,project:administration.backing,direct:true}};
         const authorized=()=>{try{current();return true;}catch{return false;}};current();
         await openUsagePanel(administrativeSpec,authorized,this.usageWriter(administrativeSpec,authorized),undefined,{administration});
     }
@@ -1441,7 +1465,10 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             if(!this.disposed)this.httpRefreshTimer=setTimeout(()=>{this.httpRefreshTimer=undefined;void this.readHttpOwnerHint();},delay);
             if(!this.disposed){
                 this.output.appendLine('AIRK saved HTTPS connection refresh deferred: '+String(error));
-                if(this.httpRefreshWarnedInstance!==instance){this.httpRefreshWarnedInstance=instance;void vscode.window.showWarningMessage('AIRK restarted. Some saved HTTPS connections still need refreshing. AIRK will retry with their current file contents; review AIRK output for blocked or edited configurations.');}
+                // Another AIRK command briefly holding the installation lock is routine
+                // during a restart; warn only if the scheduled retries keep failing.
+                const lockBusy=/another AIRK installer\/launcher is active/.test(String(error));
+                if(this.httpRefreshWarnedInstance!==instance&&(!lockBusy||attempt>=3)){this.httpRefreshWarnedInstance=instance;void vscode.window.showWarningMessage('AIRK restarted. Some saved HTTPS connections still need refreshing. AIRK will retry with their current file contents; review AIRK output for blocked or edited configurations.');}
             }
         }).finally(()=>{if(this.httpConfigurationRefresh===pending)this.httpConfigurationRefresh=undefined;});
         this.httpConfigurationRefresh=pending;
@@ -2469,12 +2496,29 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         if(!vscode.workspace.isTrusted||!this.registrationEnabled()||!nativeExecutionAllowed())return [];
         if(!this.currentBinding())await this.refresh();if(!vscode.workspace.isTrusted||!this.registrationEnabled())return [];
         if(await this.hasManualVscodeConnection())return [];
+        await this.restoreSavedScopeForDefinitions();this.trusted();if(!this.registrationEnabled())return [];
         const observation=await this.workspaceConnection();if(!observation)return [];
         this.trusted();if(observation.generation!==this.generation||observation.identity!==this.console.controller.observationIdentity||!this.registrationEnabled())throw new ServiceError('workspace_registration_changed');const entry=observation.entry;
         if(!entry.http)throw new ServiceError('http_connection_requires_reviewed_scope');
         const material=await httpMaterial(entry.http);this.trusted();
         if(observation.generation!==this.generation||observation.identity!==this.console.controller.observationIdentity)throw new ServiceError('workspace_registration_changed');
         return [new vscode.McpHttpServerDefinition('AIRK',vscode.Uri.parse(material.url),{Authorization:'Bearer '+material.credential,'X-AIRK-Response-Mode':this.responseMode()},`${this.runningVersion}:${entry.http.connection_id}:${entry.http.endpoint.generation}:${this.responseMode()}`)];
+    }
+    /** The saved applied choice must not depend on the Explorer view being open,
+     * and a replaced control connection must not leave the provider empty. This
+     * performs the same read-only revalidation of the existing saved grant that
+     * the Explorer performs; it never connects, starts a service or creates a grant. */
+    private async restoreSavedScopeForDefinitions():Promise<void>{
+        try{
+            if(this.currentCatalogScope())return;
+            const raw=this.context.workspaceState.get('airk.localScope.selection.1');
+            if(!raw||typeof raw!=='object'||!(raw as {grant?:unknown}).grant)return;
+            if(!this.console.controller.connectedRuntimeBinding||!this.console.controller.state.connected)return;
+            await this.prepareWindowContext();
+            if(!this.currentCatalogScope())await this.restoreLocalSearchScope();
+            // Another caller may own the single in-flight revalidation; observe it briefly.
+            for(let step=0;step<40&&this.restoringLocalScope&&!this.disposed;step++)await this.localScopeRestorePause(50);
+        }catch{/* Unavailable metadata keeps the existing empty or legacy answer. */}
     }
     async resolveDefinition(definition:vscode.McpServerDefinition):Promise<vscode.McpServerDefinition>{
         this.trusted();if(!this.registrationEnabled())throw new ServiceError('mcp_registration_disabled');

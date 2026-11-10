@@ -1,9 +1,16 @@
 # AIRK: Local Search for Coding Agents
 
-**Repair stopped, 9 November 2026:** 1.8.16 is an unfinished checkpoint. The
-Windows VSIX is package-verified but failed installed-editor acceptance. The
-[stop and handoff](https://github.com/iokaio/airk/blob/main/docs/research/installer-stop-2026-11-09.md)
-records the changes, unresolved binding cancellation and validation limits. It is not release-ready.
+**1.8.18 manual-test candidate:** this unpublished Windows x64 candidate
+contains the focused closeout of the accepted simplification work. The
+[working record](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.18.md) describes its changes
+and compatibility boundary; the
+[release-readiness ledger](https://github.com/iokaio/airk/blob/main/docs/simplify/release-readiness.md) identifies
+the exact VSIX, artifact hashes, completed checks, failures and remaining gates
+as qualification proceeds. Package verification, installed-editor acceptance
+and release qualification have separate receipts. The earlier 1.8.16 VSIX
+passed package verification but failed installed-editor acceptance; its
+[stop record](https://github.com/iokaio/airk/blob/main/docs/research/installer-stop-2026-11-09.md) retains those
+failures. Publication remains a separate action.
 
 **1.8.16 clean-break baseline:** every installation older than 1.8.16 must use
 fresh AIRK state and rebuild its indexes. Preserve reviewed source selections and
@@ -55,10 +62,10 @@ incomplete or unproven cleanup stays visible. Existing terminals need reopening
 to inherit installed CLI PATH changes. If Explorer still runs old extension
 JavaScript, use **Restart Extensions** once to activate the replacement loader.
 Public-release and full-matrix qualification remain incomplete. The
-[working record](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.16.md) records exact candidate, package and installed
+[working record](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.18.md) records exact candidate, package and installed
 acceptance scopes and preserves failed evidence.
 
-**1.8.16 source builds on the unpublished 1.8.14 implementation; qualification is stopped and incomplete.** The source versions and generated catalog identify the [One AIRK implementation](https://github.com/iokaio/airk/blob/main/docs/one-airk.md). The single-executable HTTPS runtime is implemented; the [1.8.16 working record](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.16.md) tracks current clean-break and installed acceptance. The 1.8.14 record retains historical implementation evidence. Earlier binaries keep their original versions and hashes.
+**1.8.18 source builds on the unpublished One AIRK implementation; qualification is in progress.** The source versions and generated catalog identify the [One AIRK implementation](https://github.com/iokaio/airk/blob/main/docs/one-airk.md). The single-executable HTTPS runtime is implemented; the [1.8.18 working record](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.18.md) tracks current candidate and installed acceptance. The 1.8.16 and 1.8.14 records retain historical implementation evidence. Earlier binaries keep their original versions and hashes.
 
 Before 1.8.16, legacy runtime, launcher and index formats are cleanup inputs,
 not reusable index state. The reset preserves only reviewed sources and supported

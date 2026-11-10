@@ -1206,6 +1206,10 @@ fn command() -> Command {
 }
 
 fn start(root: &Path) -> Result<Child> {
+    start_command(root, command())
+}
+
+fn start_command(root: &Path, mut process: Command) -> Result<Child> {
     static SEQUENCE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let log = root
@@ -1216,7 +1220,12 @@ fn start(root: &Path) -> Result<Child> {
         .write(true)
         .create_new(true)
         .open(log)?;
-    Ok(command()
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        process.creation_flags(0x08000000);
+    }
+    Ok(process
         .arg("serve")
         .arg("--runtime-dir")
         .arg(root)
@@ -1224,6 +1233,188 @@ fn start(root: &Path) -> Result<Child> {
         .stdout(Stdio::null())
         .stderr(log)
         .spawn()?)
+}
+
+fn require_request_epoch(
+    response: airk_core::service::ControlResponse,
+    phase: &str,
+) -> Result<(airk_core::identity::Incarnation, u64)> {
+    match response {
+        airk_core::service::ControlResponse::RequestEpoch { namespace, epoch } => {
+            Ok((namespace, epoch))
+        }
+        unexpected => anyhow::bail!(
+            "{phase}: unexpected RequestEpoch reply: {}",
+            serde_json::to_string(&unexpected)?
+        ),
+    }
+}
+
+/// Observe this test's actual metadata precondition before submitting its one
+/// RequestEpoch mutation. Health and checkpoint release do not synchronize an
+/// already-entered frozen metadata receive. Only the read-only Projects probe
+/// repeats, and only after its known unexecuted checkpoint refusal.
+async fn observe_metadata_projects<F, Fut>(
+    deadline: tokio::time::Instant,
+    phase: &str,
+    mut observe: F,
+) -> Result<()>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<airk_core::service::ControlResponse>>,
+{
+    use airk_core::service::ControlResponse;
+    let mut last_reply = Value::Null;
+    loop {
+        ensure!(
+            tokio::time::Instant::now() < deadline,
+            "{phase}: metadata Projects readiness deadline; last_reply={last_reply}"
+        );
+        let reply = tokio::time::timeout_at(deadline, observe())
+            .await
+            .with_context(|| {
+                format!("{phase}: metadata Projects readiness deadline; last_reply={last_reply}")
+            })?
+            .with_context(|| {
+                format!("{phase}: metadata Projects observation failed; last_reply={last_reply}")
+            })?;
+        match reply {
+            ControlResponse::Projects { ref page } => {
+                ensure!(
+                    page.projects.len() <= 1 && (page.after.is_none() || !page.projects.is_empty()),
+                    "{phase}: invalid one-item Projects readiness page: {}",
+                    serde_json::to_string(&reply)?
+                );
+                return Ok(());
+            }
+            ControlResponse::Failure { ref code } if code == "runtime_upgrade_in_progress" => {
+                last_reply = serde_json::to_value(reply)?;
+            }
+            unexpected => anyhow::bail!(
+                "{phase}: unexpected Projects readiness reply: {}",
+                serde_json::to_string(&unexpected)?
+            ),
+        }
+        tokio::task::yield_now().await;
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn metadata_readiness_observer_repeats_only_known_unexecuted_projects_refusal() -> Result<()>
+{
+    use airk_core::service::{ControlResponse, ProjectPage};
+    let mut calls = 0;
+    observe_metadata_projects(
+        tokio::time::Instant::now() + Duration::from_secs(5),
+        "post-release",
+        || {
+            calls += 1;
+            std::future::ready(Ok(if calls == 1 {
+                ControlResponse::Failure {
+                    code: "runtime_upgrade_in_progress".into(),
+                }
+            } else {
+                ControlResponse::Projects {
+                    page: ProjectPage {
+                        revision: 1,
+                        projects: Vec::new(),
+                        after: None,
+                    },
+                }
+            }))
+        },
+    )
+    .await?;
+    assert_eq!(calls, 2);
+    for code in [
+        "registry_response_unknown_retry_with_key",
+        "registry_unavailable",
+        "service_instance_changed",
+        "registry_busy",
+    ] {
+        calls = 0;
+        let error = observe_metadata_projects(
+            tokio::time::Instant::now() + Duration::from_secs(5),
+            "post-release",
+            || {
+                calls += 1;
+                std::future::ready(Ok(ControlResponse::Failure { code: code.into() }))
+            },
+        )
+        .await
+        .err()
+        .context("unclassified reply must stop readiness observation")?;
+        assert_eq!(calls, 1);
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("{{\"status\":\"failure\",\"code\":\"{code}\"}}")),
+            "{error:#}"
+        );
+        assert!(error.to_string().contains("post-release"));
+    }
+    calls = 0;
+    let error = observe_metadata_projects(
+        tokio::time::Instant::now() + Duration::from_secs(5),
+        "post-release",
+        || {
+            calls += 1;
+            std::future::ready(Err(anyhow::anyhow!("unknown transport outcome")))
+        },
+    )
+    .await
+    .err()
+    .context("unknown transport outcome must stop observation")?;
+    assert_eq!(calls, 1);
+    assert!(format!("{error:#}").contains("unknown transport outcome"));
+    assert!(error.to_string().contains("post-release"));
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn metadata_readiness_deadline_and_epoch_failure_keep_complete_phase_observations()
+-> Result<()> {
+    use airk_core::service::ControlResponse;
+    let mut calls = 0;
+    let error = observe_metadata_projects(
+        tokio::time::Instant::now() + Duration::from_secs(5),
+        "post-release",
+        || {
+            calls += 1;
+            let advance = Duration::from_millis(if calls == 1 { 4999 } else { 1 });
+            async move {
+                tokio::time::advance(advance).await;
+                Ok(ControlResponse::Failure {
+                    code: "runtime_upgrade_in_progress".into(),
+                })
+            }
+        },
+    )
+    .await
+    .err()
+    .context("expired readiness must preserve its pending reply")?;
+    assert!(
+        calls <= 2,
+        "no observation may be submitted after its original deadline"
+    );
+    assert!(error.to_string().contains("post-release"));
+    assert!(
+        error.to_string().contains("runtime_upgrade_in_progress"),
+        "{error:#}"
+    );
+    let error = require_request_epoch(
+        ControlResponse::Failure {
+            code: "runtime_upgrade_in_progress".into(),
+        },
+        "after Projects readiness",
+    )
+    .err()
+    .context("unexpected epoch reply must be retained")?;
+    assert_eq!(
+        error.to_string(),
+        "after Projects readiness: unexpected RequestEpoch reply: {\"status\":\"failure\",\"code\":\"runtime_upgrade_in_progress\"}"
+    );
+    Ok(())
 }
 
 // Process-lifecycle campaigns still own real child handles, while fresh model
@@ -1320,6 +1511,11 @@ fn storage_fingerprints(
                 Some(".writer-locks" | ".reader-locks" | ".current-gates"),
                 ..
             ]
+        ) || matches!(
+            // A caller holding the service lease OS-locks this advisory file,
+            // wherever the fingerprinted root places its control directory.
+            parts.as_slice(),
+            [.., Some("control"), Some("instance-1.4.lock")]
         )
     }
     fn collect(
@@ -3177,6 +3373,222 @@ fn denied_registered_source_keeps_direct_queries_and_fails_new_work_without_data
 }
 
 #[test]
+fn initialized_completed_reviewed_activation_replay_preserves_stopped_service_and_all_state()
+-> Result<()> {
+    use airk_cli::runtime_install::{InstallManifest, VerificationBasis};
+    use airk_core::service::{ControlMethod, ControlResponse};
+    use std::io::Write;
+    let mut owner = tempfile::tempdir()?;
+    owner.disable_cleanup(true);
+    let runtime_owner = owner.path().canonicalize()?.join("runtime-owner");
+    airk_cli::local_ipc::prepare_root(&runtime_owner)?;
+    let (install, root, _) = common::installed_runtime_fixture(&runtime_owner)?;
+    let (prior, _, _) = airk_cli::runtime_install::selected(&install)?;
+    let retained_payload = install.join("runtimes").join(&prior.active);
+    let candidate_payload = runtime_owner.join("reviewed-update-payload");
+    airk_cli::local_ipc::prepare_root(&candidate_payload)?;
+    let mut inventory: InstallManifest =
+        serde_json::from_slice(&fs::read(retained_payload.join("airk-install.json"))?)?;
+    // Both candidates execute the exact current Cargo image. A distinct, honest
+    // fixture provenance notice makes this a real separately approved update.
+    for name in inventory.files.keys() {
+        let relative = Path::new(name);
+        ensure!(
+            !relative.is_absolute()
+                && relative
+                    .components()
+                    .all(|part| matches!(part, std::path::Component::Normal(_))),
+            "fixture inventory escaped its payload"
+        );
+        let destination = candidate_payload.join(relative);
+        fs::create_dir_all(
+            destination
+                .parent()
+                .context("fixture payload parent missing")?,
+        )?;
+        fs::copy(retained_payload.join(relative), destination)?;
+    }
+    let provenance = "notices/reviewed-replay-fixture.json";
+    ensure!(
+        !inventory.files.contains_key(provenance),
+        "replay fixture notice already exists"
+    );
+    fs::write(
+        candidate_payload.join(provenance),
+        serde_json::to_vec(&serde_json::json!({"schema":1,
+            "purpose":"completed reviewed update, exact current Cargo image",
+            "approval":"explicit local organization digest","release_qualified":false}))?,
+    )?;
+    inventory.files.insert(
+        provenance.into(),
+        airk_cli::runtime_pair::digest_file(&candidate_payload.join(provenance))?,
+    );
+    fs::write(
+        candidate_payload.join("airk-install.json"),
+        serde_json::to_vec(&inventory)?,
+    )?;
+    let candidate =
+        airk_cli::runtime_pair::digest_file(&candidate_payload.join("airk-install.json"))?;
+    ensure!(
+        candidate != prior.active,
+        "fixture update did not change its approved inventory"
+    );
+    airk_cli::runtime_install::stage(
+        &candidate_payload,
+        &install,
+        &candidate,
+        VerificationBasis::OrganizationDigest,
+    )?;
+    let executor = tokio::runtime::Runtime::new()?;
+    let selected = executor.block_on(airk_cli::runtime_install::activate_reviewed(
+        &install,
+        &candidate,
+        &prior.active,
+    ))?;
+    ensure!(selected.active == candidate && selected.previous.as_ref() == Some(&prior.active));
+    let (health, namespace, epoch) = executor.block_on(async {
+        let observation = match airk_cli::service_runtime::request(&root, ControlMethod::Health)
+            .await
+            .context("after reviewed activation: health transport failed")?
+        {
+            ControlResponse::Health { observation } => observation,
+            unexpected => anyhow::bail!(
+                "after reviewed activation: unexpected health reply: {}",
+                serde_json::to_string(&unexpected)?
+            ),
+        };
+        ensure!(
+            observation.runtime_sha256.as_deref() == Some(candidate.as_str()),
+            "after reviewed activation: health identifies another runtime: {}",
+            serde_json::to_string(&observation)?
+        );
+        let readiness_deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        observe_metadata_projects(
+            readiness_deadline,
+            "after reviewed activation admission release",
+            || {
+                airk_cli::service_runtime::request_for_version_and_instance(
+                    &root,
+                    ControlMethod::Projects {
+                        after: None,
+                        revision: None,
+                        limit: 1,
+                    },
+                    env!("CARGO_PKG_VERSION"),
+                    observation.instance,
+                )
+            },
+        )
+        .await?;
+        let confirmed = match airk_cli::service_runtime::request_for_version_and_instance(
+            &root,
+            ControlMethod::Health,
+            env!("CARGO_PKG_VERSION"),
+            observation.instance,
+        )
+        .await
+        .context("after Projects readiness: health transport failed")?
+        {
+            ControlResponse::Health { observation } => observation,
+            unexpected => anyhow::bail!(
+                "after Projects readiness: unexpected health reply: {}",
+                serde_json::to_string(&unexpected)?
+            ),
+        };
+        ensure!(
+            confirmed.instance == observation.instance
+                && confirmed.runtime_sha256.as_deref() == Some(candidate.as_str())
+                && confirmed.executable_sha256 == observation.executable_sha256,
+            "after Projects readiness: health identity changed: {}",
+            serde_json::to_string(&confirmed)?
+        );
+        // Use the canonical epoch transport after observing the exact metadata
+        // owner ready. Add no retry around an unknown outcome or other refusal.
+        let (namespace, epoch) = require_request_epoch(
+            airk_cli::service_runtime::request_for_version_and_instance(
+                &root,
+                ControlMethod::RequestEpoch,
+                env!("CARGO_PKG_VERSION"),
+                observation.instance,
+            )
+            .await
+            .context("after Projects readiness: RequestEpoch transport failed")?,
+            "after reviewed candidate Projects readiness",
+        )?;
+        Ok::<_, anyhow::Error>((observation, namespace, epoch))
+    })?;
+    let stop_request = serde_json::json!({
+        "caller":airk_kernel::service_broker::new_instance_id()?,
+        "key":{"namespace":namespace,"epoch":epoch,"nonce":airk_kernel::service_broker::new_instance_id()?},
+        "action":"stop","expected_instance":health.instance,"runtime":candidate,"force":false,
+    });
+    let mut stop = command()
+        .args(["runtime", "lifecycle", "--install-dir"])
+        .arg(&install)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    stop.stdin
+        .take()
+        .context("fixture lifecycle stdin missing")?
+        .write_all(&serde_json::to_vec(&stop_request)?)?;
+    let stopped = stop.wait_with_output()?;
+    ensure!(
+        stopped.status.success(),
+        "reviewed fixture Stop failed: {}",
+        String::from_utf8_lossy(&stopped.stderr)
+    );
+    let stop_receipt: Value = serde_json::from_slice(&stopped.stdout)?;
+    ensure!(
+        stop_receipt["status"] == "lifecycle"
+            && stop_receipt["record"]["phase"] == "complete"
+            && stop_receipt["record"]["request"]["key"] == stop_request["key"]
+            && stop_receipt["record"]["request"]["runtime"] == stop_request["runtime"]
+            && stop_receipt["record"]["request"]["expected_instance"]
+                == stop_request["expected_instance"],
+        "Stop did not finish for the exact reviewed runtime and instance: {stop_receipt}"
+    );
+    let until = Instant::now() + Duration::from_secs(30);
+    let excluded = loop {
+        if let Ok(excluded) = airk_store::service::ServiceLease::acquire(&root) {
+            break excluded;
+        }
+        ensure!(
+            Instant::now() < until,
+            "reviewed candidate retained native ownership after shutdown"
+        );
+        std::thread::yield_now();
+    };
+    ensure!(
+        airk_store::service::registry::ServiceRegistry::open_saved(&root)?
+            .service_explicitly_stopped()?,
+        "fixture Stop did not persist the explicit user stop"
+    );
+    let sentinel = b"Completed replay must not interpret or replace this invalid startup marker.";
+    fs::write(install.join("bootstrap.json"), sentinel)?;
+    let before = storage_fingerprints(&runtime_owner)?;
+    let replayed = executor.block_on(airk_cli::runtime_install::activate_reviewed(
+        &install,
+        &candidate,
+        &prior.active,
+    ))?;
+    ensure!(serde_json::to_value(&replayed)? == serde_json::to_value(&selected)?);
+    ensure!(
+        storage_fingerprints(&runtime_owner)? == before,
+        "completed replay changed payload, state, namespace, selection, receipt, logs or startup marker"
+    );
+    ensure!(fs::read(install.join("bootstrap.json"))? == sentinel);
+    ensure!(
+        airk_store::service::ServiceLease::acquire(&root).is_err(),
+        "replay released the test's stopped-service exclusion"
+    );
+    drop(excluded);
+    owner.disable_cleanup(false);
+    Ok(())
+}
+
+#[test]
 fn installed_log_binding_places_the_ring_outside_control_and_missing_ownership_never_falls_back()
 -> Result<()> {
     use airk_core::{
@@ -3184,24 +3596,25 @@ fn installed_log_binding_places_the_ring_outside_control_and_missing_ownership_n
         service::{ControlMethod as Method, ControlResponse as Response},
         service_logs::LogKind,
     };
-    let owner = tempfile::tempdir()?;
+    let mut owner = tempfile::tempdir()?;
+    owner.disable_cleanup(true);
     let base = owner.path().canonicalize()?;
-    let install = base.join("install");
-    let state = base.join("state");
-    let logs = base.join("native-logs");
-    for path in [&install, &state] {
-        airk_cli::local_ipc::prepare_root(path)?;
-    }
-    let binding = serde_json::to_vec(
-        &serde_json::json!({"schema":1,"install":install,"state":state,"logs":logs,"channel":"stable","ready":true}),
-    )?;
-    fs::write(install.join("runtime-layout.json"), &binding)?;
-    fs::write(state.join("airk-state-1.4.owner.json"), &binding)?;
-    fs::write(state.join("airk-state-1.4.lock"), [])?;
-    let root = state.join("control");
-    let mut children = Children(vec![start(&root)?]);
+    let runtime_owner = base.join("runtime-owner");
+    airk_cli::local_ipc::prepare_root(&runtime_owner)?;
+    let (install, root, executable) = common::installed_runtime_fixture(&runtime_owner)?;
+    let layout: Value = serde_json::from_slice(&fs::read(install.join("runtime-layout.json"))?)?;
+    let state =
+        std::path::PathBuf::from(layout["state"].as_str().context("fixture state missing")?);
+    let logs = std::path::PathBuf::from(layout["logs"].as_str().context("fixture logs missing")?);
+    let start_installed = || start_command(&root, Command::new(&executable));
+    let mut children = Children(vec![start_installed()?]);
     wait_ready(&root)?;
     let executor = tokio::runtime::Runtime::new()?;
+    let source = base.join("source");
+    let data = base.join("data");
+    fs::create_dir(&source)?;
+    fs::create_dir(&data)?;
+    let project = common::setup_fixture_project(&root, &source, &data, "logs")?;
     executor.block_on(async {
         let until = tokio::time::Instant::now() + Duration::from_secs(10);
         loop {
@@ -3219,11 +3632,6 @@ fn installed_log_binding_places_the_ring_outside_control_and_missing_ownership_n
             );
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
-        let source = base.join("source");
-        let data = base.join("data");
-        fs::create_dir(&source)?;
-        fs::create_dir(&data)?;
-        let project = airk_kernel::service_projects::registration(&source, &data, "logs")?;
         ensure!(
             matches!(
                 airk_cli::service_runtime::request(&root, Method::Register { project }).await?,
@@ -3231,14 +3639,28 @@ fn installed_log_binding_places_the_ring_outside_control_and_missing_ownership_n
             ),
             "safe registration failed"
         );
-        let private = airk_kernel::service_projects::registration(&logs, &data, "private")?;
+        let Response::RequestEpoch { namespace, epoch } =
+            airk_cli::service_runtime::request(&root, Method::RequestEpoch).await?
+        else {
+            anyhow::bail!("fixture request epoch missing")
+        };
+        let revision = airk_store::service::registry::ServiceRegistry::open_saved(&root)?
+            .catalog_state()?.context("fixture catalog missing")?.revision;
+        let mut draft = serde_json::json!({"catalog_index_setup_draft":{"selection":{
+            "key":{"namespace":namespace,"epoch":epoch,"nonce":airk_kernel::service_broker::new_instance_id()?},
+            "expected_catalog_revision":revision,"name":"Rejected log source",
+            "primary_root":source,"data_root":base.join("private-data"),"collection":"private",
+            "additional_roots":[],"setup_watch":false}}});
+        let allowed = airk_cli::service_runtime::request(&root, serde_json::from_value(draft.clone())?).await?;
+        ensure!(matches!(&allowed, Response::CatalogIndexSetupDraft { .. }), "matched safe source draft was refused: {}", serde_json::to_string(&allowed)?);
+        // Change only the source root. Drafts are read-only, so both observations
+        // retain the same request identity and catalog revision.
+        draft["catalog_index_setup_draft"]["selection"]["primary_root"] = serde_json::json!(logs);
+        let private = serde_json::from_value(draft)?;
+        let refused = airk_cli::service_runtime::request(&root, private).await?;
         ensure!(
-            matches!(
-                airk_cli::service_runtime::request(&root, Method::Register { project: private })
-                    .await?,
-                Response::Failure { .. }
-            ),
-            "native log location was admitted as source"
+            matches!(&refused, Response::Failure { code } if code == "invalid_registry_request"),
+            "native log location was admitted as source or refused for an unrelated reason: {}", serde_json::to_string(&refused)?
         );
         airk_cli::service_runtime::request(&root, Method::Shutdown).await?;
         Ok::<_, anyhow::Error>(())
@@ -3261,7 +3683,7 @@ fn installed_log_binding_places_the_ring_outside_control_and_missing_ownership_n
         airk_cli::service_logs::recent(&root, 32).is_err(),
         "missing binding redirected cached export"
     );
-    children.0.push(start(&root)?);
+    children.0.push(start_installed()?);
     wait_ready(&root)?;
     executor.block_on(async {
         let until = tokio::time::Instant::now() + Duration::from_secs(10);
@@ -3297,6 +3719,7 @@ fn installed_log_binding_places_the_ring_outside_control_and_missing_ownership_n
             && !root.join("logs-1.4").exists(),
         "unknown ownership created another ring or changed retained logs"
     );
+    owner.disable_cleanup(false);
     Ok(())
 }
 
@@ -3304,22 +3727,17 @@ fn installed_log_binding_places_the_ring_outside_control_and_missing_ownership_n
 fn installed_control_loss_rejects_native_startup_and_restoration_retains_registry_namespace()
 -> Result<()> {
     use airk_core::service::{ControlMethod as Method, ControlResponse as Response};
-    let owner = tempfile::tempdir()?;
+    let mut owner = tempfile::tempdir()?;
+    owner.disable_cleanup(true);
     let base = owner.path().canonicalize()?;
-    let install = base.join("install");
-    let state = base.join("state");
-    for path in [&install, &state] {
-        airk_cli::local_ipc::prepare_root(path)?;
-    }
-    let logs = base.join("native-logs");
-    let binding = serde_json::to_vec(
-        &serde_json::json!({"schema":1,"install":install,"state":state,"logs":logs,"channel":"stable","ready":true}),
-    )?;
-    fs::write(install.join("runtime-layout.json"), &binding)?;
-    fs::write(state.join("airk-state-1.4.owner.json"), &binding)?;
-    fs::write(state.join("airk-state-1.4.lock"), [])?;
-    let root = state.join("control");
-    let mut children = Children(vec![start(&root)?]);
+    let runtime_owner = base.join("runtime-owner");
+    airk_cli::local_ipc::prepare_root(&runtime_owner)?;
+    let (install, root, executable) = common::installed_runtime_fixture(&runtime_owner)?;
+    let layout: Value = serde_json::from_slice(&fs::read(install.join("runtime-layout.json"))?)?;
+    let state =
+        std::path::PathBuf::from(layout["state"].as_str().context("fixture state missing")?);
+    let start_installed = || start_command(&root, Command::new(&executable));
+    let mut children = Children(vec![start_installed()?]);
     wait_ready(&root)?;
     let executor = tokio::runtime::Runtime::new()?;
     let namespace = executor.block_on(async {
@@ -3350,7 +3768,7 @@ fn installed_control_loss_rejects_native_startup_and_restoration_retains_registr
         "owned external logs unavailable after control loss"
     );
     ensure!(!root.exists(), "cached log export recreated control state");
-    children.0.push(start(&root)?);
+    children.0.push(start_installed()?);
     ensure!(
         !wait_exit(children.0.last_mut().unwrap())?,
         "missing initialized control was silently recreated"
@@ -3368,7 +3786,7 @@ fn installed_control_loss_rejects_native_startup_and_restoration_retains_registr
         "original registry changed"
     );
     fs::rename(&saved, &root)?;
-    children.0.push(start(&root)?);
+    children.0.push(start_installed()?);
     wait_ready(&root)?;
     executor.block_on(async {
         let Response::RequestEpoch {
@@ -3396,7 +3814,7 @@ fn installed_control_loss_rejects_native_startup_and_restoration_retains_registr
     for name in names {
         fs::remove_file(root.join(name))?;
     }
-    children.0.push(start(&root)?);
+    children.0.push(start_installed()?);
     ensure!(
         !wait_exit(children.0.last_mut().unwrap())?,
         "lost registry and owner silently created another authority"
@@ -3412,7 +3830,7 @@ fn installed_control_loss_rejects_native_startup_and_restoration_retains_registr
     for (name, bytes) in names.into_iter().zip(originals) {
         fs::write(root.join(name), bytes)?;
     }
-    children.0.push(start(&root)?);
+    children.0.push(start_installed()?);
     wait_ready(&root)?;
     executor.block_on(async {
         let Response::RequestEpoch {
@@ -3432,6 +3850,7 @@ fn installed_control_loss_rejects_native_startup_and_restoration_retains_registr
         wait_exit(children.0.last_mut().unwrap())?,
         "twice-restored service did not stop"
     );
+    owner.disable_cleanup(false);
     Ok(())
 }
 

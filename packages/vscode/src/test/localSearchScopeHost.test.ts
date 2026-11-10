@@ -111,6 +111,65 @@ for(const boundary of ['own','whole_snapshot_event','foreign_pending','identity_
     }finally{await f.close();}
 });
 
+test('interrupted saved-selection restoration is read again a bounded number of times and changed metadata is never retried',async context=>{
+    const f=await serviceTestHost(context,{registered:false}),controller=f.context.subscriptions.find((item:any)=>typeof item.useGrant==='function');
+    const index='idx_'+'22'.repeat(16),project='prj_'+'33'.repeat(16),source='src_'+'44'.repeat(16),grantId='grt_'+'11'.repeat(16);
+    try{
+        await controller.refresh();await controller.console.controller.refresh();await controller.prepareWindowContext();
+        const native=controller.currentWindowContext().response.descriptor;
+        const membership={project_id:project,index_id:index,revision:1,scope:[{source_root_id:source,kind:'subtree',path:''}]};
+        const grant={grant:{id:grantId,host:native.host,revision:1,revoked:false,memberships:[{membership,source_revision:1,policy_epoch:0,policy_digest:null}]},provenance:{kind:'user_reviewed_project_grant'}};
+        const projectRow={id:project,name:'My set',definition_revision:1,scope_revision:1,defaults_revision:1,default_indexes:[]};
+        const indexRow={id:index,name:'Owned index',backing:{binding:'77'.repeat(32),root:path.join(f.root,'source-0'),data_root:path.join(f.root,'private'),collection:'fixture'},definition_revision:1,source_revision:1,tombstone:false,source_import:'complete',policy:null};
+        let interruptions=2,failure:string|undefined;const pauses:number[]=[];
+        f.state.catalogDetailReply=args=>{
+            if(failure)throw new Error(failure);
+            if(interruptions>0){interruptions--;throw new Error('AIRK service: console_client_closed');}
+            const entity=args.entity as any;return {status:'catalog_detail',detail:{namespace:native.namespace,revision:1,item:{kind:entity.kind,value:entity.kind==='grant'?grant:entity.kind==='project'?projectRow:entity.kind==='membership'?membership:indexRow}}};};
+        f.values.set('airk.localScope.selection.1',{schema:1,namespace:native.namespace,host:native.host,context_key:native.key,selection:{index_ids:[index],project_ids:[]},grant:{grant_id:grantId,expected_grant_revision:1,project_ids:[project]}});
+        controller.attachWorkbench({async useScope(){},async refresh(){}});
+        controller.localScopeRestorePause=async(ms:number)=>{pauses.push(ms);};
+        const writes=f.writes.length;await controller.restoreLocalSearchScope();
+        assert.equal(controller.searchScopeSelection().active,false,'an interrupted read never activates a scope');
+        for(let step=0;step<8&&controller.localScopeRestoreRetry;step++)await controller.localScopeRestoreRetry;
+        assert.deepEqual(pauses,[1000,2000],'each interruption schedules exactly one later read');
+        assert.equal(controller.searchScopeSelection().active,true,'the same saved grant restores after the control connection settles');
+        assert.equal(f.writes.length,writes,'retried restoration remains read-only');
+        // Unavailable or changed metadata is a final answer that still needs Apply selection.
+        controller.explicitCatalogScope=undefined;controller.localScopeRestoreAttempt=undefined;failure='saved_scope_grant_unavailable';pauses.length=0;
+        await controller.restoreLocalSearchScope();
+        assert.equal(controller.localScopeRestoreRetry,undefined);assert.deepEqual(pauses,[]);assert.equal(controller.searchScopeSelection().active,false);
+        // A persistently closed connection stops after its bound.
+        controller.localScopeRestoreAttempt=undefined;failure='AIRK service: console_client_closed';
+        await controller.restoreLocalSearchScope();
+        for(let step=0;step<16&&controller.localScopeRestoreRetry;step++)await controller.localScopeRestoreRetry;
+        assert.deepEqual(pauses,[1000,2000,3000,4000,5000]);assert.equal(controller.searchScopeSelection().active,false);
+    }finally{await f.close();}
+});
+
+test('definition provider revalidates the saved applied choice without the Explorer and stays read-only',async context=>{
+    const f=await serviceTestHost(context,{registered:false}),controller=f.context.subscriptions.find((item:any)=>typeof item.useGrant==='function');
+    const index='idx_'+'22'.repeat(16),project='prj_'+'33'.repeat(16),source='src_'+'44'.repeat(16),grantId='grt_'+'11'.repeat(16);
+    try{
+        await controller.refresh();await controller.console.controller.refresh();await controller.prepareWindowContext();
+        const native=controller.currentWindowContext().response.descriptor;
+        const membership={project_id:project,index_id:index,revision:1,scope:[{source_root_id:source,kind:'subtree',path:''}]};
+        const grant={grant:{id:grantId,host:native.host,revision:1,revoked:false,memberships:[{membership,source_revision:1,policy_epoch:0,policy_digest:null}]},provenance:{kind:'user_reviewed_project_grant'}};
+        const projectRow={id:project,name:'My set',definition_revision:1,scope_revision:1,defaults_revision:1,default_indexes:[]};
+        const indexRow={id:index,name:'Owned index',backing:{binding:'77'.repeat(32),root:path.join(f.root,'source-0'),data_root:path.join(f.root,'private'),collection:'fixture'},definition_revision:1,source_revision:1,tombstone:false,source_import:'complete',policy:null};
+        let reads=0;
+        f.state.catalogDetailReply=args=>{reads++;const entity=args.entity as any;return {status:'catalog_detail',detail:{namespace:native.namespace,revision:1,item:{kind:entity.kind,value:entity.kind==='grant'?grant:entity.kind==='project'?projectRow:entity.kind==='membership'?membership:indexRow}}};};
+        controller.attachWorkbench({async useScope(){},async refresh(){}});
+        // No saved applied grant: the provider performs no restoration reads.
+        await controller.provideDefinitions().catch(()=>undefined);assert.equal(reads,0);
+        f.values.set('airk.localScope.selection.1',{schema:1,namespace:native.namespace,host:native.host,context_key:native.key,selection:{index_ids:[index],project_ids:[]},grant:{grant_id:grantId,expected_grant_revision:1,project_ids:[project]}});
+        const writes=f.writes.length;assert.equal(controller.searchScopeSelection().active,false);
+        await controller.provideDefinitions().catch(()=>undefined);
+        assert.equal(controller.searchScopeSelection().active,true,'provider restored the saved applied choice');assert.ok(reads>0);
+        assert.equal(f.writes.length,writes,'provider restoration creates no grants or memberships');
+    }finally{await f.close();}
+});
+
 test('saved local selection restores only exact native membership and stale metadata deactivates it',async context=>{
     const f=await serviceTestHost(context,{registered:false}),controller=f.context.subscriptions.find((item:any)=>typeof item.useGrant==='function');
     const index='idx_'+'22'.repeat(16),project='prj_'+'33'.repeat(16),source='src_'+'44'.repeat(16),grantId='grt_'+'11'.repeat(16);let revision=1,membershipRevision=1;

@@ -412,7 +412,18 @@ async function editorUi(port,deadline=Date.now()+600000){
                 const result=await until(async()=>(await report(scoped,"({text:document.body.innerText,writeControls:document.querySelectorAll('[data-usage=clear],[data-usage=recording],[data-usage=import]').length})"))?.value,'scoped usage unavailable');
                 if(result.writeControls!==0)throw new Error('Scoped Usage exposed administration without explicit choice');return result;
             }
-            if(request.action==='usageAdmin')return openUsageAdministration(request,{open:()=>reportClick(scoped,'openIndexAdministration'),choose:quickPick,observe:()=>until(async()=>(await report(admin,'({text:document.body.innerText})'))?.value,'explicit broad Index administration')});
+            if(request.action==='usageAdmin')return openUsageAdministration(request,{open:()=>reportClick(scoped,'openIndexAdministration'),choose:quickPick,observe:async()=>{
+                try{return await until(async()=>(await report(admin,'({text:document.body.innerText})'))?.value,'explicit broad Index administration',Math.max(1000,budget(180000)-15000));}
+                catch(error){
+                    // Retain what the editor actually showed instead of a bare timeout.
+                    const seen={};
+                    for(const [name,predicate]of [['usage',"!!document.querySelector('[data-usage]')"],['usage_visible',"document.visibilityState==='visible'&&!!document.querySelector('[data-usage]')"]]){
+                        try{seen[name]=(await report(predicate,"({title:document.title,visibility:document.visibilityState,text:document.body.innerText.slice(0,4096),controls:[...document.querySelectorAll('[data-usage]')].map(n=>n.getAttribute('data-usage')).slice(0,32)})"))?.value??null;}catch(failure){seen[name]={observation_unavailable:String(failure).slice(0,1024)};}
+                    }
+                    try{seen.workbench=(await workbench("({notifications:[...document.querySelectorAll('.notifications-toasts .notification-list-item,.notifications-center .notification-list-item')].map(n=>n.innerText.slice(0,1024)).slice(0,8),tabs:[...document.querySelectorAll('.tab .label-name')].map(n=>n.innerText.slice(0,256)).slice(0,16),quick:[...document.querySelectorAll('.quick-input-widget')].map(n=>({visible:!!n.getBoundingClientRect().height,text:n.innerText.slice(0,512)})).slice(0,4)})"))?.value??null;}catch(failure){seen.workbench={observation_unavailable:String(failure).slice(0,1024)};}
+                    throw new Error(`${error.message}; observed ${JSON.stringify(seen).slice(0,12000)}`);
+                }
+            }});
             if(request.action==='usageJson'){await reportClick(admin,'json');return {requested:true};}
             if(request.action==='usageClear'){
                 await reportClick(admin,'clear');await confirm('Clear history',['Clear all usage history',request.name,'source files and index stay intact']);

@@ -55,3 +55,14 @@ test('installed full and selected UI copies preserve native future fields and ex
     assert.throws(()=>assertInstalledWorkbenchCopies(session,{...copies,selectedJson:copies.json},true),/selected/);
     assert.throws(()=>assertInstalledWorkbenchCopies(session,{...copies,markdown:'summary only'},true),/Markdown/);
 });
+test('parity treats only validated member verification deadlines as elapsed timing',()=>{
+    // Shape retained from an installed Workbench/MCP comparison that differed by one millisecond.
+    const member=(deadline:number,effective=deadline)=>({allocation:{deadline_ms:1999,max_bytes:16777216,max_sources:8},index_id:'idx_'+'30'.repeat(16),
+        result:{source_verification:{limits:{concurrency:1,deadline_ms:deadline,effective_deadline_ms:effective,hit:[],max_bytes:16777216,max_sources:8}}}});
+    assert.deepEqual(installedParityValue(member(1998)),installedParityValue(member(1997,1990)));
+    const hit=member(1998) as any;hit.result.source_verification.limits.hit=['deadline'];assert.notDeepEqual(installedParityValue(hit),installedParityValue(member(1998)),'limits hit stay literal');
+    assert.throws(()=>installedParityValue(member(2000)),/admitted deadline/);assert.throws(()=>installedParityValue(member(1998,1999)),/admitted deadline/);
+    const sources=member(1998) as any;sources.result.source_verification.limits.max_sources=9;assert.throws(()=>installedParityValue(sources),/source\/byte budget/);
+    const named={allocation:{deadline_ms:29000,verification_deadline_ms:2000,verification_max_bytes:16777216,verification_max_sources:8},result:member(1998).result};
+    assert.deepEqual(installedParityValue(named),installedParityValue({...named,result:member(1500).result}));
+});

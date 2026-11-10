@@ -136,6 +136,11 @@ version = "0.10.4"
 criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
 
+[[exemptions.block-buffer]]
+version = "0.12.1"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for SHA-2 block buffering; source review supply-chain/reviews/rmcp-2026-11-09.md. no_std MaybeUninit/raw-pointer buffer paths inspect length/position invariants, sealed nonzero block sizes and panic-reset guards. No build script or I/O found. Not a complete unsafe-code proof."
+
 [[exemptions.block-padding]]
 version = "0.3.3"
 criteria = "safe-to-deploy"
@@ -231,6 +236,11 @@ version = "0.9.1"
 criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
 
+[[exemptions.const-oid]]
+version = "0.10.2"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for digest OID metadata; source review supply-chain/reviews/rmcp-2026-11-09.md. no_std BER/DER encoding and validated borrowed OID newtypes; repr(transparent) slice cast inspected. No build script or I/O found. Not an exhaustive parser/unsafe audit."
+
 [[exemptions.cortexkit-tree-sitter-scss]]
 version = "1.0.1"
 criteria = "safe-to-deploy"
@@ -270,6 +280,11 @@ notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03
 version = "0.1.7"
 criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
+
+[[exemptions.crypto-common]]
+version = "0.2.2"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for digest traits; source review supply-chain/reviews/rmcp-2026-11-09.md. no_std, forbids unsafe code, typed block/output traits; optional entropy features not requested by new SHA-2 path. No build script or I/O found in enabled core. Not a full API audit."
 
 [[exemptions.csv]]
 version = "1.4.0"
@@ -360,6 +375,11 @@ notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03
 version = "0.10.7"
 criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
+
+[[exemptions.digest]]
+version = "0.11.3"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for SHA-2 traits; source review supply-chain/reviews/rmcp-2026-11-09.md. no_std, forbids unsafe code, block API and OID metadata wrappers; no build script or runtime I/O found. Not a full trait/cryptographic audit."
 
 [[exemptions.diskann]]
 version = "0.59.0"
@@ -545,6 +565,11 @@ notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport
 version = "1.0.3"
 criteria = "safe-to-deploy"
 notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. Hyper date formatting/parsing; forbids unsafe, no autonomous I/O/process found. Not a general calendar validation audit. Not a full security audit or current advisory clearance."
+
+[[exemptions.hybrid-array]]
+version = "0.4.15"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for digest arrays; source review supply-chain/reviews/rmcp-2026-11-09.md. repr(transparent) typed arrays, unsafe slice/layout casts and MaybeUninit construction with initialized-prefix drop guard inspected. No build script or I/O found. Not a full unsafe/panic-safety audit."
 
 [[exemptions.hyper]]
 version = "1.12.0"
@@ -997,14 +1022,14 @@ criteria = "safe-to-deploy"
 notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. TLS cryptography and OS entropy via Rust/C/ASM FFI and CPU dispatch. Build script executes compiler/assembler, can consume shipped pregenerated objects, optional regeneration Perl/NASM; no download found. Packaged dirty VCS metadata and nested Apache/ISC notices retained; no crypto/prebuilt reproducibility audit. Not a full security audit or current advisory clearance."
 
 [[exemptions.rmcp]]
-version = "3.2.0"
+version = "3.9.0"
 criteria = "safe-to-deploy"
-notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
+notes = "Reviewed limited exact-version exception for SDK security update; source review supply-chain/reviews/rmcp-2026-11-09.md. Server schema cache removed; bounded existing AIRK authentication/session/admission remains required. OAuth and built-in HTTP client features disabled. Unchanged build hook invokes git only when package grandparent has .git and .githooks. Not a full audit, publisher authentication or fresh advisory clearance."
 
 [[exemptions.rmcp-macros]]
-version = "3.2.0"
+version = "3.9.0"
 criteria = "safe-to-deploy"
-notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
+notes = "Reviewed limited exact-version exception for SDK procedural macros; source review supply-chain/reviews/rmcp-2026-11-09.md. Host compile-time token/schema generation via syn/quote; no filesystem/network/process access found in inspected macro sources. No build script. Not a full macro expansion or security audit."
 
 [[exemptions.rsqlite-vfs]]
 version = "0.1.1"
@@ -1110,6 +1135,11 @@ notes = "Limited exact-version exception from targeted source inspection on 2026
 version = "0.10.9"
 criteria = "safe-to-deploy"
 notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
+
+[[exemptions.sha2]]
+version = "0.11.1"
+criteria = "safe-to-deploy"
+notes = "Reviewed limited exact-version exception for SDK skill manifest SHA-256 support; source review supply-chain/reviews/rmcp-2026-11-09.md. no_std digest implementation with checked CPU-feature dispatch and unsafe hardware intrinsics/raw block operations; software fallback retained. No build script or network/process access found. No cryptographic correctness, constant-time or full unsafe audit."
 
 [[exemptions.signal-hook-registry]]
 version = "1.4.8"

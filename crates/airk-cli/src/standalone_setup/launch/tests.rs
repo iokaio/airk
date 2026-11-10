@@ -103,7 +103,9 @@ fn standalone_additive_ca_preserves_existing_bundles_and_bounds_all_input() -> R
 #[test]
 fn standalone_launch_plan_reads_owned_token_into_child_environment_only() -> Result<()> {
     let temporary = tempfile::tempdir()?;
-    let root = temporary.path().canonicalize()?;
+    // tempfile's cleanup owner has platform-default permissions. The native
+    // credential root is a fresh child with AIRK's explicit owner-only ACL.
+    let root = temporary.path().canonicalize()?.join("credentials");
     crate::local_ipc::prepare_root(&root)?;
     let connection = connection(&root)?;
     let binding = crate::http_endpoint::InstallationBinding {

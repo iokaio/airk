@@ -890,7 +890,7 @@ async fn advance(root: &Path, journal: &mut Journal) -> Result<Selection> {
         launcher_repair::repair(root, &journal.candidate)?;
         let (main, approval) = verify_runtime(root, &journal.candidate)?;
         crate::process_roles::install(&main)?;
-        probe(root, &approval, &main, journal.manager).await?;
+        probe_unscheduled(root, &approval, &main, journal.manager).await?;
         replace_json(root, "selected.json", &journal.selected())?;
         record(root, &intent, Outcome::Selected)?;
         if exists(&root.join(INTENT))? {

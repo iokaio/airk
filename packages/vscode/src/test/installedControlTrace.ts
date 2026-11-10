@@ -40,7 +40,7 @@ export function installInstalledControlTrace(options:InstalledControlTraceOption
     try{
         if(!['a','b'].includes(options.role)||!/^[a-f0-9]{64}$/.test(options.runtimeSha256)||!path.isAbsolute(options.outputDirectory)||!path.isAbsolute(options.installDir))return ()=>{};
         if(!fs.lstatSync(options.outputDirectory).isDirectory()||fs.lstatSync(options.outputDirectory).isSymbolicLink())return ()=>{};
-        output=fs.realpathSync(options.outputDirectory);install=path.resolve(options.installDir);
+        output=fs.realpathSync.native(options.outputDirectory);install=path.resolve(options.installDir);
         if(!inside(output,install))return ()=>{};
         file=path.join(output,`${options.role}-control-trace-${process.pid}.json`);
     }catch{return ()=>{};}
@@ -59,9 +59,9 @@ export function installInstalledControlTrace(options:InstalledControlTraceOption
     const matches=(command:unknown,args:unknown)=>{
         try{
             if(typeof command!=='string'||!path.isAbsolute(command)||!Array.isArray(args)||args.length!==6||args[0]!=='service'||args[1]!=='console'||args[2]!=='--runtime-dir'||typeof args[3]!=='string'||args[4]!=='--runtime-sha256'||args[5]!==options.runtimeSha256)return false;
-            const root=fs.realpathSync(install),executable=fs.realpathSync(command),control=fs.realpathSync(args[3]);
+            const root=fs.realpathSync.native(install),executable=fs.realpathSync.native(command),control=fs.realpathSync.native(args[3]);
             return inside(output,root)&&inside(root,executable)&&inside(root,control)
-                &&path.relative(identity(control),identity(fs.realpathSync(path.join(root,'control'))))==='';
+                &&path.relative(identity(control),identity(fs.realpathSync.native(path.join(root,'control'))))==='';
         }catch{return false;}
     };
     const wrapped=function(this:unknown,...args:any[]):any {

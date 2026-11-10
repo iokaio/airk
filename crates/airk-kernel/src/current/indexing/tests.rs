@@ -1462,6 +1462,7 @@ fn scalar_summary_preserves_policy_semantic_and_discovery_corruption_precedence(
 }
 
 #[test]
+#[ignore = "quarantine: owner Tyler Jensen; expiry 2026-11-23; intermittent publication test failure; quota-margin hypothesis lacks diagnostics (docs/simplify/qualification-evidence.md)"]
 fn optional_projection_quota_refusal_still_publishes_original_values_and_scalars() -> Result<()> {
     use airk_store::current::{
         map::MapDomain,

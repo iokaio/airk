@@ -1245,10 +1245,28 @@ def run_clean_break(args, new, old):
         candidate_staged = True
         invoke(binary, "runtime", "stage", "--source", new, "--install-dir", install, "--state-dir", old_state,
             "--approved-sha256", new_identity, "--verification-basis", "organization-digest")
+        if args.interrupted_runtime:
+            # A pre-baseline installation can retain an unfinished ordinary update.
+            # Seed only synthetic fixture metadata for a separately staged candidate;
+            # the reset itself must supersede this exact pre-probe intent.
+            interrupted = args.interrupted_runtime.resolve(strict=True)
+            interrupted_identity = digest(interrupted / "airk-install.json")
+            invoke(binary, "runtime", "stage", "--source", interrupted, "--install-dir", install,
+                   "--state-dir", old_state, "--approved-sha256", interrupted_identity,
+                   "--verification-basis", "organization-digest")
+            layout = json.loads((install / "runtime-layout.json").read_text(encoding="utf-8"))
+            intent = {"schema": 1, "install": layout["install"],
+                      "control": str(Path(layout["state"]) / "control"), "candidate": interrupted_identity,
+                      "prior": {"schema": 1, "active": old_identity, "previous": None},
+                      "manager": False, "phase": "drain"}
+            (install / "activation.json").write_text(json.dumps(intent), encoding="utf-8")
+            receipt["superseded_activation"] = {"candidate": interrupted_identity, "phase": "drain"}
         started = time.monotonic()
         selected = invoke(binary, "runtime", "activate", "--install-dir", install, "--runtime-sha256", new_identity,
             "--expected-active", old_identity)
         receipt["activation_elapsed_seconds"] = time.monotonic()-started
+        if os.path.lexists(install / "activation.json"):
+            raise RuntimeError("Clean break left an ordinary activation intent pending")
         if selected.get("active") != new_identity:
             raise RuntimeError("Clean break did not select the reviewed candidate")
         client.wait(timeout=10)
@@ -1411,8 +1429,8 @@ def main():
         parser.error("Reviewed setup is only supported for the positive indexed upgrade fixture")
     if args.semantic_old and args.source_state != "indexed":
         parser.error("Semantic predecessor qualification requires an explicitly indexed old fixture")
-    if args.clean_break and (args.source_state != "indexed" or args.semantic_old or args.interrupted_runtime):
-        parser.error("Clean-break qualification requires the indexed fixture without retained-semantic or interrupted-migration campaigns")
+    if args.clean_break and (args.source_state != "indexed" or args.semantic_old):
+        parser.error("Clean-break qualification requires the indexed fixture without the retained-semantic campaign")
     if sys.platform not in ("win32","linux","darwin"):
         raise RuntimeError("Upgrade fixture supports Windows/Linux retirement or native Darwin graceful upgrade")
     if args.check_inputs:
@@ -1439,7 +1457,7 @@ def main():
     if args.clean_break and not boundary:
         parser.error("Clean-break fixture requires a verified pre-1.8.16 predecessor")
     if boundary:
-        if args.source_state != "indexed" or args.semantic_old or args.interrupted_runtime:
+        if args.source_state != "indexed" or args.semantic_old:
             parser.error("Pre-1.8.16 resets require the clean-break fixture; retained-state assertions no longer apply")
         return run_clean_break(args, new, old)
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)

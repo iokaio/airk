@@ -128,6 +128,21 @@ pub fn native_command() -> Command {
     }
 }
 
+/// Uses the same sealed private payload and actual native Genesis activation as
+/// reviewed evidence fixtures, without constructing a background fixture owner.
+pub fn installed_runtime_fixture(owner: &Path) -> anyhow::Result<(PathBuf, PathBuf, PathBuf)> {
+    reviewed::installed_runtime(owner)
+}
+
+pub fn setup_fixture_project(
+    control: &Path,
+    root: &Path,
+    data: &Path,
+    label: &str,
+) -> anyhow::Result<ProjectRegistration> {
+    reviewed::setup_project(control, root, data, label)
+}
+
 impl Service {
     /// Fresh canonical catalog fixture, approved only by its exact local digest.
     /// Existing indexed data must use an explicit retained-state test journey.

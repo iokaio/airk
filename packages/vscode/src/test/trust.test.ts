@@ -503,6 +503,7 @@ for(const peerInstalled of [false,true])test(`explicit Use Grant validates nativ
         const usage=await controller.explorerHost().usage(workbenchSpec,()=>true);assert.match(usage.view().html,/Open Index administration/);assert.equal(reports.length,0,'selected Usage cannot read entire Index history');
         await assert.rejects(controller.usageWriter(workbenchSpec,()=>true)(['clear']),/explicit_index_administration_required/);assert.equal(f.writes.length,afterIndexWrites);
         await usage.action({type:'usage',action:'openIndexAdministration'});assert.equal(reports.length,1);assert.equal(reports[0].includes('--catalog-session'),false);assert.equal(reports[0][reports[0].indexOf('--service-project')+1],backing.binding);
+        assert.equal(reports[0][0],'--service-install-dir','administration reads through the direct service route');assert.equal(reports[0].includes('launch'),false,'the retired launcher route is never used');
         const beforePeerDetail=f.state.catalogDetailReply!;
         f.state.catalogDetailReply=args=>{if(args.expected_catalog_revision!==null&&args.expected_catalog_revision!==2)throw new ServiceError('invalid_registry_request');const response=beforePeerDetail(args) as any;return {...response,detail:{...response.detail,revision:2}};};
         await controller.openIndexAdministration(workbenchSpec,()=>true);assert.equal(reports.length,2,'Usage retains the selected Index across an unrelated forward catalog clock');

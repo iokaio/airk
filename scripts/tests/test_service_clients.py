@@ -38,7 +38,7 @@ class ServiceClientTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             owner=Path(temporary).resolve();runtime=owner/"runtime";runtime.mkdir()
             modern={"schema":2,"version":"1.8.14","os":"windows","arch":"x86_64","airk_sha256":"a"*64}
-            cases=[{**modern,"schema":3},{**modern,"version":"1.8.15"},{**modern,"os":"unknown"},
+            cases=[{**modern,"schema":3},{**modern,"os":"unknown"},
                    {**modern,"arch":"unknown"},{**modern,"airk_sha256":"not-a-digest"},{**modern,"extra":True}]
             for metadata in cases:
                 with self.subTest(metadata=metadata):
@@ -57,6 +57,54 @@ class ServiceClientTests(unittest.TestCase):
             with patch.object(CLIENTS.subprocess,"Popen") as process, self.assertRaisesRegex(ValueError,"Unreviewed"):
                 CLIENTS.Fixture(runtime,owner)
             process.assert_not_called()
+
+    def test_schema_two_classification_follows_single_image_version_policy(self):
+        expected = {
+            "topology": "single_image", "transport": "https", "authority": "catalog",
+            "setup_owner": "reviewed_catalog_setup", "input_owner": "native_administrative",
+            "original_scope": "catalog_session", "migration_provenance": "user_reviewed_project_grant",
+            "migration_path": "reviewed_catalog", "startup": "managed_install",
+            "evidence": {"kind": "current_schema_2_contract"},
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            runtime = Path(temporary)
+            for version in ("1.8.14", "1.8.15", "1.8.16", "1.8.17", "1.9.0", "2.0.0"):
+                for operating_system in ("windows", "macos", "linux"):
+                    for architecture in ("x86_64", "aarch64"):
+                        metadata = {"schema": 2, "version": version, "os": operating_system,
+                                    "arch": architecture, "airk_sha256": "a" * 64}
+                        with self.subTest(version=version, os=operating_system, arch=architecture):
+                            (runtime / "airk-runtime.json").write_text(json.dumps(metadata))
+                            self.assertEqual(CLIENTS.classify_runtime(runtime), expected)
+
+    def test_invalid_schema_two_metadata_is_rejected_before_fixture_effects(self):
+        modern = {"schema": 2, "version": "1.8.14", "os": "windows",
+                  "arch": "x86_64", "airk_sha256": "a" * 64}
+        versions = (None, True, 10816, "", "1.8.13", "1.7.99", "0.9.99", "1.8", "1.8.16.1",
+                    "1.8.16-rc.1", "1.8.16+build", "01.8.16", "1.08.16", "1.8.016",
+                    " 1.8.16", "1.8.16\n", "１.８.１６", "-1.8.16")
+        cases = [None, [], "metadata", 2]
+        cases += [{**modern, "version": version} for version in versions]
+        cases += [{**modern, "schema": schema} for schema in (None, True, False, "2", 2.0, 0, 3)]
+        cases += [{**modern, key: value} for key, value in (
+            ("os", None), ("os", "win32"), ("os", "darwin"), ("os", []),
+            ("arch", None), ("arch", "arm64"), ("arch", "amd64"), ("arch", []),
+            ("airk_sha256", None), ("airk_sha256", "A" * 64), ("airk_sha256", "a" * 63),
+            ("airk_sha256", "a" * 65), ("airk_sha256", "g" * 64), ("airk_sha256", []),
+            ("embed_sha256", "b" * 64), ("extra", True))]
+        cases += [{key: value for key, value in modern.items() if key != missing} for missing in modern]
+        for metadata in cases:
+            with self.subTest(metadata=metadata), tempfile.TemporaryDirectory() as temporary:
+                owner = Path(temporary).resolve()
+                runtime = owner / "runtime"
+                runtime.mkdir()
+                with self.assertRaises(ValueError):
+                    (runtime / "airk-runtime.json").write_text(json.dumps(metadata))
+                    CLIENTS.classify_runtime(runtime)
+                with patch.object(CLIENTS.subprocess, "Popen") as process, self.assertRaises(ValueError):
+                    CLIENTS.Fixture(runtime, owner)
+                process.assert_not_called()
+                self.assertFalse((owner / "service.stderr").exists())
 
     def test_startup_matrix_uses_managed_owner_independently_of_packaging(self):
         for single_image, authority in ((False,"legacy"),(False,"catalog"),(True,"catalog")):

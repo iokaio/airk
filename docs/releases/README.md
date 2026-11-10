@@ -1,5 +1,7 @@
 # Release records
 
+- [1.8.18 local VSIX candidate](release-1.8.18.md): focused simplification closeout, unchanged state baseline and explicit qualification evidence for Windows manual testing.
+- [1.8.16 clean-break baseline](release-1.8.16.md): persisted `airk-state/1` baseline and retained failed installed-editor acceptance.
 - [1.8.14 implementation record](release-1.8.14.md): unpublished One AIRK implementation in progress; C0 source metadata and later acceptance evidence remain distinct.
 - [1.8.12 manual-test working build](release-1.8.12.md): persistent Explorer notice dismissal, automatic AIRK extension replacement and current local qualification.
 - [1.8.11 manual-test working build](release-1.8.11.md): simplified Indexing, index deletion and its original Windows package evidence.

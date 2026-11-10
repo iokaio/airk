@@ -1,6 +1,31 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
 
+impl<F: Fn() -> Result<u64> + Sync> StartupClock for F {
+    fn wall_ms(&self) -> Result<u64> {
+        self()
+    }
+    fn monotonic(&self) -> tokio::time::Instant {
+        tokio::time::Instant::now()
+    }
+    async fn wait_until(&self, until: tokio::time::Instant) -> Result<()> {
+        tokio::time::sleep_until(until).await;
+        Ok(())
+    }
+}
+
+fn startup_operation_fixture() -> Result<(tempfile::TempDir, PathBuf, String, activation::Intent)> {
+    let (owner, root, identity) = unselected_fixture()?;
+    let control = layout::control(&root)?;
+    local_ipc::prepare_root(&control)?;
+    let intent = serde_json::from_value(serde_json::json!({
+        "schema":1,"install":root,"control":control,"candidate":identity,
+        "prior":null,"manager":false,"phase":"probe","checkpoint":null,
+    }))?;
+    replace_json(&root, "activation.json", &intent)?;
+    Ok((owner, root, identity, intent))
+}
+
 #[test]
 fn early_rebuild_option_requires_the_reviewed_predecessor() -> Result<()> {
     use clap::Parser;
@@ -337,6 +362,184 @@ fn startup_circuit_retains_failed_attempts_across_reopen_and_backwards_clock() -
     startup_attempt(&root, &identity, 140_000)?;
     // A different approved runtime has its own bounded rollback/startup budget.
     startup_attempt(&root, &"b".repeat(64), 140_000)?;
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn planned_startup_admission_waits_for_existing_second_and_third_boundaries() -> Result<()> {
+    let (_owner, root, identity, intent) = startup_operation_fixture()?;
+    let main = root.join("runtimes").join(&identity).join(main_name());
+    let binding = activation::StartupBinding::new(&root, &intent, &identity, &main);
+    let admission = StartupAdmission::Operation {
+        binding: &binding,
+        deadline: tokio::time::Instant::now() + Duration::from_secs(60),
+    };
+    let origin = tokio::time::Instant::now();
+    let wall = || Ok(10_000 + u64::try_from(origin.elapsed().as_millis())?);
+    for expected_ms in [0, 2000, 6000] {
+        let (healthy, permit) = observe_startup_admission::<()>(
+            &root,
+            &identity,
+            true,
+            None,
+            std::future::ready(Err(anyhow::anyhow!("planned probe observes stopped owner"))),
+            &wall,
+            &admission,
+        )
+        .await?;
+        assert!(healthy.is_none() && permit.is_none());
+        assert_eq!(origin.elapsed(), Duration::from_millis(expected_ms));
+    }
+    assert_eq!(
+        fs::read(root.join(format!("startup-{identity}.json")))?,
+        br#"{"attempts_unix_ms":[10000,12000,16000]}"#
+    );
+    assert!(!root.join("bootstrap.json").exists());
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn planned_startup_admission_waits_for_existing_third_boundary_without_replaying_first_two()
+-> Result<()> {
+    let (_owner, root, identity, intent) = startup_operation_fixture()?;
+    let main = root.join("runtimes").join(&identity).join(main_name());
+    let binding = activation::StartupBinding::new(&root, &intent, &identity, &main);
+    let admission = StartupAdmission::Operation {
+        binding: &binding,
+        deadline: tokio::time::Instant::now() + Duration::from_secs(60),
+    };
+    let path = root.join(format!("startup-{identity}.json"));
+    fs::write(&path, br#"{"attempts_unix_ms":[10000,12000]}"#)?;
+    let origin = tokio::time::Instant::now();
+    observe_startup_admission::<()>(
+        &root,
+        &identity,
+        true,
+        None,
+        std::future::ready(Err(anyhow::anyhow!("planned probe observes stopped owner"))),
+        &|| Ok(12_000 + u64::try_from(origin.elapsed().as_millis())?),
+        &admission,
+    )
+    .await?;
+    assert_eq!(origin.elapsed(), Duration::from_secs(4));
+    assert_eq!(
+        fs::read(path)?,
+        br#"{"attempts_unix_ms":[10000,12000,16000]}"#
+    );
+    assert!(!root.join("bootstrap.json").exists());
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn ordinary_startup_admission_keeps_immediate_cooldown_refusal_without_receipt_effects()
+-> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let root = owner.path().canonicalize()?.join("install");
+    local_ipc::prepare_root(&root)?;
+    let identity = "e".repeat(64);
+    let path = root.join(format!("startup-{identity}.json"));
+    let original = br#"{"attempts_unix_ms":[10000]}"#;
+    fs::write(&path, original)?;
+    let began = tokio::time::Instant::now();
+    let error = observe_startup_admission::<()>(
+        &root,
+        &identity,
+        true,
+        None,
+        std::future::ready(Err(anyhow::anyhow!(
+            "ordinary connection observes no owner"
+        ))),
+        &|| Ok(11_000),
+        &StartupAdmission::Immediate,
+    )
+    .await
+    .err()
+    .context("ordinary startup must preserve immediate backoff")?;
+    assert_eq!(
+        error.to_string(),
+        "on-demand restart backoff active; retry later"
+    );
+    assert_eq!(tokio::time::Instant::now(), began);
+    assert_eq!(fs::read(path)?, original);
+    assert!(!root.join("bootstrap.json").exists());
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn planned_startup_admission_does_not_reset_receipts_or_wait_past_hard_circuit() -> Result<()>
+{
+    let (_owner, root, identity, intent) = startup_operation_fixture()?;
+    let main = root.join("runtimes").join(&identity).join(main_name());
+    let binding = activation::StartupBinding::new(&root, &intent, &identity, &main);
+    let admission = StartupAdmission::Operation {
+        binding: &binding,
+        deadline: tokio::time::Instant::now() + Duration::from_secs(60),
+    };
+    let path = root.join(format!("startup-{identity}.json"));
+    for (now, original, expected) in [
+        (
+            16_001,
+            br#"{"attempts_unix_ms":[10000,12000,16000]}"#.as_slice(),
+            "on-demand startup circuit open",
+        ),
+        (
+            9_999,
+            br#"{"attempts_unix_ms":[10000]}"#.as_slice(),
+            "on-demand restart backoff active",
+        ),
+        (
+            10_000,
+            b"malformed startup receipt".as_slice(),
+            "expected value",
+        ),
+    ] {
+        fs::write(&path, original)?;
+        let began = tokio::time::Instant::now();
+        let error = observe_startup_admission::<()>(
+            &root,
+            &identity,
+            true,
+            None,
+            std::future::ready(Err(anyhow::anyhow!("planned owner is stopped"))),
+            &|| Ok(now),
+            &admission,
+        )
+        .await
+        .err()
+        .context("terminal startup state must refuse")?;
+        assert!(error.to_string().contains(expected), "{error:#}");
+        assert_eq!(tokio::time::Instant::now(), began);
+        assert_eq!(fs::read(&path)?, original);
+        assert!(!root.join("bootstrap.json").exists());
+    }
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn startup_admission_healthy_observation_never_charges_or_interprets_circuit() -> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let root = owner.path().canonicalize()?.join("install");
+    local_ipc::prepare_root(&root)?;
+    let identity = "c".repeat(64);
+    let path = root.join(format!("startup-{identity}.json"));
+    let original = b"a healthy observation must not parse this damaged attempt receipt";
+    fs::write(&path, original)?;
+    let began = tokio::time::Instant::now();
+    let (healthy, permit) = observe_startup_admission(
+        &root,
+        &identity,
+        true,
+        None,
+        std::future::ready(Ok(42)),
+        &|| -> Result<u64> { panic!("healthy observation must not read startup clock") },
+        &StartupAdmission::Immediate,
+    )
+    .await?;
+    assert_eq!(healthy, Some(42));
+    assert!(permit.is_none());
+    assert_eq!(tokio::time::Instant::now(), began);
+    assert_eq!(fs::read(&path)?, original);
+    assert!(!root.join("bootstrap.json").exists());
     Ok(())
 }
 

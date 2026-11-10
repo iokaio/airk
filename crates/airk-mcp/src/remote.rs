@@ -5,7 +5,7 @@ use rmcp::{
     ErrorData, RoleServer, ServerHandler,
     model::{
         CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ListToolsResult,
-        PaginatedRequestParams, ServerCapabilities, ServerInfo,
+        PaginatedRequestParams, ServerCapabilities, ServerConfig,
     },
     service::RequestContext,
 };
@@ -574,8 +574,8 @@ impl ReadSession {
 }
 
 impl ServerHandler for Bridge {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(rmcp::model::Implementation::new(
                 "airk",
                 env!("CARGO_PKG_VERSION"),
@@ -1120,6 +1120,17 @@ impl<R: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for BoundedRead<R> {
         let mut buffer = tokio::io::ReadBuf::new(&mut bytes[..count]);
         match Pin::new(&mut self.inner).poll_read(cx, &mut buffer) {
             std::task::Poll::Ready(Ok(())) => {
+                if buffer.filled().is_empty() && count > 0 && self.line_bytes > 0 {
+                    // End of input after an unterminated final frame. Terminate that
+                    // already bounded frame once so the SDK line decoder dispatches a
+                    // complete request; the next read reports the real end of input.
+                    self.line_bytes = 0;
+                    output.put_slice(
+                        b"
+",
+                    );
+                    return std::task::Poll::Ready(Ok(()));
+                }
                 for &byte in buffer.filled() {
                     self.line_bytes += 1;
                     if self.line_bytes > airk_core::service::MAX_FRAME_BYTES {

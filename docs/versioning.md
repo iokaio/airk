@@ -4,9 +4,11 @@ Runtime installation and upgrades display a VS Code progress notification labele
 
 Historical 1.5.4–1.8.13 installation records the exact activation intent before stopping the verified optional manager and terminating approved predecessor processes, including older versions and Windows clients holding the stable launcher. Captured native process identities prevent PID reuse from redirecting termination. All captured processes share a five-second exit wait; verification, manager control, copying and startup are additional. Historical macOS installation uses authenticated graceful shutdown. The 1.8.14 migration retains version-specific predecessor retirement, rather than assuming those old processes implement the new checkpoint protocol. See [installation](service-installation.md) for ownership and platform limits.
 
-The current branch source version is **1.8.16**, the user-approved clean-break
-baseline recorded on 8 November 2026. Every older installation creates fresh
-AIRK state and rebuilt indexes, preserving only reviewed source selections and
+The current branch source version is **1.8.18**, requested for the new local
+VSIX candidate on 9 November 2026 (1.8.17 was a working number only; no 1.8.17
+package was built). The user-approved clean-break baseline
+remains **1.8.16**, recorded on 8 November 2026. Every pre-baseline
+installation creates fresh AIRK state and rebuilt indexes, preserving only reviewed source selections and
 supported preferences. Original sources remain untouched. The
 [clean-break contract](upgrade-rebuild-fallback.md) replaces prior pre-baseline
 index migration and optional rebuild choices. Old grants, credentials, index IDs
@@ -23,14 +25,15 @@ Copied or mismatched markers do not establish compatibility.
 Downgrades and unknown contracts remain explicit refusals. Registry, collection,
 source and transport formats keep their independent compatibility checks.
 The plan is to stabilize and qualify this development line before a future
-public **1.9.0** release. Keep current source/lockfile/catalog versions 1.8.16;
+public **1.9.0** release. Keep current source/lockfile/catalog versions 1.8.18;
 1.9.0 is not a version bump or publication authorization for this task.
-See the [current record](releases/release-1.8.16.md); the
+See the [current record](releases/release-1.8.18.md) and
+[release-readiness ledger](simplify/release-readiness.md); the
 [1.8.14 working record](releases/release-1.8.14.md) retains dated implementation
 and failed-attempt evidence. Publication still requires exact-source qualification
 and successful release workflows.
 
-Use one numeric `major.minor.patch` version for the Rust workspace, every local AIRK crate in `Cargo.lock`, `packages/vscode/package.json`, and both root package entries in `packages/vscode/package-lock.json`. The compiled main, runtime metadata, native ZIP and VSIX must agree with that source version. The requested local candidate version is `1.8.16`; a release dispatch/tag must use the separately reviewed, fully validated source version. The intended public 1.9.0 release requires separate qualification and promotion. The working-version adjustment authorizes no CI dispatch or publication.
+Use one numeric `major.minor.patch` version for the Rust workspace, every local AIRK crate in `Cargo.lock`, `packages/vscode/package.json`, and both root package entries in `packages/vscode/package-lock.json`. The compiled main, runtime metadata, native ZIP and VSIX must agree with that source version. The requested local candidate version is `1.8.18`; a release dispatch/tag must use the separately reviewed, fully validated source version. The intended public 1.9.0 release requires separate qualification and promotion. The working-version adjustment authorizes no CI dispatch or publication.
 
 The generated offline template catalog in `crates/airk-mcp/src/explorer_templates.json` also embeds the extension version. After synchronizing manifests, compile the extension TypeScript modules and run `node packages/vscode/scripts/build-explorer.cjs --write-mcp-catalog`; review the generated diff. Normal extension compilation rejects catalog drift.
 
@@ -51,14 +54,14 @@ Increment the patch before handing testers another changed installable build. A 
 Update all four version-bearing files together before building. Do not edit executable versions, manifests, receipts or ZIP/VSIX contents after tests to make them match. Rebuild the native runtime when its compiled version changes. Check agreement without network access or publication:
 
 ```console
-python scripts/release-version.py check --expected 1.8.16
+python scripts/release-version.py check --expected 1.8.18
 ```
 
 CI runs the same agreement check in its unconditional quick job. It rejects mismatched manifests/lockfiles and, when supplied, a mismatched `expected_version`. Local build, native packaging and extension packaging verify compiled identities and bind the exact payload/lock hashes. New changed installable candidates need the next unused numeric patch; the checked version is not bumped automatically on each CI rerun.
 
 ## Installation and running clients
 
-A distinct extension version installs into a distinct VS Code extension directory. The extension installs the approved 1.8.16 main outside that directory, under a digest-specific runtime slot. Native bootstrap selects that image directly. Agent configuration uses the verified loopback HTTPS endpoint and scoped credential reference; it must not select an extension-bundled executable or a particular runtime slot. Historical pairs used a stable `airk-launcher` selector; pre-baseline reset retires owned entries and requires reviewed fresh client reconnection.
+A distinct extension version installs into a distinct VS Code extension directory. The extension installs the approved 1.8.18 main outside that directory, under a digest-specific runtime slot. Native bootstrap selects that image directly. Agent configuration uses the verified loopback HTTPS endpoint and scoped credential reference; it must not select an extension-bundled executable or a particular runtime slot. Historical pairs used a stable `airk-launcher` selector; pre-baseline reset retires owned entries and requires reviewed fresh client reconnection.
 
 Native admission first applies the clean-break boundary. Pre-1.8.16 state is
 reset and rebuilt; supported 1.8.16+ state follows compatible checkpointed
@@ -80,15 +83,16 @@ The optional previous VSIX selects the running-upgrade scenario. Without it, the
 
 ## CI and release handoff
 
-Finish implementation and manually accept the identified 1.8.14 build first.
-The C0 source/catalog adjustment is not a tested runtime or release artifact.
+Finish focused repairs and qualification, then manually accept the identified
+1.8.18 VSIX before release preparation. A source/catalog version adjustment is
+not a tested runtime or release artifact.
 Earlier 1.8.12, 1.8.8 and 1.9.0 development binaries retain their original versions
 and hashes; none is relabeled as a new implementation or promoted artifact.
 
 1. Before a feature/fix PR, the maintainer reviews the patch increment, synchronized locks, README, documentation index, current release notes and Marketplace listing. A bump already made for that PR is not repeated. Keep dated earlier receipts and release records identifiable as history.
 2. Merge the reviewed, human DCO-signed changes through the protected PR flow. Run full CI on the exact final main commit before publication. Skipping full tests for local installer iteration does not waive CI release gates.
 3. Promote the complete platform candidate set from one authenticated successful main CI run/attempt/commit. Rebuilds of changed source need a new candidate/version; successful artifact retries retain their original identity. Dirty local installer artifacts are not publication inputs.
-4. Rehearse Marketplace and GitHub release using the checked-in version. Set the Extension release workflow's `version` to the reviewed tested version (`1.8.16` for this local candidate), and select the intended channel. Rehearsal never increments or publishes. Verify all compiled versions, platform payloads, lock hashes, signing/provenance and qualification limits.
+4. Rehearse Marketplace and GitHub release using the checked-in version. Set the Extension release workflow's `version` to the reviewed tested version (`1.8.18` for this local candidate), and select the intended channel. Rehearsal never increments or publishes. Verify all compiled versions, platform payloads, lock hashes, signing/provenance and qualification limits.
 5. After explicit publication authorization, publish the verified artifacts through the [release workflow](release-workflow.md). GitHub and Marketplace use that same reviewed tested numeric version; its GitHub tag adds the `v` prefix. Publication must not silently allocate or rewrite a version after testing. Complete partial publication with the original matching artifacts and retry only the failed jobs. Never overwrite an existing version with different bytes.
 
-The release-time draft version PR is a fallback when both destinations already contain a completed version. It does not replace the maintainer's reviewed version choice or permit publishing before the promoted source and main CI are ready. The user authorized the 1.8.16 local retry candidate on 8 November 2026; keep that version for this correction; any later promotion is a separately reviewed source/build step, not an automatic patch increase per phase. See [CI and builds](ci-and-builds.md), [extension deployment](extension-deployment.md), and [Windows builds](windows-local-build.md).
+The release-time draft version PR is a fallback when both destinations already contain a completed version. It does not replace the maintainer's reviewed version choice or permit publishing before the promoted source and main CI are ready. The user requested the 1.8.18 local candidate on 9 November 2026, superseding the 1.8.16 retry version and the unbuilt 1.8.17 working number while retaining its persisted-state baseline and historical receipts. Keep 1.8.18 for this candidate; any later promotion is a separately reviewed source/build step, not an automatic patch increase per phase. See [CI and builds](ci-and-builds.md), [extension deployment](extension-deployment.md), and [Windows builds](windows-local-build.md).

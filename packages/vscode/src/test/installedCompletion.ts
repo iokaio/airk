@@ -36,6 +36,20 @@ export function installedParityValue(value:any):any {
     const result:Row=Object.fromEntries(Object.entries(value).filter(([key])=>!timing.has(key)).map(([key,item])=>[key,installedParityValue(item)]));
     if(result.allocation&&Object.hasOwn(result.allocation,'deadline_ms')){assert.ok(Number.isSafeInteger(result.allocation.deadline_ms)&&result.allocation.deadline_ms>0,'Original allocation deadline must be positive');result.allocation.deadline_ms=0;}
     if(result.delivery_observation?.receipt)delete result.delivery_observation.receipt.result_digest;
+    // Separate requests report different remaining verification windows. As in
+    // the native parity fixture (docs/read-interface-parity.md), only a member's
+    // source_verification deadline observations are elapsed timing, and only after
+    // they are validated against that member's admitted verification allocation.
+    const limits=result.result?.source_verification?.limits,admitted=value.allocation;
+    if(admitted&&typeof admitted==='object'&&limits&&typeof limits==='object'&&Object.hasOwn(limits,'effective_deadline_ms')){
+        const window=Object.hasOwn(admitted,'verification_deadline_ms')?admitted.verification_deadline_ms:admitted.deadline_ms;
+        const sources=Object.hasOwn(admitted,'verification_max_sources')?admitted.verification_max_sources:admitted.max_sources;
+        const bytes=Object.hasOwn(admitted,'verification_max_bytes')?admitted.verification_max_bytes:admitted.max_bytes;
+        assert.ok([window,limits.deadline_ms,limits.effective_deadline_ms].every(item=>Number.isSafeInteger(item)&&item>=0)&&window<=30000
+            &&limits.effective_deadline_ms<=limits.deadline_ms&&limits.deadline_ms<=window,'Verification receipt exceeded its admitted deadline');
+        assert.ok(Number.isSafeInteger(limits.max_sources)&&Number.isSafeInteger(limits.max_bytes)&&limits.max_sources<=sources&&limits.max_bytes<=bytes,'Verification receipt exceeded its admitted source/byte budget');
+        limits.deadline_ms=0;limits.effective_deadline_ms=0;
+    }
     // Native JSON text content and structuredContent describe the same result.
     if(Array.isArray(result.content))result.content=result.content.map((block:Row)=>{if(block.type!=='text'||typeof block.text!=='string')return block;let text:any;try{text=JSON.parse(block.text);}catch{return block;}return {...block,text:installedParityValue(text)};});
     return result;

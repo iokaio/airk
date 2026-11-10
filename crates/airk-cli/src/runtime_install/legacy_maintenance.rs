@@ -123,9 +123,24 @@ pub(super) fn require_settled(root: &Path) -> Result<()> {
 /// holds the installer lock. Without any leftover this reads only directory
 /// metadata and changes nothing.
 pub(super) async fn settle_locked(root: &Path) -> Result<Settlement> {
+    settle_locked_with_start(root, |root, approval, main| async move {
+        activation::start_selected(&root, &approval, &main, None)
+            .await
+            .map(|health| health.instance)
+    })
+    .await
+}
+
+/// Keep filesystem, fence, lifecycle and selected-image observations real while
+/// allowing component tests to observe the final process-start boundary.
+async fn settle_locked_with_start<F, Fut>(root: &Path, mut start: F) -> Result<Settlement>
+where
+    F: FnMut(PathBuf, Approval, PathBuf) -> Fut,
+    Fut: std::future::Future<Output = Result<Incarnation>>,
+{
     let root = root.canonicalize()?;
     let mut settlement = Settlement::default();
-    let retained = settle_maintenance(&root, &mut settlement).await?;
+    let retained = settle_maintenance(&root, &mut settlement, &mut start).await?;
     remove_journals(&root, retained, &mut settlement)?;
     remove_private_archives(&root, &mut settlement)?;
     settlement.report();
@@ -133,7 +148,15 @@ pub(super) async fn settle_locked(root: &Path) -> Result<Settlement> {
 }
 
 /// Returns whether the maintenance journal had to be kept.
-async fn settle_maintenance(root: &Path, settlement: &mut Settlement) -> Result<bool> {
+async fn settle_maintenance<F, Fut>(
+    root: &Path,
+    settlement: &mut Settlement,
+    start: &mut F,
+) -> Result<bool>
+where
+    F: FnMut(PathBuf, Approval, PathBuf) -> Fut,
+    Fut: std::future::Future<Output = Result<Incarnation>>,
+{
     let path = root.join(JOURNAL);
     if !present(&path)? {
         return Ok(false);
@@ -201,7 +224,7 @@ async fn settle_maintenance(root: &Path, settlement: &mut Settlement) -> Result<
         }
     }
     if restart && stopped {
-        restart_selected(root, settlement).await;
+        restart_selected(root, settlement, start).await;
     }
     safe_file(&path)?;
     fs::remove_file(&path)?;
@@ -218,13 +241,17 @@ async fn settle_maintenance(root: &Path, settlement: &mut Settlement) -> Result<
 
 /// Uses the currently selected runtime, never the journal's, and only while
 /// starting is still allowed (the explicit user stop flag remains clear).
-async fn restart_selected(root: &Path, settlement: &mut Settlement) {
+async fn restart_selected<F, Fut>(root: &Path, settlement: &mut Settlement, start: &mut F)
+where
+    F: FnMut(PathBuf, Approval, PathBuf) -> Fut,
+    Fut: std::future::Future<Output = Result<Incarnation>>,
+{
     let started = async {
         lifecycle::require_start_allowed(root)?;
         let selected = selection_record(root)?;
         let (main, approval) = verify_runtime(root, &selected.active)?;
-        let health = activation::start_selected(root, &approval, &main, None).await?;
-        anyhow::Ok((selected.active, health.instance))
+        let instance = start(root.to_path_buf(), approval, main).await?;
+        anyhow::Ok((selected.active, instance))
     }
     .await;
     match started {

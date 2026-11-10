@@ -599,3 +599,73 @@ async fn lower_http_response_override_still_bounds_complete_encoded_envelopes() 
     assert_eq!(error["error"]["code"], "canonical_response_limit");
     Ok(())
 }
+
+#[tokio::test]
+async fn modern_http_schema_validation_rechecks_unknown_and_changed_tools() -> anyhow::Result<()> {
+    struct ChangingCatalog {
+        annotated: Arc<std::sync::atomic::AtomicBool>,
+        lookups: Arc<AtomicUsize>,
+    }
+    impl RemoteTools for ChangingCatalog {
+        fn catalog(&self) -> Vec<Tool> {
+            self.lookups.fetch_add(1, Ordering::SeqCst);
+            if !self.annotated.load(Ordering::SeqCst) {
+                return vec![];
+            }
+            vec![serde_json::from_value(json!({"name":"search","inputSchema":{"type":"object","properties":{"revision":{"type":"string","x-mcp-header":"Revision"}}}})).unwrap()]
+        }
+        fn call(&self, _: String, _: serde_json::Map<String, Value>) -> RemoteFuture<'_> {
+            Box::pin(async { panic!("invalid headers/metadata must refuse before execution") })
+        }
+    }
+    let annotated = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let lookups = Arc::new(AtomicUsize::new(0));
+    let source = annotated.clone();
+    let observed = lookups.clone();
+    let service = HttpReadService::new(
+        ReadSessionFactory::default(),
+        HttpSessionBudget::new(1)?,
+        Arc::new(move || {
+            Ok(Arc::new(ChangingCatalog {
+                annotated: source.clone(),
+                lookups: observed.clone(),
+            }))
+        }),
+        ReadSessionPreferences {
+            response_mode: crate::response::ResponseMode::Full,
+            client: airk_core::usage::ClientFamily::Unknown,
+        },
+        "127.0.0.1:57421".into(),
+        vec![],
+        HttpReadLimits::default(),
+    )?;
+    for (present, expected_code) in [(false, -32602), (true, -32020), (false, -32602)] {
+        annotated.store(present, Ordering::SeqCst);
+        let prior_lookups = lookups.load(Ordering::SeqCst);
+        // A matching protocolVersion reaches schema-header validation. Keep
+        // clientCapabilities absent so an unannotated request is then refused
+        // by the handler's metadata check, without executing the backend.
+        let mut call = request(
+            Method::POST,
+            "/mcp",
+            json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search","arguments":{"revision":"body"},"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}),
+        );
+        for (header, content) in [
+            ("mcp-protocol-version", "2026-07-28"),
+            ("mcp-method", "tools/call"),
+            ("mcp-name", "search"),
+            ("mcp-param-revision", "contradiction"),
+        ] {
+            call.headers_mut().insert(header, content.parse()?);
+        }
+        let response = service.handle(call).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(value(response).await?["error"]["code"], expected_code);
+        assert!(
+            lookups.load(Ordering::SeqCst) > prior_lookups,
+            "every request must re-read the catalog, including unknown tool names"
+        );
+    }
+    service.close().await;
+    Ok(())
+}

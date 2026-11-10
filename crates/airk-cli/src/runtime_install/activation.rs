@@ -255,6 +255,86 @@ pub(super) async fn start_selected(
     main: &Path,
     expected_manager: Option<bool>,
 ) -> Result<ServiceHealth> {
+    start_selected_with_binding(root, approval, main, expected_manager, None).await
+}
+
+/// Borrowed, non-Clone, non-serialized ownership of one saved activation's
+/// startup inputs. It cannot authorize another operation or survive its caller.
+pub(super) struct StartupBinding<'a> {
+    root: &'a Path,
+    intent: &'a Intent,
+    runtime: String,
+    main: PathBuf,
+}
+impl<'a> StartupBinding<'a> {
+    pub(super) fn new(root: &'a Path, intent: &'a Intent, runtime: &str, main: &Path) -> Self {
+        Self {
+            root,
+            intent,
+            runtime: runtime.into(),
+            main: main.into(),
+        }
+    }
+    pub(super) fn validate(&self, root: &Path, runtime: &str) -> Result<()> {
+        ensure!(
+            self.root == root
+                && self.runtime == runtime
+                && self.intent.install == root.canonicalize()?,
+            "activation startup binding changed"
+        );
+        let saved = pending(root)?.context("activation startup operation disappeared")?;
+        ensure!(
+            serde_json::to_value(&saved)? == serde_json::to_value(self.intent)?,
+            "activation startup operation changed"
+        );
+        ensure!(
+            layout::control(root)? == self.intent.control,
+            "activation startup control changed"
+        );
+        let expected = match self.intent.phase {
+            Phase::Probe => self.intent.candidate.as_str(),
+            Phase::Rollback => self
+                .intent
+                .prior
+                .as_ref()
+                .context("rollback startup predecessor missing")?
+                .active
+                .as_str(),
+            _ => bail!("activation startup phase does not admit a process"),
+        };
+        ensure!(expected == runtime, "activation startup runtime changed");
+        managed::require_unmanaged(root)?;
+        let (main, approval) = verify_runtime(root, runtime)?;
+        ensure!(
+            main == self.main && approval.manifest_sha256 == runtime,
+            "activation startup payload changed"
+        );
+        ensure!(
+            crate::service_manager::ServiceManager::for_runtime(root)?.owns_restart()?
+                == self.intent.manager,
+            "startup ownership changed during activation"
+        );
+        Ok(())
+    }
+}
+
+async fn start_for_intent(
+    root: &Path,
+    intent: &Intent,
+    approval: &Approval,
+    main: &Path,
+) -> Result<ServiceHealth> {
+    let binding = StartupBinding::new(root, intent, &approval.manifest_sha256, main);
+    start_selected_with_binding(root, approval, main, Some(intent.manager), Some(binding)).await
+}
+
+async fn start_selected_with_binding(
+    root: &Path,
+    approval: &Approval,
+    main: &Path,
+    expected_manager: Option<bool>,
+    binding: Option<StartupBinding<'_>>,
+) -> Result<ServiceHealth> {
     if selection(root)?.is_some_and(|selected| selected.active == approval.manifest_sha256) {
         ensure!(
             !state_contract::required(root)?,
@@ -268,6 +348,9 @@ pub(super) async fn start_selected(
         "startup ownership changed during activation"
     );
     if !managed {
+        if let Some(binding) = binding {
+            return start_for_operation(root, approval, main, binding).await;
+        }
         return start(root, approval, main, true).await;
     }
     let expected = runtime_pair::digest_file(main)?;
@@ -355,8 +438,24 @@ fn manager(root: &Path, intent: &Intent) -> Result<crate::service_manager::Servi
     Ok(manager)
 }
 
-async fn probe(root: &Path, approval: &Approval, main: &Path, manager: bool) -> Result<()> {
+async fn probe(root: &Path, intent: &Intent, approval: &Approval, main: &Path) -> Result<()> {
+    let observed = start_for_intent(root, intent, approval, main).await?;
+    probe_observed(root, approval, observed).await
+}
+
+/// A rebuild starts its candidate once under its own journal, which may already
+/// have settled the activation intent. It keeps ordinary immediate admission.
+async fn probe_unscheduled(
+    root: &Path,
+    approval: &Approval,
+    main: &Path,
+    manager: bool,
+) -> Result<()> {
     let observed = start_selected(root, approval, main, Some(manager)).await?;
+    probe_observed(root, approval, observed).await
+}
+
+async fn probe_observed(root: &Path, approval: &Approval, observed: ServiceHealth) -> Result<()> {
     if let Some(intent) = pending(root)?
         && let Some(operation) = &intent.checkpoint
         && crate::checkpoint_fence::admission_closed(&intent.control)?
@@ -437,7 +536,7 @@ async fn rollback(root: &Path, intent: &Intent) -> Result<()> {
     }
     if let Some(prior) = &intent.prior {
         let (main, approval) = verify_runtime(root, &prior.active)?;
-        start_selected(root, &approval, &main, Some(intent.manager)).await?;
+        start_for_intent(root, intent, &approval, &main).await?;
     }
     record(root, intent, Outcome::AbortedOrFailed)?;
     checkpoint::stage(root, intent, checkpoint::Stage::Aborted)?;
@@ -559,7 +658,7 @@ pub(super) async fn resume(root: &Path) -> Result<()> {
         // be adopted as a fresh namespace. Keep the real absent selection until
         // qualified metadata and actual candidate health have both succeeded.
         catalog_upgrade::activate(root, &intent).await?;
-        probe(root, &approval, &main, intent.manager).await?;
+        probe(root, &intent, &approval, &main).await?;
         if !committed {
             replace_json(root, "selected.json", &intent.selected())?;
         }
@@ -568,7 +667,7 @@ pub(super) async fn resume(root: &Path) -> Result<()> {
     if committed && data_migration::needed(root)? {
         migrate_selected(root, &intent, &main, &approval).await?;
     }
-    match probe(root, &approval, &main, intent.manager).await {
+    match probe(root, &intent, &approval, &main).await {
         Ok(_) => {
             if !committed {
                 replace_json(root, "selected.json", &intent.selected())?;
@@ -578,12 +677,12 @@ pub(super) async fn resume(root: &Path) -> Result<()> {
             // rather than automatically rolling back to an older metadata reader.
             if data_migration::needed(root)? {
                 migrate_selected(root, &intent, &main, &approval).await?;
-                probe(root, &approval, &main, intent.manager).await?;
+                probe(root, &intent, &approval, &main).await?;
             }
             // Drain and require the existing catalog; an in-place upgrade of
             // a registry without one is refused (catalog_upgrade_unsupported).
             catalog_upgrade::activate(root, &intent).await?;
-            probe(root, &approval, &main, intent.manager).await?;
+            probe(root, &intent, &approval, &main).await?;
             complete_selected(root, &intent).await
         }
         Err(error) if committed => {
