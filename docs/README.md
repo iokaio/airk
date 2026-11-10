@@ -17,6 +17,10 @@ component contract,
 [`install_files`](../crates/airk-cli/src/install_files/CONTRACT.md). No
 version, wire format or persisted state changed.
 
+**Simplification hand-off (10 November 2026):** [docs/simplify/handoff-2026-11-10.md](simplify/handoff-2026-11-10.md)
+summarizes the `feat/simplify` restructuring, its verification and the open
+decisions.
+
 **Documentation history:** dated reviews, superseded plans, phase logs, spikes
 and experiments moved to [docs/history](history/README.md) in step D6a of the
 simplification plan. They are kept unchanged apart from link updates and are
