@@ -179,7 +179,7 @@ fn parse_owner(bytes: &[u8]) -> Result<Owner> {
 }
 pub(super) fn owned_scope_at(
     directory: &Path,
-    pin: &crate::service::registry::catalog::setup::storage::SetupDirectory,
+    pin: &crate::store_fs::SetupDirectory,
 ) -> Result<Option<CurrentScope>> {
     let bytes = match pin.read_file(std::ffi::OsStr::new(OWNER_FILE), 65_536) {
         Ok(bytes) => bytes,

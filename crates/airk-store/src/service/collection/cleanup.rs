@@ -362,7 +362,7 @@ impl Collection {
                 let destination = self.slot(intent.replacement);
                 if !destination.try_exists()? {
                     fs::create_dir(&destination)?;
-                    crate::maintenance::sync_parent(&destination)?;
+                    crate::store_fs::sync_parent(&destination)?;
                 }
                 let (files, directories) = retirement_inventory(&destination)?;
                 ensure!(

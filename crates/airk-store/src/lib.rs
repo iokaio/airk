@@ -34,6 +34,7 @@ pub mod roots;
 pub mod scheduler;
 pub mod service;
 mod sqlite;
+mod store_fs;
 pub mod usage;
 pub mod vector_cache;
 pub mod vector_policy;
@@ -461,7 +462,7 @@ impl FileStore {
             .context("logical collection name missing")?
             .to_str()
             .context("non-UTF8 collection name")?;
-        let advisory = crate::service::acquire_existing_file(&locks, name)?;
+        let advisory = crate::store_fs::acquire_existing_file(&locks, name)?;
         // Healthy writers remove their transient marker. Never require it, and
         // never repair a stale/legacy marker while observing a saved owner.
         match fs::symlink_metadata(self.directory.join("writer.lock")) {
@@ -566,7 +567,7 @@ impl FileStore {
 
 /// Bounded-observation exclusion, deliberately not a mutation WriterLock.
 pub(crate) struct ExistingWriterExclusion {
-    _advisory: crate::service::OwnershipFile,
+    _advisory: crate::store_fs::OwnershipFile,
     _lifecycle: File,
     pub(crate) directory: PathBuf,
 }

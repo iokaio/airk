@@ -1,8 +1,33 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Point-in-time OS free-space observations, separate from logical quota ownership.
 use anyhow::{Context, Result, ensure};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PressureScope {
+    Root,
+    Collection,
+    Reservation,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct QuotaPressure {
+    pub scope: PressureScope,
+    pub required_bytes: u64,
+    pub available_bytes: u64,
+    pub protected_bytes: Option<u64>,
+}
+impl std::fmt::Display for QuotaPressure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "storage quota exhausted ({:?}): need {} bytes, available {}",
+            self.scope, self.required_bytes, self.available_bytes
+        )
+    }
+}
+impl std::error::Error for QuotaPressure {}
 
 /// Leave room for filesystem metadata and recovery. This is not an OS reservation.
 pub const SAFETY_HEADROOM_BYTES: u64 = 16 * 1024 * 1024;
@@ -28,7 +53,7 @@ impl std::error::Error for StoragePressure {}
 /// No string matching: unrelated permission/corruption failures are not retried.
 pub fn is_storage_pressure(error: &anyhow::Error) -> bool {
     error.chain().any(|cause| {
-        cause.is::<crate::quota::QuotaPressure>() || cause.is::<StoragePressure>()
+        cause.is::<QuotaPressure>() || cause.is::<StoragePressure>()
         || cause.downcast_ref::<std::io::Error>().is_some_and(|error|
             error.kind()==std::io::ErrorKind::StorageFull)
         || matches!(cause.downcast_ref::<rusqlite::Error>(),
@@ -40,11 +65,11 @@ pub fn is_storage_pressure(error: &anyhow::Error) -> bool {
 /// conflating a reservation ceiling with physical disk exhaustion.
 pub fn storage_pressure_code(error: &anyhow::Error) -> Option<&'static str> {
     for cause in error.chain() {
-        if let Some(quota) = cause.downcast_ref::<crate::quota::QuotaPressure>() {
+        if let Some(quota) = cause.downcast_ref::<QuotaPressure>() {
             return Some(match quota.scope {
-                crate::quota::PressureScope::Root => "storage_quota_root",
-                crate::quota::PressureScope::Collection => "storage_quota_collection",
-                crate::quota::PressureScope::Reservation => "storage_quota_reservation",
+                PressureScope::Root => "storage_quota_root",
+                PressureScope::Collection => "storage_quota_collection",
+                PressureScope::Reservation => "storage_quota_reservation",
             });
         }
         if cause.is::<StoragePressure>() {
@@ -265,17 +290,11 @@ mod tests {
             Some("physical_storage_headroom")
         );
         for (scope, code) in [
-            (crate::quota::PressureScope::Root, "storage_quota_root"),
-            (
-                crate::quota::PressureScope::Collection,
-                "storage_quota_collection",
-            ),
-            (
-                crate::quota::PressureScope::Reservation,
-                "storage_quota_reservation",
-            ),
+            (PressureScope::Root, "storage_quota_root"),
+            (PressureScope::Collection, "storage_quota_collection"),
+            (PressureScope::Reservation, "storage_quota_reservation"),
         ] {
-            let error = anyhow::Error::new(crate::quota::QuotaPressure {
+            let error = anyhow::Error::new(QuotaPressure {
                 scope,
                 required_bytes: 100,
                 available_bytes: 50,

@@ -3,10 +3,10 @@
 use super::*;
 use crate::quota::{CleanBreakInventory, clean_break_inventory};
 use crate::service::registry::{
-    MAX_PROJECTS, ServiceRegistry,
-    catalog::setup::storage::{SetupDirectory, SetupFileMode, file_identity, write_exact},
+    MAX_PROJECTS, ServiceRegistry, catalog::setup::storage::write_exact,
 };
 use crate::service::{EmbeddingLease, ProjectLease, ServiceLease, SourceWatchLease};
+use crate::store_fs::{SetupDirectory, SetupFileMode, file_identity};
 use airk_core::{
     identity::{Sha256Digest, framed_digest},
     service::ProjectRegistration,

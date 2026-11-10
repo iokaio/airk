@@ -199,7 +199,7 @@ pub fn validate_planned_sources(
 ) -> Result<()> {
     validate_map(roots)?;
     let owner = owner.canonicalize()?;
-    let data = crate::service::data_scope::canonical_location(data)?;
+    let data = crate::store_fs::canonical_location(data)?;
     validate_resolved_sources(&owner, &data, roots)
 }
 

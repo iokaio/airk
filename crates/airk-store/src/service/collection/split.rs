@@ -295,8 +295,8 @@ impl SplitBuildPermit {
     pub(super) fn retained_policy_already_installed(
         &self,
         store: &FileStore,
-        logical: &crate::service::registry::catalog::setup::storage::SetupDirectory,
-        slot: &crate::service::registry::catalog::setup::storage::SetupDirectory,
+        logical: &crate::store_fs::SetupDirectory,
+        slot: &crate::store_fs::SetupDirectory,
         quota: &Quota,
     ) -> Result<bool> {
         self.validate_pinned_store(store, logical)?;
@@ -443,9 +443,9 @@ impl SplitBuildPermit {
     pub(crate) fn validate_pinned_store(
         &self,
         store: &FileStore,
-        pin: &crate::service::registry::catalog::setup::storage::SetupDirectory,
+        pin: &crate::store_fs::SetupDirectory,
     ) -> Result<()> {
-        use crate::service::registry::catalog::setup::storage::SetupDirectory;
+        use crate::store_fs::SetupDirectory;
         use std::ffi::OsStr;
         let managed = store.managed_path()?;
         ensure!(
@@ -617,7 +617,7 @@ impl Collection {
             )
         });
         let _lock = match retry_manifest_lock(|| {
-            crate::service::acquire_shared_file(&self.directory, "manifest.lock")
+            crate::store_fs::acquire_shared_file(&self.directory, "manifest.lock")
         }) {
             Ok(lock) => lock,
             Err(error)

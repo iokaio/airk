@@ -234,7 +234,7 @@ impl crate::FileStore {
         gate::check_writer(self, writer)?;
         writer.invalidate_census_before_mutation()?;
         std::fs::remove_file(self.directory().join("current-runtime-bootstrap.json"))?;
-        crate::maintenance::sync_parent(self.directory())
+        crate::store_fs::sync_parent(self.directory())
     }
     pub(crate) fn current_owned_scope(&self) -> Result<Option<CurrentScope>> {
         if !self.directory().join(database::OWNER_FILE).try_exists()? {
@@ -254,7 +254,7 @@ impl crate::FileStore {
         &self,
         gate: &gate::Gate,
     ) -> Result<Option<CurrentScope>> {
-        use crate::service::registry::catalog::setup::storage::SetupDirectory;
+        use crate::store_fs::SetupDirectory;
         gate.require_store(self)?;
         let pin = SetupDirectory::open_canonical(self.directory())?;
         let identity = pin.identity()?;

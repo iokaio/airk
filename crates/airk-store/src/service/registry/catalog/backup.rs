@@ -400,7 +400,7 @@ pub(super) fn capture(
     );
     drop(destination);
     writable.sync_all()?;
-    crate::maintenance::sync_parent(root)?;
+    crate::store_fs::sync_parent(root)?;
     let (bytes, sha256) = digest(&path)?;
     attempt.bytes = Some(bytes);
     attempt.sha256 = Some(sha256);

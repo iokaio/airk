@@ -2449,7 +2449,7 @@ pub struct NativeSplitAbsentDestination {
     expected: Sha256Digest,
     directory: std::path::PathBuf,
     ancestor_path: std::path::PathBuf,
-    ancestor: super::setup::storage::SetupDirectory,
+    ancestor: crate::store_fs::SetupDirectory,
     missing: std::ffi::OsString,
 }
 impl NativeSplitAbsentDestination {
@@ -2490,7 +2490,7 @@ impl NativeSplitAbsentDestination {
         }
         let ancestor_path =
             selected.context("split destination has no protected existing ancestor")?;
-        let ancestor = super::setup::storage::SetupDirectory::open_canonical(&ancestor_path)?;
+        let ancestor = crate::store_fs::SetupDirectory::open_canonical(&ancestor_path)?;
         let relative = directory.strip_prefix(&ancestor_path)?;
         let missing = match relative
             .components()
@@ -2514,8 +2514,7 @@ impl NativeSplitAbsentDestination {
     }
     fn revalidate(&self) -> Result<()> {
         ensure!(
-            super::setup::storage::SetupDirectory::open_canonical(&self.ancestor_path)?
-                .identity()?
+            crate::store_fs::SetupDirectory::open_canonical(&self.ancestor_path)?.identity()?
                 == self.ancestor.identity()?,
             "split absence ancestor changed"
         );

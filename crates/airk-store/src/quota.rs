@@ -2,6 +2,7 @@
 //! Reservations for application-written logical bytes, with process-death recovery.
 //! Every participating writer must charge growth before issuing writes. This is
 //! not an operating-system filesystem quota or a cap on allocation-unit overhead.
+pub use crate::capacity::{PressureScope, QuotaPressure};
 use anyhow::{Context, Result, ensure};
 use rusqlite::{
     Connection, OpenFlags,
@@ -88,31 +89,6 @@ struct PreparedPublication {
     expected: crate::ExpectedHead,
     receipt: airk_core::identity::PublicationReceipt,
 }
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PressureScope {
-    Root,
-    Collection,
-    Reservation,
-}
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct QuotaPressure {
-    pub scope: PressureScope,
-    pub required_bytes: u64,
-    pub available_bytes: u64,
-    pub protected_bytes: Option<u64>,
-}
-impl std::fmt::Display for QuotaPressure {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "storage quota exhausted ({:?}): need {} bytes, available {}",
-            self.scope, self.required_bytes, self.available_bytes
-        )
-    }
-}
-impl std::error::Error for QuotaPressure {}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -265,7 +241,7 @@ pub(crate) fn service_lifecycle_lease(root: &Path, exclusive: bool) -> Result<Fi
 /// Noncreating shared relocation exclusion for bounded native-owner observation.
 pub(crate) fn existing_service_lifecycle_lease(root: &Path) -> Result<File> {
     ensure_current_root(root)?;
-    let file = crate::service::open_existing_ownership_file(root, Namespace::Service.lifecycle())?;
+    let file = crate::store_fs::open_existing_ownership_file(root, Namespace::Service.lifecycle())?;
     file.try_lock_shared()
         .context("data root relocation in progress")?;
     ensure_current_root(root)?;

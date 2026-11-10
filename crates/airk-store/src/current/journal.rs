@@ -723,15 +723,11 @@ struct ComponentChanges<'a> {
     fts: Option<&'a fts::Updates>,
 }
 
-fn require_absent_current(
-    directory: &crate::service::registry::catalog::setup::storage::SetupDirectory,
-) -> Result<()> {
+fn require_absent_current(directory: &crate::store_fs::SetupDirectory) -> Result<()> {
     require_absent_current_payload(directory)?;
     require_absent_native_entries(directory, &[database::OWNER_FILE])
 }
-fn require_absent_current_payload(
-    directory: &crate::service::registry::catalog::setup::storage::SetupDirectory,
-) -> Result<()> {
+fn require_absent_current_payload(directory: &crate::store_fs::SetupDirectory) -> Result<()> {
     require_absent_native_entries(
         directory,
         &[
@@ -744,7 +740,7 @@ fn require_absent_current_payload(
     )
 }
 fn require_absent_native_entries(
-    directory: &crate::service::registry::catalog::setup::storage::SetupDirectory,
+    directory: &crate::store_fs::SetupDirectory,
     names: &[&str],
 ) -> Result<()> {
     for name in names {
@@ -765,7 +761,7 @@ fn require_absent_native_entries(
 #[cfg(test)]
 #[test]
 fn no_current_proof_refuses_every_partial_native_journal_entry() -> Result<()> {
-    use crate::service::registry::catalog::setup::storage::SetupDirectory;
+    use crate::store_fs::SetupDirectory;
     let temporary = tempfile::tempdir()?;
     let path = temporary.path().canonicalize()?;
     let pinned = SetupDirectory::open_canonical(&path)?;
@@ -807,10 +803,7 @@ impl FileStore {
             .context("split metadata has no exact saved funding")?;
         let _gate = Gate::exclusive(self, writer)?;
         let Some(scope) = self.current_owned_scope_under_gate(&_gate)? else {
-            let pin =
-                crate::service::registry::catalog::setup::storage::SetupDirectory::open_canonical(
-                    self.directory(),
-                )?;
+            let pin = crate::store_fs::SetupDirectory::open_canonical(self.directory())?;
             require_absent_current(&pin)?;
             return quota.reconcile_funding_phase(writer, funding, None);
         };
@@ -852,7 +845,7 @@ impl FileStore {
         writer: &WriterLock,
         quota: &Quota,
     ) -> Result<usize> {
-        use crate::service::registry::catalog::setup::storage::SetupDirectory;
+        use crate::store_fs::SetupDirectory;
         let permit = self
             .split_access
             .as_ref()
@@ -882,7 +875,7 @@ impl FileStore {
         expected: &crate::quota::funding::FundingReceipt,
         phase: crate::quota::funding::FundingPhase,
     ) -> Result<(Self, crate::quota::funding::FundingReceipt)> {
-        use crate::service::registry::catalog::setup::storage::SetupDirectory;
+        use crate::store_fs::SetupDirectory;
         let permit = self
             .split_access
             .as_ref()
@@ -913,10 +906,7 @@ impl FileStore {
             .split_access
             .as_ref()
             .context("retry takeover requires its claimed native worker")?;
-        let pin =
-            crate::service::registry::catalog::setup::storage::SetupDirectory::open_canonical(
-                self.managed_path()?.logical,
-            )?;
+        let pin = crate::store_fs::SetupDirectory::open_canonical(self.managed_path()?.logical)?;
         permit.validate_pinned_store(self, &pin)?;
         crate::maintenance::check_writer(self, writer, quota)?;
         ensure!(
@@ -939,7 +929,7 @@ impl FileStore {
         quota: &Quota,
         _gate: &Gate,
     ) -> Result<Option<crate::quota::funding::FundingReceipt>> {
-        use crate::service::registry::catalog::setup::storage::SetupDirectory;
+        use crate::store_fs::SetupDirectory;
         let permit = self
             .split_access
             .as_ref()
@@ -1022,10 +1012,7 @@ impl FileStore {
             self.service_incarnation()? == Some(incarnation),
             "retired grant scope differs from owned slot"
         );
-        let pin =
-            crate::service::registry::catalog::setup::storage::SetupDirectory::open_canonical(
-                self.directory(),
-            )?;
+        let pin = crate::store_fs::SetupDirectory::open_canonical(self.directory())?;
         require_absent_current_payload(&pin)?;
         if let Some(scope) = self.current_owned_scope_under_gate(_gate)? {
             let receipt = quota.observe_funding(funding.operation_id)?;
@@ -1063,7 +1050,7 @@ impl FileStore {
         writer: &WriterLock,
         quota: &Quota,
     ) -> Result<crate::quota::funding::FundingReceipt> {
-        use crate::service::registry::catalog::setup::storage::SetupDirectory;
+        use crate::store_fs::SetupDirectory;
         let permit = self
             .split_access
             .as_ref()
@@ -1097,7 +1084,7 @@ impl FileStore {
     pub(crate) fn prepare_extraction_contract(
         &self,
         context: &crate::service::collection::retention_barrier::RetentionOwnerContext<'_>,
-        pin: crate::service::registry::catalog::setup::storage::SetupDirectory,
+        pin: crate::store_fs::SetupDirectory,
     ) -> Result<PreparedExtractionContract> {
         let owning_store = context.owning_store;
         let writer = context.writer;
@@ -1112,7 +1099,7 @@ impl FileStore {
         let gate = Gate::exclusive_pinned_slot(owning_store, writer, self, logical)?;
         let expected = match pin.open_file(
             std::ffi::OsStr::new(database::OWNER_FILE),
-            crate::service::registry::catalog::setup::storage::SetupFileMode::Read,
+            crate::store_fs::SetupFileMode::Read,
         ) {
             Ok(file) => Some(file),
             Err(error)
@@ -3147,7 +3134,7 @@ impl FileStore {
 /// Keeps exact current directory/expected owner and exclusive Gate through publish.
 pub(crate) struct PreparedExtractionContract {
     directory: std::path::PathBuf,
-    pin: crate::service::registry::catalog::setup::storage::SetupDirectory,
+    pin: crate::store_fs::SetupDirectory,
     _gate: Gate,
     expected: Option<std::fs::File>,
     temporary: Option<crate::service::collection::retention_barrier::PreparedMarker>,
@@ -3162,10 +3149,7 @@ impl Drop for PreparedExtractionContract {
 impl PreparedExtractionContract {
     fn require_named_directory(&self) -> Result<()> {
         ensure!(
-            crate::service::registry::catalog::setup::storage::SetupDirectory::open_canonical(
-                &self.directory
-            )?
-            .identity()?
+            crate::store_fs::SetupDirectory::open_canonical(&self.directory)?.identity()?
                 == self.pin.identity()?,
             "retained slot pathname changed during capability handoff"
         );

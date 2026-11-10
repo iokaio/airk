@@ -188,6 +188,38 @@ the same commit, as a reviewed diff.
 - Predicted: largest Store cycle 21→18.
 - It contains Unix file-descriptor code: run Clippy on macOS first. It is the
   prerequisite for a later quota/index-store step.
+- **Measured:** largest Store cycle 21→18, modules in cycles 21→18, edges
+  112→117, top-level modules 29→30. `capacity`, `durability` and `roots` left
+  the cycle. `store_fs` depends only on `capacity` and `managed_collection`.
+- Moved: the ownership-file helpers from `service`, `sync_parent` from
+  `maintenance`, `canonical_location` with its `exists` helper from
+  `service::data_scope` (re-exported there for airk-kernel), and the setup
+  directory handle (`SetupDirectory`, `SetupFileMode`, `SetupEntries`,
+  `file_identity`, the Unix implementation and the Windows HANDLE
+  implementation) from `service::registry::catalog::setup::storage`.
+  `QuotaPressure` and `PressureScope` moved into `capacity`; `quota`
+  re-exports them, so `airk_store::quota::QuotaPressure` is unchanged. The old
+  owners import what they still use, so their submodules are unchanged.
+  Call sites: `python scripts/dev/s7_5_store_fs.py --check` (125 paths).
+- The Windows setup regressions also drive setup storage internals, so they
+  stay at `...::setup::storage::windows::tests`. The old
+  `service_catalog_setup_storage_windows.rs` is now only their test host, and
+  `native_file_identity`, `nt_result` and `publish_with_hook` became
+  `pub(crate)` for them.
+- Goldens: ownership files are empty, so no ownership-file bytes exist to
+  capture, and the moved code encodes no setup-file bytes. Exact bytes of the
+  `QuotaPressure` serde form and Display text, the storage pressure codes, and
+  observed ownership, `canonical_location` and `SetupDirectory` behavior were
+  identical before and after:
+
+  | Golden | SHA-256 |
+  |---|---|
+  | `QuotaPressure` JSON, all three scopes | `6ff11b5cf983f7c879cddd25032ca243598e746d90fddce114bce7a8df208a7d` |
+  | `QuotaPressure` Display text | `923972ab4ecf203a2878ab92ae3d4690746e91c9184f8b60bd3aa5ca2132b7a5` |
+  | Pressure code and downcast | `4092912c89f68fc5586865233f4818b1928aa4b3d1d92c2054ea6685c0bd0cd0` |
+  | Ownership-file observations (zero length, lock refusals) | `4c500f3ceef93e5ff8b822f6259ba6bb603b1b1d30b858c65e92c9dbb7a22419` |
+  | `canonical_location` (temporary root replaced by `<root>`) | `6dda2e50568553506ea2159813d5046b8a6a9e943eb3a5fea1e7b4f1ec021026` |
+  | `SetupDirectory` observations (Windows) | `8da4759f5eb65d39da1cfad3b5858f10d9e2d503f6412bcca2d543272596a4ba` |
 
 ## Deferred, with reasons
 

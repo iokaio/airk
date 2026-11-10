@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! One registry namespace owns a 1.4 data root, independently of legacy storage.
+use crate::store_fs::exists;
 use airk_core::identity::Incarnation;
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
@@ -13,6 +14,8 @@ pub(crate) const OWNER: &str = "service-data-1.4.owner.json";
 pub(crate) const PART: &str = "service-data-1.4.owner.part";
 pub(crate) const LOCK: &str = "service-data-1.4.lock";
 const MAX_BYTES: u64 = 16384;
+
+pub use crate::store_fs::canonical_location;
 
 mod setup;
 #[cfg(any(unix, windows))]
@@ -129,47 +132,6 @@ impl BoundDataRoot {
         );
         check(&self.0.data, &self.0.control, self.0.namespace)
     }
-}
-fn exists(path: &Path) -> Result<bool> {
-    match fs::symlink_metadata(path) {
-        Ok(_) => Ok(true),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(e) => Err(e.into()),
-    }
-}
-/// Resolve existing ancestors without creating a directory or accepting traversal.
-pub fn canonical_location(path: &Path) -> Result<PathBuf> {
-    ensure!(
-        path.is_absolute()
-            && path.to_str().is_some_and(|value| value.len() <= 4096)
-            && !path
-                .components()
-                .any(|c| matches!(c, std::path::Component::ParentDir)),
-        "service data location must be absolute without traversal"
-    );
-    let mut prefix = path.to_path_buf();
-    let mut suffix = Vec::new();
-    while !exists(&prefix)? {
-        suffix.push(
-            prefix
-                .file_name()
-                .context("service data ancestor missing")?
-                .to_owned(),
-        );
-        ensure!(prefix.pop(), "service data ancestor missing");
-    }
-    ensure!(prefix.is_dir(), "service data ancestor is not a directory");
-    let mut value = prefix.canonicalize()?;
-    for name in suffix.into_iter().rev() {
-        value.push(name);
-    }
-    ensure!(
-        value
-            .to_str()
-            .is_some_and(|v| v.len() <= 4096 && !v.chars().any(char::is_control)),
-        "invalid service data location"
-    );
-    Ok(value)
 }
 fn expected(data: &Path, control: &Path, namespace: Incarnation) -> Result<Scope> {
     ensure!(
@@ -380,7 +342,7 @@ pub fn bind(data: &Path, control: &Path, namespace: Incarnation) -> Result<Bound
     file.sync_all()?;
     drop(file);
     fs::rename(partial, scope.data.join(OWNER))?;
-    crate::maintenance::sync_parent(&scope.data)?;
+    crate::store_fs::sync_parent(&scope.data)?;
     Ok(BoundDataRoot(scope, LiveIntegrity(Default::default())))
 }
 

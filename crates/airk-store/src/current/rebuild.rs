@@ -151,12 +151,12 @@ impl FileStore {
                 fs::remove_file(&path)?;
             }
         }
-        crate::maintenance::sync_parent(&directory)?;
+        crate::store_fs::sync_parent(&directory)?;
         for grant in grants {
             grant.release(writer)?;
         }
         fs::remove_file(marker_path)?;
-        crate::maintenance::sync_parent(&directory)?;
+        crate::store_fs::sync_parent(&directory)?;
         Ok(true)
     }
 }

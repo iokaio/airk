@@ -99,7 +99,7 @@ fn embedded_mutation_guard_binds_namespace_and_never_initializes_unowned_roots()
 #[test]
 fn concurrent_embedded_mutation_guards_wait_for_existing_fence_then_both_complete() -> Result<()> {
     let (root, registry) = qualified()?;
-    let held = crate::service::acquire_existing_file(root.path(), "service-1.4.initialize.lock")?;
+    let held = crate::store_fs::acquire_existing_file(root.path(), "service-1.4.initialize.lock")?;
     let ready = std::sync::Arc::new(std::sync::Barrier::new(3));
     let (sender, receiver) = std::sync::mpsc::channel();
     std::thread::scope(|scope| -> Result<()> {
@@ -138,7 +138,7 @@ fn concurrent_embedded_mutation_guards_wait_for_existing_fence_then_both_complet
 #[test]
 fn embedded_mutation_fence_deadline_preserves_typed_contention_and_database_bytes() -> Result<()> {
     let (root, registry) = qualified()?;
-    let held = crate::service::acquire_existing_file(root.path(), "service-1.4.initialize.lock")?;
+    let held = crate::store_fs::acquire_existing_file(root.path(), "service-1.4.initialize.lock")?;
     let database = root.path().join("service-1.4.sqlite3");
     let before = std::fs::read(&database)?;
     let started = std::time::Instant::now();
@@ -157,7 +157,7 @@ fn embedded_mutation_fence_deadline_preserves_typed_contention_and_database_byte
     // The ordinary existing-file primitive still refuses immediately; its
     // writer/ledger/manifest callers have not inherited this bounded wait.
     assert!(
-        crate::service::acquire_existing_file(root.path(), "service-1.4.initialize.lock").is_err()
+        crate::store_fs::acquire_existing_file(root.path(), "service-1.4.initialize.lock").is_err()
     );
     drop(held);
     Ok(())

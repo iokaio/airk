@@ -77,9 +77,7 @@ impl Collection {
             .service_incarnation()?
             .context("saved preferences require an owned service incarnation")?;
         let directory =
-            crate::service::registry::catalog::setup::storage::SetupDirectory::open_canonical(
-                selected.store.directory(),
-            )?;
+            crate::store_fs::SetupDirectory::open_canonical(selected.store.directory())?;
         let mut files = Vec::with_capacity(SETTINGS.len());
         let mut total = 0usize;
         for name in SETTINGS {
@@ -192,10 +190,7 @@ impl Collection {
 }
 
 fn capture_files(source: &FileStore, root: &str) -> Result<Vec<CapturedSettingFile>> {
-    let directory =
-        crate::service::registry::catalog::setup::storage::SetupDirectory::open_canonical(
-            source.directory(),
-        )?;
+    let directory = crate::store_fs::SetupDirectory::open_canonical(source.directory())?;
     // Unknown future policy files cannot silently disappear from this explicit
     // catalog. Inspect names only; never discover sources from this directory.
     for (index, entry) in directory.entries()?.enumerate() {

@@ -387,7 +387,7 @@ fn relocate_at(
     let physical = if exists(source)? { source } else { destination };
     let _data = crate::quota::service_lifecycle_lease(physical, true)?;
     let _legacy_data = crate::quota::lifecycle_lease(physical, true)?;
-    let _claim = crate::service::acquire_file(physical, data_scope::LOCK)?;
+    let _claim = crate::store_fs::acquire_file(physical, data_scope::LOCK)?;
     let migration = if exists(&intent_path)? {
         let value: Migration = serde_json::from_slice(&read(&intent_path, MAX_PLAN)?)?;
         ensure!(
@@ -481,7 +481,7 @@ fn relocate_at(
             "index migration destination appeared; both directories were preserved"
         );
         rename_new(source, destination)?;
-        crate::maintenance::sync_parent(source.parent().context("migration parent missing")?)?;
+        crate::store_fs::sync_parent(source.parent().context("migration parent missing")?)?;
     }
     checkpoint("renamed")?;
     for edit in &migration.edits {
@@ -530,7 +530,7 @@ fn relocate_at(
         "index relocation barrier changed"
     );
     fs::remove_file(destination.join(marker_name))?;
-    crate::maintenance::sync_parent(destination)?;
+    crate::store_fs::sync_parent(destination)?;
     write(
         &control.join(RESULT),
         &serde_json::to_vec(&Completed {
@@ -541,7 +541,7 @@ fn relocate_at(
         })?,
     )?;
     fs::remove_file(intent_path)?;
-    crate::maintenance::sync_parent(control)
+    crate::store_fs::sync_parent(control)
 }
 
 fn rename_new(source: &Path, destination: &Path) -> Result<()> {

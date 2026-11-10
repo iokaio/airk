@@ -6,7 +6,7 @@ use std::path::Path;
 pub(crate) fn persist_synced(temporary: tempfile::NamedTempFile, path: &Path) -> Result<()> {
     temporary.as_file().sync_all()?;
     replace(temporary, path)?;
-    crate::maintenance::sync_parent(path.parent().context("metadata path has no parent")?)
+    crate::store_fs::sync_parent(path.parent().context("metadata path has no parent")?)
 }
 
 #[cfg(not(windows))]

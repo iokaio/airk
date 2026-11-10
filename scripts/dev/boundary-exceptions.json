@@ -197,12 +197,10 @@
     "airk-store": [
       [
         "blobs",
-        "capacity",
         "checkpoints",
         "compression",
         "current",
         "diagnostics",
-        "durability",
         "extraction_policy",
         "history",
         "history_policy",
@@ -211,7 +209,6 @@
         "quota",
         "reset",
         "retention",
-        "roots",
         "scheduler",
         "service",
         "sqlite",

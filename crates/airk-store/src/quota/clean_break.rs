@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Typed, noncreating census of the native quota metadata retired by a clean break.
 use super::*;
-use crate::service::registry::catalog::setup::storage::{SetupDirectory, SetupFileMode};
+use crate::store_fs::{SetupDirectory, SetupFileMode};
 use airk_core::{identity::Incarnation, service::ProjectRegistration};
 use std::{collections::BTreeSet, ffi::OsStr};
 

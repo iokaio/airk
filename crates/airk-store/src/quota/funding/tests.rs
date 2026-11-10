@@ -527,7 +527,7 @@ fn bound_root_namespace_policy_and_malformed_inventory_fail_closed() -> Result<(
 
 #[test]
 fn pinned_setup_and_deadline_inventory_observe_same_funding_without_sweeping() -> Result<()> {
-    use crate::service::registry::catalog::setup::storage::SetupDirectory;
+    use crate::store_fs::SetupDirectory;
     let fixture = Fixture::new()?;
     let (owner, funded) = fixture.destination()?;
     let capture = funded.reserve("destination", 4096)?;

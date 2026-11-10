@@ -339,11 +339,11 @@ pub(super) fn removed_root_identity(root: &str) -> airk_core::identity::Sha256Di
 // allowance, ownership receipt or advisory is created, removed or adopted.
 struct RetiredUninitializedData {
     path: std::path::PathBuf,
-    root: super::catalog::setup::storage::SetupDirectory,
+    root: crate::store_fs::SetupDirectory,
 }
 impl RetiredUninitializedData {
     fn capture(data: &Path) -> Result<Option<Self>> {
-        let root = super::catalog::setup::storage::SetupDirectory::open_canonical(data)?;
+        let root = crate::store_fs::SetupDirectory::open_canonical(data)?;
         match root.open_entry(std::ffi::OsStr::new(super::super::data_scope::OWNER)) {
             Ok(_) => return Ok(None),
             Err(error) if missing_entry(&error) => (),
@@ -359,8 +359,7 @@ impl RetiredUninitializedData {
     fn revalidate(&self) -> Result<()> {
         use std::ffi::OsStr;
         ensure!(
-            super::catalog::setup::storage::SetupDirectory::open_canonical(&self.path)?
-                .identity()?
+            crate::store_fs::SetupDirectory::open_canonical(&self.path)?.identity()?
                 == self.root.identity()?,
             "uninitialized retired data root changed"
         );
@@ -401,7 +400,7 @@ fn missing_entry(error: &anyhow::Error) -> bool {
 // root must use the existing ownership-aware physical cleanup instead.
 struct RetiredDataAbsence {
     ancestor_path: std::path::PathBuf,
-    ancestor: super::catalog::setup::storage::SetupDirectory,
+    ancestor: crate::store_fs::SetupDirectory,
     missing: std::ffi::OsString,
 }
 impl RetiredDataAbsence {
@@ -427,8 +426,7 @@ impl RetiredDataAbsence {
             }
         }
         let ancestor_path = selected.context("retired data has no existing ancestor")?;
-        let ancestor =
-            super::catalog::setup::storage::SetupDirectory::open_canonical(&ancestor_path)?;
+        let ancestor = crate::store_fs::SetupDirectory::open_canonical(&ancestor_path)?;
         let relative = data.strip_prefix(&ancestor_path)?;
         let missing = match relative
             .components()
@@ -448,8 +446,7 @@ impl RetiredDataAbsence {
     }
     fn revalidate(&self) -> Result<()> {
         ensure!(
-            super::catalog::setup::storage::SetupDirectory::open_canonical(&self.ancestor_path)?
-                .identity()?
+            crate::store_fs::SetupDirectory::open_canonical(&self.ancestor_path)?.identity()?
                 == self.ancestor.identity()?,
             "retired data ancestor changed"
         );

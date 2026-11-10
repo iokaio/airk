@@ -184,7 +184,7 @@ fn persist(receipt: &GenesisReceipt, initial: bool) -> Result<()> {
     if initial {
         temporary.as_file().sync_all()?;
         temporary.persist_noclobber(path)?;
-        crate::maintenance::sync_parent(&receipt.root)
+        crate::store_fs::sync_parent(&receipt.root)
     } else {
         crate::durability::persist_synced(temporary, &path)
     }

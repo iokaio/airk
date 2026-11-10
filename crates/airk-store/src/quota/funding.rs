@@ -536,7 +536,7 @@ pub(super) struct FundedChildRef {
 }
 
 fn root_identity(quota: &Quota, namespace: Incarnation) -> Result<Sha256Digest> {
-    use crate::service::registry::catalog::setup::storage::SetupDirectory;
+    use crate::store_fs::SetupDirectory;
     ensure!(
         quota.namespace == Namespace::Service,
         "split funding requires service quota"
@@ -545,7 +545,7 @@ fn root_identity(quota: &Quota, namespace: Incarnation) -> Result<Sha256Digest> 
     pinned_identity(&root, &quota.root, namespace)
 }
 fn pinned_identity(
-    root: &crate::service::registry::catalog::setup::storage::SetupDirectory,
+    root: &crate::store_fs::SetupDirectory,
     logical_root: &Path,
     namespace: Incarnation,
 ) -> Result<Sha256Digest> {
@@ -607,7 +607,7 @@ fn persist_observed(
     pending.write_all(&serde_json::to_vec(record)?)?;
     observer(PersistPoint::BeforeReplace)?;
     crate::durability::persist_synced(pending, &directory.join(record.filename()))?;
-    crate::maintenance::sync_parent(&directory)?;
+    crate::store_fs::sync_parent(&directory)?;
     observer(PersistPoint::AfterReplace)?;
     Ok(())
 }
@@ -674,19 +674,19 @@ fn inventory(quota: &Quota, deadline: Option<Instant>) -> Result<Vec<FundingRece
 /// The setup owner uses its already captured native directory handles, including
 /// Windows rename/identity protections. No path-based fallback is allowed here.
 pub(super) fn pinned_records(
-    control: &crate::service::registry::catalog::setup::storage::SetupDirectory,
-    root: &crate::service::registry::catalog::setup::storage::SetupDirectory,
+    control: &crate::store_fs::SetupDirectory,
+    root: &crate::store_fs::SetupDirectory,
     logical_root: &Path,
 ) -> Result<Vec<LiveRecord>> {
     pinned_records_checked(control, root, logical_root, None)
 }
 fn pinned_records_checked(
-    control: &crate::service::registry::catalog::setup::storage::SetupDirectory,
-    root: &crate::service::registry::catalog::setup::storage::SetupDirectory,
+    control: &crate::store_fs::SetupDirectory,
+    root: &crate::store_fs::SetupDirectory,
     logical_root: &Path,
     retired_registration: Option<&ProjectRegistration>,
 ) -> Result<Vec<LiveRecord>> {
-    use crate::service::registry::catalog::setup::storage::SetupFileMode;
+    use crate::store_fs::SetupFileMode;
     use std::ffi::OsStr;
     let directory = match control.open_dir(OsStr::new(DIRECTORY)) {
         Ok(directory) => directory,
@@ -852,7 +852,7 @@ impl Quota {
         operation: Incarnation,
         permit: &crate::service::registry::catalog::split::FundingTerminalPermit,
     ) -> Result<bool> {
-        use crate::service::registry::catalog::setup::storage::{SetupDirectory, SetupFileMode};
+        use crate::store_fs::{SetupDirectory, SetupFileMode};
         use std::ffi::OsStr;
         let namespace = permit.validate_acknowledgment_root(root, operation)?;
         let root_pin = SetupDirectory::open_canonical(root)?;
@@ -938,7 +938,7 @@ impl Quota {
     /// Optimistic preview of the selected spelling. No root, control directory,
     /// policy, lease, or ledger is created; admission rechecks the digest later.
     pub fn review_service_funding_policy(root: &Path) -> Result<FundingPolicyReview> {
-        use crate::service::registry::catalog::setup::storage::SetupDirectory;
+        use crate::store_fs::SetupDirectory;
         use std::ffi::OsStr;
         ensure!(
             root.is_absolute()
@@ -1613,14 +1613,14 @@ fn reservation_identity(owner: &FundingUse, ordinal: u64) -> Result<Sha256Digest
 }
 
 struct PreparedReservationLease {
-    directory: crate::service::registry::catalog::setup::storage::SetupDirectory,
+    directory: crate::store_fs::SetupDirectory,
     name: std::ffi::OsString,
     file: Option<File>,
     created: bool,
 }
 impl PreparedReservationLease {
     fn open(quota: &Quota, child: Sha256Digest, allow_create: bool) -> Result<Self> {
-        use crate::service::registry::catalog::setup::storage::{SetupDirectory, SetupFileMode};
+        use crate::store_fs::{SetupDirectory, SetupFileMode};
         let parent = SetupDirectory::open_canonical(&quota.control_path().join(DIRECTORY))?;
         let directory = if allow_create {
             parent.create_dir(std::ffi::OsStr::new("leases"))?
@@ -1964,7 +1964,7 @@ pub(super) fn release_current(quota: &Quota, reference: &FundedChildRef) -> Resu
     // retires. The native catalog retains historical admission/completion proof.
     if record.complete && record.release_acknowledged && record.children.is_empty() {
         fs::remove_file(quota.control_path().join(DIRECTORY).join(record.filename()))?;
-        crate::maintenance::sync_parent(&quota.control_path().join(DIRECTORY))
+        crate::store_fs::sync_parent(&quota.control_path().join(DIRECTORY))
     } else {
         persist(quota, &record)
     }
@@ -2078,7 +2078,7 @@ impl Quota {
         permit.validate_acknowledged(&record)?;
         if record.children.is_empty() {
             fs::remove_file(self.control_path().join(DIRECTORY).join(record.filename()))?;
-            crate::maintenance::sync_parent(&self.control_path().join(DIRECTORY))?;
+            crate::store_fs::sync_parent(&self.control_path().join(DIRECTORY))?;
             return Ok(true);
         }
         record.release_acknowledged = true;

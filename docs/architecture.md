@@ -48,8 +48,9 @@ Rules:
   `crates/airk-cli/src/install_files/`,
   `crates/airk-cli/src/install_layout/`,
   `crates/airk-cli/src/native_command/`,
-  `crates/airk-core/src/read_limits/` and
-  `crates/airk-core/src/service_records/`) state their interface, owned state,
+  `crates/airk-core/src/read_limits/`,
+  `crates/airk-core/src/service_records/` and
+  `crates/airk-store/src/store_fs/`) state their interface, owned state,
   invariants and test command there.
 
 ## Runtime topology

@@ -159,7 +159,7 @@ fn finish_clean_break_metadata(
 // on the owning collection's filesystem. Validate the entire batch before unlink.
 fn dispose_clean_break_stage_turn(stage: &Path) -> Result<bool> {
     dispose_clean_break_stage_turn_observed(stage, |path| {
-        use crate::service::registry::catalog::setup::storage::{SetupDirectory, file_identity};
+        use crate::store_fs::{SetupDirectory, file_identity};
         if plain(path)?.is_dir() {
             Ok(SetupDirectory::open_canonical(path)?.identity()?.0)
         } else {
@@ -338,7 +338,8 @@ impl Collection {
         retirement.files.sort_by(|left, right| left.0.cmp(&right.0));
         retirement.validate(registration)?;
         if namespace.is_some() {
-            use crate::service::registry::catalog::setup::storage::{SetupDirectory, write_exact};
+            use crate::service::registry::catalog::setup::storage::write_exact;
+            use crate::store_fs::SetupDirectory;
             // The complete namespace capability already owns exclusive lifecycle
             // and all credit ledgers. A disposal receipt must not reserve new
             // work or recursively acquire those same quota/relocation locks.

@@ -3,9 +3,7 @@
 //! No opener here creates a directory, advisory, lifecycle, ledger or lease.
 use super::*;
 use crate::service::ProjectLease;
-use crate::service::registry::catalog::setup::storage::{
-    SetupDirectory, SetupFileMode, file_identity,
-};
+use crate::store_fs::{SetupDirectory, SetupFileMode, file_identity};
 use airk_core::identity::Incarnation;
 use airk_core::service::ProjectRegistration;
 use std::ffi::{OsStr, OsString};

@@ -985,7 +985,7 @@ fn ensure_directory(store: &crate::FileStore, path: &Path) -> Result<()> {
         current.push(part);
         if !current.exists() {
             fs::create_dir(&current)?;
-            crate::maintenance::sync_parent(current.parent().unwrap())?;
+            crate::store_fs::sync_parent(current.parent().unwrap())?;
         }
         ensure!(plain(&current)?.is_dir(), "invalid historical directory");
     }
@@ -1200,7 +1200,7 @@ fn write_component(
     let mut file = reservation.create_file(destination)?;
     file.write_all(bytes)?;
     file.sync_all()?;
-    crate::maintenance::sync_parent(path.parent().unwrap())
+    crate::store_fs::sync_parent(path.parent().unwrap())
 }
 
 fn converted_binding(intent: &ConversionIntent) -> HistoryBinding {
@@ -1306,13 +1306,13 @@ fn process_conversion(
             intent.stage == ConversionStage::IntentDurable,
         )?;
         verify_package_work(store, &staging, &binding, work)?;
-        crate::maintenance::sync_parent(&staging)?;
+        crate::store_fs::sync_parent(&staging)?;
         intent.stage = ConversionStage::PackageVerified;
         persist_intent(store, &intent, reservation, observer)?;
         ensure_directory(store, package.parent().unwrap())?;
         fs::rename(&staging, &package)?;
-        crate::maintenance::sync_parent(package.parent().unwrap())?;
-        crate::maintenance::sync_parent(staging.parent().unwrap())?;
+        crate::store_fs::sync_parent(package.parent().unwrap())?;
+        crate::store_fs::sync_parent(staging.parent().unwrap())?;
         intent.stage = ConversionStage::PackagePublished;
         persist_intent(store, &intent, reservation, observer)?;
     }
@@ -1337,7 +1337,7 @@ fn process_conversion(
     if source.exists() {
         verify_full_bounded(store, &intent.publication, work)?;
         fs::rename(&source, &detached)?;
-        crate::maintenance::sync_parent(source.parent().unwrap())?;
+        crate::store_fs::sync_parent(source.parent().unwrap())?;
         intent.stage = ConversionStage::FullDetached;
         persist_intent(store, &intent, reservation, observer)?;
     }
@@ -1367,7 +1367,7 @@ fn process_conversion(
     intent.stage = ConversionStage::IntentComplete;
     persist_intent(store, &intent, reservation, observer)?;
     fs::remove_file(intent_path(store, &token))?;
-    crate::maintenance::sync_parent(intent_path(store, &token).parent().unwrap())?;
+    crate::store_fs::sync_parent(intent_path(store, &token).parent().unwrap())?;
     Ok(outcome(ConversionStatus::Complete, intent.stage, work))
 }
 
@@ -1738,7 +1738,7 @@ fn process_removal(
             );
             verify_package_work(store, &package, &intent.binding, work)?;
             fs::rename(&package, &detached)?;
-            crate::maintenance::sync_parent(package.parent().unwrap())?;
+            crate::store_fs::sync_parent(package.parent().unwrap())?;
         }
         if detached.exists() {
             ensure!(plain(&detached)?.is_dir(), "invalid detached history");
@@ -1776,7 +1776,7 @@ fn process_removal(
                 }
             }
             fs::remove_dir(&detached)?;
-            crate::maintenance::sync_parent(detached.parent().unwrap())?;
+            crate::store_fs::sync_parent(detached.parent().unwrap())?;
         } else {
             ensure!(
                 matches!(
@@ -1814,10 +1814,10 @@ fn process_removal(
             work.metadata(bytes)
         })?;
         fs::remove_file(&witness)?;
-        crate::maintenance::sync_parent(witness.parent().unwrap())?;
+        crate::store_fs::sync_parent(witness.parent().unwrap())?;
     }
     fs::remove_file(removal_path(store, &token))?;
-    crate::maintenance::sync_parent(removal_path(store, &token).parent().unwrap())?;
+    crate::store_fs::sync_parent(removal_path(store, &token).parent().unwrap())?;
     Ok(result(ConversionStatus::Complete, intent.stage, work))
 }
 

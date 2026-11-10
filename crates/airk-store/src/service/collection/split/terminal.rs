@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Fixed native final-publication capacity; no document/evidence access.
 use super::*;
-use crate::service::registry::catalog::setup::storage::{
-    SetupDirectory, SetupFileMode, file_identity,
-};
+use crate::store_fs::{SetupDirectory, SetupFileMode, file_identity};
 use std::{
     ffi::OsStr,
     io::{Seek, SeekFrom},

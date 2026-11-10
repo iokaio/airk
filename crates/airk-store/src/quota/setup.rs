@@ -3,9 +3,7 @@
 //! Inventory never sweeps abandoned state. Ordinary quota/provider paths remain
 //! path based; no setup inventory runs during reads or retrieval.
 use super::*;
-use crate::service::registry::catalog::setup::storage::{
-    SetupDirectory, SetupFileMode, file_identity,
-};
+use crate::store_fs::{SetupDirectory, SetupFileMode, file_identity};
 use airk_core::identity::Incarnation;
 use std::ffi::{OsStr, OsString};
 

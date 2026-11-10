@@ -4,6 +4,7 @@
 use super::*;
 use crate::service::collection::Collection;
 use std::os::unix::fs::FileTypeExt;
+use std::{ffi::CString, os::unix::ffi::OsStrExt};
 
 fn pins(request: &airk_core::catalog_setup::IndexSetupRequest) -> Result<NativeSetupPins> {
     let data = Path::new(&request.registration.data_root);

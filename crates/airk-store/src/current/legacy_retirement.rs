@@ -412,7 +412,7 @@ pub fn remove(control: &Path, target: &Target, approval: Sha256Digest) -> Result
     let (control, root, directory) = paths(control, target)?;
     let registry = ServiceRegistry::open_saved(&control)?;
     let namespace = registry.incarnation()?;
-    let _journal = crate::service::acquire_file(&control, "legacy-derived-retirement.lock")?;
+    let _journal = crate::store_fs::acquire_file(&control, "legacy-derived-retirement.lock")?;
     let journals = control.join("legacy-derived-retirement-1.4");
     if !journals.try_exists()? {
         fs::create_dir(&journals)?;
@@ -521,7 +521,7 @@ pub fn remove(control: &Path, target: &Target, approval: Sha256Digest) -> Result
         );
         fs::remove_file(path)?;
     }
-    crate::maintenance::sync_parent(&directory)?;
+    crate::store_fs::sync_parent(&directory)?;
     if payload.len() > TURN {
         return Ok(report(approval, false, live.len() - TURN));
     }
@@ -536,7 +536,7 @@ pub fn remove(control: &Path, target: &Target, approval: Sha256Digest) -> Result
         );
         fs::remove_file(owner_path)?;
     }
-    crate::maintenance::sync_parent(&directory)?;
+    crate::store_fs::sync_parent(&directory)?;
     intent.complete = true;
     save(&path, intent)?;
     Ok(report(approval, true, 0))
@@ -591,7 +591,7 @@ pub fn receipts(control: &Path) -> Result<serde_json::Value> {
 pub fn forget(control: &Path, approval: Sha256Digest) -> Result<()> {
     let control = control.canonicalize()?;
     let namespace = ServiceRegistry::open_saved(&control)?.incarnation()?;
-    let _journal = crate::service::acquire_file(&control, "legacy-derived-retirement.lock")?;
+    let _journal = crate::store_fs::acquire_file(&control, "legacy-derived-retirement.lock")?;
     let directory = control.join("legacy-derived-retirement-1.4");
     ensure!(
         plain(&directory)?.is_dir(),
@@ -604,7 +604,7 @@ pub fn forget(control: &Path, approval: Sha256Digest) -> Result<()> {
         "only the matching completed legacy cleanup receipt can be forgotten"
     );
     fs::remove_file(path)?;
-    crate::maintenance::sync_parent(&directory)
+    crate::store_fs::sync_parent(&directory)
 }
 
 #[cfg(test)]

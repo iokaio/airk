@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Private bounded policy capture. No source document/model I/O or wire authority.
 use super::*;
-use crate::service::registry::catalog::setup::storage::SetupDirectory;
+use crate::store_fs::SetupDirectory;
 use airk_core::catalog_split::SplitRequest;
 use airk_core::retention::SplitExtractionPolicyReference;
 use std::ffi::OsStr;

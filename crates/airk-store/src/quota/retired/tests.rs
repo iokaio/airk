@@ -354,7 +354,7 @@ fn held_existing_collection_advisory_refuses_disposed_current_grant_release() ->
     let f = Fixture::new()?;
     let original = f.grants(&f.registration.collection)?;
     let healthy = f.grants(&f.healthy.collection)?;
-    let old_writer = crate::service::acquire_existing_file(
+    let old_writer = crate::store_fs::acquire_existing_file(
         &f.quota.root.join("collections-1.4/.writer-locks"),
         &f.registration.collection,
     )?;

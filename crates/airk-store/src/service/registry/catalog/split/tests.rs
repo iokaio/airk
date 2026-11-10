@@ -1229,8 +1229,9 @@ fn real_claimed_cancellation_disposes_paid_shell_then_publishes_and_acknowledges
     // Materialize the exact initial native files and interrupted intent scratch
     // left before protected publication. The actual finalization adapter below
     // must recover this prefix through all ordinary custody/funding gates.
-    use super::super::setup::storage::{SetupDirectory, file_identity, write_exact};
+    use super::super::setup::storage::write_exact;
     use crate::service::collection::TerminalSlot;
+    use crate::store_fs::{SetupDirectory, file_identity};
     let terminal_directory = Path::new(&request.destination_registration.data_root)
         .join("collections-1.4")
         .join(&request.destination_registration.collection);

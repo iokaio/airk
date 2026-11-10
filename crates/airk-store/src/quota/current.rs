@@ -97,7 +97,7 @@ impl CurrentGrant {
         self.require_current()?;
         let directory = self.quota.control_path().join("current-grants");
         fs::remove_file(directory.join(self.record.filename()))?;
-        crate::maintenance::sync_parent(&directory)?;
+        crate::store_fs::sync_parent(&directory)?;
         Ok(())
     }
 
@@ -191,7 +191,7 @@ impl Quota {
         let control = quota.control_path();
         ensure!(control.is_dir(), "existing quota control directory missing");
         unlinked(&control)?;
-        let _ledger = crate::service::acquire_existing_file(&control, "ledger.lock")?;
+        let _ledger = crate::store_fs::acquire_existing_file(&control, "ledger.lock")?;
         let record = allowance_record(&quota, scope)?;
         ensure!(
             record.scope == *scope && record.bytes >= minimum,
@@ -563,7 +563,7 @@ fn persist(quota: &Quota, record: &DurableRecord, create: bool) -> Result<()> {
     let directory = quota.control_path().join("current-grants");
     fs::create_dir_all(&directory)?;
     unlinked(&directory)?;
-    crate::maintenance::sync_parent(&quota.control_path())?;
+    crate::store_fs::sync_parent(&quota.control_path())?;
     let path = directory.join(record.filename());
     if create {
         ensure!(!path.try_exists()?, "current quota grant already exists");
@@ -581,17 +581,17 @@ fn persist(quota: &Quota, record: &DurableRecord, create: bool) -> Result<()> {
         .tempfile_in(&directory)?;
     temporary.write_all(&bytes)?;
     crate::durability::persist_synced(temporary, &path)?;
-    crate::maintenance::sync_parent(&directory)?;
+    crate::store_fs::sync_parent(&directory)?;
     Ok(())
 }
 
 // Caller retains the actual ledger lock and positive complete-collection
 // absence proof. Inventory is read-only; no recovery of another collection.
 pub(super) fn retired_inventory(
-    directory: &crate::service::registry::catalog::setup::storage::SetupDirectory,
+    directory: &crate::store_fs::SetupDirectory,
     collection: &str,
 ) -> Result<Vec<(std::ffi::OsString, File)>> {
-    use crate::service::registry::catalog::setup::storage::SetupFileMode;
+    use crate::store_fs::SetupFileMode;
     let mut selected = Vec::new();
     let mut records = 0;
     for (visited, entry) in directory.entries()?.enumerate() {

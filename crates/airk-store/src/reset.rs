@@ -318,7 +318,7 @@ impl FileStore {
             } else {
                 fs::remove_file(&target)?;
             }
-            crate::maintenance::sync_parent(&directory)?;
+            crate::store_fs::sync_parent(&directory)?;
             observe(Stage::DerivedRemoved)?;
         }
         reset.ready_for_build = true;
@@ -372,7 +372,7 @@ impl FileStore {
             "rebuilt index retained obsolete ancestry"
         );
         fs::remove_file(directory.join(INTENT))?;
-        crate::maintenance::sync_parent(&directory)
+        crate::store_fs::sync_parent(&directory)
     }
 }
 
@@ -393,7 +393,7 @@ fn write_intent(
     temporary.write_all(&bytes)?;
     temporary.as_file().sync_all()?;
     temporary.persist(directory.join(INTENT))?;
-    crate::maintenance::sync_parent(directory)
+    crate::store_fs::sync_parent(directory)
 }
 
 fn reader_exclusion(directory: &Path) -> Result<Vec<File>> {

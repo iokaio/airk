@@ -104,7 +104,7 @@ impl FileStore {
 /// Opaque existing metadata through the retained native directory. No source
 /// capture, producer execution or ingestion interpretation belongs to Store.
 pub(crate) fn extraction_policy_bytes_at(
-    pin: &crate::service::registry::catalog::setup::storage::SetupDirectory,
+    pin: &crate::store_fs::SetupDirectory,
     owner_root: &str,
 ) -> Result<Option<Vec<u8>>> {
     let bytes = match pin.read_file(

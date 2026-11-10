@@ -104,9 +104,7 @@ pub(crate) fn required_extraction_contract_for_store(
     if managed.namespace != "collections-1.4" || managed.slot.is_none() {
         return Ok(None);
     }
-    let pin = crate::service::registry::catalog::setup::storage::SetupDirectory::open_canonical(
-        managed.logical,
-    )?;
+    let pin = crate::store_fs::SetupDirectory::open_canonical(managed.logical)?;
     let owner: Owner =
         retention_barrier::read_json(&pin, "service-owner.json", MAX_METADATA as u64)?;
     ensure!(
@@ -126,9 +124,7 @@ pub(crate) fn required_extraction_contract_for_scope(
         managed.namespace == "collections-1.4" && managed.slot.is_some(),
         "retained contract requires native service incarnation"
     );
-    let pin = crate::service::registry::catalog::setup::storage::SetupDirectory::open_canonical(
-        managed.logical,
-    )?;
+    let pin = crate::store_fs::SetupDirectory::open_canonical(managed.logical)?;
     let owner: Owner =
         retention_barrier::read_json(&pin, "service-owner.json", MAX_METADATA as u64)?;
     ensure!(
@@ -983,7 +979,7 @@ impl Collection {
         );
         write(self, "replacement.json", &intent)?;
         fs::create_dir(self.slot(slot))?;
-        crate::maintenance::sync_parent(&self.directory.join("incarnations"))?;
+        crate::store_fs::sync_parent(&self.directory.join("incarnations"))?;
         Ok(Replacement {
             collection: self.clone(),
             intent,
@@ -1031,7 +1027,7 @@ impl Collection {
             }
         }
         fs::remove_file(path)?;
-        crate::maintenance::sync_parent(&self.directory)
+        crate::store_fs::sync_parent(&self.directory)
     }
 }
 
@@ -1149,7 +1145,7 @@ impl Replacement {
         )?;
         observer(HandoffStage::AfterSwitch)?;
         fs::remove_file(self.collection.directory.join("replacement.json"))?;
-        crate::maintenance::sync_parent(&self.collection.directory)?;
+        crate::store_fs::sync_parent(&self.collection.directory)?;
         Ok(token)
     }
 }

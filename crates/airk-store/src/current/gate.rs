@@ -132,7 +132,7 @@ impl Gate {
             "linked current gate directory"
         );
         let name = managed.slot.unwrap_or(managed.collection);
-        let file = crate::service::open_existing_ownership_file(&locks, name)?;
+        let file = crate::store_fs::open_existing_ownership_file(&locks, name)?;
         acquired(file.try_lock_shared(), CurrentGateContention::Applying)?;
         Ok(Self {
             file,
@@ -157,11 +157,9 @@ impl Gate {
         owning_store: &FileStore,
         writer: &WriterLock,
         target: &FileStore,
-        logical: &crate::service::registry::catalog::setup::storage::SetupDirectory,
+        logical: &crate::store_fs::SetupDirectory,
     ) -> Result<Self> {
-        use crate::service::registry::catalog::setup::storage::{
-            SetupDirectory, SetupFileMode, file_identity,
-        };
+        use crate::store_fs::{SetupDirectory, SetupFileMode, file_identity};
         use std::ffi::OsStr;
         check_writer(owning_store, writer)?;
         let owner = owning_store.managed_path()?;

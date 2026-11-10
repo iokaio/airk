@@ -148,7 +148,7 @@ impl Owner {
         temporary.write_all(&serde_json::to_vec(&self)?)?;
         temporary.as_file().sync_all()?;
         temporary.persist(root.join("service-1.4.owner.json"))?;
-        crate::maintenance::sync_parent(root)
+        crate::store_fs::sync_parent(root)
     }
 }
 
@@ -215,7 +215,7 @@ fn owner_record(root: &Path, existed: bool, incarnation: Incarnation) -> Result<
             temporary.write_all(&serde_json::to_vec(&owner)?)?;
             temporary.as_file().sync_all()?;
             temporary.persist_noclobber(path)?;
-            crate::maintenance::sync_parent(root)?;
+            crate::store_fs::sync_parent(root)?;
             Ok(owner)
         }
         Err(error) => Err(error.into()),

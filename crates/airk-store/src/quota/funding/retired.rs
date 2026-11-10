@@ -2,7 +2,7 @@
 //! Disposal of fully acknowledged allocations already handed to ordinary Current.
 //! Active/unacknowledged operation funding never gains retirement authority here.
 use super::*;
-use crate::service::registry::catalog::setup::storage::{SetupDirectory, SetupFileMode};
+use crate::store_fs::{SetupDirectory, SetupFileMode};
 use std::ffi::{OsStr, OsString};
 
 /// Whole-root reset validates every participant, including zero-credit pending

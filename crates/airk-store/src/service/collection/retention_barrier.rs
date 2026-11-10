@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Native bounded predecessor capability publication; no source or index mutation.
 use super::*;
-use crate::service::registry::catalog::setup::storage::{
-    SetupDirectory, SetupFileMode, file_identity,
-};
+use crate::store_fs::{SetupDirectory, SetupFileMode, file_identity};
 use std::ffi::OsStr;
 
 pub(super) fn read_json<T: serde::de::DeserializeOwned + Serialize>(

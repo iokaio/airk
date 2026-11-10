@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Charged, intent-bound retirement of searchable revisions. No history promise.
+use crate::store_fs::sync_parent;
 use crate::{
     FileStore, WriterLock,
     quota::{Quota, QuotaPressure, Reservation},
@@ -284,17 +285,6 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>> {
         "maintenance metadata too large"
     );
     Ok(Some(serde_json::from_slice(&bytes)?))
-}
-pub(crate) fn sync_parent(path: &Path) -> Result<()> {
-    #[cfg(unix)]
-    {
-        File::open(path)?.sync_all()?;
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-    }
-    Ok(())
 }
 pub(crate) fn write_json<T: Serialize>(
     store: &FileStore,

@@ -70,7 +70,7 @@ pub(crate) fn uninitialized_legacy_adoption(
         "checkpoint adoption lacks exact native storage preparation"
     );
     let data = Path::new(&registration.data_root);
-    let root = storage::SetupDirectory::open_canonical(data)?;
+    let root = crate::store_fs::SetupDirectory::open_canonical(data)?;
     let owner = root.read_file(
         OsStr::new(crate::service::data_scope::OWNER),
         metadata.owner.len() as u64,
