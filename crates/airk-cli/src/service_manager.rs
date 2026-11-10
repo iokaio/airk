@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Explicit per-user OS lifecycle. Inspection never installs or starts a worker.
+use crate::native_command::{Invocation, MAX_CONFIG, Output, execute, windows_tool};
+use crate::native_process::windows_argument;
 use airk_kernel::Kernel;
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
@@ -9,13 +11,10 @@ use std::{
     fs::{self, OpenOptions},
     io::{Read, Write},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
-    sync::mpsc,
     thread,
     time::{Duration, Instant},
 };
 
-const MAX_CONFIG: u64 = 128 * 1024;
 #[cfg(test)]
 mod direct_tests;
 #[cfg(target_os = "linux")]
@@ -89,28 +88,6 @@ pub struct ServiceManager {
     args: Vec<String>,
     definition: PathBuf,
     receipt: PathBuf,
-}
-
-#[derive(Clone, Debug)]
-struct Invocation {
-    program: PathBuf,
-    args: Vec<String>,
-    env: BTreeMap<String, String>,
-    input: Option<Vec<u8>>,
-}
-impl Invocation {
-    fn new(program: impl Into<PathBuf>, args: &[&str]) -> Self {
-        Self {
-            program: program.into(),
-            args: args.iter().map(|arg| (*arg).into()).collect(),
-            env: BTreeMap::new(),
-            input: None,
-        }
-    }
-}
-struct Output {
-    success: bool,
-    text: String,
 }
 
 impl ServiceManager {
@@ -1048,32 +1025,6 @@ fn parse_status(platform: Platform, output: &Output) -> (Option<bool>, Option<bo
     }
 }
 
-#[cfg(windows)]
-pub(crate) fn windows_tool(name: &str) -> Result<PathBuf> {
-    use std::os::windows::ffi::OsStringExt;
-    let mut buffer = vec![0u16; 32768];
-    // SAFETY: the native API receives a writable, correctly bounded UTF-16 buffer.
-    let length = unsafe {
-        windows_sys::Win32::System::SystemInformation::GetSystemDirectoryW(
-            buffer.as_mut_ptr(),
-            buffer.len() as u32,
-        )
-    };
-    ensure!(
-        length > 0 && (length as usize) < buffer.len(),
-        "native system directory unavailable"
-    );
-    let path = PathBuf::from(std::ffi::OsString::from_wide(&buffer[..length as usize])).join(name);
-    ensure!(
-        path.is_absolute() && path.is_file(),
-        "native Windows lifecycle tool is unavailable"
-    );
-    Ok(path)
-}
-#[cfg(not(windows))]
-pub(crate) fn windows_tool(_name: &str) -> Result<PathBuf> {
-    bail!("Windows lifecycle tools are unavailable on this host")
-}
 fn absolute_existing_ancestor(path: &Path) -> Result<PathBuf> {
     let mut parent = std::path::absolute(path)?;
     let mut suffix = Vec::new();
@@ -1231,26 +1182,6 @@ fn windows_path(value: &str) -> String {
         .map(|rest| format!(r"\\{rest}"))
         .unwrap_or_else(|| value.trim_start_matches(r"\\?\").into())
 }
-pub(crate) fn windows_argument(value: &str) -> String {
-    let mut out = String::from("\"");
-    let mut slashes = 0;
-    for ch in value.chars() {
-        if ch == '\\' {
-            slashes += 1;
-            continue;
-        }
-        if ch == '"' {
-            out.extend(std::iter::repeat_n('\\', slashes * 2 + 1));
-        } else {
-            out.extend(std::iter::repeat_n('\\', slashes));
-        }
-        slashes = 0;
-        out.push(ch);
-    }
-    out.extend(std::iter::repeat_n('\\', slashes * 2));
-    out.push('"');
-    out
-}
 fn checked(invocation: &Invocation) -> Result<()> {
     let output = execute(invocation)?;
     ensure!(
@@ -1260,18 +1191,6 @@ fn checked(invocation: &Invocation) -> Result<()> {
     );
     Ok(())
 }
-fn execute(invocation: &Invocation) -> Result<Output> {
-    execute_with_timeout(invocation, Duration::from_secs(30))
-}
-#[cfg(any(target_os = "macos", test))]
-pub(crate) fn execute_native_program(program: &Path, args: &[&str]) -> Result<bool> {
-    Ok(execute(&Invocation::new(program, args))?.success)
-}
-#[cfg(any(windows, target_os = "macos", test))]
-pub(crate) fn execute_native_observation(program: &Path, args: &[&str]) -> Result<(bool, String)> {
-    let output = execute(&Invocation::new(program, args))?;
-    Ok((output.success, output.text))
-}
 #[cfg(any(target_os = "macos", test))]
 pub(crate) fn verify_macos_login_intent(
     root: &Path,
@@ -1280,97 +1199,6 @@ pub(crate) fn verify_macos_login_intent(
 ) -> Result<()> {
     macos::verify_intent(root, identity, channel)
 }
-fn execute_with_timeout(invocation: &Invocation, timeout: Duration) -> Result<Output> {
-    ensure!(
-        invocation
-            .input
-            .as_ref()
-            .is_none_or(|input| input.len() as u64 <= MAX_CONFIG),
-        "manager input exceeds byte allowance"
-    );
-    let mut command = Command::new(&invocation.program);
-    command
-        .args(&invocation.args)
-        .envs(&invocation.env)
-        .stdin(if invocation.input.is_some() {
-            Stdio::piped()
-        } else {
-            Stdio::null()
-        })
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x08000000);
-    }
-    let deadline = Instant::now() + timeout;
-    let mut child = crate::native_process::ContainedChild::spawn(&mut command)
-        .with_context(|| format!("start service manager {}", invocation.program.display()))?;
-    let input = if let Some(bytes) = &invocation.input {
-        let bytes = bytes.clone();
-        let mut input = child.stdin.take().context("missing manager input")?;
-        let (sender, completion) = mpsc::sync_channel(1);
-        thread::Builder::new()
-            .name("airk-manager-input".into())
-            .spawn(move || {
-                let _ = sender.send(input.write_all(&bytes));
-            })?;
-        Some(completion)
-    } else {
-        None
-    };
-    let (sender, receiver) = mpsc::channel();
-    for mut stream in [
-        Box::new(child.stdout.take().context("missing manager stdout")?) as Box<dyn Read + Send>,
-        Box::new(child.stderr.take().context("missing manager stderr")?),
-    ] {
-        let sender = sender.clone();
-        thread::Builder::new()
-            .name("airk-manager-output".into())
-            .spawn(move || {
-                let mut retained = Vec::new();
-                let mut block = [0; 4096];
-                let result = loop {
-                    match stream.read(&mut block) {
-                        Ok(0) => break Ok(retained),
-                        Ok(read) if retained.len() + read <= 65536 => {
-                            retained.extend_from_slice(&block[..read])
-                        }
-                        Ok(_) => break Err(std::io::Error::other("manager output exceeds 64 KiB")),
-                        Err(error) => break Err(error),
-                    }
-                };
-                let _ = sender.send(result);
-            })?;
-    }
-    drop(sender);
-    let success = loop {
-        if let Some(status) = child.try_wait()? {
-            break status.success();
-        }
-        if Instant::now() >= deadline {
-            bail!(
-                "service manager exceeded its command deadline; inspect OS service status before retrying"
-            );
-        }
-        thread::sleep(Duration::from_millis(20));
-    };
-    if let Some(input) = input {
-        input
-            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-            .context("service manager input did not complete before its deadline")??;
-    }
-    let mut text = String::new();
-    for _ in 0..2 {
-        let bytes = receiver
-            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-            .context("service manager output did not close before its deadline")??;
-        text.push_str(&String::from_utf8_lossy(&bytes));
-    }
-    Ok(Output { success, text })
-}
-
 /// The same bounded native command adapter also checks the paired helper's role/version.
 pub(crate) fn check_executable_identity(program: &Path, expected: &str) -> Result<()> {
     let output = execute(&Invocation::new(program, &["--version"]))?;
@@ -1384,6 +1212,9 @@ pub(crate) fn check_executable_identity(program: &Path, expected: &str) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::native_command::execute_with_timeout;
+    #[cfg(target_os = "linux")]
+    use std::process::{Command, Stdio};
     #[cfg(windows)]
     #[test]
     #[ignore = "requires explicit owned native Task Scheduler qualification"]

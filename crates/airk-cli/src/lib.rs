@@ -67,6 +67,7 @@ pub mod service_manager;
 mod child_job;
 
 pub mod client_owner;
+mod native_command;
 mod native_process;
 mod process_diagnostics;
 mod process_roles;

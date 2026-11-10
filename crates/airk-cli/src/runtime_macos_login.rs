@@ -196,7 +196,7 @@ fn job_pid(text: &str) -> Result<Option<u32>> {
 
 fn observe_job(main: &Path, channel: RuntimeChannel, entry: &str) -> Result<Option<String>> {
     let domain = format!("gui/{}", crate::local_ipc::current_user()?);
-    let (domain_available, _) = crate::service_manager::execute_native_observation(
+    let (domain_available, _) = crate::native_command::execute_native_observation(
         Path::new("/bin/launchctl"),
         &["print", &domain],
     )?;
@@ -206,7 +206,7 @@ fn observe_job(main: &Path, channel: RuntimeChannel, entry: &str) -> Result<Opti
     );
     let label = format!("io.iokaio.airk.service.{}", channel_name(channel));
     let target = format!("{domain}/{label}");
-    let (present, text) = crate::service_manager::execute_native_observation(
+    let (present, text) = crate::native_command::execute_native_observation(
         Path::new("/bin/launchctl"),
         &["print", &target],
     )?;
@@ -306,7 +306,7 @@ fn approved_main(root: &Path, identity: &str, full: bool) -> Result<PathBuf> {
     // approval remains the distributor/user policy; ad-hoc development signatures
     // do not establish Developer ID or notarization qualification.
     let target = if full { bundle(&main)? } else { main.clone() };
-    let output = super::super::service_manager::execute_native_program(
+    let output = crate::native_command::execute_native_program(
         Path::new("/usr/bin/codesign"),
         &[
             "--verify",

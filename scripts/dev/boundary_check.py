@@ -429,7 +429,7 @@ def main(argv=None):
             return 2
     if args.write_baseline:
         baseline = build_baseline(facts, previous)
-        args.exceptions.write_text(json.dumps(baseline, indent=2) + "\n", encoding="utf-8")
+        args.exceptions.write_text(json.dumps(baseline, indent=2) + "\n", encoding="utf-8", newline="\n")
         unclassified = [entry for entry in baseline["module_honesty"] if not entry["reason"]]
         sys.stdout.write(
             f"wrote {args.exceptions}: {len(baseline['module_honesty'])} module-honesty exceptions, "

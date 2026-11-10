@@ -141,7 +141,7 @@ fn command(run: &mut Runner<'_>, program: &Path, args: &[String]) -> Result<Stri
 fn windows_program() -> Result<PathBuf> {
     #[cfg(windows)]
     {
-        crate::service_manager::windows_tool("WindowsPowerShell/v1.0/powershell.exe")
+        crate::native_command::windows_tool("WindowsPowerShell/v1.0/powershell.exe")
     }
     #[cfg(all(not(windows), test))]
     {
@@ -374,7 +374,7 @@ pub fn manage(
             Host::current(),
             &mut |program, args| {
                 let refs = args.iter().map(String::as_str).collect::<Vec<_>>();
-                crate::service_manager::execute_native_observation(program, &refs)
+                crate::native_command::execute_native_observation(program, &refs)
             },
         )
     }

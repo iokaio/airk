@@ -48,14 +48,10 @@
         "catalog_split_control",
         "combined_frontend",
         "console_client",
-        "embedding_pool_bootstrap",
-        "embedding_pool_process",
-        "explorer_assistance",
         "http_backend",
         "http_endpoint",
         "http_gateway",
         "native_admin_connections",
-        "native_process",
         "project_client",
         "project_protocol",
         "project_supervisor",
@@ -63,7 +59,6 @@
         "runtime_install",
         "runtime_metadata",
         "service_frontend",
-        "service_inference",
         "service_logs",
         "service_management",
         "service_manager",
@@ -72,12 +67,16 @@
         "source_supervisor",
         "unified_mcp",
         "universal_launcher",
-        "unix_guardian",
         "usage_client"
       ],
       [
         "client_requests",
         "service_configuration"
+      ],
+      [
+        "embedding_pool_bootstrap",
+        "embedding_pool_process",
+        "unix_guardian"
       ],
       [
         "process_roles",

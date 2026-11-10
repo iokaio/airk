@@ -32,6 +32,15 @@ the same commit, as a reviewed diff.
 - Predicted: largest CLI cycle 34→28.
 - The code is gated to Windows and macOS. Run scoped Clippy on macOS and
   Linux before anything else on those hosts.
+- **Measured:** largest CLI cycle 34→28, modules in cycles 38→35, edges
+  277→279, top-level modules 65→66. `explorer_assistance`, `native_process`
+  and `service_inference` left the cycle. `embedding_pool_bootstrap`,
+  `embedding_pool_process` and `unix_guardian` split off into their own
+  3-cycle. `windows_argument` also stays used by `service_manager`, which now
+  imports it from `native_process`. `MAX_CONFIG` moved with
+  `execute_with_timeout`, which bounds input by it; `service_manager` imports
+  it. The `manager_command` tests stay in `service_manager::tests`. Contract:
+  [`native_command/CONTRACT.md`](../../crates/airk-cli/src/native_command/CONTRACT.md).
 
 ## S7.2 CLI layout: `install_layout` leaf
 

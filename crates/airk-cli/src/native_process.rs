@@ -185,6 +185,26 @@ impl DetachedChild {
     }
 }
 
+pub(crate) fn windows_argument(value: &str) -> String {
+    let mut out = String::from("\"");
+    let mut slashes = 0;
+    for ch in value.chars() {
+        if ch == '\\' {
+            slashes += 1;
+            continue;
+        }
+        if ch == '"' {
+            out.extend(std::iter::repeat_n('\\', slashes * 2 + 1));
+        } else {
+            out.extend(std::iter::repeat_n('\\', slashes));
+        }
+        slashes = 0;
+        out.push(ch);
+    }
+    out.extend(std::iter::repeat_n('\\', slashes * 2));
+    out.push('"');
+    out
+}
 /// A detached Windows service inherits no handles at all, including caller pipes,
 /// editor handles and installer locks. It negotiates control over private IPC later.
 #[cfg(windows)]
@@ -205,13 +225,10 @@ pub(crate) fn spawn_detached(
         .encode_wide()
         .chain(Some(0))
         .collect();
-    let mut line =
-        crate::service_manager::windows_argument(&executable.as_os_str().to_string_lossy());
+    let mut line = windows_argument(&executable.as_os_str().to_string_lossy());
     for arg in args {
         line.push(' ');
-        line.push_str(&crate::service_manager::windows_argument(
-            &arg.to_string_lossy(),
-        ));
+        line.push_str(&windows_argument(&arg.to_string_lossy()));
     }
     let mut line: Vec<u16> = line.encode_utf16().chain(Some(0)).collect();
     // SAFETY: zero initialization gives valid defaults; cb is set before the call.
