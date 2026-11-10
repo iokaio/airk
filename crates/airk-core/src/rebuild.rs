@@ -2,7 +2,7 @@
 //! Native rebuild observations are evidence of an operation, never mutation authority.
 use crate::{
     identity::{Incarnation, Sha256Digest},
-    service::{JobRecord, ProjectBinding, ProjectRegistration},
+    service_records::{JobRecord, ProjectBinding, ProjectRegistration},
 };
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
@@ -295,7 +295,8 @@ impl RebuildObservation {
                         .is_some_and(|replacement| replacement.binding == initial.project)
                         && matches!(
                             initial.state,
-                            crate::service::JobState::Failed | crate::service::JobState::Canceled
+                            crate::service_records::JobState::Failed
+                                | crate::service_records::JobState::Canceled
                         ),
                     "invalid original clean-break retry receipt"
                 );
@@ -314,7 +315,7 @@ impl RebuildObservation {
                     || index
                         .job
                         .as_ref()
-                        .is_some_and(|job| job.state == crate::service::JobState::Succeeded),
+                        .is_some_and(|job| job.state == crate::service_records::JobState::Succeeded),
                 "native rebuild readiness has no successful native job"
             );
             if let Some(failure) = &index.failure {

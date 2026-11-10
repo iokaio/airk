@@ -2,7 +2,7 @@
 //! Inert Project/index metadata contracts. IDs and context choices grant no access.
 use crate::{
     identity::{Incarnation, Sha256Digest},
-    service::ProjectRegistration,
+    service_records::ProjectRegistration,
 };
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};

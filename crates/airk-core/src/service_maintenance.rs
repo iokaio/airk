@@ -2,8 +2,8 @@
 //! Durable scoped maintenance intents. Planning never grants a mutation capability.
 use crate::{
     identity::{RevisionToken, Sha256Digest},
-    service::{JobKind, JobOutcome, ProjectBinding},
     service_inspection::InspectionObservation,
+    service_records::{JobKind, JobOutcome, ProjectBinding},
 };
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};

@@ -193,7 +193,7 @@ impl NativeImportedHttpUnion {
 pub struct NativeImportedHttpSelection {
     pub namespace: Incarnation,
     pub expected_catalog_revision: crate::index_catalog::CatalogRevision,
-    pub registration: crate::service::ProjectRegistration,
+    pub registration: crate::service_records::ProjectRegistration,
     pub grant: crate::grant_provenance::PersistedGrant,
     pub configuration_receipt: Sha256Digest,
 }

@@ -2,7 +2,7 @@
 //! Content-free service resource contracts; observations and admission live in kernel.
 use crate::{
     identity::{Incarnation, Sha256Digest},
-    service::WorkerIdentity,
+    service_records::WorkerIdentity,
 };
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};

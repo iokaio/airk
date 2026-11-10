@@ -2,7 +2,7 @@
 //! Content-free retained service events; sequence positions never imply index freshness.
 use crate::{
     identity::{Incarnation, Sha256Digest},
-    service::{JobKind, ProjectBinding},
+    service_records::{JobKind, ProjectBinding},
 };
 use serde::{Deserialize, Serialize};
 

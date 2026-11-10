@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 #[serde(deny_unknown_fields)]
 pub struct PolicyResumeReceipt {
     pub source_job: Sha256Digest,
-    pub job: crate::service::JobRecord,
+    pub job: crate::service_records::JobRecord,
     pub configuration: crate::service_configuration::ConfigurationWork,
     pub result: Option<serde_json::Value>,
 }

@@ -3,7 +3,7 @@
 //! Deserializing a complete observation never proves native ownership or drain.
 use crate::{
     identity::{Incarnation, Sha256Digest},
-    service::WorkerIdentity,
+    service_records::WorkerIdentity,
 };
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};

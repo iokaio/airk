@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Bounded cached metadata for trusted consoles; observations never open an index.
 use crate::{
-    service::{MaintenanceObservation, ProjectBinding, RegisteredProject},
     service_inspection::InspectionObservation,
     service_progress::ProgressObservation,
+    service_records::{MaintenanceObservation, ProjectBinding, RegisteredProject},
     service_watch::WatchObservation,
 };
 use serde::{Deserialize, Serialize};
@@ -52,7 +52,7 @@ pub struct ProjectObservation {
     pub recovery: Vec<RecoveryObservation>,
     pub project: RegisteredProject,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pending_job: Option<crate::service::JobRecord>,
+    pub pending_job: Option<crate::service_records::JobRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_gate: Option<PendingJobGate>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -60,7 +60,7 @@ pub struct ProjectObservation {
     pub watch: Option<WatchObservation>,
     pub progress: Option<ProgressObservation>,
     #[serde(default)]
-    pub configuration: Option<crate::service::JobRecord>,
+    pub configuration: Option<crate::service_records::JobRecord>,
     pub inspection: Option<InspectionObservation>,
     pub maintenance: Option<MaintenanceObservation>,
     pub maintenance_retrying: Option<bool>,
@@ -79,7 +79,7 @@ pub struct ConsolePage {
 #[serde(deny_unknown_fields)]
 pub struct WorkerObservation {
     pub project: ProjectBinding,
-    pub identity: Option<crate::service::WorkerIdentity>,
+    pub identity: Option<crate::service_records::WorkerIdentity>,
     pub restarting: bool,
     pub automatic_start_blocked: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]

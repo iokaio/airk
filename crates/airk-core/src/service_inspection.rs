@@ -3,7 +3,7 @@
 use crate::{
     identity::{Incarnation, RevisionToken, Sha256Digest, framed_digest},
     readiness::{DiscoveryState, SemanticState},
-    service::{ProjectBinding, WorkerIdentity},
+    service_records::{ProjectBinding, WorkerIdentity},
 };
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};

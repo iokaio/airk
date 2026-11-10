@@ -8,7 +8,7 @@ use crate::{
         CatalogRevision, IndexId, PolicyReference, QueryProjectId, ScopeAtom, atoms, encoded_size,
         label,
     },
-    service::{ProjectRegistration, RequestKey},
+    service_records::{ProjectRegistration, RequestKey},
     source_policy::{SourcePolicy, SplitDestination, SplitPolicyPlan},
 };
 use anyhow::{Result, ensure};

@@ -7,9 +7,7 @@ pub const REQUEST_SCHEMA: &str = "airk.parse.request/1";
 pub const PLAN_SCHEMA: &str = "airk.parse.plan/1";
 pub const RESULT_SCHEMA: &str = "airk.workbench.result/1";
 pub const CATALOG: &str = "airk.evidence-plans/1";
-/// Reports are expanded by typed bindings; they are not limited to the six
-/// authored plan steps. Native composition retains every bounded fanout report.
-pub const MAX_STEP_REPORTS: usize = 6 * 12;
+pub use crate::read_limits::MAX_STEP_REPORTS;
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]

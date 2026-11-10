@@ -135,9 +135,9 @@ pub fn proposed_retry(combined: &Value) -> Option<SingleRequiredMemberRetry> {
         || !(1..=100).contains(&allocation.limit)
         || !(1..=65_536).contains(&allocation.max_bytes)
         || !(1..=30_000).contains(&allocation.deadline_ms)
-        || allocation.verification_max_sources > crate::verification::MAX_SOURCES
-        || allocation.verification_max_bytes > crate::verification::MAX_BYTES
-        || allocation.verification_deadline_ms > crate::verification::MAX_DEADLINE_MS
+        || allocation.verification_max_sources > crate::read_limits::MAX_SOURCES
+        || allocation.verification_max_bytes > crate::read_limits::MAX_BYTES
+        || allocation.verification_deadline_ms > crate::read_limits::MAX_DEADLINE_MS
     {
         return None;
     }

@@ -4,7 +4,7 @@ use crate::{
     grant_provenance::{PersistedGrant, is_imported_grant_id},
     identity::{Incarnation, Sha256Digest, framed_digest},
     index_catalog::*,
-    service::RequestKey,
+    service_records::RequestKey,
 };
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};

@@ -2,7 +2,7 @@
 //! Trusted host lifecycle intent; this is never an MCP capability.
 use crate::{
     identity::{Incarnation, Sha256Digest},
-    service::RequestKey,
+    service_records::RequestKey,
 };
 use serde::{Deserialize, Serialize};
 

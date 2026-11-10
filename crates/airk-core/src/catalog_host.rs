@@ -8,7 +8,7 @@ use crate::{
         unique_bounded,
     },
     scoped_reads::ScopeReadRefused,
-    service::RequestKey,
+    service_records::RequestKey,
 };
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
@@ -21,17 +21,17 @@ pub struct NativeLegacyBindingObservation {
     pub schema: u32,
     pub namespace: Incarnation,
     pub catalog_revision: Option<CatalogRevision>,
-    pub project: crate::service::ProjectBinding,
+    pub project: crate::service_records::ProjectBinding,
     pub eligibility: NativeLegacyBindingEligibility,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum NativeLegacyBindingEligibility {
     AuthorityZero {
-        registration: crate::service::ProjectRegistration,
+        registration: crate::service_records::ProjectRegistration,
     },
     ImportedSnapshot {
-        registration: crate::service::ProjectRegistration,
+        registration: crate::service_records::ProjectRegistration,
         grant: Box<crate::grant_provenance::PersistedGrant>,
     },
     Unavailable,

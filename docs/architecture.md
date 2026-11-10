@@ -46,8 +46,10 @@ Rules:
 - Components with a `CONTRACT.md` (currently
   `crates/airk-cli/src/checkpoint_fence/`,
   `crates/airk-cli/src/install_files/`,
-  `crates/airk-cli/src/install_layout/` and
-  `crates/airk-cli/src/native_command/`) state their interface, owned state,
+  `crates/airk-cli/src/install_layout/`,
+  `crates/airk-cli/src/native_command/`,
+  `crates/airk-core/src/read_limits/` and
+  `crates/airk-core/src/service_records/`) state their interface, owned state,
   invariants and test command there.
 
 ## Runtime topology

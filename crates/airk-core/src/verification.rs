@@ -3,9 +3,7 @@
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 
-pub const MAX_SOURCES: usize = 256;
-pub const MAX_BYTES: u64 = 1_073_741_824;
-pub const MAX_DEADLINE_MS: u64 = 30_000;
+pub use crate::read_limits::{MAX_BYTES, MAX_DEADLINE_MS, MAX_SOURCES};
 pub const STREAM_BYTES: usize = 65_536;
 pub const MAX_REFERENCES: usize = 4_096;
 pub const MAX_RECEIPT_BYTES: usize = 32_768;
@@ -83,7 +81,7 @@ fn validate_projection_inner(
     }
     if let Some(steps) = value.get("steps").and_then(serde_json::Value::as_array) {
         ensure!(
-            steps.len() <= crate::workbench::MAX_STEP_REPORTS,
+            steps.len() <= crate::read_limits::MAX_STEP_REPORTS,
             VerificationProjectionChanged
         );
         for step in steps {

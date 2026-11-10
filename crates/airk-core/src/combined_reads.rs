@@ -379,9 +379,9 @@ impl SharedBudgets {
             "combined deadline must be 1..30000 ms"
         );
         ensure!(
-            self.verification_max_sources <= crate::verification::MAX_SOURCES
-                && self.verification_max_bytes <= crate::verification::MAX_BYTES
-                && self.verification_deadline_ms <= crate::verification::MAX_DEADLINE_MS,
+            self.verification_max_sources <= crate::read_limits::MAX_SOURCES
+                && self.verification_max_bytes <= crate::read_limits::MAX_BYTES
+                && self.verification_deadline_ms <= crate::read_limits::MAX_DEADLINE_MS,
             "combined verification budget exceeds bounds"
         );
         Ok(())

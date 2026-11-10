@@ -2,7 +2,7 @@
 //! Content-free work observations. Liveness is deliberately not work advancement.
 use crate::{
     identity::{Incarnation, RevisionToken, Sha256Digest},
-    service::{JobRecord, WorkerIdentity},
+    service_records::{JobRecord, WorkerIdentity},
 };
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};

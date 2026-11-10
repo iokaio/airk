@@ -5,8 +5,8 @@ use crate::{
     catalog_management::{CatalogOperation, CatalogRequest, MAX_RECEIPT_BYTES},
     identity::{Incarnation, Sha256Digest, framed_digest},
     index_catalog::{MAX_SOURCE_ROOTS, SourceRootId, encoded_size},
-    service::{ProjectRegistration, RequestKey},
     service_configuration::{ConfigurationRequest, ProjectConfiguration},
+    service_records::{ProjectRegistration, RequestKey},
     source_policy::{SourceRoot, validate_root_path},
 };
 use anyhow::{Result, ensure};
@@ -195,7 +195,7 @@ pub struct AppliedSourceChange {
 #[serde(deny_unknown_fields)]
 pub struct SourceChangeObservation {
     pub begin: crate::catalog_fences::FencedReceipt,
-    pub job: Option<crate::service::JobRecord>,
+    pub job: Option<crate::service_records::JobRecord>,
     pub configuration_result: Option<serde_json::Value>,
     pub completion: Option<crate::catalog_management::CatalogReceipt>,
 }

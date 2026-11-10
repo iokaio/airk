@@ -136,6 +136,49 @@ the same commit, as a reviewed diff.
 - Under D5, the moved limits join the reviewed fixtures; no mirror is
   generated.
 - Predicted: largest Core cycle 31→19.
+- **Measured:** largest Core cycle 31→20, modules in cycles 39→28, edges
+  240→244, top-level modules 71→73. `index_catalog`, `inference_provider`,
+  `service_checkpoint`, `service_console`, `service_events`,
+  `service_inspection`, `service_maintenance`, `service_progress`,
+  `service_resources`, `source_policy` and `workbench` left the cycle. The
+  remaining gap to the prediction is `catalog_refresh`, which also names
+  `service::CombinedConnectRequest`. That type depends on `index_catalog` and
+  `scoped_reads`, so it is not identity-only vocabulary and stayed in
+  `service`; removing that edge alone would give 19.
+- Moved to `service_records` (private module, `pub` items re-exported from
+  `service`): `ProjectBinding`, `MAX_PROJECT_REGISTRATION_BYTES`,
+  `ProjectRegistration`, `RegisteredProject`, `JobKind`, `JobState`,
+  `RequestKey`, `JobOutcome`, `JobRecord`, `WorkerIdentity` and
+  `MaintenanceObservation`. `ProjectPage`, `JobError` and the connection types
+  stay in `service`. Moved to `read_limits` (private module, re-exported from
+  `verification` and `workbench`): `MAX_SOURCES`, `MAX_BYTES`,
+  `MAX_DEADLINE_MS` and `MAX_STEP_REPORTS`. Only Core production code was
+  rewritten (39 paths); tests and other crates keep the old paths. Call sites:
+  `python scripts/dev/s7_4_core_leaves.py --check`.
+- No module path reaches any format: there is no `std::any::type_name` or
+  `module_path!` use for these types, and the only `schemars` derives are
+  airk-mcp's own parameter types. `fixtures/wire/` is byte-identical.
+- **Not done:** D5 "the moved limits join the reviewed fixtures" would add a
+  new `fixtures/wire` file, which conflicts with keeping `fixtures/wire`
+  byte-identical in a structural step. It is left as its own contract step.
+- Goldens (exact serde bytes of the moved types and the limit values, through
+  the public `service`, `verification` and `workbench` paths), identical before
+  and after:
+
+  | Golden | SHA-256 |
+  |---|---|
+  | `ProjectRegistration` | `c61c051dfa6b0959132ca6e2eab4f0d891f7cd1af5d3539ff3a717f44a4e48ed` |
+  | `RegisteredProject` | `22c80acce97a9b76770bdec0a68639a8e3d6684185211e52a7f892824f6e9112` |
+  | `JobKind` values and codes | `67986bd4b631bf3db088a516dcabf51053579862b5f87a1d657474435e86a810` |
+  | `JobState` values | `9e98b82e0fbbe7976e952cef464e95916735219d70f66a3c6488562fcadec849` |
+  | `RequestKey` | `709fb244e604126ee5eb267765ab707b6ea487c81899396550c0173b75c30560` |
+  | `JobOutcome` values | `4d32bb4918c64e2aa6483d5c121677b5f222d19760eeb7e6c47ad13b78ea6001` |
+  | `JobRecord` | `e27eac47f147d7f534b9608935c771e0a118e3337dce11a7b44212055443af30` |
+  | `WorkerIdentity` | `12f09911dbb1b2b93127edd30f3fead43faf388833b0a876171c6355fb207e05` |
+  | `MaintenanceObservation` | `74c8182b0b60db59da74476b787fcbfb63e3a824064ef24cba99bf3ee5f55dfe` |
+  | Limit values | `65a480cc6e414b1b2e8f110f3e41df9a6483c9fe8ab897d48159ee344d0f1964` |
+  | `fixtures/wire/catalog_receipt.json` | `5a4823fc4aad4e887d11189194f3721190c92891f44c41cf8ca14789d7694224` |
+  | `fixtures/wire/read_retry_decisions.json` | `1700dbf2a419b68f808fc42b8145817d11b57d72f56b97c71d9dcb7adf21506f` |
 
 ## S7.5 Store filesystem and lock layer: `store_fs` leaf
 

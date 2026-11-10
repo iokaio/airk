@@ -6,7 +6,7 @@ use crate::{
     catalog_setup::{IndexSetupReceipt, IndexSetupRequest, SetupStage},
     identity::{RevisionToken, Sha256Digest, framed_digest},
     index_catalog::encoded_size,
-    service::ProjectRegistration,
+    service_records::ProjectRegistration,
 };
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};

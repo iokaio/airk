@@ -7,7 +7,7 @@ use crate::{
     index_catalog::{
         CatalogRevision, IndexId, MAX_SOURCE_ROOTS, SourceRootId, encoded_size, label,
     },
-    service::{ProjectRegistration, RequestKey},
+    service_records::{ProjectRegistration, RequestKey},
     source_policy::validate_root_path,
 };
 use anyhow::{Result, ensure};

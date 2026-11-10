@@ -3,7 +3,7 @@
 use crate::{
     identity::{Incarnation, Sha256Digest, framed_digest},
     index_catalog::{GrantId, ReviewedGrant},
-    service::ProjectBinding,
+    service_records::ProjectBinding,
 };
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
