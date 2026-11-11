@@ -842,3 +842,54 @@ fn airkctl_resolves_the_project_its_folder_names() -> anyhow::Result<()> {
     );
     Ok(())
 }
+
+/// `airkctl pause|resume|watch|projects` print what `airk` printed for the
+/// same project (split step 3c.2). Each `airk` call precedes the `airkctl`
+/// one, so both observe the same state.
+#[test]
+fn airkctl_project_commands_print_what_airk_printed() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let state = tempfile::tempdir()?;
+    let service = common::Service::reviewed(root.path(), state.path(), "ctl-admin");
+    service.settle_reviewed_index(
+        root.path(),
+        state.path(),
+        std::time::Instant::now() + std::time::Duration::from_secs(90),
+    )?;
+    let control = service.control.to_str().unwrap().to_owned();
+    let binding = service.project.binding.to_string();
+    for command in [
+        vec!["pause"],
+        vec!["resume"],
+        vec!["watch", "off"],
+        vec!["watch", "on"],
+        vec!["projects", "--runtime-dir", &control],
+    ] {
+        let old = common::command(root.path(), state.path(), "ctl-admin")
+            .args(&command)
+            .output()?;
+        let mut line = vec![
+            "airkctl",
+            "--service-runtime-dir",
+            &control,
+            "--service-project",
+            &binding,
+        ];
+        line.extend(command.iter().copied());
+        let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+        let mut io = airkctl::cli::Io {
+            stdin: &mut std::io::empty(),
+            stdout: &mut stdout,
+            stderr: &mut stderr,
+            full_responses: true,
+        };
+        let code = airkctl::cli::run(line.into_iter().map(Into::into).collect(), &mut io);
+        assert_eq!(
+            (Some(i32::from(code)), String::from_utf8(stdout)?),
+            (old.status.code(), String::from_utf8(old.stdout)?),
+            "{command:?}: {}",
+            String::from_utf8_lossy(&stderr)
+        );
+    }
+    Ok(())
+}

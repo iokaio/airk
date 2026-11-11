@@ -111,6 +111,21 @@ enum Command {
         #[command(subcommand)]
         action: ToolsCommand,
     },
+    /// Pause work for the project.
+    Pause,
+    /// Resume work paused with `pause`.
+    Resume,
+    /// Turn native source watching on or off for the project (on keeps the index current after edits).
+    Watch {
+        #[arg(value_parser = ["on", "off"])]
+        mode: String,
+    },
+    /// List the projects registered with the service (same fields as the MCP `projects` tool).
+    Projects {
+        /// The service's control directory (default: --service-runtime-dir, else the installation's).
+        #[arg(long)]
+        runtime_dir: Option<PathBuf>,
+    },
     /// The AIRK service: health and shutdown.
     Service {
         #[command(subcommand)]
@@ -515,8 +530,7 @@ fn catalog(cx: &mut Context, selection: &Selection, action: ToolsCommand) -> u8 
 /// The control root and M3 selection of one call. Without a binding or a
 /// session (and for any tool but the in-process help), the project the
 /// `--root`/`--data-dir`/`--collection` folder names is resolved through M1
-/// (step 3c.1), starting the installed service automatically when it is down
-/// (contracts §3.2; a saved explicit Stop is honored).
+/// (step 3c.1).
 fn resolve_call(
     cx: &mut Context,
     selection: &Selection,
@@ -526,6 +540,25 @@ fn resolve_call(
     if !matches!(explicit, ToolSelection::Unselected) || matches!(tool, "airk_help" | "help") {
         return Ok((control(cx, selection)?, explicit));
     }
+    let (control, registration) = project_for(cx, selection)?;
+    Ok((
+        control,
+        ToolSelection::Project {
+            binding: registration.binding,
+        },
+    ))
+}
+
+/// The control root and the registered project a command names: by
+/// `--service-project`, else by the `--root`/`--data-dir`/`--collection`
+/// folder (M1, step 3c.1). The control root is the flag's, else the
+/// installation's; the data root `--data-dir`, else the record's
+/// `locations.data` (U39). A service that is down is started automatically
+/// (contracts §3.2; a saved explicit Stop is honored).
+fn project_for(
+    cx: &mut Context,
+    selection: &Selection,
+) -> Result<(PathBuf, airk_core::service::ProjectRegistration), u8> {
     let not_found = |cx: &mut Context, message: &str| {
         fail(
             cx,
@@ -545,7 +578,7 @@ fn resolve_call(
             *verified = Some(found);
         }
     };
-    if selection.control.is_none() || selection.data_dir.is_none() {
+    if selection.control.is_none() || selection.project.is_none() && selection.data_dir.is_none() {
         discover(&mut verified);
     }
     let control = match selection.control.clone().or_else(|| {
@@ -561,17 +594,35 @@ fn resolve_call(
             ));
         }
     };
-    let data = match selection.data_dir.clone().or_else(|| {
-        verified
-            .as_ref()
-            .map(|found| PathBuf::from(&found.record.locations.data))
-    }) {
-        Some(data) => data,
+    let target = match selection.project {
+        Some(project) => airk_core::service::ResolveTarget::Binding { project },
         None => {
-            return Err(not_found(
-                cx,
-                "No AIRK installation was found; pass --data-dir <project data folder>.",
-            ));
+            let data = match selection.data_dir.clone().or_else(|| {
+                verified
+                    .as_ref()
+                    .map(|found| PathBuf::from(&found.record.locations.data))
+            }) {
+                Some(data) => data,
+                None => {
+                    return Err(not_found(
+                        cx,
+                        "No AIRK installation was found; pass --data-dir <project data folder>.",
+                    ));
+                }
+            };
+            let absolute = |path: &Path| {
+                std::path::absolute(path)
+                    .ok()
+                    .and_then(|path| path.to_str().map(str::to_owned))
+            };
+            let (Some(root), Some(data_root)) = (absolute(&selection.root), absolute(&data)) else {
+                return Err(usage(cx, "--root and --data-dir must be UTF-8 paths"));
+            };
+            airk_core::service::ResolveTarget::Registration {
+                root,
+                data_root,
+                collection: selection.collection.clone(),
+            }
         }
     };
     match crate::service::request(&control, ControlMethod::Health, VERSION) {
@@ -604,26 +655,8 @@ fn resolve_call(
         }
         Err(line) => return Err(fail(cx, &line)),
     }
-    let absolute = |path: &Path| {
-        std::path::absolute(path)
-            .ok()
-            .and_then(|path| path.to_str().map(str::to_owned))
-    };
-    let (Some(root), Some(data_root)) = (absolute(&selection.root), absolute(&data)) else {
-        return Err(usage(cx, "--root and --data-dir must be UTF-8 paths"));
-    };
-    let target = airk_core::service::ResolveTarget::Registration {
-        root,
-        data_root,
-        collection: selection.collection.clone(),
-    };
     match crate::service::request(&control, ControlMethod::ResolveProject { target }, VERSION) {
-        Ok(ControlResponse::Resolved { registration }) => Ok((
-            control,
-            ToolSelection::Project {
-                binding: registration.binding,
-            },
-        )),
+        Ok(ControlResponse::Resolved { registration }) => Ok((control, registration)),
         Ok(ControlResponse::Failure { code }) if code == "project_not_registered" => Err(fail(
             cx,
             &ErrorLine::new(
@@ -636,6 +669,107 @@ fn resolve_call(
         Ok(other) => Err(fail(cx, &crate::service::refusal(&other))),
         Err(line) => Err(fail(cx, &line)),
     }
+}
+
+/// An administrative command refuses the read-only sessions, as `airk` did.
+fn administrative(cx: &mut Context, selection: &Selection) -> Result<(), u8> {
+    if selection.catalog.is_some() {
+        return Err(usage(
+            cx,
+            "catalog sessions are read-only; administrative commands require an explicit administrative invocation",
+        ));
+    }
+    if selection.combined.is_some() {
+        return Err(usage(
+            cx,
+            "combined sessions are read-only; settings and administrative commands require an explicit index or administrative invocation",
+        ));
+    }
+    Ok(())
+}
+
+/// The compact control response `airk` printed, then its refusal, if any.
+fn print_control(cx: &mut Context, response: &ControlResponse) -> u8 {
+    let printed = print_compact(cx, response);
+    match response {
+        ControlResponse::Failure { code } => {
+            let mut line = crate::service::refusal(response);
+            line.message = format!("native request refused: {code}");
+            fail(cx, &line)
+        }
+        ControlResponse::Incompatible { .. } => {
+            let mut line = crate::service::refusal(response);
+            line.message = "native request protocol is incompatible".into();
+            fail(cx, &line)
+        }
+        _ => printed,
+    }
+}
+
+/// `pause`, `resume` and `watch on|off` for the selected project (step 3c.2).
+fn project_control(
+    cx: &mut Context,
+    selection: Selection,
+    method: impl FnOnce(airk_core::service::ProjectBinding) -> ControlMethod,
+) -> u8 {
+    if let Err(code) = administrative(cx, &selection) {
+        return code;
+    }
+    let (control, registration) = match project_for(cx, &selection) {
+        Ok(found) => found,
+        Err(code) => return code,
+    };
+    match crate::service::request(&control, method(registration.binding), VERSION) {
+        Ok(response) => print_control(cx, &response),
+        Err(mut line) => {
+            if line.class == ExitClass::Internal {
+                line.class = ExitClass::OutcomeUnknown;
+                line.code = "service_request_outcome_unknown".into();
+            }
+            fail(cx, &line)
+        }
+    }
+}
+
+/// `projects [--runtime-dir]` (step 3c.2): every registered project, as
+/// `airk projects` listed them.
+fn projects(cx: &mut Context, selection: Selection, runtime_dir: Option<PathBuf>) -> u8 {
+    let control = match runtime_dir.or(selection.control.clone()) {
+        Some(control) => control,
+        None => match installed(cx) {
+            Ok(verified) => PathBuf::from(&verified.record.locations.state),
+            Err(code) => return code,
+        },
+    };
+    let (mut after, mut revision, mut listed) = (None, None, Vec::new());
+    loop {
+        let method = ControlMethod::Projects {
+            after,
+            revision,
+            limit: 32,
+        };
+        let page = match crate::service::request(&control, method, VERSION) {
+            Ok(ControlResponse::Projects { page }) => page,
+            Ok(other) => return fail(cx, &crate::service::refusal(&other)),
+            Err(line) => return fail(cx, &line),
+        };
+        for project in &page.projects {
+            let registration = &project.registration;
+            listed.push(serde_json::json!({"project":registration.binding,
+                "name":Path::new(&registration.root).file_name().map(|name| name.to_string_lossy().into_owned()),
+                "collection":registration.collection,"root":registration.root,"data_root":registration.data_root}));
+        }
+        match page.after {
+            Some(next) => {
+                after = Some(next);
+                revision = Some(page.revision);
+            }
+            None => break,
+        }
+    }
+    let document = serde_json::json!({"default_project": selection.project, "projects": listed});
+    let result = writeln!(cx.io.stdout, "{document}");
+    written(cx, result)
 }
 
 /// One M3 call printed as the pre-split CLI printed it: the complete envelope
@@ -1231,6 +1365,21 @@ fn dispatch(cx: &mut Context, command: Command, selection: Selection) -> u8 {
     match command {
         Command::Version => version(cx),
         Command::Service { action } => service(cx, selection, action),
+        Command::Pause => project_control(cx, selection, |project| ControlMethod::Pause {
+            project,
+            paused: true,
+        }),
+        Command::Resume => project_control(cx, selection, |project| ControlMethod::Pause {
+            project,
+            paused: false,
+        }),
+        Command::Watch { mode } => project_control(cx, selection, move |project| {
+            ControlMethod::ConfigureWatch {
+                project,
+                enabled: mode == "on",
+            }
+        }),
+        Command::Projects { runtime_dir } => projects(cx, selection, runtime_dir),
         Command::Tools {
             action:
                 ToolsCommand::Call {
