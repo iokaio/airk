@@ -149,9 +149,12 @@ pub(super) fn lookup(
         (Some(operation), saved, "saved_predecessor_snapshot")
     } else {
         ensure!(
-            active == predecessor && state_contract::required(root)?,
-            "HTTP cleanup requires the exact prebaseline predecessor or its retained reset snapshot"
+            active == predecessor,
+            "HTTP cleanup requires the exact selected predecessor or its retained reset snapshot"
         );
+        // Validate saved state identity without restricting disposal-only
+        // ownership reads to installations that still require a baseline reset.
+        let _ = state_contract::required(root)?;
         let control = crate::install_layout::saved_control(root)?;
         (
             None,

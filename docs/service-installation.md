@@ -80,6 +80,13 @@ selected summary and points to this complete cached JSON route.
 
 ## Exact native bootstrap and host artifact cleanup
 
+The HTTP disposal lookup accepts the exact selected predecessor, including an
+initialized modern installation, or its retained exact reset snapshot. Saved
+state identity validation still applies; a pending baseline reset is no longer
+an eligibility condition for disposal-only ownership proof. This source fix
+addresses the reported automatic-installation refusal; it is untested and no
+replacement installer was built, at the user's direction on 10 November 2026.
+
 Host request tracking is being moved from Memento into a shared private
 per-request journal; preferences stay in Memento. Immutable preparation is
 persisted before native dispatch, and post-response local tracking failures
