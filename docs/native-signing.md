@@ -2,6 +2,8 @@
 
 Signing is opt-in and operates on a fresh copy under ignored `artifacts/`. It does not import certificates, export keys, change the original build or publish a package. `scripts/sign-native.py` only writes a success receipt after OS signature verification succeeds. The native packager accepts `--signed-dir` and re-verifies the signature, source binary digest, target, commit and dependency lock before including the signed copy.
 
+The public signing identities live in one reviewed file, `scripts/signing-identity.json` (schema `airk-signing-identity/1`): the Windows publisher, identity EKU and Azure Artifact Signing account and profile; the pinned local Artifact Signing client; and the Apple team, Developer ID name, leaf-certificate SHA-256 and the Neo keychain and notary profile names. It holds no secrets. `sign-native.py` loads it, refuses unknown or missing fields, and derives the hosted `AZURE_SIGNING` policy from it unchanged. Tests check that the hosted workflow inputs and the macOS script constants still equal the file.
+
 ## Current 1.8.14 signing contract
 
 The unpublished modern runtime has one main executable, with embedded default

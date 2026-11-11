@@ -17,12 +17,50 @@ import urllib.parse
 import zipfile
 
 ROOT = Path(__file__).resolve().parent.parent
+IDENTITY_FILE = ROOT / "scripts/signing-identity.json"
+IDENTITY_SCHEMA = "airk-signing-identity/1"
+IDENTITY_KEYS = {
+    (): {"schema", "note", "windows", "macos"},
+    ("windows",): {"publisher", "identity_eku", "artifact_signing", "local_client"},
+    ("windows", "artifact_signing"): {"endpoint", "account", "certificate_profile", "file_digest",
+                                      "timestamp_url", "timestamp_digest", "credential",
+                                      "excluded_credentials"},
+    ("windows", "local_client"): {"package", "version", "nupkg_sha256", "dlib", "dlib_sha256",
+                                  "dlib_publisher"},
+    ("macos",): {"team_id", "identity", "certificate_sha256", "local"},
+    ("macos", "local"): {"keychain", "notary_profile", "unlock_item"},
+}
+
+
+def load_identity(path=IDENTITY_FILE):
+    """Load the checked-in public signing identities; refuse missing or unknown fields."""
+    identity = json.loads(Path(path).read_text(encoding="utf-8"))
+    if identity.get("schema") != IDENTITY_SCHEMA:
+        raise ValueError("Expected " + IDENTITY_SCHEMA)
+    for location, expected in IDENTITY_KEYS.items():
+        node = identity
+        for key in location:
+            node = node[key]
+        if not isinstance(node, dict) or set(node) != expected:
+            raise ValueError("Signing identity fields differ at " + ("/".join(location) or "root"))
+    for value in (identity["windows"]["local_client"]["nupkg_sha256"],
+                  identity["windows"]["local_client"]["dlib_sha256"],
+                  identity["macos"]["certificate_sha256"]):
+        if not re.fullmatch(r"[0-9a-f]{64}", value):
+            raise ValueError("Signing identity digests must be lowercase SHA-256")
+    if not re.fullmatch(r"[A-Z0-9]{10}", identity["macos"]["team_id"]):
+        raise ValueError("Unexpected Apple team identifier")
+    return identity
+
+
+SIGNING_IDENTITY = load_identity()
+# Hosted signing receipts compare this mapping exactly; its keys and order are fixed.
 AZURE_SIGNING = {
-    "endpoint": "https://wus2.codesigning.azure.net",
-    "account": "ioka-llc-signing",
-    "profile": "WritingForgePro",
-    "publisher": "CN=Ioka LLC, O=Ioka LLC, L=Mapleton, S=Utah, C=US",
-    "identity_eku": "1.3.6.1.4.1.311.97.88309284.513035131.587831003.613935669",
+    "endpoint": SIGNING_IDENTITY["windows"]["artifact_signing"]["endpoint"],
+    "account": SIGNING_IDENTITY["windows"]["artifact_signing"]["account"],
+    "profile": SIGNING_IDENTITY["windows"]["artifact_signing"]["certificate_profile"],
+    "publisher": SIGNING_IDENTITY["windows"]["publisher"],
+    "identity_eku": SIGNING_IDENTITY["windows"]["identity_eku"],
 }
 
 

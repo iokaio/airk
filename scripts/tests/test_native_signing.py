@@ -286,5 +286,67 @@ class SigningContracts(unittest.TestCase):
                     signing.verify(binary,receipt)
 
 
+ROOT = Path(__file__).resolve().parents[2]
+# Reviewed literal (split plan C10): hosted receipts compare this mapping exactly.
+REVIEWED_AZURE_SIGNING = {
+    "endpoint": "https://wus2.codesigning.azure.net",
+    "account": "ioka-llc-signing",
+    "profile": "WritingForgePro",
+    "publisher": "CN=Ioka LLC, O=Ioka LLC, L=Mapleton, S=Utah, C=US",
+    "identity_eku": "1.3.6.1.4.1.311.97.88309284.513035131.587831003.613935669",
+}
+
+
+class SigningIdentityFile(unittest.TestCase):
+    def test_hosted_policy_is_unchanged_in_value_and_order(self):
+        self.assertEqual(signing.AZURE_SIGNING, REVIEWED_AZURE_SIGNING)
+        self.assertEqual(json.dumps(signing.AZURE_SIGNING), json.dumps(REVIEWED_AZURE_SIGNING))
+
+    def test_loader_refuses_unknown_missing_or_malformed_fields(self):
+        original = json.loads(signing.IDENTITY_FILE.read_text(encoding="utf-8"))
+        def mutated(change):
+            document = json.loads(json.dumps(original))
+            change(document)
+            with tempfile.TemporaryDirectory() as temporary:
+                path = Path(temporary) / "identity.json"
+                path.write_text(json.dumps(document), encoding="utf-8")
+                return signing.load_identity(path)
+        cases = [
+            lambda d: d.update(schema="airk-signing-identity/2"),
+            lambda d: d["windows"].update(extra="value"),
+            lambda d: d["windows"]["artifact_signing"].pop("account"),
+            lambda d: d["macos"]["local"].update(password="never"),
+            lambda d: d["windows"]["local_client"].update(dlib_sha256="ABC"),
+            lambda d: d["macos"].update(team_id="short"),
+        ]
+        for change in cases:
+            with self.assertRaises((ValueError, KeyError)):
+                mutated(change)
+        self.assertEqual(mutated(lambda d: None)["macos"]["team_id"], "5PX7D99PXA")
+
+    def test_hosted_workflow_inputs_match_the_identity_file(self):
+        azure = signing.SIGNING_IDENTITY["windows"]["artifact_signing"]
+        workflow = (ROOT / ".github/workflows/github-release.yml").read_text(encoding="utf-8")
+        blocks = workflow.split("uses: azure/artifact-signing-action@")[1:]
+        self.assertEqual(len(blocks), 3)
+        for block in blocks:
+            inputs = dict(line.strip().split(": ", 1) for line in block.split("\n")[2:16] if ": " in line)
+            self.assertEqual(inputs["endpoint"], azure["endpoint"])
+            self.assertEqual(inputs["signing-account-name"], azure["account"])
+            self.assertEqual(inputs["certificate-profile-name"], azure["certificate_profile"])
+            self.assertEqual(inputs["file-digest"], azure["file_digest"])
+            self.assertEqual(inputs["timestamp-rfc3161"], azure["timestamp_url"])
+            self.assertEqual(inputs["timestamp-digest"], azure["timestamp_digest"])
+
+    def test_macos_constants_match_the_identity_file(self):
+        macos = signing.SIGNING_IDENTITY["macos"]
+        sign = (ROOT / "scripts/ci-macos-sign.py").read_text(encoding="utf-8")
+        self.assertIn(f'IDENTITY = "{macos["identity"]}"', sign)
+        self.assertIn(f'TEAM = "{macos["team_id"]}"', sign)
+        self.assertIn(f'CERTIFICATE_SHA256 = "{macos["certificate_sha256"]}"', sign)
+        for name in ("scripts/check-macos-direct-runtime.py", "scripts/package-standalone-macos.py"):
+            self.assertIn(f'TEAM = "{macos["team_id"]}"', (ROOT / name).read_text(encoding="utf-8"))
+
+
 if __name__ == "__main__":
     unittest.main()

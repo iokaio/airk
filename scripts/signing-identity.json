@@ -1,0 +1,46 @@
+{
+ "schema": "airk-signing-identity/1",
+ "note": "Public signing identities only; no secrets, user names or absolute paths. Owner: scripts/sign-native.py (load_identity). Changing a value is a reviewed signing-policy change.",
+ "windows": {
+  "publisher": "CN=Ioka LLC, O=Ioka LLC, L=Mapleton, S=Utah, C=US",
+  "identity_eku": "1.3.6.1.4.1.311.97.88309284.513035131.587831003.613935669",
+  "artifact_signing": {
+   "endpoint": "https://wus2.codesigning.azure.net",
+   "account": "ioka-llc-signing",
+   "certificate_profile": "WritingForgePro",
+   "file_digest": "SHA256",
+   "timestamp_url": "http://timestamp.acs.microsoft.com",
+   "timestamp_digest": "SHA256",
+   "credential": "AzureCliCredential",
+   "excluded_credentials": [
+    "ManagedIdentityCredential",
+    "EnvironmentCredential",
+    "WorkloadIdentityCredential",
+    "SharedTokenCacheCredential",
+    "VisualStudioCredential",
+    "VisualStudioCodeCredential",
+    "AzurePowerShellCredential",
+    "AzureDeveloperCliCredential",
+    "InteractiveBrowserCredential"
+   ]
+  },
+  "local_client": {
+   "package": "Microsoft.ArtifactSigning.Client",
+   "version": "1.0.146",
+   "nupkg_sha256": "7761e5d8f31e54b764da21d33cd8b0a2940e1b05526c7dfcb5e94b0431426f70",
+   "dlib": "bin/x64/Azure.CodeSigning.Dlib.dll",
+   "dlib_sha256": "123fa0c50341777d8e5b1414df52f39a1f2c7ab4a9f716abf6310069a6cb8a19",
+   "dlib_publisher": "CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US"
+  }
+ },
+ "macos": {
+  "team_id": "5PX7D99PXA",
+  "identity": "Developer ID Application: Ioka LLC (5PX7D99PXA)",
+  "certificate_sha256": "4260bd90b8623e45da6d67144a2bff4fd8fa0a8186c7281c0125e39877c3f5c1",
+  "local": {
+   "keychain": "~/Library/Keychains/airk-signing.keychain-db",
+   "notary_profile": "airk-notary",
+   "unlock_item": "airk-signing-keychain-password"
+  }
+ }
+}
