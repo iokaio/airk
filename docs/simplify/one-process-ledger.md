@@ -196,6 +196,16 @@
   (U66), push notifications for blockers (U67), switch the Neo checkout (U68).
 - Pending user action: create `~/.airk-signing/keychain-pass` (mode 600) on
   the Neo before the first signing batch.
+- Neo signing check (11 November, user-approved): the agent created the empty
+  owner-only file and the user filled it. Login keychain unlock passed; a
+  hardened-runtime, timestamped test signature with `Developer ID Application:
+  Ioka LLC (5PX7D99PXA)` verified with `codesign --verify --strict`. No
+  `airk-ci` profile exists on the Neo. The documented AIRK keychain
+  `airk-signing.keychain-db` (profile `airk-notary`, password item
+  `airk-signing-keychain-password` in the login keychain) unlocked, holds one
+  Developer ID identity, and `notarytool history` listed 85 submissions. Both
+  keychains were relocked. U65 and U69 now name that keychain and profile.
+  No secret was printed or written.
 
 ## Reported HTTP cleanup refusal (10 November 2026)
 
