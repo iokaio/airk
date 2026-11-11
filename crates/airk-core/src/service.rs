@@ -465,6 +465,14 @@ pub enum ControlMethod {
     /// U87 (`service status`): the saved explicit Stop and the pending
     /// lifecycle record, read from the lifecycle ledger.
     LifecycleStatus,
+    /// M14 (`service record-error`): append a bounded client error to the raw
+    /// job-error ring, as `airk service record-error` did. `input` is the
+    /// error's JSON text (`{code, detail}`), at most
+    /// [`MAX_CLIENT_ERROR_INPUT_BYTES`]; `operation` is a snake-case name.
+    RecordClientError {
+        operation: String,
+        input: String,
+    },
 }
 
 /// The project an M3 call reads, as the pre-split CLI selected it.
@@ -537,6 +545,8 @@ pub const MAX_TOOLS_CALL_REQUEST_BYTES: usize = 128 * 1024;
 /// The largest M3 response frame (contracts §2.8): the largest canonical tool
 /// response the service's HTTPS route can be configured to return.
 pub const MAX_TOOLS_CALL_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
+/// The largest client error input (M14), as `airk service record-error` bounded stdin.
+pub const MAX_CLIENT_ERROR_INPUT_BYTES: usize = 16 * 1024;
 /// The largest request frame the control endpoint reads before dispatch; each
 /// method is then held to its own [`ControlMethod::request_frame_budget`].
 pub const MAX_CONTROL_REQUEST_BYTES: usize = MAX_TOOLS_CALL_REQUEST_BYTES;
@@ -556,7 +566,8 @@ impl ControlMethod {
     /// drops a larger request unanswered, as it drops any oversize frame.
     pub fn request_frame_budget(&self) -> usize {
         match self {
-            Self::ToolsCall { .. } => MAX_TOOLS_CALL_REQUEST_BYTES,
+            // JSON escaping can grow the 16 KiB input; M3's budget covers it.
+            Self::ToolsCall { .. } | Self::RecordClientError { .. } => MAX_TOOLS_CALL_REQUEST_BYTES,
             _ => MAX_FRAME_BYTES,
         }
     }
@@ -966,6 +977,9 @@ pub enum ControlResponse {
         service_instance: Incarnation,
         process_id: u32,
     },
+    /// M14: the client error was appended. An empty record, not a unit
+    /// variant, so unknown fields are refused.
+    ClientErrorRecorded {},
     /// U87: whether automatic starts are off, and any unfinished lifecycle record.
     LifecycleStatus {
         explicitly_stopped: bool,

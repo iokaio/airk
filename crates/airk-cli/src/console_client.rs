@@ -54,7 +54,8 @@ async fn handle(
         ControlMethod::ToolsCatalog { .. }
         | ControlMethod::ToolsCall { .. }
         | ControlMethod::Lifecycle { .. }
-        | ControlMethod::LifecycleStatus => {
+        | ControlMethod::LifecycleStatus
+        | ControlMethod::RecordClientError { .. } => {
             return failure("console_method_not_reviewed");
         }
         // Exhaustive review: a new service method must be considered here before

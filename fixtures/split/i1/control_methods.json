@@ -293,6 +293,40 @@
           "bytes": "{\"status\":\"lifecycle_status\",\"explicitly_stopped\":\"yes\",\"pending\":null}"
         }
       ]
+    },
+    {
+      "variant": "record_client_error",
+      "method": "M14",
+      "methods": [
+        {
+          "name": "record",
+          "bytes": "{\"record_client_error\":{\"operation\":\"service_setup\",\"input\":\"{\\\"code\\\":\\\"setup_failed\\\",\\\"detail\\\":{\\\"chain\\\":[\\\"download refused\\\"]}}\"}}",
+          "request_frame_budget": 131072,
+          "response_frame_budget": 65536
+        }
+      ],
+      "rejected_methods": [
+        {
+          "name": "input_not_text",
+          "bytes": "{\"record_client_error\":{\"operation\":\"x\",\"input\":{\"code\":\"x\"}}}"
+        },
+        {
+          "name": "missing_operation",
+          "bytes": "{\"record_client_error\":{\"input\":\"{\\\"code\\\":\\\"setup_failed\\\",\\\"detail\\\":{\\\"chain\\\":[\\\"download refused\\\"]}}\"}}"
+        }
+      ],
+      "responses": [
+        {
+          "name": "recorded",
+          "bytes": "{\"status\":\"client_error_recorded\"}"
+        }
+      ],
+      "rejected_responses": [
+        {
+          "name": "with_fields",
+          "bytes": "{\"status\":\"client_error_recorded\",\"duplicate\":false}"
+        }
+      ]
     }
   ]
 }

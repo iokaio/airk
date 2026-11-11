@@ -23,7 +23,13 @@ use std::{
 /// The pre-parse selector for private roles.
 pub const SELECTOR: &str = "__airk_role";
 /// Roles named by the contract, in the order of `fixtures/split/i4/role_admission.json`.
-pub const ROLES: [&str; 4] = ["service-detached", "service-login", "pdf-child", "setup"];
+pub const ROLES: [&str; 5] = [
+    "service-detached",
+    "service-login",
+    "pdf-child",
+    "record-error",
+    "setup",
+];
 
 /// An admitted role with its verified-syntax inputs.
 #[derive(Debug, PartialEq, Eq)]

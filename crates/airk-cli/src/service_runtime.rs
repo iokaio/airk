@@ -471,6 +471,10 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 detail,
                 combined: Some(request),
             } => tools_call::combined_catalog(&state.control_root, &detail, &request).await,
+            // M14 lands its handler in step 3b.2b; until then the typed refusal.
+            ControlMethod::RecordClientError { .. } => ControlResponse::Failure {
+                code: "not_yet_served".into(),
+            },
             ControlMethod::LifecycleStatus => match lifecycle::status(&state.control_root) {
                 Ok((explicitly_stopped, pending)) => ControlResponse::LifecycleStatus {
                     explicitly_stopped,
