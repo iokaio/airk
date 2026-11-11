@@ -51,7 +51,9 @@ async fn handle(
         }
         // M2 is an `airkctl` read (split step 3a.1); the retiring console relay
         // never carries its larger response frame.
-        ControlMethod::ToolsCatalog { .. } | ControlMethod::ToolsCall { .. } => {
+        ControlMethod::ToolsCatalog { .. }
+        | ControlMethod::ToolsCall { .. }
+        | ControlMethod::Lifecycle { .. } => {
             return failure("console_method_not_reviewed");
         }
         // Exhaustive review: a new service method must be considered here before

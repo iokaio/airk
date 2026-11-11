@@ -1121,7 +1121,8 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         | ControlMethod::StopEmbedding { .. }
         | ControlMethod::ConfigureResources { .. }
         | ControlMethod::ToolsCatalog { .. }
-        | ControlMethod::ToolsCall { .. } => {
+        | ControlMethod::ToolsCall { .. }
+        | ControlMethod::Lifecycle { .. } => {
             anyhow::bail!("not a registry method")
         }
     })

@@ -207,6 +207,58 @@
           "bytes": "{\"status\":\"tool_call_failed\",\"message\":\"x\",\"code\":\"operation_failed\"}"
         }
       ]
+    },
+    {
+      "variant": "lifecycle",
+      "method": "M19",
+      "methods": [
+        {
+          "name": "stop",
+          "bytes": "{\"lifecycle\":{\"action\":\"stop\",\"caller\":\"3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c\",\"key\":{\"namespace\":\"4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d\",\"epoch\":7,\"nonce\":\"5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e\"}}}",
+          "request_frame_budget": 65536,
+          "response_frame_budget": 65536
+        },
+        {
+          "name": "restart",
+          "bytes": "{\"lifecycle\":{\"action\":\"restart\",\"caller\":\"3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c\",\"key\":{\"namespace\":\"4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d\",\"epoch\":7,\"nonce\":\"5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e\"}}}",
+          "request_frame_budget": 65536,
+          "response_frame_budget": 65536
+        }
+      ],
+      "rejected_methods": [
+        {
+          "name": "unknown_action",
+          "bytes": "{\"lifecycle\":{\"action\":\"kill\",\"caller\":\"3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c\",\"key\":{\"namespace\":\"4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d\",\"epoch\":7,\"nonce\":\"5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e\"}}}"
+        },
+        {
+          "name": "missing_key",
+          "bytes": "{\"lifecycle\":{\"action\":\"stop\",\"caller\":\"3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c\"}}"
+        },
+        {
+          "name": "extra_field",
+          "bytes": "{\"lifecycle\":{\"action\":\"stop\",\"caller\":\"3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c\",\"key\":{\"namespace\":\"4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d\",\"epoch\":7,\"nonce\":\"5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e\"},\"force\":true}}"
+        },
+        {
+          "name": "key_extra_field",
+          "bytes": "{\"lifecycle\":{\"action\":\"stop\",\"caller\":\"3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c\",\"key\":{\"namespace\":\"4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d\",\"epoch\":7,\"nonce\":\"5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e\",\"sequence\":1}}}"
+        }
+      ],
+      "responses": [
+        {
+          "name": "accepted_restart",
+          "bytes": "{\"status\":\"lifecycle_accepted\",\"record\":{\"id\":\"7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a\",\"request\":{\"caller\":\"3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c\",\"key\":{\"namespace\":\"4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d\",\"epoch\":7,\"nonce\":\"5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e\"},\"action\":\"restart\",\"expected_instance\":\"6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f\",\"runtime\":\"8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b\",\"manager\":false},\"phase\":\"draining\"},\"service_instance\":\"6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f\",\"process_id\":4242}"
+        }
+      ],
+      "rejected_responses": [
+        {
+          "name": "missing_process_id",
+          "bytes": "{\"status\":\"lifecycle_accepted\",\"record\":{\"id\":\"7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a\",\"request\":{\"caller\":\"3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c\",\"key\":{\"namespace\":\"4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d\",\"epoch\":7,\"nonce\":\"5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e\"},\"action\":\"restart\",\"expected_instance\":\"6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f\",\"runtime\":\"8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b\",\"manager\":false},\"phase\":\"draining\"},\"service_instance\":\"6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f\"}"
+        },
+        {
+          "name": "unknown_phase",
+          "bytes": "{\"status\":\"lifecycle_accepted\",\"record\":{\"id\":\"7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a\",\"request\":{\"caller\":\"3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c\",\"key\":{\"namespace\":\"4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d\",\"epoch\":7,\"nonce\":\"5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e\"},\"action\":\"restart\",\"expected_instance\":\"6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f\",\"runtime\":\"8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b\",\"manager\":false},\"phase\":\"paused\"},\"service_instance\":\"6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f\",\"process_id\":1}"
+        }
+      ]
     }
   ]
 }

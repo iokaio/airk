@@ -452,6 +452,16 @@ pub enum ControlMethod {
         response_mode: ToolResponseMode,
         usage_client: crate::usage::ClientFamily,
     },
+    /// M19 (U85): stop or restart this service through its lifecycle ledger.
+    /// The service records the request, answers `LifecycleAccepted`, then
+    /// drains and exits; the caller observes `process_id` exit and, for a
+    /// restart, starts the service again. Keyed by `(caller, key)`; the key
+    /// comes from `RequestEpoch`.
+    Lifecycle {
+        action: crate::service_lifecycle::LifecycleAction,
+        caller: Incarnation,
+        key: RequestKey,
+    },
 }
 
 /// The project an M3 call reads, as the pre-split CLI selected it.
@@ -946,6 +956,12 @@ pub enum ControlResponse {
     /// `operation_failed` error line carried it.
     ToolCallFailed {
         message: String,
+    },
+    /// M19: the recorded lifecycle request and the process that will exit.
+    LifecycleAccepted {
+        record: crate::service_lifecycle::LifecycleRecord,
+        service_instance: Incarnation,
+        process_id: u32,
     },
 }
 

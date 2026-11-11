@@ -468,6 +468,10 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 detail,
                 combined: Some(request),
             } => tools_call::combined_catalog(&state.control_root, &detail, &request).await,
+            // M19 lands its handler in step 3b.1e-2; until then the typed refusal.
+            ControlMethod::Lifecycle { .. } => ControlResponse::Failure {
+                code: "not_yet_served".into(),
+            },
             ControlMethod::ToolsCall {
                 tool,
                 arguments,
