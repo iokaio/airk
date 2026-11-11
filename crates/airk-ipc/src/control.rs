@@ -49,6 +49,7 @@ pub async fn request_once(
     } else {
         Duration::from_secs(5)
     };
+    let response_budget = method.response_frame_budget();
     let address = local_ipc::endpoint(root, "control")?;
     let mut stream =
         tokio::time::timeout(Duration::from_secs(5), local_ipc::connect(&address)).await??;
@@ -62,7 +63,7 @@ pub async fn request_once(
         Duration::from_secs(5),
     )
     .await?;
-    let response = local_ipc::read_message(&mut stream, response_deadline)
+    let response = local_ipc::read_message_limited(&mut stream, response_deadline, response_budget)
         .await?
         .ok_or_else(|| anyhow::anyhow!("service disconnected before control response"))?;
     if let ControlResponse::Health { observation } = &response {

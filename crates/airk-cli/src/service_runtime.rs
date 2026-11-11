@@ -154,6 +154,7 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
     let shutdown = request.protocol == PROTOCOL_VERSION
         && instance_matches
         && matches!(request.method, ControlMethod::Shutdown);
+    let response_budget = request.method.response_frame_budget();
     let _checkpoint_admission = if request.protocol == PROTOCOL_VERSION
         && instance_matches
         && !matches!(
@@ -448,6 +449,10 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
             ControlMethod::ConfigureResources { configuration } => {
                 state.supervisor.configure_resources(configuration).await
             }
+            // M2 lands its handler in step 3a.1; until then the typed refusal.
+            ControlMethod::ToolsCatalog { .. } => ControlResponse::Failure {
+                code: "not_yet_served".into(),
+            },
             method => state.management.request(method).await,
         }
     };
@@ -470,7 +475,13 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
             Some("runtime_incompatible"),
         );
     }
-    local_ipc::write_message(&mut stream, &response, Duration::from_secs(5)).await?;
+    local_ipc::write_message_limited(
+        &mut stream,
+        &response,
+        Duration::from_secs(5),
+        response_budget,
+    )
+    .await?;
     if shutdown {
         state.shutdown.notify_one();
     }

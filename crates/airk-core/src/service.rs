@@ -424,6 +424,37 @@ pub enum ControlMethod {
     ConfigureResources {
         configuration: crate::service_resources::ResourceConfiguration,
     },
+    /// M2 (`docs/split/contracts.md` §2): the unified tool catalog document,
+    /// read without a project. Response budget [`MAX_TOOLS_CATALOG_RESPONSE_BYTES`].
+    ToolsCatalog {
+        detail: ToolsCatalogDetail,
+    },
+}
+
+/// Which M2 catalog document to return.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum ToolsCatalogDetail {
+    /// `{"tools":[…]}`; each entry is complete with `schemas`, otherwise only
+    /// its `name` and `description`.
+    List { schemas: bool },
+    /// The one complete tool entry whose name, or name after an `airk_` prefix,
+    /// equals `tool`; otherwise the `unknown_tool` failure.
+    Help { tool: String },
+}
+
+/// The largest M2 response frame (contracts §2.8): the catalog with schemas.
+pub const MAX_TOOLS_CATALOG_RESPONSE_BYTES: usize = 1024 * 1024;
+
+impl ControlMethod {
+    /// The response frame budget for this method (contracts §2.8). Both the
+    /// service writer and the client reader apply it.
+    pub fn response_frame_budget(&self) -> usize {
+        match self {
+            Self::ToolsCatalog { .. } => MAX_TOOLS_CATALOG_RESPONSE_BYTES,
+            _ => MAX_FRAME_BYTES,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -806,6 +837,13 @@ pub enum ControlResponse {
     EmbeddingStarting,
     EmbeddingStopped {
         worker: Incarnation,
+    },
+    /// M2: the requested catalog document as the exact pretty-printed JSON
+    /// text the pre-split `airk tools list --json` / `tools help --json`
+    /// printed. Text, not a value, so a client keeps its key order: list
+    /// documents are key-sorted values, a help document keeps the tool's field order.
+    ToolsCatalog {
+        document: String,
     },
 }
 

@@ -317,3 +317,47 @@ fn native_outcome_replies_are_native_control_responses() {
     }
     assert!(checked > 0, "zero selected native reply cases");
 }
+
+const TOOLS_CATALOG_FIXTURE: &str =
+    include_str!("../../../fixtures/wire/control_tools_catalog.json");
+
+/// M2 wire bytes, the per-method response budget and reviewed refusals.
+#[test]
+fn tools_catalog_wire_bytes_and_budget_match_reviewed_fixture() {
+    let fixture: Value = serde_json::from_str(TOOLS_CATALOG_FIXTURE).unwrap();
+    assert_eq!(
+        fixture["schema"],
+        "airk.wire-fixture.control-tools-catalog/1"
+    );
+    for case in fixture["methods"].as_array().unwrap() {
+        let text = case["bytes"].as_str().unwrap();
+        let method: ControlMethod = serde_json::from_str(text).unwrap();
+        assert_eq!(bytes(&method), text, "{}", case["name"]);
+        assert_eq!(
+            method.response_frame_budget() as u64,
+            case["response_frame_budget"].as_u64().unwrap(),
+            "{}",
+            case["name"]
+        );
+    }
+    for case in fixture["rejected_methods"].as_array().unwrap() {
+        assert!(
+            serde_json::from_str::<ControlMethod>(case["bytes"].as_str().unwrap()).is_err(),
+            "{}",
+            case["name"]
+        );
+    }
+    for case in fixture["responses"].as_array().unwrap() {
+        let text = case["bytes"].as_str().unwrap();
+        let response: ControlResponse = serde_json::from_str(text).unwrap();
+        assert!(matches!(response, ControlResponse::ToolsCatalog { .. }));
+        assert_eq!(bytes(&response), text, "{}", case["name"]);
+    }
+    for case in fixture["rejected_responses"].as_array().unwrap() {
+        assert!(
+            serde_json::from_str::<ControlResponse>(case["bytes"].as_str().unwrap()).is_err(),
+            "{}",
+            case["name"]
+        );
+    }
+}

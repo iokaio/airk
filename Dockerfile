@@ -106,6 +106,7 @@ COPY fixtures/wire/read_retry_decisions.json ./fixtures/wire/read_retry_decision
 COPY fixtures/wire/read_retry_envelopes.json ./fixtures/wire/read_retry_envelopes.json
 COPY fixtures/wire/session_frames.json ./fixtures/wire/session_frames.json
 COPY fixtures/wire/usage_page.json ./fixtures/wire/usage_page.json
+COPY fixtures/wire/control_tools_catalog.json ./fixtures/wire/control_tools_catalog.json
 COPY packages/contracts-gen/i3.schema.json ./packages/contracts-gen/i3.schema.json
 COPY packages/vscode/src/generated/i2.schema.json ./packages/vscode/src/generated/i2.schema.json
 COPY packages/vscode/src/test/diagnosticLogs.test.ts ./packages/vscode/src/test/diagnosticLogs.test.ts

@@ -49,6 +49,11 @@ async fn handle(
         | ControlMethod::HttpRevoke { .. } => {
             return failure("console_private_setup_forbidden");
         }
+        // M2 is an `airkctl` read (split step 3a.1); the retiring console relay
+        // never carries its larger response frame.
+        ControlMethod::ToolsCatalog { .. } => {
+            return failure("console_method_not_served");
+        }
         // Exhaustive review: a new service method must be considered here before
         // a trusted console can expose it. No default credential-bearing path.
         ControlMethod::HttpEndpoint

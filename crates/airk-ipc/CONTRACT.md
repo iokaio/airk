@@ -17,7 +17,10 @@ The same-user local transport between `airk` and its clients:
   control, query and session protocols.
 - `control`: one framed I1 control request per connection with bounded
   deadlines, the `registry_busy` retry window and the Health identity check.
-  The service's baseline-gate policy stays in `airk-cli` (group G2).
+  The response is read under the method's own frame budget
+  (`ControlMethod::response_frame_budget`, contracts §2.8; 64 KiB unless the
+  method declares more). The service's baseline-gate policy stays in
+  `airk-cli` (group G2).
 
 ## Interface
 
