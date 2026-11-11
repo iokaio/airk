@@ -357,6 +357,7 @@ fn run_in_process(
     replies: Box<dyn FrameSink<Reply>>,
     scope: crate::worker_scope::WorkerScope,
     derived: bool,
+    hooks: crate::project_worker::Hooks,
 ) -> Result<()> {
     /// Releases the owner's project lease last: after its runtime, and so
     /// every blocking task still holding owner state, has returned. This
@@ -382,7 +383,7 @@ fn run_in_process(
         .enable_all()
         .build()?;
     let result = runtime.block_on(crate::project_worker::serve(
-        init, commands, replies, residency,
+        init, commands, replies, residency, hooks,
     ));
     drop(runtime);
     result
@@ -446,6 +447,7 @@ impl ChildWorker {
         project: ProjectBinding,
         service: Incarnation,
         derived: bool,
+        hooks: crate::project_worker::Hooks,
     ) -> Result<Self> {
         Self::start_in_process(
             root,
@@ -453,6 +455,7 @@ impl ChildWorker {
             service,
             derived,
             crate::runtime_pair::engine_identity()?,
+            hooks,
         )
     }
 
@@ -464,6 +467,7 @@ impl ChildWorker {
         service: Incarnation,
         derived: bool,
         engine: airk_core::identity::Sha256Digest,
+        hooks: crate::project_worker::Hooks,
     ) -> Result<Self> {
         let worker = new_instance_id()?;
         let (commands, command_source) =
@@ -488,6 +492,7 @@ impl ChildWorker {
                     Box::new(replies),
                     owner_scope,
                     derived,
+                    hooks,
                 )
             })
             .context("start project owner")?;
@@ -1404,6 +1409,7 @@ struct WorkerOwnerContext<'a> {
     root: &'a Path,
     instance: Incarnation,
     gate: Option<&'a crate::catalog_admission::NativeCatalogAdmission>,
+    hooks: crate::project_worker::Hooks,
 }
 
 fn poll_worker_exits(
@@ -1418,6 +1424,7 @@ fn poll_worker_exits(
         root,
         instance,
         gate,
+        hooks: _,
     } = owner;
     let mut first_error = None;
     for identity in drains.identities() {
@@ -1576,6 +1583,7 @@ fn start_worker(
         root,
         instance,
         gate: catalog_gate,
+        hooks,
     } = owner;
     let WorkerAdmission {
         log,
@@ -1647,7 +1655,7 @@ fn start_worker(
         if !derived && ServiceRegistry::open_saved(root)?.project_setup_pending(project)? {
             crate::service_registration::prepare_storage(root, project)?;
         }
-        ChildWorker::spawn(root, project, instance, derived)
+        ChildWorker::spawn(root, project, instance, derived, hooks)
     };
     let mut worker = match spawn() {
         Ok(worker) => worker,
@@ -1764,6 +1772,7 @@ fn start_worker(
 }
 
 impl Supervisor {
+    #[allow(clippy::too_many_arguments)] // The owned inputs and service hooks stay explicit.
     pub fn start(
         root: PathBuf,
         instance: Incarnation,
@@ -1772,6 +1781,7 @@ impl Supervisor {
         source_telemetry: Arc<std::sync::atomic::AtomicBool>,
         log: crate::service_logs::Log,
         ownership: Arc<airk_store::service::ServiceLease>,
+        hooks: crate::project_worker::Hooks,
     ) -> Result<Self> {
         ensure!(
             ownership.root() == root.as_path(),
@@ -1887,7 +1897,7 @@ impl Supervisor {
 &mut pool_recovery,
 &mut resources,
 &policy,
-WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref() });
+WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref(), hooks });
                     {
                         let mut referenced = resource_drains.referenced_helpers();
                         referenced.extend(workers.values().flat_map(|worker| worker.provider_helpers.iter().copied()));
@@ -2404,7 +2414,7 @@ WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref() });
                         Ok(Envelope::Catalog { gate, operation, reply }) => {
                             let result = catalog::execute(&mut catalog_gate, gate, *operation, &mut workers,
                                 &mut registry, &root, instance, may_allocate, &mut backoff,
-                                WorkerAdmission { log: &log, policy: &policy, pool: &mut pool, resources: &mut resources, recovery: &mut pool_recovery, drains: &mut resource_drains });
+                                WorkerAdmission { log: &log, policy: &policy, pool: &mut pool, resources: &mut resources, recovery: &mut pool_recovery, drains: &mut resource_drains }, hooks);
                             catalog::send_reply(&reply, result);
                         },
                         Ok(Envelope::ConfigureResources {
@@ -2474,7 +2484,7 @@ WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref() });
                                     .get(project)?
                                     .registration;
                                 start_worker(&mut workers,
-WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref() },
+WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref(), hooks },
 registration,
 false,
 &mut backoff,
@@ -2716,7 +2726,7 @@ WorkerAdmission {
                     {
                         if let Ok(record) = registry.get(project) {
                             let _ = start_worker(&mut workers,
-WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref() },
+WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref(), hooks },
 record.registration,
 false,
 &mut backoff,
@@ -2770,7 +2780,7 @@ WorkerAdmission {
                                 continue;
                             };
                             let _ = start_worker(&mut workers,
-WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref() },
+WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref(), hooks },
 registration,
 derived,
 &mut backoff,
@@ -3036,7 +3046,7 @@ WorkerAdmission {
 &mut pool_recovery,
 &mut resources,
 &policy,
-WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref() });
+WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref(), hooks });
                     let (all_quarantined, held) = stopping_quarantined();
                     if workers.is_empty() && all_quarantined && resource_drains.identities().iter().all(|identity| held.contains(identity) || resource_drains.released(*identity).unwrap_or(false)) { break; }
                     std::thread::sleep(Duration::from_millis(100));
@@ -3561,7 +3571,13 @@ mod tests {
             airk_kernel::service_projects::registration(&source, &data, "production")?;
         registry.register(&registration)?;
         let project = registration.binding;
-        let worker = ChildWorker::spawn(&root, project, service, false)?;
+        let worker = ChildWorker::spawn(
+            &root,
+            project,
+            service,
+            false,
+            crate::runtime_metadata::project_worker_hooks(),
+        )?;
         let identity = worker.identity.context("production owner identity")?;
         assert_eq!((identity.service, identity.project), (service, project));
         // No process of its own: the owner is a thread of this process.
@@ -3604,7 +3620,14 @@ mod tests {
         let project = registration.binding;
         // The production thread host, carriers, scope binding and handshake.
         let engine = airk_core::identity::Sha256Digest::from_bytes([53; 32]);
-        let worker = ChildWorker::start_in_process(&root, project, service, false, engine)?;
+        let worker = ChildWorker::start_in_process(
+            &root,
+            project,
+            service,
+            false,
+            engine,
+            crate::runtime_metadata::project_worker_hooks(),
+        )?;
         let identity = worker.identity.context("in-process owner identity")?;
         assert_eq!((identity.service, identity.project), (service, project));
         assert!(identity.fencing_generation > 0);

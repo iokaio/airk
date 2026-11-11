@@ -101,3 +101,9 @@ pub mod session_protocol;
 pub mod unified_mcp;
 pub mod universal_launcher;
 pub mod usage_client;
+
+/// The private project-owner process role, wired with the service hooks
+/// (see `project_worker::Hooks`).
+pub async fn run_project_worker() -> anyhow::Result<()> {
+    project_worker::run(runtime_metadata::project_worker_hooks()).await
+}

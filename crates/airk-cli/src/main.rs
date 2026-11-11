@@ -1499,7 +1499,7 @@ async fn dispatch(mut cli: Cli, explicit_root: bool, executable: &Path, io: &Cli
         Command::ExplorerAssistance { descriptor } => {
             return airk_cli::explorer_assistance::run(descriptor);
         }
-        Command::ProjectWorker => return airk_cli::project_worker::run().await,
+        Command::ProjectWorker => return airk_cli::run_project_worker().await,
         Command::DerivedWorker => return airk_cli::derived_worker::run(),
         Command::SourceWorker => return airk_cli::source_worker::run(),
         Command::ProcessGuardian => {

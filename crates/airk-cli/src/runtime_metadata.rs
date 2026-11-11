@@ -155,6 +155,32 @@ pub(crate) fn observe_process() -> RuntimeProcess {
     }
 }
 
+/// The service functions a project owner calls (split plan G5); the owner
+/// itself does not depend on this module, installation or reference refresh.
+pub(crate) fn project_worker_hooks() -> crate::project_worker::Hooks {
+    crate::project_worker::Hooks {
+        runtime_bundle: observe_runtime_bundle,
+        runtime_work: observe_runtime_work,
+        rebuild_observation: crate::runtime_install::rebuild_observation_for_control,
+        refresh_references: crate::reference_refresh_control::execute,
+    }
+}
+
+fn observe_runtime_bundle(
+    control: &Path,
+    identity: airk_core::service::WorkerIdentity,
+    frontend: Option<RuntimeProcess>,
+) -> crate::project_worker::Observation<'_> {
+    Box::pin(bundle(control, identity, frontend))
+}
+
+fn observe_runtime_work(
+    control: &Path,
+    identity: airk_core::service::WorkerIdentity,
+) -> crate::project_worker::Observation<'_> {
+    Box::pin(work(control, identity))
+}
+
 pub(crate) async fn bundle(
     control: &Path,
     identity: airk_core::service::WorkerIdentity,

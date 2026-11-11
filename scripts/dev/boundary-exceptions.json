@@ -218,7 +218,8 @@
         "usage",
         "vector_cache"
       ]
-    ]
+    ],
+    "airkctl": []
   },
   "module_honesty": [
     {

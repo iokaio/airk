@@ -49,6 +49,7 @@ fn owner_marker_enables_shared_recovery_but_attach_still_requires_real_project_e
         Arc::new(AtomicBool::new(true)),
         log,
         ownership.clone(),
+        crate::runtime_metadata::project_worker_hooks(),
     )?;
     assert!(
         crate::embedding_pool_process::recover_predecessor_shared_helpers(&root, instance).is_err(),

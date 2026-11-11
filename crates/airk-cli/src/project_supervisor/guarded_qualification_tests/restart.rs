@@ -293,6 +293,7 @@ fn restored_native_worker_obligation() -> Result<()> {
         Arc::new(std::sync::atomic::AtomicBool::new(false)),
         log,
         lease,
+        crate::runtime_metadata::project_worker_hooks(),
     )?;
     let control = supervisor.catalog_control(gate.clone())?;
     let mut coordinator = crate::catalog_coordinator::CatalogCoordinator::new(gate, control)?;

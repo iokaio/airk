@@ -106,9 +106,42 @@ mod admin;
 mod admission;
 mod scopes;
 
+/// A boxed observation future returned by a [`Hooks`] observer.
+pub(crate) type Observation<'a> =
+    std::pin::Pin<Box<dyn std::future::Future<Output = serde_json::Value> + Send + 'a>>;
+
+/// Service functions the project owner calls but does not own. The service
+/// composition root supplies them (split plan G5), so this module depends on
+/// neither runtime metadata, installation nor reference-refresh control.
+#[derive(Clone, Copy)]
+pub(crate) struct Hooks {
+    /// Runtime bundle for an unscoped `airk_diagnostics` call.
+    pub(crate) runtime_bundle: for<'a> fn(
+        &'a Path,
+        WorkerIdentity,
+        Option<airk_core::service::RuntimeProcess>,
+    ) -> Observation<'a>,
+    /// Work summary for an unscoped `airk_diagnostics` call.
+    pub(crate) runtime_work: for<'a> fn(&'a Path, WorkerIdentity) -> Observation<'a>,
+    /// Rebuild observation bound to the project's kernel.
+    pub(crate) rebuild_observation: fn(
+        &Path,
+        airk_core::service::ProjectBinding,
+    )
+        -> Result<Option<airk_core::rebuild::RebuildObservation>>,
+    /// Executes an accepted reference-refresh configuration job.
+    pub(crate) refresh_references: fn(
+        &Kernel,
+        &mut ServiceRegistry,
+        &ProjectLease,
+        airk_core::identity::Sha256Digest,
+    ) -> Result<JobOutcome>,
+}
+
 struct State {
     control: std::path::PathBuf,
     identity: WorkerIdentity,
+    hooks: Hooks,
     storage: airk_store::service::data_scope::BoundDataRoot,
     broker: Mutex<Broker>,
     tools: airk_mcp::local::LocalTools,
@@ -366,8 +399,8 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
                     },
                     None => {
                         if request.tool == "airk_diagnostics" && grant.scope.is_none() {
-                            tools.set_runtime(crate::runtime_metadata::bundle(&state.control, state.identity, request.frontend).await);
-                            tools.set_work(crate::runtime_metadata::work(&state.control, state.identity).await);
+                            tools.set_runtime((state.hooks.runtime_bundle)(&state.control, state.identity, request.frontend).await);
+                            tools.set_work((state.hooks.runtime_work)(&state.control, state.identity).await);
                         }
                         let result = match &read_context {
                             Some(context) => tools.call_with_read_context(request.tool, request.arguments, context.clone()).await?,
@@ -669,7 +702,7 @@ fn reconcile_semantic_setup(
     Ok(())
 }
 
-pub async fn run() -> Result<()> {
+pub(crate) async fn run(hooks: Hooks) -> Result<()> {
     let mut commands = StdinFrames;
     let init: protocol::Init = FrameSource::<protocol::Init>::recv(&mut commands)?
         .context("missing private project initialization")?;
@@ -678,6 +711,7 @@ pub async fn run() -> Result<()> {
         Box::new(commands),
         Box::new(StdoutFrames),
         Residency::Process,
+        hooks,
     )
     .await
 }
@@ -689,6 +723,7 @@ pub(crate) async fn serve(
     mut commands: Box<dyn FrameSource<Command>>,
     mut replies: Box<dyn FrameSink<Reply>>,
     residency: Residency,
+    hooks: Hooks,
 ) -> Result<()> {
     local_ipc::prepare_root(&init.runtime)?;
     let mut lease = ProjectLease::acquire(&init.runtime, init.project)?;
@@ -814,12 +849,10 @@ pub(crate) async fn serve(
     // metadata on the ordinary Kernel also supports reads after activation.
     let rebuild_control = init.runtime.clone();
     let rebuild_project = init.project;
+    let rebuild = hooks.rebuild_observation;
     let kernel = crate::bundled_assets::bind_service_models(kernel, &init.runtime)?
         .with_rebuild_observer(rebuild_project, move || {
-            crate::runtime_install::rebuild_observation_for_control(
-                &rebuild_control,
-                rebuild_project,
-            )
+            rebuild(&rebuild_control, rebuild_project)
         });
     match residency.scope() {
         None => {
@@ -943,6 +976,7 @@ pub(crate) async fn serve(
     let state = Arc::new(State {
         control: init.runtime.clone(),
         identity,
+        hooks,
         storage,
         broker: Mutex::new(broker),
         tools: airk_mcp::local::LocalTools::with_client(
@@ -1083,7 +1117,7 @@ pub(crate) async fn serve(
                                 return Ok(JobOutcome::Succeeded { revision: None });
                             }
                             if matches!(work.request.configuration,airk_core::service_configuration::ProjectConfiguration::RefreshReferences {..}) {
-                                return crate::reference_refresh_control::execute(&kernel,&mut registry,&job_lease,job.id);
+                                return (hooks.refresh_references)(&kernel,&mut registry,&job_lease,job.id);
                             }
                             if work.request.prepare {
                                 work.request.validate()?;

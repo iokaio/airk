@@ -545,6 +545,7 @@ pub async fn serve_with_idle(root: &Path, idle_grace: Option<Duration>) -> Resul
         sources.telemetry_complete.clone(),
         log.clone(),
         _ownership.clone(),
+        crate::runtime_metadata::project_worker_hooks(),
     )?;
     let mut legacy_connections = false;
     let catalog_gate = match airk_store::service::registry::ServiceRegistry::open(root, instance) {

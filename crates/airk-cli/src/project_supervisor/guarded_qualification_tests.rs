@@ -53,6 +53,7 @@ impl NativeOwner {
                 recovery: &mut self.recovery,
                 drains: &mut self.drains,
             },
+            crate::runtime_metadata::project_worker_hooks(),
         )
     }
 
@@ -136,6 +137,7 @@ impl NativeOwner {
                 root: &self.root,
                 instance: self.instance,
                 gate: Some(&self.gate),
+                hooks: crate::runtime_metadata::project_worker_hooks(),
             },
         )
     }

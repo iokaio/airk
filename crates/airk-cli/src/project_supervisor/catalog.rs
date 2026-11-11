@@ -932,6 +932,7 @@ pub(super) fn execute(
     may_allocate: bool,
     backoff: &mut BTreeMap<ProjectBinding, (Instant, u32)>,
     admission: WorkerAdmission<'_>,
+    hooks: crate::project_worker::Hooks,
 ) -> Result<Response> {
     gate.require_service(instance)?;
     // Before attaching a new empty authority ledger, the existing owner must
@@ -1012,6 +1013,7 @@ pub(super) fn execute(
                     root,
                     instance,
                     gate: Some(&gate),
+                    hooks,
                 },
                 registration,
                 false,
@@ -1085,6 +1087,7 @@ pub(super) fn execute(
                     root,
                     instance,
                     gate: Some(&gate),
+                    hooks,
                 },
                 registration,
                 false,
@@ -1260,6 +1263,7 @@ pub(super) fn execute(
                     root,
                     instance,
                     gate: Some(&gate),
+                    hooks,
                 },
             )?;
             Ok(Response::Drained)
@@ -1308,6 +1312,7 @@ pub(super) fn execute(
                     root,
                     instance,
                     gate: Some(&gate),
+                    hooks,
                 },
                 registration,
                 false,
