@@ -1,0 +1,60 @@
+{
+ "schema": "airk.split-fixture.receipts/1",
+ "validator": "service_pair_signing_local",
+ "contract": "docs/split/inventory/build.md B.3: airk-service-pair-signing-local/1, both images, all components local; no paths",
+ "base": {
+  "schema": "airk-service-pair-signing-local/1",
+  "provenance": "local",
+  "target": "x86_64-pc-windows-msvc",
+  "commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+  "cargo_lock_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+  "source_install_sha256": "9999999999999999999999999999999999999999999999999999999999999999",
+  "install_manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "components": {
+   "airk.exe": {
+    "schema": "airk-native-signing-local/1", "provenance": "local", "platform": "Windows",
+    "target": "x86_64-pc-windows-msvc", "identity": "0123456789ABCDEF0123456789ABCDEF01234567", "team_id": null,
+    "azure": {"endpoint": "https://wus2.codesigning.azure.net", "account": "ioka-llc-signing", "profile": "WritingForgePro", "publisher": "CN=Ioka LLC, O=Ioka LLC, L=Mapleton, S=Utah, C=US", "identity_eku": "1.3.6.1.4.1.311.97.88309284.513035131.587831003.613935669"},
+    "source_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "binary_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+    "cargo_lock_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+    "notarization": null,
+    "verification": {"trust": "authenticode_valid", "timestamp_present": true, "signer_thumbprint": "0123456789ABCDEF0123456789ABCDEF01234567"},
+    "local_signing": {"mode": "artifact-signing-dlib", "client": {"package": "Microsoft.ArtifactSigning.Client", "version": "1.0.146", "dlib_sha256": "123fa0c50341777d8e5b1414df52f39a1f2c7ab4a9f716abf6310069a6cb8a19"}, "signtool_sha256": "7777777777777777777777777777777777777777777777777777777777777777", "metadata_sha256": "8888888888888888888888888888888888888888888888888888888888888888", "credential": "AzureCliCredential"}
+   },
+   "airkctl.exe": {
+    "schema": "airk-native-signing-local/1", "provenance": "local", "platform": "Windows",
+    "target": "x86_64-pc-windows-msvc", "identity": "0123456789ABCDEF0123456789ABCDEF01234567", "team_id": null,
+    "azure": {"endpoint": "https://wus2.codesigning.azure.net", "account": "ioka-llc-signing", "profile": "WritingForgePro", "publisher": "CN=Ioka LLC, O=Ioka LLC, L=Mapleton, S=Utah, C=US", "identity_eku": "1.3.6.1.4.1.311.97.88309284.513035131.587831003.613935669"},
+    "source_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "binary_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+    "commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+    "cargo_lock_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+    "notarization": null,
+    "verification": {"trust": "authenticode_valid", "timestamp_present": true, "signer_thumbprint": "0123456789ABCDEF0123456789ABCDEF01234567"},
+    "local_signing": {"mode": "artifact-signing-dlib", "client": {"package": "Microsoft.ArtifactSigning.Client", "version": "1.0.146", "dlib_sha256": "123fa0c50341777d8e5b1414df52f39a1f2c7ab4a9f716abf6310069a6cb8a19"}, "signtool_sha256": "7777777777777777777777777777777777777777777777777777777777777777", "metadata_sha256": "8888888888888888888888888888888888888888888888888888888888888888", "credential": "AzureCliCredential"}
+   }
+  }
+ },
+ "cases": [
+  {"name": "valid local Windows pair", "expect": "ok"},
+  {"name": "hosted pair schema", "set": [[["schema"], "airk-service-pair-signing/1"]], "expect": "schema_mismatch"},
+  {"name": "component schema at pair level", "set": [[["schema"], "airk-native-signing-local/1"]], "expect": "schema_mismatch"},
+  {"name": "producer identity", "set": [[["producer"], {"run_id": "1001"}]], "expect": "hosted_provenance"},
+  {"name": "workflow reference", "set": [[["workflow_ref"], "iokaio/airk/.github/workflows/github-release.yml@refs/heads/main"]], "expect": "hosted_provenance"},
+  {"name": "hosted provenance inside a component", "set": [[["components", "airk.exe", "provenance"], "hosted"]], "expect": "hosted_provenance"},
+  {"name": "staged source path", "set": [[["source"], "D:\\airk\\artifacts\\runtime\\x86_64-pc-windows-msvc"]], "expect": "path_absolute"},
+  {"name": "component DLL path", "set": [[["components", "airkctl.exe", "local_signing", "client", "dlib"], "D:\\tools\\Azure.CodeSigning.Dlib.dll"]], "expect": "path_absolute"},
+  {"name": "hosted component inside a local pair", "set": [[["components", "airkctl.exe", "schema"], "airk-native-signing/1"]], "expect": "component_mixed"},
+  {"name": "unknown pair key", "set": [[["copied_launcher"], {"schema": 1}]], "expect": "unknown_field"},
+  {"name": "unknown component key", "set": [[["components", "airkctl.exe", "note"], "fixture"]], "expect": "unknown_field"},
+  {"name": "missing provenance", "delete": [["provenance"]], "expect": "missing_field"},
+  {"name": "uppercase install manifest digest", "set": [[["install_manifest_sha256"], "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"]], "expect": "digest_invalid"},
+  {"name": "uppercase component source digest", "set": [[["components", "airk.exe", "source_sha256"], "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"]], "expect": "digest_invalid"},
+  {"name": "missing airkctl component", "delete": [["components", "airkctl.exe"]], "expect": "inventory_mismatch"},
+  {"name": "historical embed helper component", "set": [[["components", "airk-embed.exe"], {}]], "expect": "inventory_mismatch"},
+  {"name": "component from another commit", "set": [[["components", "airk.exe", "commit"], "0000000000000000000000000000000000000000"]], "expect": "inventory_mismatch"},
+  {"name": "Linux pair is unsigned", "set": [[["target"], "x86_64-unknown-linux-gnu"]], "expect": "value_invalid"}
+ ]
+}

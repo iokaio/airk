@@ -1,0 +1,46 @@
+{
+ "schema": "airk.split-fixture.receipts/1",
+ "validator": "ci_runtime_2",
+ "contract": "docs/split/contracts.md §9: airk-ci-runtime/2 binds both executables, the admin digests and the source identity",
+ "base": {
+  "schema": "airk-ci-runtime/2",
+  "commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+  "tree": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e",
+  "run_id": "123456789",
+  "target": "x86_64-unknown-linux-gnu",
+  "qualification": false,
+  "build_attempt": 1,
+  "source": {"sha256": "5555555555555555555555555555555555555555555555555555555555555555", "files": 1834},
+  "payload": {
+   "airk": "1111111111111111111111111111111111111111111111111111111111111111",
+   "airkctl": "2222222222222222222222222222222222222222222222222222222222222222",
+   "airk-runtime.json": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "airk-build.json": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+   "airk-install.json": "9999999999999999999999999999999999999999999999999999999999999999",
+   "LICENSE": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "archive_sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+  "airk_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+  "airkctl_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+  "admin_assets": {"inventory_sha256": "3333333333333333333333333333333333333333333333333333333333333333", "bundle_sha256": "4444444444444444444444444444444444444444444444444444444444444444"}
+ },
+ "cases": [
+  {"name": "valid Linux transfer", "expect": "ok"},
+  {"name": "valid qualification transfer on a later attempt", "set": [[["qualification"], true], [["build_attempt"], 3]], "expect": "ok"},
+  {"name": "pre-split transfer schema", "set": [[["schema"], "airk-ci-runtime/1"]], "expect": "schema_mismatch"},
+  {"name": "unknown key", "set": [[["attempt"], "1"]], "expect": "unknown_field"},
+  {"name": "unknown admin key", "set": [[["admin_assets", "node"], "v22.11.0"]], "expect": "unknown_field"},
+  {"name": "missing admin digests", "delete": [["admin_assets"]], "expect": "missing_field"},
+  {"name": "missing source identity", "delete": [["source"]], "expect": "missing_field"},
+  {"name": "uppercase admin bundle digest", "set": [[["admin_assets", "bundle_sha256"], "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"]], "expect": "digest_invalid"},
+  {"name": "uppercase tree", "set": [[["tree"], "7E7E7E7E7E7E7E7E7E7E7E7E7E7E7E7E7E7E7E7E"]], "expect": "digest_invalid"},
+  {"name": "zero run id", "set": [[["run_id"], "0"]], "expect": "value_invalid"},
+  {"name": "integer run id", "set": [[["run_id"], 123456789]], "expect": "value_invalid"},
+  {"name": "zero build attempt", "set": [[["build_attempt"], 0]], "expect": "value_invalid"},
+  {"name": "string qualification flag", "set": [[["qualification"], "false"]], "expect": "value_invalid"},
+  {"name": "payload missing airkctl", "delete": [["payload", "airkctl"]], "expect": "inventory_mismatch"},
+  {"name": "payload missing build receipt", "delete": [["payload", "airk-build.json"]], "expect": "inventory_mismatch"},
+  {"name": "Windows target with Linux image names", "set": [[["target"], "x86_64-pc-windows-msvc"]], "expect": "inventory_mismatch"},
+  {"name": "one digest for both images", "set": [[["airkctl_sha256"], "1111111111111111111111111111111111111111111111111111111111111111"], [["payload", "airkctl"], "1111111111111111111111111111111111111111111111111111111111111111"]], "expect": "inventory_mismatch"}
+ ]
+}

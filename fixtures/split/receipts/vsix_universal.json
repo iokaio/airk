@@ -1,0 +1,57 @@
+{
+ "schema": "airk.split-fixture.receipts/1",
+ "validator": "vsix_universal",
+ "contract": "docs/split/contracts.md §9 and U29: one universal VSIX receipt, I2 contracts and UI inventory, no native entry",
+ "base": {
+  "schema": "airk-extension-candidate/2",
+  "version": "1.9.0",
+  "commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+  "tree": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e",
+  "extension_id": "iokaio.airk",
+  "display_name": "AIRK",
+  "pre_release": false,
+  "target": "universal",
+  "i2_contracts": [1],
+  "required_capabilities": ["evidence.read", "session.v2"],
+  "ui_inventory_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+  "locks": {
+   "packages/ui/package-lock.json": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "packages/vscode/package-lock.json": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "node": "v22.11.0",
+  "vsce": "4.0.1-3",
+  "archive": "airk-1.9.0.vsix",
+  "archive_sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+  "payload": {
+   "package.json": "2222222222222222222222222222222222222222222222222222222222222222",
+   "out/extension.js": "3333333333333333333333333333333333333333333333333333333333333333",
+   "README.md": "4444444444444444444444444444444444444444444444444444444444444444",
+   "LICENSE": "5555555555555555555555555555555555555555555555555555555555555555"
+  },
+  "qualification": "verified universal package; installed-editor qualification separate"
+ },
+ "cases": [
+  {"name": "valid universal VSIX", "expect": "ok"},
+  {"name": "valid pre-release with two I2 contracts and no capabilities", "set": [[["pre_release"], true], [["i2_contracts"], [1, 2]], [["required_capabilities"], []]], "expect": "ok"},
+  {"name": "pre-split platform VSIX schema", "set": [[["schema"], "airk-extension-candidate/1"]], "expect": "schema_mismatch"},
+  {"name": "pre-split stage receipt schema", "set": [[["schema"], "airk-extension-stage/1"]], "expect": "schema_mismatch"},
+  {"name": "platform field", "set": [[["platform"], "win32-x64"]], "expect": "native_entry"},
+  {"name": "native manifest binding", "set": [[["native_manifest_sha256"], "6666666666666666666666666666666666666666666666666666666666666666"]], "expect": "native_entry"},
+  {"name": "native runtime in payload", "set": [[["payload", "native/runtime/airk.exe"], "6666666666666666666666666666666666666666666666666666666666666666"]], "expect": "native_entry"},
+  {"name": "native Node addon in payload", "set": [[["payload", "out/helper.node"], "6666666666666666666666666666666666666666666666666666666666666666"]], "expect": "native_entry"},
+  {"name": "single npm lock digest of the platform receipt", "set": [[["npm_lock_sha256"], "6666666666666666666666666666666666666666666666666666666666666666"]], "expect": "unknown_field"},
+  {"name": "missing UI inventory", "delete": [["ui_inventory_sha256"]], "expect": "missing_field"},
+  {"name": "missing I2 contracts", "delete": [["i2_contracts"]], "expect": "missing_field"},
+  {"name": "uppercase UI inventory digest", "set": [[["ui_inventory_sha256"], "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"]], "expect": "digest_invalid"},
+  {"name": "uppercase payload digest", "set": [[["payload", "LICENSE"], "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"]], "expect": "digest_invalid"},
+  {"name": "platform target", "set": [[["target"], "win32-x64"]], "expect": "value_invalid"},
+  {"name": "no I2 contract", "set": [[["i2_contracts"], []]], "expect": "value_invalid"},
+  {"name": "unordered I2 contracts", "set": [[["i2_contracts"], [2, 1]]], "expect": "value_invalid"},
+  {"name": "duplicate I2 contract", "set": [[["i2_contracts"], [1, 1]]], "expect": "value_invalid"},
+  {"name": "string I2 contract", "set": [[["i2_contracts"], ["1"]]], "expect": "value_invalid"},
+  {"name": "unordered capabilities", "set": [[["required_capabilities"], ["session.v2", "evidence.read"]]], "expect": "value_invalid"},
+  {"name": "uppercase capability", "set": [[["required_capabilities"], ["Session.v2"]]], "expect": "value_invalid"},
+  {"name": "per-platform archive name", "set": [[["archive"], "airk-1.9.0-win32-x64.vsix"]], "expect": "value_invalid"},
+  {"name": "string pre-release flag", "set": [[["pre_release"], "false"]], "expect": "value_invalid"}
+ ]
+}

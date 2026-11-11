@@ -1,0 +1,38 @@
+{
+ "schema": "airk.split-fixture.receipts/1",
+ "validator": "admin_assets_1",
+ "contract": "docs/split/contracts.md §9: admin-assets.json airk-admin-assets/1",
+ "base": {
+  "schema": "airk-admin-assets/1",
+  "files": [
+   {"name": "index.html", "sha256": "1111111111111111111111111111111111111111111111111111111111111111", "bytes": 1024, "content_type": "text/html; charset=utf-8"},
+   {"name": "assets/app-5f3c.js", "sha256": "2222222222222222222222222222222222222222222222222222222222222222", "bytes": 204800, "content_type": "text/javascript; charset=utf-8"},
+   {"name": "assets/app-5f3c.css", "sha256": "3333333333333333333333333333333333333333333333333333333333333333", "bytes": 8192, "content_type": "text/css; charset=utf-8"},
+   {"name": "assets/logo.svg", "sha256": "4444444444444444444444444444444444444444444444444444444444444444", "bytes": 2048, "content_type": "image/svg+xml"}
+  ],
+  "bundle_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+  "toolchain": {"node": "v22.11.0", "npm": "10.9.0"}
+ },
+ "cases": [
+  {"name": "valid inventory", "expect": "ok"},
+  {"name": "valid zero-byte font file", "set": [[["files", 3], {"name": "assets/inter.woff2", "sha256": "6666666666666666666666666666666666666666666666666666666666666666", "bytes": 0, "content_type": "font/woff2"}]], "expect": "ok"},
+  {"name": "other inventory version", "set": [[["schema"], "airk-admin-assets/2"]], "expect": "schema_mismatch"},
+  {"name": "pre-split native candidate schema", "set": [[["schema"], "airk-native-candidate/2"]], "expect": "schema_mismatch"},
+  {"name": "unknown top-level key", "set": [[["locks"], {}]], "expect": "unknown_field"},
+  {"name": "unknown file row key", "set": [[["files", 0, "mode"], 420]], "expect": "unknown_field"},
+  {"name": "unknown toolchain key", "set": [[["toolchain", "esbuild"], "0.24.0"]], "expect": "unknown_field"},
+  {"name": "missing file size", "delete": [["files", 1, "bytes"]], "expect": "missing_field"},
+  {"name": "missing npm version", "delete": [["toolchain", "npm"]], "expect": "missing_field"},
+  {"name": "uppercase file digest", "set": [[["files", 2, "sha256"], "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"]], "expect": "digest_invalid"},
+  {"name": "uppercase bundle digest", "set": [[["bundle_sha256"], "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"]], "expect": "digest_invalid"},
+  {"name": "duplicate file name", "set": [[["files", 3, "name"], "index.html"]], "expect": "value_invalid"},
+  {"name": "content type differs from extension", "set": [[["files", 0, "content_type"], "text/plain; charset=utf-8"]], "expect": "value_invalid"},
+  {"name": "unlisted extension", "set": [[["files", 3, "name"], "assets/app.wasm"], [["files", 3, "content_type"], "application/wasm"]], "expect": "value_invalid"},
+  {"name": "absolute file name", "set": [[["files", 0, "name"], "/index.html"]], "expect": "value_invalid"},
+  {"name": "parent traversal", "set": [[["files", 1, "name"], "../app.js"]], "expect": "value_invalid"},
+  {"name": "negative size", "set": [[["files", 2, "bytes"], -1]], "expect": "value_invalid"},
+  {"name": "boolean size", "set": [[["files", 2, "bytes"], true]], "expect": "value_invalid"},
+  {"name": "empty file list", "set": [[["files"], []]], "expect": "value_invalid"},
+  {"name": "node version without v", "set": [[["toolchain", "node"], "22.11.0"]], "expect": "value_invalid"}
+ ]
+}

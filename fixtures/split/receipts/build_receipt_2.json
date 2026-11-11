@@ -1,0 +1,66 @@
+{
+ "schema": "airk.split-fixture.receipts/1",
+ "validator": "build_receipt_2",
+ "contract": "docs/split/contracts.md §9: airk-build.json schema 2 adds admin_assets and the airkctl import report; 16 KiB bound",
+ "base": {
+  "schema": 2,
+  "source": {"sha256": "5555555555555555555555555555555555555555555555555555555555555555", "files": 1834},
+  "profile": "release",
+  "runtime": {
+   "schema": 3,
+   "version": "1.9.0",
+   "os": "windows",
+   "arch": "x86_64",
+   "airk_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+   "airkctl_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+   "i1_protocol": 1,
+   "i2_contract": 1,
+   "admin_inventory_sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+  },
+  "rustc": "rustc 1.90.0 (fixture)\nhost: x86_64-pc-windows-msvc",
+  "static_ort": {
+   "build_receipt_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+   "target": "x86_64-pc-windows-msvc",
+   "static_link_closure_sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+   "static_link_supplement_sha256": null,
+   "static_link_recovery_sha256": null,
+   "verified_inputs_sha256": "8888888888888888888888888888888888888888888888888888888888888888"
+  },
+  "static_imports": {"schema": 1, "command": ["dumpbin", "/NOLOGO", "/DEPENDENTS", "airk.exe"], "stdout": "Image has the following dependencies:\n    KERNEL32.dll\n", "external_onnxruntime_imports": false},
+  "airkctl_static_imports": {"schema": 1, "command": ["dumpbin", "/NOLOGO", "/DEPENDENTS", "airkctl.exe"], "stdout": "Image has the following dependencies:\n    KERNEL32.dll\n", "external_onnxruntime_imports": false, "inference_symbols": false},
+  "embedded_model_smoke": {"schema": 1, "source": "embedded", "engine": "onnxruntime-cpu/1.22.1", "dimensions": 384, "repeat_equal": true},
+  "admin_assets": {
+   "bundle_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+   "inventory_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+   "node": "v22.11.0",
+   "npm": "10.9.0",
+   "locks": {
+    "packages/admin/package-lock.json": "9999999999999999999999999999999999999999999999999999999999999999",
+    "packages/ui/package-lock.json": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+   }
+  }
+ },
+ "cases": [
+  {"name": "valid release receipt", "expect": "ok"},
+  {"name": "valid debug receipt", "set": [[["profile"], "debug"]], "expect": "ok"},
+  {"name": "static ORT supplement digest present", "set": [[["static_ort", "static_link_supplement_sha256"], "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]], "expect": "ok"},
+  {"name": "pre-split schema 1", "set": [[["schema"], 1]], "expect": "schema_mismatch"},
+  {"name": "pre-split pair metadata inside", "set": [[["runtime", "schema"], 2]], "expect": "schema_mismatch"},
+  {"name": "unknown top-level key", "set": [[["airkctl_imports"], {}]], "expect": "unknown_field"},
+  {"name": "unknown runtime key", "set": [[["runtime", "embed_sha256"], "4444444444444444444444444444444444444444444444444444444444444444"]], "expect": "unknown_field"},
+  {"name": "unknown admin_assets key", "set": [[["admin_assets", "files"], 12]], "expect": "unknown_field"},
+  {"name": "missing admin_assets", "delete": [["admin_assets"]], "expect": "missing_field"},
+  {"name": "missing airkctl import report", "delete": [["airkctl_static_imports"]], "expect": "missing_field"},
+  {"name": "uppercase lock digest", "set": [[["admin_assets", "locks", "packages/ui/package-lock.json"], "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"]], "expect": "digest_invalid"},
+  {"name": "uppercase source digest", "set": [[["source", "sha256"], "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"]], "expect": "digest_invalid"},
+  {"name": "admin inventory differs from pair metadata", "set": [[["admin_assets", "inventory_sha256"], "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]], "expect": "inventory_mismatch"},
+  {"name": "static ORT host differs from pair platform", "set": [[["static_ort", "target"], "x86_64-unknown-linux-gnu"]], "expect": "inventory_mismatch"},
+  {"name": "airkctl imports external ORT", "set": [[["airkctl_static_imports", "external_onnxruntime_imports"], true]], "expect": "value_invalid"},
+  {"name": "airkctl carries inference symbols", "set": [[["airkctl_static_imports", "inference_symbols"], true]], "expect": "value_invalid"},
+  {"name": "two-part npm version", "set": [[["admin_assets", "npm"], "10.9"]], "expect": "value_invalid"},
+  {"name": "absolute lock path", "set": [[["admin_assets", "locks", "/packages/ui/package-lock.json"], "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]], "expect": "value_invalid"},
+  {"name": "unknown profile", "set": [[["profile"], "fast"]], "expect": "value_invalid"},
+  {"name": "import report over its own bound", "set": [[["static_imports", "stdout"], {"$repeat": ["x", 8193]}]], "expect": "value_invalid"},
+  {"name": "complete receipt over 16 KiB", "set": [[["static_imports", "stdout"], {"$repeat": ["x", 8000]}], [["airkctl_static_imports", "stdout"], {"$repeat": ["x", 8000]}]], "expect": "receipt_oversize"}
+ ]
+}

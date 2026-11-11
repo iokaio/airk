@@ -1,0 +1,58 @@
+{
+ "schema": "airk.split-fixture.receipts/1",
+ "validator": "native_signing_local",
+ "contract": "docs/split/inventory/build.md B.3: airk-native-signing-local/1, hosted component fields plus local_signing; provenance local; no paths",
+ "base": {
+  "schema": "airk-native-signing-local/1",
+  "provenance": "local",
+  "platform": "Windows",
+  "target": "x86_64-pc-windows-msvc",
+  "identity": "0123456789ABCDEF0123456789ABCDEF01234567",
+  "team_id": null,
+  "azure": {
+   "endpoint": "https://wus2.codesigning.azure.net",
+   "account": "ioka-llc-signing",
+   "profile": "WritingForgePro",
+   "publisher": "CN=Ioka LLC, O=Ioka LLC, L=Mapleton, S=Utah, C=US",
+   "identity_eku": "1.3.6.1.4.1.311.97.88309284.513035131.587831003.613935669"
+  },
+  "source_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+  "binary_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+  "commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+  "cargo_lock_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+  "notarization": null,
+  "verification": {"trust": "authenticode_valid", "timestamp_present": true, "signer_thumbprint": "0123456789ABCDEF0123456789ABCDEF01234567"},
+  "local_signing": {
+   "mode": "artifact-signing-dlib",
+   "client": {"package": "Microsoft.ArtifactSigning.Client", "version": "1.0.146", "dlib_sha256": "123fa0c50341777d8e5b1414df52f39a1f2c7ab4a9f716abf6310069a6cb8a19"},
+   "signtool_sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+   "metadata_sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+   "credential": "AzureCliCredential"
+  }
+ },
+ "cases": [
+  {"name": "valid Windows component", "expect": "ok"},
+  {"name": "valid macOS component signed on the Neo", "delete": [["azure"]], "set": [[["platform"], "Darwin"], [["target"], "aarch64-apple-darwin"], [["identity"], "Developer ID Application: Ioka LLC (5PX7D99PXA)"], [["team_id"], "5PX7D99PXA"], [["verification"], {"trust": "apple_developer_id", "team_id": "5PX7D99PXA", "hardened_runtime": true, "timestamp_present": true}], [["notarization"], {"id": "00000000-0000-4000-8000-000000000000", "status": "Accepted", "stapled": false}], [["local_signing"], {"mode": "developer-id-keychain"}]], "expect": "ok"},
+  {"name": "hosted component schema", "set": [[["schema"], "airk-native-signing/1"]], "expect": "schema_mismatch"},
+  {"name": "pair schema for a component", "set": [[["schema"], "airk-service-pair-signing-local/1"]], "expect": "schema_mismatch"},
+  {"name": "hosted provenance value", "set": [[["provenance"], "hosted"]], "expect": "hosted_provenance"},
+  {"name": "workflow run id", "set": [[["run_id"], "123456789"]], "expect": "hosted_provenance"},
+  {"name": "nested GitHub field", "set": [[["local_signing", "github_sha"], "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0"]], "expect": "hosted_provenance"},
+  {"name": "Windows DLL path", "set": [[["local_signing", "client", "dlib"], "C:\\Users\\fixture\\.airk-dev-tools\\artifact-signing\\1.0.146\\bin\\x64\\Azure.CodeSigning.Dlib.dll"]], "expect": "path_absolute"},
+  {"name": "forward-slash drive path", "set": [[["local_signing", "signtool"], "C:/Program Files (x86)/Windows Kits/10/bin/x64/signtool.exe"]], "expect": "path_absolute"},
+  {"name": "POSIX path", "set": [[["local_signing", "metadata"], "/tmp/airk-artifact-signing-x/metadata.json"]], "expect": "path_absolute"},
+  {"name": "home-relative keychain", "set": [[["local_signing", "keychain"], "~/Library/Keychains/airk-signing.keychain-db"]], "expect": "path_absolute"},
+  {"name": "unknown key", "set": [[["local_signing", "metadata_name"], "metadata.json"]], "expect": "unknown_field"},
+  {"name": "missing provenance", "delete": [["provenance"]], "expect": "missing_field"},
+  {"name": "Windows component without Azure policy", "delete": [["azure"]], "expect": "missing_field"},
+  {"name": "missing signtool digest", "delete": [["local_signing", "signtool_sha256"]], "expect": "missing_field"},
+  {"name": "uppercase binary digest", "set": [[["binary_sha256"], "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"]], "expect": "digest_invalid"},
+  {"name": "uppercase DLL digest", "set": [[["local_signing", "client", "dlib_sha256"], "123FA0C50341777D8E5B1414DF52F39A1F2C7AB4A9F716ABF6310069A6CB8A19"]], "expect": "digest_invalid"},
+  {"name": "observed thumbprint differs", "set": [[["verification", "signer_thumbprint"], "FEDCBA9876543210FEDCBA9876543210FEDCBA98"]], "expect": "inventory_mismatch"},
+  {"name": "other credential", "set": [[["local_signing", "credential"], "EnvironmentCredential"]], "expect": "value_invalid"},
+  {"name": "signing left the bytes unchanged", "set": [[["binary_sha256"], "1111111111111111111111111111111111111111111111111111111111111111"]], "expect": "value_invalid"},
+  {"name": "Windows platform for the Linux target", "set": [[["target"], "x86_64-unknown-linux-gnu"]], "expect": "value_invalid"},
+  {"name": "Windows component with a team id", "set": [[["team_id"], "5PX7D99PXA"]], "expect": "value_invalid"},
+  {"name": "missing timestamp", "set": [[["verification", "timestamp_present"], false]], "expect": "value_invalid"}
+ ]
+}

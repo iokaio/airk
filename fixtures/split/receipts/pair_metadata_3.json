@@ -1,0 +1,35 @@
+{
+ "schema": "airk.split-fixture.receipts/1",
+ "validator": "pair_metadata_3",
+ "contract": "docs/split/contracts.md §9: airk-runtime.json schema 3, exact key set",
+ "base": {
+  "schema": 3,
+  "version": "1.9.0",
+  "os": "windows",
+  "arch": "x86_64",
+  "airk_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+  "airkctl_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+  "i1_protocol": 1,
+  "i2_contract": 1,
+  "admin_inventory_sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+ },
+ "cases": [
+  {"name": "valid Windows pair", "expect": "ok"},
+  {"name": "valid macOS arm64 pair", "set": [[["os"], "macos"], [["arch"], "aarch64"]], "expect": "ok"},
+  {"name": "interim 1.8.x split build (U46)", "set": [[["version"], "1.8.24"]], "expect": "ok"},
+  {"name": "pre-split single-image schema 2", "set": [[["schema"], 2]], "expect": "schema_mismatch"},
+  {"name": "schema as a string", "set": [[["schema"], "3"]], "expect": "schema_mismatch"},
+  {"name": "missing schema", "delete": [["schema"]], "expect": "schema_mismatch"},
+  {"name": "historical embed helper digest", "set": [[["embed_sha256"], "4444444444444444444444444444444444444444444444444444444444444444"]], "expect": "unknown_field"},
+  {"name": "missing airkctl digest", "delete": [["airkctl_sha256"]], "expect": "missing_field"},
+  {"name": "missing I2 contract", "delete": [["i2_contract"]], "expect": "missing_field"},
+  {"name": "uppercase airk digest", "set": [[["airk_sha256"], "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"]], "expect": "digest_invalid"},
+  {"name": "short admin inventory digest", "set": [[["admin_inventory_sha256"], "3333"]], "expect": "digest_invalid"},
+  {"name": "Linux arm64 is not a release target", "set": [[["os"], "linux"], [["arch"], "aarch64"]], "expect": "value_invalid"},
+  {"name": "boolean I1 protocol", "set": [[["i1_protocol"], true]], "expect": "value_invalid"},
+  {"name": "zero I2 contract", "set": [[["i2_contract"], 0]], "expect": "value_invalid"},
+  {"name": "two-part version", "set": [[["version"], "1.9"]], "expect": "value_invalid"},
+  {"name": "one digest for both images", "set": [[["airkctl_sha256"], "1111111111111111111111111111111111111111111111111111111111111111"]], "expect": "inventory_mismatch"},
+  {"name": "array document", "replace": [], "expect": "not_object"}
+ ]
+}

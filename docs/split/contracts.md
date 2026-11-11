@@ -899,7 +899,7 @@ help in MCP comes from the running parser (`install_cli_help`, `main.rs:1341`).
 
 | Inventory | |
 |---|---|
-| Owner | `scripts/build-service-runtime.py` (root roster, imported by all packagers [V build.md A.1]) and the release catalog owners (`ci-candidates.py`, `github-release.py`) |
+| Owner | `scripts/split_receipts.py` (C7: pure validators for every split receipt schema; existing pre-split decoders stay unchanged and refuse the new schemas). Consumers in Phases 5 and 7 (`build-service-runtime.py`, packagers, `ci-candidates.py`, `github-release.py`) call it |
 | Consumers | `package-native.py`, `ci-runtime.py`, `sign-native.py`, `package-standalone-*.py`, `package-extension.py`, release workflows, `verify-published-release.py`, the I4 record writer |
 | Version | Every changed receipt bumps its schema; pre-split decoders stay unchanged and version-gated; no pre-split receipt qualifies a split payload |
 | Fixtures | `fixtures/split/receipts/{pair_metadata_3.json, build_receipt_2.json, admin_assets_1.json, native_candidate_3.json, ci_runtime_2.json, vsix_universal.json, release_catalog.json, *-local.json}`; Python tests with independent expectations |

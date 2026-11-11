@@ -1,0 +1,62 @@
+{
+ "schema": "airk.split-fixture.receipts/1",
+ "validator": "standalone_installer_local",
+ "contract": "docs/split/inventory/build.md B.4: airk-standalone-installer-local/1 for the locally signed Windows installer and uninstaller; no paths",
+ "base": {
+  "schema": "airk-standalone-installer-local/1",
+  "provenance": "local",
+  "version": "1.9.0",
+  "target": "x86_64-pc-windows-msvc",
+  "commit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+  "cargo_lock_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+  "runtime_install_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "runtime_source": {"sha256": "5555555555555555555555555555555555555555555555555555555555555555", "files": 1834},
+  "runtime_signing_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "artifact": "airk-1.9.0-x86_64-pc-windows-msvc-installer.exe",
+  "artifact_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "installer_kind": "windows_inno",
+  "signing": {
+   "platform": "Windows", "identity": "0123456789ABCDEF0123456789ABCDEF01234567", "team_id": null,
+   "azure": {"endpoint": "https://wus2.codesigning.azure.net", "account": "ioka-llc-signing", "profile": "WritingForgePro", "publisher": "CN=Ioka LLC, O=Ioka LLC, L=Mapleton, S=Utah, C=US", "identity_eku": "1.3.6.1.4.1.311.97.88309284.513035131.587831003.613935669"},
+   "binary_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+   "verification": {"trust": "authenticode_valid", "timestamp_present": true, "signer_thumbprint": "0123456789ABCDEF0123456789ABCDEF01234567"},
+   "local_signing": {"mode": "artifact-signing-dlib", "client": {"package": "Microsoft.ArtifactSigning.Client", "version": "1.0.146", "dlib_sha256": "123fa0c50341777d8e5b1414df52f39a1f2c7ab4a9f716abf6310069a6cb8a19"}, "signtool_sha256": "7777777777777777777777777777777777777777777777777777777777777777", "metadata_sha256": "8888888888888888888888888888888888888888888888888888888888888888", "credential": "AzureCliCredential"}
+  },
+  "uninstaller": {
+   "unsigned_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+   "platform": "Windows", "identity": "0123456789ABCDEF0123456789ABCDEF01234567", "team_id": null,
+   "azure": {"endpoint": "https://wus2.codesigning.azure.net", "account": "ioka-llc-signing", "profile": "WritingForgePro", "publisher": "CN=Ioka LLC, O=Ioka LLC, L=Mapleton, S=Utah, C=US", "identity_eku": "1.3.6.1.4.1.311.97.88309284.513035131.587831003.613935669"},
+   "binary_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+   "verification": {"trust": "authenticode_valid", "timestamp_present": true, "signer_thumbprint": "0123456789ABCDEF0123456789ABCDEF01234567"},
+   "local_signing": {"mode": "artifact-signing-dlib", "client": {"package": "Microsoft.ArtifactSigning.Client", "version": "1.0.146", "dlib_sha256": "123fa0c50341777d8e5b1414df52f39a1f2c7ab4a9f716abf6310069a6cb8a19"}, "signtool_sha256": "7777777777777777777777777777777777777777777777777777777777777777", "metadata_sha256": "9999999999999999999999999999999999999999999999999999999999999999", "credential": "AzureCliCredential"}
+  },
+  "compiler": {"version": "6.7.1", "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"},
+  "installer_source_sha256": "0101010101010101010101010101010101010101010101010101010101010101",
+  "payload": {
+   "runtime/airk.exe": "2222222222222222222222222222222222222222222222222222222222222222",
+   "runtime/airkctl.exe": "4444444444444444444444444444444444444444444444444444444444444444",
+   "runtime/airk-install.json": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "notices/inno-setup/LICENSE.txt": "0202020202020202020202020202020202020202020202020202020202020202"
+  }
+ },
+ "cases": [
+  {"name": "valid local Windows installer", "expect": "ok"},
+  {"name": "valid with the reviewed compiler lock identity (A.5.1)", "set": [[["compiler"], {"version": "6.7.1", "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", "files_sha256": "0303030303030303030303030303030303030303030303030303030303030303", "lock_sha256": "0404040404040404040404040404040404040404040404040404040404040404"}]], "expect": "ok"},
+  {"name": "hosted installer schema", "set": [[["schema"], "airk-standalone-installer/1"]], "expect": "schema_mismatch"},
+  {"name": "hosted provenance value", "set": [[["provenance"], "github-hosted"]], "expect": "hosted_provenance"},
+  {"name": "workflow run attempt", "set": [[["run_attempt"], "1"]], "expect": "hosted_provenance"},
+  {"name": "output folder path", "set": [[["output"], "C:\\Users\\fixture\\airk\\artifacts\\standalone\\x86_64-pc-windows-msvc"]], "expect": "path_absolute"},
+  {"name": "compiler path", "set": [[["compiler", "path"], "C:/Program Files (x86)/Inno Setup 6/ISCC.exe"]], "expect": "path_absolute"},
+  {"name": "unknown compiler key", "set": [[["compiler", "product_version"], "0.0.0.0"]], "expect": "unknown_field"},
+  {"name": "missing uninstaller", "delete": [["uninstaller"]], "expect": "missing_field"},
+  {"name": "uninstaller without local signing evidence", "delete": [["uninstaller", "local_signing"]], "expect": "missing_field"},
+  {"name": "uppercase artifact digest", "set": [[["artifact_sha256"], "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"], [["signing", "binary_sha256"], "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"]], "expect": "digest_invalid"},
+  {"name": "uppercase payload digest", "set": [[["payload", "runtime/airkctl.exe"], "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"]], "expect": "digest_invalid"},
+  {"name": "outer signature of another file", "set": [[["signing", "binary_sha256"], "0505050505050505050505050505050505050505050505050505050505050505"]], "expect": "inventory_mismatch"},
+  {"name": "uninstaller never acquired a signature", "set": [[["uninstaller", "binary_sha256"], "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"]], "expect": "value_invalid"},
+  {"name": "other installer artifact name", "set": [[["artifact"], "airk-1.9.0-x86_64-pc-windows-msvc-installer.msi"]], "expect": "value_invalid"},
+  {"name": "macOS installer is not defined locally", "set": [[["target"], "aarch64-apple-darwin"]], "expect": "value_invalid"},
+  {"name": "other installer kind", "set": [[["installer_kind"], "macos_dmg"]], "expect": "value_invalid"},
+  {"name": "macOS signature on the Windows installer", "set": [[["signing", "platform"], "Darwin"]], "expect": "value_invalid"}
+ ]
+}
