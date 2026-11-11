@@ -26,9 +26,10 @@ extension, scripts and users (split plan §4.2; draft in
 
 - Contract values change only with a reviewed fixture change. Expectations in
   the fixtures are written independently of this code.
-- Scope selection, Assistance acknowledgement and handoff frames join the
-  session protocol with the C3 window-plane contract; this module does not
-  anticipate them.
+- Window-plane frames (`scope_select`, `scope_release`, `assistance_ack`,
+  `handoff_publish`) follow `fixtures/split/i1/window_plane.json`; a service
+  refusal of one is `refused {code, retryable}`, distinct from session-level
+  `failed`. The window lease never appears in a session frame.
 - `airkctl` depends only on `airk-core`, `airk-process` and `airk-ipc` (U27).
 
 ## Fixtures

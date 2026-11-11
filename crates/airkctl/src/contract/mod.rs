@@ -307,6 +307,34 @@ pub enum SessionMethod {
         cursor: Option<SessionCursor>,
     },
     Unsubscribe {},
+    /// Select existing indexes as this window's search scope (U77, W4). The
+    /// service issues an in-memory read grant bound to the window lease; it
+    /// never creates or changes indexes, index sets or agent grants.
+    ScopeSelect {
+        selection: WindowSelection,
+    },
+    /// Release this window's scope grant (W4b); idempotent.
+    ScopeRelease {},
+    /// Acknowledge Assistance drafts through `through` (W7); idempotent.
+    AssistanceAck {
+        through: u64,
+    },
+    /// Publish an Explorer handoff for this window (W8).
+    HandoffPublish {
+        handoff: serde_json::Value,
+        ttl_ms: u64,
+    },
+}
+
+/// Existing indexes and projects selected as one window's scope.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WindowSelection {
+    #[schemars(schema_with = "schema::incarnation")]
+    pub namespace: Incarnation,
+    pub expected_catalog_revision: u64,
+    pub index_ids: Vec<String>,
+    pub project_ids: Vec<String>,
 }
 
 /// One reply frame. Events travel in [`SessionEventFrame`] (disjoint keys).
@@ -352,6 +380,24 @@ pub enum SessionOutcome {
         cursor: SessionCursor,
     },
     Unsubscribed,
+    Scope {
+        scope_identity: String,
+        catalog_revision: u64,
+        expires_at_ms: u64,
+    },
+    ScopeReleased,
+    Acknowledged,
+    Handoff {
+        handoff_id: String,
+        expires_at_ms: u64,
+    },
+    /// A typed service refusal for a window-plane frame (for example
+    /// `window_scope_not_granted`, `scoped_read_unavailable`,
+    /// `assistance_ack_ahead`, `handoff_oversize`); the service changed nothing.
+    Refused {
+        code: String,
+        retryable: bool,
+    },
     /// Session-level refusal; the command did not run or its outcome is unknown.
     Failed {
         code: SessionFailure,

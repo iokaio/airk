@@ -427,8 +427,11 @@ shape `{id, outcome}`; events are `{event: {...}}` (disjoint keys).
 | `control { method }` | `control { response }` | Metadata relay; no `runtime_dir` (pointer); `Connect`/`ConnectScoped` refused `console_brokerage_forbidden` [V `console_client.rs:41`] |
 | `cancel { target }` | `cancelled` | v1 semantics [V `session.rs:13-22`] |
 | `subscribe { topics: [status, jobs, assistance], cursor? }` / `unsubscribe` | `subscribed { cursor }` | Cursor `{service_instance, window_id, native: EventCursor}`; another instance/window → `event_cursor_scope_mismatch` |
-| `scope_select { selection }` / `scope_release` | `scope { scope_identity, catalog_revision }` | W4 (U77) |
+| `scope_select { selection: {namespace, expected_catalog_revision, index_ids, project_ids} }` | `scope { scope_identity, catalog_revision, expires_at_ms }` | W4 (U77); no catalog grant id |
+| `scope_release {}` | `scope_released` | W4b; idempotent |
 | `assistance_ack { through }` | `acknowledged` | W7 |
+| `handoff_publish { handoff, ttl_ms }` | `handoff { handoff_id, expires_at_ms }` | W8 |
+| Any window-plane frame refused by the service | `refused { code, retryable }` | For example `window_scope_not_granted`, `scoped_read_unavailable`, `assistance_ack_ahead`, `handoff_oversize`; nothing changed |
 
 Event kinds: `status`, `job`, `assistance_draft`, `resync{reason: overflow | native_gap | service_restarted}`, `closing`. Overflow drops the buffer
 and emits one `resync`, never a gap disguised as history. A service restart

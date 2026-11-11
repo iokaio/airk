@@ -127,22 +127,26 @@ fn keys(value: &Value, found: &mut Vec<String>) {
 
 #[test]
 fn no_session_frame_carries_a_token_lease_or_launch_code() {
+    // Valid frames only: invalid cases may name a forbidden field to prove
+    // that it is refused.
+    let fixture = json(FRAMES);
     let mut found = Vec::new();
-    keys(&json(FRAMES), &mut found);
+    for section in ["requests", "responses", "events"] {
+        keys(&fixture[section], &mut found);
+    }
     for key in found {
-        for forbidden in [
-            "token",
-            "bearer",
-            "credential",
-            "lease",
-            "launch_code",
-            "grant",
-        ] {
+        // Whole words of the key, so `scope_release` is not read as `lease`.
+        let words: Vec<&str> = key.split('_').collect();
+        for forbidden in ["token", "bearer", "credential", "lease", "grant"] {
             assert!(
-                !key.contains(forbidden),
+                !words.contains(&forbidden),
                 "session frame key {key} is forbidden"
             );
         }
+        assert!(
+            !key.contains("launch_code"),
+            "session frame key {key} is forbidden"
+        );
     }
 }
 

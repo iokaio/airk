@@ -514,6 +514,92 @@
             "unsubscribe"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Select existing indexes as this window's search scope (U77, W4). The\nservice issues an in-memory read grant bound to the window lease; it\nnever creates or changes indexes, index sets or agent grants.",
+          "properties": {
+            "scope_select": {
+              "additionalProperties": false,
+              "properties": {
+                "selection": {
+                  "$ref": "#/$defs/WindowSelection"
+                }
+              },
+              "required": [
+                "selection"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "scope_select"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Release this window's scope grant (W4b); idempotent.",
+          "properties": {
+            "scope_release": {
+              "additionalProperties": false,
+              "type": "object"
+            }
+          },
+          "required": [
+            "scope_release"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Acknowledge Assistance drafts through `through` (W7); idempotent.",
+          "properties": {
+            "assistance_ack": {
+              "additionalProperties": false,
+              "properties": {
+                "through": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "through"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "assistance_ack"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Publish an Explorer handoff for this window (W8).",
+          "properties": {
+            "handoff_publish": {
+              "additionalProperties": false,
+              "properties": {
+                "handoff": true,
+                "ttl_ms": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "handoff",
+                "ttl_ms"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "handoff_publish"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -673,6 +759,106 @@
         },
         {
           "additionalProperties": false,
+          "properties": {
+            "catalog_revision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "expires_at_ms": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "scope_identity": {
+              "type": "string"
+            },
+            "status": {
+              "const": "scope",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "scope_identity",
+            "catalog_revision",
+            "expires_at_ms"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "status": {
+              "const": "scope_released",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "status": {
+              "const": "acknowledged",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "expires_at_ms": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "handoff_id": {
+              "type": "string"
+            },
+            "status": {
+              "const": "handoff",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "handoff_id",
+            "expires_at_ms"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A typed service refusal for a window-plane frame (for example\n`window_scope_not_granted`, `scoped_read_unavailable`,\n`assistance_ack_ahead`, `handoff_oversize`); the service changed nothing.",
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "retryable": {
+              "type": "boolean"
+            },
+            "status": {
+              "const": "refused",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "code",
+            "retryable"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
           "description": "Session-level refusal; the command did not run or its outcome is unknown.",
           "properties": {
             "code": {
@@ -808,6 +994,40 @@
         "i1_protocol",
         "capabilities",
         "installation"
+      ],
+      "type": "object"
+    },
+    "WindowSelection": {
+      "additionalProperties": false,
+      "description": "Existing indexes and projects selected as one window's scope.",
+      "properties": {
+        "expected_catalog_revision": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "index_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "namespace": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        },
+        "project_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "namespace",
+        "expected_catalog_revision",
+        "index_ids",
+        "project_ids"
       ],
       "type": "object"
     }

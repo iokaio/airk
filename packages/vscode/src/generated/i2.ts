@@ -121,6 +121,22 @@ export type SessionMethod = {
 } | {
     unsubscribe: {
     };
+} | {
+    scope_select: {
+        selection: WindowSelection;
+    };
+} | {
+    scope_release: {
+    };
+} | {
+    assistance_ack: {
+        through: number;
+    };
+} | {
+    handoff_publish: {
+        handoff: unknown;
+        ttl_ms: number;
+    };
 };
 
 export type SessionOutcome = {
@@ -150,6 +166,23 @@ export type SessionOutcome = {
     status: "subscribed";
 } | {
     status: "unsubscribed";
+} | {
+    catalog_revision: number;
+    expires_at_ms: number;
+    scope_identity: string;
+    status: "scope";
+} | {
+    status: "scope_released";
+} | {
+    status: "acknowledged";
+} | {
+    expires_at_ms: number;
+    handoff_id: string;
+    status: "handoff";
+} | {
+    code: string;
+    retryable: boolean;
+    status: "refused";
 } | {
     code: SessionFailure;
     retryable: boolean;
@@ -198,4 +231,14 @@ export type VersionDocument = {
     product: string;
     schema: string;
     version: string;
+};
+
+/**
+ * Existing indexes and projects selected as one window's scope.
+ */
+export type WindowSelection = {
+    expected_catalog_revision: number;
+    index_ids: Array<string>;
+    namespace: string;
+    project_ids: Array<string>;
 };
