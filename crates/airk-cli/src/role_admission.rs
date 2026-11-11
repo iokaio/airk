@@ -142,27 +142,11 @@ pub async fn run(request: RoleRequest) -> Result<()> {
     match request {
         RoleRequest::ServiceDetached { runtime_dir, nonce } => {
             let mode = consume_start_request(&runtime_dir, nonce, now_unix_ms()?)?;
-            if mode == StartMode::Explicit {
-                clear_saved_stop(&runtime_dir)?;
-            }
-            crate::service_runtime::serve(&runtime_dir).await
+            // The saved Stop and any pending lifecycle record are settled once
+            // the service holds its single-instance lease (step 3b.1e-2).
+            crate::service_runtime::serve_admitted(&runtime_dir, mode).await
         }
     }
-}
-
-/// An explicit start clears a saved explicit Stop, as a user's Start does today.
-fn clear_saved_stop(runtime_dir: &Path) -> Result<()> {
-    if !runtime_dir.join("service-1.4.sqlite3").try_exists()? {
-        return Ok(());
-    }
-    let saved = airk_store::service::registry::ServiceRegistry::open_saved(runtime_dir)?;
-    let namespace = saved.incarnation()?;
-    drop(saved);
-    airk_store::service::registry::ServiceRegistry::with_existing_lifecycle(
-        runtime_dir,
-        namespace,
-        |ledger| ledger.clear_service_stop(),
-    )
 }
 
 #[cfg(test)]

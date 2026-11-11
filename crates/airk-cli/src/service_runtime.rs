@@ -17,6 +17,7 @@ use tokio::{
 };
 pub(crate) mod checkpoint;
 mod http;
+mod lifecycle;
 mod tools_call;
 
 fn connection_failure_code<'a>(error: &anyhow::Error, fallback: &'a str) -> &'a str {
@@ -96,6 +97,8 @@ struct State {
     legacy_connections: bool,
     native_administrative: crate::native_admin_connections::NativeAdministrativePool,
     native_caller: airk_core::identity::Incarnation,
+    /// The M19 record this instance accepted; advanced after the drain.
+    lifecycle: Mutex<Option<airk_core::service_lifecycle::LifecycleRecord>>,
 }
 
 /// The real outer NativeRead seam. A fixture may supply the producer for race
@@ -162,7 +165,7 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
     {
         *activity = Instant::now();
     }
-    let shutdown = request.protocol == PROTOCOL_VERSION
+    let mut shutdown = request.protocol == PROTOCOL_VERSION
         && instance_matches
         && matches!(request.method, ControlMethod::Shutdown);
     let response_budget = request.method.response_frame_budget();
@@ -468,9 +471,39 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 detail,
                 combined: Some(request),
             } => tools_call::combined_catalog(&state.control_root, &detail, &request).await,
-            // M19 lands its handler in step 3b.1e-2; until then the typed refusal.
-            ControlMethod::Lifecycle { .. } => ControlResponse::Failure {
-                code: "not_yet_served".into(),
+            ControlMethod::Lifecycle {
+                action,
+                caller,
+                key,
+            } => match lifecycle::accept(
+                &state.control_root,
+                state.instance,
+                &state.executable_sha256,
+                action,
+                caller,
+                key,
+            ) {
+                Ok(record) => {
+                    // A replay for an earlier instance answers its record only.
+                    if record.phase == airk_core::service_lifecycle::LifecyclePhase::Draining
+                        && record.request.expected_instance == state.instance
+                    {
+                        *state
+                            .lifecycle
+                            .lock()
+                            .map_err(|_| anyhow::anyhow!("lifecycle state unavailable"))? =
+                            Some(record.clone());
+                        shutdown = true;
+                    }
+                    ControlResponse::LifecycleAccepted {
+                        record,
+                        service_instance: state.instance,
+                        process_id: std::process::id(),
+                    }
+                }
+                Err(error) => ControlResponse::Failure {
+                    code: lifecycle::failure_code(&error),
+                },
             },
             ControlMethod::ToolsCall {
                 tool,
@@ -528,6 +561,13 @@ pub async fn serve(root: &Path) -> Result<()> {
     serve_with_idle(root, None).await
 }
 
+/// Serve as an admitted private role (split step 3b.1e-2): once this instance
+/// holds the single-instance lease, a predecessor's pending lifecycle record
+/// is completed and an explicit start clears the saved Stop.
+pub async fn serve_admitted(root: &Path, mode: airk_core::install_record::StartMode) -> Result<()> {
+    serve_with_admission(root, None, Some(mode)).await
+}
+
 /// Exactly one service owns a control root. While a live service holds the
 /// single-instance lease, a second `serve`, `managed-serve`, `foreground` or
 /// `host` start is refused with the typed `service_already_running` code; the
@@ -551,12 +591,23 @@ fn acquire_single_instance(root: &Path) -> Result<airk_store::service::ServiceLe
 }
 
 pub async fn serve_with_idle(root: &Path, idle_grace: Option<Duration>) -> Result<()> {
+    serve_with_admission(root, idle_grace, None).await
+}
+
+async fn serve_with_admission(
+    root: &Path,
+    idle_grace: Option<Duration>,
+    admission: Option<airk_core::install_record::StartMode>,
+) -> Result<()> {
     crate::install_layout::validate_control_root(root)?;
     crate::runtime_install::require_baseline_service(root)?;
     local_ipc::prepare_root(root)?;
     let _ownership = Arc::new(acquire_single_instance(root)?);
     crate::http_endpoint::rotation::require_start_allowed(root)?;
     crate::install_layout::record_control_root(&_ownership)?;
+    if let Some(mode) = admission {
+        lifecycle::admit_start(root, mode)?;
+    }
     if root.join("service-1.4.sqlite3").try_exists()? {
         match airk_store::service::registry::ServiceRegistry::open(root, new_instance_id()?) {
             Ok(registry) => ensure!(
@@ -688,6 +739,7 @@ pub async fn serve_with_idle(root: &Path, idle_grace: Option<Duration>) -> Resul
         legacy_connections,
         native_administrative: Default::default(),
         native_caller: local_ipc::caller_identity()?,
+        lifecycle: Mutex::new(None),
     });
     let mut http_task = if let Some((owner, task)) = http::Owner::start(&state, _ownership.clone())?
     {
@@ -769,7 +821,16 @@ pub async fn serve_with_idle(root: &Path, idle_grace: Option<Duration>) -> Resul
     })
     .await;
     connections.shutdown().await;
+    let accepted = state
+        .lifecycle
+        .lock()
+        .map_err(|_| anyhow::anyhow!("lifecycle state unavailable"))?
+        .take();
     drop(state);
+    // Supervisors and workers have drained: the accepted record advances.
+    if let Some(record) = accepted {
+        lifecycle::finish_drain(root, &record)?;
+    }
     log.record(airk_core::service_logs::LogKind::ServiceStopped, None, None);
     drop(log_guard);
     Ok(())

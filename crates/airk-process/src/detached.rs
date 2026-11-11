@@ -188,3 +188,101 @@ pub fn new_session(command: &mut std::process::Command) {
         });
     }
 }
+
+/// Wait up to `timeout` for the process `pid` to exit; `true` once it has.
+/// The process need not be a child (split step 3b.1e: `airkctl` observes the
+/// service it asked to stop). On Unix a child of this process is reaped.
+pub fn wait_for_exit(pid: u32, timeout: std::time::Duration) -> io::Result<bool> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject,
+        };
+        const ERROR_INVALID_PARAMETER: i32 = 87;
+        const WAIT_OBJECT_0: u32 = 0;
+        const WAIT_TIMEOUT: u32 = 258;
+        // SAFETY: scalar rights and process id; a null result reports failure.
+        let raw = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
+        if raw.is_null() {
+            let error = io::Error::last_os_error();
+            // No process has this id any more.
+            return if error.raw_os_error() == Some(ERROR_INVALID_PARAMETER) {
+                Ok(true)
+            } else {
+                Err(error)
+            };
+        }
+        // SAFETY: a successful OpenProcess returns one owned handle.
+        let handle = unsafe { OwnedHandle::from_raw_handle(raw) };
+        let millis = u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX - 1);
+        // SAFETY: the handle is live for the call.
+        match unsafe { WaitForSingleObject(handle.as_raw_handle(), millis) } {
+            WAIT_OBJECT_0 => Ok(true),
+            WAIT_TIMEOUT => Ok(false),
+            _ => Err(io::Error::last_os_error()),
+        }
+    }
+    #[cfg(unix)]
+    {
+        let pid = libc::pid_t::try_from(pid)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "process id out of range"))?;
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            let mut status = 0;
+            // SAFETY: a writable status and a scalar id; ECHILD means not our child.
+            if unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) } == pid {
+                return Ok(true);
+            }
+            // SAFETY: signal 0 checks existence without delivering a signal.
+            if unsafe { libc::kill(pid, 0) } != 0
+                && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+            {
+                return Ok(true);
+            }
+            if std::time::Instant::now() >= deadline {
+                return Ok(false);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
+}
+
+#[cfg(test)]
+mod wait_tests {
+    use super::*;
+
+    /// A long-running process with no shell wrapper and no inherited output,
+    /// so killing it leaves nothing behind.
+    fn long_child() -> std::process::Child {
+        #[cfg(windows)]
+        let mut command = {
+            let mut command = std::process::Command::new("ping");
+            command.args(["-n", "30", "127.0.0.1"]);
+            command
+        };
+        #[cfg(unix)]
+        let mut command = {
+            let mut command = std::process::Command::new("sleep");
+            command.arg("30");
+            command
+        };
+        command
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap()
+    }
+
+    #[test]
+    fn a_running_process_is_not_reported_exited_and_an_exited_one_is() {
+        let mut child = long_child();
+        let pid = child.id();
+        assert!(!wait_for_exit(pid, std::time::Duration::from_millis(100)).unwrap());
+        child.kill().unwrap();
+        #[cfg(windows)]
+        child.wait().unwrap();
+        assert!(wait_for_exit(pid, std::time::Duration::from_secs(10)).unwrap());
+    }
+}

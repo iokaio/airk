@@ -4557,3 +4557,62 @@ fn airkctl_service_start_runs_the_private_role_until_healthy() -> Result<()> {
     }
     Ok(())
 }
+
+/// M19 stop and restart through `airkctl`'s lifecycle and start logic on a
+/// live service, with the ledger observed directly (split U85, 3b.1e).
+#[test]
+fn airkctl_lifecycle_stops_restarts_and_settles_the_ledger() -> Result<()> {
+    use airk_core::service::ControlResponse;
+    use airk_core::service_lifecycle::{LifecycleAction, LifecyclePhase};
+    use airk_store::service::registry::ServiceRegistry;
+    let owner = tempfile::tempdir()?;
+    let root = owner.path().join("runtime");
+    let dir = root.to_str().context("runtime path")?.to_owned();
+    let airk = Path::new(env!("CARGO_BIN_EXE_airk"));
+    let version = env!("CARGO_PKG_VERSION");
+    let _guard = ShutdownOnDrop(dir.clone());
+    let started = |root: &Path| -> Result<airk_core::identity::Incarnation> {
+        let started = airkctl::start::start(airk, root, version)
+            .map_err(|line| anyhow::anyhow!("{}: {}", line.code, line.message))?;
+        let ControlResponse::Health { observation } = &started.health else {
+            anyhow::bail!("start did not return Health");
+        };
+        Ok(observation.instance)
+    };
+    let stopped = |root: &Path, action| {
+        airkctl::lifecycle::stop(root, version, action)
+            .map_err(|line| anyhow::anyhow!("{}: {}", line.code, line.message))
+    };
+    let first = started(&root)?;
+    let stop = stopped(&root, LifecycleAction::Stop)?;
+    ensure!(stop.instance == first && stop.record.request.expected_instance == first);
+    ensure!(stop.record.phase == LifecyclePhase::Draining);
+    let saved = ServiceRegistry::open_saved(&root)?;
+    ensure!(
+        saved.pending_lifecycle()?.is_none(),
+        "the drained stop completed"
+    );
+    ensure!(saved.service_explicitly_stopped()?, "the saved Stop is set");
+    drop(saved);
+    let second = started(&root)?;
+    ensure!(second != first, "a new instance");
+    ensure!(
+        !ServiceRegistry::open_saved(&root)?.service_explicitly_stopped()?,
+        "an explicit start clears the saved Stop"
+    );
+    let restart = stopped(&root, LifecycleAction::Restart)?;
+    ensure!(restart.instance == second);
+    let pending = ServiceRegistry::open_saved(&root)?
+        .pending_lifecycle()?
+        .context("a drained restart awaits its start")?;
+    ensure!(pending.phase == LifecyclePhase::Starting && pending.id == restart.record.id);
+    let third = started(&root)?;
+    ensure!(third != second, "the restart started a new instance");
+    let saved = ServiceRegistry::open_saved(&root)?;
+    ensure!(
+        saved.pending_lifecycle()?.is_none(),
+        "the admitted start completed it"
+    );
+    ensure!(!saved.service_explicitly_stopped()?);
+    Ok(())
+}

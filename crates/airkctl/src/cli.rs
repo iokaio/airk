@@ -120,6 +120,18 @@ enum ServiceCommand {
         #[arg(long)]
         runtime_dir: Option<PathBuf>,
     },
+    /// Stop the service and wait until its process exits; a saved Stop keeps automatic starts off.
+    Stop {
+        /// The service's control directory (default: --service-runtime-dir, else the installation's).
+        #[arg(long)]
+        runtime_dir: Option<PathBuf>,
+    },
+    /// Stop the service, wait until its process exits, then start the installed service again.
+    Restart {
+        /// The service's control directory (default: --service-runtime-dir, else the installation's).
+        #[arg(long)]
+        runtime_dir: Option<PathBuf>,
+    },
     /// Check that the service for --runtime-dir is running and healthy; exits non-zero otherwise.
     Health {
         /// The service's control directory (default: --service-runtime-dir).
@@ -564,11 +576,12 @@ fn print_compact(cx: &mut Context, response: &ControlResponse) -> u8 {
 /// 3b.1c), then for shutdown a `Shutdown` fenced to the observed instance.
 /// `service start`: a verified installation with an exact pair, then the
 /// record's `airk` started detached (step 3b.1d), printing the `Health` line.
-fn start_service(cx: &mut Context, selection: Selection, runtime_dir: Option<PathBuf>) -> u8 {
+/// The verified installation with an exact pair, or the exit code that refuses it.
+fn installed(cx: &mut Context) -> Result<Box<crate::install::Verified>, u8> {
     let verified = match crate::install::discover() {
         crate::install::Discovery::Verified(verified) => verified,
         crate::install::Discovery::NotFound => {
-            return fail(
+            return Err(fail(
                 cx,
                 &ErrorLine::new(
                     ExitClass::ServiceMissing,
@@ -576,17 +589,17 @@ fn start_service(cx: &mut Context, selection: Selection, runtime_dir: Option<Pat
                     false,
                     "No AIRK installation was found for this user.",
                 ),
-            );
+            ));
         }
         crate::install::Discovery::Unverified { code, message } => {
-            return fail(
+            return Err(fail(
                 cx,
                 &ErrorLine::new(ExitClass::InstallationUnverified, &code, false, &message),
-            );
+            ));
         }
     };
     if !pair_exact(&verified.record) {
-        return fail(
+        return Err(fail(
             cx,
             &ErrorLine::new(
                 ExitClass::IncompatiblePair,
@@ -594,8 +607,16 @@ fn start_service(cx: &mut Context, selection: Selection, runtime_dir: Option<Pat
                 false,
                 "This airkctl is not the installation's airkctl; use the installed one.",
             ),
-        );
+        ));
     }
+    Ok(verified)
+}
+
+fn start_service(cx: &mut Context, selection: Selection, runtime_dir: Option<PathBuf>) -> u8 {
+    let verified = match installed(cx) {
+        Ok(verified) => verified,
+        Err(code) => return code,
+    };
     let control = runtime_dir
         .or(selection.control)
         .unwrap_or_else(|| PathBuf::from(&verified.record.locations.state));
@@ -605,10 +626,76 @@ fn start_service(cx: &mut Context, selection: Selection, runtime_dir: Option<Pat
     }
 }
 
+/// `service stop` and `service restart` (U85; step 3b.1e-3). Stop prints the
+/// accepted lifecycle record once the process exited; restart then starts the
+/// installed service and prints its new `Health`.
+fn lifecycle_service(
+    cx: &mut Context,
+    selection: Selection,
+    runtime_dir: Option<PathBuf>,
+    action: airk_core::service_lifecycle::LifecycleAction,
+) -> u8 {
+    use airk_core::service_lifecycle::LifecycleAction;
+    let explicit = runtime_dir.or(selection.control);
+    let verified = if action == LifecycleAction::Restart || explicit.is_none() {
+        match installed(cx) {
+            Ok(verified) => Some(verified),
+            Err(code) => return code,
+        }
+    } else {
+        None
+    };
+    let control = match (explicit, &verified) {
+        (Some(control), _) => control,
+        (None, Some(verified)) => PathBuf::from(&verified.record.locations.state),
+        (None, None) => unreachable!("an installation was required above"),
+    };
+    let stopped = match crate::lifecycle::stop(&control, VERSION, action) {
+        Ok(stopped) => stopped,
+        Err(line) => return fail(cx, &line),
+    };
+    let Some(verified) = verified.filter(|_| action == LifecycleAction::Restart) else {
+        return print_compact(cx, &stopped.accepted);
+    };
+    match crate::start::start(&verified.airk, &control, VERSION) {
+        Ok(started) => match &started.health {
+            ControlResponse::Health { observation } if observation.instance != stopped.instance => {
+                print_compact(cx, &started.health)
+            }
+            _ => fail(
+                cx,
+                &ErrorLine::new(
+                    ExitClass::OutcomeUnknown,
+                    "lifecycle_predecessor_is_still_active",
+                    false,
+                    "The restarted service reports the stopped instance.",
+                ),
+            ),
+        },
+        Err(line) => fail(cx, &line),
+    }
+}
+
 fn service(cx: &mut Context, mut selection: Selection, action: ServiceCommand) -> u8 {
     let (runtime_dir, shutdown) = match action {
         ServiceCommand::Start { runtime_dir } => {
             return start_service(cx, selection, runtime_dir);
+        }
+        ServiceCommand::Stop { runtime_dir } => {
+            return lifecycle_service(
+                cx,
+                selection,
+                runtime_dir,
+                airk_core::service_lifecycle::LifecycleAction::Stop,
+            );
+        }
+        ServiceCommand::Restart { runtime_dir } => {
+            return lifecycle_service(
+                cx,
+                selection,
+                runtime_dir,
+                airk_core::service_lifecycle::LifecycleAction::Restart,
+            );
         }
         ServiceCommand::Health { runtime_dir } => (runtime_dir, false),
         ServiceCommand::Shutdown { runtime_dir } => (runtime_dir, true),
