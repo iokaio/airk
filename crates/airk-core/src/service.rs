@@ -473,6 +473,26 @@ pub enum ControlMethod {
         operation: String,
         input: String,
     },
+    /// M1 (split step 3c.1): the registered project a binding, or a root, data
+    /// root and collection, name; read-only, as the CLI's `saved` lookup was.
+    ResolveProject {
+        target: ResolveTarget,
+    },
+}
+
+/// What M1 resolves. Paths are absolute: the service's working folder is not
+/// the caller's.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum ResolveTarget {
+    Binding {
+        project: ProjectBinding,
+    },
+    Registration {
+        root: String,
+        data_root: String,
+        collection: String,
+    },
 }
 
 /// The project an M3 call reads, as the pre-split CLI selected it.
@@ -976,6 +996,10 @@ pub enum ControlResponse {
         record: crate::service_lifecycle::LifecycleRecord,
         service_instance: Incarnation,
         process_id: u32,
+    },
+    /// M1: the registered project.
+    Resolved {
+        registration: ProjectRegistration,
     },
     /// M14: the client error was appended. An empty record, not a unit
     /// variant, so unknown fields are refused.

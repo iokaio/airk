@@ -327,6 +327,54 @@
           "bytes": "{\"status\":\"client_error_recorded\",\"duplicate\":false}"
         }
       ]
+    },
+    {
+      "variant": "resolve_project",
+      "method": "M1",
+      "methods": [
+        {
+          "name": "by_binding",
+          "bytes": "{\"resolve_project\":{\"target\":{\"binding\":{\"project\":\"abababababababababababababababababababababababababababababababab\"}}}}",
+          "request_frame_budget": 65536,
+          "response_frame_budget": 65536
+        },
+        {
+          "name": "by_registration",
+          "bytes": "{\"resolve_project\":{\"target\":{\"registration\":{\"root\":\"C:\\\\work\\\\repo\",\"data_root\":\"C:\\\\Users\\\\fixture\\\\AppData\\\\Local\\\\AIRK\\\\data\",\"collection\":\"default\"}}}}",
+          "request_frame_budget": 65536,
+          "response_frame_budget": 65536
+        }
+      ],
+      "rejected_methods": [
+        {
+          "name": "root_scope_not_yet",
+          "bytes": "{\"resolve_project\":{\"target\":{\"root_scope\":{\"root\":\"/r\"}}}}"
+        },
+        {
+          "name": "registration_without_data_root",
+          "bytes": "{\"resolve_project\":{\"target\":{\"registration\":{\"root\":\"/r\",\"collection\":\"default\"}}}}"
+        },
+        {
+          "name": "extra_field",
+          "bytes": "{\"resolve_project\":{\"target\":{\"binding\":{\"project\":\"abababababababababababababababababababababababababababababababab\"}},\"start\":true}}"
+        }
+      ],
+      "responses": [
+        {
+          "name": "registered",
+          "bytes": "{\"status\":\"resolved\",\"registration\":{\"binding\":\"abababababababababababababababababababababababababababababababab\",\"root\":\"/home/fixture/repo\",\"data_root\":\"/home/fixture/.local/share/airk/data/default\",\"collection\":\"default\"}}"
+        }
+      ],
+      "rejected_responses": [
+        {
+          "name": "missing_registration",
+          "bytes": "{\"status\":\"resolved\"}"
+        },
+        {
+          "name": "registration_extra_field",
+          "bytes": "{\"status\":\"resolved\",\"registration\":{\"binding\":\"abababababababababababababababababababababababababababababababab\",\"root\":\"/home/fixture/repo\",\"data_root\":\"/home/fixture/.local/share/airk/data/default\",\"collection\":\"default\",\"watch\":true}}"
+        }
+      ]
     }
   ]
 }

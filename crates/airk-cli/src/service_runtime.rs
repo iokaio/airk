@@ -471,6 +471,10 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 detail,
                 combined: Some(request),
             } => tools_call::combined_catalog(&state.control_root, &detail, &request).await,
+            // M1 lands its handler in step 3c.1b; until then the typed refusal.
+            ControlMethod::ResolveProject { .. } => ControlResponse::Failure {
+                code: "not_yet_served".into(),
+            },
             ControlMethod::RecordClientError { operation, input } => {
                 match crate::service_logs::record_client_error(
                     &state.control_root,
