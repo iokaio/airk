@@ -1122,7 +1122,8 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         | ControlMethod::ConfigureResources { .. }
         | ControlMethod::ToolsCatalog { .. }
         | ControlMethod::ToolsCall { .. }
-        | ControlMethod::Lifecycle { .. } => {
+        | ControlMethod::Lifecycle { .. }
+        | ControlMethod::LifecycleStatus => {
             anyhow::bail!("not a registry method")
         }
     })

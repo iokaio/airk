@@ -259,6 +259,40 @@
           "bytes": "{\"status\":\"lifecycle_accepted\",\"record\":{\"id\":\"7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a\",\"request\":{\"caller\":\"3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c\",\"key\":{\"namespace\":\"4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d\",\"epoch\":7,\"nonce\":\"5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e\"},\"action\":\"restart\",\"expected_instance\":\"6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f\",\"runtime\":\"8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b\",\"manager\":false},\"phase\":\"paused\"},\"service_instance\":\"6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f\",\"process_id\":1}"
         }
       ]
+    },
+    {
+      "variant": "lifecycle_status",
+      "method": "U87",
+      "methods": [
+        {
+          "name": "status",
+          "bytes": "\"lifecycle_status\"",
+          "request_frame_budget": 65536,
+          "response_frame_budget": 65536
+        }
+      ],
+      "rejected_methods": [
+        {
+          "name": "with_fields",
+          "bytes": "{\"lifecycle_status\":{}}"
+        }
+      ],
+      "responses": [
+        {
+          "name": "settled",
+          "bytes": "{\"status\":\"lifecycle_status\",\"explicitly_stopped\":false,\"pending\":null}"
+        },
+        {
+          "name": "draining_stop",
+          "bytes": "{\"status\":\"lifecycle_status\",\"explicitly_stopped\":true,\"pending\":{\"id\":\"7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a\",\"request\":{\"caller\":\"3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c\",\"key\":{\"namespace\":\"4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d\",\"epoch\":7,\"nonce\":\"5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e\"},\"action\":\"stop\",\"expected_instance\":\"6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f\",\"runtime\":\"8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b\",\"manager\":false},\"phase\":\"draining\"}}"
+        }
+      ],
+      "rejected_responses": [
+        {
+          "name": "stopped_not_boolean",
+          "bytes": "{\"status\":\"lifecycle_status\",\"explicitly_stopped\":\"yes\",\"pending\":null}"
+        }
+      ]
     }
   ]
 }

@@ -53,7 +53,8 @@ async fn handle(
         // never carries its larger response frame.
         ControlMethod::ToolsCatalog { .. }
         | ControlMethod::ToolsCall { .. }
-        | ControlMethod::Lifecycle { .. } => {
+        | ControlMethod::Lifecycle { .. }
+        | ControlMethod::LifecycleStatus => {
             return failure("console_method_not_reviewed");
         }
         // Exhaustive review: a new service method must be considered here before

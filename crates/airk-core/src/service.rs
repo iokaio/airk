@@ -462,6 +462,9 @@ pub enum ControlMethod {
         caller: Incarnation,
         key: RequestKey,
     },
+    /// U87 (`service status`): the saved explicit Stop and the pending
+    /// lifecycle record, read from the lifecycle ledger.
+    LifecycleStatus,
 }
 
 /// The project an M3 call reads, as the pre-split CLI selected it.
@@ -962,6 +965,11 @@ pub enum ControlResponse {
         record: crate::service_lifecycle::LifecycleRecord,
         service_instance: Incarnation,
         process_id: u32,
+    },
+    /// U87: whether automatic starts are off, and any unfinished lifecycle record.
+    LifecycleStatus {
+        explicitly_stopped: bool,
+        pending: Option<crate::service_lifecycle::LifecycleRecord>,
     },
 }
 

@@ -471,6 +471,10 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 detail,
                 combined: Some(request),
             } => tools_call::combined_catalog(&state.control_root, &detail, &request).await,
+            // U87 lands its handler in step 3b.1f-3; until then the typed refusal.
+            ControlMethod::LifecycleStatus => ControlResponse::Failure {
+                code: "not_yet_served".into(),
+            },
             ControlMethod::Lifecycle {
                 action,
                 caller,
