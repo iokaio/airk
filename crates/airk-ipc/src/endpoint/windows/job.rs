@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Current-user security for native named jobs. Validation never repairs an ACL
 //! or establishes process/session absence; callers retain their native handle.
-#[cfg(any(not(feature = "local-inference"), test))]
 use super::descriptor;
 use super::{Allocation, current_user, sid_string};
 use anyhow::{Result, ensure};
@@ -19,13 +18,11 @@ use windows_sys::Win32::{
     System::SystemServices::ACCESS_ALLOWED_ACE_TYPE,
 };
 
-#[cfg(any(not(feature = "local-inference"), test))]
 use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
 
 /// Keep the existing native descriptor allocation alive during object creation.
 /// The SID is derived from this process's native token, never a frontend claim.
-#[cfg(any(not(feature = "local-inference"), test))]
-pub(crate) fn with_current_user_job_security<T>(
+pub fn with_current_user_job_security<T>(
     action: impl FnOnce(&SECURITY_ATTRIBUTES, &str) -> Result<T>,
 ) -> Result<T> {
     let user = current_user()?;
@@ -41,7 +38,7 @@ pub(crate) fn with_current_user_job_security<T>(
 /// Inspect the actual opened object's owner and protected DACL before the
 /// caller adopts any destructive kill-on-drop responsibility for that job.
 /// This proves user isolation only, not a boot/session or drain observation.
-pub(crate) fn require_job_user(handle: BorrowedHandle<'_>, expected_user: &str) -> Result<()> {
+pub fn require_job_user(handle: BorrowedHandle<'_>, expected_user: &str) -> Result<()> {
     let user = current_user()?;
     ensure!(user == expected_user, "native job user changed");
     let (mut security, mut owner, mut dacl) = (

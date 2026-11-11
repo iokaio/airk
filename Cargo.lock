@@ -57,6 +57,7 @@ version = "1.8.23"
 dependencies = [
  "airk-core",
  "airk-ingest",
+ "airk-ipc",
  "airk-kernel",
  "airk-mcp",
  "airk-process",
@@ -181,6 +182,21 @@ dependencies = [
  "url",
  "windows-sys 0.61.2",
  "zip",
+]
+
+[[package]]
+name = "airk-ipc"
+version = "1.8.23"
+dependencies = [
+ "airk-core",
+ "anyhow",
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

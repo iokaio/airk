@@ -6,6 +6,7 @@
   "first_party": {
     "airk-cli": "crates/airk-cli/Cargo.toml",
     "airk-core": "crates/airk-core/Cargo.toml",
+    "airk-ipc": "crates/airk-ipc/Cargo.toml",
     "airk-ingest": "crates/airk-ingest/Cargo.toml",
     "airk-kernel": "crates/airk-kernel/Cargo.toml",
     "airk-mcp": "crates/airk-mcp/Cargo.toml",

@@ -2,9 +2,8 @@
 //! Explicit user-only pipe/file ACLs and native token checks on both connection ends.
 mod job;
 use anyhow::{Context, Result, ensure};
-pub(crate) use job::require_job_user;
-#[cfg(any(not(feature = "local-inference"), test))]
-pub(crate) use job::with_current_user_job_security;
+pub use job::require_job_user;
+pub use job::with_current_user_job_security;
 use std::{
     ffi::c_void,
     io, mem,
@@ -73,7 +72,7 @@ fn sid_string(sid: *mut c_void) -> Result<String> {
     Ok(value)
 }
 
-pub(crate) fn process_user(pid: u32) -> Result<String> {
+pub fn process_user(pid: u32) -> Result<String> {
     // SAFETY: PID and requested read-only rights are scalar values.
     let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
     if process.is_null() {
@@ -188,7 +187,7 @@ fn create_directory(root: &Path, user: &str, allow_existing: bool) -> Result<()>
     Ok(())
 }
 
-pub(crate) fn create_root(root: &Path) -> Result<()> {
+pub fn create_root(root: &Path) -> Result<()> {
     create_directory(root, &current_user()?, false)?;
     prepare_root(root)
 }
@@ -204,7 +203,7 @@ pub fn prepare_root(root: &Path) -> Result<()> {
 }
 
 /// Validate existing owned runtime state without creating missing directories.
-pub(crate) fn require_existing_root(root: &Path) -> Result<()> {
+pub fn require_existing_root(root: &Path) -> Result<()> {
     let user = current_user()?;
     validate_existing_root(root, &user)
 }
@@ -278,7 +277,7 @@ fn validate_existing_root(root: &Path, user: &str) -> Result<()> {
 /// Owner-private descriptor check for editor-written files. Unlike AIRK's own
 /// control roots, these inherit the profile ACL, so SYSTEM and Administrators
 /// may also hold access; any other allowed principal, or a null DACL, is refused.
-pub(crate) fn require_owner_private(path: &Path) -> Result<()> {
+pub fn require_owner_private(path: &Path) -> Result<()> {
     const SYSTEM: &str = "S-1-5-18";
     const ADMINISTRATORS: &str = "S-1-5-32-544";
     let user = current_user()?;

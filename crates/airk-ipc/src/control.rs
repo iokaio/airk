@@ -8,7 +8,7 @@ use airk_core::service::{ControlMethod, ControlRequest, ControlResponse, PROTOCO
 use anyhow::{Result, ensure};
 use std::{path::Path, time::Duration};
 
-pub(crate) async fn registry_busy_retry<F, Fut>(mut request: F) -> Result<ControlResponse>
+pub async fn registry_busy_retry<F, Fut>(mut request: F) -> Result<ControlResponse>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<ControlResponse>>,
@@ -34,7 +34,7 @@ where
     Ok(response)
 }
 
-pub(crate) async fn request_once(
+pub async fn request_once(
     root: &Path,
     method: ControlMethod,
     version: &str,

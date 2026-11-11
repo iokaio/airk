@@ -28,7 +28,8 @@ mod http_gateway;
 pub(crate) mod inference_completion_ledger;
 #[cfg(feature = "local-inference")]
 pub(crate) mod inference_engine;
-pub mod ipc;
+/// The local transport lives in `airk-ipc` (split G6); `ipc` keeps the old path.
+pub use airk_ipc as ipc;
 /// Compatibility path (split G1): the transport moved to `ipc::endpoint`.
 pub use ipc::endpoint as local_ipc;
 mod native_admin_connections;

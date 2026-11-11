@@ -14,13 +14,13 @@ use self::windows as platform;
 mod unix;
 #[cfg(unix)]
 use self::unix as platform;
-pub(crate) use platform::require_existing_root;
+pub use platform::require_existing_root;
 pub use platform::{Listener, Stream, connect, current_user, prepare_root};
 #[cfg(windows)]
-pub(crate) use platform::{create_root, process_user, require_job_user, require_owner_private};
+pub use platform::{create_root, process_user, require_job_user, require_owner_private};
 
-#[cfg(all(windows, any(not(feature = "local-inference"), test)))]
-pub(crate) use platform::with_current_user_job_security;
+#[cfg(windows)]
+pub use platform::with_current_user_job_security;
 
 /// Stable counter identity for the OS-authenticated user; not a bearer credential.
 pub fn caller_identity() -> Result<airk_core::identity::Incarnation> {
@@ -155,7 +155,7 @@ pub fn prepare_control_endpoint(root: &Path) -> Result<()> {
 
 /// Called only before allocating any new children, after predecessor OS leases release.
 /// Unknown entries survive. A pass removes at most 64 recognized stale sockets.
-pub(crate) fn cleanup_predecessor_endpoints(root: &Path) -> Result<bool> {
+pub fn cleanup_predecessor_endpoints(root: &Path) -> Result<bool> {
     #[cfg(unix)]
     {
         let directory = unix_socket_root(&root.canonicalize()?)?;
@@ -203,7 +203,7 @@ fn predecessor_child_role(role: &str) -> bool {
 /// Retire only the receipt-bound namespace after the old service/children exit.
 /// Unknown entries remain explicit blockers rather than becoming a deletion scope.
 /// The caller passes the root of the service lease it holds.
-pub(crate) fn retire_endpoint_namespace(root: &Path) -> Result<bool> {
+pub fn retire_endpoint_namespace(root: &Path) -> Result<bool> {
     if !cleanup_predecessor_endpoints(root)? {
         return Ok(false);
     }
@@ -225,7 +225,7 @@ pub(crate) fn retire_endpoint_namespace(root: &Path) -> Result<bool> {
 }
 
 /// The owning adapter must prove actual process exit before invoking this function.
-pub(crate) fn remove_exited_endpoint(root: &Path, role: &str) -> Result<()> {
+pub fn remove_exited_endpoint(root: &Path, role: &str) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::{FileTypeExt, MetadataExt};
@@ -302,7 +302,7 @@ pub async fn write_message_limited<S: AsyncWrite + Unpin, T: Serialize>(
     limit: usize,
 ) -> Result<()> {
     let mut frame = Vec::new();
-    crate::service_ipc::write_frame_limited(&mut frame, value, limit)?;
+    crate::frame::write_frame_limited(&mut frame, value, limit)?;
     tokio::time::timeout(deadline, async {
         stream.write_all(&frame).await?;
         stream.flush().await

@@ -6,6 +6,7 @@
     "allowed": {
       "airk-cli": [
         "airk-core",
+        "airk-ipc",
         "airk-kernel",
         "airk-mcp",
         "airk-process",
@@ -16,6 +17,9 @@
       "airk-ingest": [
         "airk-core",
         "airk-process"
+      ],
+      "airk-ipc": [
+        "airk-core"
       ],
       "airk-kernel": [
         "airk-core",

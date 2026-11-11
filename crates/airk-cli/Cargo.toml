@@ -21,6 +21,7 @@ path = "src/main.rs"
 
 [dependencies]
 airk-core.workspace = true
+airk-ipc.workspace = true
 airk-process.workspace = true
 airk-kernel.workspace = true
 airk-mcp.workspace = true
