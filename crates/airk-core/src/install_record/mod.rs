@@ -21,6 +21,10 @@ pub const MAX_SETUP_OPERATION_BYTES: usize = 16 * 1024;
 pub const MAX_SETUP_OPERATION_LIFETIME_MS: u64 = 10 * 60 * 1000;
 /// The record file name inside the program folder.
 pub const RECORD_FILE: &str = "install-record.json";
+pub const START_REQUEST_SCHEMA: &str = "airk-start-request/1";
+pub const MAX_START_REQUEST_BYTES: usize = 1024;
+/// A start request is consumed within this many milliseconds (plan §5.1).
+pub const MAX_START_REQUEST_LIFETIME_MS: u64 = 30_000;
 
 /// Why a pointer, record or operation was refused. Readers map every case to
 /// `installation_unverified` (I2 exit 7).
@@ -37,6 +41,9 @@ pub enum Refusal {
     ExecutableOutsideProgram,
     Expired,
     LifetimeTooLong,
+    StartRequestNonceMismatch,
+    StartRequestExpired,
+    StartRequestLifetimeTooLong,
 }
 
 impl Refusal {
@@ -53,6 +60,9 @@ impl Refusal {
             Self::ExecutableOutsideProgram => "install_executable_outside_program",
             Self::Expired => "setup_operation_expired",
             Self::LifetimeTooLong => "setup_operation_lifetime_too_long",
+            Self::StartRequestNonceMismatch => "start_request_nonce_mismatch",
+            Self::StartRequestExpired => "start_request_expired",
+            Self::StartRequestLifetimeTooLong => "start_request_lifetime_too_long",
         }
     }
 }
@@ -226,6 +236,28 @@ pub struct SetupOperation {
     pub options: SetupOptions,
 }
 
+/// How a detached start treats a saved explicit Stop (plan §5.1): an explicit
+/// start (a user's Start) clears it; an automatic start honors it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StartMode {
+    Explicit,
+    Automatic,
+}
+
+/// An owner-private, single-use request that admits the `service-detached`
+/// role (`docs/split/contracts.md` §5.7). The starter writes it; the role
+/// consumes it atomically before opening any state.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StartRequest {
+    pub schema: String,
+    pub nonce: Incarnation,
+    pub mode: StartMode,
+    pub created_unix_ms: u64,
+    pub expires_unix_ms: u64,
+}
+
 /// Durable phases of one setup transaction (plan §9.6), in order. Login,
 /// trust and readiness are recorded separately so one success cannot hide
 /// another's failure.
@@ -372,6 +404,31 @@ impl SetupOperation {
             return Err(Refusal::RelativeLocation);
         }
         Ok(operation)
+    }
+}
+
+impl StartRequest {
+    /// Decode a request named by `expected` and check it against the caller's
+    /// clock (`now_unix_ms`).
+    pub fn decode(bytes: &[u8], expected: Incarnation, now_unix_ms: u64) -> Result<Self, Refusal> {
+        let request: Self = decode(
+            bytes,
+            MAX_START_REQUEST_BYTES,
+            START_REQUEST_SCHEMA,
+            |r: &Self| &r.schema,
+        )?;
+        if request.nonce != expected {
+            return Err(Refusal::StartRequestNonceMismatch);
+        }
+        if request.expires_unix_ms <= request.created_unix_ms
+            || request.expires_unix_ms - request.created_unix_ms > MAX_START_REQUEST_LIFETIME_MS
+        {
+            return Err(Refusal::StartRequestLifetimeTooLong);
+        }
+        if now_unix_ms >= request.expires_unix_ms || now_unix_ms < request.created_unix_ms {
+            return Err(Refusal::StartRequestExpired);
+        }
+        Ok(request)
     }
 }
 

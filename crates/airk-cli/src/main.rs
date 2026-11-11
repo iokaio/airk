@@ -1338,6 +1338,11 @@ fn run_cli() -> Result<()> {
 }
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn run() -> Result<()> {
+    // Private roles are admitted before any command parsing (split plan §5.1).
+    let arguments: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    if let Some(role) = airk_cli::role_admission::parse(&arguments) {
+        return airk_cli::role_admission::run(role?).await;
+    }
     airk_mcp::help::install_cli_help(cli_help_catalog);
     let executable = std::env::current_exe()?;
     // The universal launcher forwards before parsing, so arguments added by later

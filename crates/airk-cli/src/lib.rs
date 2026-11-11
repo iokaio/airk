@@ -42,6 +42,8 @@ pub(crate) mod service_inference;
 pub(crate) mod owner_acl {
     pub(crate) use crate::local_ipc::require_owner_private;
 }
+/// Private role admission (split plan §5.1, step 3.0).
+pub mod role_admission;
 mod runtime_metadata;
 pub mod runtime_pair;
 pub mod service_configuration;

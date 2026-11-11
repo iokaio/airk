@@ -98,6 +98,7 @@ COPY fixtures/split/i3/envelopes.json ./fixtures/split/i3/envelopes.json
 COPY fixtures/split/i3/headers.json ./fixtures/split/i3/headers.json
 COPY fixtures/split/i3/launch_exchange.json ./fixtures/split/i3/launch_exchange.json
 COPY fixtures/split/i4/i4_cases.json ./fixtures/split/i4/i4_cases.json
+COPY fixtures/split/i4/role_admission.json ./fixtures/split/i4/role_admission.json
 COPY fixtures/wire/airkctl_session_frames.json ./fixtures/wire/airkctl_session_frames.json
 COPY fixtures/wire/catalog_receipt.json ./fixtures/wire/catalog_receipt.json
 COPY fixtures/wire/native_outcomes.json ./fixtures/wire/native_outcomes.json

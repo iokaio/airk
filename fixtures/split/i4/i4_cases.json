@@ -5,7 +5,9 @@
   "pointer": 4096,
   "record": 65536,
   "setup_operation": 16384,
-  "operation_lifetime_ms": 600000
+  "operation_lifetime_ms": 600000,
+  "start_request": 1024,
+  "start_request_lifetime_ms": 30000
  },
  "pointers": [
   {
@@ -170,6 +172,71 @@
    "text": "{\"schema\":\"airk-setup-operation/1\",\"operation_id\":\"0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e\",\"kind\":\"install\",\"created_unix_ms\":1800000000000,\"expires_unix_ms\":1800000600000,\"requested_by\":\"inno\",\"acknowledgements\":{\"predecessor_removal\":true,\"index_reset\":true},\"locations\":{\"program\":\"C:\\\\Users\\\\fixture\\\\AppData\\\\Local\\\\Programs\\\\AIRK\",\"data\":\"C:\\\\Users\\\\fixture\\\\AppData\\\\Local\\\\AIRK\\\\data\\\\indexes\",\"state\":\"C:\\\\Users\\\\fixture\\\\AppData\\\\Local\\\\AIRK\\\\state\\\\service\",\"cache\":\"cache\",\"logs\":\"C:\\\\Users\\\\fixture\\\\AppData\\\\Local\\\\AIRK\\\\logs\\\\service\"},\"payload_inventory_sha256\":\"5555555555555555555555555555555555555555555555555555555555555555\",\"options\":{\"login_startup\":true,\"trust\":\"ask\",\"start\":true,\"delete_indexes\":\"keep\"}}\n",
    "now_unix_ms": 1800000000001,
    "expect": "install_location_relative"
+  }
+ ],
+ "start_requests": [
+  {
+   "name": "valid explicit start",
+   "text": "{\"schema\":\"airk-start-request/1\",\"nonce\":\"1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"mode\":\"explicit\",\"created_unix_ms\":1800000000000,\"expires_unix_ms\":1800000030000}\n",
+   "nonce": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+   "now_unix_ms": 1800000000001,
+   "expect": "ok"
+  },
+  {
+   "name": "valid automatic start",
+   "text": "{\"schema\":\"airk-start-request/1\",\"nonce\":\"1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"mode\":\"automatic\",\"created_unix_ms\":1800000000000,\"expires_unix_ms\":1800000030000}\n",
+   "nonce": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+   "now_unix_ms": 1800000000000,
+   "expect": "ok"
+  },
+  {
+   "name": "request for another nonce",
+   "text": "{\"schema\":\"airk-start-request/1\",\"nonce\":\"1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"mode\":\"explicit\",\"created_unix_ms\":1800000000000,\"expires_unix_ms\":1800000030000}\n",
+   "nonce": "1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b",
+   "now_unix_ms": 1800000000001,
+   "expect": "start_request_nonce_mismatch"
+  },
+  {
+   "name": "expired at its deadline",
+   "text": "{\"schema\":\"airk-start-request/1\",\"nonce\":\"1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"mode\":\"explicit\",\"created_unix_ms\":1800000000000,\"expires_unix_ms\":1800000030000}\n",
+   "nonce": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+   "now_unix_ms": 1800000030000,
+   "expect": "start_request_expired"
+  },
+  {
+   "name": "clock before creation",
+   "text": "{\"schema\":\"airk-start-request/1\",\"nonce\":\"1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"mode\":\"explicit\",\"created_unix_ms\":1800000000000,\"expires_unix_ms\":1800000030000}\n",
+   "nonce": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+   "now_unix_ms": 1799999999999,
+   "expect": "start_request_expired"
+  },
+  {
+   "name": "lifetime above thirty seconds",
+   "text": "{\"schema\":\"airk-start-request/1\",\"nonce\":\"1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"mode\":\"explicit\",\"created_unix_ms\":1800000000000,\"expires_unix_ms\":1800000030001}\n",
+   "nonce": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+   "now_unix_ms": 1800000000001,
+   "expect": "start_request_lifetime_too_long"
+  },
+  {
+   "name": "unknown mode",
+   "text": "{\"schema\":\"airk-start-request/1\",\"nonce\":\"1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"mode\":\"forced\",\"created_unix_ms\":1800000000000,\"expires_unix_ms\":1800000030000}\n",
+   "nonce": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+   "now_unix_ms": 1800000000001,
+   "expect": "install_file_malformed"
+  },
+  {
+   "name": "unknown field",
+   "text": "{\"schema\":\"airk-start-request/1\",\"nonce\":\"1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"mode\":\"explicit\",\"created_unix_ms\":1800000000000,\"expires_unix_ms\":1800000030000,\"runtime_dir\":\"C:\\\\x\"}\n",
+   "nonce": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+   "now_unix_ms": 1800000000001,
+   "expect": "install_file_malformed"
+  },
+  {
+   "name": "pretty-printed request is not canonical",
+   "text": "{\n \"schema\": \"airk-start-request/1\",\n \"nonce\": \"1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\n \"mode\": \"explicit\",\n \"created_unix_ms\": 1800000000000,\n \"expires_unix_ms\": 1800000030000\n}\n",
+   "nonce": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+   "now_unix_ms": 1800000000001,
+   "expect": "install_file_non_canonical"
   }
  ],
  "phases": [

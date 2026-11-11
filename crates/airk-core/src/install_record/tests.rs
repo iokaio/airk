@@ -127,3 +127,26 @@ fn setup_phases_are_ordered_as_reviewed() {
     assert_eq!(observed, expected);
     assert!(all.windows(2).all(|pair| pair[0] < pair[1]));
 }
+
+#[test]
+fn start_requests_decode_with_the_injected_clock_as_reviewed() {
+    let fixture = fixture();
+    let limits = &fixture["limits"];
+    assert_eq!(limits["start_request"], MAX_START_REQUEST_BYTES as u64);
+    assert_eq!(
+        limits["start_request_lifetime_ms"],
+        MAX_START_REQUEST_LIFETIME_MS
+    );
+    for case in cases(&fixture, "start_requests") {
+        let text = case["text"].as_str().unwrap();
+        let nonce: Incarnation = case["nonce"].as_str().unwrap().parse().unwrap();
+        let now = case["now_unix_ms"].as_u64().unwrap();
+        let observed = outcome(StartRequest::decode(text.as_bytes(), nonce, now), text);
+        assert_eq!(
+            observed,
+            case["expect"].as_str().unwrap(),
+            "{}",
+            case["name"]
+        );
+    }
+}

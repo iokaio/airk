@@ -150,12 +150,42 @@ def cases():
         {"name": "relative cache location", "text": canonical(changed(operation(), ["locations", "cache"], "cache")),
          "now_unix_ms": NOW + 1, "expect": "install_location_relative"},
     ]
+    nonce = "1a" * 16
+
+    def start(**changes):
+        value = {"schema": "airk-start-request/1", "nonce": nonce, "mode": "explicit",
+                 "created_unix_ms": NOW, "expires_unix_ms": NOW + 30_000}
+        value.update(changes)
+        return canonical(value)
+
+    starts = [
+        {"name": "valid explicit start", "text": start(), "nonce": nonce, "now_unix_ms": NOW + 1, "expect": "ok"},
+        {"name": "valid automatic start", "text": start(mode="automatic"), "nonce": nonce, "now_unix_ms": NOW,
+         "expect": "ok"},
+        {"name": "request for another nonce", "text": start(), "nonce": "1b" * 16, "now_unix_ms": NOW + 1,
+         "expect": "start_request_nonce_mismatch"},
+        {"name": "expired at its deadline", "text": start(), "nonce": nonce, "now_unix_ms": NOW + 30_000,
+         "expect": "start_request_expired"},
+        {"name": "clock before creation", "text": start(), "nonce": nonce, "now_unix_ms": NOW - 1,
+         "expect": "start_request_expired"},
+        {"name": "lifetime above thirty seconds", "text": start(expires_unix_ms=NOW + 30_001), "nonce": nonce,
+         "now_unix_ms": NOW + 1, "expect": "start_request_lifetime_too_long"},
+        {"name": "unknown mode", "text": start(mode="forced"), "nonce": nonce, "now_unix_ms": NOW + 1,
+         "expect": "install_file_malformed"},
+        {"name": "unknown field", "text": canonical({"schema": "airk-start-request/1", "nonce": nonce,
+         "mode": "explicit", "created_unix_ms": NOW, "expires_unix_ms": NOW + 30_000, "runtime_dir": "C:\\x"}),
+         "nonce": nonce, "now_unix_ms": NOW + 1, "expect": "install_file_malformed"},
+        {"name": "pretty-printed request is not canonical", "text": json.dumps(json.loads(start()), indent=1) + "\n",
+         "nonce": nonce, "now_unix_ms": NOW + 1, "expect": "install_file_non_canonical"},
+    ]
     phases = ["locked", "predecessors_retired", "service_drained", "placed", "record_written", "pointer_written",
               "login_registered", "login_failed", "trust_applied", "trust_declined", "trust_unsupported",
               "started", "healthy", "complete"]
     return {"schema": SCHEMA, "contract": "crates/airk-core/src/install_record/mod.rs",
-            "limits": {"pointer": 4096, "record": 65536, "setup_operation": 16384, "operation_lifetime_ms": 600000},
-            "pointers": pointers, "records": records, "operations": operations, "phases": phases}
+            "limits": {"pointer": 4096, "record": 65536, "setup_operation": 16384, "operation_lifetime_ms": 600000,
+                       "start_request": 1024, "start_request_lifetime_ms": 30000},
+            "pointers": pointers, "records": records, "operations": operations, "start_requests": starts,
+            "phases": phases}
 
 
 def main():
