@@ -1,37 +1,1679 @@
 {
  "schema": "airk-golden-cases/1",
- "note": "Seeded from the one-process golden capture (30 offline cases). Phase 0 (P0.3) extends this to every surviving command.",
- "normalize": [],
+ "note": "Seeded from the one-process golden capture (30 offline cases), then extended in P0.3 with --help for every command path in docs/cli-reference.md, tools help for every tool listed by `tools list --json`, and offline explorer/tools calls. Live-service cases are captured separately (P0.3b).",
+ "normalize": [
+  {
+   "why": "digest of the absolute fixture install path",
+   "pattern": "\"expected_predecessor\":\"[0-9a-f]{64}\"",
+   "replacement": "\"expected_predecessor\":\"<PATH-DIGEST>\""
+  },
+  {
+   "why": "digest of the absolute fixture source/data binding",
+   "pattern": "\"binding\":\"[0-9a-f]{64}\"",
+   "replacement": "\"binding\":\"<PATH-DIGEST>\""
+  },
+  {
+   "why": "Windows executable suffix in usage and guidance text",
+   "pattern": "\\bairk\\.exe\\b",
+   "replacement": "airk"
+  }
+ ],
  "cases": [
-  {"id": "version", "argv": ["--version"]},
-  {"id": "help", "argv": ["--help"]},
-  {"id": "runtime-help", "argv": ["runtime", "--help"]},
-  {"id": "service-help", "argv": ["service", "--help"]},
-  {"id": "runtime-bogus", "argv": ["runtime", "bogus"]},
-  {"id": "runtime-inspect", "argv": ["runtime", "inspect"]},
-  {"id": "runtime-location-stable", "argv": ["runtime", "location", "--channel", "stable"]},
-  {"id": "runtime-self-test", "argv": ["runtime", "self-test"]},
-  {"id": "runtime-inspect-empty", "argv": ["runtime", "inspect", "--install-dir", "{install_empty}"]},
-  {"id": "runtime-snapshot-empty", "argv": ["runtime", "snapshot", "--install-dir", "{install_empty}"]},
-  {"id": "runtime-diagnose-missing", "argv": ["runtime", "diagnose", "--install-dir", "{missing}"]},
-  {"id": "runtime-diagnose-empty", "argv": ["runtime", "diagnose", "--install-dir", "{install_empty}"]},
-  {"id": "runtime-inventory-empty", "argv": ["runtime", "inventory", "--install-dir", "{install_empty}"]},
-  {"id": "runtime-inspect-candidate", "argv": ["runtime", "inspect-candidate", "--install-dir", "{install_empty}", "--runtime-sha256", "{sha}"]},
-  {"id": "runtime-replace-installation-missing", "argv": ["runtime", "replace-installation", "--install-dir", "{missing}", "--candidate-sha256", "{sha}"]},
-  {"id": "runtime-http-endpoint", "argv": ["runtime", "http-endpoint", "--install-dir", "{install_empty}"]},
-  {"id": "runtime-http-connection-info", "argv": ["runtime", "http-connection-info", "--install-dir", "{install_empty}", "--connection-id", "{id}"]},
-  {"id": "runtime-lifecycle", "argv": ["runtime", "lifecycle", "--install-dir", "{install_empty}"], "stdin": "{}"},
-  {"id": "runtime-abandon-lifecycle", "argv": ["runtime", "abandon-lifecycle", "--install-dir", "{install_empty}", "--request-id", "{id}"]},
-  {"id": "service-prepare-registration", "argv": ["--root", "{src}", "--data-dir", "{data}", "--collection", "default", "service", "prepare-registration"]},
-  {"id": "service-logs-json", "argv": ["service", "logs", "--runtime-dir", "{control}", "--limit", "32", "--format", "json"]},
-  {"id": "service-logs-missing-text", "argv": ["service", "logs", "--runtime-dir", "{missing}", "--format", "text"]},
-  {"id": "service-rpc-missing", "argv": ["service", "rpc", "--runtime-dir", "{missing}", "--stdin"], "stdin": "\"health\""},
-  {"id": "service-record-error-missing", "argv": ["service", "record-error", "--runtime-dir", "{missing}", "--operation", "fixture"], "stdin": "fixture error"},
-  {"id": "service-legacy-list-missing", "argv": ["service", "legacy", "list", "--runtime-dir", "{missing}"]},
-  {"id": "tools-list-json", "argv": ["tools", "list", "--json"]},
-  {"id": "tools-help-search", "argv": ["tools", "help", "airk_search"]},
-  {"id": "tools-call-status-missing", "argv": ["--service-install-dir", "{missing}", "tools", "call", "airk_status"]},
-  {"id": "usage-import-preview", "argv": ["--service-install-dir", "{missing}", "usage", "import", "{measurement}", "--preview"]},
-  {"id": "model-catalog", "argv": ["model-catalog"]}
+  {
+   "id": "version",
+   "argv": [
+    "--version"
+   ]
+  },
+  {
+   "id": "help",
+   "argv": [
+    "--help"
+   ]
+  },
+  {
+   "id": "runtime-help",
+   "argv": [
+    "runtime",
+    "--help"
+   ]
+  },
+  {
+   "id": "service-help",
+   "argv": [
+    "service",
+    "--help"
+   ]
+  },
+  {
+   "id": "runtime-bogus",
+   "argv": [
+    "runtime",
+    "bogus"
+   ]
+  },
+  {
+   "id": "runtime-inspect",
+   "argv": [
+    "runtime",
+    "inspect"
+   ]
+  },
+  {
+   "id": "runtime-location-stable",
+   "argv": [
+    "runtime",
+    "location",
+    "--channel",
+    "stable"
+   ]
+  },
+  {
+   "id": "runtime-self-test",
+   "argv": [
+    "runtime",
+    "self-test"
+   ]
+  },
+  {
+   "id": "runtime-inspect-empty",
+   "argv": [
+    "runtime",
+    "inspect",
+    "--install-dir",
+    "{install_empty}"
+   ]
+  },
+  {
+   "id": "runtime-snapshot-empty",
+   "argv": [
+    "runtime",
+    "snapshot",
+    "--install-dir",
+    "{install_empty}"
+   ]
+  },
+  {
+   "id": "runtime-diagnose-missing",
+   "argv": [
+    "runtime",
+    "diagnose",
+    "--install-dir",
+    "{missing}"
+   ]
+  },
+  {
+   "id": "runtime-diagnose-empty",
+   "argv": [
+    "runtime",
+    "diagnose",
+    "--install-dir",
+    "{install_empty}"
+   ]
+  },
+  {
+   "id": "runtime-inspect-candidate",
+   "argv": [
+    "runtime",
+    "inspect-candidate",
+    "--install-dir",
+    "{install_empty}",
+    "--runtime-sha256",
+    "{sha}"
+   ]
+  },
+  {
+   "id": "runtime-replace-installation-missing",
+   "argv": [
+    "runtime",
+    "replace-installation",
+    "--install-dir",
+    "{missing}",
+    "--candidate-sha256",
+    "{sha}"
+   ]
+  },
+  {
+   "id": "runtime-http-endpoint",
+   "argv": [
+    "runtime",
+    "http-endpoint",
+    "--install-dir",
+    "{install_empty}"
+   ]
+  },
+  {
+   "id": "runtime-http-connection-info",
+   "argv": [
+    "runtime",
+    "http-connection-info",
+    "--install-dir",
+    "{install_empty}",
+    "--connection-id",
+    "{id}"
+   ]
+  },
+  {
+   "id": "runtime-lifecycle",
+   "argv": [
+    "runtime",
+    "lifecycle",
+    "--install-dir",
+    "{install_empty}"
+   ],
+   "stdin": "{}"
+  },
+  {
+   "id": "runtime-abandon-lifecycle",
+   "argv": [
+    "runtime",
+    "abandon-lifecycle",
+    "--install-dir",
+    "{install_empty}",
+    "--request-id",
+    "{id}"
+   ]
+  },
+  {
+   "id": "service-prepare-registration",
+   "argv": [
+    "--root",
+    "{src}",
+    "--data-dir",
+    "{data}",
+    "--collection",
+    "default",
+    "service",
+    "prepare-registration"
+   ]
+  },
+  {
+   "id": "service-logs-json",
+   "argv": [
+    "service",
+    "logs",
+    "--runtime-dir",
+    "{control}",
+    "--limit",
+    "32",
+    "--format",
+    "json"
+   ]
+  },
+  {
+   "id": "service-logs-missing-text",
+   "argv": [
+    "service",
+    "logs",
+    "--runtime-dir",
+    "{missing}",
+    "--format",
+    "text"
+   ]
+  },
+  {
+   "id": "service-rpc-missing",
+   "argv": [
+    "service",
+    "rpc",
+    "--runtime-dir",
+    "{missing}",
+    "--stdin"
+   ],
+   "stdin": "\"health\""
+  },
+  {
+   "id": "service-record-error-missing",
+   "argv": [
+    "service",
+    "record-error",
+    "--runtime-dir",
+    "{missing}",
+    "--operation",
+    "fixture"
+   ],
+   "stdin": "fixture error"
+  },
+  {
+   "id": "service-legacy-list-missing",
+   "argv": [
+    "service",
+    "legacy",
+    "list",
+    "--runtime-dir",
+    "{missing}"
+   ]
+  },
+  {
+   "id": "tools-list-json",
+   "argv": [
+    "tools",
+    "list",
+    "--json"
+   ]
+  },
+  {
+   "id": "tools-help-search",
+   "argv": [
+    "tools",
+    "help",
+    "airk_search"
+   ]
+  },
+  {
+   "id": "tools-call-status-missing",
+   "argv": [
+    "--service-install-dir",
+    "{missing}",
+    "tools",
+    "call",
+    "airk_status"
+   ]
+  },
+  {
+   "id": "usage-import-preview",
+   "argv": [
+    "--service-install-dir",
+    "{missing}",
+    "usage",
+    "import",
+    "{measurement}",
+    "--preview"
+   ]
+  },
+  {
+   "id": "model-catalog",
+   "argv": [
+    "model-catalog"
+   ]
+  },
+  {
+   "id": "help-bridge",
+   "argv": [
+    "bridge",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-changes",
+   "argv": [
+    "changes",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-code-facts",
+   "argv": [
+    "code-facts",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-configure",
+   "argv": [
+    "configure",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-context",
+   "argv": [
+    "context",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-explorer",
+   "argv": [
+    "explorer",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-explorer-draft-plan",
+   "argv": [
+    "explorer",
+    "draft-plan",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-explorer-draft-search",
+   "argv": [
+    "explorer",
+    "draft-search",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-explorer-draft-strategy",
+   "argv": [
+    "explorer",
+    "draft-strategy",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-explorer-get-handoff",
+   "argv": [
+    "explorer",
+    "get-handoff",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-explorer-get-template",
+   "argv": [
+    "explorer",
+    "get-template",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-explorer-list-templates",
+   "argv": [
+    "explorer",
+    "list-templates",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-explorer-proposal-status",
+   "argv": [
+    "explorer",
+    "proposal-status",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-explorer-suggest-view",
+   "argv": [
+    "explorer",
+    "suggest-view",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-explorer-validate-draft",
+   "argv": [
+    "explorer",
+    "validate-draft",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-facts",
+   "argv": [
+    "facts",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-files",
+   "argv": [
+    "files",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-host",
+   "argv": [
+    "host",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-imports",
+   "argv": [
+    "imports",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-index",
+   "argv": [
+    "index",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-info",
+   "argv": [
+    "info",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-init",
+   "argv": [
+    "init",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-inspect",
+   "argv": [
+    "inspect",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-mcp",
+   "argv": [
+    "mcp",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-model-catalog",
+   "argv": [
+    "model-catalog",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-outline",
+   "argv": [
+    "outline",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-parse",
+   "argv": [
+    "parse",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-pause",
+   "argv": [
+    "pause",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-projects",
+   "argv": [
+    "projects",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-read",
+   "argv": [
+    "read",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-refs",
+   "argv": [
+    "refs",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-relationships",
+   "argv": [
+    "relationships",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-resume",
+   "argv": [
+    "resume",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime",
+   "argv": [
+    "runtime",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-abandon-lifecycle",
+   "argv": [
+    "runtime",
+    "abandon-lifecycle",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-abort-activation",
+   "argv": [
+    "runtime",
+    "abort-activation",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-abort-launcher-repair",
+   "argv": [
+    "runtime",
+    "abort-launcher-repair",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-abort-layout",
+   "argv": [
+    "runtime",
+    "abort-layout",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-abort-stage",
+   "argv": [
+    "runtime",
+    "abort-stage",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-activate",
+   "argv": [
+    "runtime",
+    "activate",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-adopt-legacy-index",
+   "argv": [
+    "runtime",
+    "adopt-legacy-index",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-adopt-legacy-indexes",
+   "argv": [
+    "runtime",
+    "adopt-legacy-indexes",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-container-host",
+   "argv": [
+    "runtime",
+    "container-host",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-diagnose",
+   "argv": [
+    "runtime",
+    "diagnose",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-ensure",
+   "argv": [
+    "runtime",
+    "ensure",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-foreground",
+   "argv": [
+    "runtime",
+    "foreground",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-http-connection",
+   "argv": [
+    "runtime",
+    "http-connection",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-http-connection-info",
+   "argv": [
+    "runtime",
+    "http-connection-info",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-http-credential",
+   "argv": [
+    "runtime",
+    "http-credential",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-http-endpoint",
+   "argv": [
+    "runtime",
+    "http-endpoint",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-http-issuer-rotation",
+   "argv": [
+    "runtime",
+    "http-issuer-rotation",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-http-legacy-connection",
+   "argv": [
+    "runtime",
+    "http-legacy-connection",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-http-legacy-union-connection",
+   "argv": [
+    "runtime",
+    "http-legacy-union-connection",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-http-revoke",
+   "argv": [
+    "runtime",
+    "http-revoke",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-http-trust",
+   "argv": [
+    "runtime",
+    "http-trust",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-inspect",
+   "argv": [
+    "runtime",
+    "inspect",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-inspect-candidate",
+   "argv": [
+    "runtime",
+    "inspect-candidate",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-inspect-legacy-caches",
+   "argv": [
+    "runtime",
+    "inspect-legacy-caches",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-inspect-legacy-launchers",
+   "argv": [
+    "runtime",
+    "inspect-legacy-launchers",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-inventory",
+   "argv": [
+    "runtime",
+    "inventory",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-launch",
+   "argv": [
+    "runtime",
+    "launch",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-legacy-retirement-authorize",
+   "argv": [
+    "runtime",
+    "legacy-retirement-authorize",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-legacy-retirement-candidates",
+   "argv": [
+    "runtime",
+    "legacy-retirement-candidates",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-legacy-retirement-receipt",
+   "argv": [
+    "runtime",
+    "legacy-retirement-receipt",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-legacy-retirement-resume",
+   "argv": [
+    "runtime",
+    "legacy-retirement-resume",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-legacy-retirement-review",
+   "argv": [
+    "runtime",
+    "legacy-retirement-review",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-lifecycle",
+   "argv": [
+    "runtime",
+    "lifecycle",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-location",
+   "argv": [
+    "runtime",
+    "location",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-login",
+   "argv": [
+    "runtime",
+    "login",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-login-install",
+   "argv": [
+    "runtime",
+    "login",
+    "install",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-login-plan",
+   "argv": [
+    "runtime",
+    "login",
+    "plan",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-login-start",
+   "argv": [
+    "runtime",
+    "login",
+    "start",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-login-status",
+   "argv": [
+    "runtime",
+    "login",
+    "status",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-login-stop",
+   "argv": [
+    "runtime",
+    "login",
+    "stop",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-login-uninstall",
+   "argv": [
+    "runtime",
+    "login",
+    "uninstall",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-lookup-http-connection",
+   "argv": [
+    "runtime",
+    "lookup-http-connection",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-managed",
+   "argv": [
+    "runtime",
+    "managed",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-prepare-client",
+   "argv": [
+    "runtime",
+    "prepare-client",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-prepare-legacy-caches",
+   "argv": [
+    "runtime",
+    "prepare-legacy-caches",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-purge",
+   "argv": [
+    "runtime",
+    "purge",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-remove",
+   "argv": [
+    "runtime",
+    "remove",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-repair-launcher",
+   "argv": [
+    "runtime",
+    "repair-launcher",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-repair-payload",
+   "argv": [
+    "runtime",
+    "repair-payload",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-replace-installation",
+   "argv": [
+    "runtime",
+    "replace-installation",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-reprepare-legacy-caches",
+   "argv": [
+    "runtime",
+    "reprepare-legacy-caches",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-reset-startup",
+   "argv": [
+    "runtime",
+    "reset-startup",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-retire-legacy-caches",
+   "argv": [
+    "runtime",
+    "retire-legacy-caches",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-retire-legacy-launchers",
+   "argv": [
+    "runtime",
+    "retire-legacy-launchers",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-retire-previous",
+   "argv": [
+    "runtime",
+    "retire-previous",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-rollback",
+   "argv": [
+    "runtime",
+    "rollback",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-self-test",
+   "argv": [
+    "runtime",
+    "self-test",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-snapshot",
+   "argv": [
+    "runtime",
+    "snapshot",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-source-scope",
+   "argv": [
+    "runtime",
+    "source-scope",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-stage",
+   "argv": [
+    "runtime",
+    "stage",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-start",
+   "argv": [
+    "runtime",
+    "start",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-runtime-uninstall",
+   "argv": [
+    "runtime",
+    "uninstall",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-search",
+   "argv": [
+    "search",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-serve",
+   "argv": [
+    "serve",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-service",
+   "argv": [
+    "service",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-service-console",
+   "argv": [
+    "service",
+    "console",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-service-health",
+   "argv": [
+    "service",
+    "health",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-service-legacy",
+   "argv": [
+    "service",
+    "legacy",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-service-legacy-derived-receipts",
+   "argv": [
+    "service",
+    "legacy",
+    "derived-receipts",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-service-legacy-forget",
+   "argv": [
+    "service",
+    "legacy",
+    "forget",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-service-legacy-forget-derived",
+   "argv": [
+    "service",
+    "legacy",
+    "forget-derived",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-service-legacy-list",
+   "argv": [
+    "service",
+    "legacy",
+    "list",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-service-legacy-preview-derived",
+   "argv": [
+    "service",
+    "legacy",
+    "preview-derived",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-service-legacy-remove-derived",
+   "argv": [
+    "service",
+    "legacy",
+    "remove-derived",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-service-legacy-remove-startup",
+   "argv": [
+    "service",
+    "legacy",
+    "remove-startup",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-service-legacy-review",
+   "argv": [
+    "service",
+    "legacy",
+    "review",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-service-legacy-show",
+   "argv": [
+    "service",
+    "legacy",
+    "show",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-service-logs",
+   "argv": [
+    "service",
+    "logs",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-service-prepare-configuration",
+   "argv": [
+    "service",
+    "prepare-configuration",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-service-prepare-registration",
+   "argv": [
+    "service",
+    "prepare-registration",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-service-prepare-storage",
+   "argv": [
+    "service",
+    "prepare-storage",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-service-record-error",
+   "argv": [
+    "service",
+    "record-error",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-service-register",
+   "argv": [
+    "service",
+    "register",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-service-requests",
+   "argv": [
+    "service",
+    "requests",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-service-requests-forget",
+   "argv": [
+    "service",
+    "requests",
+    "forget",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-service-requests-list",
+   "argv": [
+    "service",
+    "requests",
+    "list",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-service-requests-prepare",
+   "argv": [
+    "service",
+    "requests",
+    "prepare",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-service-requests-prepare-configuration",
+   "argv": [
+    "service",
+    "requests",
+    "prepare-configuration",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-service-requests-retry",
+   "argv": [
+    "service",
+    "requests",
+    "retry",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-service-rpc",
+   "argv": [
+    "service",
+    "rpc",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-service-session",
+   "argv": [
+    "service",
+    "session",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-service-shutdown",
+   "argv": [
+    "service",
+    "shutdown",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-settings",
+   "argv": [
+    "settings",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-setup",
+   "argv": [
+    "setup",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-setup-model",
+   "argv": [
+    "setup-model",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-status",
+   "argv": [
+    "status",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-symbol",
+   "argv": [
+    "symbol",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-tools",
+   "argv": [
+    "tools",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-tools-call",
+   "argv": [
+    "tools",
+    "call",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-tools-list",
+   "argv": [
+    "tools",
+    "list",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-tools-shell",
+   "argv": [
+    "tools",
+    "shell",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-uninstall",
+   "argv": [
+    "uninstall",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-usage",
+   "argv": [
+    "usage",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-usage-calibrate",
+   "argv": [
+    "usage",
+    "calibrate",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-usage-clear",
+   "argv": [
+    "usage",
+    "clear",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-usage-configure",
+   "argv": [
+    "usage",
+    "configure",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-usage-feedback",
+   "argv": [
+    "usage",
+    "feedback",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-usage-import",
+   "argv": [
+    "usage",
+    "import",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-usage-policy",
+   "argv": [
+    "usage",
+    "policy",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-usage-report",
+   "argv": [
+    "usage",
+    "report",
+    "--help"
+   ]
+  },
+  {
+   "id": "help-watch",
+   "argv": [
+    "watch",
+    "--help"
+   ]
+  },
+  {
+   "id": "tools-help-capabilities",
+   "argv": [
+    "tools",
+    "help",
+    "capabilities"
+   ]
+  },
+  {
+   "id": "tools-help-changes",
+   "argv": [
+    "tools",
+    "help",
+    "changes"
+   ]
+  },
+  {
+   "id": "tools-help-code-facts",
+   "argv": [
+    "tools",
+    "help",
+    "code_facts"
+   ]
+  },
+  {
+   "id": "tools-help-context",
+   "argv": [
+    "tools",
+    "help",
+    "context"
+   ]
+  },
+  {
+   "id": "tools-help-diagnostics",
+   "argv": [
+    "tools",
+    "help",
+    "diagnostics"
+   ]
+  },
+  {
+   "id": "tools-help-document-facts",
+   "argv": [
+    "tools",
+    "help",
+    "document_facts"
+   ]
+  },
+  {
+   "id": "tools-help-file-info",
+   "argv": [
+    "tools",
+    "help",
+    "file_info"
+   ]
+  },
+  {
+   "id": "tools-help-help",
+   "argv": [
+    "tools",
+    "help",
+    "help"
+   ]
+  },
+  {
+   "id": "tools-help-imports",
+   "argv": [
+    "tools",
+    "help",
+    "imports"
+   ]
+  },
+  {
+   "id": "tools-help-list-files",
+   "argv": [
+    "tools",
+    "help",
+    "list_files"
+   ]
+  },
+  {
+   "id": "tools-help-outline",
+   "argv": [
+    "tools",
+    "help",
+    "outline"
+   ]
+  },
+  {
+   "id": "tools-help-parse",
+   "argv": [
+    "tools",
+    "help",
+    "parse"
+   ]
+  },
+  {
+   "id": "tools-help-query-scope",
+   "argv": [
+    "tools",
+    "help",
+    "query_scope"
+   ]
+  },
+  {
+   "id": "tools-help-read-file",
+   "argv": [
+    "tools",
+    "help",
+    "read_file"
+   ]
+  },
+  {
+   "id": "tools-help-references",
+   "argv": [
+    "tools",
+    "help",
+    "references"
+   ]
+  },
+  {
+   "id": "tools-help-relationships",
+   "argv": [
+    "tools",
+    "help",
+    "relationships"
+   ]
+  },
+  {
+   "id": "tools-help-status",
+   "argv": [
+    "tools",
+    "help",
+    "status"
+   ]
+  },
+  {
+   "id": "tools-help-symbols",
+   "argv": [
+    "tools",
+    "help",
+    "symbols"
+   ]
+  },
+  {
+   "id": "tools-help-draft-search",
+   "argv": [
+    "tools",
+    "help",
+    "draft_search"
+   ]
+  },
+  {
+   "id": "tools-help-draft-strategy",
+   "argv": [
+    "tools",
+    "help",
+    "draft_strategy"
+   ]
+  },
+  {
+   "id": "tools-help-draft-plan",
+   "argv": [
+    "tools",
+    "help",
+    "draft_plan"
+   ]
+  },
+  {
+   "id": "tools-help-list-templates",
+   "argv": [
+    "tools",
+    "help",
+    "list_templates"
+   ]
+  },
+  {
+   "id": "tools-help-get-template",
+   "argv": [
+    "tools",
+    "help",
+    "get_template"
+   ]
+  },
+  {
+   "id": "tools-help-validate-draft",
+   "argv": [
+    "tools",
+    "help",
+    "validate_draft"
+   ]
+  },
+  {
+   "id": "tools-help-proposal-status",
+   "argv": [
+    "tools",
+    "help",
+    "proposal_status"
+   ]
+  },
+  {
+   "id": "tools-help-get-handoff",
+   "argv": [
+    "tools",
+    "help",
+    "get_handoff"
+   ]
+  },
+  {
+   "id": "tools-help-suggest-view",
+   "argv": [
+    "tools",
+    "help",
+    "suggest_view"
+   ]
+  },
+  {
+   "id": "tools-help-projects",
+   "argv": [
+    "tools",
+    "help",
+    "projects"
+   ]
+  },
+  {
+   "id": "tools-call-help",
+   "argv": [
+    "tools",
+    "call",
+    "airk_help"
+   ]
+  },
+  {
+   "id": "explorer-list-templates",
+   "argv": [
+    "explorer",
+    "list-templates"
+   ]
+  }
+ ],
+ "excluded": [
+  {
+   "id": "runtime-inventory-empty",
+   "why": "measures the real per-user AIRK roots (sizes, file counts) even with --install-dir; covered by sandboxed T2 checks, not committed goldens"
+  }
  ]
 }
