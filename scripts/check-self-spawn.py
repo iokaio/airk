@@ -122,6 +122,10 @@ STARTS = {
         "primitive: bounded provider run for a caller-built ProviderCommand",
     ("crates/airk-ingest/src/provider_process.rs", "spawn_limited"):
         "primitive: provider start in a Windows job or Unix process group with limits",
+    ("crates/airkctl/src/start.rs", "launch"):
+        "service: `airkctl service start` (split 3b.1d) starts the install record's verified "
+        "`airk` as the private `service-detached` role, admitted by a single-use owner-private "
+        "start request; the single-instance lease refuses a second resident",
     ("crates/airk-process/src/child_group.rs", "spawn"):
         "primitive: Unix owned process group start",
     ("crates/airk-process/src/child_job_named.rs", "spawn_guarded"):

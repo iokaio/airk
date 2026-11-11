@@ -19,6 +19,8 @@ airk-process.workspace = true
 # Already in the dependency graph (airk-cli) at this version and feature set.
 anyhow.workspace = true
 clap.workspace = true
+# Start-request nonces; already in the graph (airk-kernel) at this version.
+getrandom.workspace = true
 # Already in the dependency graph through rmcp at this version and feature set
 # (split plan U47 pilot); no new third-party identity.
 schemars = "1.2.2"

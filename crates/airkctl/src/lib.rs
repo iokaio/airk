@@ -12,4 +12,5 @@ pub mod install;
 #[rustfmt::skip]
 pub mod evidence;
 pub mod service;
+pub mod start;
 pub mod tools;

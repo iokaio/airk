@@ -114,6 +114,12 @@ enum Command {
 #[derive(Subcommand)]
 #[command(disable_help_subcommand = true)]
 enum ServiceCommand {
+    /// Start the installed service (the install record's verified airk) and wait until it is healthy.
+    Start {
+        /// The service's control directory (default: --service-runtime-dir, else the installation's).
+        #[arg(long)]
+        runtime_dir: Option<PathBuf>,
+    },
     /// Check that the service for --runtime-dir is running and healthy; exits non-zero otherwise.
     Health {
         /// The service's control directory (default: --service-runtime-dir).
@@ -201,10 +207,7 @@ fn installation() -> (Installation, Option<String>) {
         }
         crate::install::Discovery::Verified(verified) => {
             let record = &verified.record;
-            let exact = record.version == VERSION
-                && own_digest().as_deref()
-                    == Some(record.executables.airkctl.sha256.to_string().as_str());
-            let pair = if exact {
+            let pair = if pair_exact(record) {
                 crate::contract::PairState::Exact
             } else {
                 crate::contract::PairState::Mismatch
@@ -220,6 +223,12 @@ fn installation() -> (Installation, Option<String>) {
             )
         }
     }
+}
+
+/// The pair is exact when the record names this version and this executable.
+fn pair_exact(record: &airk_core::install_record::InstallRecord) -> bool {
+    record.version == VERSION
+        && own_digest().as_deref() == Some(record.executables.airkctl.sha256.to_string().as_str())
 }
 
 fn version_document() -> VersionDocument {
@@ -553,8 +562,54 @@ fn print_compact(cx: &mut Context, response: &ControlResponse) -> u8 {
 /// --runtime-dir` ran them: `Health` with the pair check (version and
 /// protocol; the executable digest joins with the install record, step
 /// 3b.1c), then for shutdown a `Shutdown` fenced to the observed instance.
+/// `service start`: a verified installation with an exact pair, then the
+/// record's `airk` started detached (step 3b.1d), printing the `Health` line.
+fn start_service(cx: &mut Context, selection: Selection, runtime_dir: Option<PathBuf>) -> u8 {
+    let verified = match crate::install::discover() {
+        crate::install::Discovery::Verified(verified) => verified,
+        crate::install::Discovery::NotFound => {
+            return fail(
+                cx,
+                &ErrorLine::new(
+                    ExitClass::ServiceMissing,
+                    "installation_not_found",
+                    false,
+                    "No AIRK installation was found for this user.",
+                ),
+            );
+        }
+        crate::install::Discovery::Unverified { code, message } => {
+            return fail(
+                cx,
+                &ErrorLine::new(ExitClass::InstallationUnverified, &code, false, &message),
+            );
+        }
+    };
+    if !pair_exact(&verified.record) {
+        return fail(
+            cx,
+            &ErrorLine::new(
+                ExitClass::IncompatiblePair,
+                "pair_mismatch",
+                false,
+                "This airkctl is not the installation's airkctl; use the installed one.",
+            ),
+        );
+    }
+    let control = runtime_dir
+        .or(selection.control)
+        .unwrap_or_else(|| PathBuf::from(&verified.record.locations.state));
+    match crate::start::start(&verified.airk, &control, VERSION) {
+        Ok(started) => print_compact(cx, &started.health),
+        Err(line) => fail(cx, &line),
+    }
+}
+
 fn service(cx: &mut Context, mut selection: Selection, action: ServiceCommand) -> u8 {
     let (runtime_dir, shutdown) = match action {
+        ServiceCommand::Start { runtime_dir } => {
+            return start_service(cx, selection, runtime_dir);
+        }
         ServiceCommand::Health { runtime_dir } => (runtime_dir, false),
         ServiceCommand::Shutdown { runtime_dir } => (runtime_dir, true),
     };

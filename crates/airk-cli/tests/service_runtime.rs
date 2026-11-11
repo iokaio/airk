@@ -4499,3 +4499,61 @@ fn airkctl_service_health_and_shutdown_print_what_airk_printed() -> Result<()> {
     assert!(wait_exit(&mut children.0[1])?, "service exits cleanly");
     Ok(())
 }
+
+/// Shuts a detached test service down even when an assertion fails first.
+struct ShutdownOnDrop(String);
+impl Drop for ShutdownOnDrop {
+    fn drop(&mut self) {
+        let _ = airkctl(&["service", "shutdown", "--runtime-dir", &self.0]);
+    }
+}
+
+/// `airkctl service start` starts the verified `airk` image as the private
+/// `service-detached` role through a single-use start request and waits for
+/// its health; a second start reports the running service (split step 3b.1d).
+#[test]
+fn airkctl_service_start_runs_the_private_role_until_healthy() -> Result<()> {
+    use airk_core::service::ControlResponse;
+    let owner = tempfile::tempdir()?;
+    let root = owner.path().join("runtime");
+    let dir = root.to_str().context("runtime path")?.to_owned();
+    let airk = Path::new(env!("CARGO_BIN_EXE_airk"));
+    let version = env!("CARGO_PKG_VERSION");
+    let _guard = ShutdownOnDrop(dir.clone());
+    let first = airkctl::start::start(airk, &root, version)
+        .map_err(|line| anyhow::anyhow!("{}: {}", line.code, line.message))?;
+    ensure!(first.started, "the first start starts the service");
+    let ControlResponse::Health { observation } = &first.health else {
+        anyhow::bail!("start did not return Health");
+    };
+    let instance = observation.instance;
+    ensure!(
+        fs::read_dir(root.join("start"))?.next().is_none(),
+        "the single-use start request was consumed"
+    );
+    let second = airkctl::start::start(airk, &root, version)
+        .map_err(|line| anyhow::anyhow!("{}: {}", line.code, line.message))?;
+    ensure!(
+        !second.started,
+        "a second start reports the running service"
+    );
+    let ControlResponse::Health { observation } = &second.health else {
+        anyhow::bail!("second start did not return Health");
+    };
+    ensure!(observation.instance == instance, "same service instance");
+    let (code, _, stderr) = airkctl(&["service", "shutdown", "--runtime-dir", &dir]);
+    ensure!(code == 0, "shutdown failed: {stderr}");
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let (code, _, _) = airkctl(&["service", "health", "--runtime-dir", &dir]);
+        if code == 3 {
+            break;
+        }
+        ensure!(
+            Instant::now() < deadline,
+            "the started service did not exit"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    Ok(())
+}
