@@ -1047,9 +1047,9 @@ criteria = "safe-to-deploy"
 notes = "Reviewed limited exact-version exception for native HTTPS/TLS transport; source review 2026-11-07. ASN.1 parser combinator macros; inspected source has no unsafe/autonomous I/O/process. Composed parser completeness/resource bounds remain caller responsibilities. Not a full security audit or current advisory clearance."
 
 [[exemptions.rustix]]
-version = "1.1.5"
+version = "1.1.6"
 criteria = "safe-to-deploy"
-notes = "Existing locked dependency baseline recorded mechanically on 2026-11-03; unreviewed, not a security audit. New versions/revisions require review, not automatic exemption regeneration."
+notes = "Reviewed limited exact-version exception for the RUSTSEC-2026-0486 security update; source review supply-chain/reviews/rustix-1.1.6-2026-11-11.md. The 1.1.5 to 1.1.6 diff fixes zero-length xattr buffer initialization, clamps control-message lengths and zero-initializes padding; build.rs unchanged; no new dependency. Not a full unsafe-code audit or publisher authentication."
 
 [[exemptions.rustls]]
 version = "0.23.46"

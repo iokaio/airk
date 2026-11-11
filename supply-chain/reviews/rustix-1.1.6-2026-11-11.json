@@ -1,0 +1,68 @@
+{
+  "schema": "airk.dependency-source-review-proposal/1",
+  "status": "PRIMARY_AGENT_REVIEWED_LIMITED_EXCEPTION",
+  "date": "2026-11-11",
+  "scope": "Exact locked archive integrity, manifest/license digests and targeted review of the 1.1.5 to 1.1.6 source diff; no full audit or publisher authentication.",
+  "advisory": {
+    "id": "RUSTSEC-2026-0486",
+    "aliases": [
+      "GHSA-jh2m-fhpj-3vr7"
+    ],
+    "patched": ">=1.1.6"
+  },
+  "tree_algorithm": "sha256 over path-sorted lines '<path>\u0000<file sha256>\n' of every regular file in the archive",
+  "packages": [
+    {
+      "identity": {
+        "name": "rustix",
+        "version": "1.1.6",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "e5e76742e5294153d4dde1207dbec5bdd81eef6fabdc0d2118babadabfd858aa"
+      },
+      "previous": {
+        "version": "1.1.5",
+        "checksum": "891efababe418670775f199f0d233d84843c227a0949a883ce15b37c78d6629d"
+      },
+      "archive_bytes": 426484,
+      "archive_links": 0,
+      "packaged_files": 332,
+      "packaged_tree_sha256": "7a3434ef94af904ead37438ef509665b4c952a2ea2ba7bfaa47f118706b45255",
+      "manifest_sha256": "43d4bcaf19bf857aaa17ada056e7561a50abdcb3201a1722770948ce050c77cb",
+      "original_manifest_sha256": "bb8b1a90410d9e1e0545fbed680e72ce47c1c36bfb71208c7da13110153e7bba",
+      "declared_license": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+      "declared_repository": "https://github.com/bytecodealliance/rustix",
+      "build": true,
+      "build_script_unchanged_from_previous": true,
+      "license_files": [
+        {
+          "path": "COPYRIGHT",
+          "bytes": 853,
+          "sha256": "377c2e7c53250cc5905c0b0532d35973392af16ffb9596a41d99d202cf3617c9"
+        },
+        {
+          "path": "LICENSE-APACHE",
+          "bytes": 10847,
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+        },
+        {
+          "path": "LICENSE-Apache-2.0_WITH_LLVM-exception",
+          "bytes": 12243,
+          "sha256": "268872b9816f90fd8e85db5a28d33f8150ebb8dd016653fb39ef1f94f2686bc5"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "bytes": 1023,
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+        }
+      ],
+      "packaged_vcs_metadata_unverified": {
+        "git": {
+          "sha1": "4a563ad698b2c20ff848515821023d2265a788d0"
+        },
+        "path_in_vcs": ""
+      },
+      "changed_files_from_previous": 30,
+      "lock_change": "version and checksum only; windows-sys stays 0.61.2 (accepted range >=0.52, <0.62)"
+    }
+  ]
+}
