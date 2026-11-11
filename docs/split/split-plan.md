@@ -14,7 +14,7 @@ is 1.8.23.
 | 1 | Two products: a standalone service installer and a UI-only extension that discovers the service. |
 | 2 | Adds `airkctl`, a service-only `airk`, browser admin pages on the HTTPS endpoint, an extension that reaches the service only through `airkctl`, a fixed-layout installer that removes pre-split installations, and code and installer maps. Records the user's decisions of 10 November 2026. |
 | 3 | Clarifies common-contract ownership, UI boundaries, recovery and deployment; maps CI selection, artifact reuse, signing and publication; adds force-local Windows installer/VSIX scripts, phase dependencies and acceptance evidence. Records the additional user decisions U18 onward. |
-| 4 | Records the answers to O1–O12 and the remaining planning questions as U23–U58 (11 November): custom program and data/index locations, macOS setup fallback, phase gates, I2/I3 type generation, commit, test-machine, signing, CI, tool, dependency, agent and failure-handling authorizations. |
+| 4 | Records the answers to O1–O12 and the remaining planning questions as U23–U59 (11 November): custom program and data/index locations, macOS setup fallback, phase gates, I2/I3 type generation, commit, test-machine, signing, CI, tool, dependency, agent and failure-handling authorizations. |
 
 **Reading order.** §2 lists what the user has decided and what still needs an
 answer. §4 defines the boundary between extension code and service code. §5–§9
@@ -122,6 +122,7 @@ These came from the user's request and answers. They are not agent choices.
 | U56 | (11 November) Automated installed-product runs decline certificate trust and check the admin pages with a test client that pins the installation issuer. One final run with real CurrentUser Root trust waits for the user to approve the OS dialog. |
 | U57 | (11 November) No pull request is opened by the agent. The user opens the PR from `feat/split`; merging and publication stay with the user. |
 | U58 | (11 November) Docker on this machine (Linux) and the Mac Neo over the existing SSH setup (macOS arm64) may be used for scoped checks without asking. The Neo target is cleaned after each batch, keeping needed evidence first. |
+| U59 | (11 November) The extension README shown on the Marketplace (`packages/vscode/README.md`) must explain that the extension needs the separately installed AIRK Service, link to the download page (**https://airk.ioka.io**) and the versioned [GitHub Releases](https://github.com/iokaio/airk/releases), and give short per-platform install steps (Windows, macOS, Linux) plus how to confirm the service is running (`airkctl service status`). |
 
 ### 2.2 Formerly open decisions
 
@@ -676,6 +677,16 @@ adapters separate. Neither shell starts a frontend server in production.
 | Agent connection for the workspace | Calls `airkctl agents …`; keeps removal-only code | TypeScript writers, HTTPS enrollment, trust and rotation code |
 | VS Code MCP provider | Supplies the definition; resolves the token with an `airkctl` one-shot. VS Code's own MCP client connects to `/mcp`; the extension does not. | Direct reads of CA and token files |
 | Status and guidance | **Open AIRK Admin**, **Start**, **Download AIRK Service**, **Check again** | Stop, restart, upgrade, rollback |
+
+**Marketplace README (U59).** `packages/vscode/README.md` opens with a
+"Requires AIRK Service" section: what the service is, the
+**https://airk.ioka.io** download link and GitHub Releases link, short
+Windows, macOS and Linux install steps, how to check `airkctl service status`,
+and that installing or updating the extension never installs the service. The
+**Download AIRK Service** action and the "not installed" state (§8.3) use the
+same link. A cheap check pins the link and section heading against a reviewed,
+checked-in expectation, and VSIX verification confirms the packaged README
+carries them.
 
 Choosing a window's search scope stays in the extension because it selects
 among existing indexes for that window. Creating or changing indexes, index
@@ -1245,7 +1256,9 @@ Updated with the change that makes each statement true, not before:
 the CLI guide and generated reference, [extension](../vscode-extension.md),
 [read parity](../read-interface-parity.md), [versioning](../versioning.md),
 the README, the documentation index, release notes and the Marketplace
-description. Dated records stay identifiable as history.
+description. The extension README carries the service download link and
+install steps (U59) in the same change that removes the extension's install
+path (Phase 6); until then it keeps describing the current product. Dated records stay identifiable as history.
 
 CLAUDE.md and AGENTS.md name the CLI, the window session and the parity
 surfaces. Their wording changes only with the user's approval and stays
@@ -1286,7 +1299,7 @@ flowchart LR
 | **3. `airkctl`** | Port the command tree. Add the service-side handlers. Move agent configuration to Rust. Add session mode. The old `airk` CLI still exists. | `airkctl` reproduces the goldens for every surviving command. Parity regressions pass on actual transports. |
 | **4. `airk` service-only** | Remove the user CLI after equivalent `airkctl` coverage. Add manual start and private roles; migrate process/harness consumers and rosters. Delete replaced code with evidence. | §5.1 is tested; surviving commands and test identities have owners. Build/package gates understand both binaries. Retain original goldens and their source identity. Any interim nonshippable state is recorded, not published. |
 | **5. Admin plane and pages** | Always-on listener, sign-in, admin dispatch, shared UI and admin shell, local/CI asset generation and seals, first-release pages. Freeze shared UI/adapters before Phase 6 integration. | Security regressions and dedicated review pass; admin reads match the other surfaces. Missing/stale assets fail build/package checks and the embedded pages work offline. |
-| **6. Extension** | Verified discovery, I2 facade, evidence features, MCP entry handling and removal of install/management surfaces. UI-only package and local VSIX build script. Follows U28/U29 and requires the frozen shared UI interface. | §4.4 boundaries pass. No install path remains. Local VSIX builds without a service build and exercises missing/incompatible/compatible service states. |
+| **6. Extension** | Verified discovery, I2 facade, evidence features, MCP entry handling and removal of install/management surfaces. Marketplace README with the service download link and install steps (U59). UI-only package and local VSIX build script. Follows U28/U29 and requires the frozen shared UI interface. | §4.4 boundaries pass. No install path remains. Local VSIX builds without a service build and exercises missing/incompatible/compatible service states. |
 | **7. Installers and release** | Fixed-layout transaction, signed setup, removal/consent, user-chosen program and data/index locations (U39), local service and combined build scripts, signing rosters, CI identities/selection, release/site updates. Follows U30–U33 and U39–U40 and requires sealed admin assets. | Installer contracts pass against predecessor fixtures. Force-local signed Windows EXE and ordinary VSIX installation is demonstrated before hosted qualification; publication verifiers reject incomplete inventories or missing hosted provenance even when local signatures are valid. |
 | **8. Qualification and handoff** | Ordered §12 checks on frozen inputs; final artifact and publication verification only when authorized. | Receipts collected, blockers reported, and claims limited to observed hosts. The approved `airk-cli` → `airk-service` rename (U34) is a separate mechanical step before freezing consumed inputs. |
 
@@ -1317,7 +1330,7 @@ decision behavior, not installation or signed artifacts.
 | T0: boundaries | Crate edges; VSIX contents; extension process starts and transport imports; self-spawn and process-topology rosters. |
 | T0: `airk` and `airkctl` | The §5.1 invocation table. Every surviving command against its golden. Session framing, limits, cancellation and owner loss. Version and contract handshake. |
 | T0: admin plane | Pure-function tests of host, origin and fetch-site checks, cookie attributes, anti-forgery, plane separation, single-use sign-in codes, session expiry and the never-over-HTTP list. Every operation has one handler, an authorization rule and a conformance entry. |
-| T0: extension | Every state in §8.3. No execution before verification. MCP entry removal with and without a service. No install-side call from activation, commands, update or uninstall. The removal recognizer against shared Rust cases. |
+| T0: extension | Every state in §8.3. The packaged README contains the reviewed "Requires AIRK Service" section and download link (U59). No execution before verification. MCP entry removal with and without a service. No install-side call from activation, commands, update or uninstall. The removal recognizer against shared Rust cases. |
 | T0: installer contracts | Against predecessor fixtures: proven items removed; unproven and locked items kept and reported; links not followed; sources untouched; installation continues; interrupted removal resumes. Two-executable inventories. Custom program, data/index, cache and log locations (U39): accepted user-owned folders, refused shared, linked, nested, pre-split and non-empty foreign folders, pointer written last, and later installs keeping the chosen locations. Bad or missing Windows and macOS signatures and failed Linux integrity checks are rejected. |
 | T0: CI and local build contracts | §10.5.5 script cases: consumed-input selection, stale admin reuse, incomplete binary/asset inventories, UI-only VSIX, producer/attempt validation, force-local behavior and fail-fast output receipts. Verify signing failures stop packaging, ordinary VSIX signature checks stay enabled, and valid local signatures cannot substitute for hosted provenance. |
 | T0/T1: parity | Complete read and input parity across `airkctl`, MCP, Workbench through the session and the admin pages, including provenance, coverage, continuations, errors and retries, on canonical handlers and actual transports. |
@@ -1344,6 +1357,8 @@ root-cause stop rule.
   every surviving command with complete results.
 - The admin pages manage the service and search any index, behind the §7.2
   rules, and `/mcp` and `/api/v1` behave as before.
+- The extension's Marketplace README tells users to install AIRK Service,
+  links to its download page and gives per-platform install steps (U59).
 - The VSIX contains no native payload, has no install path, and reaches the
   service only through `airkctl`.
 - The documented force-local-build scripts produce a working Windows service
