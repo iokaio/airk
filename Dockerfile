@@ -92,6 +92,11 @@ COPY fixtures/schema/airk-state-1/usage.supplemental.objects.json ./fixtures/sch
 COPY fixtures/split/i2/error_lines.json ./fixtures/split/i2/error_lines.json
 COPY fixtures/split/i2/exit_codes.json ./fixtures/split/i2/exit_codes.json
 COPY fixtures/split/i2/version.json ./fixtures/split/i2/version.json
+COPY fixtures/split/i3/admin_operations.json ./fixtures/split/i3/admin_operations.json
+COPY fixtures/split/i3/admission_cases.json ./fixtures/split/i3/admission_cases.json
+COPY fixtures/split/i3/envelopes.json ./fixtures/split/i3/envelopes.json
+COPY fixtures/split/i3/headers.json ./fixtures/split/i3/headers.json
+COPY fixtures/split/i3/launch_exchange.json ./fixtures/split/i3/launch_exchange.json
 COPY fixtures/split/i4/i4_cases.json ./fixtures/split/i4/i4_cases.json
 COPY fixtures/wire/airkctl_session_frames.json ./fixtures/wire/airkctl_session_frames.json
 COPY fixtures/wire/catalog_receipt.json ./fixtures/wire/catalog_receipt.json
@@ -100,6 +105,7 @@ COPY fixtures/wire/read_retry_decisions.json ./fixtures/wire/read_retry_decision
 COPY fixtures/wire/read_retry_envelopes.json ./fixtures/wire/read_retry_envelopes.json
 COPY fixtures/wire/session_frames.json ./fixtures/wire/session_frames.json
 COPY fixtures/wire/usage_page.json ./fixtures/wire/usage_page.json
+COPY packages/contracts-gen/i3.schema.json ./packages/contracts-gen/i3.schema.json
 COPY packages/vscode/src/generated/i2.schema.json ./packages/vscode/src/generated/i2.schema.json
 COPY packages/vscode/src/test/diagnosticLogs.test.ts ./packages/vscode/src/test/diagnosticLogs.test.ts
 COPY packages/vscode/src/test/extensionUninstall.test.ts ./packages/vscode/src/test/extensionUninstall.test.ts

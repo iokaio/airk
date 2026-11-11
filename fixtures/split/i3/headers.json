@@ -1,0 +1,217 @@
+{
+ "schema": "airk.split-fixture.i3-headers/1",
+ "contract": "docs/split/contracts.md \u00a74, \u00a74.11; docs/split/security-review-i3.md",
+ "generator": "fixtures/split/i3/admission_cases.py",
+ "comparison": "Header sets are compared as sorted [name, value] pairs.",
+ "kinds": {
+  "api": [
+   [
+    "content-security-policy",
+    "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; require-trusted-types-for 'script'; trusted-types 'none'"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-frame-options",
+    "DENY"
+   ],
+   [
+    "cross-origin-opener-policy",
+    "same-origin"
+   ],
+   [
+    "cross-origin-resource-policy",
+    "same-origin"
+   ],
+   [
+    "permissions-policy",
+    "accelerometer=(), autoplay=(), camera=(), display-capture=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), midi=(), payment=(), publickey-credentials-get=(), screen-wake-lock=(), serial=(), usb=(), xr-spatial-tracking=()"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "content-type",
+    "application/json"
+   ]
+  ],
+  "events": [
+   [
+    "content-security-policy",
+    "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; require-trusted-types-for 'script'; trusted-types 'none'"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-frame-options",
+    "DENY"
+   ],
+   [
+    "cross-origin-opener-policy",
+    "same-origin"
+   ],
+   [
+    "cross-origin-resource-policy",
+    "same-origin"
+   ],
+   [
+    "permissions-policy",
+    "accelerometer=(), autoplay=(), camera=(), display-capture=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), midi=(), payment=(), publickey-credentials-get=(), screen-wake-lock=(), serial=(), usb=(), xr-spatial-tracking=()"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "content-type",
+    "application/x-ndjson"
+   ]
+  ],
+  "shell": [
+   [
+    "content-security-policy",
+    "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; require-trusted-types-for 'script'; trusted-types 'none'"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-frame-options",
+    "DENY"
+   ],
+   [
+    "cross-origin-opener-policy",
+    "same-origin"
+   ],
+   [
+    "cross-origin-resource-policy",
+    "same-origin"
+   ],
+   [
+    "permissions-policy",
+    "accelerometer=(), autoplay=(), camera=(), display-capture=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), midi=(), payment=(), publickey-credentials-get=(), screen-wake-lock=(), serial=(), usb=(), xr-spatial-tracking=()"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ]
+  ],
+  "asset": [
+   [
+    "content-security-policy",
+    "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; require-trusted-types-for 'script'; trusted-types 'none'"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-frame-options",
+    "DENY"
+   ],
+   [
+    "cross-origin-opener-policy",
+    "same-origin"
+   ],
+   [
+    "cross-origin-resource-policy",
+    "same-origin"
+   ],
+   [
+    "permissions-policy",
+    "accelerometer=(), autoplay=(), camera=(), display-capture=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), midi=(), payment=(), publickey-credentials-get=(), screen-wake-lock=(), serial=(), usb=(), xr-spatial-tracking=()"
+   ],
+   [
+    "cache-control",
+    "private, max-age=31536000, immutable"
+   ]
+  ],
+  "redirect": [
+   [
+    "content-security-policy",
+    "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; require-trusted-types-for 'script'; trusted-types 'none'"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-frame-options",
+    "DENY"
+   ],
+   [
+    "cross-origin-opener-policy",
+    "same-origin"
+   ],
+   [
+    "cross-origin-resource-policy",
+    "same-origin"
+   ],
+   [
+    "permissions-policy",
+    "accelerometer=(), autoplay=(), camera=(), display-capture=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), midi=(), payment=(), publickey-credentials-get=(), screen-wake-lock=(), serial=(), usb=(), xr-spatial-tracking=()"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "location",
+    "/admin/"
+   ]
+  ]
+ },
+ "never_sent_prefixes": [
+  "access-control-"
+ ],
+ "cookie_name": "__Host-airk_admin",
+ "csrf_header": "x-airk-csrf",
+ "set_cookie": {
+  "value": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "header": "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8; Secure; HttpOnly; SameSite=Strict; Path=/"
+ },
+ "clear_cookie": "__Host-airk_admin=; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=0",
+ "redacted_request_headers": [
+  "authorization",
+  "cookie",
+  "x-airk-csrf"
+ ],
+ "exchange_secret_fields": [
+  "code",
+  "csrf"
+ ],
+ "bare_status_exceptions": [
+  400,
+  431
+ ]
+}

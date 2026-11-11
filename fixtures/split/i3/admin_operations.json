@@ -1,0 +1,2239 @@
+{
+ "schema": "airk.split-fixture.i3-operations/1",
+ "contract": "docs/split/contracts.md \u00a74, \u00a74.11; docs/split/security-review-i3.md; split plan \u00a77.3; contracts.md \u00a72.2",
+ "generator": "fixtures/split/i3/admission_cases.py",
+ "status": "Reviewed initial table (C5). Handlers land in Phase 5; every row is not yet served.",
+ "enumerations": {
+  "plane": [
+   "management",
+   "evidence"
+  ],
+  "surface": [
+   "pipe",
+   "airkctl",
+   "session",
+   "admin"
+  ],
+  "authorization": [
+   "owner_pipe",
+   "window_lease",
+   "admin_session_csrf"
+  ],
+  "effect": [
+   "read",
+   "mutation",
+   "destructive"
+  ],
+  "idempotency": [
+   "read",
+   "request_key",
+   "operation_digest",
+   "natural"
+  ],
+  "conformance": [
+   "P1",
+   "P2",
+   "P3",
+   "P4",
+   "P5",
+   "P6",
+   "P7",
+   "P8",
+   "P9"
+  ]
+ },
+ "operations": [
+  {
+   "operation": "service.health",
+   "method": "Health",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "session",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
+   "operation": "service.resources",
+   "method": "Resources",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
+   "operation": "service.workers",
+   "method": "Workers",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
+   "operation": "service.login_startup_status",
+   "method": "LoginStartup.Status",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
+   "operation": "indexes.list",
+   "method": "Projects",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "session",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
+   "operation": "indexes.inspect",
+   "method": "Inspection",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "session",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
+   "operation": "indexes.progress",
+   "method": "Progress",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "session",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
+   "operation": "indexes.plan_registration",
+   "method": "PlanRegistration",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
+   "operation": "indexes.prepare_configuration",
+   "method": "PrepareConfiguration",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
+   "operation": "catalog.page",
+   "method": "CatalogPage",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "session",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
+   "operation": "catalog.detail",
+   "method": "CatalogDetail",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "session",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
+   "operation": "catalog.preview",
+   "method": "CatalogPreview",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
+   "operation": "catalog.receipt",
+   "method": "CatalogReceipt",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
+   "operation": "catalog.index_setup_draft",
+   "method": "CatalogIndexSetupDraft",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
+   "operation": "catalog.index_setup_receipt",
+   "method": "CatalogIndexSetupReceipt",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
+   "operation": "catalog.split_draft",
+   "method": "CatalogSplitDraft",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
+   "operation": "catalog.split_status",
+   "method": "CatalogSplitStatus",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
+   "operation": "catalog.retirement_evidence",
+   "method": "CatalogIndexRetirementEvidence",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
+   "operation": "catalog.policy_status",
+   "method": "CatalogPolicyStatus",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
+   "operation": "events.page",
+   "method": "Events",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "session",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
+   "operation": "jobs.get",
+   "method": "Job",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "session",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
+   "operation": "requests.list",
+   "method": "ClientRequestList",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
+   "operation": "requests.receipt",
+   "method": "RequestReceipt",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
+   "operation": "recovery.plan",
+   "method": "Plan",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
+   "operation": "recovery.plan_items",
+   "method": "PlanItems",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
+   "operation": "storage.inventory",
+   "method": "StorageInventory",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
+   "operation": "logs.recent",
+   "method": "Logs",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
+   "operation": "logs.export",
+   "method": "LogsExport",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
+   "operation": "agents.connection",
+   "method": "HttpConnectionInfo",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
+   "operation": "agents.ownership",
+   "method": "HttpConnectionOwnership",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
+   "operation": "agents.verify",
+   "method": "AgentConnectionVerify",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
+   "operation": "https.trust_status",
+   "method": "HttpTrust.Inspect",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
+   "operation": "https.rotation_status",
+   "method": "HttpIssuerRotation.Status",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
+   "operation": "models.catalog",
+   "method": "ModelCatalog",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
+   "operation": "indexes.resolve",
+   "method": "ResolveProject",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "session"
+   ],
+   "authorization": [
+    "owner_pipe"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P8"
+   ]
+  },
+  {
+   "operation": "tools.catalog",
+   "method": "ToolsCatalog",
+   "plane": "evidence",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "session",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P6",
+    "P7",
+    "P8"
+   ]
+  },
+  {
+   "operation": "search.call",
+   "method": "ToolsCall",
+   "plane": "evidence",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "session",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P6",
+    "P7",
+    "P8"
+   ]
+  },
+  {
+   "operation": "explorer.offline",
+   "method": "ExplorerOffline",
+   "plane": "evidence",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "session",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P6",
+    "P7",
+    "P8"
+   ]
+  },
+  {
+   "operation": "explorer.handoff",
+   "method": "ExplorerHandoff",
+   "plane": "evidence",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "session"
+   ],
+   "authorization": [
+    "owner_pipe"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P6",
+    "P7",
+    "P8"
+   ]
+  },
+  {
+   "operation": "evidence.native_read_scoped",
+   "method": "NativeReadScoped",
+   "plane": "evidence",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "session"
+   ],
+   "authorization": [
+    "owner_pipe"
+   ],
+   "effect": "read",
+   "idempotency": "read",
+   "conformance": [
+    "P3",
+    "P5",
+    "P6",
+    "P7",
+    "P8"
+   ]
+  },
+  {
+   "operation": "search.select_scope",
+   "method": "AdminScopeGrant",
+   "plane": "evidence",
+   "surfaces": [
+    "admin"
+   ],
+   "authorization": [
+    "admin_session_csrf"
+   ],
+   "effect": "mutation",
+   "idempotency": "natural",
+   "conformance": [
+    "P2",
+    "P3",
+    "P5"
+   ]
+  },
+  {
+   "operation": "indexes.prepare_storage",
+   "method": "PrepareStorage",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "mutation",
+   "idempotency": "natural",
+   "conformance": [
+    "P2",
+    "P3",
+    "P5"
+   ]
+  },
+  {
+   "operation": "indexes.register",
+   "method": "Register",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "mutation",
+   "idempotency": "natural",
+   "conformance": [
+    "P2",
+    "P3",
+    "P5"
+   ]
+  },
+  {
+   "operation": "indexes.configure",
+   "method": "ConfigureProject",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "mutation",
+   "idempotency": "request_key",
+   "conformance": [
+    "P1",
+    "P2",
+    "P3",
+    "P5",
+    "P9"
+   ]
+  },
+  {
+   "operation": "indexes.watch",
+   "method": "ConfigureWatch",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "mutation",
+   "idempotency": "natural",
+   "conformance": [
+    "P2",
+    "P3",
+    "P5"
+   ]
+  },
+  {
+   "operation": "indexes.pause",
+   "method": "Pause",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "mutation",
+   "idempotency": "natural",
+   "conformance": [
+    "P2",
+    "P3",
+    "P5"
+   ]
+  },
+  {
+   "operation": "jobs.enqueue",
+   "method": "Enqueue",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "mutation",
+   "idempotency": "request_key",
+   "conformance": [
+    "P1",
+    "P2",
+    "P3",
+    "P4",
+    "P5",
+    "P9"
+   ]
+  },
+  {
+   "operation": "jobs.retry",
+   "method": "Retry",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "mutation",
+   "idempotency": "request_key",
+   "conformance": [
+    "P1",
+    "P2",
+    "P3",
+    "P4",
+    "P5",
+    "P9"
+   ]
+  },
+  {
+   "operation": "jobs.cancel",
+   "method": "Cancel",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "mutation",
+   "idempotency": "natural",
+   "conformance": [
+    "P2",
+    "P3",
+    "P4",
+    "P5"
+   ]
+  },
+  {
+   "operation": "requests.prepare",
+   "method": "ClientRequestPrepare",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl"
+   ],
+   "authorization": [
+    "owner_pipe"
+   ],
+   "effect": "mutation",
+   "idempotency": "request_key",
+   "conformance": [
+    "P1",
+    "P2",
+    "P3",
+    "P5",
+    "P9"
+   ]
+  },
+  {
+   "operation": "requests.submit",
+   "method": "ClientRequestSubmit",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "mutation",
+   "idempotency": "request_key",
+   "conformance": [
+    "P1",
+    "P2",
+    "P3",
+    "P5",
+    "P9"
+   ]
+  },
+  {
+   "operation": "requests.forget",
+   "method": "ClientRequestForget",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "mutation",
+   "idempotency": "natural",
+   "conformance": [
+    "P2",
+    "P3",
+    "P5"
+   ]
+  },
+  {
+   "operation": "catalog.apply",
+   "method": "CatalogApply",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "destructive",
+   "idempotency": "operation_digest",
+   "conformance": [
+    "P2",
+    "P3",
+    "P5",
+    "P9"
+   ]
+  },
+  {
+   "operation": "catalog.index_setup_apply",
+   "method": "CatalogIndexSetupApply",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "mutation",
+   "idempotency": "operation_digest",
+   "conformance": [
+    "P2",
+    "P3",
+    "P5",
+    "P9"
+   ]
+  },
+  {
+   "operation": "catalog.split_apply",
+   "method": "CatalogSplitApply",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "destructive",
+   "idempotency": "operation_digest",
+   "conformance": [
+    "P2",
+    "P3",
+    "P5",
+    "P9"
+   ]
+  },
+  {
+   "operation": "catalog.policy_resume",
+   "method": "CatalogPolicyResume",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "mutation",
+   "idempotency": "request_key",
+   "conformance": [
+    "P1",
+    "P2",
+    "P3",
+    "P5",
+    "P9"
+   ]
+  },
+  {
+   "operation": "recovery.plan_create",
+   "method": "PlanCreate",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "mutation",
+   "idempotency": "request_key",
+   "conformance": [
+    "P1",
+    "P2",
+    "P3",
+    "P5",
+    "P9"
+   ]
+  },
+  {
+   "operation": "recovery.plan_execute",
+   "method": "PlanExecute",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "destructive",
+   "idempotency": "operation_digest",
+   "conformance": [
+    "P2",
+    "P3",
+    "P5",
+    "P9"
+   ]
+  },
+  {
+   "operation": "recovery.plan_pause",
+   "method": "PlanPause",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "mutation",
+   "idempotency": "natural",
+   "conformance": [
+    "P2",
+    "P3",
+    "P5"
+   ]
+  },
+  {
+   "operation": "recovery.plan_cancel",
+   "method": "PlanCancel",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "mutation",
+   "idempotency": "natural",
+   "conformance": [
+    "P2",
+    "P3",
+    "P5"
+   ]
+  },
+  {
+   "operation": "storage.purge",
+   "method": "StoragePurge",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "destructive",
+   "idempotency": "operation_digest",
+   "conformance": [
+    "P2",
+    "P3",
+    "P5",
+    "P9"
+   ]
+  },
+  {
+   "operation": "service.configure_resources",
+   "method": "ConfigureResources",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "mutation",
+   "idempotency": "natural",
+   "conformance": [
+    "P2",
+    "P3",
+    "P5"
+   ]
+  },
+  {
+   "operation": "service.stop",
+   "method": "Lifecycle.Stop",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "mutation",
+   "idempotency": "request_key",
+   "conformance": [
+    "P1",
+    "P2",
+    "P3",
+    "P5",
+    "P9"
+   ]
+  },
+  {
+   "operation": "service.restart",
+   "method": "Lifecycle.Restart",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "mutation",
+   "idempotency": "request_key",
+   "conformance": [
+    "P1",
+    "P2",
+    "P3",
+    "P5",
+    "P9"
+   ]
+  },
+  {
+   "operation": "service.abandon_lifecycle",
+   "method": "AbandonLifecycle",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "mutation",
+   "idempotency": "natural",
+   "conformance": [
+    "P2",
+    "P3",
+    "P5"
+   ]
+  },
+  {
+   "operation": "service.login_startup_install",
+   "method": "LoginStartup.Install",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "mutation",
+   "idempotency": "natural",
+   "conformance": [
+    "P2",
+    "P3",
+    "P5"
+   ]
+  },
+  {
+   "operation": "service.login_startup_uninstall",
+   "method": "LoginStartup.Uninstall",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "mutation",
+   "idempotency": "natural",
+   "conformance": [
+    "P2",
+    "P3",
+    "P5"
+   ]
+  },
+  {
+   "operation": "service.record_client_error",
+   "method": "RecordClientError",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "session",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "mutation",
+   "idempotency": "natural",
+   "conformance": [
+    "P2",
+    "P3",
+    "P5"
+   ]
+  },
+  {
+   "operation": "agents.revoke",
+   "method": "HttpRevoke",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "mutation",
+   "idempotency": "natural",
+   "conformance": [
+    "P2",
+    "P3",
+    "P5"
+   ]
+  }
+ ],
+ "never_over_http": [
+  {
+   "item": "bearer_credentials",
+   "methods": [],
+   "reason": "Bearer tokens and credential files never leave the owner plane."
+  },
+  {
+   "item": "private_keys",
+   "methods": [],
+   "reason": "TLS leaf and issuer private keys."
+  },
+  {
+   "item": "connection_grants",
+   "methods": [
+    "Connect",
+    "ConnectScoped"
+   ],
+   "reason": "Raw ConnectionGrant."
+  },
+  {
+   "item": "upgrade_checkpoints",
+   "methods": [
+    "PrepareUpgradeCheckpoint",
+    "ObserveUpgradeCheckpoint",
+    "UpgradeRecoveryProbe",
+    "ReleaseUpgradeAdmission"
+   ],
+   "reason": "Upgrade checkpoints are installer-class owner-pipe operations."
+  },
+  {
+   "item": "credential_enrollment",
+   "methods": [
+    "HttpEnroll"
+   ],
+   "reason": "Credential-creating; `airkctl agents connect` only. The Agents page shows the command."
+  },
+  {
+   "item": "admin_launch_code",
+   "methods": [
+    "AdminLaunchCode"
+   ],
+   "reason": "A1 is owner pipe only."
+  },
+  {
+   "item": "admin_session_revocation",
+   "methods": [
+    "AdminEndSessions"
+   ],
+   "reason": "Ending every admin session after a suspected leak is an owner-pipe method (L4)."
+  },
+  {
+   "item": "window_leases",
+   "methods": [
+    "WindowOpen",
+    "WindowRenew",
+    "WindowClose",
+    "AssistanceDrain",
+    "HandoffPublish"
+   ],
+   "reason": "W1-W3, W7-W8 carry a window lease."
+  },
+  {
+   "item": "certificate_trust_changes",
+   "methods": [
+    "HttpIssuerRotation.Stage",
+    "HttpIssuerRotation.Commit",
+    "HttpIssuerRotation.Finalize"
+   ],
+   "reason": "Trust install/remove are offline airkctl operations; rotation stages trust (L8). Status only."
+  },
+  {
+   "item": "uninstall_and_setup_role",
+   "methods": [],
+   "reason": "Installer and setup role only."
+  },
+  {
+   "item": "raw_relay",
+   "methods": [],
+   "reason": "`airkctl service rpc` is an owner-pipe raw relay."
+  }
+ ],
+ "invalid_tables": [
+  {
+   "name": "duplicate_operation",
+   "reason": "operation_duplicate",
+   "rows": [
+    {
+     "operation": "service.stop",
+     "method": "Lifecycle.Stop",
+     "plane": "management",
+     "surfaces": [
+      "pipe",
+      "airkctl",
+      "admin"
+     ],
+     "authorization": [
+      "owner_pipe",
+      "admin_session_csrf"
+     ],
+     "effect": "mutation",
+     "idempotency": "request_key",
+     "conformance": [
+      "P1",
+      "P2",
+      "P3",
+      "P5",
+      "P9"
+     ]
+    },
+    {
+     "operation": "service.stop",
+     "method": "Lifecycle.Stop",
+     "plane": "management",
+     "surfaces": [
+      "pipe",
+      "airkctl",
+      "admin"
+     ],
+     "authorization": [
+      "owner_pipe",
+      "admin_session_csrf"
+     ],
+     "effect": "mutation",
+     "idempotency": "request_key",
+     "conformance": [
+      "P1",
+      "P2",
+      "P3",
+      "P5",
+      "P9"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "operation_not_dotted",
+   "reason": "operation_id",
+   "rows": [
+    {
+     "operation": "stop",
+     "method": "Lifecycle.Stop",
+     "plane": "management",
+     "surfaces": [
+      "pipe",
+      "airkctl",
+      "admin"
+     ],
+     "authorization": [
+      "owner_pipe",
+      "admin_session_csrf"
+     ],
+     "effect": "mutation",
+     "idempotency": "request_key",
+     "conformance": [
+      "P1",
+      "P2",
+      "P3",
+      "P5",
+      "P9"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "operation_uppercase",
+   "reason": "operation_id",
+   "rows": [
+    {
+     "operation": "Service.Stop",
+     "method": "Lifecycle.Stop",
+     "plane": "management",
+     "surfaces": [
+      "pipe",
+      "airkctl",
+      "admin"
+     ],
+     "authorization": [
+      "owner_pipe",
+      "admin_session_csrf"
+     ],
+     "effect": "mutation",
+     "idempotency": "request_key",
+     "conformance": [
+      "P1",
+      "P2",
+      "P3",
+      "P5",
+      "P9"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "method_empty",
+   "reason": "method_empty",
+   "rows": [
+    {
+     "operation": "service.stop",
+     "method": "",
+     "plane": "management",
+     "surfaces": [
+      "pipe",
+      "airkctl",
+      "admin"
+     ],
+     "authorization": [
+      "owner_pipe",
+      "admin_session_csrf"
+     ],
+     "effect": "mutation",
+     "idempotency": "request_key",
+     "conformance": [
+      "P1",
+      "P2",
+      "P3",
+      "P5",
+      "P9"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "no_surface",
+   "reason": "surfaces",
+   "rows": [
+    {
+     "operation": "service.stop",
+     "method": "Lifecycle.Stop",
+     "plane": "management",
+     "surfaces": [],
+     "authorization": [
+      "owner_pipe",
+      "admin_session_csrf"
+     ],
+     "effect": "mutation",
+     "idempotency": "request_key",
+     "conformance": [
+      "P1",
+      "P2",
+      "P3",
+      "P5",
+      "P9"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "surface_twice",
+   "reason": "surfaces",
+   "rows": [
+    {
+     "operation": "service.stop",
+     "method": "Lifecycle.Stop",
+     "plane": "management",
+     "surfaces": [
+      "pipe",
+      "pipe",
+      "airkctl",
+      "admin"
+     ],
+     "authorization": [
+      "owner_pipe",
+      "admin_session_csrf"
+     ],
+     "effect": "mutation",
+     "idempotency": "request_key",
+     "conformance": [
+      "P1",
+      "P2",
+      "P3",
+      "P5",
+      "P9"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "authorization_twice",
+   "reason": "duplicate_entry",
+   "rows": [
+    {
+     "operation": "service.stop",
+     "method": "Lifecycle.Stop",
+     "plane": "management",
+     "surfaces": [
+      "pipe",
+      "airkctl",
+      "admin"
+     ],
+     "authorization": [
+      "owner_pipe",
+      "owner_pipe",
+      "admin_session_csrf"
+     ],
+     "effect": "mutation",
+     "idempotency": "request_key",
+     "conformance": [
+      "P1",
+      "P2",
+      "P3",
+      "P5",
+      "P9"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "admin_without_csrf_rule",
+   "reason": "authorization_admin",
+   "rows": [
+    {
+     "operation": "service.stop",
+     "method": "Lifecycle.Stop",
+     "plane": "management",
+     "surfaces": [
+      "pipe",
+      "airkctl",
+      "admin"
+     ],
+     "authorization": [
+      "owner_pipe"
+     ],
+     "effect": "mutation",
+     "idempotency": "request_key",
+     "conformance": [
+      "P1",
+      "P2",
+      "P3",
+      "P5",
+      "P9"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "csrf_rule_without_admin",
+   "reason": "authorization_admin",
+   "rows": [
+    {
+     "operation": "service.stop",
+     "method": "Lifecycle.Stop",
+     "plane": "management",
+     "surfaces": [
+      "pipe",
+      "airkctl"
+     ],
+     "authorization": [
+      "owner_pipe",
+      "admin_session_csrf"
+     ],
+     "effect": "mutation",
+     "idempotency": "request_key",
+     "conformance": [
+      "P1",
+      "P2",
+      "P3",
+      "P5",
+      "P9"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "pipe_without_owner_rule",
+   "reason": "authorization_owner_pipe",
+   "rows": [
+    {
+     "operation": "service.stop",
+     "method": "Lifecycle.Stop",
+     "plane": "management",
+     "surfaces": [
+      "pipe",
+      "airkctl",
+      "admin"
+     ],
+     "authorization": [
+      "admin_session_csrf"
+     ],
+     "effect": "mutation",
+     "idempotency": "request_key",
+     "conformance": [
+      "P1",
+      "P2",
+      "P3",
+      "P5",
+      "P9"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "read_with_request_key",
+   "reason": "effect_idempotency",
+   "rows": [
+    {
+     "operation": "service.health",
+     "method": "Health",
+     "plane": "management",
+     "surfaces": [
+      "pipe",
+      "airkctl",
+      "session",
+      "admin"
+     ],
+     "authorization": [
+      "owner_pipe",
+      "admin_session_csrf"
+     ],
+     "effect": "read",
+     "idempotency": "request_key",
+     "conformance": [
+      "P3",
+      "P5",
+      "P8"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "mutation_with_read_idempotency",
+   "reason": "effect_idempotency",
+   "rows": [
+    {
+     "operation": "service.stop",
+     "method": "Lifecycle.Stop",
+     "plane": "management",
+     "surfaces": [
+      "pipe",
+      "airkctl",
+      "admin"
+     ],
+     "authorization": [
+      "owner_pipe",
+      "admin_session_csrf"
+     ],
+     "effect": "mutation",
+     "idempotency": "read",
+     "conformance": [
+      "P1",
+      "P2",
+      "P3",
+      "P5",
+      "P9"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "destructive_without_digest",
+   "reason": "effect_idempotency",
+   "rows": [
+    {
+     "operation": "service.stop",
+     "method": "Lifecycle.Stop",
+     "plane": "management",
+     "surfaces": [
+      "pipe",
+      "airkctl",
+      "admin"
+     ],
+     "authorization": [
+      "owner_pipe",
+      "admin_session_csrf"
+     ],
+     "effect": "destructive",
+     "idempotency": "request_key",
+     "conformance": [
+      "P1",
+      "P2",
+      "P3",
+      "P5",
+      "P9"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "missing_p5",
+   "reason": "conformance_missing",
+   "rows": [
+    {
+     "operation": "service.health",
+     "method": "Health",
+     "plane": "management",
+     "surfaces": [
+      "pipe",
+      "airkctl",
+      "session",
+      "admin"
+     ],
+     "authorization": [
+      "owner_pipe",
+      "admin_session_csrf"
+     ],
+     "effect": "read",
+     "idempotency": "read",
+     "conformance": [
+      "P3",
+      "P8"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "mutation_without_p2",
+   "reason": "conformance_missing",
+   "rows": [
+    {
+     "operation": "service.stop",
+     "method": "Lifecycle.Stop",
+     "plane": "management",
+     "surfaces": [
+      "pipe",
+      "airkctl",
+      "admin"
+     ],
+     "authorization": [
+      "owner_pipe",
+      "admin_session_csrf"
+     ],
+     "effect": "mutation",
+     "idempotency": "request_key",
+     "conformance": [
+      "P1",
+      "P3",
+      "P5",
+      "P9"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "request_key_without_p1",
+   "reason": "conformance_missing",
+   "rows": [
+    {
+     "operation": "service.stop",
+     "method": "Lifecycle.Stop",
+     "plane": "management",
+     "surfaces": [
+      "pipe",
+      "airkctl",
+      "admin"
+     ],
+     "authorization": [
+      "owner_pipe",
+      "admin_session_csrf"
+     ],
+     "effect": "mutation",
+     "idempotency": "request_key",
+     "conformance": [
+      "P2",
+      "P3",
+      "P5",
+      "P9"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "admin_read_without_p8",
+   "reason": "conformance_missing",
+   "rows": [
+    {
+     "operation": "service.health",
+     "method": "Health",
+     "plane": "management",
+     "surfaces": [
+      "pipe",
+      "airkctl",
+      "session",
+      "admin"
+     ],
+     "authorization": [
+      "owner_pipe",
+      "admin_session_csrf"
+     ],
+     "effect": "read",
+     "idempotency": "read",
+     "conformance": [
+      "P3",
+      "P5"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "evidence_read_without_p7",
+   "reason": "conformance_missing",
+   "rows": [
+    {
+     "operation": "service.health",
+     "method": "Health",
+     "plane": "evidence",
+     "surfaces": [
+      "pipe",
+      "airkctl",
+      "session",
+      "admin"
+     ],
+     "authorization": [
+      "owner_pipe",
+      "admin_session_csrf"
+     ],
+     "effect": "read",
+     "idempotency": "read",
+     "conformance": [
+      "P3",
+      "P5",
+      "P6",
+      "P8"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "admin_enroll",
+   "reason": "never_over_http",
+   "rows": [
+    {
+     "operation": "agents.enroll",
+     "method": "HttpEnroll",
+     "plane": "management",
+     "surfaces": [
+      "pipe",
+      "airkctl",
+      "admin"
+     ],
+     "authorization": [
+      "owner_pipe",
+      "admin_session_csrf"
+     ],
+     "effect": "mutation",
+     "idempotency": "request_key",
+     "conformance": [
+      "P1",
+      "P2",
+      "P3",
+      "P5",
+      "P9"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "admin_rotation_commit",
+   "reason": "never_over_http",
+   "rows": [
+    {
+     "operation": "https.rotation_commit",
+     "method": "HttpIssuerRotation.Commit",
+     "plane": "management",
+     "surfaces": [
+      "pipe",
+      "airkctl",
+      "admin"
+     ],
+     "authorization": [
+      "owner_pipe",
+      "admin_session_csrf"
+     ],
+     "effect": "mutation",
+     "idempotency": "request_key",
+     "conformance": [
+      "P1",
+      "P2",
+      "P3",
+      "P5",
+      "P9"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "admin_action_of_never_method",
+   "reason": "never_over_http",
+   "rows": [
+    {
+     "operation": "agents.connect",
+     "method": "Connect.Project",
+     "plane": "management",
+     "surfaces": [
+      "pipe",
+      "airkctl",
+      "admin"
+     ],
+     "authorization": [
+      "owner_pipe",
+      "admin_session_csrf"
+     ],
+     "effect": "mutation",
+     "idempotency": "request_key",
+     "conformance": [
+      "P1",
+      "P2",
+      "P3",
+      "P5",
+      "P9"
+     ]
+    }
+   ]
+  }
+ ]
+}

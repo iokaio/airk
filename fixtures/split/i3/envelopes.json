@@ -1,0 +1,525 @@
+{
+ "schema": "airk.split-fixture.i3-envelopes/1",
+ "contract": "docs/split/contracts.md \u00a74, \u00a74.11; docs/split/security-review-i3.md",
+ "generator": "fixtures/split/i3/admission_cases.py",
+ "envelope_schema": "airk-admin/1",
+ "status_by_class": {
+  "malformed": 400,
+  "unauthenticated": 401,
+  "forbidden": 403,
+  "not_found": 404,
+  "method_not_allowed": 405,
+  "refused": 409,
+  "too_large": 413,
+  "internal": 500,
+  "unavailable": 503
+ },
+ "codes": [
+  {
+   "code": "admin_host_refused",
+   "class": "forbidden",
+   "status": 403,
+   "retryable": false
+  },
+  {
+   "code": "admin_origin_refused",
+   "class": "forbidden",
+   "status": 403,
+   "retryable": false
+  },
+  {
+   "code": "admin_fetch_metadata_refused",
+   "class": "forbidden",
+   "status": 403,
+   "retryable": false
+  },
+  {
+   "code": "admin_peer_refused",
+   "class": "forbidden",
+   "status": 403,
+   "retryable": false
+  },
+  {
+   "code": "admin_preflight_refused",
+   "class": "forbidden",
+   "status": 403,
+   "retryable": false
+  },
+  {
+   "code": "admin_bearer_refused",
+   "class": "unauthenticated",
+   "status": 401,
+   "retryable": false
+  },
+  {
+   "code": "admin_session_invalid",
+   "class": "unauthenticated",
+   "status": 401,
+   "retryable": false
+  },
+  {
+   "code": "admin_launch_code_invalid",
+   "class": "unauthenticated",
+   "status": 401,
+   "retryable": false
+  },
+  {
+   "code": "admin_not_found",
+   "class": "not_found",
+   "status": 404,
+   "retryable": false
+  },
+  {
+   "code": "admin_operation_unknown",
+   "class": "not_found",
+   "status": 404,
+   "retryable": false
+  },
+  {
+   "code": "admin_method_not_allowed",
+   "class": "method_not_allowed",
+   "status": 405,
+   "retryable": false
+  },
+  {
+   "code": "admin_upgrade_refused",
+   "class": "malformed",
+   "status": 400,
+   "retryable": false
+  },
+  {
+   "code": "admin_malformed_request",
+   "class": "malformed",
+   "status": 400,
+   "retryable": false
+  },
+  {
+   "code": "admin_request_too_large",
+   "class": "too_large",
+   "status": 413,
+   "retryable": false
+  },
+  {
+   "code": "admin_stream_limit",
+   "class": "unavailable",
+   "status": 503,
+   "retryable": true
+  },
+  {
+   "code": "admin_exchange_rate_limited",
+   "class": "unavailable",
+   "status": 503,
+   "retryable": true
+  },
+  {
+   "code": "admin_internal",
+   "class": "internal",
+   "status": 500,
+   "retryable": false
+  },
+  {
+   "code": "not_yet_served",
+   "class": "unavailable",
+   "status": 503,
+   "retryable": false
+  },
+  {
+   "code": "service_draining",
+   "class": "unavailable",
+   "status": 503,
+   "retryable": true
+  },
+  {
+   "code": "upgrade_in_progress",
+   "class": "unavailable",
+   "status": 503,
+   "retryable": true
+  },
+  {
+   "code": "cookie_on_bearer_plane",
+   "class": "forbidden",
+   "status": 403,
+   "retryable": false
+  }
+ ],
+ "valid": [
+  {
+   "name": "exchange",
+   "json": {
+    "schema": "airk-admin/1",
+    "ok": true,
+    "operation": "session.exchange",
+    "result": {
+     "csrf": "QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8",
+     "idle_expires_in_ms": 1800000,
+     "absolute_expires_in_ms": 43200000,
+     "service_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"
+    }
+   }
+  },
+  {
+   "name": "logout",
+   "json": {
+    "schema": "airk-admin/1",
+    "ok": true,
+    "operation": "session.logout",
+    "result": {}
+   }
+  },
+  {
+   "name": "read",
+   "json": {
+    "schema": "airk-admin/1",
+    "ok": true,
+    "operation": "service.health",
+    "result": {
+     "status": "health",
+     "version": "elided"
+    }
+   }
+  },
+  {
+   "name": "accepted_mutation",
+   "json": {
+    "schema": "airk-admin/1",
+    "ok": true,
+    "operation": "jobs.enqueue",
+    "result": {
+     "job": null
+    },
+    "request": {
+     "nonce": "4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e",
+     "state": "accepted"
+    }
+   }
+  },
+  {
+   "name": "unknown_outcome",
+   "json": {
+    "schema": "airk-admin/1",
+    "ok": true,
+    "operation": "service.stop",
+    "result": null,
+    "request": {
+     "nonce": "4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e",
+     "state": "unknown"
+    }
+   }
+  },
+  {
+   "name": "session_invalid",
+   "json": {
+    "schema": "airk-admin/1",
+    "ok": false,
+    "error": {
+     "code": "admin_session_invalid",
+     "class": "unauthenticated",
+     "retryable": false
+    }
+   }
+  },
+  {
+   "name": "draining",
+   "json": {
+    "schema": "airk-admin/1",
+    "ok": false,
+    "error": {
+     "code": "service_draining",
+     "class": "unavailable",
+     "retryable": true,
+     "retry_after_ms": 500
+    }
+   }
+  },
+  {
+   "name": "upgrade_checkpoint",
+   "json": {
+    "schema": "airk-admin/1",
+    "ok": false,
+    "error": {
+     "code": "upgrade_in_progress",
+     "class": "unavailable",
+     "retryable": true
+    }
+   }
+  },
+  {
+   "name": "not_yet_served",
+   "json": {
+    "schema": "airk-admin/1",
+    "ok": false,
+    "error": {
+     "code": "not_yet_served",
+     "class": "unavailable",
+     "retryable": false
+    }
+   }
+  },
+  {
+   "name": "native_refusal",
+   "json": {
+    "schema": "airk-admin/1",
+    "ok": false,
+    "error": {
+     "code": "key_conflict",
+     "class": "refused",
+     "retryable": false,
+     "native": {
+      "status": "failure",
+      "code": "key_conflict"
+     }
+    }
+   }
+  },
+  {
+   "name": "native_busy_refusal",
+   "json": {
+    "schema": "airk-admin/1",
+    "ok": false,
+    "error": {
+     "code": "registry_busy",
+     "class": "refused",
+     "retryable": true,
+     "retry_after_ms": 100
+    }
+   }
+  }
+ ],
+ "invalid": [
+  {
+   "name": "success_unknown_field",
+   "json": {
+    "schema": "airk-admin/1",
+    "ok": true,
+    "operation": "service.health",
+    "result": {},
+    "token": "x"
+   }
+  },
+  {
+   "name": "failure_unknown_error_field",
+   "json": {
+    "schema": "airk-admin/1",
+    "ok": false,
+    "error": {
+     "code": "admin_internal",
+     "class": "internal",
+     "retryable": false,
+     "message": "x"
+    }
+   }
+  },
+  {
+   "name": "unknown_class",
+   "json": {
+    "schema": "airk-admin/1",
+    "ok": false,
+    "error": {
+     "code": "admin_internal",
+     "class": "teapot",
+     "retryable": false
+    }
+   }
+  },
+  {
+   "name": "request_unknown_state",
+   "json": {
+    "schema": "airk-admin/1",
+    "ok": true,
+    "operation": "jobs.enqueue",
+    "result": {},
+    "request": {
+     "nonce": "4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e",
+     "state": "queued"
+    }
+   }
+  },
+  {
+   "name": "neither_result_nor_error",
+   "json": {
+    "schema": "airk-admin/1",
+    "ok": true,
+    "operation": "service.health"
+   }
+  }
+ ],
+ "rejected_after_decoding": [
+  {
+   "name": "wrong_schema",
+   "reason": "envelope_schema",
+   "json": {
+    "schema": "airk-admin/2",
+    "ok": true,
+    "operation": "service.health",
+    "result": {}
+   }
+  },
+  {
+   "name": "success_not_ok",
+   "reason": "envelope_ok",
+   "json": {
+    "schema": "airk-admin/1",
+    "ok": false,
+    "operation": "service.health",
+    "result": {}
+   }
+  },
+  {
+   "name": "failure_ok",
+   "reason": "envelope_ok",
+   "json": {
+    "schema": "airk-admin/1",
+    "ok": true,
+    "error": {
+     "code": "admin_internal",
+     "class": "internal",
+     "retryable": false
+    }
+   }
+  },
+  {
+   "name": "bad_operation",
+   "reason": "envelope_operation",
+   "json": {
+    "schema": "airk-admin/1",
+    "ok": true,
+    "operation": "Service.Health",
+    "result": {}
+   }
+  },
+  {
+   "name": "uppercase_nonce",
+   "reason": "envelope_nonce",
+   "json": {
+    "schema": "airk-admin/1",
+    "ok": true,
+    "operation": "jobs.enqueue",
+    "result": {},
+    "request": {
+     "nonce": "4E4E4E4E4E4E4E4E4E4E4E4E4E4E4E4E",
+     "state": "accepted"
+    }
+   }
+  },
+  {
+   "name": "code_not_snake",
+   "reason": "error_code",
+   "json": {
+    "schema": "airk-admin/1",
+    "ok": false,
+    "error": {
+     "code": "Admin-Internal",
+     "class": "internal",
+     "retryable": false
+    }
+   }
+  },
+  {
+   "name": "known_code_wrong_class",
+   "reason": "error_class",
+   "json": {
+    "schema": "airk-admin/1",
+    "ok": false,
+    "error": {
+     "code": "admin_session_invalid",
+     "class": "forbidden",
+     "retryable": false
+    }
+   }
+  },
+  {
+   "name": "known_code_wrong_retryable",
+   "reason": "error_retryable",
+   "json": {
+    "schema": "airk-admin/1",
+    "ok": false,
+    "error": {
+     "code": "admin_peer_refused",
+     "class": "forbidden",
+     "retryable": true
+    }
+   }
+  },
+  {
+   "name": "native_code_not_refused",
+   "reason": "error_class",
+   "json": {
+    "schema": "airk-admin/1",
+    "ok": false,
+    "error": {
+     "code": "key_conflict",
+     "class": "internal",
+     "retryable": false
+    }
+   }
+  },
+  {
+   "name": "retry_after_not_retryable",
+   "reason": "error_retry_after",
+   "json": {
+    "schema": "airk-admin/1",
+    "ok": false,
+    "error": {
+     "code": "key_conflict",
+     "class": "refused",
+     "retryable": false,
+     "retry_after_ms": 10
+    }
+   }
+  }
+ ],
+ "stream_lines": [
+  {
+   "name": "event",
+   "json": {
+    "kind": "event",
+    "cursor": "opaque-1",
+    "event": {
+     "kind": "job"
+    }
+   }
+  },
+  {
+   "name": "resync",
+   "json": {
+    "kind": "resync",
+    "reason": "overflow"
+   }
+  },
+  {
+   "name": "resync_restart",
+   "json": {
+    "kind": "resync",
+    "reason": "service_restarted"
+   }
+  },
+  {
+   "name": "closing",
+   "json": {
+    "kind": "closing"
+   }
+  }
+ ],
+ "invalid_stream_lines": [
+  {
+   "name": "unknown_kind",
+   "json": {
+    "kind": "gap"
+   }
+  },
+  {
+   "name": "closing_with_field",
+   "json": {
+    "kind": "closing",
+    "cursor": "x"
+   }
+  },
+  {
+   "name": "unknown_reason",
+   "json": {
+    "kind": "resync",
+    "reason": "later"
+   }
+  }
+ ]
+}

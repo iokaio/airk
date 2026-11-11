@@ -1,0 +1,460 @@
+{
+  "$defs": {
+    "AdminCode": {
+      "description": "Codes the admin plane itself produces. Native refusals keep their own\ncode with class `refused`.",
+      "oneOf": [
+        {
+          "enum": [
+            "admin_host_refused",
+            "admin_origin_refused",
+            "admin_fetch_metadata_refused",
+            "admin_bearer_refused",
+            "admin_not_found",
+            "admin_operation_unknown",
+            "admin_method_not_allowed",
+            "admin_upgrade_refused",
+            "admin_malformed_request",
+            "admin_request_too_large",
+            "admin_stream_limit",
+            "admin_exchange_rate_limited",
+            "admin_internal",
+            "not_yet_served",
+            "service_draining"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "admin_peer_refused",
+          "description": "The TCP peer is not proven to run as the service's OS user (H1).",
+          "type": "string"
+        },
+        {
+          "const": "admin_preflight_refused",
+          "description": "CORS preflight; no CORS header is ever sent.",
+          "type": "string"
+        },
+        {
+          "const": "admin_session_invalid",
+          "description": "Zero or several admin cookies, an unknown cookie, an expired or\nforeign-instance session, or a missing or wrong anti-forgery token:\none uniform answer (M2 rule 3).",
+          "type": "string"
+        },
+        {
+          "const": "admin_launch_code_invalid",
+          "description": "Unknown, expired, used, foreign-instance or malformed launch code.",
+          "type": "string"
+        },
+        {
+          "const": "upgrade_in_progress",
+          "description": "Admin mutations during an upgrade checkpoint (review I5).",
+          "type": "string"
+        },
+        {
+          "const": "cookie_on_bearer_plane",
+          "description": "The exact admin cookie on `/mcp` or `/api/v1`, after their existing\nHost and `Origin` checks (L6; an I3 addition under U24).",
+          "type": "string"
+        }
+      ]
+    },
+    "Authorization": {
+      "oneOf": [
+        {
+          "enum": [
+            "owner_pipe",
+            "window_lease"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "admin_session_csrf",
+          "description": "Session cookie, anti-forgery token and same-user peer proof.",
+          "type": "string"
+        }
+      ]
+    },
+    "Conformance": {
+      "description": "Simplification-plan §4.6 properties.",
+      "enum": [
+        "P1",
+        "P2",
+        "P3",
+        "P4",
+        "P5",
+        "P6",
+        "P7",
+        "P8",
+        "P9"
+      ],
+      "type": "string"
+    },
+    "Effect": {
+      "oneOf": [
+        {
+          "enum": [
+            "read",
+            "mutation"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "destructive",
+          "description": "Native draft, preview, apply-with-digest and typed confirmation.",
+          "type": "string"
+        }
+      ]
+    },
+    "Envelope": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SuccessEnvelope"
+        },
+        {
+          "$ref": "#/$defs/FailureEnvelope"
+        }
+      ],
+      "description": "Every admin API body, including the session exchange and logout."
+    },
+    "ErrorBody": {
+      "additionalProperties": false,
+      "properties": {
+        "class": {
+          "$ref": "#/$defs/ErrorClass"
+        },
+        "code": {
+          "type": "string"
+        },
+        "native": {
+          "description": "The complete native response, never reduced."
+        },
+        "retry_after_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "class",
+        "retryable"
+      ],
+      "type": "object"
+    },
+    "ErrorClass": {
+      "description": "HTTP status classes of the admin API (§4.4).",
+      "oneOf": [
+        {
+          "enum": [
+            "malformed",
+            "unauthenticated",
+            "forbidden",
+            "not_found",
+            "method_not_allowed",
+            "too_large",
+            "internal",
+            "unavailable"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "refused",
+          "description": "A typed native refusal; nothing changed.",
+          "type": "string"
+        }
+      ]
+    },
+    "ExchangeRequest": {
+      "additionalProperties": false,
+      "description": "`POST /admin/api/v1/session` body. `Debug` redacts the code.",
+      "properties": {
+        "code": {
+          "pattern": "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code"
+      ],
+      "type": "object"
+    },
+    "ExchangeResponse": {
+      "additionalProperties": false,
+      "description": "The `result` of a successful exchange. The token is returned only here\nand kept in page memory (M1). `Debug` redacts it.",
+      "properties": {
+        "absolute_expires_in_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "csrf": {
+          "pattern": "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$",
+          "type": "string"
+        },
+        "idle_expires_in_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "service_instance": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "csrf",
+        "idle_expires_in_ms",
+        "absolute_expires_in_ms",
+        "service_instance"
+      ],
+      "type": "object"
+    },
+    "FailureEnvelope": {
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "$ref": "#/$defs/ErrorBody"
+        },
+        "ok": {
+          "const": false
+        },
+        "schema": {
+          "const": "airk-admin/1",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "ok",
+        "error"
+      ],
+      "type": "object"
+    },
+    "Idempotency": {
+      "enum": [
+        "read",
+        "request_key",
+        "operation_digest",
+        "natural"
+      ],
+      "type": "string"
+    },
+    "OperationRow": {
+      "additionalProperties": false,
+      "properties": {
+        "authorization": {
+          "items": {
+            "$ref": "#/$defs/Authorization"
+          },
+          "type": "array"
+        },
+        "conformance": {
+          "items": {
+            "$ref": "#/$defs/Conformance"
+          },
+          "type": "array"
+        },
+        "effect": {
+          "$ref": "#/$defs/Effect"
+        },
+        "idempotency": {
+          "$ref": "#/$defs/Idempotency"
+        },
+        "method": {
+          "description": "The one handler: a `ControlMethod` variant, `Variant.Action` for one\naction of it, or a canonical admin handler id.",
+          "type": "string"
+        },
+        "operation": {
+          "type": "string"
+        },
+        "plane": {
+          "$ref": "#/$defs/Plane"
+        },
+        "surfaces": {
+          "items": {
+            "$ref": "#/$defs/Surface"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "operation",
+        "method",
+        "plane",
+        "surfaces",
+        "authorization",
+        "effect",
+        "idempotency",
+        "conformance"
+      ],
+      "type": "object"
+    },
+    "Plane": {
+      "description": "Operation table (§4.3). Rows are compared with the reviewed\n`fixtures/split/i3/admin_operations.json`.",
+      "oneOf": [
+        {
+          "enum": [
+            "management"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "evidence",
+          "description": "Never queues behind the metadata actor (plan §4.5).",
+          "type": "string"
+        }
+      ]
+    },
+    "RequestProgress": {
+      "additionalProperties": false,
+      "description": "The service-journal request behind a mutation; the key is generated by\nthe admin handler and never reaches the browser.",
+      "properties": {
+        "nonce": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/RequestState"
+        }
+      },
+      "required": [
+        "nonce",
+        "state"
+      ],
+      "type": "object"
+    },
+    "RequestState": {
+      "description": "UI state of a durable request (§2.4).",
+      "enum": [
+        "submitted",
+        "accepted",
+        "completed",
+        "refused",
+        "unknown"
+      ],
+      "type": "string"
+    },
+    "StreamLine": {
+      "description": "One NDJSON line of `/admin/api/v1/events`. Cursors are opaque and scoped\nto the service instance and the session.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "cursor": {
+              "type": "string"
+            },
+            "event": true,
+            "kind": {
+              "const": "event",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "cursor",
+            "event"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Re-read current state; a gap is never reported as history.",
+          "properties": {
+            "kind": {
+              "const": "resync",
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/$defs/StreamResync"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The server ends the stream (after `STREAM_SECONDS`); reconnect with the\nlast cursor. A struct variant, so an unknown field is refused.",
+          "properties": {
+            "kind": {
+              "const": "closing",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "StreamResync": {
+      "enum": [
+        "overflow",
+        "native_gap",
+        "service_restarted"
+      ],
+      "type": "string"
+    },
+    "SuccessEnvelope": {
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true
+        },
+        "operation": {
+          "type": "string"
+        },
+        "request": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RequestProgress"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "result": {
+          "description": "The complete native result, never reduced."
+        },
+        "schema": {
+          "const": "airk-admin/1",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "ok",
+        "operation",
+        "result"
+      ],
+      "type": "object"
+    },
+    "Surface": {
+      "enum": [
+        "pipe",
+        "airkctl",
+        "session",
+        "admin"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "i3_contract": 1,
+  "roots": [
+    "Envelope",
+    "AdminCode",
+    "ExchangeRequest",
+    "ExchangeResponse",
+    "StreamLine",
+    "OperationRow"
+  ],
+  "title": "airk admin I3 contract"
+}

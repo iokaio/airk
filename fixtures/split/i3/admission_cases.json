@@ -1,0 +1,3553 @@
+{
+ "schema": "airk.split-fixture.i3-admission/1",
+ "contract": "docs/split/contracts.md \u00a74, \u00a74.11; docs/split/security-review-i3.md",
+ "generator": "fixtures/split/i3/admission_cases.py",
+ "port": 57421,
+ "limits": {
+  "launch_code_ttl_ms": 60000,
+  "session_idle_ms": 1800000,
+  "session_absolute_ms": 43200000,
+  "max_sessions": 16,
+  "max_exchange_body_bytes": 1024,
+  "max_request_body_bytes": 65536,
+  "max_response_bytes": 33554432,
+  "max_streams_per_session": 2,
+  "max_streams": 16,
+  "stream_buffer_events": 256,
+  "stream_buffer_bytes": 1048576,
+  "stream_seconds": 120,
+  "max_asset_name_bytes": 128,
+  "max_operation_bytes": 64,
+  "secret_text_chars": 43
+ },
+ "conventions": [
+  "`session` is the lookup result for the single admin cookie, or null when unknown.",
+  "Cookie values are fixture placeholders, never real secrets."
+ ],
+ "cases": [
+  {
+   "name": "shell_top_level_navigation",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "GET",
+    "target": "/admin/",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "none"
+    ],
+    "sec_fetch_mode": "navigate",
+    "sec_fetch_dest": "document",
+    "peer": "unavailable"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "admit",
+    "route": {
+     "kind": "shell"
+    },
+    "touches_idle": false
+   }
+  },
+  {
+   "name": "shell_same_origin_reload",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "GET",
+    "target": "/admin/",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "navigate",
+    "sec_fetch_dest": "document",
+    "peer": "unavailable"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "admit",
+    "route": {
+     "kind": "shell"
+    },
+    "touches_idle": false
+   }
+  },
+  {
+   "name": "shell_without_fetch_metadata",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "GET",
+    "target": "/admin/",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [],
+    "sec_fetch_mode": "navigate",
+    "sec_fetch_dest": "document",
+    "peer": "unavailable"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "admit",
+    "route": {
+     "kind": "shell"
+    },
+    "touches_idle": false
+   }
+  },
+  {
+   "name": "shell_same_site_refused",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "GET",
+    "target": "/admin/",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-site"
+    ],
+    "sec_fetch_mode": "navigate",
+    "sec_fetch_dest": "document",
+    "peer": "unavailable"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "refuse",
+    "status": 403,
+    "code": "admin_fetch_metadata_refused"
+   }
+  },
+  {
+   "name": "shell_cross_site_refused",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "GET",
+    "target": "/admin/",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "cross-site"
+    ],
+    "sec_fetch_mode": "navigate",
+    "sec_fetch_dest": "document",
+    "peer": "unavailable"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "refuse",
+    "status": 403,
+    "code": "admin_fetch_metadata_refused"
+   }
+  },
+  {
+   "name": "shell_unknown_fetch_site_refused",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "GET",
+    "target": "/admin/",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "Same-Origin"
+    ],
+    "sec_fetch_mode": "navigate",
+    "sec_fetch_dest": "document",
+    "peer": "unavailable"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "refuse",
+    "status": 403,
+    "code": "admin_fetch_metadata_refused"
+   }
+  },
+  {
+   "name": "shell_two_fetch_site_headers_refused",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "GET",
+    "target": "/admin/",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "none",
+     "none"
+    ],
+    "sec_fetch_mode": "navigate",
+    "sec_fetch_dest": "document",
+    "peer": "unavailable"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "refuse",
+    "status": 403,
+    "code": "admin_fetch_metadata_refused"
+   }
+  },
+  {
+   "name": "launch_from_redirect_file_cross_site",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "GET",
+    "target": "/admin/launch",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "cross-site"
+    ],
+    "sec_fetch_mode": "navigate",
+    "sec_fetch_dest": "document",
+    "peer": "unavailable"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "admit",
+    "route": {
+     "kind": "launch"
+    },
+    "touches_idle": false
+   }
+  },
+  {
+   "name": "launch_top_level_navigation",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "GET",
+    "target": "/admin/launch",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "none"
+    ],
+    "sec_fetch_mode": "navigate",
+    "sec_fetch_dest": "document",
+    "peer": "unavailable"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "admit",
+    "route": {
+     "kind": "launch"
+    },
+    "touches_idle": false
+   }
+  },
+  {
+   "name": "launch_same_site_refused",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "GET",
+    "target": "/admin/launch",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-site"
+    ],
+    "sec_fetch_mode": "navigate",
+    "sec_fetch_dest": "document",
+    "peer": "unavailable"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "refuse",
+    "status": 403,
+    "code": "admin_fetch_metadata_refused"
+   }
+  },
+  {
+   "name": "asset_from_shell",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "GET",
+    "target": "/admin/assets/app.3f2a9c.js",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "no-cors",
+    "sec_fetch_dest": "script",
+    "peer": "unavailable"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "admit",
+    "route": {
+     "kind": "asset",
+     "name": "app.3f2a9c.js"
+    },
+    "touches_idle": false
+   }
+  },
+  {
+   "name": "asset_cross_site_refused",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "GET",
+    "target": "/admin/assets/app.3f2a9c.js",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "cross-site"
+    ],
+    "sec_fetch_mode": "navigate",
+    "sec_fetch_dest": "document",
+    "peer": "unavailable"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "refuse",
+    "status": 403,
+    "code": "admin_fetch_metadata_refused"
+   }
+  },
+  {
+   "name": "redirect_without_trailing_slash",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "GET",
+    "target": "/admin",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "none"
+    ],
+    "sec_fetch_mode": "navigate",
+    "sec_fetch_dest": "document",
+    "peer": "unavailable"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "admit",
+    "route": {
+     "kind": "redirect"
+    },
+    "touches_idle": false
+   }
+  },
+  {
+   "name": "static_exact_origin_allowed",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "GET",
+    "target": "/admin/",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "navigate",
+    "sec_fetch_dest": "document",
+    "peer": "unavailable",
+    "origin": [
+     "https://127.0.0.1:57421"
+    ]
+   },
+   "session": null,
+   "expect": {
+    "outcome": "admit",
+    "route": {
+     "kind": "shell"
+    },
+    "touches_idle": false
+   }
+  },
+  {
+   "name": "static_other_port_origin_refused",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "GET",
+    "target": "/admin/",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "none"
+    ],
+    "sec_fetch_mode": "navigate",
+    "sec_fetch_dest": "document",
+    "peer": "unavailable",
+    "origin": [
+     "https://127.0.0.1:3000"
+    ]
+   },
+   "session": null,
+   "expect": {
+    "outcome": "refuse",
+    "status": 403,
+    "code": "admin_origin_refused"
+   }
+  },
+  {
+   "name": "static_null_origin_refused",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "GET",
+    "target": "/admin/",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "none"
+    ],
+    "sec_fetch_mode": "navigate",
+    "sec_fetch_dest": "document",
+    "peer": "unavailable",
+    "origin": [
+     "null"
+    ]
+   },
+   "session": null,
+   "expect": {
+    "outcome": "refuse",
+    "status": 403,
+    "code": "admin_origin_refused"
+   }
+  },
+  {
+   "name": "static_bearer_refused",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "GET",
+    "target": "/admin/",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "none"
+    ],
+    "sec_fetch_mode": "navigate",
+    "sec_fetch_dest": "document",
+    "peer": "unavailable",
+    "authorization": 1
+   },
+   "session": null,
+   "expect": {
+    "outcome": "refuse",
+    "status": 401,
+    "code": "admin_bearer_refused"
+   }
+  },
+  {
+   "name": "static_needs_no_peer_proof",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "GET",
+    "target": "/admin/",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "none"
+    ],
+    "sec_fetch_mode": "navigate",
+    "sec_fetch_dest": "document",
+    "peer": "other_user"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "admit",
+    "route": {
+     "kind": "shell"
+    },
+    "touches_idle": false
+   }
+  },
+  {
+   "name": "static_ignores_cookies",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "GET",
+    "target": "/admin/",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "none"
+    ],
+    "sec_fetch_mode": "navigate",
+    "sec_fetch_dest": "document",
+    "peer": "unavailable",
+    "cookie": [
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ]
+   },
+   "session": null,
+   "expect": {
+    "outcome": "admit",
+    "route": {
+     "kind": "shell"
+    },
+    "touches_idle": false
+   }
+  },
+  {
+   "name": "static_post_not_allowed",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "none"
+    ],
+    "sec_fetch_mode": "navigate",
+    "sec_fetch_dest": "document",
+    "peer": "unavailable"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "refuse",
+    "status": 405,
+    "code": "admin_method_not_allowed"
+   }
+  },
+  {
+   "name": "static_head_not_allowed",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "HEAD",
+    "target": "/admin/",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "none"
+    ],
+    "sec_fetch_mode": "navigate",
+    "sec_fetch_dest": "document",
+    "peer": "unavailable"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "refuse",
+    "status": 405,
+    "code": "admin_method_not_allowed"
+   }
+  },
+  {
+   "name": "static_lowercase_method_not_allowed",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "get",
+    "target": "/admin/",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "none"
+    ],
+    "sec_fetch_mode": "navigate",
+    "sec_fetch_dest": "document",
+    "peer": "unavailable"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "refuse",
+    "status": 405,
+    "code": "admin_method_not_allowed"
+   }
+  },
+  {
+   "name": "static_preflight_refused",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "OPTIONS",
+    "target": "/admin/",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "none"
+    ],
+    "sec_fetch_mode": "navigate",
+    "sec_fetch_dest": "document",
+    "peer": "unavailable"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "refuse",
+    "status": 403,
+    "code": "admin_preflight_refused"
+   }
+  },
+  {
+   "name": "shell_websocket_upgrade_refused",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "GET",
+    "target": "/admin/",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "none"
+    ],
+    "sec_fetch_mode": "navigate",
+    "sec_fetch_dest": "document",
+    "peer": "unavailable",
+    "upgrade": true
+   },
+   "session": null,
+   "expect": {
+    "outcome": "refuse",
+    "status": 400,
+    "code": "admin_upgrade_refused"
+   }
+  },
+  {
+   "name": "host_other_port_refused",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "GET",
+    "target": "/admin/",
+    "host": [
+     "127.0.0.1:57422"
+    ],
+    "sec_fetch_site": [
+     "none"
+    ],
+    "sec_fetch_mode": "navigate",
+    "sec_fetch_dest": "document",
+    "peer": "unavailable"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "refuse",
+    "status": 403,
+    "code": "admin_host_refused"
+   }
+  },
+  {
+   "name": "host_localhost_name_refused",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "GET",
+    "target": "/admin/",
+    "host": [
+     "localhost:57421"
+    ],
+    "sec_fetch_site": [
+     "none"
+    ],
+    "sec_fetch_mode": "navigate",
+    "sec_fetch_dest": "document",
+    "peer": "unavailable"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "refuse",
+    "status": 403,
+    "code": "admin_host_refused"
+   }
+  },
+  {
+   "name": "host_twice_refused",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "GET",
+    "target": "/admin/",
+    "host": [
+     "127.0.0.1:57421",
+     "127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "none"
+    ],
+    "sec_fetch_mode": "navigate",
+    "sec_fetch_dest": "document",
+    "peer": "unavailable"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "refuse",
+    "status": 403,
+    "code": "admin_host_refused"
+   }
+  },
+  {
+   "name": "host_missing_refused",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "GET",
+    "target": "/admin/",
+    "host": [],
+    "sec_fetch_site": [
+     "none"
+    ],
+    "sec_fetch_mode": "navigate",
+    "sec_fetch_dest": "document",
+    "peer": "unavailable"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "refuse",
+    "status": 403,
+    "code": "admin_host_refused"
+   }
+  },
+  {
+   "name": "rebound_name_on_api_refused",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/call/service.stop",
+    "host": [
+     "attacker.example:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 2,
+    "cookie": [
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ],
+    "csrf_headers": 1,
+    "peer": "same_user"
+   },
+   "session": {
+    "created_at_ms": 49940000,
+    "last_used_at_ms": 49999000,
+    "same_instance": true,
+    "token_matches": true
+   },
+   "expect": {
+    "outcome": "refuse",
+    "status": 403,
+    "code": "admin_host_refused"
+   }
+  },
+  {
+   "name": "host_checked_before_unknown_path",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "GET",
+    "target": "/admin/nothing",
+    "host": [
+     "attacker.example"
+    ],
+    "sec_fetch_site": [
+     "none"
+    ],
+    "sec_fetch_mode": "navigate",
+    "sec_fetch_dest": "document",
+    "peer": "unavailable"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "refuse",
+    "status": 403,
+    "code": "admin_host_refused"
+   }
+  },
+  {
+   "name": "exchange_same_origin",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/session",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 60,
+    "cookie": [],
+    "csrf_headers": 0,
+    "peer": "same_user"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "admit",
+    "route": {
+     "kind": "exchange"
+    },
+    "touches_idle": false
+   }
+  },
+  {
+   "name": "exchange_cross_origin_refused",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/session",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://evil.example"
+    ],
+    "sec_fetch_site": [
+     "cross-site"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 60,
+    "cookie": [],
+    "csrf_headers": 0,
+    "peer": "same_user"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "refuse",
+    "status": 403,
+    "code": "admin_origin_refused"
+   }
+  },
+  {
+   "name": "exchange_missing_origin_refused",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/session",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 60,
+    "cookie": [],
+    "csrf_headers": 0,
+    "peer": "same_user"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "refuse",
+    "status": 403,
+    "code": "admin_origin_refused"
+   }
+  },
+  {
+   "name": "exchange_same_site_refused",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/session",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-site"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 60,
+    "cookie": [],
+    "csrf_headers": 0,
+    "peer": "same_user"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "refuse",
+    "status": 403,
+    "code": "admin_fetch_metadata_refused"
+   }
+  },
+  {
+   "name": "exchange_missing_fetch_site_refused",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/session",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 60,
+    "cookie": [],
+    "csrf_headers": 0,
+    "peer": "same_user"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "refuse",
+    "status": 403,
+    "code": "admin_fetch_metadata_refused"
+   }
+  },
+  {
+   "name": "exchange_navigation_site_none_refused",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/session",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "none"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 60,
+    "cookie": [],
+    "csrf_headers": 0,
+    "peer": "same_user"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "refuse",
+    "status": 403,
+    "code": "admin_fetch_metadata_refused"
+   }
+  },
+  {
+   "name": "exchange_bearer_refused",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/session",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 60,
+    "cookie": [],
+    "csrf_headers": 0,
+    "peer": "same_user",
+    "authorization": 1
+   },
+   "session": null,
+   "expect": {
+    "outcome": "refuse",
+    "status": 401,
+    "code": "admin_bearer_refused"
+   }
+  },
+  {
+   "name": "exchange_text_plain_refused",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/session",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "text/plain"
+    ],
+    "content_length": 60,
+    "cookie": [],
+    "csrf_headers": 0,
+    "peer": "same_user"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "refuse",
+    "status": 400,
+    "code": "admin_malformed_request"
+   }
+  },
+  {
+   "name": "exchange_json_with_charset",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/session",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json; charset=utf-8"
+    ],
+    "content_length": 60,
+    "cookie": [],
+    "csrf_headers": 0,
+    "peer": "same_user"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "admit",
+    "route": {
+     "kind": "exchange"
+    },
+    "touches_idle": false
+   }
+  },
+  {
+   "name": "exchange_two_content_types_refused",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/session",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json",
+     "application/json"
+    ],
+    "content_length": 60,
+    "cookie": [],
+    "csrf_headers": 0,
+    "peer": "same_user"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "refuse",
+    "status": 400,
+    "code": "admin_malformed_request"
+   }
+  },
+  {
+   "name": "exchange_body_exactly_1_kib",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/session",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 1024,
+    "cookie": [],
+    "csrf_headers": 0,
+    "peer": "same_user"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "admit",
+    "route": {
+     "kind": "exchange"
+    },
+    "touches_idle": false
+   }
+  },
+  {
+   "name": "exchange_body_over_1_kib_refused",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/session",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 1025,
+    "cookie": [],
+    "csrf_headers": 0,
+    "peer": "same_user"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "refuse",
+    "status": 413,
+    "code": "admin_request_too_large"
+   }
+  },
+  {
+   "name": "exchange_streamed_body_admitted_reader_bounds_it",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/session",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": null,
+    "cookie": [],
+    "csrf_headers": 0,
+    "peer": "same_user"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "admit",
+    "route": {
+     "kind": "exchange"
+    },
+    "touches_idle": false
+   }
+  },
+  {
+   "name": "exchange_ignores_presented_cookies",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/session",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 60,
+    "cookie": [
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ],
+    "csrf_headers": 0,
+    "peer": "same_user"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "admit",
+    "route": {
+     "kind": "exchange"
+    },
+    "touches_idle": false
+   }
+  },
+  {
+   "name": "exchange_get_not_allowed",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "GET",
+    "target": "/admin/api/v1/session",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 60,
+    "cookie": [],
+    "csrf_headers": 0,
+    "peer": "same_user"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "refuse",
+    "status": 405,
+    "code": "admin_method_not_allowed"
+   }
+  },
+  {
+   "name": "exchange_preflight_refused",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "OPTIONS",
+    "target": "/admin/api/v1/session",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 60,
+    "cookie": [],
+    "csrf_headers": 0,
+    "peer": "same_user"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "refuse",
+    "status": 403,
+    "code": "admin_preflight_refused"
+   }
+  },
+  {
+   "name": "call_with_live_session",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/call/service.stop",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 2,
+    "cookie": [
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ],
+    "csrf_headers": 1,
+    "peer": "same_user"
+   },
+   "session": {
+    "created_at_ms": 49940000,
+    "last_used_at_ms": 49999000,
+    "same_instance": true,
+    "token_matches": true
+   },
+   "expect": {
+    "outcome": "admit",
+    "route": {
+     "kind": "call",
+     "operation": "service.stop"
+    },
+    "touches_idle": true
+   }
+  },
+  {
+   "name": "call_cross_origin_refused",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/call/service.stop",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://evil.example"
+    ],
+    "sec_fetch_site": [
+     "cross-site"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 2,
+    "cookie": [
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ],
+    "csrf_headers": 1,
+    "peer": "same_user"
+   },
+   "session": {
+    "created_at_ms": 49940000,
+    "last_used_at_ms": 49999000,
+    "same_instance": true,
+    "token_matches": true
+   },
+   "expect": {
+    "outcome": "refuse",
+    "status": 403,
+    "code": "admin_origin_refused"
+   }
+  },
+  {
+   "name": "call_other_127_port_page_refused",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/call/service.stop",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:3000"
+    ],
+    "sec_fetch_site": [
+     "same-site"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 2,
+    "cookie": [
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ],
+    "csrf_headers": 1,
+    "peer": "same_user"
+   },
+   "session": {
+    "created_at_ms": 49940000,
+    "last_used_at_ms": 49999000,
+    "same_instance": true,
+    "token_matches": true
+   },
+   "expect": {
+    "outcome": "refuse",
+    "status": 403,
+    "code": "admin_origin_refused"
+   }
+  },
+  {
+   "name": "call_cross_site_form_post_refused",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/call/service.stop",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://evil.example"
+    ],
+    "sec_fetch_site": [
+     "cross-site"
+    ],
+    "sec_fetch_mode": "navigate",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/x-www-form-urlencoded"
+    ],
+    "content_length": 2,
+    "cookie": [
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ],
+    "csrf_headers": 0,
+    "peer": "same_user"
+   },
+   "session": {
+    "created_at_ms": 49940000,
+    "last_used_at_ms": 49999000,
+    "same_instance": true,
+    "token_matches": true
+   },
+   "expect": {
+    "outcome": "refuse",
+    "status": 403,
+    "code": "admin_origin_refused"
+   }
+  },
+  {
+   "name": "call_missing_origin_refused",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/call/service.stop",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 2,
+    "cookie": [
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ],
+    "csrf_headers": 1,
+    "peer": "same_user"
+   },
+   "session": {
+    "created_at_ms": 49940000,
+    "last_used_at_ms": 49999000,
+    "same_instance": true,
+    "token_matches": true
+   },
+   "expect": {
+    "outcome": "refuse",
+    "status": 403,
+    "code": "admin_origin_refused"
+   }
+  },
+  {
+   "name": "call_missing_fetch_metadata_refused",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/call/service.stop",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 2,
+    "cookie": [
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ],
+    "csrf_headers": 1,
+    "peer": "same_user"
+   },
+   "session": {
+    "created_at_ms": 49940000,
+    "last_used_at_ms": 49999000,
+    "same_instance": true,
+    "token_matches": true
+   },
+   "expect": {
+    "outcome": "refuse",
+    "status": 403,
+    "code": "admin_fetch_metadata_refused"
+   }
+  },
+  {
+   "name": "call_same_site_with_exact_origin_refused",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/call/service.stop",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-site"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 2,
+    "cookie": [
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ],
+    "csrf_headers": 1,
+    "peer": "same_user"
+   },
+   "session": {
+    "created_at_ms": 49940000,
+    "last_used_at_ms": 49999000,
+    "same_instance": true,
+    "token_matches": true
+   },
+   "expect": {
+    "outcome": "refuse",
+    "status": 403,
+    "code": "admin_fetch_metadata_refused"
+   }
+  },
+  {
+   "name": "call_peer_unavailable_refused",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/call/service.stop",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 2,
+    "cookie": [
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ],
+    "csrf_headers": 1,
+    "peer": "unavailable"
+   },
+   "session": {
+    "created_at_ms": 49940000,
+    "last_used_at_ms": 49999000,
+    "same_instance": true,
+    "token_matches": true
+   },
+   "expect": {
+    "outcome": "refuse",
+    "status": 403,
+    "code": "admin_peer_refused"
+   }
+  },
+  {
+   "name": "call_bearer_refused",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/call/service.stop",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 2,
+    "cookie": [
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ],
+    "csrf_headers": 1,
+    "peer": "same_user",
+    "authorization": 1
+   },
+   "session": {
+    "created_at_ms": 49940000,
+    "last_used_at_ms": 49999000,
+    "same_instance": true,
+    "token_matches": true
+   },
+   "expect": {
+    "outcome": "refuse",
+    "status": 401,
+    "code": "admin_bearer_refused"
+   }
+  },
+  {
+   "name": "call_bearer_checked_after_peer",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/call/service.stop",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 2,
+    "cookie": [
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ],
+    "csrf_headers": 1,
+    "peer": "other_user",
+    "authorization": 1
+   },
+   "session": {
+    "created_at_ms": 49940000,
+    "last_used_at_ms": 49999000,
+    "same_instance": true,
+    "token_matches": true
+   },
+   "expect": {
+    "outcome": "refuse",
+    "status": 403,
+    "code": "admin_peer_refused"
+   }
+  },
+  {
+   "name": "call_without_cookie",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/call/service.stop",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 2,
+    "cookie": [],
+    "csrf_headers": 1,
+    "peer": "same_user"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "refuse",
+    "status": 401,
+    "code": "admin_session_invalid"
+   }
+  },
+  {
+   "name": "call_two_cookies_one_header",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/call/service.stop",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 2,
+    "cookie": [
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8; __Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ],
+    "csrf_headers": 1,
+    "peer": "same_user"
+   },
+   "session": {
+    "created_at_ms": 49940000,
+    "last_used_at_ms": 49999000,
+    "same_instance": true,
+    "token_matches": true
+   },
+   "expect": {
+    "outcome": "refuse",
+    "status": 401,
+    "code": "admin_session_invalid"
+   }
+  },
+  {
+   "name": "call_two_cookies_two_headers",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/call/service.stop",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 2,
+    "cookie": [
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ],
+    "csrf_headers": 1,
+    "peer": "same_user"
+   },
+   "session": {
+    "created_at_ms": 49940000,
+    "last_used_at_ms": 49999000,
+    "same_instance": true,
+    "token_matches": true
+   },
+   "expect": {
+    "outcome": "refuse",
+    "status": 401,
+    "code": "admin_session_invalid"
+   }
+  },
+  {
+   "name": "call_unknown_cookie",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/call/service.stop",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 2,
+    "cookie": [
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ],
+    "csrf_headers": 1,
+    "peer": "same_user"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "refuse",
+    "status": 401,
+    "code": "admin_session_invalid"
+   }
+  },
+  {
+   "name": "call_wrong_token",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/call/service.stop",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 2,
+    "cookie": [
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ],
+    "csrf_headers": 1,
+    "peer": "same_user"
+   },
+   "session": {
+    "created_at_ms": 49940000,
+    "last_used_at_ms": 49999000,
+    "same_instance": true,
+    "token_matches": false
+   },
+   "expect": {
+    "outcome": "refuse",
+    "status": 401,
+    "code": "admin_session_invalid"
+   }
+  },
+  {
+   "name": "call_missing_token_header",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/call/service.stop",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 2,
+    "cookie": [
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ],
+    "csrf_headers": 0,
+    "peer": "same_user"
+   },
+   "session": {
+    "created_at_ms": 49940000,
+    "last_used_at_ms": 49999000,
+    "same_instance": true,
+    "token_matches": true
+   },
+   "expect": {
+    "outcome": "refuse",
+    "status": 401,
+    "code": "admin_session_invalid"
+   }
+  },
+  {
+   "name": "call_two_token_headers",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/call/service.stop",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 2,
+    "cookie": [
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ],
+    "csrf_headers": 2,
+    "peer": "same_user"
+   },
+   "session": {
+    "created_at_ms": 49940000,
+    "last_used_at_ms": 49999000,
+    "same_instance": true,
+    "token_matches": true
+   },
+   "expect": {
+    "outcome": "refuse",
+    "status": 401,
+    "code": "admin_session_invalid"
+   }
+  },
+  {
+   "name": "call_idle_expired_at_30_min",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/call/service.stop",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 2,
+    "cookie": [
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ],
+    "csrf_headers": 1,
+    "peer": "same_user"
+   },
+   "session": {
+    "created_at_ms": 49940000,
+    "last_used_at_ms": 48200000,
+    "same_instance": true,
+    "token_matches": true
+   },
+   "expect": {
+    "outcome": "refuse",
+    "status": 401,
+    "code": "admin_session_invalid"
+   }
+  },
+  {
+   "name": "call_idle_just_inside_30_min",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/call/service.stop",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 2,
+    "cookie": [
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ],
+    "csrf_headers": 1,
+    "peer": "same_user"
+   },
+   "session": {
+    "created_at_ms": 49940000,
+    "last_used_at_ms": 48200001,
+    "same_instance": true,
+    "token_matches": true
+   },
+   "expect": {
+    "outcome": "admit",
+    "route": {
+     "kind": "call",
+     "operation": "service.stop"
+    },
+    "touches_idle": true
+   }
+  },
+  {
+   "name": "call_absolute_expired_at_12_h",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/call/service.stop",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 2,
+    "cookie": [
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ],
+    "csrf_headers": 1,
+    "peer": "same_user"
+   },
+   "session": {
+    "created_at_ms": 6800000,
+    "last_used_at_ms": 49999000,
+    "same_instance": true,
+    "token_matches": true
+   },
+   "expect": {
+    "outcome": "refuse",
+    "status": 401,
+    "code": "admin_session_invalid"
+   }
+  },
+  {
+   "name": "call_absolute_just_inside_12_h",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/call/service.stop",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 2,
+    "cookie": [
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ],
+    "csrf_headers": 1,
+    "peer": "same_user"
+   },
+   "session": {
+    "created_at_ms": 6800001,
+    "last_used_at_ms": 49999000,
+    "same_instance": true,
+    "token_matches": true
+   },
+   "expect": {
+    "outcome": "admit",
+    "route": {
+     "kind": "call",
+     "operation": "service.stop"
+    },
+    "touches_idle": true
+   }
+  },
+  {
+   "name": "call_session_of_previous_instance",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/call/service.stop",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 2,
+    "cookie": [
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ],
+    "csrf_headers": 1,
+    "peer": "same_user"
+   },
+   "session": {
+    "created_at_ms": 49940000,
+    "last_used_at_ms": 49999000,
+    "same_instance": false,
+    "token_matches": true
+   },
+   "expect": {
+    "outcome": "refuse",
+    "status": 401,
+    "code": "admin_session_invalid"
+   }
+  },
+  {
+   "name": "call_cookie_name_case_differs",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/call/service.stop",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 2,
+    "cookie": [
+     "__host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ],
+    "csrf_headers": 1,
+    "peer": "same_user"
+   },
+   "session": {
+    "created_at_ms": 49940000,
+    "last_used_at_ms": 49999000,
+    "same_instance": true,
+    "token_matches": true
+   },
+   "expect": {
+    "outcome": "refuse",
+    "status": 401,
+    "code": "admin_session_invalid"
+   }
+  },
+  {
+   "name": "call_other_cookies_ignored",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/call/service.stop",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 2,
+    "cookie": [
+     "theme=dark; __Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8; lang=en"
+    ],
+    "csrf_headers": 1,
+    "peer": "same_user"
+   },
+   "session": {
+    "created_at_ms": 49940000,
+    "last_used_at_ms": 49999000,
+    "same_instance": true,
+    "token_matches": true
+   },
+   "expect": {
+    "outcome": "admit",
+    "route": {
+     "kind": "call",
+     "operation": "service.stop"
+    },
+    "touches_idle": true
+   }
+  },
+  {
+   "name": "call_session_checked_before_content_type",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/call/service.stop",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "text/plain"
+    ],
+    "content_length": 2,
+    "cookie": [],
+    "csrf_headers": 1,
+    "peer": "same_user"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "refuse",
+    "status": 401,
+    "code": "admin_session_invalid"
+   }
+  },
+  {
+   "name": "call_text_plain_refused",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/call/service.stop",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "text/plain"
+    ],
+    "content_length": 2,
+    "cookie": [
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ],
+    "csrf_headers": 1,
+    "peer": "same_user"
+   },
+   "session": {
+    "created_at_ms": 49940000,
+    "last_used_at_ms": 49999000,
+    "same_instance": true,
+    "token_matches": true
+   },
+   "expect": {
+    "outcome": "refuse",
+    "status": 400,
+    "code": "admin_malformed_request"
+   }
+  },
+  {
+   "name": "call_body_exactly_64_kib",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/call/service.stop",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 65536,
+    "cookie": [
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ],
+    "csrf_headers": 1,
+    "peer": "same_user"
+   },
+   "session": {
+    "created_at_ms": 49940000,
+    "last_used_at_ms": 49999000,
+    "same_instance": true,
+    "token_matches": true
+   },
+   "expect": {
+    "outcome": "admit",
+    "route": {
+     "kind": "call",
+     "operation": "service.stop"
+    },
+    "touches_idle": true
+   }
+  },
+  {
+   "name": "call_body_over_64_kib_refused",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/call/service.stop",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 65537,
+    "cookie": [
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ],
+    "csrf_headers": 1,
+    "peer": "same_user"
+   },
+   "session": {
+    "created_at_ms": 49940000,
+    "last_used_at_ms": 49999000,
+    "same_instance": true,
+    "token_matches": true
+   },
+   "expect": {
+    "outcome": "refuse",
+    "status": 413,
+    "code": "admin_request_too_large"
+   }
+  },
+  {
+   "name": "call_get_not_allowed",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "GET",
+    "target": "/admin/api/v1/call/service.stop",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 2,
+    "cookie": [
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ],
+    "csrf_headers": 1,
+    "peer": "same_user"
+   },
+   "session": {
+    "created_at_ms": 49940000,
+    "last_used_at_ms": 49999000,
+    "same_instance": true,
+    "token_matches": true
+   },
+   "expect": {
+    "outcome": "refuse",
+    "status": 405,
+    "code": "admin_method_not_allowed"
+   }
+  },
+  {
+   "name": "call_preflight_refused",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "OPTIONS",
+    "target": "/admin/api/v1/call/service.stop",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 2,
+    "cookie": [
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ],
+    "csrf_headers": 1,
+    "peer": "same_user"
+   },
+   "session": {
+    "created_at_ms": 49940000,
+    "last_used_at_ms": 49999000,
+    "same_instance": true,
+    "token_matches": true
+   },
+   "expect": {
+    "outcome": "refuse",
+    "status": 403,
+    "code": "admin_preflight_refused"
+   }
+  },
+  {
+   "name": "call_uppercase_operation_not_found",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/call/Service.Stop",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 2,
+    "cookie": [
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ],
+    "csrf_headers": 1,
+    "peer": "same_user"
+   },
+   "session": {
+    "created_at_ms": 49940000,
+    "last_used_at_ms": 49999000,
+    "same_instance": true,
+    "token_matches": true
+   },
+   "expect": {
+    "outcome": "refuse",
+    "status": 404,
+    "code": "admin_not_found"
+   }
+  },
+  {
+   "name": "call_trailing_slash_not_found",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/call/service.stop/",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 2,
+    "cookie": [
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ],
+    "csrf_headers": 1,
+    "peer": "same_user"
+   },
+   "session": {
+    "created_at_ms": 49940000,
+    "last_used_at_ms": 49999000,
+    "same_instance": true,
+    "token_matches": true
+   },
+   "expect": {
+    "outcome": "refuse",
+    "status": 404,
+    "code": "admin_not_found"
+   }
+  },
+  {
+   "name": "events_do_not_renew_idle",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/events",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 2,
+    "cookie": [
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ],
+    "csrf_headers": 1,
+    "peer": "same_user"
+   },
+   "session": {
+    "created_at_ms": 49940000,
+    "last_used_at_ms": 49999000,
+    "same_instance": true,
+    "token_matches": true
+   },
+   "expect": {
+    "outcome": "admit",
+    "route": {
+     "kind": "events"
+    },
+    "touches_idle": false
+   }
+  },
+  {
+   "name": "events_websocket_upgrade_refused",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "GET",
+    "target": "/admin/api/v1/events",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 2,
+    "cookie": [
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ],
+    "csrf_headers": 1,
+    "peer": "same_user",
+    "upgrade": true
+   },
+   "session": {
+    "created_at_ms": 49940000,
+    "last_used_at_ms": 49999000,
+    "same_instance": true,
+    "token_matches": true
+   },
+   "expect": {
+    "outcome": "refuse",
+    "status": 400,
+    "code": "admin_upgrade_refused"
+   }
+  },
+  {
+   "name": "events_query_not_found",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/events?cursor=1",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 2,
+    "cookie": [
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ],
+    "csrf_headers": 1,
+    "peer": "same_user"
+   },
+   "session": {
+    "created_at_ms": 49940000,
+    "last_used_at_ms": 49999000,
+    "same_instance": true,
+    "token_matches": true
+   },
+   "expect": {
+    "outcome": "refuse",
+    "status": 404,
+    "code": "admin_not_found"
+   }
+  },
+  {
+   "name": "logout_with_live_session",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/session/logout",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 2,
+    "cookie": [
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ],
+    "csrf_headers": 1,
+    "peer": "same_user"
+   },
+   "session": {
+    "created_at_ms": 49940000,
+    "last_used_at_ms": 49999000,
+    "same_instance": true,
+    "token_matches": true
+   },
+   "expect": {
+    "outcome": "admit",
+    "route": {
+     "kind": "logout"
+    },
+    "touches_idle": false
+   }
+  },
+  {
+   "name": "logout_without_session",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/session/logout",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 2,
+    "cookie": [],
+    "csrf_headers": 1,
+    "peer": "same_user"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "refuse",
+    "status": 401,
+    "code": "admin_session_invalid"
+   }
+  },
+  {
+   "name": "mcp_is_not_admin",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/mcp",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 2,
+    "cookie": [
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ],
+    "csrf_headers": 1,
+    "peer": "same_user"
+   },
+   "session": {
+    "created_at_ms": 49940000,
+    "last_used_at_ms": 49999000,
+    "same_instance": true,
+    "token_matches": true
+   },
+   "expect": {
+    "outcome": "not_admin"
+   }
+  },
+  {
+   "name": "api_v1_is_not_admin",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/api/v1/tools/search",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 2,
+    "cookie": [
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ],
+    "csrf_headers": 1,
+    "peer": "same_user"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "not_admin"
+   }
+  },
+  {
+   "name": "absolute_form_is_not_admin",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "GET",
+    "target": "https://127.0.0.1:57421/admin/",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "none"
+    ],
+    "sec_fetch_mode": "navigate",
+    "sec_fetch_dest": "document",
+    "peer": "unavailable"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "not_admin"
+   }
+  },
+  {
+   "name": "uppercase_admin_is_not_admin",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "GET",
+    "target": "/ADMIN/",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "none"
+    ],
+    "sec_fetch_mode": "navigate",
+    "sec_fetch_dest": "document",
+    "peer": "unavailable"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "not_admin"
+   }
+  },
+  {
+   "name": "admin_prefixed_word_not_found",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "GET",
+    "target": "/adminx",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "none"
+    ],
+    "sec_fetch_mode": "navigate",
+    "sec_fetch_dest": "document",
+    "peer": "unavailable"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "refuse",
+    "status": 404,
+    "code": "admin_not_found"
+   }
+  },
+  {
+   "name": "traversal_to_mcp_not_found",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/../mcp",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 2,
+    "cookie": [
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ],
+    "csrf_headers": 1,
+    "peer": "same_user"
+   },
+   "session": {
+    "created_at_ms": 49940000,
+    "last_used_at_ms": 49999000,
+    "same_instance": true,
+    "token_matches": true
+   },
+   "expect": {
+    "outcome": "refuse",
+    "status": 404,
+    "code": "admin_not_found"
+   }
+  },
+  {
+   "name": "encoded_dot_not_found",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "GET",
+    "target": "/admin/%2e%2e/mcp",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "none"
+    ],
+    "sec_fetch_mode": "navigate",
+    "sec_fetch_dest": "document",
+    "peer": "unavailable"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "refuse",
+    "status": 404,
+    "code": "admin_not_found"
+   }
+  }
+ ],
+ "paths": [
+  {
+   "target": "/admin",
+   "expect": {
+    "match": "route",
+    "route": {
+     "kind": "redirect"
+    }
+   }
+  },
+  {
+   "target": "/admin/",
+   "expect": {
+    "match": "route",
+    "route": {
+     "kind": "shell"
+    }
+   }
+  },
+  {
+   "target": "/admin/launch",
+   "expect": {
+    "match": "route",
+    "route": {
+     "kind": "launch"
+    }
+   }
+  },
+  {
+   "target": "/admin/assets/app.3f2a9c.js",
+   "expect": {
+    "match": "route",
+    "route": {
+     "kind": "asset",
+     "name": "app.3f2a9c.js"
+    }
+   }
+  },
+  {
+   "target": "/admin/assets/inter-latin_400.woff2",
+   "expect": {
+    "match": "route",
+    "route": {
+     "kind": "asset",
+     "name": "inter-latin_400.woff2"
+    }
+   }
+  },
+  {
+   "target": "/admin/assets/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "expect": {
+    "match": "route",
+    "route": {
+     "kind": "asset",
+     "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+   }
+  },
+  {
+   "target": "/admin/api/v1/session",
+   "expect": {
+    "match": "route",
+    "route": {
+     "kind": "exchange"
+    }
+   }
+  },
+  {
+   "target": "/admin/api/v1/session/logout",
+   "expect": {
+    "match": "route",
+    "route": {
+     "kind": "logout"
+    }
+   }
+  },
+  {
+   "target": "/admin/api/v1/call/storage.purge",
+   "expect": {
+    "match": "route",
+    "route": {
+     "kind": "call",
+     "operation": "storage.purge"
+    }
+   }
+  },
+  {
+   "target": "/admin/api/v1/call/catalog.index_setup_draft",
+   "expect": {
+    "match": "route",
+    "route": {
+     "kind": "call",
+     "operation": "catalog.index_setup_draft"
+    }
+   }
+  },
+  {
+   "target": "/admin/api/v1/call/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+   "expect": {
+    "match": "route",
+    "route": {
+     "kind": "call",
+     "operation": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+   }
+  },
+  {
+   "target": "/admin/api/v1/events",
+   "expect": {
+    "match": "route",
+    "route": {
+     "kind": "events"
+    }
+   }
+  },
+  {
+   "target": "/admin//",
+   "expect": {
+    "match": "not_found"
+   }
+  },
+  {
+   "target": "/admin/launch/",
+   "expect": {
+    "match": "not_found"
+   }
+  },
+  {
+   "target": "/admin/launch?c=x",
+   "expect": {
+    "match": "not_found"
+   }
+  },
+  {
+   "target": "/admin/launch#c=x",
+   "expect": {
+    "match": "not_found"
+   }
+  },
+  {
+   "target": "/admin/assets/",
+   "expect": {
+    "match": "not_found"
+   }
+  },
+  {
+   "target": "/admin/assets/../secret",
+   "expect": {
+    "match": "not_found"
+   }
+  },
+  {
+   "target": "/admin/assets/.hidden",
+   "expect": {
+    "match": "not_found"
+   }
+  },
+  {
+   "target": "/admin/assets/app.js.",
+   "expect": {
+    "match": "not_found"
+   }
+  },
+  {
+   "target": "/admin/assets/a..b.js",
+   "expect": {
+    "match": "not_found"
+   }
+  },
+  {
+   "target": "/admin/assets/App.js",
+   "expect": {
+    "match": "not_found"
+   }
+  },
+  {
+   "target": "/admin/assets/sub/app.js",
+   "expect": {
+    "match": "not_found"
+   }
+  },
+  {
+   "target": "/admin/assets/%2e%2e/x",
+   "expect": {
+    "match": "not_found"
+   }
+  },
+  {
+   "target": "/admin/%2e%2e/mcp",
+   "expect": {
+    "match": "not_found"
+   }
+  },
+  {
+   "target": "/admin/%2E%2E/mcp",
+   "expect": {
+    "match": "not_found"
+   }
+  },
+  {
+   "target": "/admin/%252e/x",
+   "expect": {
+    "match": "not_found"
+   }
+  },
+  {
+   "target": "/admin\\launch",
+   "expect": {
+    "match": "not_found"
+   }
+  },
+  {
+   "target": "/admin/assets/app.js;v=1",
+   "expect": {
+    "match": "not_found"
+   }
+  },
+  {
+   "target": "/admin/launch\u0000",
+   "expect": {
+    "match": "not_found"
+   }
+  },
+  {
+   "target": "/admin/l\u0430unch",
+   "expect": {
+    "match": "not_found"
+   }
+  },
+  {
+   "target": "/admin/./launch",
+   "expect": {
+    "match": "not_found"
+   }
+  },
+  {
+   "target": "/admin/api/v1/call/",
+   "expect": {
+    "match": "not_found"
+   }
+  },
+  {
+   "target": "/admin/api/v1/call/stop",
+   "expect": {
+    "match": "not_found"
+   }
+  },
+  {
+   "target": "/admin/api/v1/call/service..stop",
+   "expect": {
+    "match": "not_found"
+   }
+  },
+  {
+   "target": "/admin/api/v1/call/service.stop.",
+   "expect": {
+    "match": "not_found"
+   }
+  },
+  {
+   "target": "/admin/api/v1/call/1service.stop",
+   "expect": {
+    "match": "not_found"
+   }
+  },
+  {
+   "target": "/admin/api/v1/call/service.Stop",
+   "expect": {
+    "match": "not_found"
+   }
+  },
+  {
+   "target": "/admin/api/v1/call/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+   "expect": {
+    "match": "not_found"
+   }
+  },
+  {
+   "target": "/admin/api/v2/session",
+   "expect": {
+    "match": "not_found"
+   }
+  },
+  {
+   "target": "/admin/API/v1/session",
+   "expect": {
+    "match": "not_found"
+   }
+  },
+  {
+   "target": "/adminx",
+   "expect": {
+    "match": "not_found"
+   }
+  },
+  {
+   "target": "/admin-x",
+   "expect": {
+    "match": "not_found"
+   }
+  },
+  {
+   "target": "/admin/assets/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "expect": {
+    "match": "not_found"
+   }
+  },
+  {
+   "target": "/admin/api/v1/session/",
+   "expect": {
+    "match": "not_found"
+   }
+  },
+  {
+   "target": "/admin/api/v1/call/service.stop/extra",
+   "expect": {
+    "match": "not_found"
+   }
+  },
+  {
+   "target": "/admin/~/launch",
+   "expect": {
+    "match": "not_found"
+   }
+  },
+  {
+   "target": "/mcp",
+   "expect": {
+    "match": "not_admin"
+   }
+  },
+  {
+   "target": "/api/v1/tools",
+   "expect": {
+    "match": "not_admin"
+   }
+  },
+  {
+   "target": "/",
+   "expect": {
+    "match": "not_admin"
+   }
+  },
+  {
+   "target": "*",
+   "expect": {
+    "match": "not_admin"
+   }
+  },
+  {
+   "target": "https://127.0.0.1:57421/admin/",
+   "expect": {
+    "match": "not_admin"
+   }
+  },
+  {
+   "target": "/ADMIN",
+   "expect": {
+    "match": "not_admin"
+   }
+  },
+  {
+   "target": "",
+   "expect": {
+    "match": "not_admin"
+   }
+  },
+  {
+   "target": "/Admin/",
+   "expect": {
+    "match": "not_admin"
+   }
+  }
+ ],
+ "cookies": [
+  {
+   "headers": [],
+   "admin_cookies": 0
+  },
+  {
+   "headers": [
+    "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+   ],
+   "admin_cookies": 1
+  },
+  {
+   "headers": [
+    "a=1; __Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8; b=2"
+   ],
+   "admin_cookies": 1
+  },
+  {
+   "headers": [
+    "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8; __Host-airk_admin=other"
+   ],
+   "admin_cookies": 2
+  },
+  {
+   "headers": [
+    "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+    "__Host-airk_admin=other"
+   ],
+   "admin_cookies": 2
+  },
+  {
+   "headers": [
+    "__host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+   ],
+   "admin_cookies": 0
+  },
+  {
+   "headers": [
+    "airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+   ],
+   "admin_cookies": 0
+  },
+  {
+   "headers": [
+    "__Host-airk_admin"
+   ],
+   "admin_cookies": 0
+  },
+  {
+   "headers": [
+    "__Host-airk_admin="
+   ],
+   "admin_cookies": 1
+  },
+  {
+   "headers": [
+    "  __Host-airk_admin =AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8;"
+   ],
+   "admin_cookies": 1
+  },
+  {
+   "headers": [
+    "x=__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+   ],
+   "admin_cookies": 0
+  }
+ ],
+ "bearer_plane": [
+  {
+   "headers": [
+    "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+   ],
+   "expect": {
+    "status": 403,
+    "code": "cookie_on_bearer_plane"
+   }
+  },
+  {
+   "headers": [
+    "session=abc; theme=dark"
+   ],
+   "expect": null
+  },
+  {
+   "headers": [
+    "__host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+   ],
+   "expect": null
+  },
+  {
+   "headers": [],
+   "expect": null
+  }
+ ],
+ "peers": [
+  {
+   "observation": {
+    "platform": "windows",
+    "service_sid": "S-1-5-21-1000-2000-3000-1001",
+    "peer_sid": "S-1-5-21-1000-2000-3000-1001"
+   },
+   "expect": "same_user"
+  },
+  {
+   "observation": {
+    "platform": "windows",
+    "service_sid": "S-1-5-21-1000-2000-3000-1001",
+    "peer_sid": "S-1-5-21-1000-2000-3000-1002"
+   },
+   "expect": "other_user"
+  },
+  {
+   "observation": {
+    "platform": "windows",
+    "service_sid": "S-1-5-21-1000-2000-3000-1001",
+    "peer_sid": null
+   },
+   "expect": "unavailable"
+  },
+  {
+   "observation": {
+    "platform": "linux",
+    "service_uid": 1000,
+    "peer_uid": 1000
+   },
+   "expect": "same_user"
+  },
+  {
+   "observation": {
+    "platform": "linux",
+    "service_uid": 1000,
+    "peer_uid": 0
+   },
+   "expect": "other_user"
+  },
+  {
+   "observation": {
+    "platform": "linux",
+    "service_uid": 1000,
+    "peer_uid": null
+   },
+   "expect": "unavailable"
+  },
+  {
+   "observation": {
+    "platform": "macos",
+    "found_among_service_user_sockets": true
+   },
+   "expect": "same_user"
+  },
+  {
+   "observation": {
+    "platform": "macos",
+    "found_among_service_user_sockets": false
+   },
+   "expect": "other_user"
+  },
+  {
+   "observation": {
+    "platform": "macos",
+    "found_among_service_user_sockets": null
+   },
+   "expect": "unavailable"
+  }
+ ]
+}

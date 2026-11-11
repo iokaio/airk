@@ -50,8 +50,26 @@ class Render(unittest.TestCase):
                 self.assertEqual(TYPES.main(["i2", "--check"]), 0)
                 self.assertIn('export type A = "one";', (root / "x.ts").read_text(encoding="utf-8"))
 
+    def test_each_contract_names_its_own_version_constant(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            schema = root / "i3.schema.json"
+            schema.write_text(json.dumps({"title": "fixture", "i3_contract": 1, "roots": ["A"],
+                                          "$defs": {"A": {"type": "object", "additionalProperties": False,
+                                                          "properties": {"ok": {"const": True}},
+                                                          "required": ["ok"]}}}), encoding="utf-8")
+            with mock.patch.dict(TYPES.CONTRACTS, {"i3": schema}), mock.patch.object(TYPES, "ROOT", root):
+                rendered = TYPES.generate("i3")
+        self.assertIn("export const I3_CONTRACT = 1;", rendered)
+        self.assertNotIn("I2_CONTRACT", rendered)
+        self.assertIn("ok: true;", rendered)
+        self.assertEqual(TYPES.CONTRACTS["i3"], ROOT / "packages/contracts-gen/i3.schema.json")
+
     def test_checked_in_i2_types_match_their_schema(self):
         self.assertEqual(TYPES.main(["i2", "--check"]), 0)
+
+    def test_checked_in_i3_types_match_their_schema(self):
+        self.assertEqual(TYPES.main(["i3", "--check"]), 0)
 
 
 if __name__ == "__main__":

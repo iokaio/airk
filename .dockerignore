@@ -29,10 +29,14 @@ fixtures/schema/airk-state-1/**
 fixtures/split/**
 !fixtures/split/i2/
 fixtures/split/i2/**
+!fixtures/split/i3/
+fixtures/split/i3/**
 !fixtures/split/i4/
 fixtures/split/i4/**
 !fixtures/wire/
 fixtures/wire/**
+!packages/contracts-gen/
+packages/contracts-gen/**
 !packages/vscode/
 packages/vscode/**
 !third_party/licenses/
@@ -109,6 +113,11 @@ packages/vscode/src/test/fixtures/**
 !fixtures/split/i2/error_lines.json
 !fixtures/split/i2/exit_codes.json
 !fixtures/split/i2/version.json
+!fixtures/split/i3/admin_operations.json
+!fixtures/split/i3/admission_cases.json
+!fixtures/split/i3/envelopes.json
+!fixtures/split/i3/headers.json
+!fixtures/split/i3/launch_exchange.json
 !fixtures/split/i4/i4_cases.json
 !fixtures/wire/airkctl_session_frames.json
 !fixtures/wire/catalog_receipt.json
@@ -117,6 +126,7 @@ packages/vscode/src/test/fixtures/**
 !fixtures/wire/read_retry_envelopes.json
 !fixtures/wire/session_frames.json
 !fixtures/wire/usage_page.json
+!packages/contracts-gen/i3.schema.json
 !packages/vscode/src/generated/i2.schema.json
 !packages/vscode/src/test/diagnosticLogs.test.ts
 !packages/vscode/src/test/extensionUninstall.test.ts

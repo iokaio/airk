@@ -1,0 +1,433 @@
+{
+ "schema": "airk.split-fixture.i3-launch-exchange/1",
+ "contract": "docs/split/contracts.md \u00a74, \u00a74.11; docs/split/security-review-i3.md",
+ "generator": "fixtures/split/i3/admission_cases.py",
+ "launch_url": {
+  "port": 57421,
+  "code": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8",
+  "url": "https://127.0.0.1:57421/admin/launch#c=ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8"
+ },
+ "exchanges": [
+  {
+   "name": "fresh_code_accepted",
+   "body": "{\"code\": \"ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8\"}",
+   "stored": {
+    "issued_at_ms": 49999000,
+    "same_instance": true
+   },
+   "now_ms": 50000000,
+   "expect": {
+    "outcome": "accepted"
+   }
+  },
+  {
+   "name": "accepted_just_inside_60_s",
+   "body": "{\"code\": \"ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8\"}",
+   "stored": {
+    "issued_at_ms": 49940001,
+    "same_instance": true
+   },
+   "now_ms": 50000000,
+   "expect": {
+    "outcome": "accepted"
+   }
+  },
+  {
+   "name": "expired_at_60_s",
+   "body": "{\"code\": \"ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8\"}",
+   "stored": {
+    "issued_at_ms": 49940000,
+    "same_instance": true
+   },
+   "now_ms": 50000000,
+   "expect": {
+    "outcome": "refused",
+    "status": 401,
+    "code": "admin_launch_code_invalid"
+   }
+  },
+  {
+   "name": "unknown_code",
+   "body": "{\"code\": \"ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8\"}",
+   "stored": null,
+   "now_ms": 50000000,
+   "expect": {
+    "outcome": "refused",
+    "status": 401,
+    "code": "admin_launch_code_invalid"
+   }
+  },
+  {
+   "name": "replay_after_consumption",
+   "body": "{\"code\": \"ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8\"}",
+   "stored": null,
+   "now_ms": 50000000,
+   "expect": {
+    "outcome": "refused",
+    "status": 401,
+    "code": "admin_launch_code_invalid"
+   }
+  },
+  {
+   "name": "code_of_previous_instance",
+   "body": "{\"code\": \"ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8\"}",
+   "stored": {
+    "issued_at_ms": 49999000,
+    "same_instance": false
+   },
+   "now_ms": 50000000,
+   "expect": {
+    "outcome": "refused",
+    "status": 401,
+    "code": "admin_launch_code_invalid"
+   }
+  },
+  {
+   "name": "short_code",
+   "body": "{\"code\": \"ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj\"}",
+   "stored": {
+    "issued_at_ms": 49999000,
+    "same_instance": true
+   },
+   "now_ms": 50000000,
+   "expect": {
+    "outcome": "refused",
+    "status": 401,
+    "code": "admin_launch_code_invalid"
+   }
+  },
+  {
+   "name": "non_canonical_final_character",
+   "body": "{\"code\": \"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB\"}",
+   "stored": {
+    "issued_at_ms": 49999000,
+    "same_instance": true
+   },
+   "now_ms": 50000000,
+   "expect": {
+    "outcome": "refused",
+    "status": 401,
+    "code": "admin_launch_code_invalid"
+   }
+  },
+  {
+   "name": "padded_code",
+   "body": "{\"code\": \"ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8=\"}",
+   "stored": {
+    "issued_at_ms": 49999000,
+    "same_instance": true
+   },
+   "now_ms": 50000000,
+   "expect": {
+    "outcome": "refused",
+    "status": 401,
+    "code": "admin_launch_code_invalid"
+   }
+  },
+  {
+   "name": "standard_base64_alphabet",
+   "body": "{\"code\": \"+CEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8\"}",
+   "stored": {
+    "issued_at_ms": 49999000,
+    "same_instance": true
+   },
+   "now_ms": 50000000,
+   "expect": {
+    "outcome": "refused",
+    "status": 401,
+    "code": "admin_launch_code_invalid"
+   }
+  },
+  {
+   "name": "empty_code",
+   "body": "{\"code\": \"\"}",
+   "stored": null,
+   "now_ms": 50000000,
+   "expect": {
+    "outcome": "refused",
+    "status": 401,
+    "code": "admin_launch_code_invalid"
+   }
+  },
+  {
+   "name": "unknown_field",
+   "body": "{\"code\": \"ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8\", \"cookie\": \"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8\"}",
+   "stored": {
+    "issued_at_ms": 49999000,
+    "same_instance": true
+   },
+   "now_ms": 50000000,
+   "expect": {
+    "outcome": "refused",
+    "status": 400,
+    "code": "admin_malformed_request"
+   }
+  },
+  {
+   "name": "missing_code",
+   "body": "{}",
+   "stored": {
+    "issued_at_ms": 49999000,
+    "same_instance": true
+   },
+   "now_ms": 50000000,
+   "expect": {
+    "outcome": "refused",
+    "status": 400,
+    "code": "admin_malformed_request"
+   }
+  },
+  {
+   "name": "code_not_a_string",
+   "body": "{\"code\": 5}",
+   "stored": {
+    "issued_at_ms": 49999000,
+    "same_instance": true
+   },
+   "now_ms": 50000000,
+   "expect": {
+    "outcome": "refused",
+    "status": 400,
+    "code": "admin_malformed_request"
+   }
+  },
+  {
+   "name": "array_body",
+   "body": "[]",
+   "stored": {
+    "issued_at_ms": 49999000,
+    "same_instance": true
+   },
+   "now_ms": 50000000,
+   "expect": {
+    "outcome": "refused",
+    "status": 400,
+    "code": "admin_malformed_request"
+   }
+  },
+  {
+   "name": "not_json",
+   "body": "c=ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8",
+   "stored": {
+    "issued_at_ms": 49999000,
+    "same_instance": true
+   },
+   "now_ms": 50000000,
+   "expect": {
+    "outcome": "refused",
+    "status": 400,
+    "code": "admin_malformed_request"
+   }
+  },
+  {
+   "name": "body_over_1_kib",
+   "body": "{\"code\": \"ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8\", \"pad\": \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}",
+   "stored": {
+    "issued_at_ms": 49999000,
+    "same_instance": true
+   },
+   "now_ms": 50000000,
+   "expect": {
+    "outcome": "refused",
+    "status": 413,
+    "code": "admin_request_too_large"
+   }
+  }
+ ],
+ "admission": [
+  {
+   "name": "forged_headers_from_foreign_peer",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/session",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 60,
+    "cookie": [],
+    "csrf_headers": 0,
+    "peer": "other_user"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "refuse",
+    "status": 403,
+    "code": "admin_peer_refused"
+   }
+  },
+  {
+   "name": "same_user_peer_accepted",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/session",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 60,
+    "cookie": [],
+    "csrf_headers": 0,
+    "peer": "same_user"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "admit",
+    "route": {
+     "kind": "exchange"
+    },
+    "touches_idle": false
+   }
+  },
+  {
+   "name": "peer_observer_unavailable",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/session",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 60,
+    "cookie": [],
+    "csrf_headers": 0,
+    "peer": "unavailable"
+   },
+   "session": null,
+   "expect": {
+    "outcome": "refuse",
+    "status": 403,
+    "code": "admin_peer_refused"
+   }
+  },
+  {
+   "name": "foreign_peer_with_valid_cookie_and_token",
+   "request": {
+    "listener_port": 57421,
+    "now_ms": 50000000,
+    "method": "POST",
+    "target": "/admin/api/v1/call/service.stop",
+    "host": [
+     "127.0.0.1:57421"
+    ],
+    "origin": [
+     "https://127.0.0.1:57421"
+    ],
+    "sec_fetch_site": [
+     "same-origin"
+    ],
+    "sec_fetch_mode": "cors",
+    "sec_fetch_dest": "empty",
+    "content_type": [
+     "application/json"
+    ],
+    "content_length": 2,
+    "cookie": [
+     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ],
+    "csrf_headers": 1,
+    "peer": "other_user"
+   },
+   "session": {
+    "created_at_ms": 49940000,
+    "last_used_at_ms": 49999000,
+    "same_instance": true,
+    "token_matches": true
+   },
+   "expect": {
+    "outcome": "refuse",
+    "status": 403,
+    "code": "admin_peer_refused"
+   }
+  }
+ ],
+ "responses": [
+  {
+   "name": "exchange_result",
+   "json": {
+    "csrf": "QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8",
+    "idle_expires_in_ms": 1800000,
+    "absolute_expires_in_ms": 43200000,
+    "service_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"
+   }
+  }
+ ],
+ "invalid_responses": [
+  {
+   "name": "unknown_field",
+   "json": {
+    "csrf": "QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8",
+    "idle_expires_in_ms": 1,
+    "absolute_expires_in_ms": 1,
+    "service_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1",
+    "cookie": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+   }
+  },
+  {
+   "name": "missing_csrf",
+   "json": {
+    "idle_expires_in_ms": 1,
+    "absolute_expires_in_ms": 1,
+    "service_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"
+   }
+  }
+ ],
+ "rejected_responses": [
+  {
+   "name": "short_csrf",
+   "reason": "exchange_csrf",
+   "json": {
+    "csrf": "QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xd",
+    "idle_expires_in_ms": 1,
+    "absolute_expires_in_ms": 1,
+    "service_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"
+   }
+  },
+  {
+   "name": "uppercase_instance",
+   "reason": "exchange_service_instance",
+   "json": {
+    "csrf": "QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8",
+    "idle_expires_in_ms": 1,
+    "absolute_expires_in_ms": 1,
+    "service_instance": "E1E1E1E1E1E1E1E1E1E1E1E1E1E1E1E1"
+   }
+  }
+ ]
+}
