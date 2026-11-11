@@ -3,7 +3,8 @@
 **Status:** approved plan, revision 4, updated 11 November 2026, on `feat/split`
 (created from `feat/simplify` at `59dd3c721ca4c8301664827abaa9ea2ac6fd8dc8`).
 Implementation, local builds, local signing, per-installer version bumps,
-commits on `feat/split` and targeted hosted CI runs are authorized as U42–U46
+commits on `feat/split`, targeted hosted CI runs, tool installation, new
+dependencies within policy, and Docker/Neo checks are authorized as U42–U58
 record. Pull requests, merges and publication are not. The stopped
 installed-editor repair stays superseded (U23). The inherited source version
 is 1.8.23.
@@ -13,7 +14,7 @@ is 1.8.23.
 | 1 | Two products: a standalone service installer and a UI-only extension that discovers the service. |
 | 2 | Adds `airkctl`, a service-only `airk`, browser admin pages on the HTTPS endpoint, an extension that reaches the service only through `airkctl`, a fixed-layout installer that removes pre-split installations, and code and installer maps. Records the user's decisions of 10 November 2026. |
 | 3 | Clarifies common-contract ownership, UI boundaries, recovery and deployment; maps CI selection, artifact reuse, signing and publication; adds force-local Windows installer/VSIX scripts, phase dependencies and acceptance evidence. Records the additional user decisions U18 onward. |
-| 4 | Records the answers to O1–O12 and the remaining planning questions as U23–U46 (11 November): custom program and data/index locations, macOS setup fallback, phase gates, commit, test-machine, signing and CI authorizations. |
+| 4 | Records the answers to O1–O12 and the remaining planning questions as U23–U58 (11 November): custom program and data/index locations, macOS setup fallback, phase gates, I2/I3 type generation, commit, test-machine, signing, CI, tool, dependency, agent and failure-handling authorizations. |
 
 **Reading order.** §2 lists what the user has decided and what still needs an
 answer. §4 defines the boundary between extension code and service code. §5–§9
@@ -100,15 +101,27 @@ These came from the user's request and answers. They are not agent choices.
 | U35 | (11 November) The split is the structural work after Milestone S1. Remaining simplification-plan work that touches a split-owned component is done inside the split's phases, under the simplification plan's rules and review gates. Other simplification milestones wait. |
 | U36 | (11 November) The §9.5 install paths are approved as defaults; U39 lets the user choose others. Phase 0 still verifies that none collides with a pre-split root. |
 | U37 | (11 November) The §10.5.1 local build entry points and their `-ForceBuild` interface are approved: `scripts/build-local-installers.ps1`, `scripts/build-local-service-installer.ps1` and `scripts/build-local-vsix.ps1`. |
-| U38 | (11 November) The §7.2 dedicated security review is performed by an independent agent against the written specification. The user reviews its findings and approves before admin code is written. |
+| U38 | (11 November) The §7.2 dedicated security review is performed by an independent agent against the written specification. The user reviews its findings and approves before admin code is written (amended by U55). |
 | U39 | (11 November) The service installer lets the user choose a different program folder and a different location for index data and service state, and for cache and logs. The defaults are the §9.5 paths. Only folders owned by the current user and not writable by others are accepted, with no elevation; machine-wide folders are refused. A small owner-only pointer always stays at a fixed per-user path and names the chosen locations. `airkctl`, the extension and later installers find the installation only through that pointer; there is still no editor setting for the location. This amends U15 and U36: the layout inside the chosen program folder is fixed, and the folder itself is chosen. |
 | U40 | (11 November) If the macOS `Install AIRK.command` wrapper fails Gatekeeper from the notarized DMG, setup runs from inside the notarized `AIRK.app` on first launch instead. No installer package is introduced. |
 | U41 | (11 November) CLAUDE.md and AGENTS.md wording that names `airkctl` as the CLI, the `airkctl` window session and the admin pages as parity surfaces is pre-approved, in the phase that makes it true. Both files stay byte-identical. Any other change to them still needs the user's approval. |
 | U42 | (11 November) Completed, reviewed steps are committed on `feat/split` with `git commit -s` under the user's configured identity, without asking each time. No agent trailers. Pull requests, merges and publication still need the user's authorization. |
-| U43 | (11 November) Installed-product tests (T2) may run on this Windows machine, including installs that remove its current AIRK installation and indexes. The user handles OS consent dialogs, such as certificate trust, when asked. |
+| U43 | (11 November) Installed-product tests (T2) may run on this Windows machine, including installs that remove its current AIRK installation and indexes. The user handles OS consent dialogs, such as certificate trust, when asked (see U56). |
 | U44 | (11 November) Azure Trusted Signing access on this machine is set up for non-interactive local signing; the user keeps it working or reports a change. Pushing `feat/split` and running specific hosted CI or qualification workflows is pre-authorized for platform questions that cannot be answered locally (macOS signing and notarization, Linux, Intel Mac). Publication is not. |
-| U45 | (11 November) Implementation of this plan is authorized, starting with Phase 0, without a stop at the end of Phase 0 or at later phase boundaries. Work still stops for a named blocker, the two-strike rule, the U38 security approval, a material scope change, or anything that needs authorization not granted here (pull requests, merges, publication). |
+| U45 | (11 November) Implementation of this plan is authorized, starting with Phase 0, without a stop at the end of Phase 0 or at later phase boundaries. Work still stops for a named blocker, the U52 failure rule, a U55 high or critical security finding, a material scope change, or anything that needs authorization not granted here (pull requests, merges, publication). |
 | U46 | (11 November) Interim split installers keep the standing per-build patch increments on 1.8.x (1.8.24, 1.8.25, …). Version 1.9.0 is set only for the release candidate (U31). |
+| U47 | (11 November) Simplification decision D5 is reopened for I2 and I3 only. Phase 1 runs a small generation pilot: Rust `schemars` JSON Schema to TypeScript types, with checked-in output and a drift check. Semantic rules such as read-retry eligibility stay hand-written and are tested against Rust-emitted cases. Other contracts keep D5's "fixtures first, no type generation". U24 is the approved D8 exception for the split's wire additions in 1.9.0. |
+| U48 | (11 November) Missing local prerequisites may be installed: Inno Setup at the CI-pinned version and `cargo-nextest` at the CI-pinned version with `--locked`. Tools are called by full path; PATH is not edited. |
+| U49 | (11 November) This repository's `.mcp.json` and `.codex/config.toml` may be updated in the phase that makes the new `airkctl` entries valid, documented in that commit. |
+| U50 | (11 November) The §9.1–§9.2 location rules are approved: a chosen folder must be empty or owned by this split installation; the pointer is written last; later installs keep the locations in use; index data moves only through the service's storage relocation. |
+| U51 | (11 November) For the split, CLAUDE.md's investigation checkpoints are recorded in the task ledger and do not stop the work. Work stops only for a decision or a blocker outside existing authorization. |
+| U52 | (11 November) For the split, the "two strikes" rule becomes three: after three failed expensive (T2/T3) runs for one component, stop running, write the root-cause note, complete the correction with the missing cheap regression, then run again. This does not require waiting for the user. |
+| U53 | (11 November) Parallel subagents and Workflow orchestration may be used for independent investigation, implementation and review, within the default workflow size. Builds, tests and platform batches still go through one owner. |
+| U54 | (11 November) New third-party crates and npm packages may be added without asking each time when they are well maintained, license-compatible, pinned and locked, and pass `dependency-audit.py` and `license-notices.py`. Each addition is reported in the phase summary. |
+| U55 | (11 November) Amends U38: when the independent security review leaves no high or critical finding, medium and low findings are fixed in the specification, recorded, and admin work continues without waiting. A remaining high or critical finding, or a fix that would change a U decision, stops for the user. |
+| U56 | (11 November) Automated installed-product runs decline certificate trust and check the admin pages with a test client that pins the installation issuer. One final run with real CurrentUser Root trust waits for the user to approve the OS dialog. |
+| U57 | (11 November) No pull request is opened by the agent. The user opens the PR from `feat/split`; merging and publication stay with the user. |
+| U58 | (11 November) Docker on this machine (Linux) and the Mac Neo over the existing SSH setup (macOS arm64) may be used for scoped checks without asking. The Neo target is cleaned after each batch, keeping needed evidence first. |
 
 ### 2.2 Formerly open decisions
 
@@ -289,7 +302,8 @@ Before a contract lands, its inventory row records owner, consumers, allowed
 surfaces, authorization, version and unknown-field rules, byte/deadline limits,
 cancellation, retry and recovery behavior, and its golden fixtures. Name the
 generation command and drift check, or explicitly record why generation is
-outside the proven pilot. Generated output is never its own expected value:
+outside the proven pilot. Only I2 and I3 types are generated, through the
+U47 pilot; every other contract follows D5 (fixtures first). Generated output is never its own expected value:
 operation sets and compatibility expectations are reviewed fixtures. Compare
 exact bytes for persisted/digested data and parsed equality elsewhere,
 normalizing only documented transport identities and timing.

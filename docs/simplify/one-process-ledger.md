@@ -81,6 +81,105 @@
 - Status: documentation-only task complete. Implementation waits for the
   user's review of the plan and the open decisions.
 
+### Split plan revision 3 review (10 November 2026)
+
+- Request: improve the split plan, including the concrete CI changes and
+  architectural separation needed for implementation, maintenance and deployment;
+  account for the revision-2 pass notes. Ask before changing technology choices
+  or adopting a recommendation contrary to the plan.
+- Acceptance: a source-backed CI/build/release change map, explicit common
+  contract ownership and dependency rules, phase prerequisites and validation
+  evidence. Preserve U1–U17 and distinguish all unanswered proposals from approval.
+- Boundary: `docs/split/split-plan.md` and this ledger only. No implementation,
+  version bump, commit, build, installed repair or publication.
+- Review checkpoint: at most 15 minutes; extend only for a named acceptance
+  blocker. Parallel read-only reviews cover CI/release and architecture/contracts;
+  the primary owns edits, combined review and all checks.
+- AIRK MCP: no available AIRK tools; `.codex/config.toml` disables the server,
+  while `.mcp.json` still names its launcher. Live local files are the evidence.
+- Source-review questions: which workflow dependencies assume one executable or
+  a bundled VSIX; where shared contract generation belongs; which phase edges
+  and open decisions must precede consumers. These are review questions, not
+  reproduced failures. No executable correction or qualification is in scope.
+- Intended validation: inspect the combined documentation diff, verify local
+  links and cited current paths, run `pwsh -NoProfile -File scripts/check-repo.ps1`
+  and `git diff --check`, and confirm only these two files changed. Use the
+  command-scoped Git safe-directory exception for this checkout; do not change
+  persistent Git configuration or file ownership.
+- Review checkpoint: the bounded source review is complete. Required planning
+  corrections were missing frontend inputs in native build identity, omitted
+  CI selection/producer/container owners, conflicting shared-contract ownership,
+  and incomplete phase/deployment dependencies. These are source-review findings,
+  not reproduced runtime failures. No broader hardening work was started.
+- User decisions added as U18–U21: retain Preact/esbuild; generate and seal admin
+  assets before native compilation; keep thin setup-owned uninstall delegation;
+  require local service-installer and VSIX force-build scripts, at least for
+  Windows. The user explicitly limited the script request to plan deliverables.
+- Open choice O13 was asked directly: local unsigned test artifacts with explicit
+  developer opt-in versus local test-certificate signing. No answer recorded yet;
+  the plan does not weaken production verification. O1–O12 remain unanswered.
+- Changes: expanded contract owners, dispatch/admission, journal/session recovery,
+  shared UI/adapters, fixed-layout replacement, CI job/input/receipt/signing maps,
+  local PowerShell script contracts and product acceptance. Native/service
+  receipts and independently buildable VSIX receipts remain separate until
+  release assembly. Stopped repairs remain stopped.
+- Review: the primary inspected the complete diff and both read-only reviewers
+  checked their affected sections. Corrected installer pre-placement ordering,
+  independent VSIX receipts, post-tag verification wording and duplicate-build
+  risk in local acceptance. No code or workflow files changed.
+- Validation: `pwsh -NoProfile -File scripts/check-repo.ps1` passed for 2,230
+  public files, including local Markdown links, AGENTS/CLAUDE identity and the
+  production self-spawn roster. Cited CI/test paths were verified against the
+  live tree; proposed package/script paths are labeled as future deliverables.
+  `git diff --check` passed. Only the plan and this ledger changed. Existing
+  Git ignore/cache read-permission warnings remain environmental limitations.
+- Status: revision 3 documentation task complete, with O13 still awaiting an
+  answer and O1–O12 unchanged. No builds, compiler invocations, Rust formatting,
+  Clippy, workspace tests, installed qualification, commits or publication run;
+  no executable inputs changed.
+
+### Local Windows signing clarification (11 November 2026)
+
+- User answer to O13: this machine has access to the same signing certificate
+  as Windows CI; use it. Recorded as U22. The earlier pending O13 status above
+  describes the previous review checkpoint, not the current decision.
+- Acceptance/boundary: update only the split plan and this ledger to require
+  signed local native/setup/uninstaller/installer outputs and an ordinary VSIX
+  with normal verification. Preserve distinct local and hosted provenance.
+  No certificate access, signing, implementation or build is requested here.
+- Source review: AIRK MCP remains unavailable/disabled. The read-only CI reviewer
+  checked existing signing ownership and policy. Reuse the authorized signing
+  identity/profile and publisher checks; do not assume an exported key or fixed
+  leaf thumbprint. Preserve the hosted signing adapter's guard.
+- Validation: primary review complete; `scripts/check-repo.ps1` passed for 2,230
+  public files and `git diff --check` passed. Only the plan and ledger changed.
+  Existing ignore/cache read-permission warnings remain environmental limits.
+  No compiler, certificate access, signing or qualification campaign ran.
+- Status: documentation update complete; O13 resolved, O1–O12 unchanged.
+
+### Split plan decisions U23–U58 (11 November 2026)
+
+- Request: ask every question needed to plan and implement the split without
+  interruption, then a second pass for remaining approvals; record answers in
+  the plan as they arrive.
+- Answers: O1–O12 recorded as U23–U34. Further decisions U35–U58 cover the
+  Track S relationship, install paths, local script names, the security-review
+  route, user-chosen program and data/index locations (U39, U50), the macOS
+  setup fallback, CLAUDE.md wording, commits, the test machine, signing and
+  hosted CI, phase gates (no stops, U45), interim versions, I2/I3 type
+  generation (D5 reopened for those only, U47), tool installation,
+  repository MCP configuration, checkpoints, the three-failure rule (U52),
+  agents and workflows, dependencies, security-finding thresholds, trust in
+  automated runs, no agent-opened PR, and Docker/Neo use.
+- Source review for the second pass: `simplify-plan.md` §9 (D5 "fixtures first"
+  conflicted with the plan's generated I2/I3 types), and local prerequisites:
+  Inno Setup and `cargo-nextest` are missing; cargo is in `~/.cargo/bin` but not
+  on this shell's PATH; signtool, az, Docker, Node and Python are present.
+- Validation: `git diff --check` passed; `scripts/check-repo.ps1` passed for 2,230 public files. Documentation only;
+  no build, compiler, signing or installation ran.
+- Status: plan revision 4 complete and committed on `feat/split`. Phase 0 is
+  next and authorized (U45).
+
 ## Reported HTTP cleanup refusal (10 November 2026)
 
 Acceptance: correct the reported `HTTP cleanup requires the exact prebaseline
