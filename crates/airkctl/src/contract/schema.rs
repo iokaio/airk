@@ -8,7 +8,8 @@
 //! here by hand: rules inside `airk-core` newtypes are invisible to generators
 //! (contract-generation pilot), and I1 stays fixtures-only (D5).
 use super::{
-    ErrorLine, ExitClass, SessionEventFrame, SessionRequest, SessionResponse, VersionDocument,
+    ErrorLine, ExitClass, ServiceStatus, SessionEventFrame, SessionRequest, SessionResponse,
+    VersionDocument,
 };
 use schemars::{JsonSchema, Schema, SchemaGenerator, generate::SchemaSettings, json_schema};
 
@@ -42,6 +43,7 @@ pub fn document() -> serde_json::Value {
     root::<SessionRequest>(&mut generator, &mut roots);
     root::<SessionResponse>(&mut generator, &mut roots);
     root::<SessionEventFrame>(&mut generator, &mut roots);
+    root::<ServiceStatus>(&mut generator, &mut roots);
     let definitions: std::collections::BTreeMap<String, serde_json::Value> = generator
         .definitions()
         .iter()

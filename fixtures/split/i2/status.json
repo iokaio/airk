@@ -1,0 +1,141 @@
+{
+  "schema": "airk.split-fixture.i2-status/1",
+  "contract": "crates/airkctl/src/contract/mod.rs (ServiceStatus, U87)",
+  "note": "Reviewed status documents. health and pending_lifecycle carry I1 values unchanged (fixtures/wire, D5).",
+  "documents": [
+    {
+      "name": "running",
+      "json": {
+        "schema": "airkctl-service-status/1",
+        "installation": {
+          "state": "complete",
+          "airk_version": "1.9.0",
+          "pair": "exact",
+          "install_id": "22222222222222222222222222222222"
+        },
+        "service": {
+          "state": "running",
+          "health": {
+            "version": "1.9.0",
+            "protocol": 1,
+            "instance": "6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f",
+            "process_id": 4242,
+            "executable_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+            "user": "fixture",
+            "uptime_ms": 10
+          },
+          "explicitly_stopped": false,
+          "pending_lifecycle": null
+        }
+      }
+    },
+    {
+      "name": "running with a pending restart",
+      "json": {
+        "schema": "airkctl-service-status/1",
+        "installation": {
+          "state": "complete",
+          "airk_version": "1.9.0",
+          "pair": "exact",
+          "install_id": "22222222222222222222222222222222"
+        },
+        "service": {
+          "state": "running",
+          "health": {
+            "version": "1.9.0",
+            "protocol": 1,
+            "instance": "6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f",
+            "process_id": 4242,
+            "executable_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+            "user": "fixture",
+            "uptime_ms": 10
+          },
+          "explicitly_stopped": false,
+          "pending_lifecycle": {
+            "id": "7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a",
+            "request": {
+              "caller": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
+              "key": {
+                "namespace": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
+                "epoch": 7,
+                "nonce": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+              },
+              "action": "restart",
+              "expected_instance": "6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f",
+              "runtime": "8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b",
+              "manager": false
+            },
+            "phase": "starting"
+          }
+        }
+      }
+    },
+    {
+      "name": "not running",
+      "json": {
+        "schema": "airkctl-service-status/1",
+        "installation": {
+          "state": "not_found"
+        },
+        "service": {
+          "state": "not_running"
+        }
+      }
+    },
+    {
+      "name": "unknown",
+      "json": {
+        "schema": "airkctl-service-status/1",
+        "installation": {
+          "state": "unverified"
+        },
+        "service": {
+          "state": "unknown"
+        }
+      }
+    },
+    {
+      "name": "incompatible",
+      "json": {
+        "schema": "airkctl-service-status/1",
+        "installation": {
+          "state": "complete",
+          "airk_version": "1.9.0",
+          "pair": "exact",
+          "install_id": "22222222222222222222222222222222"
+        },
+        "service": {
+          "state": "incompatible",
+          "code": "service_rebind_required"
+        }
+      }
+    }
+  ],
+  "rejected": [
+    {
+      "name": "unknown service state",
+      "json": {
+        "schema": "airkctl-service-status/1",
+        "installation": {
+          "state": "not_found"
+        },
+        "service": {
+          "state": "paused"
+        }
+      }
+    },
+    {
+      "name": "running without health",
+      "json": {
+        "schema": "airkctl-service-status/1",
+        "installation": {
+          "state": "not_found"
+        },
+        "service": {
+          "state": "running",
+          "explicitly_stopped": false
+        }
+      }
+    }
+  ]
+}

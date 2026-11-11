@@ -251,3 +251,21 @@ fn contract_schema_matches_the_checked_in_copy() {
         );
     }
 }
+
+const STATUS: &str = include_str!("../../../../fixtures/split/i2/status.json");
+
+#[test]
+fn status_documents_round_trip_and_refuse_unknown_states() {
+    let fixture = json(STATUS);
+    for case in cases(&fixture, "documents") {
+        round_trip::<ServiceStatus>(case);
+        assert_eq!(case["json"]["schema"], STATUS_SCHEMA, "{}", case["name"]);
+    }
+    for case in cases(&fixture, "rejected") {
+        assert!(
+            serde_json::from_value::<ServiceStatus>(case["json"].clone()).is_err(),
+            "{}",
+            case["name"]
+        );
+    }
+}

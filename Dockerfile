@@ -91,6 +91,7 @@ COPY fixtures/schema/airk-state-1/usage.supplemental.meta.json ./fixtures/schema
 COPY fixtures/schema/airk-state-1/usage.supplemental.objects.json ./fixtures/schema/airk-state-1/usage.supplemental.objects.json
 COPY fixtures/split/i2/error_lines.json ./fixtures/split/i2/error_lines.json
 COPY fixtures/split/i2/exit_codes.json ./fixtures/split/i2/exit_codes.json
+COPY fixtures/split/i2/status.json ./fixtures/split/i2/status.json
 COPY fixtures/split/i2/version.json ./fixtures/split/i2/version.json
 COPY fixtures/split/i3/admin_operations.json ./fixtures/split/i3/admin_operations.json
 COPY fixtures/split/i3/admission_cases.json ./fixtures/split/i3/admission_cases.json

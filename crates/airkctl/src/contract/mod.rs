@@ -25,6 +25,8 @@ pub const I2_CONTRACT: u32 = 1;
 pub const I2_CONTRACTS_SUPPORTED: &[u32] = &[1];
 /// Schema of the `airkctl version --output json` document.
 pub const VERSION_SCHEMA: &str = "airkctl-version/1";
+/// `airkctl service status --output json` (U87).
+pub const STATUS_SCHEMA: &str = "airkctl-service-status/1";
 /// The product this client belongs to (U31).
 pub const PRODUCT: &str = "AIRK Service";
 /// Editor session protocol. Version 1 stays with `airk service session` until
@@ -200,6 +202,40 @@ pub struct VersionDocument {
     /// SHA-256 of this `airkctl` executable, when it could be read.
     pub executable_sha256: Option<String>,
     pub installation: Installation,
+}
+
+/// `airkctl service status --output json` (U87; split step 3b.1f-3): this
+/// user's installation and the service's state. Readers ignore unknown fields.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ServiceStatus {
+    pub schema: String,
+    pub installation: Installation,
+    pub service: ServiceState,
+}
+
+/// Whether the service answers, and what it reports when it does.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum ServiceState {
+    /// No control directory is known: no `--runtime-dir`, no
+    /// `--service-runtime-dir` and no verified installation.
+    Unknown,
+    /// Nothing answers at the control directory.
+    NotRunning,
+    /// A service answers but refuses this `airkctl` (another version,
+    /// protocol or user); `code` is the I2 refusal code.
+    Incompatible { code: String },
+    /// The service answers `Health` for this pair.
+    Running {
+        /// The I1 `Health` observation, carried unchanged.
+        #[schemars(schema_with = "schema::native_value")]
+        health: serde_json::Value,
+        /// Automatic starts are off until an explicit start.
+        explicitly_stopped: bool,
+        /// An unfinished I1 lifecycle record, carried unchanged.
+        #[schemars(schema_with = "schema::native_value")]
+        pending_lifecycle: Option<serde_json::Value>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]

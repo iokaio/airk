@@ -189,6 +189,100 @@
       ],
       "type": "string"
     },
+    "ServiceState": {
+      "description": "Whether the service answers, and what it reports when it does.",
+      "oneOf": [
+        {
+          "description": "No control directory is known: no `--runtime-dir`, no\n`--service-runtime-dir` and no verified installation.",
+          "properties": {
+            "state": {
+              "const": "unknown",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Nothing answers at the control directory.",
+          "properties": {
+            "state": {
+              "const": "not_running",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A service answers but refuses this `airkctl` (another version,\nprotocol or user); `code` is the I2 refusal code.",
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "state": {
+              "const": "incompatible",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The service answers `Health` for this pair.",
+          "properties": {
+            "explicitly_stopped": {
+              "description": "Automatic starts are off until an explicit start.",
+              "type": "boolean"
+            },
+            "health": {
+              "description": "The I1 `Health` observation, carried unchanged."
+            },
+            "pending_lifecycle": {
+              "description": "An unfinished I1 lifecycle record, carried unchanged."
+            },
+            "state": {
+              "const": "running",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "health",
+            "explicitly_stopped",
+            "pending_lifecycle"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ServiceStatus": {
+      "description": "`airkctl service status --output json` (U87; split step 3b.1f-3): this\nuser's installation and the service's state. Readers ignore unknown fields.",
+      "properties": {
+        "installation": {
+          "$ref": "#/$defs/Installation"
+        },
+        "schema": {
+          "type": "string"
+        },
+        "service": {
+          "$ref": "#/$defs/ServiceState"
+        }
+      },
+      "required": [
+        "schema",
+        "installation",
+        "service"
+      ],
+      "type": "object"
+    },
     "SessionCursor": {
       "additionalProperties": false,
       "description": "A subscription cursor, scoped to one service incarnation and one window.\nA cursor from another incarnation or window is refused\n(`event_cursor_scope_mismatch`).",
@@ -1040,7 +1134,8 @@
     "ExitClass",
     "SessionRequest",
     "SessionResponse",
-    "SessionEventFrame"
+    "SessionEventFrame",
+    "ServiceStatus"
   ],
   "title": "airkctl I2 contract"
 }

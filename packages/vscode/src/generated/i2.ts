@@ -49,6 +49,42 @@ export type PairState = "exact" | "mismatch";
 export type ResyncReason = "overflow" | "native_gap" | "service_restarted";
 
 /**
+ * Whether the service answers, and what it reports when it does.
+ */
+export type ServiceState = {
+    state: "unknown";
+} | {
+    state: "not_running";
+} | {
+    code: string;
+    state: "incompatible";
+} | {
+    /**
+     * Automatic starts are off until an explicit start.
+     */
+    explicitly_stopped: boolean;
+    /**
+     * The I1 `Health` observation, carried unchanged.
+     */
+    health: unknown;
+    /**
+     * An unfinished I1 lifecycle record, carried unchanged.
+     */
+    pending_lifecycle: unknown;
+    state: "running";
+};
+
+/**
+ * `airkctl service status --output json` (U87; split step 3b.1f-3): this
+ * user's installation and the service's state. Readers ignore unknown fields.
+ */
+export type ServiceStatus = {
+    installation: Installation;
+    schema: string;
+    service: ServiceState;
+};
+
+/**
  * A subscription cursor, scoped to one service incarnation and one window.
  * A cursor from another incarnation or window is refused
  * (`event_cursor_scope_mismatch`).
