@@ -598,7 +598,7 @@ pub(super) fn cleanup(
         let _source = SourceWatchLease::acquire(&plan.old_control)?;
         let _embedding = EmbeddingLease::acquire(&plan.old_control)?;
         if !plan.endpoints_retired {
-            if !crate::local_ipc::retire_endpoint_namespace(&_service)? {
+            if !crate::local_ipc::retire_endpoint_namespace(_service.root())? {
                 return Ok(observation(&plan));
             }
             plan.endpoints_retired = true;

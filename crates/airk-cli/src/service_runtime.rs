@@ -527,7 +527,7 @@ pub async fn serve_with_idle(root: &Path, idle_grace: Option<Duration>) -> Resul
         }
     }
     _ownership.prepare_control_endpoint()?;
-    local_ipc::prepare_control_endpoint(&_ownership)?;
+    local_ipc::prepare_control_endpoint(_ownership.root())?;
     let instance = new_instance_id()?;
     let (log, log_guard) = crate::service_logs::Log::start(root.canonicalize()?, instance);
     log.record(airk_core::service_logs::LogKind::ServiceStarted, None, None);

@@ -127,12 +127,13 @@ fn unix_socket_root(root: &Path) -> Result<std::path::PathBuf> {
     Ok(directory)
 }
 
-/// Only the elected service owner may replace its fixed stale control socket.
-pub fn prepare_control_endpoint(lease: &airk_store::service::ServiceLease) -> Result<()> {
+/// Only the elected service owner may replace its fixed stale control socket; the
+/// caller passes the root of the service lease it holds.
+pub fn prepare_control_endpoint(root: &Path) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::{FileTypeExt, MetadataExt};
-        let path = endpoint(lease.root(), "control")?;
+        let path = endpoint(root, "control")?;
         match std::fs::symlink_metadata(&path) {
             Ok(metadata) => {
                 ensure!(
@@ -148,7 +149,7 @@ pub fn prepare_control_endpoint(lease: &airk_store::service::ServiceLease) -> Re
         }
     }
     #[cfg(not(unix))]
-    let _ = lease;
+    let _ = root;
     Ok(())
 }
 
@@ -201,14 +202,15 @@ fn predecessor_child_role(role: &str) -> bool {
 
 /// Retire only the receipt-bound namespace after the old service/children exit.
 /// Unknown entries remain explicit blockers rather than becoming a deletion scope.
-pub(crate) fn retire_endpoint_namespace(lease: &airk_store::service::ServiceLease) -> Result<bool> {
-    if !cleanup_predecessor_endpoints(lease.root())? {
+/// The caller passes the root of the service lease it holds.
+pub(crate) fn retire_endpoint_namespace(root: &Path) -> Result<bool> {
+    if !cleanup_predecessor_endpoints(root)? {
         return Ok(false);
     }
-    prepare_control_endpoint(lease)?;
+    prepare_control_endpoint(root)?;
     #[cfg(unix)]
     {
-        let directory = unix_socket_root(&lease.root().canonicalize()?)?;
+        let directory = unix_socket_root(&root.canonicalize()?)?;
         let entries = std::fs::read_dir(&directory)?
             .take(2)
             .collect::<std::io::Result<Vec<_>>>()?;
