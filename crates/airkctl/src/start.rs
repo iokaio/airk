@@ -57,7 +57,12 @@ fn health(control: &Path, version: &str) -> Result<Option<ControlResponse>, Erro
 
 /// Write the owner-private start request (`<control>/start/<nonce>.json`)
 /// through a temporary name so the role never reads a partial file.
-fn write_request(control: &Path, nonce: Incarnation, now: u64) -> Result<PathBuf, ErrorLine> {
+fn write_request(
+    control: &Path,
+    nonce: Incarnation,
+    now: u64,
+    mode: StartMode,
+) -> Result<PathBuf, ErrorLine> {
     let folder = control.join("start");
     airk_ipc::endpoint::prepare_root(control)
         .and_then(|()| airk_ipc::endpoint::prepare_root(&folder))
@@ -65,7 +70,7 @@ fn write_request(control: &Path, nonce: Incarnation, now: u64) -> Result<PathBuf
     let request = StartRequest {
         schema: START_REQUEST_SCHEMA.into(),
         nonce,
-        mode: StartMode::Explicit,
+        mode,
         created_unix_ms: now,
         expires_unix_ms: now + MAX_START_REQUEST_LIFETIME_MS,
     };
@@ -145,8 +150,20 @@ fn launch(airk: &Path, control: &Path, nonce: Incarnation) -> Result<Launched, E
 }
 
 /// Start the service owning `control` from the verified `airk` image, or
-/// return the running service's `Health`.
+/// return the running service's `Health` (an explicit start, which clears a
+/// saved Stop).
 pub fn start(airk: &Path, control: &Path, version: &str) -> Result<Started, ErrorLine> {
+    start_with(airk, control, version, StartMode::Explicit)
+}
+
+/// As [`start`] with the start mode: an automatic start (a command that
+/// needs the service, contracts §3.2) honors a saved explicit Stop.
+pub fn start_with(
+    airk: &Path,
+    control: &Path,
+    version: &str,
+    mode: StartMode,
+) -> Result<Started, ErrorLine> {
     if let Some(health) = health(control, version)? {
         return Ok(Started {
             health,
@@ -156,7 +173,7 @@ pub fn start(airk: &Path, control: &Path, version: &str) -> Result<Started, Erro
     let mut nonce = [0u8; 16];
     getrandom::fill(&mut nonce).map_err(|error| failed(format!("start nonce: {error}")))?;
     let nonce = Incarnation::from_bytes(nonce);
-    let request = write_request(control, nonce, now_unix_ms())?;
+    let request = write_request(control, nonce, now_unix_ms(), mode)?;
     let mut launched = match launch(airk, control, nonce) {
         Ok(launched) => launched,
         Err(line) => {
@@ -172,9 +189,13 @@ pub fn start(airk: &Path, control: &Path, version: &str) -> Result<Started, Erro
             Err(line) => break Err(line),
         }
         if let Some(status) = launched.exited() {
-            break Err(failed(format!(
-                "the AIRK service exited ({status}) before it was ready"
-            )));
+            break Err(failed(if mode == StartMode::Automatic {
+                format!(
+                    "the AIRK service exited ({status}) before it was ready; if it was stopped explicitly, run `airkctl service start`"
+                )
+            } else {
+                format!("the AIRK service exited ({status}) before it was ready")
+            }));
         }
         if Instant::now() >= deadline {
             launched.stop();

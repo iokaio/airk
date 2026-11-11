@@ -69,11 +69,11 @@ struct Cli {
     service_project: Option<ProjectBinding>,
     /// Explicit reviewed single-index session JSON; preferences alone grant no access.
     #[arg(long, global = true, value_parser = parse_catalog_session,
-        conflicts_with = "service_project")]
+        conflicts_with_all = ["service_project", "root", "data_dir", "collection"])]
     catalog_session: Option<ScopedConnectRequest>,
     /// Frozen reviewed multi-Project session JSON; indexes are executed once each.
     #[arg(long, global = true, value_parser = parse_combined_session,
-        conflicts_with_all = ["catalog_session", "service_project"])]
+        conflicts_with_all = ["catalog_session", "service_project", "root", "data_dir", "collection"])]
     combined_session: Option<CombinedConnectRequest>,
     /// Narrow a combined read to explicit Projects from its reviewed session.
     #[arg(
@@ -90,6 +90,14 @@ struct Cli {
     /// Report member failures or require every selected member to answer.
     #[arg(long, global = true, value_parser = ["report", "require"], requires_all = ["combined_session", "project_ids"])]
     member_availability: Option<String>,
+    /// The project folder (default: the current folder).
+    #[arg(long, global = true, default_value = ".")]
+    root: PathBuf,
+    /// The project's data folder (default: the installation's data location).
+    #[arg(long, global = true)]
+    data_dir: Option<PathBuf>,
+    #[arg(long, global = true, default_value = "default")]
+    collection: String,
     #[command(subcommand)]
     command: Command,
 }
@@ -357,6 +365,10 @@ struct Selection {
     project_ids: Option<Vec<QueryProjectId>>,
     index_ids: Option<Vec<IndexId>>,
     member_availability: Option<MemberAvailability>,
+    /// `--root`, `--data-dir` and `--collection` for a project named by its folder.
+    root: PathBuf,
+    data_dir: Option<PathBuf>,
+    collection: String,
 }
 
 impl Selection {
@@ -500,6 +512,132 @@ fn catalog(cx: &mut Context, selection: &Selection, action: ToolsCommand) -> u8 
     }
 }
 
+/// The control root and M3 selection of one call. Without a binding or a
+/// session (and for any tool but the in-process help), the project the
+/// `--root`/`--data-dir`/`--collection` folder names is resolved through M1
+/// (step 3c.1), starting the installed service automatically when it is down
+/// (contracts §3.2; a saved explicit Stop is honored).
+fn resolve_call(
+    cx: &mut Context,
+    selection: &Selection,
+    tool: &str,
+) -> Result<(PathBuf, ToolSelection), u8> {
+    let explicit = selection.tool_selection();
+    if !matches!(explicit, ToolSelection::Unselected) || matches!(tool, "airk_help" | "help") {
+        return Ok((control(cx, selection)?, explicit));
+    }
+    let not_found = |cx: &mut Context, message: &str| {
+        fail(
+            cx,
+            &ErrorLine::new(
+                ExitClass::ServiceMissing,
+                "installation_not_found",
+                false,
+                message,
+            ),
+        )
+    };
+    let mut verified = None;
+    let discover = |verified: &mut Option<Box<crate::install::Verified>>| {
+        if verified.is_none()
+            && let crate::install::Discovery::Verified(found) = crate::install::discover()
+        {
+            *verified = Some(found);
+        }
+    };
+    if selection.control.is_none() || selection.data_dir.is_none() {
+        discover(&mut verified);
+    }
+    let control = match selection.control.clone().or_else(|| {
+        verified
+            .as_ref()
+            .map(|found| PathBuf::from(&found.record.locations.state))
+    }) {
+        Some(control) => control,
+        None => {
+            return Err(not_found(
+                cx,
+                "No AIRK installation was found; pass --service-runtime-dir <service control directory>.",
+            ));
+        }
+    };
+    let data = match selection.data_dir.clone().or_else(|| {
+        verified
+            .as_ref()
+            .map(|found| PathBuf::from(&found.record.locations.data))
+    }) {
+        Some(data) => data,
+        None => {
+            return Err(not_found(
+                cx,
+                "No AIRK installation was found; pass --data-dir <project data folder>.",
+            ));
+        }
+    };
+    match crate::service::request(&control, ControlMethod::Health, VERSION) {
+        Ok(ControlResponse::Health { .. }) => {}
+        Ok(other) => return Err(fail(cx, &crate::service::refusal(&other))),
+        Err(line) if line.class == ExitClass::ServiceMissing => {
+            discover(&mut verified);
+            let Some(found) = verified.as_ref() else {
+                return Err(fail(cx, &line));
+            };
+            if !pair_exact(&found.record) {
+                return Err(fail(
+                    cx,
+                    &ErrorLine::new(
+                        ExitClass::IncompatiblePair,
+                        "pair_mismatch",
+                        false,
+                        "This airkctl is not the installation's airkctl; use the installed one.",
+                    ),
+                ));
+            }
+            if let Err(line) = crate::start::start_with(
+                &found.airk,
+                &control,
+                VERSION,
+                airk_core::install_record::StartMode::Automatic,
+            ) {
+                return Err(fail(cx, &line));
+            }
+        }
+        Err(line) => return Err(fail(cx, &line)),
+    }
+    let absolute = |path: &Path| {
+        std::path::absolute(path)
+            .ok()
+            .and_then(|path| path.to_str().map(str::to_owned))
+    };
+    let (Some(root), Some(data_root)) = (absolute(&selection.root), absolute(&data)) else {
+        return Err(usage(cx, "--root and --data-dir must be UTF-8 paths"));
+    };
+    let target = airk_core::service::ResolveTarget::Registration {
+        root,
+        data_root,
+        collection: selection.collection.clone(),
+    };
+    match crate::service::request(&control, ControlMethod::ResolveProject { target }, VERSION) {
+        Ok(ControlResponse::Resolved { registration }) => Ok((
+            control,
+            ToolSelection::Project {
+                binding: registration.binding,
+            },
+        )),
+        Ok(ControlResponse::Failure { code }) if code == "project_not_registered" => Err(fail(
+            cx,
+            &ErrorLine::new(
+                ExitClass::Refused,
+                &code,
+                false,
+                "project is not registered with this service; review registration before indexing or connecting",
+            ),
+        )),
+        Ok(other) => Err(fail(cx, &crate::service::refusal(&other))),
+        Err(line) => Err(fail(cx, &line)),
+    }
+}
+
 /// One M3 call printed as the pre-split CLI printed it: the complete envelope
 /// as pretty JSON, then a refusal when the envelope reports an error.
 fn call(
@@ -508,11 +646,10 @@ fn call(
     tool: String,
     arguments: Map<String, Value>,
 ) -> u8 {
-    let control = match control(cx, selection) {
-        Ok(control) => control,
+    let (control, selection) = match resolve_call(cx, selection, &tool) {
+        Ok(resolved) => resolved,
         Err(code) => return code,
     };
-    let selection = selection.tool_selection();
     let local_help = matches!(
         selection,
         ToolSelection::Unselected | ToolSelection::Project { .. }
@@ -1169,6 +1306,9 @@ pub fn run(arguments: Vec<OsString>, io: &mut Io) -> u8 {
         combined: cli.combined_session,
         project_ids: cli.project_ids,
         index_ids: cli.index_ids,
+        root: cli.root,
+        data_dir: cli.data_dir,
+        collection: cli.collection,
         member_availability: cli.member_availability.map(|policy| {
             if policy == "require" {
                 MemberAvailability::Require

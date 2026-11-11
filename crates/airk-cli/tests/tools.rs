@@ -780,3 +780,65 @@ fn airkctl_reads_print_what_airk_printed() -> anyhow::Result<()> {
     assert_eq!(compared, reads.len());
     Ok(())
 }
+
+/// Without a binding or session, `airkctl` resolves the project its
+/// `--root`/`--data-dir`/`--collection` name through M1 and reads it as
+/// `airk` read the bound project (split step 3c.1).
+#[test]
+fn airkctl_resolves_the_project_its_folder_names() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let state = tempfile::tempdir()?;
+    let service = common::Service::reviewed(root.path(), state.path(), "ctl-resolve");
+    fs::write(
+        root.path().join("notes.md"),
+        "# Notes\n\nResolved by folder.\n",
+    )?;
+    service.settle_reviewed_index(
+        root.path(),
+        state.path(),
+        std::time::Instant::now() + std::time::Duration::from_secs(90),
+    )?;
+    common::call(root.path(), state.path(), "ctl-resolve", &["index"])?;
+    let control = service.control.to_str().unwrap().to_owned();
+    let project_root = service.project.root.clone();
+    let data_root = service.project.data_root.clone();
+    for read in [
+        vec!["status"],
+        vec!["files"],
+        vec!["read", "notes.md", "--start-line", "1", "--end-line", "3"],
+    ] {
+        let old =
+            airk_outcome(common::command(root.path(), state.path(), "ctl-resolve").args(&read));
+        let mut line = vec![
+            "--service-runtime-dir",
+            &control,
+            "--root",
+            &project_root,
+            "--data-dir",
+            &data_root,
+            "--collection",
+            "ctl-resolve",
+        ];
+        line.extend(read.iter().copied());
+        assert_eq!(airkctl_outcome(&line), old, "resolved {read:?}");
+    }
+    // An existing folder, disjoint from the data root, that is not registered
+    // (a missing or overlapping folder is refused before the registry lookup).
+    let elsewhere = tempfile::tempdir()?;
+    let missing = elsewhere.path().to_str().unwrap();
+    let (code, _, message) = airkctl_outcome(&[
+        "--service-runtime-dir",
+        &control,
+        "--root",
+        missing,
+        "--data-dir",
+        &data_root,
+        "status",
+    ]);
+    assert_eq!(code, Some(1));
+    assert!(
+        message.starts_with("project is not registered"),
+        "{message}"
+    );
+    Ok(())
+}

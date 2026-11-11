@@ -18,6 +18,7 @@ use tokio::{
 pub(crate) mod checkpoint;
 mod http;
 mod lifecycle;
+mod resolve;
 mod tools_call;
 
 fn connection_failure_code<'a>(error: &anyhow::Error, fallback: &'a str) -> &'a str {
@@ -471,10 +472,9 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 detail,
                 combined: Some(request),
             } => tools_call::combined_catalog(&state.control_root, &detail, &request).await,
-            // M1 lands its handler in step 3c.1b; until then the typed refusal.
-            ControlMethod::ResolveProject { .. } => ControlResponse::Failure {
-                code: "not_yet_served".into(),
-            },
+            ControlMethod::ResolveProject { target } => {
+                resolve::response(&state.control_root, target)
+            }
             ControlMethod::RecordClientError { operation, input } => {
                 match crate::service_logs::record_client_error(
                     &state.control_root,

@@ -4874,3 +4874,38 @@ fn airkctl_record_error_matches_airk_running_and_stopped() -> Result<()> {
     ensure!(all.iter().all(|record| record == &running[0]), "{all:?}");
     Ok(())
 }
+
+/// An automatic start (a command that needs the service) honors a saved
+/// explicit Stop; an explicit start clears it (contracts §3.2, step 3c.1).
+#[test]
+fn an_automatic_start_honors_a_saved_stop() -> Result<()> {
+    use airk_core::{install_record::StartMode, service_lifecycle::LifecycleAction};
+    let owner = tempfile::tempdir()?;
+    let root = owner.path().join("runtime");
+    let dir = root.to_str().context("runtime path")?.to_owned();
+    let airk = Path::new(env!("CARGO_BIN_EXE_airk"));
+    let version = env!("CARGO_PKG_VERSION");
+    let _guard = ShutdownOnDrop(dir.clone());
+    let error =
+        |line: airkctl::contract::ErrorLine| anyhow::anyhow!("{}: {}", line.code, line.message);
+    airkctl::start::start(airk, &root, version).map_err(error)?;
+    airkctl::lifecycle::stop(&root, version, LifecycleAction::Stop).map_err(error)?;
+    let refused = airkctl::start::start_with(airk, &root, version, StartMode::Automatic);
+    let Err(line) = refused else {
+        anyhow::bail!("an automatic start ran despite the saved Stop");
+    };
+    ensure!(line.code == "service_start_failed", "{}", line.code);
+    ensure!(
+        line.message.contains("airkctl service start"),
+        "{}",
+        line.message
+    );
+    let (code, _, _) = airkctl(&["service", "health", "--runtime-dir", &dir]);
+    ensure!(
+        code == 3,
+        "no service runs after the refused automatic start"
+    );
+    let started = airkctl::start::start(airk, &root, version).map_err(error)?;
+    ensure!(started.started, "an explicit start clears the saved Stop");
+    Ok(())
+}

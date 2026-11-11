@@ -441,7 +441,7 @@ pub async fn resolve_control(control: &Path, binding: ProjectBinding) -> Result<
     })
 }
 
-fn saved(
+pub(crate) fn saved(
     control: &Path,
     binding: Option<ProjectBinding>,
     root: &Path,
