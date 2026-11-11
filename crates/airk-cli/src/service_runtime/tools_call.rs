@@ -39,6 +39,12 @@ pub(super) async fn response(
     mode: ToolResponseMode,
     client: airk_core::usage::ClientFamily,
 ) -> ControlResponse {
+    // Combined selections land with their handler in step 3a.2d.
+    if matches!(selection, ToolSelection::Combined { .. }) {
+        return ControlResponse::Failure {
+            code: "not_yet_served".into(),
+        };
+    }
     match run(control, tool, arguments, selection, mode, client).await {
         Ok(result) => ControlResponse::ToolResult { result },
         Err(error) => ControlResponse::ToolCallFailed {
@@ -64,6 +70,7 @@ async fn run(
         ToolSelection::Unselected => {
             anyhow::bail!("project binding required")
         }
+        ToolSelection::Combined { .. } => unreachable!("refused before the call"),
         ToolSelection::Project { binding } => {
             let project = crate::service_frontend::resolve_control(control, binding).await?;
             (

@@ -428,6 +428,14 @@ pub enum ControlMethod {
     /// read without a project. Response budget [`MAX_TOOLS_CATALOG_RESPONSE_BYTES`].
     ToolsCatalog {
         detail: ToolsCatalogDetail,
+        /// `--combined-session`: the catalog of that reviewed session, served
+        /// after the session resolves. Absent for the unified catalog.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "combined_present"
+        )]
+        combined: Option<Box<CombinedConnectRequest>>,
     },
     /// M3: run one unified tool for a selected project and return its complete
     /// envelope. The service runs the pre-split CLI call path unchanged.
@@ -451,12 +459,39 @@ pub enum ControlMethod {
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum ToolSelection {
     /// No project: only the help tool, which the CLI answered in process
-    /// without resolving a project; any other tool fails.
+    /// without resolving a project; any other tool fails. Help is answered in
+    /// process for `Unselected` and `Project` only.
     Unselected,
     /// `--service-project <binding>`: a registered project.
     Project { binding: ProjectBinding },
     /// `--catalog-session <request>`: an exact reviewed catalog grant.
     Catalog { request: ScopedConnectRequest },
+    /// `--combined-session <request>` with its narrowing defaults, which the
+    /// service adds to the arguments (a conflicting argument is refused).
+    Combined {
+        request: CombinedConnectRequest,
+        /// `--project-ids`.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "combined_present"
+        )]
+        project_ids: Option<Vec<crate::index_catalog::QueryProjectId>>,
+        /// `--index-ids`; requires `project_ids`.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "combined_present"
+        )]
+        index_ids: Option<Vec<crate::index_catalog::IndexId>>,
+        /// `--member-availability`; requires `project_ids`.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "combined_present"
+        )]
+        member_availability: Option<crate::combined_reads::MemberAvailability>,
+    },
 }
 
 /// The response mode an M3 call applies (`terse` unless `full`).

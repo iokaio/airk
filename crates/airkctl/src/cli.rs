@@ -263,11 +263,17 @@ fn catalog(cx: &mut Context, selection: &Selection, action: ToolsCommand) -> u8 
         ToolsCatalogDetail::Help { tool } => Some(tool.clone()),
         ToolsCatalogDetail::List { .. } => None,
     };
-    let response =
-        match crate::service::request(&control, ControlMethod::ToolsCatalog { detail }, VERSION) {
-            Ok(response) => response,
-            Err(line) => return fail(cx, &line),
-        };
+    let response = match crate::service::request(
+        &control,
+        ControlMethod::ToolsCatalog {
+            detail,
+            combined: None,
+        },
+        VERSION,
+    ) {
+        Ok(response) => response,
+        Err(line) => return fail(cx, &line),
+    };
     let document = match response {
         ControlResponse::ToolsCatalog { document } => document,
         ControlResponse::Failure { code } if code == "unknown_tool" => {

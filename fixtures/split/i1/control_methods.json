@@ -29,6 +29,12 @@
           "bytes": "\"health\"",
           "response_frame_budget": 65536,
           "request_frame_budget": 65536
+        },
+        {
+          "name": "list_for_a_combined_session",
+          "bytes": "{\"tools_catalog\":{\"detail\":{\"list\":{\"schemas\":false}},\"combined\":{\"schema\":1,\"context_key\":\"0505050505050505050505050505050505050505050505050505050505050505\",\"namespace\":\"2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\",\"expected_catalog_revision\":4,\"grant_id\":\"grt_2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\",\"expected_grant_revision\":3,\"project_ids\":[\"prj_2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\"],\"index_ids\":[\"idx_2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\"]}}}",
+          "request_frame_budget": 65536,
+          "response_frame_budget": 1048576
         }
       ],
       "rejected_methods": [
@@ -55,6 +61,14 @@
         {
           "name": "help_tool_not_string",
           "bytes": "{\"tools_catalog\":{\"detail\":{\"help\":{\"tool\":1}}}}"
+        },
+        {
+          "name": "combined_null",
+          "bytes": "{\"tools_catalog\":{\"detail\":{\"list\":{\"schemas\":false}},\"combined\":null}}"
+        },
+        {
+          "name": "combined_extra_field",
+          "bytes": "{\"tools_catalog\":{\"detail\":{\"list\":{\"schemas\":false}},\"combined\":{\"schema\":1,\"context_key\":\"0505050505050505050505050505050505050505050505050505050505050505\",\"namespace\":\"2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\",\"expected_catalog_revision\":4,\"grant_id\":\"grt_2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\",\"expected_grant_revision\":3,\"project_ids\":[\"prj_2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\"],\"extra\":1}}}"
         }
       ],
       "responses": [
@@ -101,6 +115,18 @@
           "bytes": "{\"tools_call\":{\"tool\":\"help\",\"arguments\":{\"topic\":\"workbench\"},\"selection\":\"unselected\",\"response_mode\":\"terse\",\"usage_client\":\"cli\"}}",
           "request_frame_budget": 131072,
           "response_frame_budget": 4194304
+        },
+        {
+          "name": "combined_session_only",
+          "bytes": "{\"tools_call\":{\"tool\":\"airk_search\",\"arguments\":{\"query\":\"q\"},\"selection\":{\"combined\":{\"request\":{\"schema\":1,\"context_key\":\"0505050505050505050505050505050505050505050505050505050505050505\",\"namespace\":\"2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\",\"expected_catalog_revision\":4,\"grant_id\":\"grt_2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\",\"expected_grant_revision\":3,\"project_ids\":[\"prj_2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\"]}}},\"response_mode\":\"full\",\"usage_client\":\"cli\"}}",
+          "request_frame_budget": 131072,
+          "response_frame_budget": 4194304
+        },
+        {
+          "name": "combined_with_narrowing_defaults",
+          "bytes": "{\"tools_call\":{\"tool\":\"airk_search\",\"arguments\":{\"query\":\"q\"},\"selection\":{\"combined\":{\"request\":{\"schema\":1,\"context_key\":\"0505050505050505050505050505050505050505050505050505050505050505\",\"namespace\":\"2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\",\"expected_catalog_revision\":4,\"grant_id\":\"grt_2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\",\"expected_grant_revision\":3,\"project_ids\":[\"prj_2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\"]},\"project_ids\":[\"prj_2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\"],\"index_ids\":[\"idx_2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\"],\"member_availability\":\"require\"}},\"response_mode\":\"full\",\"usage_client\":\"cli\"}}",
+          "request_frame_budget": 131072,
+          "response_frame_budget": 4194304
         }
       ],
       "rejected_methods": [
@@ -143,6 +169,18 @@
         {
           "name": "unselected_with_fields",
           "bytes": "{\"tools_call\":{\"tool\":\"help\",\"arguments\":{},\"selection\":{\"unselected\":{}},\"response_mode\":\"terse\",\"usage_client\":\"cli\"}}"
+        },
+        {
+          "name": "combined_unknown_availability",
+          "bytes": "{\"tools_call\":{\"tool\":\"airk_search\",\"arguments\":{\"query\":\"q\"},\"selection\":{\"combined\":{\"request\":{\"schema\":1,\"context_key\":\"0505050505050505050505050505050505050505050505050505050505050505\",\"namespace\":\"2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\",\"expected_catalog_revision\":4,\"grant_id\":\"grt_2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\",\"expected_grant_revision\":3,\"project_ids\":[\"prj_2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\"]},\"member_availability\":\"all\"}},\"response_mode\":\"full\",\"usage_client\":\"cli\"}}"
+        },
+        {
+          "name": "combined_null_project_ids",
+          "bytes": "{\"tools_call\":{\"tool\":\"airk_search\",\"arguments\":{\"query\":\"q\"},\"selection\":{\"combined\":{\"request\":{\"schema\":1,\"context_key\":\"0505050505050505050505050505050505050505050505050505050505050505\",\"namespace\":\"2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\",\"expected_catalog_revision\":4,\"grant_id\":\"grt_2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\",\"expected_grant_revision\":3,\"project_ids\":[\"prj_2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\"]},\"project_ids\":null}},\"response_mode\":\"full\",\"usage_client\":\"cli\"}}"
+        },
+        {
+          "name": "combined_extra_field",
+          "bytes": "{\"tools_call\":{\"tool\":\"airk_search\",\"arguments\":{\"query\":\"q\"},\"selection\":{\"combined\":{\"request\":{\"schema\":1,\"context_key\":\"0505050505050505050505050505050505050505050505050505050505050505\",\"namespace\":\"2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\",\"expected_catalog_revision\":4,\"grant_id\":\"grt_2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\",\"expected_grant_revision\":3,\"project_ids\":[\"prj_2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\"]},\"explorer\":true}},\"response_mode\":\"full\",\"usage_client\":\"cli\"}}"
         }
       ],
       "responses": [

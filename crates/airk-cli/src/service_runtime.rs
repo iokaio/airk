@@ -460,7 +460,16 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
             ControlMethod::ConfigureResources { configuration } => {
                 state.supervisor.configure_resources(configuration).await
             }
-            ControlMethod::ToolsCatalog { detail } => crate::tool_catalog::response(&detail)?,
+            ControlMethod::ToolsCatalog {
+                detail,
+                combined: None,
+            } => crate::tool_catalog::response(&detail)?,
+            // Combined catalogs land with their handler in step 3a.2d.
+            ControlMethod::ToolsCatalog {
+                combined: Some(_), ..
+            } => ControlResponse::Failure {
+                code: "not_yet_served".into(),
+            },
             ControlMethod::ToolsCall {
                 tool,
                 arguments,
