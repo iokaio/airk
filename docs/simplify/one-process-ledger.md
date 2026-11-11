@@ -207,6 +207,37 @@
   keychains were relocked. U65 and U69 now name that keychain and profile.
   No secret was printed or written.
 
+### Split execution (started 11 November 2026)
+
+Execution plan approved by the user: setup S0, Phase 0 inventory (P0.1–P0.9),
+then Phases 1–8 as work packages decomposed here before each phase starts.
+Decisions U70 (local Trusted Signing client and adapter) and U71 (promote the
+receipt runner and golden capture; commit normalized goldens) came from the
+planning pass.
+
+Planning findings (read-only exploration, not test results):
+- Local signing: no code-signing certificate in either Windows store; no
+  `Azure.CodeSigning.Dlib.dll`; `az` login active and a code-signing token is
+  issued. `sign-native.py` signs only by thumbprint; Azure signing exists only
+  in `github-release.yml` (`azure/artifact-signing-action`).
+- Tools: Inno Setup absent (CI pins 6.7.1 via the runner image);
+  `cargo-nextest` absent (CI pins 0.9.148); cargo not on PATH.
+- Goldens and the receipt runner live only in git-ignored `artifacts/one-process/`.
+- `nativeOutcome.ts` has no shared Rust-emitted cases.
+- `build-service-runtime.py::source_identity()` excludes frontend inputs; the
+  runtime builder, packager, signer and Inno script assume one executable;
+  `airk.iss` sets `DisableDirPage=yes`.
+- The HTTPS listener starts only with a catalog gate (`service_runtime/http.rs`
+  `Owner::start`).
+
+| Step | State | Evidence |
+| --- | --- | --- |
+| S0.1 Record U70/U71 | done | split-plan §2.1 |
+| S0.2 Inno Setup 6.7.1, cargo-nextest 0.9.148 | pending | |
+| S0.3 Trusted Signing client | pending | |
+| S0.4 Promote receipt runner and golden capture | pending | |
+| S0.5 Neo readiness | pending | |
+
 ## Reported HTTP cleanup refusal (10 November 2026)
 
 Acceptance: correct the reported `HTTP cleanup requires the exact prebaseline
