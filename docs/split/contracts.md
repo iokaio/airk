@@ -193,9 +193,35 @@ behind M5–M8.
 | Client death | Journal entry survives in the service | Prepared or accepted | Any surface (CLI, session, admin) lists (M6) and retries/forgets by nonce |
 | Service restart | Journal and `service_requests` are durable; registry namespace persists; service instance changes | As before the restart | Reconnect, receipt lookup; a reconnect never replays M5 with a new key |
 | Duplicate key, same arguments | M5 `duplicate:true`; `Enqueue` returns the same job [V] | Same request | None |
-| Same key, different arguments | M5 `client_request_key_conflict`; `Enqueue`/`ConfigureProject` `key_conflict` [V] | Refused; the original is unchanged | Fail closed; show the original by receipt |
-| Receipt pruned / epoch rotated | `RequestReceipt.expired:true`; submit `key_expired` | **Unknown** | Report unknown; never replay |
+| Same key, different arguments | M5 `client_request_key_conflict`; `Enqueue`/`ConfigureProject` `KeyConflict` [V wire spelling, `service_management.rs:500` formats `JobError` with `Debug`] | Refused; the original is unchanged | Fail closed; show the original by receipt |
+| Receipt pruned / epoch rotated | `RequestReceipt.expired:true`; submit `KeyExpired` [V spelling as above] | **Unknown** | Report unknown; never replay |
 | Journal full (64) | M5 `client_request_journal_full` | Refused | Inspect and forget (`airkctl service requests …`) |
+
+Rules fixed by `request_recovery.json` [P]:
+
+- **M5 order.** The identical saved request under the nonce → `duplicate:true`;
+  the nonce with other bytes → `client_request_key_conflict`; then a namespace
+  or epoch that is not current → `client_request_key_expired`; then capacity →
+  `client_request_journal_full`. M5's `caller` and `key` must equal those of
+  its inner request, else `client_request_key_mismatch`. The registry's own
+  rule is the same shape: an accepted key is found before the epoch check
+  (`jobs.rs:638-660`), so an accepted key survives a later rotation.
+- **New keys.** A client mints a new key for the same intent only right after
+  a definitive M5 refusal that proves nothing was journaled
+  (`client_request_key_expired`, `client_request_journal_full`). Every other
+  loss (missing reply, death, restart, `registry_response_unknown_retry_with_key`,
+  `service_instance_changed`) keeps the key.
+- **Recovery by nonce.** `RequestReceipt` needs `caller` and `key`, which only
+  the minting client holds; M6 entries stay `{nonce, project, kind}`. Another
+  surface (after client death) recovers by resending M7 for the nonce: the
+  exact saved key returns the accepted job, accepts a never-submitted one under
+  a current epoch, or answers `KeyExpired`.
+- **`KeyExpired` on a journaled entry is unknown**, not "never accepted": the
+  unchanged journal format records no submission, and a pruned receipt also
+  answers `KeyExpired`.
+- **Restart.** Requests carry `expected_instance`; a stale one is refused with
+  `service_instance_changed` before dispatch [V `service_runtime.rs:143-196`].
+  The client re-reads `Health` and recovers by receipt or M6/M7.
 
 UI states (I2, I3, extension): `submitted` (sent, no answer), `accepted`
 (journaled or receipt with pending/running job), `completed` (terminal
@@ -214,9 +240,10 @@ session frame, on stdout or in logs [P].
 | # | Method { request } | Response { fields } | Rules |
 |---|---|---|---|
 | W1 | `WindowOpen { label (≤128 B), owner_pid }` | `WindowOpened { window_id, lease, ttl_ms, service_instance }` | ≤ 64 windows per service; TTL 30 s, renewed every 10 s (injected clock) |
-| W2 | `WindowRenew { window_id, lease }` | `WindowRenewed { ttl_ms }` | Wrong lease or other instance → `window_lease_invalid` |
+| W2 | `WindowRenew { window_id, lease }` | `WindowRenewed { ttl_ms }` | Known window, wrong lease → `window_lease_invalid`; unknown id (closed, expired or from another instance) → `window_unknown` [P] |
 | W3 | `WindowClose { window_id, lease }` | `WindowClosed` | Drops queue, handoffs and scope grant |
-| W4 | `WindowScopeGrant { window_id, lease, selection: Catalog{ScopedConnectRequest} \| Combined{CombinedConnectRequest} }` | `WindowScopeGranted { scope_identity, catalog_revision, expires_at_ms }` | U77: selects existing indexes only; never creates or changes indexes, index sets or agent grants; revoked by close, lease expiry or restart. Reads use M3 `selection: Window{..}`; no bearer leaves the service |
+| W4 | `WindowScopeGrant { window_id, lease, selection: { namespace, expected_catalog_revision, index_ids, project_ids } }` [P, replaces `Catalog{ScopedConnectRequest} \| Combined{..}`] | `WindowScopeGranted { scope_identity, catalog_revision, expires_at_ms }` | U77: selects existing indexes only; never creates or changes indexes, index sets or agent grants; carries no catalog `GrantId` (Q6 closed by the ledger row "P0.6": an in-memory grant bound to the lease). Unknown index or stale revision → `scoped_read_unavailable` [V code]. A new grant replaces the old one. Revoked by close, lease expiry or restart, never re-granted automatically. Reads use M3 `selection: Window{..}`; without a grant → `window_scope_not_granted` [P]; no bearer leaves the service |
+| W4b | `WindowScopeRelease { window_id, lease }` [P] | `WindowScopeReleased` | Idempotent; session frame `scope_release` |
 | W5 | `AssistanceWindows {}` | `AssistanceWindows { windows: [{window_id, label, accepting, queued}] }` | Readable by owner pipe and by `/mcp` Explorer tools with a valid bearer [P] |
 | W6 | `AssistanceSubmit { window_id, kind, draft: Value, submitter: ClientFamily }` | `AssistanceQueued { draft_id, queued }` | Per window ≤ 16 drafts and ≤ 1 MiB; draft ≤ 256 KiB; full → `assistance_queue_full` (never drops silently) |
 | W7 | `AssistanceDrain { window_id, lease, ack_through: Option<u64>, limit ≤ 8 }` | `AssistanceDrained { drafts: [{sequence, draft_id, kind, draft}], next }` | Only the owning lease drains; ack removes |
@@ -226,8 +253,32 @@ All W state is in memory, scoped to `service_instance`; a restart loses it,
 `window_unknown` tells agents to list windows again, and sessions re-open and
 emit `resync` (§3.7). `window_plane.json` covers open, renew, expiry under a
 manual clock, foreign lease, queue full, drain/ack, cross-window drain,
-restart and grant revocation. Whether W4 can be ephemeral given
-authority-contract-1 `GrantId`s is Q6.
+restart and grant revocation.
+
+Rules fixed by `window_plane.json` [P]:
+
+- Lease: 256 random bits as 64 lowercase hex. It appears only on pipe frames
+  between the owning session and the service. The session `control` relay
+  refuses W1–W4b, W7 and W8 by method (`session_command_refused`) before the
+  pipe; W5 is relayed. `owner_pid` is diagnostic only; liveness is renewal.
+- A window is valid while `now < last renewal + ttl_ms`; expiry acts as W3.
+  Over 64 windows → `window_capacity`; label over 128 bytes → `window_label_invalid`.
+- Assistance: sizes are compact JSON bytes; a draft over 256 KiB →
+  `assistance_draft_oversize`; count or byte bound → `assistance_queue_full`.
+  `accepting` = open and not full. Sequences start at 1 per window and are
+  never reused. W7 is non-destructive: it returns the oldest unacknowledged
+  drafts (≤ `limit`, else `assistance_drain_limit_invalid`) and `next` = the
+  first sequence not returned, or null. `ack_through` removes and is
+  idempotent; beyond the highest assigned sequence → `assistance_ack_ahead`.
+  At most `limit` drafts are unacknowledged in delivery, so acknowledgement is
+  the back-pressure. The session suppresses repeats by `sequence`; after an
+  overflow `resync` it re-drains from the last acknowledgement, so no draft is lost.
+- Handoffs: `ttl_ms` 1..=600000 (else `handoff_ttl_invalid`), over 64 KiB →
+  `handoff_oversize`, over 32 → `handoff_capacity`. M12 reads do not consume;
+  at `expires_at_ms`, after close or restart → `handoff_unknown`. The editor
+  publishes with a session frame `handoff_publish { handoff, ttl_ms }` →
+  `handoff { handoff_id, expires_at_ms }`; it and `scope_release` →
+  `scope_released` are §3.7 rows to add with the I2 window step.
 
 ### 2.6 Event subscription basis (C3)
 
@@ -241,6 +292,16 @@ No new I1 method: sessions and the admin stream poll the existing `Events`
 | # | Method | Response | Rules [P] |
 |---|---|---|---|
 | A1 | `AdminLaunchCode {}` | `AdminLaunchCode { code, port, expires_in_ms }` | Owner pipe only; never relayed by the session, never over HTTP. 256-bit random code (base64url); the service stores only its SHA-256; TTL 60 s (injected clock); ≤ 8 outstanding, oldest evicted; consumed atomically by §4.5; `Debug` redacts it; never logged |
+
+Rules fixed by `admin_launch_code.json` [P]: the code is base64url without
+padding (43 characters); the stored digest is SHA-256 of those 43 ASCII bytes,
+so a non-canonical spelling of the same bits is a different, unknown code.
+Valid while `now < issued + 60000`. Unknown, expired, used, evicted, padded,
+short or empty codes all get `admin_launch_code_invalid`. A1 takes no fields
+(an unknown field is refused before dispatch). Neither the code nor its digest
+appears in logs, `Debug` output or errors; the code appears only in the A1
+reply, in the one-shot `airkctl admin url|open` URL fragment and in the §4.5
+exchange body.
 
 ### 2.8 Per-method byte budgets [P]
 

@@ -1,0 +1,501 @@
+{
+ "schema": "airk.split-fixture.i1-window-plane/1",
+ "contract": "docs/split/contracts.md \u00a72.5; split plan \u00a75.2, \u00a76.5; U10, U77",
+ "generator": "fixtures/split/i1/window_plane.py",
+ "limits": {
+  "windows": 64,
+  "label_bytes": 128,
+  "ttl_ms": 30000,
+  "renew_every_ms": 10000,
+  "drafts_per_window": 16,
+  "queue_bytes": 1048576,
+  "draft_bytes": 262144,
+  "drain_limit": 8,
+  "handoffs_per_window": 32,
+  "handoff_bytes": 65536,
+  "handoff_ttl_ms": 600000
+ },
+ "conventions": [
+  "`$fill_bytes: N` stands for a JSON value whose compact serialization is exactly N bytes.",
+  "`elided` stands for a value pinned elsewhere (read budgets, tool results, event cursors).",
+  "Session frames scope_select, scope_release, assistance_ack and handoff_publish follow \u00a73.7 [P]."
+ ],
+ "secrets": {
+  "lease_by_window": {
+   "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+   "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0": "1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b",
+   "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+  }
+ },
+ "secret_channels": {
+  "lease": [
+   "pipe"
+  ]
+ },
+ "cases": [
+  {
+   "name": "open_lease_held_by_session",
+   "rule": "W1: the service mints the window; only the session holds the lease",
+   "transcript": [
+    {"at_ms": 0, "channel": "session", "send": {"id": "01010101010101010101010101010101", "request": {"hello": {"protocol": 2, "client": {"name": "airk-vscode", "version": "1.9.0"}, "i2_contracts": [1]}}}},
+    {"at_ms": 0, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"window_open": {"label": "workspace A", "owner_pid": 4242}}}},
+    {"at_ms": 0, "channel": "pipe", "reply": {"status": "window_opened", "window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a", "ttl_ms": 30000, "service_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"}},
+    {"at_ms": 0, "channel": "session", "reply": {"id": "01010101010101010101010101010101", "outcome": {"status": "hello", "protocol": 2, "version": "1.9.0", "i2_contract": 1, "capabilities": ["window-scope/1", "assistance/1"], "executable_sha256": "3333333333333333333333333333333333333333333333333333333333333333", "service_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0"}}}
+   ],
+   "expected": {
+    "windows_open": 1,
+    "lease_on_channels": ["pipe"]
+   }
+  },
+  {
+   "name": "renew_and_expiry",
+   "rule": "W2: valid while now < last renewal + ttl_ms; expiry acts as close",
+   "transcript": [
+    {"at_ms": 0, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"window_open": {"label": "workspace A", "owner_pid": 4242}}}},
+    {"at_ms": 0, "channel": "pipe", "reply": {"status": "window_opened", "window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a", "ttl_ms": 30000, "service_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"}},
+    {"at_ms": 10000, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"window_renew": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a"}}}},
+    {"at_ms": 10000, "channel": "pipe", "reply": {"status": "window_renewed", "ttl_ms": 30000}},
+    {"at_ms": 39999, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_windows": {}}}},
+    {"at_ms": 39999, "channel": "pipe", "reply": {"status": "assistance_windows", "windows": [{"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "label": "workspace A", "accepting": true, "queued": 0}]}},
+    {"at_ms": 40000, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"window_renew": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a"}}}},
+    {"at_ms": 40000, "channel": "pipe", "reply": {"status": "failure", "code": "window_unknown"}},
+    {"at_ms": 40000, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_windows": {}}}},
+    {"at_ms": 40000, "channel": "pipe", "reply": {"status": "assistance_windows", "windows": []}}
+   ],
+   "expected": {
+    "windows_open": 0
+   }
+  },
+  {
+   "name": "foreign_lease",
+   "rule": "W2: a known window with another lease is refused and left unchanged",
+   "transcript": [
+    {"at_ms": 0, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"window_open": {"label": "workspace A", "owner_pid": 4242}}}},
+    {"at_ms": 0, "channel": "pipe", "reply": {"status": "window_opened", "window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a", "ttl_ms": 30000, "service_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"}},
+    {"at_ms": 1, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"window_open": {"label": "workspace B", "owner_pid": 4242}}}},
+    {"at_ms": 1, "channel": "pipe", "reply": {"status": "window_opened", "window_id": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0", "lease": "1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b", "ttl_ms": 30000, "service_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"}},
+    {"at_ms": 2, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"window_renew": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b"}}}},
+    {"at_ms": 2, "channel": "pipe", "reply": {"status": "failure", "code": "window_lease_invalid"}},
+    {"at_ms": 3, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"window_renew": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a"}}}},
+    {"at_ms": 3, "channel": "pipe", "reply": {"status": "window_renewed", "ttl_ms": 30000}}
+   ],
+   "expected": {
+    "windows_open": 2
+   }
+  },
+  {
+   "name": "open_limits",
+   "rule": "W1: at most 64 windows; label at most 128 bytes",
+   "transcript": [
+    {"at_ms": 0, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"window_open": {"label": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "owner_pid": 4242}}}},
+    {"at_ms": 0, "channel": "pipe", "reply": {"status": "failure", "code": "window_label_invalid"}},
+    {"at_ms": 1, "harness": "windows_opened", "count": 64},
+    {"at_ms": 2, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"window_open": {"label": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "owner_pid": 4242}}}},
+    {"at_ms": 2, "channel": "pipe", "reply": {"status": "failure", "code": "window_capacity"}}
+   ],
+   "expected": {
+    "windows_open": 64
+   }
+  },
+  {
+   "name": "scope_select_in_memory_grant",
+   "rule": "W4 (U77): selects existing indexes only; nothing persisted",
+   "transcript": [
+    {"at_ms": 0, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"window_open": {"label": "workspace A", "owner_pid": 4242}}}},
+    {"at_ms": 0, "channel": "pipe", "reply": {"status": "window_opened", "window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a", "ttl_ms": 30000, "service_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"}},
+    {"at_ms": 1, "channel": "session", "send": {"id": "02020202020202020202020202020202", "request": {"scope_select": {"selection": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "expected_catalog_revision": 12, "index_ids": ["idx_01010101010101010101010101010101"], "project_ids": ["prj_02020202020202020202020202020202"]}}}}},
+    {"at_ms": 1, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"window_scope_grant": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a", "selection": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "expected_catalog_revision": 12, "index_ids": ["idx_01010101010101010101010101010101"], "project_ids": ["prj_02020202020202020202020202020202"]}}}}},
+    {"at_ms": 1, "channel": "pipe", "reply": {"status": "window_scope_granted", "scope_identity": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c", "catalog_revision": 12, "expires_at_ms": 30001}},
+    {"at_ms": 1, "channel": "session", "reply": {"id": "02020202020202020202020202020202", "outcome": {"status": "scope", "scope_identity": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c", "catalog_revision": 12}}},
+    {"at_ms": 2, "channel": "session", "send": {"id": "03030303030303030303030303030303", "request": {"invoke": {"argv": ["search", "--query", "fixture"], "deadline_ms": 60000}}}},
+    {"at_ms": 2, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"tools_call": {"tool": "search", "arguments": {"query": "fixture"}, "selection": {"window": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a"}}, "read_budget": "elided", "usage_client": "elided"}}}},
+    {"at_ms": 2, "channel": "pipe", "reply": {"status": "tool_result", "result": "elided"}},
+    {"at_ms": 2, "channel": "session", "reply": {"id": "03030303030303030303030303030303", "outcome": {"status": "invoked", "exit_code": 0, "class": "success", "stdout": "elided", "stderr": ""}}},
+    {"at_ms": 3, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"window_scope_grant": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a", "selection": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "expected_catalog_revision": 12, "index_ids": ["idx_0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f"], "project_ids": ["prj_02020202020202020202020202020202"]}}}}},
+    {"at_ms": 3, "channel": "pipe", "reply": {"status": "failure", "code": "scoped_read_unavailable"}}
+   ],
+   "expected": {
+    "catalog_revision_after": 12,
+    "grants_created": 0,
+    "indexes_created": 0,
+    "persisted": false,
+    "active_scope": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c"
+   }
+  },
+  {
+   "name": "scope_reselect_replaces",
+   "rule": "W4: a new grant atomically replaces the old one",
+   "transcript": [
+    {"at_ms": 0, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"window_open": {"label": "workspace A", "owner_pid": 4242}}}},
+    {"at_ms": 0, "channel": "pipe", "reply": {"status": "window_opened", "window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a", "ttl_ms": 30000, "service_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"}},
+    {"at_ms": 1, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"window_scope_grant": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a", "selection": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "expected_catalog_revision": 12, "index_ids": ["idx_01010101010101010101010101010101"], "project_ids": ["prj_02020202020202020202020202020202"]}}}}},
+    {"at_ms": 1, "channel": "pipe", "reply": {"status": "window_scope_granted", "scope_identity": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c", "catalog_revision": 12, "expires_at_ms": 30001}},
+    {"at_ms": 2, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"window_scope_grant": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a", "selection": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "expected_catalog_revision": 12, "index_ids": ["idx_01010101010101010101010101010101"], "project_ids": ["prj_02020202020202020202020202020202"]}}}}},
+    {"at_ms": 2, "channel": "pipe", "reply": {"status": "window_scope_granted", "scope_identity": "5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d", "catalog_revision": 12, "expires_at_ms": 30002}}
+   ],
+   "expected": {
+    "active_scope": "5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d",
+    "revoked_scopes": ["5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c"]
+   }
+  },
+  {
+   "name": "scope_release",
+   "rule": "W4b: release drops the grant; release is idempotent",
+   "transcript": [
+    {"at_ms": 0, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"window_open": {"label": "workspace A", "owner_pid": 4242}}}},
+    {"at_ms": 0, "channel": "pipe", "reply": {"status": "window_opened", "window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a", "ttl_ms": 30000, "service_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"}},
+    {"at_ms": 1, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"window_scope_grant": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a", "selection": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "expected_catalog_revision": 12, "index_ids": ["idx_01010101010101010101010101010101"], "project_ids": ["prj_02020202020202020202020202020202"]}}}}},
+    {"at_ms": 1, "channel": "pipe", "reply": {"status": "window_scope_granted", "scope_identity": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c", "catalog_revision": 12, "expires_at_ms": 30001}},
+    {"at_ms": 2, "channel": "session", "send": {"id": "02020202020202020202020202020202", "request": {"scope_release": {}}}},
+    {"at_ms": 2, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"window_scope_release": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a"}}}},
+    {"at_ms": 2, "channel": "pipe", "reply": {"status": "window_scope_released"}},
+    {"at_ms": 2, "channel": "session", "reply": {"id": "02020202020202020202020202020202", "outcome": {"status": "scope_released"}}},
+    {"at_ms": 3, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"window_scope_release": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a"}}}},
+    {"at_ms": 3, "channel": "pipe", "reply": {"status": "window_scope_released"}},
+    {"at_ms": 4, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"tools_call": {"tool": "search", "arguments": {"query": "fixture"}, "selection": {"window": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a"}}, "read_budget": "elided", "usage_client": "elided"}}}},
+    {"at_ms": 4, "channel": "pipe", "reply": {"status": "failure", "code": "window_scope_not_granted"}}
+   ],
+   "expected": {
+    "active_scope": null
+   }
+  },
+  {
+   "name": "grant_revoked_on_service_restart",
+   "rule": "All W state is per instance; no stale grant is reused",
+   "transcript": [
+    {"at_ms": 0, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"window_open": {"label": "workspace A", "owner_pid": 4242}}}},
+    {"at_ms": 0, "channel": "pipe", "reply": {"status": "window_opened", "window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a", "ttl_ms": 30000, "service_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"}},
+    {"at_ms": 1, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"window_scope_grant": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a", "selection": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "expected_catalog_revision": 12, "index_ids": ["idx_01010101010101010101010101010101"], "project_ids": ["prj_02020202020202020202020202020202"]}}}}},
+    {"at_ms": 1, "channel": "pipe", "reply": {"status": "window_scope_granted", "scope_identity": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c", "catalog_revision": 12, "expires_at_ms": 30001}},
+    {"at_ms": 2, "channel": "session", "send": {"id": "02020202020202020202020202020202", "request": {"invoke": {"argv": ["search", "--query", "fixture"], "deadline_ms": 60000}}}},
+    {"at_ms": 2, "harness": "service_restarts", "service_instance": "e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2"},
+    {"at_ms": 2, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"tools_call": {"tool": "search", "arguments": {"query": "fixture"}, "selection": {"window": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a"}}, "read_budget": "elided", "usage_client": "elided"}}}},
+    {"at_ms": 2, "channel": "pipe", "reply": {"status": "failure", "code": "service_instance_changed"}},
+    {"at_ms": 2, "channel": "session", "reply": {"id": "02020202020202020202020202020202", "outcome": {"status": "failed", "code": "service_restarted", "retryable": true}}},
+    {"at_ms": 2, "channel": "session", "event": {"kind": "resync", "reason": "service_restarted"}},
+    {"at_ms": 3, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2", "method": {"window_renew": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a"}}}},
+    {"at_ms": 3, "channel": "pipe", "reply": {"status": "failure", "code": "window_unknown"}},
+    {"at_ms": 3, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2", "method": {"window_open": {"label": "workspace A", "owner_pid": 4242}}}},
+    {"at_ms": 3, "channel": "pipe", "reply": {"status": "window_opened", "window_id": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2", "lease": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a", "ttl_ms": 30000, "service_instance": "e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2"}},
+    {"at_ms": 4, "channel": "session", "send": {"id": "03030303030303030303030303030303", "request": {"invoke": {"argv": ["search", "--query", "fixture"], "deadline_ms": 60000}}}},
+    {"at_ms": 4, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2", "method": {"tools_call": {"tool": "search", "arguments": {"query": "fixture"}, "selection": {"window": {"window_id": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2", "lease": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"}}, "read_budget": "elided", "usage_client": "elided"}}}},
+    {"at_ms": 4, "channel": "pipe", "reply": {"status": "failure", "code": "window_scope_not_granted"}},
+    {"at_ms": 4, "channel": "session", "reply": {"id": "03030303030303030303030303030303", "outcome": {"status": "invoked", "exit_code": 1, "class": "refused", "stdout": "", "stderr": "elided", "error": {"airkctl_error": 1, "class": "refused", "code": "window_scope_not_granted", "retryable": false, "message": "elided"}}}}
+   ],
+   "expected": {
+    "active_scope": null,
+    "automatic_regrant": false,
+    "window_id_after": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2"
+   }
+  },
+  {
+   "name": "grant_revoked_on_session_close",
+   "rule": "Owner loss closes the window; process death expires it",
+   "transcript": [
+    {"at_ms": 0, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"window_open": {"label": "workspace A", "owner_pid": 4242}}}},
+    {"at_ms": 0, "channel": "pipe", "reply": {"status": "window_opened", "window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a", "ttl_ms": 30000, "service_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"}},
+    {"at_ms": 1, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"window_scope_grant": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a", "selection": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "expected_catalog_revision": 12, "index_ids": ["idx_01010101010101010101010101010101"], "project_ids": ["prj_02020202020202020202020202020202"]}}}}},
+    {"at_ms": 1, "channel": "pipe", "reply": {"status": "window_scope_granted", "scope_identity": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c", "catalog_revision": 12, "expires_at_ms": 30001}},
+    {"at_ms": 2, "harness": "session_stdin_eof"},
+    {"at_ms": 2, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"window_close": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a"}}}},
+    {"at_ms": 2, "channel": "pipe", "reply": {"status": "window_closed"}},
+    {"at_ms": 3, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"window_open": {"label": "workspace B", "owner_pid": 4242}}}},
+    {"at_ms": 3, "channel": "pipe", "reply": {"status": "window_opened", "window_id": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0", "lease": "1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b", "ttl_ms": 30000, "service_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"}},
+    {"at_ms": 3, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"window_scope_grant": {"window_id": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0", "lease": "1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b", "selection": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "expected_catalog_revision": 12, "index_ids": ["idx_01010101010101010101010101010101"], "project_ids": ["prj_02020202020202020202020202020202"]}}}}},
+    {"at_ms": 3, "channel": "pipe", "reply": {"status": "window_scope_granted", "scope_identity": "5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d", "catalog_revision": 12, "expires_at_ms": 30003}},
+    {"at_ms": 4, "harness": "session_process_dies", "window_id": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"},
+    {"at_ms": 30003, "channel": "mcp", "send": {"method": {"assistance_windows": {}}}},
+    {"at_ms": 30003, "channel": "mcp", "reply": {"status": "assistance_windows", "windows": []}},
+    {"at_ms": 30003, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"window_scope_grant": {"window_id": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0", "lease": "1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b", "selection": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "expected_catalog_revision": 12, "index_ids": ["idx_01010101010101010101010101010101"], "project_ids": ["prj_02020202020202020202020202020202"]}}}}},
+    {"at_ms": 30003, "channel": "pipe", "reply": {"status": "failure", "code": "window_unknown"}}
+   ],
+   "expected": {
+    "windows_open": 0,
+    "active_scope": null
+   }
+  },
+  {
+   "name": "close_drops_state",
+   "rule": "W3: close drops the queue, handoffs and scope grant",
+   "transcript": [
+    {"at_ms": 0, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"window_open": {"label": "workspace A", "owner_pid": 4242}}}},
+    {"at_ms": 0, "channel": "pipe", "reply": {"status": "window_opened", "window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a", "ttl_ms": 30000, "service_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"}},
+    {"at_ms": 1, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"window_scope_grant": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a", "selection": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "expected_catalog_revision": 12, "index_ids": ["idx_01010101010101010101010101010101"], "project_ids": ["prj_02020202020202020202020202020202"]}}}}},
+    {"at_ms": 1, "channel": "pipe", "reply": {"status": "window_scope_granted", "scope_identity": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c", "catalog_revision": 12, "expires_at_ms": 30001}},
+    {"at_ms": 1, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_submit": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "kind": "search", "draft": {"query": "fixture"}, "submitter": "codex"}}}},
+    {"at_ms": 1, "channel": "pipe", "reply": {"status": "assistance_queued", "draft_id": "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1", "queued": 1}},
+    {"at_ms": 1, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"handoff_publish": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a", "handoff": {"kind": "studio"}, "ttl_ms": 600000}}}},
+    {"at_ms": 1, "channel": "pipe", "reply": {"status": "handoff_published", "handoff_id": "4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e", "expires_at_ms": 600001}},
+    {"at_ms": 2, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"window_close": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a"}}}},
+    {"at_ms": 2, "channel": "pipe", "reply": {"status": "window_closed"}},
+    {"at_ms": 3, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"explorer_handoff": {"handoff_id": "4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e"}}}},
+    {"at_ms": 3, "channel": "pipe", "reply": {"status": "failure", "code": "handoff_unknown"}},
+    {"at_ms": 3, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_submit": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "kind": "search", "draft": {"query": "fixture"}, "submitter": "codex"}}}},
+    {"at_ms": 3, "channel": "pipe", "reply": {"status": "failure", "code": "window_unknown"}},
+    {"at_ms": 3, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"tools_call": {"tool": "search", "arguments": {"query": "fixture"}, "selection": {"window": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a"}}, "read_budget": "elided", "usage_client": "elided"}}}},
+    {"at_ms": 3, "channel": "pipe", "reply": {"status": "failure", "code": "window_unknown"}}
+   ],
+   "expected": {
+    "windows_open": 0,
+    "queued": 0,
+    "handoffs": 0
+   }
+  },
+  {
+   "name": "assistance_queue_count_bound",
+   "rule": "W6: at most 16 drafts; full is refused, never dropped",
+   "transcript": [
+    {"at_ms": 0, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"window_open": {"label": "workspace A", "owner_pid": 4242}}}},
+    {"at_ms": 0, "channel": "pipe", "reply": {"status": "window_opened", "window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a", "ttl_ms": 30000, "service_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"}},
+    {"at_ms": 1, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_submit": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "kind": "search", "draft": {"query": "fixture"}, "submitter": "codex"}}}},
+    {"at_ms": 1, "channel": "pipe", "reply": {"status": "assistance_queued", "draft_id": "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1", "queued": 1}},
+    {"at_ms": 2, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_submit": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "kind": "search", "draft": {"query": "fixture"}, "submitter": "codex"}}}},
+    {"at_ms": 2, "channel": "pipe", "reply": {"status": "assistance_queued", "draft_id": "d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2", "queued": 2}},
+    {"at_ms": 3, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_submit": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "kind": "search", "draft": {"query": "fixture"}, "submitter": "codex"}}}},
+    {"at_ms": 3, "channel": "pipe", "reply": {"status": "assistance_queued", "draft_id": "d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3", "queued": 3}},
+    {"at_ms": 4, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_submit": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "kind": "search", "draft": {"query": "fixture"}, "submitter": "codex"}}}},
+    {"at_ms": 4, "channel": "pipe", "reply": {"status": "assistance_queued", "draft_id": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4", "queued": 4}},
+    {"at_ms": 5, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_submit": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "kind": "search", "draft": {"query": "fixture"}, "submitter": "codex"}}}},
+    {"at_ms": 5, "channel": "pipe", "reply": {"status": "assistance_queued", "draft_id": "d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5", "queued": 5}},
+    {"at_ms": 6, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_submit": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "kind": "search", "draft": {"query": "fixture"}, "submitter": "codex"}}}},
+    {"at_ms": 6, "channel": "pipe", "reply": {"status": "assistance_queued", "draft_id": "d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6", "queued": 6}},
+    {"at_ms": 7, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_submit": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "kind": "search", "draft": {"query": "fixture"}, "submitter": "codex"}}}},
+    {"at_ms": 7, "channel": "pipe", "reply": {"status": "assistance_queued", "draft_id": "d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7", "queued": 7}},
+    {"at_ms": 8, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_submit": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "kind": "search", "draft": {"query": "fixture"}, "submitter": "codex"}}}},
+    {"at_ms": 8, "channel": "pipe", "reply": {"status": "assistance_queued", "draft_id": "d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8", "queued": 8}},
+    {"at_ms": 9, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_submit": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "kind": "search", "draft": {"query": "fixture"}, "submitter": "codex"}}}},
+    {"at_ms": 9, "channel": "pipe", "reply": {"status": "assistance_queued", "draft_id": "d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9", "queued": 9}},
+    {"at_ms": 10, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_submit": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "kind": "search", "draft": {"query": "fixture"}, "submitter": "codex"}}}},
+    {"at_ms": 10, "channel": "pipe", "reply": {"status": "assistance_queued", "draft_id": "dadadadadadadadadadadadadadadada", "queued": 10}},
+    {"at_ms": 11, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_submit": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "kind": "search", "draft": {"query": "fixture"}, "submitter": "codex"}}}},
+    {"at_ms": 11, "channel": "pipe", "reply": {"status": "assistance_queued", "draft_id": "dbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdb", "queued": 11}},
+    {"at_ms": 12, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_submit": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "kind": "search", "draft": {"query": "fixture"}, "submitter": "codex"}}}},
+    {"at_ms": 12, "channel": "pipe", "reply": {"status": "assistance_queued", "draft_id": "dcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdc", "queued": 12}},
+    {"at_ms": 13, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_submit": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "kind": "search", "draft": {"query": "fixture"}, "submitter": "codex"}}}},
+    {"at_ms": 13, "channel": "pipe", "reply": {"status": "assistance_queued", "draft_id": "dddddddddddddddddddddddddddddddd", "queued": 13}},
+    {"at_ms": 14, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_submit": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "kind": "search", "draft": {"query": "fixture"}, "submitter": "codex"}}}},
+    {"at_ms": 14, "channel": "pipe", "reply": {"status": "assistance_queued", "draft_id": "dededededededededededededededede", "queued": 14}},
+    {"at_ms": 15, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_submit": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "kind": "search", "draft": {"query": "fixture"}, "submitter": "codex"}}}},
+    {"at_ms": 15, "channel": "pipe", "reply": {"status": "assistance_queued", "draft_id": "dfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdf", "queued": 15}},
+    {"at_ms": 16, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_submit": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "kind": "search", "draft": {"query": "fixture"}, "submitter": "codex"}}}},
+    {"at_ms": 16, "channel": "pipe", "reply": {"status": "assistance_queued", "draft_id": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0", "queued": 16}},
+    {"at_ms": 20, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_submit": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "kind": "search", "draft": {"query": "fixture"}, "submitter": "codex"}}}},
+    {"at_ms": 20, "channel": "pipe", "reply": {"status": "failure", "code": "assistance_queue_full"}},
+    {"at_ms": 21, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_windows": {}}}},
+    {"at_ms": 21, "channel": "pipe", "reply": {"status": "assistance_windows", "windows": [{"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "label": "workspace A", "accepting": false, "queued": 16}]}}
+   ],
+   "expected": {
+    "queued": 16,
+    "dropped": 0
+   }
+  },
+  {
+   "name": "assistance_queue_byte_bound",
+   "rule": "W6: draft <= 256 KiB, window queue <= 1 MiB (compact JSON bytes)",
+   "transcript": [
+    {"at_ms": 0, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"window_open": {"label": "workspace A", "owner_pid": 4242}}}},
+    {"at_ms": 0, "channel": "pipe", "reply": {"status": "window_opened", "window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a", "ttl_ms": 30000, "service_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"}},
+    {"at_ms": 1, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_submit": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "kind": "search", "draft": {"$fill_bytes": 262145}, "submitter": "codex"}}}},
+    {"at_ms": 1, "channel": "pipe", "reply": {"status": "failure", "code": "assistance_draft_oversize"}},
+    {"at_ms": 2, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_submit": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "kind": "search", "draft": {"$fill_bytes": 262144}, "submitter": "codex"}}}},
+    {"at_ms": 2, "channel": "pipe", "reply": {"status": "assistance_queued", "draft_id": "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1", "queued": 1}},
+    {"at_ms": 3, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_submit": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "kind": "search", "draft": {"$fill_bytes": 262144}, "submitter": "codex"}}}},
+    {"at_ms": 3, "channel": "pipe", "reply": {"status": "assistance_queued", "draft_id": "d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2", "queued": 2}},
+    {"at_ms": 4, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_submit": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "kind": "search", "draft": {"$fill_bytes": 262144}, "submitter": "codex"}}}},
+    {"at_ms": 4, "channel": "pipe", "reply": {"status": "assistance_queued", "draft_id": "d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3", "queued": 3}},
+    {"at_ms": 5, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_submit": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "kind": "search", "draft": {"$fill_bytes": 262144}, "submitter": "codex"}}}},
+    {"at_ms": 5, "channel": "pipe", "reply": {"status": "assistance_queued", "draft_id": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4", "queued": 4}},
+    {"at_ms": 6, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_submit": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "kind": "search", "draft": {"$fill_bytes": 2}, "submitter": "codex"}}}},
+    {"at_ms": 6, "channel": "pipe", "reply": {"status": "failure", "code": "assistance_queue_full"}}
+   ],
+   "expected": {
+    "queued": 4,
+    "queued_bytes": 1048576
+   }
+  },
+  {
+   "name": "drain_and_ack",
+   "rule": "W7: drain is non-destructive; ack removes; at most `limit` unacknowledged",
+   "transcript": [
+    {"at_ms": 0, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"window_open": {"label": "workspace A", "owner_pid": 4242}}}},
+    {"at_ms": 0, "channel": "pipe", "reply": {"status": "window_opened", "window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a", "ttl_ms": 30000, "service_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"}},
+    {"at_ms": 1, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_submit": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "kind": "search", "draft": {"query": "fixture"}, "submitter": "codex"}}}},
+    {"at_ms": 1, "channel": "pipe", "reply": {"status": "assistance_queued", "draft_id": "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1", "queued": 1}},
+    {"at_ms": 2, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_submit": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "kind": "search", "draft": {"query": "fixture"}, "submitter": "codex"}}}},
+    {"at_ms": 2, "channel": "pipe", "reply": {"status": "assistance_queued", "draft_id": "d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2", "queued": 2}},
+    {"at_ms": 3, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_submit": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "kind": "search", "draft": {"query": "fixture"}, "submitter": "codex"}}}},
+    {"at_ms": 3, "channel": "pipe", "reply": {"status": "assistance_queued", "draft_id": "d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3", "queued": 3}},
+    {"at_ms": 4, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_submit": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "kind": "search", "draft": {"query": "fixture"}, "submitter": "codex"}}}},
+    {"at_ms": 4, "channel": "pipe", "reply": {"status": "assistance_queued", "draft_id": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4", "queued": 4}},
+    {"at_ms": 5, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_submit": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "kind": "search", "draft": {"query": "fixture"}, "submitter": "codex"}}}},
+    {"at_ms": 5, "channel": "pipe", "reply": {"status": "assistance_queued", "draft_id": "d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5", "queued": 5}},
+    {"at_ms": 6, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_submit": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "kind": "search", "draft": {"query": "fixture"}, "submitter": "codex"}}}},
+    {"at_ms": 6, "channel": "pipe", "reply": {"status": "assistance_queued", "draft_id": "d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6", "queued": 6}},
+    {"at_ms": 7, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_submit": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "kind": "search", "draft": {"query": "fixture"}, "submitter": "codex"}}}},
+    {"at_ms": 7, "channel": "pipe", "reply": {"status": "assistance_queued", "draft_id": "d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7", "queued": 7}},
+    {"at_ms": 8, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_submit": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "kind": "search", "draft": {"query": "fixture"}, "submitter": "codex"}}}},
+    {"at_ms": 8, "channel": "pipe", "reply": {"status": "assistance_queued", "draft_id": "d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8", "queued": 8}},
+    {"at_ms": 9, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_submit": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "kind": "search", "draft": {"query": "fixture"}, "submitter": "codex"}}}},
+    {"at_ms": 9, "channel": "pipe", "reply": {"status": "assistance_queued", "draft_id": "d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9", "queued": 9}},
+    {"at_ms": 10, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_submit": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "kind": "search", "draft": {"query": "fixture"}, "submitter": "codex"}}}},
+    {"at_ms": 10, "channel": "pipe", "reply": {"status": "assistance_queued", "draft_id": "dadadadadadadadadadadadadadadada", "queued": 10}},
+    {"at_ms": 11, "channel": "session", "send": {"id": "02020202020202020202020202020202", "request": {"subscribe": {"topics": ["assistance"]}}}},
+    {"at_ms": 11, "channel": "session", "reply": {"id": "02020202020202020202020202020202", "outcome": {"status": "subscribed", "cursor": "elided"}}},
+    {"at_ms": 11, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_drain": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a", "ack_through": null, "limit": 8}}}},
+    {"at_ms": 11, "channel": "pipe", "reply": {"status": "assistance_drained", "drafts": [{"sequence": 1, "draft_id": "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1", "kind": "search", "draft": {"query": "fixture"}}, {"sequence": 2, "draft_id": "d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2", "kind": "search", "draft": {"query": "fixture"}}, {"sequence": 3, "draft_id": "d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3", "kind": "search", "draft": {"query": "fixture"}}, {"sequence": 4, "draft_id": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4", "kind": "search", "draft": {"query": "fixture"}}, {"sequence": 5, "draft_id": "d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5", "kind": "search", "draft": {"query": "fixture"}}, {"sequence": 6, "draft_id": "d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6", "kind": "search", "draft": {"query": "fixture"}}, {"sequence": 7, "draft_id": "d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7", "kind": "search", "draft": {"query": "fixture"}}, {"sequence": 8, "draft_id": "d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8", "kind": "search", "draft": {"query": "fixture"}}], "next": 9}},
+    {"at_ms": 11, "channel": "session", "event": {"kind": "assistance_draft", "cursor": "elided", "draft": {"sequence": 1, "draft_id": "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1", "kind": "search", "draft": {"query": "fixture"}}}},
+    {"at_ms": 11, "channel": "session", "event": {"kind": "assistance_draft", "cursor": "elided", "draft": {"sequence": 2, "draft_id": "d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2", "kind": "search", "draft": {"query": "fixture"}}}},
+    {"at_ms": 11, "channel": "session", "event": {"kind": "assistance_draft", "cursor": "elided", "draft": {"sequence": 3, "draft_id": "d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3", "kind": "search", "draft": {"query": "fixture"}}}},
+    {"at_ms": 11, "channel": "session", "event": {"kind": "assistance_draft", "cursor": "elided", "draft": {"sequence": 4, "draft_id": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4", "kind": "search", "draft": {"query": "fixture"}}}},
+    {"at_ms": 11, "channel": "session", "event": {"kind": "assistance_draft", "cursor": "elided", "draft": {"sequence": 5, "draft_id": "d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5", "kind": "search", "draft": {"query": "fixture"}}}},
+    {"at_ms": 11, "channel": "session", "event": {"kind": "assistance_draft", "cursor": "elided", "draft": {"sequence": 6, "draft_id": "d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6", "kind": "search", "draft": {"query": "fixture"}}}},
+    {"at_ms": 11, "channel": "session", "event": {"kind": "assistance_draft", "cursor": "elided", "draft": {"sequence": 7, "draft_id": "d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7", "kind": "search", "draft": {"query": "fixture"}}}},
+    {"at_ms": 11, "channel": "session", "event": {"kind": "assistance_draft", "cursor": "elided", "draft": {"sequence": 8, "draft_id": "d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8", "kind": "search", "draft": {"query": "fixture"}}}},
+    {"at_ms": 12, "channel": "session", "send": {"id": "03030303030303030303030303030303", "request": {"assistance_ack": {"through": 8}}}},
+    {"at_ms": 12, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_drain": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a", "ack_through": 8, "limit": 8}}}},
+    {"at_ms": 12, "channel": "pipe", "reply": {"status": "assistance_drained", "drafts": [{"sequence": 9, "draft_id": "d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9", "kind": "search", "draft": {"query": "fixture"}}, {"sequence": 10, "draft_id": "dadadadadadadadadadadadadadadada", "kind": "search", "draft": {"query": "fixture"}}], "next": null}},
+    {"at_ms": 12, "channel": "session", "reply": {"id": "03030303030303030303030303030303", "outcome": {"status": "acknowledged"}}},
+    {"at_ms": 12, "channel": "session", "event": {"kind": "assistance_draft", "cursor": "elided", "draft": {"sequence": 9, "draft_id": "d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9", "kind": "search", "draft": {"query": "fixture"}}}},
+    {"at_ms": 12, "channel": "session", "event": {"kind": "assistance_draft", "cursor": "elided", "draft": {"sequence": 10, "draft_id": "dadadadadadadadadadadadadadadada", "kind": "search", "draft": {"query": "fixture"}}}},
+    {"at_ms": 13, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_drain": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a", "ack_through": 8, "limit": 8}}}},
+    {"at_ms": 13, "channel": "pipe", "reply": {"status": "assistance_drained", "drafts": [{"sequence": 9, "draft_id": "d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9", "kind": "search", "draft": {"query": "fixture"}}, {"sequence": 10, "draft_id": "dadadadadadadadadadadadadadadada", "kind": "search", "draft": {"query": "fixture"}}], "next": null}},
+    {"at_ms": 14, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_drain": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a", "ack_through": 12, "limit": 8}}}},
+    {"at_ms": 14, "channel": "pipe", "reply": {"status": "failure", "code": "assistance_ack_ahead"}},
+    {"at_ms": 15, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_drain": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a", "ack_through": 10, "limit": 8}}}},
+    {"at_ms": 15, "channel": "pipe", "reply": {"status": "assistance_drained", "drafts": [], "next": null}},
+    {"at_ms": 16, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_drain": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a", "ack_through": null, "limit": 9}}}},
+    {"at_ms": 16, "channel": "pipe", "reply": {"status": "failure", "code": "assistance_drain_limit_invalid"}}
+   ],
+   "expected": {
+    "queued": 0,
+    "redelivered_events": 0,
+    "next_sequence": 11
+   }
+  },
+  {
+   "name": "session_buffer_overflow_resync",
+   "rule": "Overflow drops the session buffer, emits one resync, re-drains",
+   "transcript": [
+    {"at_ms": 0, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"window_open": {"label": "workspace A", "owner_pid": 4242}}}},
+    {"at_ms": 0, "channel": "pipe", "reply": {"status": "window_opened", "window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a", "ttl_ms": 30000, "service_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"}},
+    {"at_ms": 1, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_submit": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "kind": "search", "draft": {"$fill_bytes": 262144}, "submitter": "codex"}}}},
+    {"at_ms": 1, "channel": "pipe", "reply": {"status": "assistance_queued", "draft_id": "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1", "queued": 1}},
+    {"at_ms": 2, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_submit": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "kind": "search", "draft": {"$fill_bytes": 262144}, "submitter": "codex"}}}},
+    {"at_ms": 2, "channel": "pipe", "reply": {"status": "assistance_queued", "draft_id": "d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2", "queued": 2}},
+    {"at_ms": 3, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_submit": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "kind": "search", "draft": {"$fill_bytes": 262144}, "submitter": "codex"}}}},
+    {"at_ms": 3, "channel": "pipe", "reply": {"status": "assistance_queued", "draft_id": "d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3", "queued": 3}},
+    {"at_ms": 4, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_submit": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "kind": "search", "draft": {"$fill_bytes": 262144}, "submitter": "codex"}}}},
+    {"at_ms": 4, "channel": "pipe", "reply": {"status": "assistance_queued", "draft_id": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4", "queued": 4}},
+    {"at_ms": 5, "channel": "session", "send": {"id": "02020202020202020202020202020202", "request": {"subscribe": {"topics": ["assistance"]}}}},
+    {"at_ms": 5, "channel": "session", "reply": {"id": "02020202020202020202020202020202", "outcome": {"status": "subscribed", "cursor": "elided"}}},
+    {"at_ms": 5, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_drain": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a", "ack_through": null, "limit": 8}}}},
+    {"at_ms": 5, "channel": "pipe", "reply": {"status": "assistance_drained", "drafts": [{"sequence": 1, "draft_id": "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1", "kind": "search", "draft": {"$fill_bytes": 262144}}, {"sequence": 2, "draft_id": "d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2", "kind": "search", "draft": {"$fill_bytes": 262144}}, {"sequence": 3, "draft_id": "d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3", "kind": "search", "draft": {"$fill_bytes": 262144}}, {"sequence": 4, "draft_id": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4", "kind": "search", "draft": {"$fill_bytes": 262144}}], "next": null}},
+    {"at_ms": 5, "harness": "editor_stops_reading"},
+    {"at_ms": 6, "harness": "session_event_buffer_exceeds", "bytes_limit": 1048576},
+    {"at_ms": 7, "channel": "session", "event": {"kind": "resync", "reason": "overflow"}},
+    {"at_ms": 7, "harness": "editor_resumes_reading"},
+    {"at_ms": 7, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_drain": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a", "ack_through": null, "limit": 8}}}},
+    {"at_ms": 7, "channel": "pipe", "reply": {"status": "assistance_drained", "drafts": [{"sequence": 1, "draft_id": "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1", "kind": "search", "draft": {"$fill_bytes": 262144}}, {"sequence": 2, "draft_id": "d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2", "kind": "search", "draft": {"$fill_bytes": 262144}}, {"sequence": 3, "draft_id": "d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3", "kind": "search", "draft": {"$fill_bytes": 262144}}, {"sequence": 4, "draft_id": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4", "kind": "search", "draft": {"$fill_bytes": 262144}}], "next": null}},
+    {"at_ms": 7, "channel": "session", "event": {"kind": "assistance_draft", "cursor": "elided", "draft": {"sequence": 1, "draft_id": "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1", "kind": "search", "draft": {"$fill_bytes": 262144}}}},
+    {"at_ms": 7, "channel": "session", "event": {"kind": "assistance_draft", "cursor": "elided", "draft": {"sequence": 2, "draft_id": "d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2", "kind": "search", "draft": {"$fill_bytes": 262144}}}},
+    {"at_ms": 7, "channel": "session", "event": {"kind": "assistance_draft", "cursor": "elided", "draft": {"sequence": 3, "draft_id": "d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3", "kind": "search", "draft": {"$fill_bytes": 262144}}}},
+    {"at_ms": 7, "channel": "session", "event": {"kind": "assistance_draft", "cursor": "elided", "draft": {"sequence": 4, "draft_id": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4", "kind": "search", "draft": {"$fill_bytes": 262144}}}}
+   ],
+   "expected": {
+    "resync_events": 1,
+    "lost_drafts": 0,
+    "duplicate_identity": "sequence and draft_id"
+   }
+  },
+  {
+   "name": "cross_window_refused",
+   "rule": "Another window's lease or cursor never delivers its drafts",
+   "transcript": [
+    {"at_ms": 0, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"window_open": {"label": "workspace A", "owner_pid": 4242}}}},
+    {"at_ms": 0, "channel": "pipe", "reply": {"status": "window_opened", "window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a", "ttl_ms": 30000, "service_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"}},
+    {"at_ms": 1, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"window_open": {"label": "workspace B", "owner_pid": 4242}}}},
+    {"at_ms": 1, "channel": "pipe", "reply": {"status": "window_opened", "window_id": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0", "lease": "1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b", "ttl_ms": 30000, "service_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"}},
+    {"at_ms": 2, "channel": "mcp", "send": {"method": {"assistance_submit": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "kind": "search", "draft": {"query": "fixture"}, "submitter": "codex"}}}},
+    {"at_ms": 2, "channel": "mcp", "reply": {"status": "assistance_queued", "draft_id": "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1", "queued": 1}},
+    {"at_ms": 3, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_drain": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b", "ack_through": null, "limit": 8}}}},
+    {"at_ms": 3, "channel": "pipe", "reply": {"status": "failure", "code": "window_lease_invalid"}},
+    {"at_ms": 3, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_drain": {"window_id": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0", "lease": "1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b", "ack_through": null, "limit": 8}}}},
+    {"at_ms": 3, "channel": "pipe", "reply": {"status": "assistance_drained", "drafts": [], "next": null}},
+    {"at_ms": 4, "channel": "session", "send": {"id": "02020202020202020202020202020202", "request": {"subscribe": {"topics": ["assistance"], "cursor": {"service_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "native": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "project": null, "after": 0, "through": null}}}}}},
+    {"at_ms": 4, "channel": "session", "reply": {"id": "02020202020202020202020202020202", "outcome": {"status": "failed", "code": "event_cursor_scope_mismatch", "retryable": false}}}
+   ],
+   "expected": {
+    "queued_for": {"a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0": 1, "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0": 0}
+   }
+  },
+  {
+   "name": "handoff_publish_and_read",
+   "rule": "W8 + M12: published through the window session; reads do not consume",
+   "transcript": [
+    {"at_ms": 0, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"window_open": {"label": "workspace A", "owner_pid": 4242}}}},
+    {"at_ms": 0, "channel": "pipe", "reply": {"status": "window_opened", "window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a", "ttl_ms": 30000, "service_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"}},
+    {"at_ms": 0, "harness": "session_renews", "every_ms": 10000},
+    {"at_ms": 1, "channel": "session", "send": {"id": "02020202020202020202020202020202", "request": {"handoff_publish": {"handoff": {"kind": "studio", "draft_revision": 1}, "ttl_ms": 60000}}}},
+    {"at_ms": 1, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"handoff_publish": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a", "handoff": {"kind": "studio", "draft_revision": 1}, "ttl_ms": 60000}}}},
+    {"at_ms": 1, "channel": "pipe", "reply": {"status": "handoff_published", "handoff_id": "4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e", "expires_at_ms": 60001}},
+    {"at_ms": 1, "channel": "session", "reply": {"id": "02020202020202020202020202020202", "outcome": {"status": "handoff", "handoff_id": "4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e", "expires_at_ms": 60001}}},
+    {"at_ms": 2, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"explorer_handoff": {"handoff_id": "4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e"}}}},
+    {"at_ms": 2, "channel": "pipe", "reply": {"status": "explorer_handoff", "handoff": {"kind": "studio", "draft_revision": 1}}},
+    {"at_ms": 60000, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"explorer_handoff": {"handoff_id": "4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e"}}}},
+    {"at_ms": 60000, "channel": "pipe", "reply": {"status": "explorer_handoff", "handoff": {"kind": "studio", "draft_revision": 1}}},
+    {"at_ms": 60001, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"explorer_handoff": {"handoff_id": "4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e"}}}},
+    {"at_ms": 60001, "channel": "pipe", "reply": {"status": "failure", "code": "handoff_unknown"}}
+   ],
+   "expected": {
+    "handoffs": 0
+   }
+  },
+  {
+   "name": "handoff_limits",
+   "rule": "W8: ttl 1..=600000 ms, <= 64 KiB, <= 32 per window",
+   "transcript": [
+    {"at_ms": 0, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"window_open": {"label": "workspace A", "owner_pid": 4242}}}},
+    {"at_ms": 0, "channel": "pipe", "reply": {"status": "window_opened", "window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a", "ttl_ms": 30000, "service_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"}},
+    {"at_ms": 1, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"handoff_publish": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a", "handoff": {}, "ttl_ms": 600001}}}},
+    {"at_ms": 1, "channel": "pipe", "reply": {"status": "failure", "code": "handoff_ttl_invalid"}},
+    {"at_ms": 1, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"handoff_publish": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a", "handoff": {"$fill_bytes": 65537}, "ttl_ms": 1000}}}},
+    {"at_ms": 1, "channel": "pipe", "reply": {"status": "failure", "code": "handoff_oversize"}},
+    {"at_ms": 2, "harness": "handoffs_published", "window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "count": 32},
+    {"at_ms": 3, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"handoff_publish": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a", "handoff": {}, "ttl_ms": 1000}}}},
+    {"at_ms": 3, "channel": "pipe", "reply": {"status": "failure", "code": "handoff_capacity"}}
+   ],
+   "expected": {
+    "handoffs": 32
+   }
+  },
+  {
+   "name": "relay_refuses_lease_methods",
+   "rule": "Lease-bearing methods never cross the session control relay",
+   "transcript": [
+    {"at_ms": 0, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"window_open": {"label": "workspace A", "owner_pid": 4242}}}},
+    {"at_ms": 0, "channel": "pipe", "reply": {"status": "window_opened", "window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a", "ttl_ms": 30000, "service_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"}},
+    {"at_ms": 1, "channel": "session", "send": {"id": "02020202020202020202020202020202", "request": {"control": {"method": {"window_open": {"label": "x", "owner_pid": 1}}}}}},
+    {"at_ms": 1, "channel": "session", "reply": {"id": "02020202020202020202020202020202", "outcome": {"status": "failed", "code": "session_command_refused", "retryable": false}}},
+    {"at_ms": 1, "channel": "session", "send": {"id": "03030303030303030303030303030303", "request": {"control": {"method": {"window_renew": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"}}}}}},
+    {"at_ms": 1, "channel": "session", "reply": {"id": "03030303030303030303030303030303", "outcome": {"status": "failed", "code": "session_command_refused", "retryable": false}}},
+    {"at_ms": 1, "channel": "session", "send": {"id": "04040404040404040404040404040404", "request": {"control": {"method": {"window_close": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"}}}}}},
+    {"at_ms": 1, "channel": "session", "reply": {"id": "04040404040404040404040404040404", "outcome": {"status": "failed", "code": "session_command_refused", "retryable": false}}},
+    {"at_ms": 1, "channel": "session", "send": {"id": "05050505050505050505050505050505", "request": {"control": {"method": {"window_scope_grant": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", "selection": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "expected_catalog_revision": 12, "index_ids": ["idx_01010101010101010101010101010101"], "project_ids": ["prj_02020202020202020202020202020202"]}}}}}}},
+    {"at_ms": 1, "channel": "session", "reply": {"id": "05050505050505050505050505050505", "outcome": {"status": "failed", "code": "session_command_refused", "retryable": false}}},
+    {"at_ms": 1, "channel": "session", "send": {"id": "06060606060606060606060606060606", "request": {"control": {"method": {"window_scope_release": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"}}}}}},
+    {"at_ms": 1, "channel": "session", "reply": {"id": "06060606060606060606060606060606", "outcome": {"status": "failed", "code": "session_command_refused", "retryable": false}}},
+    {"at_ms": 1, "channel": "session", "send": {"id": "07070707070707070707070707070707", "request": {"control": {"method": {"assistance_drain": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", "ack_through": null, "limit": 8}}}}}},
+    {"at_ms": 1, "channel": "session", "reply": {"id": "07070707070707070707070707070707", "outcome": {"status": "failed", "code": "session_command_refused", "retryable": false}}},
+    {"at_ms": 1, "channel": "session", "send": {"id": "08080808080808080808080808080808", "request": {"control": {"method": {"handoff_publish": {"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "lease": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", "handoff": {}, "ttl_ms": 1000}}}}}},
+    {"at_ms": 1, "channel": "session", "reply": {"id": "08080808080808080808080808080808", "outcome": {"status": "failed", "code": "session_command_refused", "retryable": false}}},
+    {"at_ms": 2, "channel": "session", "send": {"id": "09090909090909090909090909090909", "request": {"control": {"method": {"assistance_windows": {}}}}}},
+    {"at_ms": 2, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"assistance_windows": {}}}},
+    {"at_ms": 2, "channel": "pipe", "reply": {"status": "assistance_windows", "windows": [{"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "label": "workspace A", "accepting": true, "queued": 0}]}},
+    {"at_ms": 2, "channel": "session", "reply": {"id": "09090909090909090909090909090909", "outcome": {"status": "control", "response": {"status": "assistance_windows", "windows": [{"window_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0", "label": "workspace A", "accepting": true, "queued": 0}]}}}}
+   ],
+   "expected": {
+    "pipe_requests_from_relay": ["assistance_windows"]
+   }
+  }
+ ]
+}

@@ -1,0 +1,621 @@
+{
+ "schema": "airk.split-fixture.i1-request-recovery/1",
+ "contract": "docs/split/contracts.md \u00a72.4; split plan \u00a75.2",
+ "generator": "fixtures/split/i1/request_recovery.py",
+ "rules": [
+  "Reconnect never mints a new key and never replays an uncertain mutation.",
+  "A new key is minted only right after a definitive M5 refusal proving nothing was journaled: client_request_key_expired, client_request_journal_full.",
+  "M7 resubmits the exact saved key by nonce; the registry returns the accepted job or refuses.",
+  "M5 order: identical saved request -> duplicate:true; same nonce, other bytes -> client_request_key_conflict; stale namespace or epoch -> client_request_key_expired; full -> client_request_journal_full.",
+  "Registry refusals keep their existing wire spelling KeyConflict and KeyExpired."
+ ],
+ "outcomes": [
+  "submitted",
+  "accepted",
+  "completed",
+  "refused",
+  "unknown"
+ ],
+ "definitive_m5_refusals": [
+  "client_request_key_expired",
+  "client_request_journal_full"
+ ],
+ "steps": {
+  "send": "client writes one ControlRequest on a new owner-pipe connection",
+  "reply": "client reads the service's ControlResponse",
+  "reply_lost": "service committed this response; the connection dropped before the client read it",
+  "connection_lost_before_durable": "connection dropped before M5 was durable; nothing journaled",
+  "connection_lost_before_effect": "connection dropped before the registry saw the submission",
+  "client_mints_key": "client generates caller and key; `after` names the refusal that allows it",
+  "classify": "client-visible state at this point"
+ },
+ "cases": [
+  {
+   "name": "disconnect_before_acceptance",
+   "situation": "disconnect before acceptance",
+   "transcript": [
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": "request_epoch"}},
+    {"step": "reply", "frame": {"status": "request_epoch", "namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7}},
+    {"step": "client_mints_key", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_prepare": {"caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "request": {"enqueue": {"project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "kind": "index"}}}}}},
+    {"step": "connection_lost_before_durable"},
+    {"step": "classify", "outcome": "submitted"},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_list": {}}}},
+    {"step": "reply", "frame": {"status": "client_requests", "pending": [], "capacity": 64}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_prepare": {"caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "request": {"enqueue": {"project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "kind": "index"}}}}}},
+    {"step": "reply", "frame": {"status": "client_request_prepared", "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "duplicate": false}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_submit": {"nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}}}},
+    {"step": "reply", "frame": {"status": "job", "job": {"id": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "state": "pending", "fencing_generation": 1, "attempts": 0, "outcome": null}}}
+   ],
+   "expected": {
+    "outcome": "accepted",
+    "retry_may_reuse_key": true,
+    "new_key_allowed": false,
+    "journal_entry": true,
+    "accepted_jobs_for_key": 1
+   },
+   "note": "The client resends the identical M5; it never mints a key because the first reply is missing.",
+   "grounding": [
+    "client_requests.rs:213-257"
+   ]
+  },
+  {
+   "name": "disconnect_before_acceptance_epoch_rotated",
+   "situation": "disconnect before acceptance, then stale epoch",
+   "transcript": [
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": "request_epoch"}},
+    {"step": "reply", "frame": {"status": "request_epoch", "namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7}},
+    {"step": "client_mints_key", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_prepare": {"caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "request": {"enqueue": {"project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "kind": "index"}}}}}},
+    {"step": "connection_lost_before_durable"},
+    {"step": "epoch_rotates", "epoch": 8},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_prepare": {"caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "request": {"enqueue": {"project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "kind": "index"}}}}}},
+    {"step": "reply", "frame": {"status": "failure", "code": "client_request_key_expired"}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": "request_epoch"}},
+    {"step": "reply", "frame": {"status": "request_epoch", "namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 8}},
+    {"step": "client_mints_key", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 8, "nonce": "0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d"}, "after": "client_request_key_expired"},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_prepare": {"caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 8, "nonce": "0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d"}, "request": {"enqueue": {"project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 8, "nonce": "0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d"}, "kind": "index"}}}}}},
+    {"step": "reply", "frame": {"status": "client_request_prepared", "nonce": "0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "duplicate": false}}
+   ],
+   "expected": {
+    "outcome": "accepted",
+    "retry_may_reuse_key": false,
+    "new_key_allowed": true,
+    "journal_entry": true,
+    "accepted_jobs_for_key": 0
+   },
+   "note": "M5 checks the nonce before the epoch; a stale key with no journal entry is a definitive refusal, so only then may the client mint a new key.",
+   "grounding": [
+    "jobs.rs:636-729"
+   ]
+  },
+  {
+   "name": "disconnect_after_durable_acceptance",
+   "situation": "disconnect after durable acceptance",
+   "transcript": [
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": "request_epoch"}},
+    {"step": "reply", "frame": {"status": "request_epoch", "namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7}},
+    {"step": "client_mints_key", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_prepare": {"caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "request": {"enqueue": {"project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "kind": "index"}}}}}},
+    {"step": "reply_lost", "frame": {"status": "client_request_prepared", "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "duplicate": false}},
+    {"step": "classify", "outcome": "submitted"},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_prepare": {"caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "request": {"enqueue": {"project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "kind": "index"}}}}}},
+    {"step": "reply", "frame": {"status": "client_request_prepared", "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "duplicate": true}},
+    {"step": "classify", "outcome": "accepted"},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_submit": {"nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}}}},
+    {"step": "reply", "frame": {"status": "job", "job": {"id": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "state": "pending", "fencing_generation": 1, "attempts": 0, "outcome": null}}}
+   ],
+   "expected": {
+    "outcome": "accepted",
+    "retry_may_reuse_key": true,
+    "new_key_allowed": false,
+    "journal_entry": true,
+    "accepted_jobs_for_key": 1
+   },
+   "note": "The resent identical M5 answers duplicate:true.",
+   "grounding": [
+    "client_requests.rs:213-257"
+   ]
+  },
+  {
+   "name": "disconnect_after_submit_reply_lost",
+   "situation": "disconnect after durable acceptance (submit reply lost)",
+   "transcript": [
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": "request_epoch"}},
+    {"step": "reply", "frame": {"status": "request_epoch", "namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7}},
+    {"step": "client_mints_key", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_prepare": {"caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "request": {"enqueue": {"project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "kind": "index"}}}}}},
+    {"step": "reply", "frame": {"status": "client_request_prepared", "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "duplicate": false}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_submit": {"nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}}}},
+    {"step": "reply_lost", "frame": {"status": "job", "job": {"id": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "state": "pending", "fencing_generation": 1, "attempts": 0, "outcome": null}}},
+    {"step": "classify", "outcome": "unknown"},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"request_receipt": {"caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}}}}},
+    {"step": "reply", "frame": {"status": "request_receipt", "job": {"id": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "state": "pending", "fencing_generation": 1, "attempts": 0, "outcome": null}, "expired": false}}
+   ],
+   "expected": {
+    "outcome": "accepted",
+    "retry_may_reuse_key": true,
+    "new_key_allowed": false,
+    "journal_entry": true,
+    "accepted_jobs_for_key": 1
+   },
+   "note": "Receipt lookup recovers the accepted job; nothing is resent.",
+   "grounding": [
+    "jobs.rs:243-258"
+   ]
+  },
+  {
+   "name": "disconnect_after_submit_not_yet_accepted",
+   "situation": "disconnect after durable acceptance (submit lost)",
+   "transcript": [
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": "request_epoch"}},
+    {"step": "reply", "frame": {"status": "request_epoch", "namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7}},
+    {"step": "client_mints_key", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_prepare": {"caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "request": {"enqueue": {"project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "kind": "index"}}}}}},
+    {"step": "reply", "frame": {"status": "client_request_prepared", "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "duplicate": false}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_submit": {"nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}}}},
+    {"step": "connection_lost_before_effect"},
+    {"step": "classify", "outcome": "unknown"},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"request_receipt": {"caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}}}}},
+    {"step": "reply", "frame": {"status": "request_receipt", "job": null, "expired": false}},
+    {"step": "classify", "outcome": "accepted"},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_submit": {"nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}}}},
+    {"step": "reply", "frame": {"status": "job", "job": {"id": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "state": "pending", "fencing_generation": 1, "attempts": 0, "outcome": null}}}
+   ],
+   "expected": {
+    "outcome": "accepted",
+    "retry_may_reuse_key": true,
+    "new_key_allowed": false,
+    "journal_entry": true,
+    "accepted_jobs_for_key": 1
+   },
+   "note": "job:null, expired:false: resend M7 with the same nonce; the saved key makes it idempotent.",
+   "grounding": [
+    "jobs.rs:243-258",
+    "jobs.rs:636-660"
+   ]
+  },
+  {
+   "name": "disconnect_after_completion",
+   "situation": "disconnect after completion",
+   "transcript": [
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": "request_epoch"}},
+    {"step": "reply", "frame": {"status": "request_epoch", "namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7}},
+    {"step": "client_mints_key", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_prepare": {"caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "request": {"enqueue": {"project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "kind": "index"}}}}}},
+    {"step": "reply", "frame": {"status": "client_request_prepared", "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "duplicate": false}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_submit": {"nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}}}},
+    {"step": "reply_lost", "frame": {"status": "job", "job": {"id": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "state": "pending", "fencing_generation": 1, "attempts": 0, "outcome": null}}},
+    {"step": "job_finishes", "state": "succeeded"},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"request_receipt": {"caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}}}}},
+    {"step": "reply", "frame": {"status": "request_receipt", "job": {"id": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "state": "succeeded", "fencing_generation": 1, "attempts": 1, "outcome": {"state": "succeeded", "revision": null}}, "expired": false}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_forget": {"nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}}}},
+    {"step": "reply", "frame": {"status": "client_request_forgotten", "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b", "existed": true}}
+   ],
+   "expected": {
+    "outcome": "completed",
+    "retry_may_reuse_key": false,
+    "new_key_allowed": false,
+    "journal_entry": false,
+    "accepted_jobs_for_key": 1
+   },
+   "note": "A terminal receipt is displayed; forgetting never cancels work.",
+   "grounding": [
+    "jobs.rs:243-258",
+    "client_requests.rs:354-367"
+   ]
+  },
+  {
+   "name": "client_death_before_submit",
+   "situation": "client death",
+   "transcript": [
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": "request_epoch"}},
+    {"step": "reply", "frame": {"status": "request_epoch", "namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7}},
+    {"step": "client_mints_key", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_prepare": {"caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "request": {"enqueue": {"project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "kind": "index"}}}}}},
+    {"step": "reply", "frame": {"status": "client_request_prepared", "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "duplicate": false}},
+    {"step": "client_dies"},
+    {"step": "client_starts", "surface": "session"},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_list": {}}}},
+    {"step": "reply", "frame": {"status": "client_requests", "pending": [{"nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index"}], "capacity": 64}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_submit": {"nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}}}},
+    {"step": "reply", "frame": {"status": "job", "job": {"id": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "state": "pending", "fencing_generation": 1, "attempts": 0, "outcome": null}}}
+   ],
+   "expected": {
+    "outcome": "accepted",
+    "retry_may_reuse_key": true,
+    "new_key_allowed": false,
+    "journal_entry": true,
+    "accepted_jobs_for_key": 1
+   },
+   "note": "Another surface finds the entry by M6 and submits the saved request by nonce.",
+   "grounding": [
+    "client_requests.rs:301-352"
+   ]
+  },
+  {
+   "name": "client_death_after_submit",
+   "situation": "client death",
+   "transcript": [
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": "request_epoch"}},
+    {"step": "reply", "frame": {"status": "request_epoch", "namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7}},
+    {"step": "client_mints_key", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_prepare": {"caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "request": {"enqueue": {"project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "kind": "index"}}}}}},
+    {"step": "reply", "frame": {"status": "client_request_prepared", "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "duplicate": false}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_submit": {"nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}}}},
+    {"step": "reply_lost", "frame": {"status": "job", "job": {"id": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "state": "pending", "fencing_generation": 1, "attempts": 0, "outcome": null}}},
+    {"step": "client_dies"},
+    {"step": "client_starts", "surface": "admin"},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_list": {}}}},
+    {"step": "reply", "frame": {"status": "client_requests", "pending": [{"nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index"}], "capacity": 64}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_submit": {"nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}}}},
+    {"step": "reply", "frame": {"status": "job", "job": {"id": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "state": "pending", "fencing_generation": 1, "attempts": 0, "outcome": null}}}
+   ],
+   "expected": {
+    "outcome": "accepted",
+    "retry_may_reuse_key": true,
+    "new_key_allowed": false,
+    "journal_entry": true,
+    "accepted_jobs_for_key": 1
+   },
+   "note": "The new surface lacks caller and key, so it resubmits by nonce: the saved key returns the same job.",
+   "grounding": [
+    "jobs.rs:636-660"
+   ]
+  },
+  {
+   "name": "service_restart_after_submit",
+   "situation": "service restart",
+   "transcript": [
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": "request_epoch"}},
+    {"step": "reply", "frame": {"status": "request_epoch", "namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7}},
+    {"step": "client_mints_key", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_prepare": {"caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "request": {"enqueue": {"project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "kind": "index"}}}}}},
+    {"step": "reply", "frame": {"status": "client_request_prepared", "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "duplicate": false}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_submit": {"nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}}}},
+    {"step": "service_restarts", "service_instance": "e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2"},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"request_receipt": {"caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}}}}},
+    {"step": "reply", "frame": {"status": "failure", "code": "service_instance_changed"}},
+    {"step": "observe_health", "service_instance": "e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2"},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2", "method": {"request_receipt": {"caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}}}}},
+    {"step": "reply", "frame": {"status": "request_receipt", "job": {"id": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "state": "pending", "fencing_generation": 1, "attempts": 0, "outcome": null}, "expired": false}}
+   ],
+   "expected": {
+    "outcome": "accepted",
+    "retry_may_reuse_key": true,
+    "new_key_allowed": false,
+    "journal_entry": true,
+    "accepted_jobs_for_key": 1
+   },
+   "note": "The stale instance fence refuses before dispatch; the journal and receipts are durable.",
+   "grounding": [
+    "service_runtime.rs:143-196",
+    "jobs.rs:243-258"
+   ]
+  },
+  {
+   "name": "service_restart_before_submit",
+   "situation": "service restart",
+   "transcript": [
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": "request_epoch"}},
+    {"step": "reply", "frame": {"status": "request_epoch", "namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7}},
+    {"step": "client_mints_key", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_prepare": {"caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "request": {"enqueue": {"project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "kind": "index"}}}}}},
+    {"step": "reply", "frame": {"status": "client_request_prepared", "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "duplicate": false}},
+    {"step": "service_restarts", "service_instance": "e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2"},
+    {"step": "observe_health", "service_instance": "e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2"},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2", "method": {"client_request_list": {}}}},
+    {"step": "reply", "frame": {"status": "client_requests", "pending": [{"nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index"}], "capacity": 64}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2", "method": {"client_request_submit": {"nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}}}},
+    {"step": "reply", "frame": {"status": "job", "job": {"id": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "state": "pending", "fencing_generation": 1, "attempts": 0, "outcome": null}}}
+   ],
+   "expected": {
+    "outcome": "accepted",
+    "retry_may_reuse_key": true,
+    "new_key_allowed": false,
+    "journal_entry": true,
+    "accepted_jobs_for_key": 1
+   },
+   "note": "A reconnect never replays M5 with a new key.",
+   "grounding": [
+    "client_requests.rs:213-257"
+   ]
+  },
+  {
+   "name": "duplicate_key_same_arguments",
+   "situation": "duplicate key, same arguments",
+   "transcript": [
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": "request_epoch"}},
+    {"step": "reply", "frame": {"status": "request_epoch", "namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7}},
+    {"step": "client_mints_key", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_prepare": {"caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "request": {"enqueue": {"project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "kind": "index"}}}}}},
+    {"step": "reply", "frame": {"status": "client_request_prepared", "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "duplicate": false}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_prepare": {"caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "request": {"enqueue": {"project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "kind": "index"}}}}}},
+    {"step": "reply", "frame": {"status": "client_request_prepared", "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "duplicate": true}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_submit": {"nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}}}},
+    {"step": "reply", "frame": {"status": "job", "job": {"id": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "state": "pending", "fencing_generation": 1, "attempts": 0, "outcome": null}}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_submit": {"nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}}}},
+    {"step": "reply", "frame": {"status": "job", "job": {"id": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "state": "pending", "fencing_generation": 1, "attempts": 0, "outcome": null}}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"enqueue": {"project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "kind": "index"}}}},
+    {"step": "reply", "frame": {"status": "job", "job": {"id": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "state": "pending", "fencing_generation": 1, "attempts": 0, "outcome": null}}}
+   ],
+   "expected": {
+    "outcome": "accepted",
+    "retry_may_reuse_key": true,
+    "new_key_allowed": false,
+    "journal_entry": true,
+    "accepted_jobs_for_key": 1
+   },
+   "note": "Every repeat returns the one accepted job.",
+   "grounding": [
+    "jobs.rs:638-660"
+   ]
+  },
+  {
+   "name": "same_key_different_arguments_journal",
+   "situation": "same key, different arguments",
+   "transcript": [
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": "request_epoch"}},
+    {"step": "reply", "frame": {"status": "request_epoch", "namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7}},
+    {"step": "client_mints_key", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_prepare": {"caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "request": {"enqueue": {"project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "kind": "index"}}}}}},
+    {"step": "reply", "frame": {"status": "client_request_prepared", "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "duplicate": false}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_prepare": {"caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "request": {"enqueue": {"project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "kind": "verify"}}}}}},
+    {"step": "reply", "frame": {"status": "failure", "code": "client_request_key_conflict"}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_list": {}}}},
+    {"step": "reply", "frame": {"status": "client_requests", "pending": [{"nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index"}], "capacity": 64}}
+   ],
+   "expected": {
+    "outcome": "refused",
+    "retry_may_reuse_key": false,
+    "new_key_allowed": false,
+    "journal_entry": true,
+    "accepted_jobs_for_key": 0
+   },
+   "note": "Fail closed; the original journal entry is unchanged.",
+   "grounding": [
+    "client_requests.rs:254 (persist_noclobber)"
+   ]
+  },
+  {
+   "name": "same_key_different_arguments_registry",
+   "situation": "same key, different arguments",
+   "transcript": [
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": "request_epoch"}},
+    {"step": "reply", "frame": {"status": "request_epoch", "namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7}},
+    {"step": "client_mints_key", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_prepare": {"caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "request": {"enqueue": {"project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "kind": "index"}}}}}},
+    {"step": "reply", "frame": {"status": "client_request_prepared", "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "duplicate": false}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_submit": {"nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}}}},
+    {"step": "reply", "frame": {"status": "job", "job": {"id": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "state": "pending", "fencing_generation": 1, "attempts": 0, "outcome": null}}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"enqueue": {"project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "kind": "verify"}}}},
+    {"step": "reply", "frame": {"status": "failure", "code": "KeyConflict"}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"request_receipt": {"caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}}}}},
+    {"step": "reply", "frame": {"status": "request_receipt", "job": {"id": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "state": "pending", "fencing_generation": 1, "attempts": 0, "outcome": null}, "expired": false}}
+   ],
+   "expected": {
+    "outcome": "refused",
+    "retry_may_reuse_key": false,
+    "new_key_allowed": false,
+    "journal_entry": true,
+    "accepted_jobs_for_key": 1
+   },
+   "note": "Existing registry spelling (Debug format) is kept; the original is shown by receipt.",
+   "grounding": [
+    "jobs.rs:653-657",
+    "service_management.rs:500"
+   ]
+  },
+  {
+   "name": "prepare_key_mismatch",
+   "situation": "same key, different arguments",
+   "transcript": [
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": "request_epoch"}},
+    {"step": "reply", "frame": {"status": "request_epoch", "namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7}},
+    {"step": "client_mints_key", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_prepare": {"caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d"}, "request": {"enqueue": {"project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "kind": "index"}}}}}},
+    {"step": "reply", "frame": {"status": "failure", "code": "client_request_key_mismatch"}}
+   ],
+   "expected": {
+    "outcome": "refused",
+    "retry_may_reuse_key": false,
+    "new_key_allowed": false,
+    "journal_entry": false,
+    "accepted_jobs_for_key": 0
+   },
+   "note": "M5's caller and key must equal those inside its request.",
+   "grounding": []
+  },
+  {
+   "name": "stale_epoch_journaled_not_submitted",
+   "situation": "stale epoch",
+   "transcript": [
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": "request_epoch"}},
+    {"step": "reply", "frame": {"status": "request_epoch", "namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7}},
+    {"step": "client_mints_key", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_prepare": {"caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "request": {"enqueue": {"project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "kind": "index"}}}}}},
+    {"step": "reply", "frame": {"status": "client_request_prepared", "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "duplicate": false}},
+    {"step": "epoch_rotates", "epoch": 8},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_submit": {"nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}}}},
+    {"step": "reply", "frame": {"status": "failure", "code": "KeyExpired"}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"request_receipt": {"caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}}}}},
+    {"step": "reply", "frame": {"status": "request_receipt", "job": null, "expired": true}},
+    {"step": "classify", "outcome": "unknown"}
+   ],
+   "expected": {
+    "outcome": "unknown",
+    "retry_may_reuse_key": false,
+    "new_key_allowed": false,
+    "journal_entry": true,
+    "accepted_jobs_for_key": 0
+   },
+   "note": "KeyExpired cannot distinguish never accepted from accepted and pruned (the journal records no submission), so the outcome is unknown and nothing is replayed.",
+   "grounding": [
+    "jobs.rs:390-421",
+    "jobs.rs:723-729"
+   ]
+  },
+  {
+   "name": "stale_epoch_already_accepted",
+   "situation": "stale epoch",
+   "transcript": [
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": "request_epoch"}},
+    {"step": "reply", "frame": {"status": "request_epoch", "namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7}},
+    {"step": "client_mints_key", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_prepare": {"caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "request": {"enqueue": {"project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "kind": "index"}}}}}},
+    {"step": "reply", "frame": {"status": "client_request_prepared", "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "duplicate": false}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_submit": {"nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}}}},
+    {"step": "reply_lost", "frame": {"status": "job", "job": {"id": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "state": "pending", "fencing_generation": 1, "attempts": 0, "outcome": null}}},
+    {"step": "epoch_rotates", "epoch": 8},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"request_receipt": {"caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}}}}},
+    {"step": "reply", "frame": {"status": "request_receipt", "job": {"id": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "state": "pending", "fencing_generation": 1, "attempts": 0, "outcome": null}, "expired": false}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_submit": {"nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}}}},
+    {"step": "reply", "frame": {"status": "job", "job": {"id": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "state": "pending", "fencing_generation": 1, "attempts": 0, "outcome": null}}}
+   ],
+   "expected": {
+    "outcome": "accepted",
+    "retry_may_reuse_key": true,
+    "new_key_allowed": false,
+    "journal_entry": true,
+    "accepted_jobs_for_key": 1
+   },
+   "note": "The accepted key is looked up before the epoch check.",
+   "grounding": [
+    "jobs.rs:638-660",
+    "jobs.rs:243-258"
+   ]
+  },
+  {
+   "name": "receipt_lookup_accepted",
+   "situation": "receipt lookup: accepted",
+   "transcript": [
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": "request_epoch"}},
+    {"step": "reply", "frame": {"status": "request_epoch", "namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7}},
+    {"step": "client_mints_key", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_prepare": {"caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "request": {"enqueue": {"project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "kind": "index"}}}}}},
+    {"step": "reply", "frame": {"status": "client_request_prepared", "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "duplicate": false}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_submit": {"nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}}}},
+    {"step": "reply", "frame": {"status": "job", "job": {"id": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "state": "pending", "fencing_generation": 1, "attempts": 0, "outcome": null}}},
+    {"step": "job_starts"},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"request_receipt": {"caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}}}}},
+    {"step": "reply", "frame": {"status": "request_receipt", "job": {"id": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "state": "running", "fencing_generation": 1, "attempts": 1, "outcome": null}, "expired": false}}
+   ],
+   "expected": {
+    "outcome": "accepted",
+    "retry_may_reuse_key": true,
+    "new_key_allowed": false,
+    "journal_entry": true,
+    "accepted_jobs_for_key": 1
+   },
+   "note": "Pending or running is accepted.",
+   "grounding": [
+    "jobs.rs:243-258"
+   ]
+  },
+  {
+   "name": "receipt_lookup_completed",
+   "situation": "receipt lookup: completed",
+   "transcript": [
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": "request_epoch"}},
+    {"step": "reply", "frame": {"status": "request_epoch", "namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7}},
+    {"step": "client_mints_key", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_prepare": {"caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "request": {"enqueue": {"project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "kind": "index"}}}}}},
+    {"step": "reply", "frame": {"status": "client_request_prepared", "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "duplicate": false}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_submit": {"nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}}}},
+    {"step": "reply", "frame": {"status": "job", "job": {"id": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "state": "pending", "fencing_generation": 1, "attempts": 0, "outcome": null}}},
+    {"step": "job_finishes", "state": "failed"},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"request_receipt": {"caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}}}}},
+    {"step": "reply", "frame": {"status": "request_receipt", "job": {"id": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "state": "failed", "fencing_generation": 1, "attempts": 1, "outcome": {"state": "failed", "code": "fixture_failure"}}, "expired": false}}
+   ],
+   "expected": {
+    "outcome": "completed",
+    "retry_may_reuse_key": false,
+    "new_key_allowed": false,
+    "journal_entry": true,
+    "accepted_jobs_for_key": 1
+   },
+   "note": "A failed terminal outcome is completed, not unknown.",
+   "grounding": [
+    "jobs.rs:243-258"
+   ]
+  },
+  {
+   "name": "receipt_lookup_unknown",
+   "situation": "receipt lookup: unknown",
+   "transcript": [
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": "request_epoch"}},
+    {"step": "reply", "frame": {"status": "request_epoch", "namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7}},
+    {"step": "client_mints_key", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_prepare": {"caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "request": {"enqueue": {"project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "kind": "index"}}}}}},
+    {"step": "reply", "frame": {"status": "client_request_prepared", "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "duplicate": false}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_submit": {"nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}}}},
+    {"step": "reply_lost", "frame": {"status": "job", "job": {"id": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "state": "pending", "fencing_generation": 1, "attempts": 0, "outcome": null}}},
+    {"step": "job_finishes", "state": "succeeded"},
+    {"step": "receipt_pruned"},
+    {"step": "epoch_rotates", "epoch": 8},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"request_receipt": {"caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}}}}},
+    {"step": "reply", "frame": {"status": "request_receipt", "job": null, "expired": true}}
+   ],
+   "expected": {
+    "outcome": "unknown",
+    "retry_may_reuse_key": false,
+    "new_key_allowed": false,
+    "journal_entry": true,
+    "accepted_jobs_for_key": 1
+   },
+   "note": "A pruned receipt is unknown, never success.",
+   "grounding": [
+    "jobs.rs:243-258"
+   ]
+  },
+  {
+   "name": "management_timeout_on_submit",
+   "situation": "disconnect after durable acceptance (actor timeout)",
+   "transcript": [
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": "request_epoch"}},
+    {"step": "reply", "frame": {"status": "request_epoch", "namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7}},
+    {"step": "client_mints_key", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_prepare": {"caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "request": {"enqueue": {"project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "kind": "index"}}}}}},
+    {"step": "reply", "frame": {"status": "client_request_prepared", "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "duplicate": false}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_submit": {"nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}}}},
+    {"step": "reply", "frame": {"status": "failure", "code": "registry_response_unknown_retry_with_key"}},
+    {"step": "classify", "outcome": "unknown"},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_submit": {"nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}}}},
+    {"step": "reply", "frame": {"status": "job", "job": {"id": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2", "project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "kind": "index", "state": "pending", "fencing_generation": 1, "attempts": 0, "outcome": null}}}
+   ],
+   "expected": {
+    "outcome": "accepted",
+    "retry_may_reuse_key": true,
+    "new_key_allowed": false,
+    "journal_entry": true,
+    "accepted_jobs_for_key": 1
+   },
+   "note": "The code names its own recovery: retry with the same key.",
+   "grounding": [
+    "service_management.rs:1610-1632"
+   ]
+  },
+  {
+   "name": "journal_full",
+   "situation": "journal capacity",
+   "transcript": [
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": "request_epoch"}},
+    {"step": "reply", "frame": {"status": "request_epoch", "namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7}},
+    {"step": "client_mints_key", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}},
+    {"step": "send", "frame": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"client_request_prepare": {"caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "request": {"enqueue": {"project": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "caller": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "key": {"namespace": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "epoch": 7, "nonce": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}, "kind": "index"}}}}}},
+    {"step": "reply", "frame": {"status": "failure", "code": "client_request_journal_full"}}
+   ],
+   "expected": {
+    "outcome": "refused",
+    "retry_may_reuse_key": true,
+    "new_key_allowed": true,
+    "journal_entry": false,
+    "accepted_jobs_for_key": 0
+   },
+   "note": "Definitive refusal before journaling; inspect and forget entries, then resend.",
+   "grounding": [
+    "client_requests.rs:238-242"
+   ]
+  }
+ ]
+}

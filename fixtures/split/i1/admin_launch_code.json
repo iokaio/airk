@@ -1,0 +1,223 @@
+{
+ "schema": "airk.split-fixture.i1-admin-launch-code/1",
+ "contract": "docs/split/contracts.md \u00a72.7, \u00a73.8, \u00a74.5 step 3, \u00a74.9",
+ "generator": "fixtures/split/i1/admin_launch_code.py",
+ "limits": {
+  "code_random_bytes": 32,
+  "code_chars": 43,
+  "ttl_ms": 60000,
+  "outstanding": 8
+ },
+ "code_format": "base64url without padding of 32 random bytes; stored as SHA-256 of the 43 ASCII bytes",
+ "secrets": {
+  "launch_code": [
+   "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+   "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI",
+   "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+   "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ",
+   "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU",
+   "BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY",
+   "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc",
+   "CAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg",
+   "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk"
+  ]
+ },
+ "secret_channels": {
+  "launch_code": [
+   "pipe A1 reply",
+   "stdout of the one-shot admin url|open",
+   "consume"
+  ]
+ },
+ "cases": [
+  {
+   "name": "issue_over_owner_pipe",
+   "rule": "A1 on the owner pipe; the service keeps only the SHA-256",
+   "transcript": [
+    {"at_ms": 0, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"admin_launch_code": {}}}},
+    {"at_ms": 0, "channel": "pipe", "reply": {"status": "admin_launch_code", "code": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE", "port": 41234, "expires_in_ms": 60000}},
+    {"at_ms": 0, "service_stores": {"sha256": "56d5fa7333f6d747db42c239407e5da4c32f4c79f35d092b134fd35a402d9c5c", "issued_at_ms": 0}}
+   ],
+   "expected": {
+    "outstanding": 1,
+    "issued_codes": [1]
+   }
+  },
+  {
+   "name": "one_shot_url",
+   "rule": "`airkctl admin url` prints the code only as the URL fragment",
+   "transcript": [
+    {"at_ms": 0, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"admin_launch_code": {}}}},
+    {"at_ms": 0, "channel": "pipe", "reply": {"status": "admin_launch_code", "code": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE", "port": 41234, "expires_in_ms": 60000}},
+    {"at_ms": 0, "service_stores": {"sha256": "56d5fa7333f6d747db42c239407e5da4c32f4c79f35d092b134fd35a402d9c5c", "issued_at_ms": 0}},
+    {"at_ms": 0, "channel": "stdout", "write": "https://127.0.0.1:41234/admin/launch#c=AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE\n"}
+   ],
+   "expected": {
+    "outstanding": 1,
+    "issued_codes": [1]
+   }
+  },
+  {
+   "name": "single_use",
+   "rule": "Consumption is one atomic compare-and-remove; a replay is refused",
+   "transcript": [
+    {"at_ms": 0, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"admin_launch_code": {}}}},
+    {"at_ms": 0, "channel": "pipe", "reply": {"status": "admin_launch_code", "code": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE", "port": 41234, "expires_in_ms": 60000}},
+    {"at_ms": 0, "service_stores": {"sha256": "56d5fa7333f6d747db42c239407e5da4c32f4c79f35d092b134fd35a402d9c5c", "issued_at_ms": 0}},
+    {"at_ms": 1000, "consume": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE", "expect": {"result": "session_created"}},
+    {"at_ms": 1001, "consume": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE", "expect": {"result": "refused", "code": "admin_launch_code_invalid"}}
+   ],
+   "expected": {
+    "outstanding": 0,
+    "sessions_created": 1
+   }
+  },
+  {
+   "name": "expiry",
+   "rule": "Valid while now < issued + 60000 ms (injected clock)",
+   "transcript": [
+    {"at_ms": 0, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"admin_launch_code": {}}}},
+    {"at_ms": 0, "channel": "pipe", "reply": {"status": "admin_launch_code", "code": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE", "port": 41234, "expires_in_ms": 60000}},
+    {"at_ms": 0, "service_stores": {"sha256": "56d5fa7333f6d747db42c239407e5da4c32f4c79f35d092b134fd35a402d9c5c", "issued_at_ms": 0}},
+    {"at_ms": 0, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"admin_launch_code": {}}}},
+    {"at_ms": 0, "channel": "pipe", "reply": {"status": "admin_launch_code", "code": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI", "port": 41234, "expires_in_ms": 60000}},
+    {"at_ms": 0, "service_stores": {"sha256": "6c1d63bbdab437c54368cbbd8886a886a79ad977297e265eebf1f5f5f01533b9", "issued_at_ms": 0}},
+    {"at_ms": 59999, "consume": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE", "expect": {"result": "session_created"}},
+    {"at_ms": 60000, "consume": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI", "expect": {"result": "refused", "code": "admin_launch_code_invalid"}}
+   ],
+   "expected": {
+    "outstanding": 0,
+    "sessions_created": 1
+   }
+  },
+  {
+   "name": "unknown_and_malformed",
+   "rule": "Unknown, padded, short or non-canonical codes get the same refusal (no oracle)",
+   "transcript": [
+    {"at_ms": 0, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"admin_launch_code": {}}}},
+    {"at_ms": 0, "channel": "pipe", "reply": {"status": "admin_launch_code", "code": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE", "port": 41234, "expires_in_ms": 60000}},
+    {"at_ms": 0, "service_stores": {"sha256": "56d5fa7333f6d747db42c239407e5da4c32f4c79f35d092b134fd35a402d9c5c", "issued_at_ms": 0}},
+    {"at_ms": 1, "consume": "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk", "expect": {"result": "refused", "code": "admin_launch_code_invalid"}},
+    {"at_ms": 1, "consume": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=", "expect": {"result": "refused", "code": "admin_launch_code_invalid"}},
+    {"at_ms": 1, "consume": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ", "expect": {"result": "refused", "code": "admin_launch_code_invalid"}},
+    {"at_ms": 1, "consume": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQF", "expect": {"result": "refused", "code": "admin_launch_code_invalid"}},
+    {"at_ms": 1, "consume": "", "expect": {"result": "refused", "code": "admin_launch_code_invalid"}}
+   ],
+   "expected": {
+    "outstanding": 1,
+    "sessions_created": 0
+   }
+  },
+  {
+   "name": "oldest_evicted",
+   "rule": "At most 8 outstanding; the ninth issuance evicts the oldest",
+   "transcript": [
+    {"at_ms": 1, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"admin_launch_code": {}}}},
+    {"at_ms": 1, "channel": "pipe", "reply": {"status": "admin_launch_code", "code": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE", "port": 41234, "expires_in_ms": 60000}},
+    {"at_ms": 1, "service_stores": {"sha256": "56d5fa7333f6d747db42c239407e5da4c32f4c79f35d092b134fd35a402d9c5c", "issued_at_ms": 1}},
+    {"at_ms": 2, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"admin_launch_code": {}}}},
+    {"at_ms": 2, "channel": "pipe", "reply": {"status": "admin_launch_code", "code": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI", "port": 41234, "expires_in_ms": 60000}},
+    {"at_ms": 2, "service_stores": {"sha256": "6c1d63bbdab437c54368cbbd8886a886a79ad977297e265eebf1f5f5f01533b9", "issued_at_ms": 2}},
+    {"at_ms": 3, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"admin_launch_code": {}}}},
+    {"at_ms": 3, "channel": "pipe", "reply": {"status": "admin_launch_code", "code": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM", "port": 41234, "expires_in_ms": 60000}},
+    {"at_ms": 3, "service_stores": {"sha256": "83bee072fbd3423f7481fc163821636ad8cfb73faef0dd0581f3979ea0c731b9", "issued_at_ms": 3}},
+    {"at_ms": 4, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"admin_launch_code": {}}}},
+    {"at_ms": 4, "channel": "pipe", "reply": {"status": "admin_launch_code", "code": "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ", "port": 41234, "expires_in_ms": 60000}},
+    {"at_ms": 4, "service_stores": {"sha256": "4f6a3bb5a6c72d17856be15f62e747ef88df8139f0c38411c8501164c1c1bdd8", "issued_at_ms": 4}},
+    {"at_ms": 5, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"admin_launch_code": {}}}},
+    {"at_ms": 5, "channel": "pipe", "reply": {"status": "admin_launch_code", "code": "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU", "port": 41234, "expires_in_ms": 60000}},
+    {"at_ms": 5, "service_stores": {"sha256": "894e352d1d8cc10c303df8fd45a59ee97b30841bdbf60b47fa317c7fa4c95859", "issued_at_ms": 5}},
+    {"at_ms": 6, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"admin_launch_code": {}}}},
+    {"at_ms": 6, "channel": "pipe", "reply": {"status": "admin_launch_code", "code": "BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY", "port": 41234, "expires_in_ms": 60000}},
+    {"at_ms": 6, "service_stores": {"sha256": "4a872257959354dd4a92153e63a96c473254e71e9363f791b5097ff5ccab0f1f", "issued_at_ms": 6}},
+    {"at_ms": 7, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"admin_launch_code": {}}}},
+    {"at_ms": 7, "channel": "pipe", "reply": {"status": "admin_launch_code", "code": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc", "port": 41234, "expires_in_ms": 60000}},
+    {"at_ms": 7, "service_stores": {"sha256": "dc4bf80c77473d130fa0de86ba4018fe98bb214005e6a5891d12ba91446f9e81", "issued_at_ms": 7}},
+    {"at_ms": 8, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"admin_launch_code": {}}}},
+    {"at_ms": 8, "channel": "pipe", "reply": {"status": "admin_launch_code", "code": "CAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg", "port": 41234, "expires_in_ms": 60000}},
+    {"at_ms": 8, "service_stores": {"sha256": "ce9ec58122164c824a43e0452ffbba3da694694b44563b5c548942dbb8ab8e14", "issued_at_ms": 8}},
+    {"at_ms": 9, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"admin_launch_code": {}}}},
+    {"at_ms": 9, "channel": "pipe", "reply": {"status": "admin_launch_code", "code": "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk", "port": 41234, "expires_in_ms": 60000}},
+    {"at_ms": 9, "service_stores": {"sha256": "83cd213e468a2fbadb529623d69bd3683afb8f13a1f0abc3167d346bde303719", "issued_at_ms": 9}},
+    {"at_ms": 20, "consume": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE", "expect": {"result": "refused", "code": "admin_launch_code_invalid"}},
+    {"at_ms": 21, "consume": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI", "expect": {"result": "session_created"}},
+    {"at_ms": 22, "consume": "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk", "expect": {"result": "session_created"}}
+   ],
+   "expected": {
+    "outstanding": 6,
+    "sessions_created": 2
+   }
+  },
+  {
+   "name": "restart_invalidates",
+   "rule": "Codes live in memory and die with the service instance",
+   "transcript": [
+    {"at_ms": 0, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"admin_launch_code": {}}}},
+    {"at_ms": 0, "channel": "pipe", "reply": {"status": "admin_launch_code", "code": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE", "port": 41234, "expires_in_ms": 60000}},
+    {"at_ms": 0, "service_stores": {"sha256": "56d5fa7333f6d747db42c239407e5da4c32f4c79f35d092b134fd35a402d9c5c", "issued_at_ms": 0}},
+    {"at_ms": 1, "harness": "service_restarts", "service_instance": "e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2"},
+    {"at_ms": 2, "consume": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE", "expect": {"result": "refused", "code": "admin_launch_code_invalid"}}
+   ],
+   "expected": {
+    "outstanding": 0,
+    "sessions_created": 0
+   }
+  },
+  {
+   "name": "no_request_fields",
+   "rule": "A1 takes no fields; an unknown field is refused before dispatch",
+   "transcript": [
+    {"at_ms": 0, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"admin_launch_code": {"ttl_ms": 600000}}}},
+    {"at_ms": 0, "channel": "pipe", "refused_before_dispatch": true}
+   ],
+   "expected": {
+    "outstanding": 0,
+    "issued_codes": []
+   }
+  },
+  {
+   "name": "refused_on_session_relay",
+   "rule": "Never relayed by `airkctl session` (\u00a73.8)",
+   "transcript": [
+    {"at_ms": 0, "channel": "session", "send": {"id": "01010101010101010101010101010101", "request": {"control": {"method": {"admin_launch_code": {}}}}}},
+    {"at_ms": 0, "channel": "session", "reply": {"id": "01010101010101010101010101010101", "outcome": {"status": "failed", "code": "session_command_refused", "retryable": false}}},
+    {"at_ms": 1, "channel": "session", "send": {"id": "01010101010101010101010101010101", "request": {"invoke": {"argv": ["admin", "url"], "deadline_ms": 10000}}}},
+    {"at_ms": 1, "channel": "session", "reply": {"id": "01010101010101010101010101010101", "outcome": {"status": "failed", "code": "session_command_refused", "retryable": false}}},
+    {"at_ms": 2, "channel": "session", "send": {"id": "01010101010101010101010101010101", "request": {"invoke": {"argv": ["admin", "open"], "deadline_ms": 10000}}}},
+    {"at_ms": 2, "channel": "session", "reply": {"id": "01010101010101010101010101010101", "outcome": {"status": "failed", "code": "session_command_refused", "retryable": false}}}
+   ],
+   "expected": {
+    "outstanding": 0,
+    "pipe_requests": []
+   }
+  },
+  {
+   "name": "refused_over_http",
+   "rule": "No HTTP route reaches A1 (\u00a74.9); nothing is issued",
+   "transcript": [
+    {"at_ms": 0, "channel": "http", "send": {"method": "POST", "path": "/admin/api/v1/call/admin.launch_code"}, "expect": {"issued": false, "route": "none"}},
+    {"at_ms": 1, "channel": "http", "send": {"method": "POST", "path": "/api/v1/tools/admin_launch_code"}, "expect": {"issued": false, "route": "none"}},
+    {"at_ms": 2, "channel": "http", "send": {"method": "GET", "path": "/admin/launch"}, "expect": {"issued": false, "route": "static entry page"}}
+   ],
+   "expected": {
+    "outstanding": 0,
+    "pipe_requests": []
+   }
+  },
+  {
+   "name": "never_logged",
+   "rule": "Neither the code nor its SHA-256 reaches logs, Debug output or errors",
+   "transcript": [
+    {"at_ms": 0, "channel": "pipe", "send": {"protocol": 1, "expected_instance": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1", "method": {"admin_launch_code": {}}}},
+    {"at_ms": 0, "channel": "pipe", "reply": {"status": "admin_launch_code", "code": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE", "port": 41234, "expires_in_ms": 60000}},
+    {"at_ms": 0, "service_stores": {"sha256": "56d5fa7333f6d747db42c239407e5da4c32f4c79f35d092b134fd35a402d9c5c", "issued_at_ms": 0}},
+    {"at_ms": 1, "consume": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE", "expect": {"result": "session_created"}},
+    {"at_ms": 2, "consume": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE", "expect": {"result": "refused", "code": "admin_launch_code_invalid"}},
+    {"at_ms": 3, "inspect": ["service_log", "debug_rendering", "error_messages"]}
+   ],
+   "expected": {
+    "forbidden_substrings": ["AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE", "56d5fa7333f6d747db42c239407e5da4c32f4c79f35d092b134fd35a402d9c5c"]
+   }
+  }
+ ]
+}
