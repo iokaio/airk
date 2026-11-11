@@ -148,6 +148,7 @@ These came from the user's request and answers. They are not agent choices.
 | U81 | (11 November) Update rustix to the patched 1.1.6 (RUSTSEC-2026-0486) with a reviewed exact-version exemption, and fix pre-existing unused code: remove it when it is truly unused, otherwise scope it so it is not reported. |
 | U82 | (11 November) The Inno Setup compiler identity check in `package-standalone-windows.py` may change in Phase 7: the genuine 6.7.1 `ISCC.exe` reports ProductVersion 0.0.0.0, so identity moves to a pinned signer and digest. |
 | U83 | (11 November) The user accepts the H1 and H2 fixes from the admin-plane security review (`contracts.md` §4.11): same-user peer admission with owner-only launch delivery, and no admin URL opened or forwarded from a remote extension host. |
+| U84 | (11 November) `airkctl`'s native needs move into existing crates by committed scripts, one implementation each: the Unix owner-private file check joins `airk-ipc` beside its Windows twin; the per-user folder lookup (Windows Known Folder, Unix passwd home) and the detached-spawn primitive move to `airk-process`; `airk-cli` calls them. No new crate. |
 
 ### 2.2 Formerly open decisions
 
@@ -986,7 +987,7 @@ script, and reproduce the captured goldens.
 | Crate or package | After the split | AIRK dependencies |
 |---|---|---|
 | `airk-core` | Unchanged owner. Gains only reviewed contract additions. | None |
-| `airk-process` | Unchanged | None |
+| `airk-process` | Gains the OS primitives `airkctl` needs (U84): per-user folder lookup and detached spawn | None |
 | `airk-ipc` (new) | Local transport (pipe and socket, owner checks, generic framing) and typed I1 control/query clients. No I2 editor-session policy. | core |
 | `airkctl` (new, binary) | Command tree, rendering, session mode, agent configuration, service start | core, process, ipc |
 | `airk-ingest`, `airk-store`, `airk-retrieval`, `airk-kernel` | Unchanged | Unchanged |
