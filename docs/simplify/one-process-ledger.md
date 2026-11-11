@@ -230,7 +230,7 @@ Planning findings (read-only exploration, not test results):
 - The HTTPS listener starts only with a catalog gate (`service_runtime/http.rs`
   `Owner::start`).
 
-**Resume point (update after every step).** Next Phase 1 steps in order: C7 receipt schemas; C11a catalog content versions; C3 journal/window/launch contracts (fixtures); C5 after the U38/U55 review of `contracts.md` §4; C9. Then Phase 2 (G1–G6 incl. the two-cut G5). Receipts: `artifacts/split/receipts/`. Build env: `--target-dir artifacts/v190/p10-target --static-environment artifacts/local/one-airk-1.8.14/static-environment-supplement.json`.
+**Resume point (update after every step).** Phase 1 done: C10, C1, C1b, C8, C4a, C4b, C6. In flight (background agents, source-only): C7 receipt schemas (`scripts/split_receipts.py`, `fixtures/split/receipts/`), C3a/C3b fixtures (`fixtures/split/i1/`), and the independent U38/U55 security review of `contracts.md` §4 (`docs/split/security-review-i3.md`). On their return: review, run their T0, commit. Then C5 (after the review has no open high/critical finding), C9. C11a moves to immediately before package 3d: changing the catalog format touches the extension build's drift check, `explorer_offline.rs` served output and the goldens, so it lands with its first consumer as one recorded step. Then Phase 2 (G1–G6 incl. the two-cut G5). Follow-ups (not in scope): RUSTSEC-2026-0486 (rustix) disposition; unused `Child` import in `project_supervisor.rs` under no-default-features; Inno `compiler_identity()` (Phase 7). Receipts: `artifacts/split/receipts/`. Build env: `--target-dir artifacts/v190/p10-target --static-environment artifacts/local/one-airk-1.8.14/static-environment-supplement.json`.
 
 | Step | State | Evidence |
 | --- | --- | --- |
