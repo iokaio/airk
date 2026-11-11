@@ -184,25 +184,57 @@ fn own_digest() -> Option<String> {
     Some(digest.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
+/// This user's installation as the I4 reader verified it (step 3b.1c), with
+/// its channel. The pair is exact when the record names this version and this
+/// executable's digest.
+fn installation() -> (Installation, Option<String>) {
+    let absent = |state| Installation {
+        state,
+        airk_version: None,
+        pair: None,
+        install_id: None,
+    };
+    match crate::install::discover() {
+        crate::install::Discovery::NotFound => (absent(InstallationState::NotFound), None),
+        crate::install::Discovery::Unverified { .. } => {
+            (absent(InstallationState::Unverified), None)
+        }
+        crate::install::Discovery::Verified(verified) => {
+            let record = &verified.record;
+            let exact = record.version == VERSION
+                && own_digest().as_deref()
+                    == Some(record.executables.airkctl.sha256.to_string().as_str());
+            let pair = if exact {
+                crate::contract::PairState::Exact
+            } else {
+                crate::contract::PairState::Mismatch
+            };
+            (
+                Installation {
+                    state: InstallationState::Complete,
+                    airk_version: Some(record.version.clone()),
+                    pair: Some(pair),
+                    install_id: Some(record.install_id.to_string()),
+                },
+                Some(record.channel.clone()),
+            )
+        }
+    }
+}
+
 fn version_document() -> VersionDocument {
+    let (installation, channel) = installation();
     VersionDocument {
         schema: VERSION_SCHEMA.into(),
         product: PRODUCT.into(),
         version: VERSION.into(),
-        // The install pointer and record (I4) arrive in step C6; until then no
-        // installation can be verified, so none is reported.
-        channel: None,
+        channel,
         i2_contract: I2_CONTRACT,
         i2_contracts_supported: I2_CONTRACTS_SUPPORTED.to_vec(),
         i1_protocol: airk_core::service::PROTOCOL_VERSION,
         capabilities: CAPABILITIES.iter().map(|&name| name.into()).collect(),
         executable_sha256: own_digest(),
-        installation: Installation {
-            state: InstallationState::NotFound,
-            airk_version: None,
-            pair: None,
-            install_id: None,
-        },
+        installation,
     }
 }
 
@@ -326,8 +358,14 @@ fn version(cx: &mut Context) -> u8 {
         },
         Output::Text => writeln!(
             cx.io.stdout,
-            "airkctl {VERSION} ({PRODUCT})\nI2 contract {I2_CONTRACT}; I1 protocol {}\ninstallation: not found",
-            document.i1_protocol
+            "airkctl {VERSION} ({PRODUCT})\nI2 contract {I2_CONTRACT}; I1 protocol {}\ninstallation: {}",
+            document.i1_protocol,
+            match document.installation.state {
+                InstallationState::Complete => "complete",
+                InstallationState::Incomplete => "incomplete",
+                InstallationState::NotFound => "not found",
+                InstallationState::Unverified => "unverified",
+            }
         ),
     };
     written(cx, result)

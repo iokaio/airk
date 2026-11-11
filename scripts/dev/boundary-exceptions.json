@@ -40,7 +40,8 @@
       ],
       "airkctl": [
         "airk-core",
-        "airk-ipc"
+        "airk-ipc",
+        "airk-process"
       ]
     }
   },

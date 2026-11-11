@@ -295,6 +295,7 @@ version = "1.8.23"
 dependencies = [
  "airk-core",
  "airk-ipc",
+ "airk-process",
  "anyhow",
  "clap",
  "schemars",
