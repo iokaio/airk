@@ -95,6 +95,12 @@
           "bytes": "{\"tools_call\":{\"tool\":\"airk_search\",\"arguments\":{\"query\":\"résumé ✓\"},\"selection\":{\"project\":{\"binding\":\"abababababababababababababababababababababababababababababababab\"}},\"response_mode\":\"full\",\"usage_client\":\"cli\"}}",
           "request_frame_budget": 131072,
           "response_frame_budget": 4194304
+        },
+        {
+          "name": "unselected_help",
+          "bytes": "{\"tools_call\":{\"tool\":\"help\",\"arguments\":{\"topic\":\"workbench\"},\"selection\":\"unselected\",\"response_mode\":\"terse\",\"usage_client\":\"cli\"}}",
+          "request_frame_budget": 131072,
+          "response_frame_budget": 4194304
         }
       ],
       "rejected_methods": [
@@ -133,6 +139,10 @@
         {
           "name": "extra_field",
           "bytes": "{\"tools_call\":{\"tool\":\"airk_search\",\"arguments\":{\"limit\":5,\"query\":\"recover password\"},\"selection\":{\"project\":{\"binding\":\"abababababababababababababababababababababababababababababababab\"}},\"response_mode\":\"full\",\"usage_client\":\"cli\",\"read_budget\":1}}"
+        },
+        {
+          "name": "unselected_with_fields",
+          "bytes": "{\"tools_call\":{\"tool\":\"help\",\"arguments\":{},\"selection\":{\"unselected\":{}},\"response_mode\":\"terse\",\"usage_client\":\"cli\"}}"
         }
       ],
       "responses": [

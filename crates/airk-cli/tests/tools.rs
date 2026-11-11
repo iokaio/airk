@@ -440,3 +440,180 @@ fn native_help_cli_reports_detail_selector_field_without_opening_a_workspace() {
     );
     assert!(!root.exists() && !state.exists());
 }
+
+/// Fields that vary by observation, as the CLI/MCP parity tests strip them.
+fn stable(value: &mut Value) {
+    match value {
+        Value::Object(fields) => {
+            for key in [
+                "request_id",
+                "observed_unix_ms",
+                "observed_from_unix_ms",
+                "observed_to_unix_ms",
+                "cache_age_ms",
+                "cached",
+                "elapsed_ms",
+            ] {
+                fields.remove(key);
+            }
+            fields.values_mut().for_each(stable);
+        }
+        Value::Array(rows) => rows.iter_mut().for_each(stable),
+        _ => {}
+    }
+}
+
+/// An envelope with its JSON text content parsed, then stabilized.
+fn comparable(mut envelope: Value) -> Value {
+    if let Some(content) = envelope["content"].as_array_mut() {
+        for item in content {
+            if let Some(text) = item["text"].as_str()
+                && let Ok(parsed) = serde_json::from_str::<Value>(text)
+            {
+                item["text"] = parsed;
+            }
+        }
+    }
+    stable(&mut envelope);
+    envelope
+}
+
+/// What one call produced: an envelope, or the failure message the CLI's
+/// error line and M3's `ToolCallFailed` carry.
+#[derive(Debug, PartialEq)]
+enum Outcome {
+    Envelope(Value),
+    Failed(String),
+}
+
+fn cli_outcome(output: Output) -> Outcome {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if output.stdout.is_empty() {
+        let line = stderr.lines().last().unwrap_or_default();
+        return Outcome::Failed(line.strip_prefix("Error: ").unwrap_or(line).to_owned());
+    }
+    Outcome::Envelope(comparable(serde_json::from_slice(&output.stdout).unwrap()))
+}
+
+fn control_outcome(
+    control: &Path,
+    tool: &str,
+    arguments: &Value,
+    selection: airk_core::service::ToolSelection,
+) -> Outcome {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let response = runtime
+        .block_on(airk_cli::service_runtime::request(
+            control,
+            airk_core::service::ControlMethod::ToolsCall {
+                tool: tool.into(),
+                arguments: arguments.as_object().unwrap().clone(),
+                selection,
+                response_mode: airk_core::service::ToolResponseMode::Full,
+                usage_client: airk_core::usage::ClientFamily::Cli,
+            },
+        ))
+        .unwrap();
+    match response {
+        airk_core::service::ControlResponse::ToolResult { result } => {
+            Outcome::Envelope(comparable(result))
+        }
+        airk_core::service::ControlResponse::ToolCallFailed { message } => Outcome::Failed(message),
+        other => panic!(
+            "unexpected M3 response: {}",
+            serde_json::to_string(&other).unwrap()
+        ),
+    }
+}
+
+/// M3 runs the CLI's own call path in the service: for each selection the
+/// control answer equals what `airk tools call` printed (split step 3a.2b).
+#[test]
+fn control_tool_calls_answer_what_the_cli_printed() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let state = tempfile::tempdir()?;
+    let service = common::Service::reviewed(root.path(), state.path(), "tools-call");
+    fs::write(
+        root.path().join("recovery.md"),
+        "# Recovery\n\nA forgotten password is recovered from the account page.\n",
+    )?;
+    service.settle_reviewed_index(
+        root.path(),
+        state.path(),
+        std::time::Instant::now() + std::time::Duration::from_secs(90),
+    )?;
+    common::call(root.path(), state.path(), "tools-call", &["index"])?;
+    let airk_core::service_http::HttpSelection::Scoped { selection } = service.http_selection()
+    else {
+        panic!("the reviewed fixture selects one scoped index");
+    };
+    let calls = [
+        ("airk_read_file", json!({"path": "recovery.md"})),
+        ("airk_file_info", json!({"path": "recovery.md"})),
+        ("airk_list_files", json!({})),
+        (
+            "airk_search",
+            json!({"query": "forgotten password", "limit": 3}),
+        ),
+        ("airk_outline", json!({"path": "missing.md"})),
+        ("help", json!({"topic": "workbench"})),
+    ];
+    let mut envelopes = 0;
+    for (tool, arguments) in &calls {
+        let arguments_text = arguments.to_string();
+        let scoped = cli_outcome(
+            common::scoped_command(root.path(), state.path(), "tools-call")
+                .args(["tools", "call", tool, "--args", &arguments_text])
+                .output()?,
+        );
+        let control = control_outcome(
+            &service.control,
+            tool,
+            arguments,
+            airk_core::service::ToolSelection::Catalog {
+                request: selection.clone(),
+            },
+        );
+        assert_eq!(control, scoped, "catalog selection {tool}");
+        envelopes += usize::from(matches!(control, Outcome::Envelope(_)));
+        let project = cli_outcome(
+            common::command(root.path(), state.path(), "tools-call")
+                .args(["tools", "call", tool, "--args", &arguments_text])
+                .output()?,
+        );
+        let control = control_outcome(
+            &service.control,
+            tool,
+            arguments,
+            airk_core::service::ToolSelection::Project {
+                binding: service.project.binding,
+            },
+        );
+        assert_eq!(control, project, "project selection {tool}");
+    }
+    assert!(envelopes >= 4, "the catalog selection must read evidence");
+    // Without any selection the CLI answers its help tool in process.
+    for arguments in [
+        json!({"topic": "workbench"}),
+        json!({"topic": "workbench", "detail": "full"}),
+    ] {
+        let text = arguments.to_string();
+        let cli = cli_outcome(
+            Command::new(env!("CARGO_BIN_EXE_airk"))
+                .args(["tools", "call", "help", "--args", &text])
+                .env("AIRK_MCP_RESPONSE_MODE", "full")
+                .output()?,
+        );
+        let control = control_outcome(
+            &service.control,
+            "help",
+            &arguments,
+            airk_core::service::ToolSelection::Unselected,
+        );
+        assert_eq!(control, cli, "unselected help {text}");
+    }
+    Ok(())
+}

@@ -23,14 +23,14 @@ impl ToolSession for RemoteSession {
     fn catalog(&self) -> Vec<airk_mcp::remote::Tool> {
         self.0.catalog()
     }
-    async fn call(&self, tool: String, mut arguments: Map<String, Value>) -> Result<Value> {
-        if self.0.uses_response_mode(&tool) {
-            arguments.entry("response_mode").or_insert_with(|| {
-                serde_json::to_value(airk_mcp::response::ResponseMode::from_environment())
-                    .expect("scalar response mode")
-            });
-        }
-        airk_mcp::remote::call_observed(self.0.as_ref(), tool, arguments).await
+    async fn call(&self, tool: String, arguments: Map<String, Value>) -> Result<Value> {
+        airk_cli::tool_call::call(
+            self.0.as_ref(),
+            tool,
+            arguments,
+            airk_mcp::response::ResponseMode::from_environment(),
+        )
+        .await
     }
 }
 
@@ -129,7 +129,7 @@ mod parity_tests {
         let backend = Arc::new(Backend {
             limit: AtomicUsize::new(16),
         });
-        let public = public_project_backend(backend, "a".repeat(64), "fixture")?;
+        let public = airk_cli::tool_call::project_backend(backend, "a".repeat(64), "fixture")?;
         assert_eq!(
             serde_json::to_value(public.catalog())?,
             serde_json::to_value(airk_mcp::unified::tools())?
@@ -232,11 +232,9 @@ fn inspect_catalog(
             tool,
             args,
             args_file,
-        } if matches!(tool.as_str(), "airk_help" | "help") => {
-            let result = serde_json::to_value(airk_mcp::help::call(Value::Object(arguments(
-                args.as_deref(),
-                args_file.as_deref(),
-            )?)))?;
+        } if airk_cli::tool_call::is_local_help(tool) => {
+            let result =
+                airk_cli::tool_call::local_help(arguments(args.as_deref(), args_file.as_deref())?)?;
             print_json(io, &result)?;
             ensure!(result["isError"] != true, "AIRK help request failed");
         }
@@ -349,10 +347,7 @@ async fn call(
     io: &CliIo,
 ) -> Result<()> {
     let result = session.call(tool, args).await?;
-    ensure!(
-        result.is_object() && result["content"].is_array(),
-        "invalid native tool response"
-    );
+    airk_cli::tool_call::require_envelope(&result)?;
     if raw {
         print_json(io, &result)?;
     } else {
@@ -403,7 +398,7 @@ pub async fn run_remote_selected(
         Some(selection) => airk_cli::project_client::scoped_tools(control, project, selection)?,
         None => airk_cli::project_client::tools(control, project),
     };
-    let session = RemoteSession(public_project_backend(
+    let session = RemoteSession(airk_cli::tool_call::project_backend(
         backend,
         project.to_string(),
         collection,
@@ -426,25 +421,6 @@ pub async fn run_remote_selected(
         ToolsCommand::Shell => shell(&session, root, Some(data), collection, io).await,
         _ => unreachable!("tool metadata handled before connection"),
     }
-}
-
-/// Reuse HTTP's public routing and argument validation without attaching an
-/// ambient Explorer window or changing the native selection authority.
-fn public_project_backend(
-    backend: std::sync::Arc<dyn airk_mcp::remote::RemoteTools>,
-    binding: String,
-    collection: &str,
-) -> Result<std::sync::Arc<dyn airk_mcp::remote::RemoteTools>> {
-    Ok(std::sync::Arc::new(airk_mcp::unified::Unified::new(
-        vec![airk_mcp::unified::Project {
-            binding: binding.clone(),
-            name: collection.into(),
-            collection: collection.into(),
-            backend,
-        }],
-        Some(binding),
-        None,
-    )?))
 }
 
 /// Combined sessions use the backend's canonical catalog for calls, shell help

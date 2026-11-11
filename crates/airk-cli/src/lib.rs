@@ -55,6 +55,8 @@ mod service_management;
 pub mod service_registration;
 pub mod service_runtime;
 pub mod standalone_setup;
+/// The CLI tool call path shared with M3 (split step 3a.2b).
+pub mod tool_call;
 /// M2 tool catalog documents (split step 3a.1).
 pub mod tool_catalog;
 mod worker_host;

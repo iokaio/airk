@@ -17,6 +17,7 @@ use tokio::{
 };
 pub(crate) mod checkpoint;
 mod http;
+mod tools_call;
 
 fn connection_failure_code<'a>(error: &anyhow::Error, fallback: &'a str) -> &'a str {
     if error
@@ -460,10 +461,23 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 state.supervisor.configure_resources(configuration).await
             }
             ControlMethod::ToolsCatalog { detail } => crate::tool_catalog::response(&detail)?,
-            // M3 lands its handler in step 3a.2b; until then the typed refusal.
-            ControlMethod::ToolsCall { .. } => ControlResponse::Failure {
-                code: "not_yet_served".into(),
-            },
+            ControlMethod::ToolsCall {
+                tool,
+                arguments,
+                selection,
+                response_mode,
+                usage_client,
+            } => {
+                tools_call::response(
+                    &state.control_root,
+                    tool,
+                    arguments,
+                    selection,
+                    response_mode,
+                    usage_client,
+                )
+                .await
+            }
             method => state.management.request(method).await,
         }
     };

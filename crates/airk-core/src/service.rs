@@ -450,6 +450,9 @@ pub enum ControlMethod {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum ToolSelection {
+    /// No project: only the help tool, which the CLI answered in process
+    /// without resolving a project; any other tool fails.
+    Unselected,
     /// `--service-project <binding>`: a registered project.
     Project { binding: ProjectBinding },
     /// `--catalog-session <request>`: an exact reviewed catalog grant.
