@@ -276,6 +276,13 @@ mod wait_tests {
     }
 
     #[test]
+    #[cfg_attr(
+        unix,
+        expect(
+            clippy::zombie_processes,
+            reason = "wait_for_exit reaps this child through waitpid; that is what the test proves"
+        )
+    )]
     fn a_running_process_is_not_reported_exited_and_an_exited_one_is() {
         let mut child = long_child();
         let pid = child.id();
