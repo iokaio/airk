@@ -96,6 +96,15 @@ have no uncommitted work; existing diagnostic branch refs remain intact.
 Worktree removal and ignored-evidence relocation receipts are collected there
 after source preservation. No build or test is part of this housekeeping.
 
+Removal completed: all seven linked worktrees were removed; only
+`D:/code/Github/airk` on `feat/simplify` remains registered. Receipt:
+`artifacts/worktree-retention/2026-11-10/retirement.json`. The entire ignored
+artifact trees from P10 and one-process-workers, plus their retained Nextest
+receipts and P6f's Nextest receipts, were moved locally before removal.
+Source archive/digest manifests remain alongside them. Existing diagnostic and
+archive branch refs were preserved. No private state, index or artifact was
+staged; no test, build, installed repair or PR followed the stop request.
+
 ## Manual-test installer correction (10 November 2026)
 
 **Windows debug manual-test installer built; installed-editor acceptance pending.** The user
