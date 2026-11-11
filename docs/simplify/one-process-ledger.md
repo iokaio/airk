@@ -180,6 +180,23 @@
 - Status: plan revision 4 complete and committed on `feat/split`. Phase 0 is
   next and authorized (U45).
 
+### Split plan final decision pass U59–U69 (11 November 2026)
+
+- U59 (extension README links to the service download) was requested directly.
+  The final pass found that the hosted `macos-signing` and `native-signing`
+  environments allow only `main` (`gh api …/deployment-branch-policies`), and
+  `macos-signing.yml` also guards the ref. The user chose Neo signing (U60).
+- Neo probe (11 November, read-only): connection from the ignored
+  `artifacts/v190/neo-connection.local.json`; Darwin arm64; `~/code/airk` clean
+  on `feat/finetuning`; one Developer ID Application identity; 272 GiB free.
+  `notarytool --keychain-profile airk-ci` failed with `keychainLocked` over SSH,
+  leading to U69. The SSH alias `neo` does not resolve on this Windows host.
+- Other answers: independent-agent deletion review (U61), Phase 8
+  qualification (U62), 1.9.0 bump at Phase 8 (U63), Intel Mac after merge
+  (U66), push notifications for blockers (U67), switch the Neo checkout (U68).
+- Pending user action: create `~/.airk-signing/keychain-pass` (mode 600) on
+  the Neo before the first signing batch.
+
 ## Reported HTTP cleanup refusal (10 November 2026)
 
 Acceptance: correct the reported `HTTP cleanup requires the exact prebaseline

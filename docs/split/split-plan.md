@@ -4,8 +4,9 @@
 (created from `feat/simplify` at `59dd3c721ca4c8301664827abaa9ea2ac6fd8dc8`).
 Implementation, local builds, local signing, per-installer version bumps,
 commits on `feat/split`, targeted hosted CI runs, tool installation, new
-dependencies within policy, and Docker/Neo checks are authorized as U42–U58
-record. Pull requests, merges and publication are not. The stopped
+dependencies within policy, Docker/Neo checks, Neo signing, deletions confirmed
+by independent review, Phase 8 qualification and the 1.9.0 bump are authorized
+as U42–U69 record. Pull requests, merges and publication are not. The stopped
 installed-editor repair stays superseded (U23). The inherited source version
 is 1.8.23.
 
@@ -14,7 +15,7 @@ is 1.8.23.
 | 1 | Two products: a standalone service installer and a UI-only extension that discovers the service. |
 | 2 | Adds `airkctl`, a service-only `airk`, browser admin pages on the HTTPS endpoint, an extension that reaches the service only through `airkctl`, a fixed-layout installer that removes pre-split installations, and code and installer maps. Records the user's decisions of 10 November 2026. |
 | 3 | Clarifies common-contract ownership, UI boundaries, recovery and deployment; maps CI selection, artifact reuse, signing and publication; adds force-local Windows installer/VSIX scripts, phase dependencies and acceptance evidence. Records the additional user decisions U18 onward. |
-| 4 | Records the answers to O1–O12 and the remaining planning questions as U23–U59 (11 November): custom program and data/index locations, macOS setup fallback, phase gates, I2/I3 type generation, commit, test-machine, signing, CI, tool, dependency, agent and failure-handling authorizations. |
+| 4 | Records the answers to O1–O12 and the remaining planning questions as U23–U69 (11 November): custom program and data/index locations, macOS setup fallback, phase gates, I2/I3 type generation, commit, test-machine, signing, CI, tool, dependency, agent and failure-handling authorizations. |
 
 **Reading order.** §2 lists what the user has decided and what still needs an
 answer. §4 defines the boundary between extension code and service code. §5–§9
@@ -107,7 +108,7 @@ These came from the user's request and answers. They are not agent choices.
 | U41 | (11 November) CLAUDE.md and AGENTS.md wording that names `airkctl` as the CLI, the `airkctl` window session and the admin pages as parity surfaces is pre-approved, in the phase that makes it true. Both files stay byte-identical. Any other change to them still needs the user's approval. |
 | U42 | (11 November) Completed, reviewed steps are committed on `feat/split` with `git commit -s` under the user's configured identity, without asking each time. No agent trailers. Pull requests, merges and publication still need the user's authorization. |
 | U43 | (11 November) Installed-product tests (T2) may run on this Windows machine, including installs that remove its current AIRK installation and indexes. The user handles OS consent dialogs, such as certificate trust, when asked (see U56). |
-| U44 | (11 November) Azure Trusted Signing access on this machine is set up for non-interactive local signing; the user keeps it working or reports a change. Pushing `feat/split` and running specific hosted CI or qualification workflows is pre-authorized for platform questions that cannot be answered locally (macOS signing and notarization, Linux, Intel Mac). Publication is not. |
+| U44 | (11 November) Azure Trusted Signing access on this machine is set up for non-interactive local signing; the user keeps it working or reports a change. Pushing `feat/split` and running specific hosted CI or qualification workflows is pre-authorized for platform questions that cannot be answered locally (Linux, unsigned macOS checks). Hosted signing environments allow only `main`, so split-branch macOS signing runs on the Neo (U60) and Intel Mac evidence waits for `main` (U66). Publication is not. |
 | U45 | (11 November) Implementation of this plan is authorized, starting with Phase 0, without a stop at the end of Phase 0 or at later phase boundaries. Work still stops for a named blocker, the U52 failure rule, a U55 high or critical security finding, a material scope change, or anything that needs authorization not granted here (pull requests, merges, publication). |
 | U46 | (11 November) Interim split installers keep the standing per-build patch increments on 1.8.x (1.8.24, 1.8.25, …). Version 1.9.0 is set only for the release candidate (U31). |
 | U47 | (11 November) Simplification decision D5 is reopened for I2 and I3 only. Phase 1 runs a small generation pilot: Rust `schemars` JSON Schema to TypeScript types, with checked-in output and a drift check. Semantic rules such as read-retry eligibility stay hand-written and are tested against Rust-emitted cases. Other contracts keep D5's "fixtures first, no type generation". U24 is the approved D8 exception for the split's wire additions in 1.9.0. |
@@ -123,6 +124,16 @@ These came from the user's request and answers. They are not agent choices.
 | U57 | (11 November) No pull request is opened by the agent. The user opens the PR from `feat/split`; merging and publication stay with the user. |
 | U58 | (11 November) Docker on this machine (Linux) and the Mac Neo over the existing SSH setup (macOS arm64) may be used for scoped checks without asking. The Neo target is cleaned after each batch, keeping needed evidence first. |
 | U59 | (11 November) The extension README shown on the Marketplace (`packages/vscode/README.md`) must explain that the extension needs the separately installed AIRK Service, link to the download page (**https://airk.ioka.io**) and the versioned [GitHub Releases](https://github.com/iokaio/airk/releases), and give short per-platform install steps (Windows, macOS, Linux) plus how to confirm the service is running (`airkctl service status`). |
+| U60 | (11 November) The hosted `macos-signing` and `native-signing` environments allow only `main`, so split-branch macOS signing runs on the Mac Neo: push `feat/split`, have the Neo pull it over the existing SSH setup, and sign there with the same Developer ID identity CI uses. As with U22, local signatures prove signed local builds, not hosted release provenance. |
+| U61 | (11 November) Deletion rows in the compatibility inventory (simplification D2) are reviewed by an independent agent against the evidence classes. A row it confirms authorizes deletion; the user may audit the inventory at any time. |
+| U62 | (11 November) At Phase 8 the full qualification workflow and the local T3 ladder run once per host on frozen inputs without asking, with reruns under U52. |
+| U63 | (11 November) At the start of Phase 8 the agent sets version 1.9.0 in every manifest, lockfile and versioned document, and writes the 1.9.0 release notes and Marketplace text, so qualification runs on the release version and the branch is ready for the user's PR. |
+| U64 | (11 November) The Neo checkout is `~/code/airk`. Its connection details stay in the git-ignored `artifacts/v190/neo-connection.local.json`, never in tracked files. |
+| U65 | (11 November) The Neo holds a `notarytool` keychain profile, so split-branch macOS arm64 builds are signed, notarized, stapled and Gatekeeper-checked there. |
+| U66 | (11 November) No Intel Mac evidence is produced before the user's PR. macOS x64 signing and qualification run in hosted CI on `main` after the user merges; until then no x64 macOS claim is made. |
+| U67 | (11 November) When work is blocked on the user (OS trust dialog, a U55 high or critical finding, a new decision), the agent sends a push notification, records the blocker in the task ledger and continues independent work. |
+| U68 | (11 November) The Neo's existing checkout `~/code/airk` (clean, on `feat/finetuning`) is switched to `feat/split` for split work. No uncommitted work may be discarded; a dirty checkout stops the batch. |
+| U69 | (11 November) Over SSH the Neo's login keychain is locked. The user creates an owner-only password file once at `~/.airk-signing/keychain-pass` (mode 600) on the Neo. Each signing batch unlocks the login keychain with it, signs and notarizes with the `airk-ci` profile, and locks the keychain again, including after a failure. The password never enters the repository, logs or receipts. |
 
 ### 2.2 Formerly open decisions
 
