@@ -589,6 +589,35 @@ can reach the loopback port); remote-workspace port forwarding (plan §8.3).
 Test unauthenticated navigation separately from authenticated API calls and
 add a real-browser check (U56 pinned-issuer client).
 
+### 4.11 Security review disposition (U38/U55, 11 November 2026)
+
+The independent review [security-review-i3.md](security-review-i3.md) found
+0 critical, 2 high, 5 medium, 9 low and 6 informational items, with the verdict
+"No high or critical finding remains if the recommended changes are applied."
+None of the fixes changes a U decision, so under U55 they are adopted and C5
+proceeds:
+
+- **Normative amendments to §4:** the review's "Recommended specification
+  text" for H1 (same-user peer admission on the exchange and on every
+  `/admin/api` request, launch delivery through an owner-only redirect file
+  instead of process arguments, fail closed where neither is qualified), H2
+  (no opening, forwarding or `asExternalUri` of an admin URL from a remote
+  extension host; `airkctl admin open` refuses without a local graphical
+  session), M1 (one document for launch and shell; the token stays in page
+  memory and no endpoint returns it), M2 (independent token, a fresh cookie per
+  exchange, exactly one cookie of the name, one uniform 401, hashed storage
+  never logged), M3 (Trusted Types, no HTML sinks, sanitizing Markdown with a
+  scheme allowlist, attachment-only exports, visible bidi and control
+  characters, hostile-document fixture), M4 (split issuers carry critical name
+  constraints for 127.0.0.1, qualified per browser before trust is offered;
+  issuer key stored apart from the leaf key) and M5 (pages never ask for a code
+  or URL; `admin url` warns; preferred-port and issuer-fingerprint check before
+  opening; documented per-user Linux NSS trust). Where that text and earlier
+  §4 text differ, the review text governs.
+- **Low and informational items** are C5 implementation checklist entries,
+  each with a regression test.
+- The real-browser check of §4.10 remains required at Phase 5.
+
 ## 5. I4 — Install pointer, install record, setup operation, role admission
 
 ### 5.1 Inventory row
