@@ -25,6 +25,7 @@ Release state and qualification evidence are in the
 | airk-kernel | Collection-scoped publication, retrieval and rank fusion, response budgets, coverage, scheduling, usage and maintenance services, and the Workbench plan runner | core, ingest, store, retrieval |
 | airk-mcp | MCP schemas, the official SDK transport, canonical read handlers and result conversion | core, kernel |
 | airk-cli | Commands, the native service and its workers, local HTTPS ingress, installation and lifecycle, and process and IPC adapters | core, process, kernel, mcp, store, retrieval |
+| airkctl | The split's command-line client ([split plan](split/split-plan.md) §6). It owns the I2 contract: exit classes, the error line, the version document and session protocol 2. So far it serves only `--version` and `version`; every other command answers `not_yet_served` (exit 5). It may depend only on core, process and the future airk-ipc (U27) | core |
 
 Rules:
 

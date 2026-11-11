@@ -83,7 +83,7 @@ class VersionContracts(unittest.TestCase):
             root = Path(temporary)
             (root / "packages/vscode").mkdir(parents=True)
             (root / "Cargo.toml").write_text('[workspace.package]\nversion = "0.1.0"\n')
-            (root / "Cargo.lock").write_text('[[package]]\nname = "airk-core"\nversion = "0.1.0"\n\n[[package]]\nname = "dependency"\nversion = "0.1.0"\n')
+            (root / "Cargo.lock").write_text('[[package]]\nname = "airk-core"\nversion = "0.1.0"\n\n[[package]]\nname = "airkctl"\nversion = "0.1.0"\n\n[[package]]\nname = "dependency"\nversion = "0.1.0"\n')
             (root / "packages/vscode/package.json").write_text('{"version":"0.1.0","dependencies":{"other":"0.1.0"}}')
             (root / "packages/vscode/package-lock.json").write_text('{"version":"0.1.0","packages":{"":{"version":"0.1.0"},"node_modules/other":{"version":"0.1.0"}}}')
             edits = version.changes("0.1.0", "0.1.1", root)
@@ -91,6 +91,7 @@ class VersionContracts(unittest.TestCase):
                 (root / name).write_text(text, encoding="utf-8")
             self.assertEqual(version.source_version(root), "0.1.1")
             self.assertIn('name = "dependency"\nversion = "0.1.0"', edits["Cargo.lock"])
+            self.assertIn('name = "airkctl"\nversion = "0.1.1"', edits["Cargo.lock"])
             self.assertEqual(json.loads(edits["packages/vscode/package.json"])["dependencies"]["other"], "0.1.0")
             with self.assertRaises(ValueError):
                 version.changes("0.1.0", "0.1.2", root)

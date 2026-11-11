@@ -1,0 +1,21 @@
+{
+  "schema": "airk.split-fixture.i2-error-lines/1",
+  "contract": "crates/airkctl/src/contract/mod.rs",
+  "max_message_chars": 4096,
+  "valid": [
+    {"name": "unserved command", "json": {"airkctl_error": 1, "class": "unsupported_capability", "code": "not_yet_served", "retryable": false, "message": "This command is not served by this AIRK Service version."}},
+    {"name": "retryable refusal with a delay", "json": {"airkctl_error": 1, "class": "refused", "code": "registry_busy", "retryable": true, "retry_after_ms": 250, "message": "The service is busy."}},
+    {"name": "native failure kept complete", "json": {"airkctl_error": 1, "class": "refused", "code": "source_scope_changed", "retryable": false, "message": "The source scope changed.", "native": {"status": "failure", "code": "source_scope_changed"}}},
+    {"name": "unknown outcome after a mutation", "json": {"airkctl_error": 1, "class": "outcome_unknown", "code": "deadline_after_send", "retryable": false, "message": "Recover the outcome by its request receipt."}}
+  ],
+  "invalid": [
+    {"name": "unknown field", "json": {"airkctl_error": 1, "class": "refused", "code": "x", "retryable": false, "message": "m", "extra": 1}},
+    {"name": "unknown class", "json": {"airkctl_error": 1, "class": "fatal", "code": "x", "retryable": false, "message": "m"}},
+    {"name": "missing retryable", "json": {"airkctl_error": 1, "class": "refused", "code": "x", "message": "m"}}
+  ],
+  "rejected_after_decoding": [
+    {"name": "other line version", "reason": "airkctl_error_version", "json": {"airkctl_error": 2, "class": "refused", "code": "x", "retryable": false, "message": "m"}},
+    {"name": "uppercase code", "reason": "airkctl_error_code", "json": {"airkctl_error": 1, "class": "refused", "code": "Not_Yet_Served", "retryable": false, "message": "m"}},
+    {"name": "success is never an error", "reason": "airkctl_error_class", "json": {"airkctl_error": 1, "class": "success", "code": "ok", "retryable": false, "message": "m"}}
+  ]
+}

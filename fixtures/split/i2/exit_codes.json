@@ -1,0 +1,17 @@
+{
+  "schema": "airk.split-fixture.i2-exit-codes/1",
+  "contract": "crates/airkctl/src/contract/mod.rs",
+  "note": "Reviewed I2 exit codes (docs/split/contracts.md section 3.4). Written independently of the code under test.",
+  "codes": [
+    {"code": 0, "class": "success", "mutation_possible": "yes"},
+    {"code": 1, "class": "refused", "mutation_possible": "no"},
+    {"code": 2, "class": "usage", "mutation_possible": "no"},
+    {"code": 3, "class": "service_missing", "mutation_possible": "no"},
+    {"code": 4, "class": "incompatible_pair", "mutation_possible": "no"},
+    {"code": 5, "class": "unsupported_capability", "mutation_possible": "no"},
+    {"code": 6, "class": "outcome_unknown", "mutation_possible": "maybe"},
+    {"code": 7, "class": "installation_unverified", "mutation_possible": "no"},
+    {"code": 8, "class": "internal", "mutation_possible": "unknown"}
+  ],
+  "unassigned": [9, 64, 101, 255]
+}

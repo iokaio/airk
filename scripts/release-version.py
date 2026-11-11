@@ -34,13 +34,17 @@ def numeric(version):
     return tuple(map(int, version.split(".")))
 
 
+# Workspace crates carry the shared version: every airk-* crate and airkctl.
+LOCAL_CRATE = re.compile(r"airk(?:-[a-z0-9-]+|ctl)")
+
+
 def source_version(root=ROOT):
     version = tomllib.loads((root / "Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"]
     numeric(version)
     package = json.loads((root / "packages/vscode/package.json").read_text(encoding="utf-8"))
     lock = json.loads((root / "packages/vscode/package-lock.json").read_text(encoding="utf-8"))
     crates = [p for p in tomllib.loads((root / "Cargo.lock").read_text(encoding="utf-8"))["package"]
-              if p["name"].startswith("airk-") and "source" not in p]
+              if LOCAL_CRATE.fullmatch(p["name"]) and "source" not in p]
     if (package["version"] != version or lock["version"] != version
             or lock["packages"][""]["version"] != version or not crates
             or any(p["version"] != version for p in crates)):
@@ -139,7 +143,7 @@ def changes(version, next_version, root=ROOT):
         if name == "Cargo.toml":
             value = value.replace(f'version = "{version}"', f'version = "{next_version}"', 1)
         elif name == "Cargo.lock":
-            value = re.sub(r'(name = "airk-[^"\n]+"\nversion = ")' + re.escape(version) + '"',
+            value = re.sub(r'(name = "' + LOCAL_CRATE.pattern + r'"\nversion = ")' + re.escape(version) + '"',
                            lambda m: m[1] + next_version + '"', value)
         else:
             # Only package/root lock entries, never dependency versions.

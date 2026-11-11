@@ -272,6 +272,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "airkctl"
+version = "1.8.23"
+dependencies = [
+ "airk-core",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "android_system_properties"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"

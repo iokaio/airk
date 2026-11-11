@@ -11,7 +11,8 @@
     "airk-mcp": "crates/airk-mcp/Cargo.toml",
     "airk-process": "crates/airk-process/Cargo.toml",
     "airk-retrieval": "crates/airk-retrieval/Cargo.toml",
-    "airk-store": "crates/airk-store/Cargo.toml"
+    "airk-store": "crates/airk-store/Cargo.toml",
+    "airkctl": "crates/airkctl/Cargo.toml"
   },
   "packages": [
     {

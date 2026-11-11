@@ -1,0 +1,159 @@
+{
+  "schema": "airk.wire-fixture.airkctl-session-frames/1",
+  "contract": "crates/airkctl/src/contract/mod.rs",
+  "protocol": 2,
+  "budgets": {
+    "max_request_frame_bytes": 196608,
+    "max_invoke_stdin_bytes": 65536,
+    "max_invoke_args": 64,
+    "max_invoke_arg_bytes": 32768,
+    "max_response_frame_bytes": 16777216,
+    "max_invoke_stderr_bytes": 65536,
+    "max_in_flight": 8,
+    "max_invoke_deadline_ms": 120000,
+    "max_buffered_events": 256,
+    "max_buffered_event_bytes": 1048576
+  },
+  "requests": [
+    {
+      "name": "hello names the client and its I2 contracts",
+      "json": {"id": "01010101010101010101010101010101", "request": {"hello": {"protocol": 2, "client": {"name": "airk-vscode", "version": "1.9.0"}, "i2_contracts": [1]}}}
+    },
+    {
+      "name": "control relay names no control directory",
+      "json": {"id": "02020202020202020202020202020202", "request": {"control": {"method": "health"}}}
+    },
+    {
+      "name": "invoke without stdin",
+      "json": {"id": "03030303030303030303030303030303", "request": {"invoke": {"argv": ["search", "--query", "fixture"], "deadline_ms": 60000}}}
+    },
+    {
+      "name": "invoke with stdin",
+      "json": {"id": "04040404040404040404040404040404", "request": {"invoke": {"argv": ["service", "prepare-configuration", "--project", "fixture"], "stdin": "{\"draft\":1}", "deadline_ms": 60000}}}
+    },
+    {
+      "name": "cancel",
+      "json": {"id": "05050505050505050505050505050505", "request": {"cancel": {"target": "03030303030303030303030303030303"}}}
+    },
+    {
+      "name": "subscribe without a cursor",
+      "json": {"id": "06060606060606060606060606060606", "request": {"subscribe": {"topics": ["status", "jobs", "assistance"]}}}
+    },
+    {
+      "name": "subscribe resuming a scoped cursor",
+      "json": {"id": "07070707070707070707070707070707", "request": {"subscribe": {"topics": ["jobs"], "cursor": {"service_instance": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "window_id": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b", "native": {"namespace": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "project": null, "after": 17, "through": null}}}}}
+    },
+    {
+      "name": "unsubscribe",
+      "json": {"id": "08080808080808080808080808080808", "request": {"unsubscribe": {}}}
+    }
+  ],
+  "invalid_requests": [
+    {
+      "name": "unknown request field",
+      "json": {"id": "01010101010101010101010101010101", "request": {"hello": {"protocol": 2, "client": {"name": "airk-vscode", "version": "1.9.0"}, "i2_contracts": [1]}}, "extra": true}
+    },
+    {
+      "name": "protocol 1 hello lacks the client and contracts",
+      "json": {"id": "01010101010101010101010101010101", "request": {"hello": {"protocol": 1}}}
+    },
+    {
+      "name": "control relay naming a control directory (protocol 1 shape)",
+      "json": {"id": "02020202020202020202020202020202", "request": {"control": {"runtime_dir": "C:\\fixture\\control", "method": "health"}}}
+    },
+    {
+      "name": "invoke without deadline",
+      "json": {"id": "03030303030303030303030303030303", "request": {"invoke": {"argv": ["search"]}}}
+    },
+    {
+      "name": "unknown event topic",
+      "json": {"id": "06060606060606060606060606060606", "request": {"subscribe": {"topics": ["everything"]}}}
+    },
+    {
+      "name": "cursor without a window scope",
+      "json": {"id": "07070707070707070707070707070707", "request": {"subscribe": {"topics": ["jobs"], "cursor": {"service_instance": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "native": {"namespace": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "project": null, "after": 17, "through": null}}}}}
+    },
+    {
+      "name": "non-canonical id",
+      "json": {"id": "ABCDEF", "request": {"unsubscribe": {}}}
+    }
+  ],
+  "responses": [
+    {
+      "name": "hello before any installation is found",
+      "json": {"id": "01010101010101010101010101010101", "outcome": {"status": "hello", "protocol": 2, "version": "1.9.0", "i2_contract": 1, "capabilities": [], "executable_sha256": "1111111111111111111111111111111111111111111111111111111111111111"}}
+    },
+    {
+      "name": "hello with a service and window",
+      "json": {"id": "01010101010101010101010101010101", "outcome": {"status": "hello", "protocol": 2, "version": "1.9.0", "i2_contract": 1, "capabilities": ["session/2", "tools/1"], "executable_sha256": "1111111111111111111111111111111111111111111111111111111111111111", "service_instance": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "window_id": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"}}
+    },
+    {
+      "name": "control failure relay",
+      "json": {"id": "02020202020202020202020202020202", "outcome": {"status": "control", "response": {"status": "failure", "code": "service_unavailable"}}}
+    },
+    {
+      "name": "invoked success",
+      "json": {"id": "03030303030303030303030303030303", "outcome": {"status": "invoked", "exit_code": 0, "class": "success", "stdout": "{\"selected\":null}\n", "stderr": ""}}
+    },
+    {
+      "name": "invoked unsupported capability carries its error line",
+      "json": {"id": "04040404040404040404040404040404", "outcome": {"status": "invoked", "exit_code": 5, "class": "unsupported_capability", "stdout": "", "stderr": "", "error": {"airkctl_error": 1, "class": "unsupported_capability", "code": "not_yet_served", "retryable": false, "message": "This command is not served by this AIRK Service version."}}}
+    },
+    {
+      "name": "subscribed",
+      "json": {"id": "06060606060606060606060606060606", "outcome": {"status": "subscribed", "cursor": {"service_instance": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "window_id": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b", "native": {"namespace": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "project": null, "after": 0, "through": null}}}}
+    },
+    {
+      "name": "unsubscribed",
+      "json": {"id": "08080808080808080808080808080808", "outcome": {"status": "unsubscribed"}}
+    },
+    {
+      "name": "busy is retryable",
+      "json": {"id": "05050505050505050505050505050505", "outcome": {"status": "failed", "code": "session_busy", "retryable": true}}
+    },
+    {
+      "name": "token-returning command is refused in a session",
+      "json": {"id": "09090909090909090909090909090909", "outcome": {"status": "failed", "code": "session_command_refused", "retryable": false}}
+    },
+    {
+      "name": "cursor from another window is refused",
+      "json": {"id": "07070707070707070707070707070707", "outcome": {"status": "failed", "code": "event_cursor_scope_mismatch", "retryable": false}}
+    },
+    {
+      "name": "service restart fails in-flight reads retryably",
+      "json": {"id": "03030303030303030303030303030303", "outcome": {"status": "failed", "code": "service_restarted", "retryable": true}}
+    },
+    {
+      "name": "cancelled",
+      "json": {"id": "03030303030303030303030303030303", "outcome": {"status": "cancelled"}}
+    }
+  ],
+  "events": [
+    {
+      "name": "job event carries its scoped cursor",
+      "json": {"event": {"kind": "job", "cursor": {"service_instance": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a", "window_id": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b", "native": {"namespace": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c", "project": null, "after": 18, "through": null}}, "job": {"id": "fixture", "state": "running"}}}
+    },
+    {
+      "name": "overflow resync",
+      "json": {"event": {"kind": "resync", "reason": "overflow"}}
+    },
+    {
+      "name": "service restart resync",
+      "json": {"event": {"kind": "resync", "reason": "service_restarted"}}
+    },
+    {
+      "name": "closing",
+      "json": {"event": {"kind": "closing"}}
+    }
+  ],
+  "invalid_events": [
+    {
+      "name": "unknown event kind",
+      "json": {"event": {"kind": "history_gap_filled"}}
+    },
+    {
+      "name": "unknown resync reason",
+      "json": {"event": {"kind": "resync", "reason": "dropped_quietly"}}
+    }
+  ]
+}

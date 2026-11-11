@@ -1,0 +1,8 @@
+// SPDX-License-Identifier: Apache-2.0
+//! `airkctl`, the AIRK command-line client (split plan §6).
+//!
+//! This crate owns the I2 contract (`contract`): arguments, output, exit
+//! classes, the version handshake and the editor session frames. It reaches the
+//! service only over I1 plus the documented exceptions, and never links the
+//! kernel, store, retrieval, ingest or MCP crates (U27).
+pub mod contract;
