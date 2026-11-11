@@ -1,0 +1,832 @@
+{
+ "assemble": [
+  {
+   "document": {
+    "a": [
+     null,
+     null,
+     1
+    ]
+   },
+   "name": "key_then_index",
+   "records": [
+    {
+     "path": [
+      {
+       "key": "a"
+      },
+      {
+       "index": 2
+      }
+     ],
+     "value": 1
+    }
+   ],
+   "rule": "an index extends a new array with nulls"
+  },
+  {
+   "document": {
+    "a": [
+     "a",
+     "b"
+    ]
+   },
+   "name": "indexes_out_of_order",
+   "records": [
+    {
+     "path": [
+      {
+       "key": "a"
+      },
+      {
+       "index": 1
+      }
+     ],
+     "value": "b"
+    },
+    {
+     "path": [
+      {
+       "key": "a"
+      },
+      {
+       "index": 0
+      }
+     ],
+     "value": "a"
+    }
+   ],
+   "rule": "records may arrive in any index order"
+  },
+  {
+   "document": {
+    "s": "\u6708x"
+   },
+   "name": "string_chunks_byte_offsets",
+   "records": [
+    {
+     "path": [
+      {
+       "key": "s"
+      },
+      {
+       "string_chunk": {
+        "offset": 0
+       }
+      }
+     ],
+     "value": "\u6708"
+    },
+    {
+     "path": [
+      {
+       "key": "s"
+      },
+      {
+       "string_chunk": {
+        "offset": 3
+       }
+      }
+     ],
+     "value": "x"
+    }
+   ],
+   "rule": "chunk offsets count UTF-8 bytes"
+  },
+  {
+   "document": {
+    "k": 1
+   },
+   "name": "root_record",
+   "records": [
+    {
+     "path": [],
+     "value": {
+      "k": 1
+     }
+    }
+   ],
+   "rule": "an empty path is the whole document"
+  },
+  {
+   "document": {
+    "e": {},
+    "l": []
+   },
+   "name": "empty_containers",
+   "records": [
+    {
+     "path": [
+      {
+       "key": "e"
+      }
+     ],
+     "value": {}
+    },
+    {
+     "path": [
+      {
+       "key": "l"
+      }
+     ],
+     "value": []
+    }
+   ],
+   "rule": "empty objects and arrays are values, not absences"
+  },
+  {
+   "name": "overlap",
+   "records": [
+    {
+     "path": [
+      {
+       "key": "a"
+      }
+     ],
+     "value": 1
+    },
+    {
+     "path": [
+      {
+       "key": "a"
+      }
+     ],
+     "value": 2
+    }
+   ],
+   "refused": true,
+   "rule": "a path is written once"
+  },
+  {
+   "name": "chunk_gap",
+   "records": [
+    {
+     "path": [
+      {
+       "key": "s"
+      },
+      {
+       "string_chunk": {
+        "offset": 0
+       }
+      }
+     ],
+     "value": "ab"
+    },
+    {
+     "path": [
+      {
+       "key": "s"
+      },
+      {
+       "string_chunk": {
+        "offset": 3
+       }
+      }
+     ],
+     "value": "c"
+    }
+   ],
+   "refused": true,
+   "rule": "chunks are contiguous"
+  },
+  {
+   "name": "chunk_character_offset",
+   "records": [
+    {
+     "path": [
+      {
+       "key": "s"
+      },
+      {
+       "string_chunk": {
+        "offset": 0
+       }
+      }
+     ],
+     "value": "\u6708"
+    },
+    {
+     "path": [
+      {
+       "key": "s"
+      },
+      {
+       "string_chunk": {
+        "offset": 1
+       }
+      }
+     ],
+     "value": "x"
+    }
+   ],
+   "refused": true,
+   "rule": "a character offset is not a byte offset"
+  },
+  {
+   "name": "crossed_object",
+   "records": [
+    {
+     "path": [
+      {
+       "key": "a"
+      }
+     ],
+     "value": 1
+    },
+    {
+     "path": [
+      {
+       "key": "a"
+      },
+      {
+       "key": "b"
+      }
+     ],
+     "value": 2
+    }
+   ],
+   "refused": true,
+   "rule": "a scalar is not an object"
+  },
+  {
+   "name": "crossed_array",
+   "records": [
+    {
+     "path": [
+      {
+       "key": "a"
+      }
+     ],
+     "value": {}
+    },
+    {
+     "path": [
+      {
+       "key": "a"
+      },
+      {
+       "index": 0
+      }
+     ],
+     "value": 1
+    }
+   ],
+   "refused": true,
+   "rule": "an object is not an array"
+  },
+  {
+   "name": "chunk_not_last",
+   "records": [
+    {
+     "path": [
+      {
+       "string_chunk": {
+        "offset": 0
+       }
+      },
+      {
+       "key": "a"
+      }
+     ],
+     "value": "x"
+    }
+   ],
+   "refused": true,
+   "rule": "a chunk ends its path"
+  },
+  {
+   "name": "chunk_onto_scalar",
+   "records": [
+    {
+     "path": [
+      {
+       "key": "a"
+      }
+     ],
+     "value": 1
+    },
+    {
+     "path": [
+      {
+       "key": "a"
+      },
+      {
+       "string_chunk": {
+        "offset": 0
+       }
+      }
+     ],
+     "value": "x"
+    }
+   ],
+   "refused": true,
+   "rule": "a chunk appends only to a string"
+  },
+  {
+   "name": "index_budget",
+   "records": [
+    {
+     "path": [
+      {
+       "index": 4096
+      }
+     ],
+     "value": 1
+    }
+   ],
+   "refused": true,
+   "rule": "an index is below 4096"
+  }
+ ],
+ "digests": [
+  {
+   "canonical": "{}",
+   "input_json": "{}",
+   "name": "empty_object",
+   "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+  },
+  {
+   "canonical": "{\"A\":[true,null],\"a\":{\"c\":3,\"d\":2},\"b\":1}",
+   "input_json": "{\"b\":1,\"a\":{\"d\":2,\"c\":3},\"A\":[true,null]}",
+   "name": "unsorted_keys",
+   "sha256": "a329a6fee5514fe5f3ba16c2dfef92c40acbb0555614aec55294d212ec47cca2"
+  },
+  {
+   "canonical": "{\"n\":-7,\"s\":\"\u00e9\\u0001/\"}",
+   "input_json": "{ \"s\" : \"\\u00e9\\u0001\\/\" , \"n\" : -7 }",
+   "name": "whitespace_and_escapes",
+   "sha256": "e76a7ba3d0fd69a1927c0186dff10daddc5eff6e4eecf024c32886d67e191f3e"
+  }
+ ],
+ "generator": "fixtures/wire/usage_page.py",
+ "pages": [
+  {
+   "input": {
+    "project": "legacy",
+    "value": {
+     "all_fields": [
+      1,
+      2,
+      3
+     ]
+    }
+   },
+   "max_bytes": 20480,
+   "name": "single_record",
+   "pages": [
+    {
+     "bytes": "{\"digest\":\"a0b11ac2b2ebd6ffa2c00606332c3e2c1d256174f2d9abfaa5b07e27ac3efcf6\",\"items\":[{\"path\":[],\"value\":{\"project\":\"legacy\",\"value\":{\"all_fields\":[1,2,3]}}}],\"cursor\":null,\"record_bytes\":71,\"total_items\":1}",
+     "cursor": null,
+     "digest": "a0b11ac2b2ebd6ffa2c00606332c3e2c1d256174f2d9abfaa5b07e27ac3efcf6",
+     "next_cursor": null,
+     "paths": [
+      []
+     ],
+     "record_bytes": 71,
+     "total_items": 1
+    }
+   ],
+   "rule": "a small document is one root record"
+  },
+  {
+   "input": {
+    "empty": {},
+    "flag": true,
+    "list": [],
+    "negative": -5,
+    "null": null,
+    "text": "quote \" backslash \\ newline \n tab \t back \b feed \f return \r bell \u0007 del \u007f \u6708 \ud83d\ude00 /",
+    "zero": 0
+   },
+   "max_bytes": 20480,
+   "name": "escapes_and_order",
+   "pages": [
+    {
+     "bytes": "{\"digest\":\"45cff093428d42cb2f9ad82ff55d9c574e8f7b5310c7c88b8413c7e719945f93\",\"items\":[{\"path\":[],\"value\":{\"empty\":{},\"flag\":true,\"list\":[],\"negative\":-5,\"null\":null,\"text\":\"quote \\\" backslash \\\\ newline \\n tab \\t back \\b feed \\f return \\r bell \\u0007 del \u007f \u6708 \ud83d\ude00 /\",\"zero\":0}}],\"cursor\":null,\"record_bytes\":193,\"total_items\":1}",
+     "cursor": null,
+     "digest": "45cff093428d42cb2f9ad82ff55d9c574e8f7b5310c7c88b8413c7e719945f93",
+     "next_cursor": null,
+     "paths": [
+      []
+     ],
+     "record_bytes": 193,
+     "total_items": 1
+    }
+   ],
+   "rule": "string escapes, raw UTF-8 and sorted object keys"
+  },
+  {
+   "input": {
+    "a": {
+     "$repeat": "x",
+     "count": 9000
+    },
+    "b": [
+     {
+      "$repeat": "y",
+      "count": 9000
+     },
+     {
+      "$repeat": "w",
+      "count": 9000
+     }
+    ],
+    "c": {
+     "$repeat": "z",
+     "count": 9000
+    }
+   },
+   "max_bytes": 20480,
+   "name": "split_object_and_array",
+   "pages": [
+    {
+     "bytes_length": 18290,
+     "bytes_sha256": "cbbfdb551ef77e5b5c16befec271e653b5c3c6035187c9dbcc3793cd13d97cf3",
+     "cursor": null,
+     "digest": "de47f9d9f64d581f594fc1d6ec265bc4a916d4e8cd7a19d0a3c6c5789096f057",
+     "next_cursor": "airk-u1:de47f9d9f64d581f594fc1d6ec265bc4a916d4e8cd7a19d0a3c6c5789096f057:2",
+     "paths": [
+      [
+       {
+        "key": "a"
+       }
+      ],
+      [
+       {
+        "key": "b"
+       },
+       {
+        "index": 0
+       }
+      ]
+     ],
+     "record_bytes": 18078,
+     "total_items": 4
+    },
+    {
+     "bytes_length": 18218,
+     "bytes_sha256": "dee75f8cd582c28b1b75eb17b612ad7c5efc7a9015e786b046783f08c60971aa",
+     "cursor": "airk-u1:de47f9d9f64d581f594fc1d6ec265bc4a916d4e8cd7a19d0a3c6c5789096f057:2",
+     "digest": "de47f9d9f64d581f594fc1d6ec265bc4a916d4e8cd7a19d0a3c6c5789096f057",
+     "next_cursor": null,
+     "paths": [
+      [
+       {
+        "key": "b"
+       },
+       {
+        "index": 1
+       }
+      ],
+      [
+       {
+        "key": "c"
+       }
+      ]
+     ],
+     "record_bytes": 18078,
+     "total_items": 4
+    }
+   ],
+   "rule": "an oversized object splits by key and an oversized array by index; two pages"
+  },
+  {
+   "input": {
+    "a": {
+     "$repeat": "x",
+     "count": 9000
+    },
+    "b": [
+     {
+      "$repeat": "y",
+      "count": 9000
+     },
+     {
+      "$repeat": "w",
+      "count": 9000
+     }
+    ],
+    "c": {
+     "$repeat": "z",
+     "count": 9000
+    }
+   },
+   "max_bytes": 49152,
+   "name": "split_at_maximum_budget",
+   "pages": [
+    {
+     "bytes_length": 36298,
+     "bytes_sha256": "24f5f525a81cf56326b249257852adfa1239f26390836be2619ad2757087d492",
+     "cursor": null,
+     "digest": "de47f9d9f64d581f594fc1d6ec265bc4a916d4e8cd7a19d0a3c6c5789096f057",
+     "next_cursor": null,
+     "paths": [
+      [
+       {
+        "key": "a"
+       }
+      ],
+      [
+       {
+        "key": "b"
+       },
+       {
+        "index": 0
+       }
+      ],
+      [
+       {
+        "key": "b"
+       },
+       {
+        "index": 1
+       }
+      ],
+      [
+       {
+        "key": "c"
+       }
+      ]
+     ],
+     "record_bytes": 36156,
+     "total_items": 4
+    }
+   ],
+   "rule": "the same records fit one page at the 48 KiB maximum"
+  },
+  {
+   "input": {
+    "export": {
+     "$repeat": "\"\u6708\",report\n",
+     "count": 1100
+    }
+   },
+   "max_bytes": 20480,
+   "name": "string_chunks_multibyte",
+   "pages": [
+    {
+     "bytes_length": 18241,
+     "bytes_sha256": "db50875d848a2a5a79daebe354d8a135eebe7f2a496ed0f3c7a3b979908bc50d",
+     "cursor": null,
+     "digest": "89b8fe4677970a549b1978a24c374afa51467f31ae5de9e9dd36f9fdc519faa0",
+     "next_cursor": null,
+     "paths": [
+      [
+       {
+        "key": "export"
+       },
+       {
+        "string_chunk": {
+         "offset": 0
+        }
+       }
+      ],
+      [
+       {
+        "key": "export"
+       },
+       {
+        "string_chunk": {
+         "offset": 2364
+        }
+       }
+      ],
+      [
+       {
+        "key": "export"
+       },
+       {
+        "string_chunk": {
+         "offset": 4728
+        }
+       }
+      ],
+      [
+       {
+        "key": "export"
+       },
+       {
+        "string_chunk": {
+         "offset": 7092
+        }
+       }
+      ],
+      [
+       {
+        "key": "export"
+       },
+       {
+        "string_chunk": {
+         "offset": 9456
+        }
+       }
+      ],
+      [
+       {
+        "key": "export"
+       },
+       {
+        "string_chunk": {
+         "offset": 11818
+        }
+       }
+      ],
+      [
+       {
+        "key": "export"
+       },
+       {
+        "string_chunk": {
+         "offset": 14182
+        }
+       }
+      ]
+     ],
+     "record_bytes": 18096,
+     "total_items": 7
+    }
+   ],
+   "rule": "an oversized string splits into 2000-character chunks at UTF-8 byte offsets"
+  }
+ ],
+ "refused_pages": [
+  {
+   "cursor": null,
+   "input": {
+    "project": "legacy"
+   },
+   "max_bytes": 20479,
+   "name": "budget_below_minimum",
+   "rule": "page budget must be at least 20 KiB"
+  },
+  {
+   "cursor": null,
+   "input": {
+    "project": "legacy"
+   },
+   "max_bytes": 49153,
+   "name": "budget_above_maximum",
+   "rule": "page budget must be at most 48 KiB"
+  },
+  {
+   "cursor": "airk-u1:0000000000000000000000000000000000000000000000000000000000000000:2",
+   "input": {
+    "a": {
+     "$repeat": "x",
+     "count": 9000
+    },
+    "b": [
+     {
+      "$repeat": "y",
+      "count": 9000
+     },
+     {
+      "$repeat": "w",
+      "count": 9000
+     }
+    ],
+    "c": {
+     "$repeat": "z",
+     "count": 9000
+    }
+   },
+   "max_bytes": 20480,
+   "name": "cursor_other_digest",
+   "rule": "a changed document restarts pagination"
+  },
+  {
+   "cursor": "airk-u1:de47f9d9f64d581f594fc1d6ec265bc4a916d4e8cd7a19d0a3c6c5789096f057:0",
+   "input": {
+    "a": {
+     "$repeat": "x",
+     "count": 9000
+    },
+    "b": [
+     {
+      "$repeat": "y",
+      "count": 9000
+     },
+     {
+      "$repeat": "w",
+      "count": 9000
+     }
+    ],
+    "c": {
+     "$repeat": "z",
+     "count": 9000
+    }
+   },
+   "max_bytes": 20480,
+   "name": "cursor_zero",
+   "rule": "a cursor index is positive"
+  },
+  {
+   "cursor": "airk-u1:de47f9d9f64d581f594fc1d6ec265bc4a916d4e8cd7a19d0a3c6c5789096f057:4",
+   "input": {
+    "a": {
+     "$repeat": "x",
+     "count": 9000
+    },
+    "b": [
+     {
+      "$repeat": "y",
+      "count": 9000
+     },
+     {
+      "$repeat": "w",
+      "count": 9000
+     }
+    ],
+    "c": {
+     "$repeat": "z",
+     "count": 9000
+    }
+   },
+   "max_bytes": 20480,
+   "name": "cursor_at_end",
+   "rule": "a cursor index is below the record count"
+  },
+  {
+   "cursor": "airk-u1:de47f9d9f64d581f594fc1d6ec265bc4a916d4e8cd7a19d0a3c6c5789096f057:2:0",
+   "input": {
+    "a": {
+     "$repeat": "x",
+     "count": 9000
+    },
+    "b": [
+     {
+      "$repeat": "y",
+      "count": 9000
+     },
+     {
+      "$repeat": "w",
+      "count": 9000
+     }
+    ],
+    "c": {
+     "$repeat": "z",
+     "count": 9000
+    }
+   },
+   "max_bytes": 20480,
+   "name": "cursor_extra_field",
+   "rule": "a cursor has exactly three fields"
+  },
+  {
+   "cursor": "airk-u2:de47f9d9f64d581f594fc1d6ec265bc4a916d4e8cd7a19d0a3c6c5789096f057:2",
+   "input": {
+    "a": {
+     "$repeat": "x",
+     "count": 9000
+    },
+    "b": [
+     {
+      "$repeat": "y",
+      "count": 9000
+     },
+     {
+      "$repeat": "w",
+      "count": 9000
+     }
+    ],
+    "c": {
+     "$repeat": "z",
+     "count": 9000
+    }
+   },
+   "max_bytes": 20480,
+   "name": "cursor_other_prefix",
+   "rule": "a cursor starts with airk-u1"
+  }
+ ],
+ "rejected": [
+  {
+   "json": "{\"path\":[],\"value\":1,\"extra\":true}",
+   "kind": "record",
+   "name": "record_unknown_field"
+  },
+  {
+   "json": "{\"path\":[]}",
+   "kind": "record",
+   "name": "record_missing_value"
+  },
+  {
+   "json": "{\"path\":[{\"field\":\"a\"}],\"value\":1}",
+   "kind": "record",
+   "name": "part_unknown_variant"
+  },
+  {
+   "json": "{\"path\":[{\"index\":-1}],\"value\":1}",
+   "kind": "record",
+   "name": "part_negative_index"
+  },
+  {
+   "json": "{\"digest\":\"00\",\"items\":[],\"cursor\":null,\"record_bytes\":0,\"total_items\":0,\"extra\":1}",
+   "kind": "page",
+   "name": "page_unknown_field"
+  }
+ ],
+ "rust": "airk_core::usage_page",
+ "schema": "airk.wire-fixture.usage-page/1"
+}

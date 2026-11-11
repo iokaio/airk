@@ -1,0 +1,284 @@
+{
+ "cases": [
+  {
+   "class": "accepted",
+   "code": null,
+   "control_response": true,
+   "expected_status": "job",
+   "method": "enqueue",
+   "name": "job_accepted",
+   "reply": {
+    "job": {
+     "attempts": 0,
+     "fencing_generation": 1,
+     "id": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+     "kind": "index",
+     "outcome": null,
+     "project": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+     "state": "pending"
+    },
+    "status": "job"
+   },
+   "rule": "an enqueue acceptance returns the complete job reply",
+   "transport": "reply"
+  },
+  {
+   "class": "accepted",
+   "code": null,
+   "control_response": true,
+   "expected_status": "catalog_applied",
+   "method": "catalog_apply",
+   "name": "catalog_applied",
+   "reply": {
+    "receipt": {
+     "authority_fence_required": false,
+     "caller": "11111111111111111111111111111111",
+     "catalog_revision": 7,
+     "key": {
+      "epoch": 3,
+      "namespace": "12121212121212121212121212121212",
+      "nonce": "13131313131313131313131313131313"
+     },
+     "operation_id": "505fbd9cb44664597a14d8593ef39705",
+     "request_digest": "1414141414141414141414141414141414141414141414141414141414141414",
+     "schema": 1
+    },
+    "status": "catalog_applied"
+   },
+   "rule": "a catalog apply acceptance returns the complete receipt reply",
+   "transport": "reply"
+  },
+  {
+   "class": "refused",
+   "code": "grant_revoked",
+   "control_response": true,
+   "expected_status": "catalog_applied",
+   "method": "catalog_apply",
+   "name": "failure_refused",
+   "reply": {
+    "code": "grant_revoked",
+    "status": "failure"
+   },
+   "rule": "an ordinary failure code is a refusal",
+   "transport": "reply"
+  },
+  {
+   "class": "refused",
+   "code": "invalid_registry_request",
+   "control_response": true,
+   "expected_status": "catalog_preview",
+   "method": "catalog_preview",
+   "name": "failure_invalid_registry_request_read",
+   "reply": {
+    "code": "invalid_registry_request",
+    "status": "failure"
+   },
+   "rule": "invalid_registry_request outside a catalog mutation is a refusal",
+   "transport": "reply"
+  },
+  {
+   "class": "refused",
+   "code": "native_session_queue_full",
+   "control_response": false,
+   "expected_status": "job",
+   "method": "enqueue",
+   "name": "session_refused_before_send",
+   "reply": null,
+   "rule": "a session failure before send cannot have started the request",
+   "transport": "not_sent"
+  },
+  {
+   "class": "unknown",
+   "code": "catalog_apply_outcome_unknown",
+   "control_response": true,
+   "expected_status": "catalog_applied",
+   "method": "catalog_apply",
+   "name": "failure_outcome_unknown",
+   "reply": {
+    "code": "catalog_apply_outcome_unknown",
+    "status": "failure"
+   },
+   "rule": "a failure code ending in _outcome_unknown is unknown",
+   "transport": "reply"
+  },
+  {
+   "class": "unknown",
+   "code": "registry_response_unknown_retry_with_key",
+   "control_response": true,
+   "expected_status": "job",
+   "method": "enqueue",
+   "name": "failure_registry_response_unknown",
+   "reply": {
+    "code": "registry_response_unknown_retry_with_key",
+    "status": "failure"
+   },
+   "rule": "registry_response_unknown_retry_with_key is unknown",
+   "transport": "reply"
+  },
+  {
+   "class": "unknown",
+   "code": "invalid_registry_request",
+   "control_response": true,
+   "expected_status": "catalog_applied",
+   "method": "catalog_apply",
+   "name": "failure_invalid_registry_request_catalog_apply",
+   "reply": {
+    "code": "invalid_registry_request",
+    "status": "failure"
+   },
+   "rule": "invalid_registry_request after a catalog mutation may hide an applied change",
+   "transport": "reply"
+  },
+  {
+   "class": "unknown",
+   "code": "invalid_registry_request",
+   "control_response": true,
+   "expected_status": "catalog_source_change_resolved",
+   "method": "catalog_source_change_resolve",
+   "name": "failure_invalid_registry_request_catalog_source_change_resolve",
+   "reply": {
+    "code": "invalid_registry_request",
+    "status": "failure"
+   },
+   "rule": "invalid_registry_request after a catalog mutation may hide an applied change",
+   "transport": "reply"
+  },
+  {
+   "class": "unknown",
+   "code": "unexpected_service_response",
+   "control_response": true,
+   "expected_status": "catalog_applied",
+   "method": "catalog_apply",
+   "name": "catalog_outcome_unknown",
+   "reply": {
+    "caller": "11111111111111111111111111111111",
+    "code": "catalog_apply_outcome_unknown",
+    "key": {
+     "epoch": 3,
+     "namespace": "12121212121212121212121212121212",
+     "nonce": "13131313131313131313131313131313"
+    },
+    "request_digest": "1414141414141414141414141414141414141414141414141414141414141414",
+    "status": "catalog_outcome_unknown"
+   },
+   "rule": "a native unknown-outcome reply is not the expected acceptance",
+   "transport": "reply"
+  },
+  {
+   "class": "unknown",
+   "code": "unexpected_service_response",
+   "control_response": true,
+   "expected_status": "catalog_source_change_resolved",
+   "method": "catalog_source_change_resolve",
+   "name": "source_change_resolution_outcome_unknown",
+   "reply": {
+    "begin_operation": "15151515151515151515151515151515",
+    "code": "source_change_resolution_outcome_unknown",
+    "status": "source_change_resolution_outcome_unknown"
+   },
+   "rule": "a native unknown resolution is not the expected acceptance",
+   "transport": "reply"
+  },
+  {
+   "class": "unknown",
+   "code": "native_session_disposed",
+   "control_response": false,
+   "expected_status": "catalog_applied",
+   "method": "catalog_apply",
+   "name": "transport_lost_after_send",
+   "reply": null,
+   "rule": "transport loss after send leaves the outcome unknown",
+   "transport": "lost_after_send"
+  },
+  {
+   "class": "unvalidated",
+   "code": "crossed_catalog_receipt",
+   "control_response": true,
+   "expected_status": "catalog_applied",
+   "method": "catalog_apply",
+   "name": "crossed_receipt_unvalidated",
+   "reply": {
+    "receipt": {
+     "authority_fence_required": false,
+     "caller": "16161616161616161616161616161616",
+     "catalog_revision": 7,
+     "key": {
+      "epoch": 3,
+      "namespace": "12121212121212121212121212121212",
+      "nonce": "13131313131313131313131313131313"
+     },
+     "operation_id": "505fbd9cb44664597a14d8593ef39705",
+     "request_digest": "1414141414141414141414141414141414141414141414141414141414141414",
+     "schema": 1
+    },
+    "status": "catalog_applied"
+   },
+   "rule": "a well-formed receipt for another caller is retained unvalidated",
+   "transport": "reply",
+   "validator": {
+    "message": "crossed_catalog_receipt"
+   }
+  },
+  {
+   "class": "unvalidated",
+   "code": "Job_Identity_Mismatch",
+   "control_response": true,
+   "expected_status": "job",
+   "method": "enqueue",
+   "name": "validator_code_unvalidated",
+   "reply": {
+    "job": {
+     "attempts": 0,
+     "fencing_generation": 1,
+     "id": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+     "kind": "index",
+     "outcome": null,
+     "project": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+     "state": "pending"
+    },
+    "status": "job"
+   },
+   "rule": "a validator error code is kept",
+   "transport": "reply",
+   "validator": {
+    "code": "Job_Identity_Mismatch",
+    "message": "job identity mismatch"
+   }
+  },
+  {
+   "class": "unvalidated",
+   "code": "native_response_validation_failed",
+   "control_response": true,
+   "expected_status": "job",
+   "method": "enqueue",
+   "name": "validator_prose_unvalidated",
+   "reply": {
+    "job": {
+     "attempts": 0,
+     "fencing_generation": 1,
+     "id": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+     "kind": "index",
+     "outcome": null,
+     "project": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+     "state": "pending"
+    },
+    "status": "job"
+   },
+   "rule": "validator prose is not displayed as a code",
+   "transport": "reply",
+   "validator": {
+    "message": "Job identity does not match"
+   }
+  }
+ ],
+ "classes": [
+  "accepted",
+  "refused",
+  "unknown",
+  "unvalidated"
+ ],
+ "generator": "fixtures/wire/native_outcomes.py",
+ "rust": "airk_core::service::ControlResponse (reply shapes only; no classifier yet)",
+ "schema": "airk.wire-fixture.native-outcomes/1",
+ "typescript": "packages/vscode/src/serviceClient.ts ServiceClient.rpc; packages/vscode/src/nativeOutcome.ts"
+}

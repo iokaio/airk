@@ -11,7 +11,8 @@ import * as path from 'node:path';
 import {readRetryDelay,singleRequiredMemberRetry} from '../readRetry';
 import {ServiceClient} from '../serviceClient';
 import type {CatalogRequest} from '../indexingCatalog';
-import {MAX_IN_FLIGHT,MAX_INVOKE_ARGS,MAX_INVOKE_ARG_BYTES,MAX_INVOKE_DEADLINE_MS,MAX_INVOKE_STDERR_BYTES,MAX_INVOKE_STDIN_BYTES,MAX_REQUEST_FRAME_BYTES,MAX_RESPONSE_FRAME_BYTES,SESSION_PROTOCOL,checkSessionRequest,decodeSessionResponse,encodeSessionRequest,sessionRequestJson,sessionRequests} from '../nativeSession';
+import {MAX_IN_FLIGHT,MAX_INVOKE_ARGS,MAX_INVOKE_ARG_BYTES,MAX_INVOKE_DEADLINE_MS,MAX_INVOKE_STDERR_BYTES,MAX_INVOKE_STDIN_BYTES,MAX_REQUEST_FRAME_BYTES,MAX_RESPONSE_FRAME_BYTES,NativeSessionError,SESSION_PROTOCOL,checkSessionRequest,decodeSessionResponse,encodeSessionRequest,sessionRequestJson,sessionRequests} from '../nativeSession';
+import {ServiceError,isLocalTrackingFailure,isNativeReplyValidationFailure,retainNativeOutcome,retainUnvalidatedNativeReply,validateNativeReply} from '../nativeOutcome';
 import {NativeProcessError} from '../native';
 
 const fixtures=path.resolve(__dirname,'../../../../fixtures/wire');
@@ -146,3 +147,80 @@ test('session budgets: every extension constant equals the reviewed native budge
         max_in_flight:MAX_IN_FLIGHT,max_invoke_deadline_ms:MAX_INVOKE_DEADLINE_MS},session.budgets,'exact key set and values');
     assert.equal(Object.keys(session.budgets).length,8);
 });
+
+// Top-level read-retry envelopes (split C8). The native test client
+// (crates/airk-cli/tests/native_read_retry.rs) and the production emitters are
+// checked against the same reviewed cases; `expected` is never computed by either.
+type EnvelopeCase={name:string;rule:string;envelope:Record<string,unknown>;expected_scope:unknown;
+    expected:{retry_after_ms:number;fresh_brokerage_required:boolean}|null};
+const envelopes=JSON.parse(fs.readFileSync(path.join(fixtures,'read_retry_envelopes.json'),'utf8')) as {schema:string;cases:EnvelopeCase[]};
+
+test('read-retry envelope fixture is the reviewed schema and is non-empty',()=>{
+    assert.equal(envelopes.schema,'airk.wire-fixture.read-retry-envelopes/1');
+    assert.ok(envelopes.cases.length>0,'zero selected envelope cases is a failure');
+});
+
+for(const item of envelopes.cases){
+    test(`read-retry envelope: ${item.name}`,()=>{
+        assert.equal(readRetryDelay(structuredClone(item.envelope),item.expected_scope??undefined)??null,item.expected?.retry_after_ms??null,item.rule);
+    });
+}
+
+// Native reply outcome classes (split C8). The rules under test: the complete
+// reply is retained, outcomeUnknown is true exactly for unknown and unvalidated
+// replies, and every exchange is sent once; no class authorizes another write.
+type OutcomeCase={name:string;rule:string;method:string;expected_status:string;transport:'reply'|'lost_after_send'|'not_sent';
+    reply:Record<string,unknown>|null;control_response:boolean;class:'accepted'|'refused'|'unknown'|'unvalidated';code:string|null;
+    validator?:{code?:string;message:string}};
+const outcomes=JSON.parse(fs.readFileSync(path.join(fixtures,'native_outcomes.json'),'utf8')) as {schema:string;classes:string[];cases:OutcomeCase[]};
+
+test('native outcome fixture is the reviewed schema and covers every class',()=>{
+    assert.equal(outcomes.schema,'airk.wire-fixture.native-outcomes/1');
+    assert.deepEqual([...new Set(outcomes.cases.map(item=>item.class))].sort(),[...outcomes.classes].sort());
+    assert.deepEqual([...outcomes.classes].sort(),['accepted','refused','unknown','unvalidated']);
+});
+
+for(const item of outcomes.cases){
+    test(`native outcome: ${item.name}`,async()=>{
+        let sent=0;
+        const client=new ServiceClient({dispose(){},async request(method:unknown){
+            sent+=1;assert.deepEqual(method,{[item.method]:{}});
+            if(item.transport==='reply'&&item.reply)return structuredClone(item.reply);
+            throw new NativeSessionError(String(item.code),item.transport==='lost_after_send');
+        }});
+        let response:Record<string,unknown>|undefined,failure:unknown;
+        try{response=await client.rpc({[item.method]:{}},item.expected_status);}catch(error){failure=error;}
+        assert.equal(sent,1,'every class sends the exchange exactly once');
+        if(item.class==='accepted'||item.class==='unvalidated'){
+            assert.equal(failure,undefined,item.rule);
+            assert.ok(response);assert.deepEqual(response,item.reply,'the complete reply is returned unchanged');
+        }
+        if(item.class==='accepted'){
+            assert.ok(response);
+            // A local tracking failure keeps the reply and marks only local tracking unconfirmed.
+            const local=retainNativeOutcome(new Error('journal_write_failed'),response);
+            assert.ok(isLocalTrackingFailure(local));assert.equal(local.code,'journal_write_failed');
+            assert.equal(local.outcomeUnknown,true);assert.equal(local.nativeResponse,response);
+            assert.equal(retainNativeOutcome(local,structuredClone(response)),local,'an equal reply is not wrapped twice');
+            return;
+        }
+        if(item.class==='unvalidated'){
+            assert.ok(response);const validator=item.validator;assert.ok(validator,'an unvalidated case states its validator failure');
+            const stated=Object.assign(new Error(validator.message),validator.code===undefined?{}:{code:validator.code});
+            let rejected:unknown;
+            try{validateNativeReply(response,()=>{throw stated;});}catch(error){rejected=error;}
+            assert.ok(isNativeReplyValidationFailure(rejected),item.rule);
+            assert.equal(rejected.code,item.code);assert.equal(rejected.outcomeUnknown,true);
+            assert.equal(rejected.nativeResponse,response,'the complete reply is retained');assert.equal(rejected.cause,stated);
+            assert.equal(retainUnvalidatedNativeReply(rejected,response),rejected);
+            assert.equal(retainNativeOutcome(rejected,response),rejected,'an unvalidated reply is not relabelled as local tracking');
+            assert.equal(isLocalTrackingFailure(rejected),false);
+            return;
+        }
+        assert.ok(failure instanceof ServiceError,item.rule);
+        assert.equal(failure.code,item.code);
+        assert.equal(failure.outcomeUnknown,item.class==='unknown',item.rule);
+        if(item.reply)assert.deepEqual(failure.nativeResponse,item.reply,'the complete reply is retained');
+        else assert.equal(failure.nativeResponse,undefined);
+    });
+}

@@ -89,9 +89,17 @@ COPY fixtures/schema/airk-state-1/usage.base.meta.json ./fixtures/schema/airk-st
 COPY fixtures/schema/airk-state-1/usage.base.objects.json ./fixtures/schema/airk-state-1/usage.base.objects.json
 COPY fixtures/schema/airk-state-1/usage.supplemental.meta.json ./fixtures/schema/airk-state-1/usage.supplemental.meta.json
 COPY fixtures/schema/airk-state-1/usage.supplemental.objects.json ./fixtures/schema/airk-state-1/usage.supplemental.objects.json
+COPY fixtures/split/i2/error_lines.json ./fixtures/split/i2/error_lines.json
+COPY fixtures/split/i2/exit_codes.json ./fixtures/split/i2/exit_codes.json
+COPY fixtures/split/i2/version.json ./fixtures/split/i2/version.json
+COPY fixtures/wire/airkctl_session_frames.json ./fixtures/wire/airkctl_session_frames.json
 COPY fixtures/wire/catalog_receipt.json ./fixtures/wire/catalog_receipt.json
+COPY fixtures/wire/native_outcomes.json ./fixtures/wire/native_outcomes.json
 COPY fixtures/wire/read_retry_decisions.json ./fixtures/wire/read_retry_decisions.json
+COPY fixtures/wire/read_retry_envelopes.json ./fixtures/wire/read_retry_envelopes.json
 COPY fixtures/wire/session_frames.json ./fixtures/wire/session_frames.json
+COPY fixtures/wire/usage_page.json ./fixtures/wire/usage_page.json
+COPY packages/vscode/src/generated/i2.schema.json ./packages/vscode/src/generated/i2.schema.json
 COPY packages/vscode/src/test/diagnosticLogs.test.ts ./packages/vscode/src/test/diagnosticLogs.test.ts
 COPY packages/vscode/src/test/extensionUninstall.test.ts ./packages/vscode/src/test/extensionUninstall.test.ts
 COPY packages/vscode/src/test/serviceBootstrap.test.ts ./packages/vscode/src/test/serviceBootstrap.test.ts

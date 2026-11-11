@@ -1,0 +1,2655 @@
+{
+ "cases": [
+  {
+   "emitter": {
+    "error": "selection_contention",
+    "function": "airk_mcp::response::typed_error_result"
+   },
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"status\":\"retry\",\"retryable\":true,\"code\":\"selection_busy\",\"retry_after_ms\":25,\"action\":\"repeat_same_request\"}",
+      "type": "text"
+     }
+    ],
+    "isError": true
+   },
+   "expected": {
+    "fresh_brokerage_required": false,
+    "retry_after_ms": 25
+   },
+   "expected_scope": null,
+   "name": "storage_selection_busy",
+   "rule": "selection_busy is a storage busy code; MCP writes the hint struct in field order"
+  },
+  {
+   "emitter": {
+    "error": "current_read_contention",
+    "function": "airk_mcp::response::typed_error_result"
+   },
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"status\":\"retry\",\"retryable\":true,\"code\":\"publication_busy\",\"retry_after_ms\":25,\"action\":\"repeat_same_request\"}",
+      "type": "text"
+     }
+    ],
+    "isError": true
+   },
+   "expected": {
+    "fresh_brokerage_required": false,
+    "retry_after_ms": 25
+   },
+   "expected_scope": null,
+   "name": "storage_publication_busy",
+   "rule": "publication_busy is a storage busy code; MCP writes the hint struct in field order"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"action\":\"repeat_same_request\",\"code\":\"selection_busy\",\"retry_after_ms\":25,\"retryable\":true,\"status\":\"retry\"}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "action": "repeat_same_request",
+     "code": "selection_busy",
+     "retry_after_ms": 25,
+     "retryable": true,
+     "status": "retry"
+    }
+   },
+   "expected": {
+    "fresh_brokerage_required": false,
+    "retry_after_ms": 25
+   },
+   "expected_scope": null,
+   "name": "storage_structured_equal",
+   "rule": "equal structured content is accepted"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"action\":\"repeat_same_request\",\"code\":\"selection_busy\",\"retry_after_ms\":25,\"retryable\":true,\"status\":\"retry\"}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "action": "repeat_same_request",
+     "code": "selection_busy",
+     "retry_after_ms": 30,
+     "retryable": true,
+     "status": "retry"
+    }
+   },
+   "expected": null,
+   "expected_scope": null,
+   "name": "storage_structured_disagrees",
+   "rule": "structured content must equal the text"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"action\":\"reconnect\",\"code\":\"selection_busy\",\"retry_after_ms\":25,\"retryable\":true,\"status\":\"retry\"}",
+      "type": "text"
+     }
+    ],
+    "isError": true
+   },
+   "expected": null,
+   "expected_scope": null,
+   "name": "storage_wrong_action",
+   "rule": "action must be repeat_same_request"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"action\":\"repeat_same_request\",\"code\":\"selection_busy\",\"retry_after_ms\":25,\"retryable\":false,\"status\":\"retry\"}",
+      "type": "text"
+     }
+    ],
+    "isError": true
+   },
+   "expected": null,
+   "expected_scope": null,
+   "name": "storage_not_retryable",
+   "rule": "retryable must be true"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"action\":\"repeat_same_request\",\"code\":\"index_busy\",\"retry_after_ms\":25,\"retryable\":true,\"status\":\"retry\"}",
+      "type": "text"
+     }
+    ],
+    "isError": true
+   },
+   "expected": null,
+   "expected_scope": null,
+   "name": "storage_other_code",
+   "rule": "only publication_busy and selection_busy are storage busy codes"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"action\":\"repeat_same_request\",\"code\":\"selection_busy\",\"retry_after_ms\":0,\"retryable\":true,\"status\":\"retry\"}",
+      "type": "text"
+     }
+    ],
+    "isError": true
+   },
+   "expected": null,
+   "expected_scope": null,
+   "name": "storage_delay_0",
+   "rule": "delay must be 1..=1000 ms"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"action\":\"repeat_same_request\",\"code\":\"selection_busy\",\"retry_after_ms\":1,\"retryable\":true,\"status\":\"retry\"}",
+      "type": "text"
+     }
+    ],
+    "isError": true
+   },
+   "expected": {
+    "fresh_brokerage_required": false,
+    "retry_after_ms": 1
+   },
+   "expected_scope": null,
+   "name": "storage_delay_1",
+   "rule": "delay must be 1..=1000 ms"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"action\":\"repeat_same_request\",\"code\":\"selection_busy\",\"retry_after_ms\":1000,\"retryable\":true,\"status\":\"retry\"}",
+      "type": "text"
+     }
+    ],
+    "isError": true
+   },
+   "expected": {
+    "fresh_brokerage_required": false,
+    "retry_after_ms": 1000
+   },
+   "expected_scope": null,
+   "name": "storage_delay_1000",
+   "rule": "delay must be 1..=1000 ms"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"action\":\"repeat_same_request\",\"code\":\"selection_busy\",\"retry_after_ms\":1001,\"retryable\":true,\"status\":\"retry\"}",
+      "type": "text"
+     }
+    ],
+    "isError": true
+   },
+   "expected": null,
+   "expected_scope": null,
+   "name": "storage_delay_1001",
+   "rule": "delay must be 1..=1000 ms"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"action\":\"repeat_same_request\",\"code\":\"selection_busy\",\"retryable\":true,\"status\":\"retry\"}",
+      "type": "text"
+     }
+    ],
+    "isError": true
+   },
+   "expected": null,
+   "expected_scope": null,
+   "name": "storage_delay_missing",
+   "rule": "a delay is required"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"action\":\"repeat_same_request\",\"code\":\"selection_busy\",\"retry_after_ms\":\"25\",\"retryable\":true,\"status\":\"retry\"}",
+      "type": "text"
+     }
+    ],
+    "isError": true
+   },
+   "expected": null,
+   "expected_scope": null,
+   "name": "storage_delay_string",
+   "rule": "the delay is a JSON number"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"action\":\"repeat_same_request\",\"code\":\"selection_busy\",\"retry_after_ms\":25.0,\"retryable\":true,\"status\":\"retry\"}",
+      "type": "text"
+     }
+    ],
+    "isError": true
+   },
+   "expected": null,
+   "expected_scope": null,
+   "name": "storage_integral_float_delay",
+   "rule": "the delay is a JSON integer literal; 25.0 is refused"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"action\":\"repeat_same_request\",\"code\":\"selection_busy\",\"retry_after_ms\":25,\"retryable\":true,\"status\":\"retry\"}",
+      "type": "text"
+     }
+    ],
+    "isError": false
+   },
+   "expected": null,
+   "expected_scope": null,
+   "name": "storage_not_error",
+   "rule": "only an error result can ask for a retry"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"action\":\"repeat_same_request\",\"code\":\"selection_busy\",\"retry_after_ms\":25,\"retryable\":true,\"status\":\"retry\"}",
+      "type": "text"
+     },
+     {
+      "text": "{}",
+      "type": "text"
+     }
+    ],
+    "isError": true
+   },
+   "expected": null,
+   "expected_scope": null,
+   "name": "storage_two_content_blocks",
+   "rule": "exactly one text block"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "selection_busy",
+      "type": "text"
+     }
+    ],
+    "isError": true
+   },
+   "expected": null,
+   "expected_scope": null,
+   "name": "text_not_json",
+   "rule": "the text must parse as JSON"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"direct_query_admission\",\"fresh_brokerage_required\":false,\"query_submitted\":false,\"reason\":\"busy\",\"retry_after_ms\":25,\"retryable\":true}}",
+      "type": "text"
+     }
+    ],
+    "isError": true
+   },
+   "expected": {
+    "fresh_brokerage_required": false,
+    "retry_after_ms": 25
+   },
+   "expected_scope": null,
+   "name": "direct_admission_busy",
+   "rule": "unsubmitted busy admission keeps the brokerage"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"direct_query_setup\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"reason\":\"busy\",\"retry_after_ms\":100,\"retryable\":true}}",
+      "type": "text"
+     }
+    ],
+    "isError": true
+   },
+   "expected": {
+    "fresh_brokerage_required": true,
+    "retry_after_ms": 100
+   },
+   "expected_scope": null,
+   "name": "direct_setup_busy",
+   "rule": "busy setup requires fresh brokerage"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"direct_query_setup\",\"fresh_brokerage_required\":false,\"query_submitted\":false,\"reason\":\"busy\",\"retry_after_ms\":100,\"retryable\":true}}",
+      "type": "text"
+     }
+    ],
+    "isError": true
+   },
+   "expected": null,
+   "expected_scope": null,
+   "name": "direct_setup_without_fresh_brokerage",
+   "rule": "setup must declare fresh brokerage"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"direct_query_admission\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"reason\":\"busy\",\"retry_after_ms\":25,\"retryable\":true}}",
+      "type": "text"
+     }
+    ],
+    "isError": true
+   },
+   "expected": null,
+   "expected_scope": null,
+   "name": "direct_admission_with_fresh_brokerage",
+   "rule": "admission must not declare fresh brokerage"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"direct_query_admission\",\"query_submitted\":false,\"reason\":\"busy\",\"retry_after_ms\":25,\"retryable\":true}}",
+      "type": "text"
+     }
+    ],
+    "isError": true
+   },
+   "expected": null,
+   "expected_scope": null,
+   "name": "direct_admission_fresh_missing",
+   "rule": "fresh_brokerage_required is required"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"direct_query_admission\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"reason\":\"draining\",\"retry_after_ms\":null,\"retryable\":false}}",
+      "type": "text"
+     }
+    ],
+    "isError": true
+   },
+   "expected": null,
+   "expected_scope": null,
+   "name": "direct_admission_draining",
+   "rule": "a draining refusal is not retried"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"direct_query_admission\",\"fresh_brokerage_required\":false,\"query_submitted\":false,\"reason\":\"canceled\",\"retry_after_ms\":25,\"retryable\":true}}",
+      "type": "text"
+     }
+    ],
+    "isError": true
+   },
+   "expected": null,
+   "expected_scope": null,
+   "name": "direct_admission_other_reason",
+   "rule": "reason must be busy even when retryable"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"direct_query_admission\",\"fresh_brokerage_required\":false,\"query_submitted\":true,\"reason\":\"busy\",\"retry_after_ms\":25,\"retryable\":true}}",
+      "type": "text"
+     }
+    ],
+    "isError": true
+   },
+   "expected": null,
+   "expected_scope": null,
+   "name": "direct_submitted",
+   "rule": "a submitted query is never replayed"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"direct_query_admission\",\"fresh_brokerage_required\":false,\"query_submitted\":null,\"reason\":\"busy\",\"retry_after_ms\":25,\"retryable\":true}}",
+      "type": "text"
+     }
+    ],
+    "isError": true
+   },
+   "expected": null,
+   "expected_scope": null,
+   "name": "direct_submitted_unknown",
+   "rule": "an unknown submission is never replayed"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"direct_query_admission\",\"fresh_brokerage_required\":false,\"message\":\"AIRK request queue is full or timed out; retry after outstanding requests complete\",\"query_submitted\":false,\"reason\":\"busy\",\"retry_after_ms\":25,\"retryable\":true}}",
+      "type": "text"
+     }
+    ],
+    "isError": true
+   },
+   "expected": {
+    "fresh_brokerage_required": false,
+    "retry_after_ms": 25
+   },
+   "expected_scope": null,
+   "name": "direct_with_message",
+   "rule": "the advisory message of the MCP request queue does not change the decision"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"request_draining\",\"fresh_brokerage_required\":false,\"query_submitted\":false,\"reason\":\"busy\",\"retry_after_ms\":25,\"retryable\":true}}",
+      "type": "text"
+     }
+    ],
+    "isError": true
+   },
+   "expected": null,
+   "expected_scope": null,
+   "name": "direct_other_code",
+   "rule": "only the two direct codes are retryable"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"direct_query_admission\",\"fresh_brokerage_required\":false,\"query_submitted\":false,\"reason\":\"busy\",\"retry_after_ms\":0,\"retryable\":true}}",
+      "type": "text"
+     }
+    ],
+    "isError": true
+   },
+   "expected": null,
+   "expected_scope": null,
+   "name": "direct_delay_0",
+   "rule": "delay must be 1..=1000 ms"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"direct_query_admission\",\"fresh_brokerage_required\":false,\"query_submitted\":false,\"reason\":\"busy\",\"retry_after_ms\":1,\"retryable\":true}}",
+      "type": "text"
+     }
+    ],
+    "isError": true
+   },
+   "expected": {
+    "fresh_brokerage_required": false,
+    "retry_after_ms": 1
+   },
+   "expected_scope": null,
+   "name": "direct_delay_1",
+   "rule": "delay must be 1..=1000 ms"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"direct_query_admission\",\"fresh_brokerage_required\":false,\"query_submitted\":false,\"reason\":\"busy\",\"retry_after_ms\":1000,\"retryable\":true}}",
+      "type": "text"
+     }
+    ],
+    "isError": true
+   },
+   "expected": {
+    "fresh_brokerage_required": false,
+    "retry_after_ms": 1000
+   },
+   "expected_scope": null,
+   "name": "direct_delay_1000",
+   "rule": "delay must be 1..=1000 ms"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"direct_query_admission\",\"fresh_brokerage_required\":false,\"query_submitted\":false,\"reason\":\"busy\",\"retry_after_ms\":1001,\"retryable\":true}}",
+      "type": "text"
+     }
+    ],
+    "isError": true
+   },
+   "expected": null,
+   "expected_scope": null,
+   "name": "direct_delay_1001",
+   "rule": "delay must be 1..=1000 ms"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"direct_query_admission\",\"fresh_brokerage_required\":false,\"query_submitted\":false,\"reason\":\"busy\",\"retry_after_ms\":25.0,\"retryable\":true}}",
+      "type": "text"
+     }
+    ],
+    "isError": true
+   },
+   "expected": null,
+   "expected_scope": null,
+   "name": "direct_integral_float_delay",
+   "rule": "the delay is a JSON integer literal; 25.0 is refused"
+  },
+  {
+   "emitter": {
+    "code": "scoped_status_prepare_timeout",
+    "function": "airk_mcp::remote::scoped_setup_failure",
+    "native_control_response": null,
+    "retryable": true
+   },
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_status_prepare_timeout\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"context_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"expected_catalog_revision\":7,\"expected_grant_revision\":1,\"grant_id\":\"grt_03030303030303030303030303030303\",\"index_id\":\"idx_04040404040404040404040404040404\",\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"],\"schema\":1}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_status_prepare_timeout",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+       "expected_catalog_revision": 7,
+       "expected_grant_revision": 1,
+       "grant_id": "grt_03030303030303030303030303030303",
+       "index_id": "idx_04040404040404040404040404040404",
+       "namespace": "02020202020202020202020202020202",
+       "project_ids": [
+        "prj_05050505050505050505050505050505"
+       ],
+       "schema": 1
+      }
+     }
+    }
+   },
+   "expected": {
+    "fresh_brokerage_required": true,
+    "retry_after_ms": 100
+   },
+   "expected_scope": {
+    "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+    "expected_catalog_revision": 7,
+    "expected_grant_revision": 1,
+    "grant_id": "grt_03030303030303030303030303030303",
+    "index_id": "idx_04040404040404040404040404040404",
+    "namespace": "02020202020202020202020202020202",
+    "project_ids": [
+     "prj_05050505050505050505050505050505"
+    ],
+    "schema": 1
+   },
+   "name": "scoped_prepare_timeout",
+   "rule": "a prepare timeout before submission is retried with fresh brokerage"
+  },
+  {
+   "emitter": {
+    "code": "scoped_connection_unavailable",
+    "function": "airk_mcp::remote::scoped_setup_failure",
+    "native_control_response": {
+     "code": "broker_busy",
+     "status": "failure"
+    },
+    "retryable": true
+   },
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"native_control_response\":{\"code\":\"broker_busy\",\"status\":\"failure\"},\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"context_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"expected_catalog_revision\":7,\"expected_grant_revision\":1,\"grant_id\":\"grt_03030303030303030303030303030303\",\"index_id\":\"idx_04040404040404040404040404040404\",\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"],\"schema\":1}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "native_control_response": {
+       "code": "broker_busy",
+       "status": "failure"
+      },
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+       "expected_catalog_revision": 7,
+       "expected_grant_revision": 1,
+       "grant_id": "grt_03030303030303030303030303030303",
+       "index_id": "idx_04040404040404040404040404040404",
+       "namespace": "02020202020202020202020202020202",
+       "project_ids": [
+        "prj_05050505050505050505050505050505"
+       ],
+       "schema": 1
+      }
+     }
+    }
+   },
+   "expected": {
+    "fresh_brokerage_required": true,
+    "retry_after_ms": 100
+   },
+   "expected_scope": {
+    "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+    "expected_catalog_revision": 7,
+    "expected_grant_revision": 1,
+    "grant_id": "grt_03030303030303030303030303030303",
+    "index_id": "idx_04040404040404040404040404040404",
+    "namespace": "02020202020202020202020202020202",
+    "project_ids": [
+     "prj_05050505050505050505050505050505"
+    ],
+    "schema": 1
+   },
+   "name": "scoped_unavailable_broker_busy",
+   "rule": "broker_busy is a pre-query native busy refusal"
+  },
+  {
+   "emitter": {
+    "code": "scoped_connection_unavailable",
+    "function": "airk_mcp::remote::scoped_setup_failure",
+    "native_control_response": {
+     "code": "project_starting_or_unavailable",
+     "status": "failure"
+    },
+    "retryable": true
+   },
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"native_control_response\":{\"code\":\"project_starting_or_unavailable\",\"status\":\"failure\"},\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"context_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"expected_catalog_revision\":7,\"expected_grant_revision\":1,\"grant_id\":\"grt_03030303030303030303030303030303\",\"index_id\":\"idx_04040404040404040404040404040404\",\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"],\"schema\":1}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "native_control_response": {
+       "code": "project_starting_or_unavailable",
+       "status": "failure"
+      },
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+       "expected_catalog_revision": 7,
+       "expected_grant_revision": 1,
+       "grant_id": "grt_03030303030303030303030303030303",
+       "index_id": "idx_04040404040404040404040404040404",
+       "namespace": "02020202020202020202020202020202",
+       "project_ids": [
+        "prj_05050505050505050505050505050505"
+       ],
+       "schema": 1
+      }
+     }
+    }
+   },
+   "expected": {
+    "fresh_brokerage_required": true,
+    "retry_after_ms": 100
+   },
+   "expected_scope": {
+    "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+    "expected_catalog_revision": 7,
+    "expected_grant_revision": 1,
+    "grant_id": "grt_03030303030303030303030303030303",
+    "index_id": "idx_04040404040404040404040404040404",
+    "namespace": "02020202020202020202020202020202",
+    "project_ids": [
+     "prj_05050505050505050505050505050505"
+    ],
+    "schema": 1
+   },
+   "name": "scoped_unavailable_project_starting_or_unavailable",
+   "rule": "project_starting_or_unavailable is a pre-query native busy refusal"
+  },
+  {
+   "emitter": {
+    "code": "scoped_connection_unavailable",
+    "function": "airk_mcp::remote::scoped_setup_failure",
+    "native_control_response": {
+     "code": "project_unavailable_or_busy",
+     "status": "failure"
+    },
+    "retryable": true
+   },
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"native_control_response\":{\"code\":\"project_unavailable_or_busy\",\"status\":\"failure\"},\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"context_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"expected_catalog_revision\":7,\"expected_grant_revision\":1,\"grant_id\":\"grt_03030303030303030303030303030303\",\"index_id\":\"idx_04040404040404040404040404040404\",\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"],\"schema\":1}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "native_control_response": {
+       "code": "project_unavailable_or_busy",
+       "status": "failure"
+      },
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+       "expected_catalog_revision": 7,
+       "expected_grant_revision": 1,
+       "grant_id": "grt_03030303030303030303030303030303",
+       "index_id": "idx_04040404040404040404040404040404",
+       "namespace": "02020202020202020202020202020202",
+       "project_ids": [
+        "prj_05050505050505050505050505050505"
+       ],
+       "schema": 1
+      }
+     }
+    }
+   },
+   "expected": {
+    "fresh_brokerage_required": true,
+    "retry_after_ms": 100
+   },
+   "expected_scope": {
+    "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+    "expected_catalog_revision": 7,
+    "expected_grant_revision": 1,
+    "grant_id": "grt_03030303030303030303030303030303",
+    "index_id": "idx_04040404040404040404040404040404",
+    "namespace": "02020202020202020202020202020202",
+    "project_ids": [
+     "prj_05050505050505050505050505050505"
+    ],
+    "schema": 1
+   },
+   "name": "scoped_unavailable_project_unavailable_or_busy",
+   "rule": "project_unavailable_or_busy is a pre-query native busy refusal"
+  },
+  {
+   "emitter": {
+    "code": "scoped_connection_unavailable",
+    "function": "airk_mcp::remote::scoped_setup_failure",
+    "native_control_response": {
+     "code": "previous_workers_draining",
+     "status": "failure"
+    },
+    "retryable": true
+   },
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"native_control_response\":{\"code\":\"previous_workers_draining\",\"status\":\"failure\"},\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"context_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"expected_catalog_revision\":7,\"expected_grant_revision\":1,\"grant_id\":\"grt_03030303030303030303030303030303\",\"index_id\":\"idx_04040404040404040404040404040404\",\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"],\"schema\":1}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "native_control_response": {
+       "code": "previous_workers_draining",
+       "status": "failure"
+      },
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+       "expected_catalog_revision": 7,
+       "expected_grant_revision": 1,
+       "grant_id": "grt_03030303030303030303030303030303",
+       "index_id": "idx_04040404040404040404040404040404",
+       "namespace": "02020202020202020202020202020202",
+       "project_ids": [
+        "prj_05050505050505050505050505050505"
+       ],
+       "schema": 1
+      }
+     }
+    }
+   },
+   "expected": {
+    "fresh_brokerage_required": true,
+    "retry_after_ms": 100
+   },
+   "expected_scope": {
+    "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+    "expected_catalog_revision": 7,
+    "expected_grant_revision": 1,
+    "grant_id": "grt_03030303030303030303030303030303",
+    "index_id": "idx_04040404040404040404040404040404",
+    "namespace": "02020202020202020202020202020202",
+    "project_ids": [
+     "prj_05050505050505050505050505050505"
+    ],
+    "schema": 1
+   },
+   "name": "scoped_unavailable_previous_workers_draining",
+   "rule": "previous_workers_draining is a pre-query native busy refusal"
+  },
+  {
+   "emitter": {
+    "code": "scoped_connection_unavailable",
+    "function": "airk_mcp::remote::scoped_setup_failure",
+    "native_control_response": {
+     "code": "catalog_revision_changed",
+     "status": "failure"
+    },
+    "retryable": true
+   },
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"native_control_response\":{\"code\":\"catalog_revision_changed\",\"status\":\"failure\"},\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"context_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"expected_catalog_revision\":7,\"expected_grant_revision\":1,\"grant_id\":\"grt_03030303030303030303030303030303\",\"index_id\":\"idx_04040404040404040404040404040404\",\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"],\"schema\":1}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "native_control_response": {
+       "code": "catalog_revision_changed",
+       "status": "failure"
+      },
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+       "expected_catalog_revision": 7,
+       "expected_grant_revision": 1,
+       "grant_id": "grt_03030303030303030303030303030303",
+       "index_id": "idx_04040404040404040404040404040404",
+       "namespace": "02020202020202020202020202020202",
+       "project_ids": [
+        "prj_05050505050505050505050505050505"
+       ],
+       "schema": 1
+      }
+     }
+    }
+   },
+   "expected": {
+    "fresh_brokerage_required": true,
+    "retry_after_ms": 100
+   },
+   "expected_scope": {
+    "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+    "expected_catalog_revision": 7,
+    "expected_grant_revision": 1,
+    "grant_id": "grt_03030303030303030303030303030303",
+    "index_id": "idx_04040404040404040404040404040404",
+    "namespace": "02020202020202020202020202020202",
+    "project_ids": [
+     "prj_05050505050505050505050505050505"
+    ],
+    "schema": 1
+   },
+   "name": "scoped_unavailable_catalog_revision_changed",
+   "rule": "catalog_revision_changed is a pre-query native busy refusal"
+  },
+  {
+   "emitter": {
+    "code": "scoped_connection_unavailable",
+    "function": "airk_mcp::remote::scoped_setup_failure",
+    "native_control_response": {
+     "code": "catalog_clock_pending",
+     "status": "failure"
+    },
+    "retryable": true
+   },
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"native_control_response\":{\"code\":\"catalog_clock_pending\",\"status\":\"failure\"},\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"context_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"expected_catalog_revision\":7,\"expected_grant_revision\":1,\"grant_id\":\"grt_03030303030303030303030303030303\",\"index_id\":\"idx_04040404040404040404040404040404\",\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"],\"schema\":1}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "native_control_response": {
+       "code": "catalog_clock_pending",
+       "status": "failure"
+      },
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+       "expected_catalog_revision": 7,
+       "expected_grant_revision": 1,
+       "grant_id": "grt_03030303030303030303030303030303",
+       "index_id": "idx_04040404040404040404040404040404",
+       "namespace": "02020202020202020202020202020202",
+       "project_ids": [
+        "prj_05050505050505050505050505050505"
+       ],
+       "schema": 1
+      }
+     }
+    }
+   },
+   "expected": {
+    "fresh_brokerage_required": true,
+    "retry_after_ms": 100
+   },
+   "expected_scope": {
+    "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+    "expected_catalog_revision": 7,
+    "expected_grant_revision": 1,
+    "grant_id": "grt_03030303030303030303030303030303",
+    "index_id": "idx_04040404040404040404040404040404",
+    "namespace": "02020202020202020202020202020202",
+    "project_ids": [
+     "prj_05050505050505050505050505050505"
+    ],
+    "schema": 1
+   },
+   "name": "scoped_unavailable_catalog_clock_pending",
+   "rule": "catalog_clock_pending is a pre-query native busy refusal"
+  },
+  {
+   "emitter": {
+    "code": "scoped_connection_unavailable",
+    "function": "airk_mcp::remote::scoped_setup_failure",
+    "native_control_response": {
+     "code": "catalog_connection_busy",
+     "status": "failure"
+    },
+    "retryable": true
+   },
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"native_control_response\":{\"code\":\"catalog_connection_busy\",\"status\":\"failure\"},\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"context_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"expected_catalog_revision\":7,\"expected_grant_revision\":1,\"grant_id\":\"grt_03030303030303030303030303030303\",\"index_id\":\"idx_04040404040404040404040404040404\",\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"],\"schema\":1}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "native_control_response": {
+       "code": "catalog_connection_busy",
+       "status": "failure"
+      },
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+       "expected_catalog_revision": 7,
+       "expected_grant_revision": 1,
+       "grant_id": "grt_03030303030303030303030303030303",
+       "index_id": "idx_04040404040404040404040404040404",
+       "namespace": "02020202020202020202020202020202",
+       "project_ids": [
+        "prj_05050505050505050505050505050505"
+       ],
+       "schema": 1
+      }
+     }
+    }
+   },
+   "expected": {
+    "fresh_brokerage_required": true,
+    "retry_after_ms": 100
+   },
+   "expected_scope": {
+    "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+    "expected_catalog_revision": 7,
+    "expected_grant_revision": 1,
+    "grant_id": "grt_03030303030303030303030303030303",
+    "index_id": "idx_04040404040404040404040404040404",
+    "namespace": "02020202020202020202020202020202",
+    "project_ids": [
+     "prj_05050505050505050505050505050505"
+    ],
+    "schema": 1
+   },
+   "name": "scoped_unavailable_catalog_connection_busy",
+   "rule": "catalog_connection_busy is a pre-query native busy refusal"
+  },
+  {
+   "emitter": {
+    "code": "scoped_connection_unavailable",
+    "function": "airk_mcp::remote::scoped_setup_failure",
+    "native_control_response": {
+     "code": "project_capacity_busy",
+     "status": "failure"
+    },
+    "retryable": true
+   },
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"native_control_response\":{\"code\":\"project_capacity_busy\",\"status\":\"failure\"},\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"context_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"expected_catalog_revision\":7,\"expected_grant_revision\":1,\"grant_id\":\"grt_03030303030303030303030303030303\",\"index_id\":\"idx_04040404040404040404040404040404\",\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"],\"schema\":1}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "native_control_response": {
+       "code": "project_capacity_busy",
+       "status": "failure"
+      },
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+       "expected_catalog_revision": 7,
+       "expected_grant_revision": 1,
+       "grant_id": "grt_03030303030303030303030303030303",
+       "index_id": "idx_04040404040404040404040404040404",
+       "namespace": "02020202020202020202020202020202",
+       "project_ids": [
+        "prj_05050505050505050505050505050505"
+       ],
+       "schema": 1
+      }
+     }
+    }
+   },
+   "expected": {
+    "fresh_brokerage_required": true,
+    "retry_after_ms": 100
+   },
+   "expected_scope": {
+    "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+    "expected_catalog_revision": 7,
+    "expected_grant_revision": 1,
+    "grant_id": "grt_03030303030303030303030303030303",
+    "index_id": "idx_04040404040404040404040404040404",
+    "namespace": "02020202020202020202020202020202",
+    "project_ids": [
+     "prj_05050505050505050505050505050505"
+    ],
+    "schema": 1
+   },
+   "name": "scoped_unavailable_project_capacity_busy",
+   "rule": "project_capacity_busy is a pre-query native busy refusal"
+  },
+  {
+   "emitter": {
+    "code": "scoped_connection_unavailable",
+    "function": "airk_mcp::remote::scoped_setup_failure",
+    "native_control_response": {
+     "code": "project_restart_backoff",
+     "status": "failure"
+    },
+    "retryable": true
+   },
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"native_control_response\":{\"code\":\"project_restart_backoff\",\"status\":\"failure\"},\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"context_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"expected_catalog_revision\":7,\"expected_grant_revision\":1,\"grant_id\":\"grt_03030303030303030303030303030303\",\"index_id\":\"idx_04040404040404040404040404040404\",\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"],\"schema\":1}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "native_control_response": {
+       "code": "project_restart_backoff",
+       "status": "failure"
+      },
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+       "expected_catalog_revision": 7,
+       "expected_grant_revision": 1,
+       "grant_id": "grt_03030303030303030303030303030303",
+       "index_id": "idx_04040404040404040404040404040404",
+       "namespace": "02020202020202020202020202020202",
+       "project_ids": [
+        "prj_05050505050505050505050505050505"
+       ],
+       "schema": 1
+      }
+     }
+    }
+   },
+   "expected": {
+    "fresh_brokerage_required": true,
+    "retry_after_ms": 100
+   },
+   "expected_scope": {
+    "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+    "expected_catalog_revision": 7,
+    "expected_grant_revision": 1,
+    "grant_id": "grt_03030303030303030303030303030303",
+    "index_id": "idx_04040404040404040404040404040404",
+    "namespace": "02020202020202020202020202020202",
+    "project_ids": [
+     "prj_05050505050505050505050505050505"
+    ],
+    "schema": 1
+   },
+   "name": "scoped_unavailable_project_restart_backoff",
+   "rule": "project_restart_backoff is a pre-query native busy refusal"
+  },
+  {
+   "emitter": {
+    "code": "scoped_connection_unavailable",
+    "function": "airk_mcp::remote::scoped_setup_failure",
+    "native_control_response": {
+     "code": "grant_revoked",
+     "status": "failure"
+    },
+    "retryable": true
+   },
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"native_control_response\":{\"code\":\"grant_revoked\",\"status\":\"failure\"},\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"context_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"expected_catalog_revision\":7,\"expected_grant_revision\":1,\"grant_id\":\"grt_03030303030303030303030303030303\",\"index_id\":\"idx_04040404040404040404040404040404\",\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"],\"schema\":1}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "native_control_response": {
+       "code": "grant_revoked",
+       "status": "failure"
+      },
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+       "expected_catalog_revision": 7,
+       "expected_grant_revision": 1,
+       "grant_id": "grt_03030303030303030303030303030303",
+       "index_id": "idx_04040404040404040404040404040404",
+       "namespace": "02020202020202020202020202020202",
+       "project_ids": [
+        "prj_05050505050505050505050505050505"
+       ],
+       "schema": 1
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+    "expected_catalog_revision": 7,
+    "expected_grant_revision": 1,
+    "grant_id": "grt_03030303030303030303030303030303",
+    "index_id": "idx_04040404040404040404040404040404",
+    "namespace": "02020202020202020202020202020202",
+    "project_ids": [
+     "prj_05050505050505050505050505050505"
+    ],
+    "schema": 1
+   },
+   "name": "scoped_unavailable_grant_revoked",
+   "rule": "a tenth native code is not a busy refusal"
+  },
+  {
+   "emitter": {
+    "code": "scoped_connection_unavailable",
+    "function": "airk_mcp::remote::scoped_setup_failure",
+    "native_control_response": null,
+    "retryable": true
+   },
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"context_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"expected_catalog_revision\":7,\"expected_grant_revision\":1,\"grant_id\":\"grt_03030303030303030303030303030303\",\"index_id\":\"idx_04040404040404040404040404040404\",\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"],\"schema\":1}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+       "expected_catalog_revision": 7,
+       "expected_grant_revision": 1,
+       "grant_id": "grt_03030303030303030303030303030303",
+       "index_id": "idx_04040404040404040404040404040404",
+       "namespace": "02020202020202020202020202020202",
+       "project_ids": [
+        "prj_05050505050505050505050505050505"
+       ],
+       "schema": 1
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+    "expected_catalog_revision": 7,
+    "expected_grant_revision": 1,
+    "grant_id": "grt_03030303030303030303030303030303",
+    "index_id": "idx_04040404040404040404040404040404",
+    "namespace": "02020202020202020202020202020202",
+    "project_ids": [
+     "prj_05050505050505050505050505050505"
+    ],
+    "schema": 1
+   },
+   "name": "scoped_unavailable_without_native_response",
+   "rule": "the unavailable code needs its native response"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"native_control_response\":{\"code\":\"broker_busy\",\"status\":\"ok\"},\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"context_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"expected_catalog_revision\":7,\"expected_grant_revision\":1,\"grant_id\":\"grt_03030303030303030303030303030303\",\"index_id\":\"idx_04040404040404040404040404040404\",\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"],\"schema\":1}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "native_control_response": {
+       "code": "broker_busy",
+       "status": "ok"
+      },
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+       "expected_catalog_revision": 7,
+       "expected_grant_revision": 1,
+       "grant_id": "grt_03030303030303030303030303030303",
+       "index_id": "idx_04040404040404040404040404040404",
+       "namespace": "02020202020202020202020202020202",
+       "project_ids": [
+        "prj_05050505050505050505050505050505"
+       ],
+       "schema": 1
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+    "expected_catalog_revision": 7,
+    "expected_grant_revision": 1,
+    "grant_id": "grt_03030303030303030303030303030303",
+    "index_id": "idx_04040404040404040404040404040404",
+    "namespace": "02020202020202020202020202020202",
+    "project_ids": [
+     "prj_05050505050505050505050505050505"
+    ],
+    "schema": 1
+   },
+   "name": "scoped_unavailable_native_not_failure",
+   "rule": "the native response is a failure"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_connection_unavailable\",\"fresh_brokerage_required\":true,\"native_control_response\":{\"code\":\"broker_busy\",\"detail\":\"x\",\"status\":\"failure\"},\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"context_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"expected_catalog_revision\":7,\"expected_grant_revision\":1,\"grant_id\":\"grt_03030303030303030303030303030303\",\"index_id\":\"idx_04040404040404040404040404040404\",\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"],\"schema\":1}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_connection_unavailable",
+      "fresh_brokerage_required": true,
+      "native_control_response": {
+       "code": "broker_busy",
+       "detail": "x",
+       "status": "failure"
+      },
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+       "expected_catalog_revision": 7,
+       "expected_grant_revision": 1,
+       "grant_id": "grt_03030303030303030303030303030303",
+       "index_id": "idx_04040404040404040404040404040404",
+       "namespace": "02020202020202020202020202020202",
+       "project_ids": [
+        "prj_05050505050505050505050505050505"
+       ],
+       "schema": 1
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+    "expected_catalog_revision": 7,
+    "expected_grant_revision": 1,
+    "grant_id": "grt_03030303030303030303030303030303",
+    "index_id": "idx_04040404040404040404040404040404",
+    "namespace": "02020202020202020202020202020202",
+    "project_ids": [
+     "prj_05050505050505050505050505050505"
+    ],
+    "schema": 1
+   },
+   "name": "scoped_unavailable_native_extra_field",
+   "rule": "the native response has only status and code"
+  },
+  {
+   "emitter": {
+    "code": "scoped_status_prepare_timeout",
+    "function": "airk_mcp::remote::scoped_setup_failure",
+    "native_control_response": {
+     "code": "broker_busy",
+     "status": "failure"
+    },
+    "retryable": true
+   },
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_status_prepare_timeout\",\"fresh_brokerage_required\":true,\"native_control_response\":{\"code\":\"broker_busy\",\"status\":\"failure\"},\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"context_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"expected_catalog_revision\":7,\"expected_grant_revision\":1,\"grant_id\":\"grt_03030303030303030303030303030303\",\"index_id\":\"idx_04040404040404040404040404040404\",\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"],\"schema\":1}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_status_prepare_timeout",
+      "fresh_brokerage_required": true,
+      "native_control_response": {
+       "code": "broker_busy",
+       "status": "failure"
+      },
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+       "expected_catalog_revision": 7,
+       "expected_grant_revision": 1,
+       "grant_id": "grt_03030303030303030303030303030303",
+       "index_id": "idx_04040404040404040404040404040404",
+       "namespace": "02020202020202020202020202020202",
+       "project_ids": [
+        "prj_05050505050505050505050505050505"
+       ],
+       "schema": 1
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+    "expected_catalog_revision": 7,
+    "expected_grant_revision": 1,
+    "grant_id": "grt_03030303030303030303030303030303",
+    "index_id": "idx_04040404040404040404040404040404",
+    "namespace": "02020202020202020202020202020202",
+    "project_ids": [
+     "prj_05050505050505050505050505050505"
+    ],
+    "schema": 1
+   },
+   "name": "scoped_timeout_with_native_response",
+   "rule": "the timeout code carries no native response"
+  },
+  {
+   "emitter": {
+    "code": "scoped_status_prepare_unavailable",
+    "function": "airk_mcp::remote::scoped_setup_failure",
+    "native_control_response": null,
+    "retryable": false
+   },
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_status_prepare_unavailable\",\"query_submitted\":false,\"retryable\":false},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"context_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"expected_catalog_revision\":7,\"expected_grant_revision\":1,\"grant_id\":\"grt_03030303030303030303030303030303\",\"index_id\":\"idx_04040404040404040404040404040404\",\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"],\"schema\":1}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_status_prepare_unavailable",
+      "query_submitted": false,
+      "retryable": false
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+       "expected_catalog_revision": 7,
+       "expected_grant_revision": 1,
+       "grant_id": "grt_03030303030303030303030303030303",
+       "index_id": "idx_04040404040404040404040404040404",
+       "namespace": "02020202020202020202020202020202",
+       "project_ids": [
+        "prj_05050505050505050505050505050505"
+       ],
+       "schema": 1
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+    "expected_catalog_revision": 7,
+    "expected_grant_revision": 1,
+    "grant_id": "grt_03030303030303030303030303030303",
+    "index_id": "idx_04040404040404040404040404040404",
+    "namespace": "02020202020202020202020202020202",
+    "project_ids": [
+     "prj_05050505050505050505050505050505"
+    ],
+    "schema": 1
+   },
+   "name": "scoped_not_retryable",
+   "rule": "a non-retryable setup failure is final"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_status_prepare_timeout\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"context_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"expected_catalog_revision\":7,\"expected_grant_revision\":1,\"grant_id\":\"grt_03030303030303030303030303030303\",\"index_id\":\"idx_04040404040404040404040404040404\",\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"],\"schema\":1}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_status_prepare_timeout",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+       "expected_catalog_revision": 7,
+       "expected_grant_revision": 1,
+       "grant_id": "grt_03030303030303030303030303030303",
+       "index_id": "idx_04040404040404040404040404040404",
+       "namespace": "02020202020202020202020202020202",
+       "project_ids": [
+        "prj_05050505050505050505050505050505"
+       ],
+       "schema": 1
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": null,
+   "name": "scoped_without_expected_scope",
+   "rule": "a caller without its original selection cannot retry"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_status_prepare_timeout\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"context_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"expected_catalog_revision\":7,\"expected_grant_revision\":1,\"grant_id\":\"grt_03030303030303030303030303030303\",\"index_id\":\"idx_04040404040404040404040404040404\",\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"],\"schema\":1}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true
+   },
+   "expected": null,
+   "expected_scope": {
+    "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+    "expected_catalog_revision": 7,
+    "expected_grant_revision": 1,
+    "grant_id": "grt_03030303030303030303030303030303",
+    "index_id": "idx_04040404040404040404040404040404",
+    "namespace": "02020202020202020202020202020202",
+    "project_ids": [
+     "prj_05050505050505050505050505050505"
+    ],
+    "schema": 1
+   },
+   "name": "scoped_without_structured_content",
+   "rule": "the scoped envelope carries equal structured content"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_status_prepare_timeout\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"context_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"expected_catalog_revision\":7,\"expected_grant_revision\":1,\"grant_id\":\"grt_03030303030303030303030303030303\",\"index_id\":\"idx_04040404040404040404040404040404\",\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"],\"schema\":1}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_status_prepare_timeout",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 200,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+       "expected_catalog_revision": 7,
+       "expected_grant_revision": 1,
+       "grant_id": "grt_03030303030303030303030303030303",
+       "index_id": "idx_04040404040404040404040404040404",
+       "namespace": "02020202020202020202020202020202",
+       "project_ids": [
+        "prj_05050505050505050505050505050505"
+       ],
+       "schema": 1
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+    "expected_catalog_revision": 7,
+    "expected_grant_revision": 1,
+    "grant_id": "grt_03030303030303030303030303030303",
+    "index_id": "idx_04040404040404040404040404040404",
+    "namespace": "02020202020202020202020202020202",
+    "project_ids": [
+     "prj_05050505050505050505050505050505"
+    ],
+    "schema": 1
+   },
+   "name": "scoped_structured_disagrees",
+   "rule": "structured content must equal the text"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_status_prepare_timeout\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"context_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"expected_catalog_revision\":6,\"expected_grant_revision\":1,\"grant_id\":\"grt_03030303030303030303030303030303\",\"index_id\":\"idx_04040404040404040404040404040404\",\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"],\"schema\":1}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_status_prepare_timeout",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+       "expected_catalog_revision": 6,
+       "expected_grant_revision": 1,
+       "grant_id": "grt_03030303030303030303030303030303",
+       "index_id": "idx_04040404040404040404040404040404",
+       "namespace": "02020202020202020202020202020202",
+       "project_ids": [
+        "prj_05050505050505050505050505050505"
+       ],
+       "schema": 1
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+    "expected_catalog_revision": 7,
+    "expected_grant_revision": 1,
+    "grant_id": "grt_03030303030303030303030303030303",
+    "index_id": "idx_04040404040404040404040404040404",
+    "namespace": "02020202020202020202020202020202",
+    "project_ids": [
+     "prj_05050505050505050505050505050505"
+    ],
+    "schema": 1
+   },
+   "name": "scoped_clock_backwards",
+   "rule": "the catalog clock never moves backwards"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_status_prepare_timeout\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"context_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"expected_catalog_revision\":12,\"expected_grant_revision\":1,\"grant_id\":\"grt_03030303030303030303030303030303\",\"index_id\":\"idx_04040404040404040404040404040404\",\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"],\"schema\":1}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_status_prepare_timeout",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+       "expected_catalog_revision": 12,
+       "expected_grant_revision": 1,
+       "grant_id": "grt_03030303030303030303030303030303",
+       "index_id": "idx_04040404040404040404040404040404",
+       "namespace": "02020202020202020202020202020202",
+       "project_ids": [
+        "prj_05050505050505050505050505050505"
+       ],
+       "schema": 1
+      }
+     }
+    }
+   },
+   "expected": {
+    "fresh_brokerage_required": true,
+    "retry_after_ms": 100
+   },
+   "expected_scope": {
+    "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+    "expected_catalog_revision": 7,
+    "expected_grant_revision": 1,
+    "grant_id": "grt_03030303030303030303030303030303",
+    "index_id": "idx_04040404040404040404040404040404",
+    "namespace": "02020202020202020202020202020202",
+    "project_ids": [
+     "prj_05050505050505050505050505050505"
+    ],
+    "schema": 1
+   },
+   "name": "scoped_clock_forward",
+   "rule": "native admission may refresh the catalog clock forward"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_status_prepare_timeout\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"context_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"expected_catalog_revision\":7,\"expected_grant_revision\":1,\"grant_id\":\"grt_09090909090909090909090909090909\",\"index_id\":\"idx_04040404040404040404040404040404\",\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"],\"schema\":1}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_status_prepare_timeout",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+       "expected_catalog_revision": 7,
+       "expected_grant_revision": 1,
+       "grant_id": "grt_09090909090909090909090909090909",
+       "index_id": "idx_04040404040404040404040404040404",
+       "namespace": "02020202020202020202020202020202",
+       "project_ids": [
+        "prj_05050505050505050505050505050505"
+       ],
+       "schema": 1
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+    "expected_catalog_revision": 7,
+    "expected_grant_revision": 1,
+    "grant_id": "grt_03030303030303030303030303030303",
+    "index_id": "idx_04040404040404040404040404040404",
+    "namespace": "02020202020202020202020202020202",
+    "project_ids": [
+     "prj_05050505050505050505050505050505"
+    ],
+    "schema": 1
+   },
+   "name": "scoped_changed_grant",
+   "rule": "a different grant is a different authority"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_status_prepare_timeout\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"context_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"expected_catalog_revision\":7,\"expected_grant_revision\":2,\"grant_id\":\"grt_03030303030303030303030303030303\",\"index_id\":\"idx_04040404040404040404040404040404\",\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"],\"schema\":1}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_status_prepare_timeout",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+       "expected_catalog_revision": 7,
+       "expected_grant_revision": 2,
+       "grant_id": "grt_03030303030303030303030303030303",
+       "index_id": "idx_04040404040404040404040404040404",
+       "namespace": "02020202020202020202020202020202",
+       "project_ids": [
+        "prj_05050505050505050505050505050505"
+       ],
+       "schema": 1
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+    "expected_catalog_revision": 7,
+    "expected_grant_revision": 1,
+    "grant_id": "grt_03030303030303030303030303030303",
+    "index_id": "idx_04040404040404040404040404040404",
+    "namespace": "02020202020202020202020202020202",
+    "project_ids": [
+     "prj_05050505050505050505050505050505"
+    ],
+    "schema": 1
+   },
+   "name": "scoped_changed_grant_revision",
+   "rule": "a changed grant revision is a different authority"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_status_prepare_timeout\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"context_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"expected_catalog_revision\":7,\"expected_grant_revision\":1,\"grant_id\":\"grt_03030303030303030303030303030303\",\"index_id\":\"idx_09090909090909090909090909090909\",\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"],\"schema\":1}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_status_prepare_timeout",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+       "expected_catalog_revision": 7,
+       "expected_grant_revision": 1,
+       "grant_id": "grt_03030303030303030303030303030303",
+       "index_id": "idx_09090909090909090909090909090909",
+       "namespace": "02020202020202020202020202020202",
+       "project_ids": [
+        "prj_05050505050505050505050505050505"
+       ],
+       "schema": 1
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+    "expected_catalog_revision": 7,
+    "expected_grant_revision": 1,
+    "grant_id": "grt_03030303030303030303030303030303",
+    "index_id": "idx_04040404040404040404040404040404",
+    "namespace": "02020202020202020202020202020202",
+    "project_ids": [
+     "prj_05050505050505050505050505050505"
+    ],
+    "schema": 1
+   },
+   "name": "scoped_changed_index",
+   "rule": "a different index is a different read"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_status_prepare_timeout\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"context_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"expected_catalog_revision\":7,\"expected_grant_revision\":1,\"grant_id\":\"grt_03030303030303030303030303030303\",\"index_id\":\"idx_04040404040404040404040404040404\",\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_06060606060606060606060606060606\",\"prj_05050505050505050505050505050505\"],\"schema\":1}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_status_prepare_timeout",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+       "expected_catalog_revision": 7,
+       "expected_grant_revision": 1,
+       "grant_id": "grt_03030303030303030303030303030303",
+       "index_id": "idx_04040404040404040404040404040404",
+       "namespace": "02020202020202020202020202020202",
+       "project_ids": [
+        "prj_06060606060606060606060606060606",
+        "prj_05050505050505050505050505050505"
+       ],
+       "schema": 1
+      }
+     }
+    }
+   },
+   "expected": {
+    "fresh_brokerage_required": true,
+    "retry_after_ms": 100
+   },
+   "expected_scope": {
+    "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+    "expected_catalog_revision": 7,
+    "expected_grant_revision": 1,
+    "grant_id": "grt_03030303030303030303030303030303",
+    "index_id": "idx_04040404040404040404040404040404",
+    "namespace": "02020202020202020202020202020202",
+    "project_ids": [
+     "prj_05050505050505050505050505050505",
+     "prj_06060606060606060606060606060606"
+    ],
+    "schema": 1
+   },
+   "name": "scoped_project_order",
+   "rule": "project order is not significant"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_status_prepare_timeout\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"context_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"expected_catalog_revision\":7,\"expected_grant_revision\":1,\"grant_id\":\"grt_03030303030303030303030303030303\",\"index_id\":\"idx_04040404040404040404040404040404\",\"namespace\":\"02020202020202020202020202020202\",\"note\":\"x\",\"project_ids\":[\"prj_05050505050505050505050505050505\"],\"schema\":1}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_status_prepare_timeout",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+       "expected_catalog_revision": 7,
+       "expected_grant_revision": 1,
+       "grant_id": "grt_03030303030303030303030303030303",
+       "index_id": "idx_04040404040404040404040404040404",
+       "namespace": "02020202020202020202020202020202",
+       "note": "x",
+       "project_ids": [
+        "prj_05050505050505050505050505050505"
+       ],
+       "schema": 1
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+    "expected_catalog_revision": 7,
+    "expected_grant_revision": 1,
+    "grant_id": "grt_03030303030303030303030303030303",
+    "index_id": "idx_04040404040404040404040404040404",
+    "namespace": "02020202020202020202020202020202",
+    "project_ids": [
+     "prj_05050505050505050505050505050505"
+    ],
+    "schema": 1
+   },
+   "name": "scoped_selection_unknown_field",
+   "rule": "the selection has a closed field set"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_status_prepare_timeout\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":true,\"selection\":{\"context_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"expected_catalog_revision\":7,\"expected_grant_revision\":1,\"grant_id\":\"grt_03030303030303030303030303030303\",\"index_id\":\"idx_04040404040404040404040404040404\",\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"],\"schema\":1}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_status_prepare_timeout",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": true,
+      "selection": {
+       "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+       "expected_catalog_revision": 7,
+       "expected_grant_revision": 1,
+       "grant_id": "grt_03030303030303030303030303030303",
+       "index_id": "idx_04040404040404040404040404040404",
+       "namespace": "02020202020202020202020202020202",
+       "project_ids": [
+        "prj_05050505050505050505050505050505"
+       ],
+       "schema": 1
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+    "expected_catalog_revision": 7,
+    "expected_grant_revision": 1,
+    "grant_id": "grt_03030303030303030303030303030303",
+    "index_id": "idx_04040404040404040404040404040404",
+    "namespace": "02020202020202020202020202020202",
+    "project_ids": [
+     "prj_05050505050505050505050505050505"
+    ],
+    "schema": 1
+   },
+   "name": "scoped_confirmed",
+   "rule": "a confirmed scope is not a pre-query refusal"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_status_prepare_timeout\",\"fresh_brokerage_required\":true,\"query_submitted\":true,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"context_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"expected_catalog_revision\":7,\"expected_grant_revision\":1,\"grant_id\":\"grt_03030303030303030303030303030303\",\"index_id\":\"idx_04040404040404040404040404040404\",\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"],\"schema\":1}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_status_prepare_timeout",
+      "fresh_brokerage_required": true,
+      "query_submitted": true,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+       "expected_catalog_revision": 7,
+       "expected_grant_revision": 1,
+       "grant_id": "grt_03030303030303030303030303030303",
+       "index_id": "idx_04040404040404040404040404040404",
+       "namespace": "02020202020202020202020202020202",
+       "project_ids": [
+        "prj_05050505050505050505050505050505"
+       ],
+       "schema": 1
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+    "expected_catalog_revision": 7,
+    "expected_grant_revision": 1,
+    "grant_id": "grt_03030303030303030303030303030303",
+    "index_id": "idx_04040404040404040404040404040404",
+    "namespace": "02020202020202020202020202020202",
+    "project_ids": [
+     "prj_05050505050505050505050505050505"
+    ],
+    "schema": 1
+   },
+   "name": "scoped_submitted",
+   "rule": "a submitted query is never replayed"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_status_prepare_timeout\",\"fresh_brokerage_required\":true,\"query_replay_safe\":true,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"context_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"expected_catalog_revision\":7,\"expected_grant_revision\":1,\"grant_id\":\"grt_03030303030303030303030303030303\",\"index_id\":\"idx_04040404040404040404040404040404\",\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"],\"schema\":1}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_status_prepare_timeout",
+      "fresh_brokerage_required": true,
+      "query_replay_safe": true,
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+       "expected_catalog_revision": 7,
+       "expected_grant_revision": 1,
+       "grant_id": "grt_03030303030303030303030303030303",
+       "index_id": "idx_04040404040404040404040404040404",
+       "namespace": "02020202020202020202020202020202",
+       "project_ids": [
+        "prj_05050505050505050505050505050505"
+       ],
+       "schema": 1
+      }
+     }
+    }
+   },
+   "expected": {
+    "fresh_brokerage_required": true,
+    "retry_after_ms": 100
+   },
+   "expected_scope": {
+    "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+    "expected_catalog_revision": 7,
+    "expected_grant_revision": 1,
+    "grant_id": "grt_03030303030303030303030303030303",
+    "index_id": "idx_04040404040404040404040404040404",
+    "namespace": "02020202020202020202020202020202",
+    "project_ids": [
+     "prj_05050505050505050505050505050505"
+    ],
+    "schema": 1
+   },
+   "name": "scoped_replay_safe_true",
+   "rule": "query_replay_safe may be stated as true"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_status_prepare_timeout\",\"fresh_brokerage_required\":true,\"query_replay_safe\":false,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"context_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"expected_catalog_revision\":7,\"expected_grant_revision\":1,\"grant_id\":\"grt_03030303030303030303030303030303\",\"index_id\":\"idx_04040404040404040404040404040404\",\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"],\"schema\":1}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_status_prepare_timeout",
+      "fresh_brokerage_required": true,
+      "query_replay_safe": false,
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+       "expected_catalog_revision": 7,
+       "expected_grant_revision": 1,
+       "grant_id": "grt_03030303030303030303030303030303",
+       "index_id": "idx_04040404040404040404040404040404",
+       "namespace": "02020202020202020202020202020202",
+       "project_ids": [
+        "prj_05050505050505050505050505050505"
+       ],
+       "schema": 1
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+    "expected_catalog_revision": 7,
+    "expected_grant_revision": 1,
+    "grant_id": "grt_03030303030303030303030303030303",
+    "index_id": "idx_04040404040404040404040404040404",
+    "namespace": "02020202020202020202020202020202",
+    "project_ids": [
+     "prj_05050505050505050505050505050505"
+    ],
+    "schema": 1
+   },
+   "name": "scoped_replay_unsafe",
+   "rule": "query_replay_safe false is never replayed"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_status_prepare_timeout\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true,\"unexpected\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"context_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"expected_catalog_revision\":7,\"expected_grant_revision\":1,\"grant_id\":\"grt_03030303030303030303030303030303\",\"index_id\":\"idx_04040404040404040404040404040404\",\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"],\"schema\":1}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_status_prepare_timeout",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true,
+      "unexpected": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+       "expected_catalog_revision": 7,
+       "expected_grant_revision": 1,
+       "grant_id": "grt_03030303030303030303030303030303",
+       "index_id": "idx_04040404040404040404040404040404",
+       "namespace": "02020202020202020202020202020202",
+       "project_ids": [
+        "prj_05050505050505050505050505050505"
+       ],
+       "schema": 1
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+    "expected_catalog_revision": 7,
+    "expected_grant_revision": 1,
+    "grant_id": "grt_03030303030303030303030303030303",
+    "index_id": "idx_04040404040404040404040404040404",
+    "namespace": "02020202020202020202020202020202",
+    "project_ids": [
+     "prj_05050505050505050505050505050505"
+    ],
+    "schema": 1
+   },
+   "name": "scoped_unknown_error_field",
+   "rule": "the error has a closed field set"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_status_prepare_timeout\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"hits\":[],\"requested_scope\":{\"confirmed\":false,\"selection\":{\"context_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"expected_catalog_revision\":7,\"expected_grant_revision\":1,\"grant_id\":\"grt_03030303030303030303030303030303\",\"index_id\":\"idx_04040404040404040404040404040404\",\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"],\"schema\":1}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_status_prepare_timeout",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "hits": [],
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+       "expected_catalog_revision": 7,
+       "expected_grant_revision": 1,
+       "grant_id": "grt_03030303030303030303030303030303",
+       "index_id": "idx_04040404040404040404040404040404",
+       "namespace": "02020202020202020202020202020202",
+       "project_ids": [
+        "prj_05050505050505050505050505050505"
+       ],
+       "schema": 1
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+    "expected_catalog_revision": 7,
+    "expected_grant_revision": 1,
+    "grant_id": "grt_03030303030303030303030303030303",
+    "index_id": "idx_04040404040404040404040404040404",
+    "namespace": "02020202020202020202020202020202",
+    "project_ids": [
+     "prj_05050505050505050505050505050505"
+    ],
+    "schema": 1
+   },
+   "name": "scoped_extra_body_field",
+   "rule": "the body has only error and requested_scope"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_status_prepare_timeout\",\"fresh_brokerage_required\":false,\"query_submitted\":false,\"retry_after_ms\":100,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"context_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"expected_catalog_revision\":7,\"expected_grant_revision\":1,\"grant_id\":\"grt_03030303030303030303030303030303\",\"index_id\":\"idx_04040404040404040404040404040404\",\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"],\"schema\":1}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_status_prepare_timeout",
+      "fresh_brokerage_required": false,
+      "query_submitted": false,
+      "retry_after_ms": 100,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+       "expected_catalog_revision": 7,
+       "expected_grant_revision": 1,
+       "grant_id": "grt_03030303030303030303030303030303",
+       "index_id": "idx_04040404040404040404040404040404",
+       "namespace": "02020202020202020202020202020202",
+       "project_ids": [
+        "prj_05050505050505050505050505050505"
+       ],
+       "schema": 1
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+    "expected_catalog_revision": 7,
+    "expected_grant_revision": 1,
+    "grant_id": "grt_03030303030303030303030303030303",
+    "index_id": "idx_04040404040404040404040404040404",
+    "namespace": "02020202020202020202020202020202",
+    "project_ids": [
+     "prj_05050505050505050505050505050505"
+    ],
+    "schema": 1
+   },
+   "name": "scoped_without_fresh_brokerage",
+   "rule": "a scoped retry always needs fresh brokerage"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_status_prepare_timeout\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":0,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"context_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"expected_catalog_revision\":7,\"expected_grant_revision\":1,\"grant_id\":\"grt_03030303030303030303030303030303\",\"index_id\":\"idx_04040404040404040404040404040404\",\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"],\"schema\":1}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_status_prepare_timeout",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 0,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+       "expected_catalog_revision": 7,
+       "expected_grant_revision": 1,
+       "grant_id": "grt_03030303030303030303030303030303",
+       "index_id": "idx_04040404040404040404040404040404",
+       "namespace": "02020202020202020202020202020202",
+       "project_ids": [
+        "prj_05050505050505050505050505050505"
+       ],
+       "schema": 1
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+    "expected_catalog_revision": 7,
+    "expected_grant_revision": 1,
+    "grant_id": "grt_03030303030303030303030303030303",
+    "index_id": "idx_04040404040404040404040404040404",
+    "namespace": "02020202020202020202020202020202",
+    "project_ids": [
+     "prj_05050505050505050505050505050505"
+    ],
+    "schema": 1
+   },
+   "name": "scoped_delay_0",
+   "rule": "delay must be 1..=1000 ms"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_status_prepare_timeout\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":1,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"context_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"expected_catalog_revision\":7,\"expected_grant_revision\":1,\"grant_id\":\"grt_03030303030303030303030303030303\",\"index_id\":\"idx_04040404040404040404040404040404\",\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"],\"schema\":1}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_status_prepare_timeout",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 1,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+       "expected_catalog_revision": 7,
+       "expected_grant_revision": 1,
+       "grant_id": "grt_03030303030303030303030303030303",
+       "index_id": "idx_04040404040404040404040404040404",
+       "namespace": "02020202020202020202020202020202",
+       "project_ids": [
+        "prj_05050505050505050505050505050505"
+       ],
+       "schema": 1
+      }
+     }
+    }
+   },
+   "expected": {
+    "fresh_brokerage_required": true,
+    "retry_after_ms": 1
+   },
+   "expected_scope": {
+    "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+    "expected_catalog_revision": 7,
+    "expected_grant_revision": 1,
+    "grant_id": "grt_03030303030303030303030303030303",
+    "index_id": "idx_04040404040404040404040404040404",
+    "namespace": "02020202020202020202020202020202",
+    "project_ids": [
+     "prj_05050505050505050505050505050505"
+    ],
+    "schema": 1
+   },
+   "name": "scoped_delay_1",
+   "rule": "delay must be 1..=1000 ms"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_status_prepare_timeout\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":1000,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"context_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"expected_catalog_revision\":7,\"expected_grant_revision\":1,\"grant_id\":\"grt_03030303030303030303030303030303\",\"index_id\":\"idx_04040404040404040404040404040404\",\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"],\"schema\":1}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_status_prepare_timeout",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 1000,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+       "expected_catalog_revision": 7,
+       "expected_grant_revision": 1,
+       "grant_id": "grt_03030303030303030303030303030303",
+       "index_id": "idx_04040404040404040404040404040404",
+       "namespace": "02020202020202020202020202020202",
+       "project_ids": [
+        "prj_05050505050505050505050505050505"
+       ],
+       "schema": 1
+      }
+     }
+    }
+   },
+   "expected": {
+    "fresh_brokerage_required": true,
+    "retry_after_ms": 1000
+   },
+   "expected_scope": {
+    "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+    "expected_catalog_revision": 7,
+    "expected_grant_revision": 1,
+    "grant_id": "grt_03030303030303030303030303030303",
+    "index_id": "idx_04040404040404040404040404040404",
+    "namespace": "02020202020202020202020202020202",
+    "project_ids": [
+     "prj_05050505050505050505050505050505"
+    ],
+    "schema": 1
+   },
+   "name": "scoped_delay_1000",
+   "rule": "delay must be 1..=1000 ms"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_status_prepare_timeout\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":1001,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"context_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"expected_catalog_revision\":7,\"expected_grant_revision\":1,\"grant_id\":\"grt_03030303030303030303030303030303\",\"index_id\":\"idx_04040404040404040404040404040404\",\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"],\"schema\":1}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_status_prepare_timeout",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 1001,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+       "expected_catalog_revision": 7,
+       "expected_grant_revision": 1,
+       "grant_id": "grt_03030303030303030303030303030303",
+       "index_id": "idx_04040404040404040404040404040404",
+       "namespace": "02020202020202020202020202020202",
+       "project_ids": [
+        "prj_05050505050505050505050505050505"
+       ],
+       "schema": 1
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+    "expected_catalog_revision": 7,
+    "expected_grant_revision": 1,
+    "grant_id": "grt_03030303030303030303030303030303",
+    "index_id": "idx_04040404040404040404040404040404",
+    "namespace": "02020202020202020202020202020202",
+    "project_ids": [
+     "prj_05050505050505050505050505050505"
+    ],
+    "schema": 1
+   },
+   "name": "scoped_delay_1001",
+   "rule": "delay must be 1..=1000 ms"
+  },
+  {
+   "envelope": {
+    "content": [
+     {
+      "text": "{\"error\":{\"code\":\"scoped_status_prepare_timeout\",\"fresh_brokerage_required\":true,\"query_submitted\":false,\"retry_after_ms\":25.0,\"retryable\":true},\"requested_scope\":{\"confirmed\":false,\"selection\":{\"context_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"expected_catalog_revision\":7,\"expected_grant_revision\":1,\"grant_id\":\"grt_03030303030303030303030303030303\",\"index_id\":\"idx_04040404040404040404040404040404\",\"namespace\":\"02020202020202020202020202020202\",\"project_ids\":[\"prj_05050505050505050505050505050505\"],\"schema\":1}}}",
+      "type": "text"
+     }
+    ],
+    "isError": true,
+    "structuredContent": {
+     "error": {
+      "code": "scoped_status_prepare_timeout",
+      "fresh_brokerage_required": true,
+      "query_submitted": false,
+      "retry_after_ms": 25.0,
+      "retryable": true
+     },
+     "requested_scope": {
+      "confirmed": false,
+      "selection": {
+       "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+       "expected_catalog_revision": 7,
+       "expected_grant_revision": 1,
+       "grant_id": "grt_03030303030303030303030303030303",
+       "index_id": "idx_04040404040404040404040404040404",
+       "namespace": "02020202020202020202020202020202",
+       "project_ids": [
+        "prj_05050505050505050505050505050505"
+       ],
+       "schema": 1
+      }
+     }
+    }
+   },
+   "expected": null,
+   "expected_scope": {
+    "context_key": "0101010101010101010101010101010101010101010101010101010101010101",
+    "expected_catalog_revision": 7,
+    "expected_grant_revision": 1,
+    "grant_id": "grt_03030303030303030303030303030303",
+    "index_id": "idx_04040404040404040404040404040404",
+    "namespace": "02020202020202020202020202020202",
+    "project_ids": [
+     "prj_05050505050505050505050505050505"
+    ],
+    "schema": 1
+   },
+   "name": "scoped_integral_float_delay",
+   "rule": "the delay is a JSON integer literal; 25.0 is refused"
+  }
+ ],
+ "generator": "fixtures/wire/read_retry_envelopes.py",
+ "native_busy_codes": [
+  "broker_busy",
+  "project_starting_or_unavailable",
+  "project_unavailable_or_busy",
+  "previous_workers_draining",
+  "catalog_revision_changed",
+  "catalog_clock_pending",
+  "catalog_connection_busy",
+  "project_capacity_busy",
+  "project_restart_backoff"
+ ],
+ "rust": "crates/airk-cli/tests/common/read_retry.rs classify, classify_for_scope",
+ "schema": "airk.wire-fixture.read-retry-envelopes/1",
+ "typescript": "packages/vscode/src/readRetry.ts readRetryDelay"
+}

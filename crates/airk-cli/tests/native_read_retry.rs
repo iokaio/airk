@@ -393,6 +393,102 @@ fn only_complete_typed_read_rejections_authorize_replay() {
     }
 }
 
+/// Reviewed top-level envelope cases shared with `readRetry.ts`
+/// (`fixtures/wire/read_retry_envelopes.py`). `expected` is written
+/// independently of both consumers; it is never computed by them.
+fn envelope_fixture() -> Value {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../fixtures/wire/read_retry_envelopes.json"
+    ))
+    .unwrap();
+    assert_eq!(
+        fixture["schema"],
+        "airk.wire-fixture.read-retry-envelopes/1"
+    );
+    assert!(
+        !fixture["cases"].as_array().unwrap().is_empty(),
+        "zero selected envelope cases"
+    );
+    fixture
+}
+
+#[test]
+fn shared_envelope_cases_match_the_native_decision() {
+    for case in envelope_fixture()["cases"].as_array().unwrap() {
+        let envelope = &case["envelope"];
+        let decision = if case["expected_scope"].is_null() {
+            read_retry::classify(envelope)
+        } else {
+            let scope: airk_core::service::ScopedConnectRequest =
+                serde_json::from_value(case["expected_scope"].clone()).unwrap();
+            read_retry::classify_for_scope(envelope, &scope)
+        };
+        let observed = decision.map_or(Value::Null, |retry| {
+            json!({"retry_after_ms": u64::try_from(retry.delay.as_millis()).unwrap(),
+                "fresh_brokerage_required": retry.fresh_brokerage})
+        });
+        assert_eq!(
+            observed, case["expected"],
+            "{}: {}",
+            case["name"], case["rule"]
+        );
+    }
+}
+
+#[test]
+fn envelope_emitters_produce_the_reviewed_fixture_envelopes() {
+    let mut emitted = 0;
+    for case in envelope_fixture()["cases"].as_array().unwrap() {
+        let Some(emitter) = case.get("emitter") else {
+            continue;
+        };
+        let expected = &case["envelope"];
+        let actual = match emitter["function"].as_str().unwrap() {
+            "airk_mcp::remote::scoped_setup_failure" => {
+                let selection: airk_core::service::ScopedConnectRequest = serde_json::from_value(
+                    expected["structuredContent"]["requested_scope"]["selection"].clone(),
+                )
+                .unwrap();
+                let native = emitter["native_control_response"].clone();
+                airk_mcp::remote::scoped_setup_failure(
+                    &selection,
+                    emitter["code"].as_str().unwrap(),
+                    emitter["retryable"].as_bool().unwrap(),
+                    (!native.is_null()).then_some(native),
+                )
+            }
+            "airk_mcp::response::typed_error_result" => {
+                let error = match emitter["error"].as_str().unwrap() {
+                    "selection_contention" => {
+                        anyhow::Error::new(airk_store::service::collection::SelectionContention)
+                    }
+                    "current_read_contention" => {
+                        anyhow::Error::new(airk_store::current::CurrentReadContention)
+                    }
+                    other => panic!("unreviewed emitter error {other}"),
+                };
+                let result = serde_json::to_value(
+                    airk_mcp::response::typed_error_result(&error).expect("typed read retry"),
+                )
+                .unwrap();
+                // Compare the fields hosts read; the MCP result also carries its
+                // own transport framing (for example `resultType`).
+                json!({"isError": result["isError"], "content": result["content"]})
+            }
+            other => panic!("unreviewed emitter {other}"),
+        };
+        assert_eq!(
+            actual["content"][0]["text"].as_str(),
+            expected["content"][0]["text"].as_str(),
+            "{}: exact text bytes",
+            case["name"]
+        );
+        assert_eq!(&actual, expected, "{}", case["name"]);
+        emitted += 1;
+    }
+    assert!(emitted > 0, "zero selected emitter cases");
+}
+
 #[tokio::test]
 async fn backend_retries_keep_arguments_and_never_replay_submitted_or_unknown_errors() -> Result<()>
 {
