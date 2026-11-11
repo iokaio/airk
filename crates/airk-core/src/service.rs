@@ -478,6 +478,33 @@ pub enum ControlMethod {
     ResolveProject {
         target: ResolveTarget,
     },
+    /// M5 (contracts §2.4): durably journal one keyed `Enqueue` or
+    /// `ConfigureProject` request in the service's control folder, with no
+    /// effect yet. `caller` and `key` must equal the inner request's.
+    ClientRequestPrepare {
+        caller: Incarnation,
+        key: RequestKey,
+        request: Box<ControlMethod>,
+    },
+    /// M6: the journaled requests.
+    ClientRequestList {},
+    /// M7: submit a journaled request by its nonce, with its exact saved key.
+    ClientRequestSubmit {
+        nonce: Incarnation,
+    },
+    /// M8: discard a journaled request; never cancels native work.
+    ClientRequestForget {
+        nonce: Incarnation,
+    },
+}
+
+/// One journaled request (M6).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PendingClientRequest {
+    pub nonce: Incarnation,
+    pub project: ProjectBinding,
+    pub kind: JobKind,
 }
 
 /// What M1 resolves. Paths are absolute: the service's working folder is not
@@ -996,6 +1023,24 @@ pub enum ControlResponse {
         record: crate::service_lifecycle::LifecycleRecord,
         service_instance: Incarnation,
         process_id: u32,
+    },
+    /// M5: the request is journaled (`duplicate` when this exact request was
+    /// already journaled under its nonce).
+    ClientRequestPrepared {
+        nonce: Incarnation,
+        project: ProjectBinding,
+        kind: JobKind,
+        duplicate: bool,
+    },
+    /// M6: the journaled requests and the journal's capacity.
+    ClientRequests {
+        pending: Vec<PendingClientRequest>,
+        capacity: usize,
+    },
+    /// M8: whether a request existed under the nonce.
+    ClientRequestForgotten {
+        nonce: Incarnation,
+        existed: bool,
     },
     /// M1: the registered project.
     Resolved {

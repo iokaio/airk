@@ -472,6 +472,13 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 detail,
                 combined: Some(request),
             } => tools_call::combined_catalog(&state.control_root, &detail, &request).await,
+            // M5-M8 land their handlers in step 3c.3b; until then the typed refusal.
+            ControlMethod::ClientRequestPrepare { .. }
+            | ControlMethod::ClientRequestList {}
+            | ControlMethod::ClientRequestSubmit { .. }
+            | ControlMethod::ClientRequestForget { .. } => ControlResponse::Failure {
+                code: "not_yet_served".into(),
+            },
             ControlMethod::ResolveProject { target } => {
                 resolve::response(&state.control_root, target)
             }

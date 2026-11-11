@@ -370,3 +370,45 @@ fn control_method_groups_match_reviewed_fixture() {
         }
     }
 }
+
+const REQUEST_RECOVERY: &str = include_str!("../../../fixtures/split/i1/request_recovery.json");
+
+/// Every frame of the reviewed request-recovery transcripts (contracts §2.4)
+/// decodes as the I1 types and re-encodes to the same bytes.
+#[test]
+fn request_recovery_frames_are_exact_i1_frames() {
+    let fixture: Value = serde_json::from_str(REQUEST_RECOVERY).unwrap();
+    let mut frames = 0;
+    for case in fixture["cases"].as_array().unwrap() {
+        for step in case["transcript"].as_array().unwrap() {
+            let Some(frame) = step.get("frame") else {
+                continue;
+            };
+            let text = serde_json::to_string(frame).unwrap();
+            match step["step"].as_str().unwrap() {
+                "send" => {
+                    let request: ControlRequest = serde_json::from_str(&text)
+                        .unwrap_or_else(|error| panic!("{}: {error}: {text}", case["name"]));
+                    assert_eq!(
+                        serde_json::to_value(&request).unwrap(),
+                        *frame,
+                        "{}",
+                        case["name"]
+                    );
+                }
+                _ => {
+                    let response: ControlResponse = serde_json::from_str(&text)
+                        .unwrap_or_else(|error| panic!("{}: {error}: {text}", case["name"]));
+                    assert_eq!(
+                        serde_json::to_value(&response).unwrap(),
+                        *frame,
+                        "{}",
+                        case["name"]
+                    );
+                }
+            }
+            frames += 1;
+        }
+    }
+    assert!(frames > 40, "{frames}");
+}
