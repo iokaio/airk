@@ -11,8 +11,10 @@ The same-user local transport between `airk` and its clients:
 
 - `endpoint`: owner-only control roots and endpoints (Windows named pipes,
   Unix sockets), peer identity checks before any message is read, bounded
-  message reads and writes. Platform code lives in `endpoint/windows.rs` and
-  `endpoint/unix.rs`, selected by `cfg`.
+  message reads and writes, and `require_owner_private` for a file this user
+  wrote (Windows: owner and ACL; Unix: regular single-link file owned by the
+  effective user without group or other bits; U84). Platform code lives in
+  `endpoint/windows.rs` and `endpoint/unix.rs`, selected by `cfg`.
 - `frame`: the 4-byte big-endian length-prefixed JSON codec shared by the
   control, query and session protocols.
 - `control`: one framed I1 control request per connection with bounded

@@ -78,7 +78,7 @@ STARTS = {
         "primitive: the bounded native command runner (no shell, output and time limits)",
     ("crates/airk-cli/src/native_process.rs", "spawn"):
         "primitive: std spawn without error dialogs; callers build the command",
-    ("crates/airk-cli/src/native_process.rs", "spawn_detached"):
+    ("crates/airk-process/src/detached.rs", "spawn_detached"):
         "primitive: detached Windows service start that inherits no handles",
     ("crates/airk-cli/src/runtime_install.rs", "self_test_observation"):
         "one-shot: installer `runtime self-test` child of a staged image, awaited with a deadline",

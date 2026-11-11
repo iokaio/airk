@@ -2188,19 +2188,7 @@ async fn start_with_observation_clock(
         .stderr(Stdio::null());
     hidden(&mut command);
     #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        // SAFETY: setsid has no pointer arguments and runs before exec in the child.
-        unsafe {
-            command.pre_exec(|| {
-                if libc::setsid() == -1 {
-                    Err(std::io::Error::last_os_error())
-                } else {
-                    Ok(())
-                }
-            });
-        }
-    }
+    airk_process::detached::new_session(&mut command);
     if let Some(deadline) = admission.deadline() {
         ensure!(
             clock.monotonic() < deadline,

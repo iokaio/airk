@@ -15,9 +15,9 @@ mod unix;
 #[cfg(unix)]
 use self::unix as platform;
 pub use platform::require_existing_root;
-pub use platform::{Listener, Stream, connect, current_user, prepare_root};
+pub use platform::{Listener, Stream, connect, current_user, prepare_root, require_owner_private};
 #[cfg(windows)]
-pub use platform::{create_root, process_user, require_job_user, require_owner_private};
+pub use platform::{create_root, process_user, require_job_user};
 
 #[cfg(windows)]
 pub use platform::with_current_user_job_security;

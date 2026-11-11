@@ -24,6 +24,22 @@ pub fn prepare_root(root: &Path) -> Result<()> {
     require_existing_root(root)
 }
 
+/// Owner-private check for a file this user wrote (U84; moved from
+/// `airk-cli` role admission): a regular file with one link, owned by the
+/// effective user, with no group or other permission bits.
+pub fn require_owner_private(path: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(path)?;
+    ensure!(
+        metadata.file_type().is_file()
+            && metadata.nlink() == 1
+            // SAFETY: geteuid takes no pointers and has no failure mode.
+            && metadata.uid() == unsafe { libc::geteuid() }
+            && metadata.mode() & 0o077 == 0,
+        "file is not owner-private"
+    );
+    Ok(())
+}
+
 /// Validate existing owned runtime state without creating missing directories.
 pub fn require_existing_root(root: &Path) -> Result<()> {
     ensure!(

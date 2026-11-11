@@ -123,24 +123,10 @@ pub fn consume_start_request(
     Ok(mode)
 }
 
-#[cfg(windows)]
+/// The platform owner-private file check (`airk-ipc`, U84).
 fn require_owner_private(path: &Path) -> Result<()> {
     crate::local_ipc::require_owner_private(path)
         .context("role_admission_refused: start request is not owner-private")
-}
-
-#[cfg(unix)]
-fn require_owner_private(path: &Path) -> Result<()> {
-    use std::os::unix::fs::MetadataExt;
-    let metadata = std::fs::symlink_metadata(path)?;
-    ensure!(
-        metadata.file_type().is_file()
-            && metadata.nlink() == 1
-            && metadata.uid() == unsafe { libc::geteuid() }
-            && metadata.mode() & 0o077 == 0,
-        "role_admission_refused: start request is not owner-private"
-    );
-    Ok(())
 }
 
 fn now_unix_ms() -> Result<u64> {
