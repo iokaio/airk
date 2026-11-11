@@ -15,7 +15,7 @@ is 1.8.23.
 | 1 | Two products: a standalone service installer and a UI-only extension that discovers the service. |
 | 2 | Adds `airkctl`, a service-only `airk`, browser admin pages on the HTTPS endpoint, an extension that reaches the service only through `airkctl`, a fixed-layout installer that removes pre-split installations, and code and installer maps. Records the user's decisions of 10 November 2026. |
 | 3 | Clarifies common-contract ownership, UI boundaries, recovery and deployment; maps CI selection, artifact reuse, signing and publication; adds force-local Windows installer/VSIX scripts, phase dependencies and acceptance evidence. Records the additional user decisions U18 onward. |
-| 4 | Records the answers to O1–O12 and the remaining planning questions as U23–U71 (11 November): custom program and data/index locations, macOS setup fallback, phase gates, I2/I3 type generation, commit, test-machine, signing, CI, tool, dependency, agent and failure-handling authorizations. |
+| 4 | Records the answers to O1–O12 and the remaining planning questions as U23–U78 (11 November): custom program and data/index locations, macOS setup fallback, phase gates, I2/I3 type generation, commit, test-machine, signing, CI, tool, dependency, agent and failure-handling authorizations. |
 
 **Reading order.** §2 lists what the user has decided and what still needs an
 answer. §4 defines the boundary between extension code and service code. §5–§9
@@ -136,6 +136,13 @@ These came from the user's request and answers. They are not agent choices.
 | U69 | (11 November) Over SSH the Neo's login keychain is locked. The user creates an owner-only password file once at `~/.airk-signing/keychain-pass` (mode 600) on the Neo. Each signing batch unlocks the login keychain with it, reads the `airk-signing-keychain-password` item there into memory to unlock `airk-signing.keychain-db` (as [native signing](../native-signing.md) documents), signs and notarizes with `--keychain-profile airk-notary` and that keychain, and locks both keychains again, including after a failure. The password never enters the repository, logs or receipts. |
 | U70 | (11 November) This machine has no code-signing certificate, and the repository signs locally only with a certificate thumbprint. Local Windows signing therefore installs the pinned Microsoft Trusted Signing client outside the repository and any AIRK root, and adds a local adapter to `scripts/sign-native.py`: `signtool /dlib` with the same account and certificate profile as CI and the Azure CLI credential, verified with the existing publisher policy. The hosted signing path and its guards are unchanged; local receipts stay distinct from hosted provenance. |
 | U71 | (11 November) Simplification D4 is resolved for two untracked harnesses: the receipt runner (`artifacts/one-process/runner.py`) and golden capture (`artifacts/one-process/golden/capture.py`) are copied into committed scripts under `scripts/dev/`, and reviewed, normalized CLI goldens are committed under `fixtures/cli-golden/` with no absolute paths or user names. The `artifacts/` originals stay untouched. |
+| U72 | (11 November) Amends §9.3 "no old binary is executed" for one case: an old macOS SMAppService login agent is unregistered by running only `runtime mac-login --action unregister` from the old installed binary, and only when its code signature and digest match its install receipt. Otherwise the agent is left and reported. No other old binary runs. |
+| U73 | (11 November) An organization-managed pre-split installation (`managed-runtime.json`) is removed like any other pre-split installation when its AIRK ownership receipt proves it (U13, U14); otherwise it is left and reported. |
+| U74 | (11 November) These indirect proofs count as U14 ownership receipts: (1) the old Inno `standalone` folder, `unins000.*`, uninstall registry key and shortcut, proven by the fixed path, the exact AppId key whose `InstallLocation` matches, and the pinned `runtime\airk.exe` digest; (2) the old extension's CLI copies and Windows PATH entry, proven by the extension-uninstall target receipt naming their storage folder; (3) AIRK-named leftovers (publish lock, extension-uninstall receipts) inside a receipt-owned universal-launcher folder; (4) 1.3 per-collection derived data under an old `--data-dir`, proven by the saved 1.3 service definition, removing only AIRK-owned files. Settings folders without a receipt are left and reported. The split Inno installer uses a new AppId. |
+| U75 | (11 November) Recovery that must work while the service is down is done by `airkctl` locally: recording an error, abandoning a stuck lifecycle record, resetting login startup, recovering from an expired HTTPS issuer, reading login status, and adding or removing the AIRK certificate trust (whose OS consent dialog the CLI can show). This extends §6.3; these operations still never open indexes, registries or stores, and each is listed in the I2 contract with its owner-private inputs. |
+| U76 | (11 November) Workbench reference refresh no longer changes index configuration from the editor; Workbench shows a link that opens the refresh in the admin pages (U6). |
+| U77 | (11 November) Selecting an existing index as a VS Code window's search scope issues a window-scoped read grant through that window's `airkctl session`, like the admin session's own grant. It never creates or changes indexes, index sets or agent grants. |
+| U78 | (11 November) The macOS program folder is `~/Library/Application Support/AIRK/program/`, holding `AIRK.app` and its install record, so no installed file shares a folder with pre-split files. Retirement never removes the shared `AIRK` parent. |
 
 ### 2.2 Formerly open decisions
 
@@ -512,7 +519,8 @@ never a reduced view.
 ### 6.3 Uses that are not pipe requests
 
 `airkctl` talks to the service only over the pipe, with five documented
-exceptions. Each is narrow and has a reason.
+exceptions plus the offline recovery operations of U75. Each is narrow and has
+a reason.
 
 | Exception | Reason |
 |---|---|
@@ -862,7 +870,8 @@ install root.
   proves it. This applies inside AIRK's own folders too.
 - **Processes** are stopped by exact image path under a discovered root, on a
   verified handle. A name or a PID alone never authorizes termination.
-- **No old binary is executed.** Old uninstallers are not run.
+- **No old binary is executed.** Old uninstallers are not run. The single
+  exception is the verified macOS login-agent unregister (U72).
 - **Links and redirects are never followed.** Sources are never touched.
 - **Installation continues.** Anything unproven or locked is left, recorded
   with its reason, and shown at the end. The same list appears in
@@ -912,7 +921,7 @@ pre-split root.
 
 | Item | Windows | macOS | Linux |
 |---|---|---|---|
-| Program folder (default; U39 allows another) | `%LOCALAPPDATA%\Programs\AIRK\` | One fixed `AIRK.app` under `~/Library/Application Support/AIRK/`, outside every pre-split root | `~/.local/lib/airk-service/` |
+| Program folder (default; U39 allows another) | `%LOCALAPPDATA%\Programs\AIRK\` | `~/Library/Application Support/AIRK/program/AIRK.app` (U78), outside every pre-split root | `~/.local/lib/airk-service/` |
 | `airkctl` | `bin\airkctl.exe` | `AIRK.app/Contents/MacOS/airkctl` | `bin/airkctl` |
 | `airk` | `service\airk.exe` | `AIRK.app/Contents/MacOS/airk` | `service/airk` |
 | Notices and licenses | `notices\` | Inside the bundle | `notices/` |
