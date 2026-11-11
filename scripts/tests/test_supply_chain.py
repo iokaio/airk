@@ -41,7 +41,8 @@ class SourcePolicyTests(unittest.TestCase):
         result = MODULE.validate_lock_sources()
         self.assertEqual(result["packages"], result["registry_packages"] + result["git_packages"])
         self.assertEqual(result["git_packages"], 2)
-        self.assertEqual(result["first_party_packages"], 8)
+        # The eight airk-* crates plus airkctl (split plan C4a).
+        self.assertEqual(result["first_party_packages"], 9)
         self.assertFalse(result["baseline_is_security_audit"])
 
     def test_changed_git_revision_url_and_registry_checksum_require_review(self):
