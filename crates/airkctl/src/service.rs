@@ -5,11 +5,26 @@ use crate::contract::{ErrorLine, ExitClass};
 use airk_core::service::{ControlMethod, ControlResponse};
 use std::path::Path;
 
+/// The refusal `airk-ipc` raises when a `Health` answer names another
+/// version, protocol or user.
+const IDENTITY_REFUSAL: &str = "incompatible native service identity";
+
 /// Send one control request to the service owning `runtime_dir`.
 pub fn request(
     runtime_dir: &Path,
     method: ControlMethod,
     version: &str,
+) -> Result<ControlResponse, ErrorLine> {
+    request_fenced(runtime_dir, method, version, None)
+}
+
+/// Send one control request that the service answers only while its instance
+/// is `expected_instance` (otherwise `service_instance_changed`).
+pub fn request_fenced(
+    runtime_dir: &Path,
+    method: ControlMethod,
+    version: &str,
+    expected_instance: Option<airk_core::identity::Incarnation>,
 ) -> Result<ControlResponse, ErrorLine> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -27,9 +42,20 @@ pub fn request(
             runtime_dir,
             method,
             version,
-            None,
+            expected_instance,
         ))
         .map_err(|error| {
+            if error
+                .chain()
+                .any(|cause| cause.to_string() == IDENTITY_REFUSAL)
+            {
+                return ErrorLine::new(
+                    ExitClass::IncompatiblePair,
+                    "service_rebind_required",
+                    false,
+                    "The AIRK service is another version, protocol or user than this airkctl.",
+                );
+            }
             let missing = error.chain().any(|cause| {
                 cause.downcast_ref::<std::io::Error>().is_some_and(|io| {
                     matches!(

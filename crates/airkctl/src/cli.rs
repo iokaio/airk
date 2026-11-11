@@ -102,8 +102,30 @@ enum Command {
         #[command(subcommand)]
         action: ToolsCommand,
     },
+    /// The AIRK service: health and shutdown.
+    Service {
+        #[command(subcommand)]
+        action: ServiceCommand,
+    },
     #[command(flatten)]
     Evidence(Box<EvidenceCommand>),
+}
+
+#[derive(Subcommand)]
+#[command(disable_help_subcommand = true)]
+enum ServiceCommand {
+    /// Check that the service for --runtime-dir is running and healthy; exits non-zero otherwise.
+    Health {
+        /// The service's control directory (default: --service-runtime-dir).
+        #[arg(long)]
+        runtime_dir: Option<PathBuf>,
+    },
+    /// Ask the service for --runtime-dir to drain its workers and exit.
+    Shutdown {
+        /// The service's control directory (default: --service-runtime-dir).
+        #[arg(long)]
+        runtime_dir: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -478,9 +500,81 @@ fn evidence(cx: &mut Context, mut selection: Selection, command: EvidenceCommand
     call(cx, &selection, tool.into(), arguments)
 }
 
+/// The compact JSON line `airk service health|shutdown` printed.
+fn print_compact(cx: &mut Context, response: &ControlResponse) -> u8 {
+    match serde_json::to_string(response) {
+        Ok(text) => {
+            let result = writeln!(cx.io.stdout, "{text}");
+            written(cx, result)
+        }
+        Err(_) => ExitClass::Internal.code(),
+    }
+}
+
+/// `service health` and `service shutdown`, as `airk service health|shutdown
+/// --runtime-dir` ran them: `Health` with the pair check (version and
+/// protocol; the executable digest joins with the install record, step
+/// 3b.1c), then for shutdown a `Shutdown` fenced to the observed instance.
+fn service(cx: &mut Context, mut selection: Selection, action: ServiceCommand) -> u8 {
+    let (runtime_dir, shutdown) = match action {
+        ServiceCommand::Health { runtime_dir } => (runtime_dir, false),
+        ServiceCommand::Shutdown { runtime_dir } => (runtime_dir, true),
+    };
+    if runtime_dir.is_some() {
+        selection.control = runtime_dir;
+    }
+    let control = match control(cx, &selection) {
+        Ok(control) => control,
+        Err(code) => return code,
+    };
+    let health = match crate::service::request(&control, ControlMethod::Health, VERSION) {
+        Ok(response @ ControlResponse::Health { .. }) => response,
+        Ok(other) => return fail(cx, &crate::service::refusal(&other)),
+        Err(line) => return fail(cx, &line),
+    };
+    let ControlResponse::Health { observation } = &health else {
+        unreachable!("matched above")
+    };
+    if !shutdown {
+        return print_compact(cx, &health);
+    }
+    let response = match crate::service::request_fenced(
+        &control,
+        ControlMethod::Shutdown,
+        VERSION,
+        Some(observation.instance),
+    ) {
+        Ok(response) => response,
+        Err(mut line) => {
+            // The request may have reached the service before the transport
+            // failed: its outcome is unknown, never retried.
+            if line.class == ExitClass::Internal {
+                line.class = ExitClass::OutcomeUnknown;
+                line.code = "service_request_outcome_unknown".into();
+            }
+            return fail(cx, &line);
+        }
+    };
+    let printed = print_compact(cx, &response);
+    match &response {
+        ControlResponse::Failure { code } => {
+            let mut line = crate::service::refusal(&response);
+            line.message = format!("native request refused: {code}");
+            fail(cx, &line)
+        }
+        ControlResponse::Incompatible { .. } => {
+            let mut line = crate::service::refusal(&response);
+            line.message = "native request protocol is incompatible".into();
+            fail(cx, &line)
+        }
+        _ => printed,
+    }
+}
+
 fn dispatch(cx: &mut Context, command: Command, selection: Selection) -> u8 {
     match command {
         Command::Version => version(cx),
+        Command::Service { action } => service(cx, selection, action),
         Command::Tools {
             action:
                 ToolsCommand::Call {

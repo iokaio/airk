@@ -4436,3 +4436,66 @@ fn trusted_console_pipe_and_stdin_rpc_preserve_closed_projects_and_frame_bounds(
     );
     Ok(())
 }
+
+/// One `airkctl` command line run in process (`airkctl::cli::run`): exit
+/// code, stdout and stderr.
+fn airkctl(arguments: &[&str]) -> (u8, String, String) {
+    let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+    let mut io = airkctl::cli::Io {
+        stdout: &mut stdout,
+        stderr: &mut stderr,
+        full_responses: false,
+    };
+    let line = std::iter::once("airkctl")
+        .chain(arguments.iter().copied())
+        .map(std::ffi::OsString::from)
+        .collect();
+    let code = airkctl::cli::run(line, &mut io);
+    (
+        code,
+        String::from_utf8(stdout).unwrap(),
+        String::from_utf8(stderr).unwrap(),
+    )
+}
+
+/// The Health document without the one field that changes between two reads.
+fn health_identity(mut health: Value) -> Value {
+    let observation = health["observation"]
+        .as_object_mut()
+        .expect("health observation");
+    assert!(observation.remove("uptime_ms").is_some());
+    health
+}
+
+/// `airkctl service health|shutdown` print what `airk service health|shutdown
+/// --runtime-dir` printed (split step 3b.1a).
+#[test]
+fn airkctl_service_health_and_shutdown_print_what_airk_printed() -> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let root = owner.path().join("runtime");
+    let mut children = Children(vec![start(&root)?]);
+    wait_ready(&root)?;
+    let dir = root.to_str().context("runtime path")?;
+    let old = health_identity(control(&root, "health")?);
+    for line in [
+        &["service", "health", "--runtime-dir", dir][..],
+        &["--service-runtime-dir", dir, "service", "health"],
+    ] {
+        let (code, stdout, stderr) = airkctl(line);
+        assert_eq!(code, 0, "{stderr}");
+        assert_eq!(stdout.lines().count(), 1, "one compact line");
+        assert_eq!(health_identity(serde_json::from_str(&stdout)?), old);
+    }
+    let stopping = control(&root, "shutdown")?;
+    assert_eq!(stopping, serde_json::json!({"status": "stopping"}));
+    assert!(wait_exit(&mut children.0[0])?, "service exits cleanly");
+    let (code, stdout, stderr) = airkctl(&["service", "health", "--runtime-dir", dir]);
+    assert_eq!((code, stdout.as_str()), (3, ""), "{stderr}");
+    children.0.push(start(&root)?);
+    wait_ready(&root)?;
+    let (code, stdout, stderr) = airkctl(&["service", "shutdown", "--runtime-dir", dir]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(serde_json::from_str::<Value>(&stdout)?, stopping);
+    assert!(wait_exit(&mut children.0[1])?, "service exits cleanly");
+    Ok(())
+}
