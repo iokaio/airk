@@ -19,7 +19,11 @@ use airk_kernel::service_broker::{Broker, new_instance_id};
 use airk_store::service::{EmbeddingLease, ProjectLease, registry::ServiceRegistry};
 use anyhow::{Context, Result, ensure};
 #[cfg(test)]
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
+// `Child` is named only by the Unix fixture in `tests` and by the
+// local-inference qualification tests (through `super::*`).
+#[cfg(all(test, any(unix, feature = "local-inference")))]
+use std::process::Child;
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
