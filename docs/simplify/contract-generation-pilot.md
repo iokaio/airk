@@ -165,3 +165,29 @@ The pilot then:
    `T::decl()` for ts-rs.
 
 </details>
+
+## Split U47 pilot: I2 generation (11 November 2026)
+
+The user reopened D5 for the split's I2 and I3 contracts only (split plan
+U47). Every other contract stays fixtures-first.
+
+- **Pipeline.** `schemars` 1.2.2 (already in the graph through `rmcp`, so no
+  new third-party identity) derives a JSON Schema for the `airkctl` contract
+  module. `cargo test -p airkctl --lib contract_schema` pins the checked-in
+  `packages/vscode/src/generated/i2.schema.json`; a mismatch fails and writes
+  the observation to a temporary file, and only `AIRK_WRITE_CONTRACT_SCHEMA=1`
+  rewrites it. `scripts/dev/contract_types.py` renders `i2.ts` from that schema.
+  It supports only the constructs the schema uses and fails on anything else.
+  `scripts/check-repo.ps1` runs its `--check`, so drift fails the quick CI job
+  without needing Cargo.
+- **Scope.** Version document, error line, exit classes and session protocol 2
+  frames. I1 values inside frames (`ControlMethod`, `ControlResponse`, the
+  native event cursor) render as `unknown`, because I1 stays fixtures-only.
+  Identities render as strings with a written `^[0-9a-f]{32}$` pattern, since
+  newtype rules are invisible to generators (finding W2 above).
+- **Observations.** Optional fields render as optional `T | null`. Native serde
+  also accepts `null` for them, so this does not make TypeScript more
+  permissive than native (unlike W3). 64-bit integers render as `number` and
+  are exact only up to 2^53 − 1; the I2 fields of that kind (`retry_after_ms`,
+  `deadline_ms`) are bounded far below it. No false enum or union types
+  appeared. Semantic rules stay hand-written and fixture-tested.

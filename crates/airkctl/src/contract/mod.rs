@@ -11,7 +11,11 @@ use airk_core::{
     service::{ControlMethod, ControlResponse},
     service_events::EventCursor,
 };
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
+mod schema;
+pub use schema::document as schema_document;
 
 /// The I2 contract version this build implements. Bumped only with a reviewed
 /// contract change; callers decide compatibility from this and capabilities,
@@ -45,7 +49,7 @@ pub const MAX_BUFFERED_EVENTS: usize = 256;
 pub const MAX_BUFFERED_EVENT_BYTES: usize = 1024 * 1024;
 
 /// Process exit classes. The numeric codes are part of the contract.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ExitClass {
     /// Completed as requested.
@@ -72,7 +76,7 @@ pub enum ExitClass {
 }
 
 /// Whether a class can follow a mutation the service may have applied.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MutationPossible {
     Yes,
@@ -124,7 +128,7 @@ impl ExitClass {
 
 /// The last stderr line of a failed command run with `--output json`. It
 /// extends the `AIRK_ERROR_FORMAT=json` line under its own key.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ErrorLine {
     /// Always 1; marks the line and versions its shape.
@@ -181,7 +185,7 @@ impl ErrorLine {
 
 /// `airkctl version --output json`. Local only: it never starts or contacts
 /// the service. Readers ignore unknown fields (forward-compatible handshake).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct VersionDocument {
     pub schema: String,
     pub product: String,
@@ -198,7 +202,7 @@ pub struct VersionDocument {
     pub installation: Installation,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Installation {
     pub state: InstallationState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -209,7 +213,7 @@ pub struct Installation {
     pub install_id: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum InstallationState {
     /// The pointer and record verified and the pair is complete.
@@ -222,7 +226,7 @@ pub enum InstallationState {
     Unverified,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PairState {
     Exact,
@@ -230,21 +234,22 @@ pub enum PairState {
 }
 
 /// Session protocol 2: one request frame from the editor window.
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SessionRequest {
+    #[schemars(schema_with = "schema::incarnation")]
     pub id: Incarnation,
     pub request: SessionMethod,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ClientIdentity {
     pub name: String,
     pub version: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EventTopic {
     Status,
@@ -255,17 +260,20 @@ pub enum EventTopic {
 /// A subscription cursor, scoped to one service incarnation and one window.
 /// A cursor from another incarnation or window is refused
 /// (`event_cursor_scope_mismatch`).
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SessionCursor {
+    #[schemars(schema_with = "schema::incarnation")]
     pub service_instance: Incarnation,
+    #[schemars(schema_with = "schema::incarnation")]
     pub window_id: Incarnation,
+    #[schemars(schema_with = "schema::native_value")]
     pub native: EventCursor,
 }
 
 // Frames are decoded once and moved; boxing would only reshape the Rust type.
 #[allow(clippy::large_enum_variant)]
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum SessionMethod {
     /// First request. Anything else first is `session_protocol_mismatch`.
@@ -285,10 +293,12 @@ pub enum SessionMethod {
     /// pointer; no control directory is named). Brokerage and token-returning
     /// methods are refused.
     Control {
+        #[schemars(schema_with = "schema::native_value")]
         method: ControlMethod,
     },
     /// Cooperatively cancel an in-flight request.
     Cancel {
+        #[schemars(schema_with = "schema::incarnation")]
         target: Incarnation,
     },
     Subscribe {
@@ -300,15 +310,16 @@ pub enum SessionMethod {
 }
 
 /// One reply frame. Events travel in [`SessionEventFrame`] (disjoint keys).
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SessionResponse {
+    #[schemars(schema_with = "schema::incarnation")]
     pub id: Incarnation,
     pub outcome: SessionOutcome,
 }
 
 #[allow(clippy::large_enum_variant)]
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SessionOutcome {
     Hello {
@@ -318,11 +329,14 @@ pub enum SessionOutcome {
         capabilities: Vec<String>,
         executable_sha256: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(schema_with = "schema::optional_incarnation")]
         service_instance: Option<Incarnation>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(schema_with = "schema::optional_incarnation")]
         window_id: Option<Incarnation>,
     },
     Control {
+        #[schemars(schema_with = "schema::native_value")]
         response: ControlResponse,
     },
     /// The command ran; the three channels a one-shot would have produced.
@@ -346,7 +360,7 @@ pub enum SessionOutcome {
     Cancelled,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionFailure {
     SessionInvalidRequest,
@@ -371,13 +385,13 @@ impl SessionFailure {
 }
 
 /// An unsolicited event frame.
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SessionEventFrame {
     pub event: SessionEvent,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SessionEvent {
     Status {
@@ -400,7 +414,7 @@ pub enum SessionEvent {
     Closing,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ResyncReason {
     Overflow,

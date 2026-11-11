@@ -13,6 +13,9 @@ publish.workspace = true
 # The edge gate (scripts/dev/boundary-exceptions.json) enforces the list.
 [dependencies]
 airk-core.workspace = true
+# Already in the dependency graph through rmcp at this version and feature set
+# (split plan U47 pilot); no new third-party identity.
+schemars = "1.2.2"
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

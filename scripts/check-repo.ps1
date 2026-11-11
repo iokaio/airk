@@ -38,6 +38,9 @@ try {
     # One resident airk per user/machine: no production self-spawn outside the reviewed roster.
     & python (Join-Path $PSScriptRoot 'check-self-spawn.py')
     if ($LASTEXITCODE -ne 0) { throw 'Production Rust starts its own executable outside the reviewed roster' }
+    # Generated contract types (split plan U47) must match their checked-in schema.
+    & python (Join-Path $PSScriptRoot 'dev/contract_types.py') i2 --check
+    if ($LASTEXITCODE -ne 0) { throw 'Generated I2 TypeScript differs from its schema' }
     git check-ignore temp/README.md | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'temp/ is not ignored' }
     Write-Output "Repository checks passed for $($airkFiles.Count) public files."

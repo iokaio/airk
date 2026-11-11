@@ -221,3 +221,29 @@ fn version_documents_round_trip_and_tolerate_unknown_fields() {
     );
     assert_eq!(values["session_protocol"], SESSION_PROTOCOL);
 }
+
+/// The checked-in schema is the reviewed output; a mismatch fails and writes
+/// the observation beside the temporary directory (never rewrites the file
+/// unless `AIRK_WRITE_CONTRACT_SCHEMA=1` is set explicitly).
+#[test]
+fn contract_schema_matches_the_checked_in_copy() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../packages/vscode/src/generated/i2.schema.json");
+    let observed = serde_json::to_string_pretty(&schema_document()).unwrap() + "\n";
+    if std::env::var_os("AIRK_WRITE_CONTRACT_SCHEMA").is_some_and(|value| value == "1") {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, &observed).unwrap();
+    }
+    let expected = std::fs::read_to_string(&path)
+        .unwrap_or_default()
+        .replace("\r\n", "\n");
+    if expected != observed {
+        let note = std::env::temp_dir().join("airkctl-i2.schema.observed.json");
+        std::fs::write(&note, &observed).unwrap();
+        panic!(
+            "I2 schema differs from {}; observation written to {}",
+            path.display(),
+            note.display()
+        );
+    }
+}

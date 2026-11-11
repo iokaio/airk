@@ -1,0 +1,826 @@
+{
+  "$defs": {
+    "ClientIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "type": "object"
+    },
+    "ErrorLine": {
+      "additionalProperties": false,
+      "description": "The last stderr line of a failed command run with `--output json`. It\nextends the `AIRK_ERROR_FORMAT=json` line under its own key.",
+      "properties": {
+        "airkctl_error": {
+          "description": "Always 1; marks the line and versions its shape.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "class": {
+          "$ref": "#/$defs/ExitClass"
+        },
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "native": {
+          "description": "The complete native failure or response, never reduced."
+        },
+        "retry_after_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "airkctl_error",
+        "class",
+        "code",
+        "retryable",
+        "message"
+      ],
+      "type": "object"
+    },
+    "EventTopic": {
+      "enum": [
+        "status",
+        "jobs",
+        "assistance"
+      ],
+      "type": "string"
+    },
+    "ExitClass": {
+      "description": "Process exit classes. The numeric codes are part of the contract.",
+      "oneOf": [
+        {
+          "const": "success",
+          "description": "Completed as requested.",
+          "type": "string"
+        },
+        {
+          "const": "refused",
+          "description": "The service answered a typed refusal, or a native read failed with its\ncomplete result on stdout.",
+          "type": "string"
+        },
+        {
+          "const": "usage",
+          "description": "Argument error.",
+          "type": "string"
+        },
+        {
+          "const": "service_missing",
+          "description": "Not installed, not running and not startable, or a saved explicit Stop.",
+          "type": "string"
+        },
+        {
+          "const": "incompatible_pair",
+          "description": "`airk`/`airkctl` version, protocol or record digest mismatch, or an\nincomplete installation; detected before any mutation.",
+          "type": "string"
+        },
+        {
+          "const": "unsupported_capability",
+          "description": "`not_yet_served`, or a required contract or capability is absent.",
+          "type": "string"
+        },
+        {
+          "const": "outcome_unknown",
+          "description": "Deadline or disconnect after a mutation was sent; recover by receipt.",
+          "type": "string"
+        },
+        {
+          "const": "installation_unverified",
+          "description": "Install pointer or record ownership, link or integrity check failed.",
+          "type": "string"
+        },
+        {
+          "const": "internal",
+          "description": "A bug or I/O failure inside `airkctl`; mutating callers treat it as\n[`ExitClass::OutcomeUnknown`].",
+          "type": "string"
+        }
+      ]
+    },
+    "Installation": {
+      "properties": {
+        "airk_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "install_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pair": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PairState"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/InstallationState"
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "type": "object"
+    },
+    "InstallationState": {
+      "oneOf": [
+        {
+          "const": "complete",
+          "description": "The pointer and record verified and the pair is complete.",
+          "type": "string"
+        },
+        {
+          "const": "incomplete",
+          "description": "The record describes a partially placed or partially replaced pair.",
+          "type": "string"
+        },
+        {
+          "const": "not_found",
+          "description": "No install pointer exists for this user.",
+          "type": "string"
+        },
+        {
+          "const": "unverified",
+          "description": "The pointer or record failed an ownership, link, size or integrity check.",
+          "type": "string"
+        }
+      ]
+    },
+    "PairState": {
+      "enum": [
+        "exact",
+        "mismatch"
+      ],
+      "type": "string"
+    },
+    "ResyncReason": {
+      "enum": [
+        "overflow",
+        "native_gap",
+        "service_restarted"
+      ],
+      "type": "string"
+    },
+    "SessionCursor": {
+      "additionalProperties": false,
+      "description": "A subscription cursor, scoped to one service incarnation and one window.\nA cursor from another incarnation or window is refused\n(`event_cursor_scope_mismatch`).",
+      "properties": {
+        "native": {
+          "description": "An I1 control-protocol value, carried unchanged; see fixtures/wire."
+        },
+        "service_instance": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        },
+        "window_id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "service_instance",
+        "window_id",
+        "native"
+      ],
+      "type": "object"
+    },
+    "SessionEvent": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "cursor": {
+              "$ref": "#/$defs/SessionCursor"
+            },
+            "kind": {
+              "const": "status",
+              "type": "string"
+            },
+            "status": true
+          },
+          "required": [
+            "kind",
+            "cursor",
+            "status"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "cursor": {
+              "$ref": "#/$defs/SessionCursor"
+            },
+            "job": true,
+            "kind": {
+              "const": "job",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "cursor",
+            "job"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "cursor": {
+              "$ref": "#/$defs/SessionCursor"
+            },
+            "draft": true,
+            "kind": {
+              "const": "assistance_draft",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "cursor",
+            "draft"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The buffer overflowed, the native stream had a gap, or the service\nrestarted; the client re-reads current state.",
+          "properties": {
+            "kind": {
+              "const": "resync",
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/$defs/ResyncReason"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "closing",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SessionEventFrame": {
+      "additionalProperties": false,
+      "description": "An unsolicited event frame.",
+      "properties": {
+        "event": {
+          "$ref": "#/$defs/SessionEvent"
+        }
+      },
+      "required": [
+        "event"
+      ],
+      "type": "object"
+    },
+    "SessionFailure": {
+      "oneOf": [
+        {
+          "enum": [
+            "session_invalid_request",
+            "session_protocol_mismatch",
+            "session_busy",
+            "session_deadline_exceeded",
+            "session_response_oversize",
+            "session_closing"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "session_command_refused",
+          "description": "Not allowlisted in a session, including token-returning one-shots.",
+          "type": "string"
+        },
+        {
+          "const": "event_cursor_scope_mismatch",
+          "description": "A cursor from another service incarnation or window.",
+          "type": "string"
+        },
+        {
+          "const": "service_restarted",
+          "description": "The service restarted; in-flight reads fail and may be retried.",
+          "type": "string"
+        }
+      ]
+    },
+    "SessionMethod": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "First request. Anything else first is `session_protocol_mismatch`.",
+          "properties": {
+            "hello": {
+              "additionalProperties": false,
+              "properties": {
+                "client": {
+                  "$ref": "#/$defs/ClientIdentity"
+                },
+                "i2_contracts": {
+                  "items": {
+                    "format": "uint32",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "type": "array"
+                },
+                "protocol": {
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "protocol",
+                "client",
+                "i2_contracts"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "hello"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Run one allowlisted command. `argv` excludes the program name.",
+          "properties": {
+            "invoke": {
+              "additionalProperties": false,
+              "properties": {
+                "argv": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "deadline_ms": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "stdin": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "argv",
+                "deadline_ms"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "invoke"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Metadata relay to the installed service (found through the install\npointer; no control directory is named). Brokerage and token-returning\nmethods are refused.",
+          "properties": {
+            "control": {
+              "additionalProperties": false,
+              "properties": {
+                "method": {
+                  "description": "An I1 control-protocol value, carried unchanged; see fixtures/wire."
+                }
+              },
+              "required": [
+                "method"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "control"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Cooperatively cancel an in-flight request.",
+          "properties": {
+            "cancel": {
+              "additionalProperties": false,
+              "properties": {
+                "target": {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "target"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "cancel"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "subscribe": {
+              "additionalProperties": false,
+              "properties": {
+                "cursor": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/SessionCursor"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "topics": {
+                  "items": {
+                    "$ref": "#/$defs/EventTopic"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "topics"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "subscribe"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "unsubscribe": {
+              "additionalProperties": false,
+              "type": "object"
+            }
+          },
+          "required": [
+            "unsubscribe"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SessionOutcome": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "capabilities": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "executable_sha256": {
+              "type": "string"
+            },
+            "i2_contract": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "protocol": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "service_instance": {
+              "anyOf": [
+                {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status": {
+              "const": "hello",
+              "type": "string"
+            },
+            "version": {
+              "type": "string"
+            },
+            "window_id": {
+              "anyOf": [
+                {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "status",
+            "protocol",
+            "version",
+            "i2_contract",
+            "capabilities",
+            "executable_sha256"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "response": {
+              "description": "An I1 control-protocol value, carried unchanged; see fixtures/wire."
+            },
+            "status": {
+              "const": "control",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "response"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The command ran; the three channels a one-shot would have produced.",
+          "properties": {
+            "class": {
+              "$ref": "#/$defs/ExitClass"
+            },
+            "error": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ErrorLine"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "exit_code": {
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "status": {
+              "const": "invoked",
+              "type": "string"
+            },
+            "stderr": {
+              "type": "string"
+            },
+            "stdout": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "exit_code",
+            "class",
+            "stdout",
+            "stderr"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "cursor": {
+              "$ref": "#/$defs/SessionCursor"
+            },
+            "status": {
+              "const": "subscribed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "cursor"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "status": {
+              "const": "unsubscribed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Session-level refusal; the command did not run or its outcome is unknown.",
+          "properties": {
+            "code": {
+              "$ref": "#/$defs/SessionFailure"
+            },
+            "retryable": {
+              "type": "boolean"
+            },
+            "status": {
+              "const": "failed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "code",
+            "retryable"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "status": {
+              "const": "cancelled",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SessionRequest": {
+      "additionalProperties": false,
+      "description": "Session protocol 2: one request frame from the editor window.",
+      "properties": {
+        "id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        },
+        "request": {
+          "$ref": "#/$defs/SessionMethod"
+        }
+      },
+      "required": [
+        "id",
+        "request"
+      ],
+      "type": "object"
+    },
+    "SessionResponse": {
+      "additionalProperties": false,
+      "description": "One reply frame. Events travel in [`SessionEventFrame`] (disjoint keys).",
+      "properties": {
+        "id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/SessionOutcome"
+        }
+      },
+      "required": [
+        "id",
+        "outcome"
+      ],
+      "type": "object"
+    },
+    "VersionDocument": {
+      "description": "`airkctl version --output json`. Local only: it never starts or contacts\nthe service. Readers ignore unknown fields (forward-compatible handshake).",
+      "properties": {
+        "capabilities": {
+          "description": "Served operations of this exact pair; an unserved one is absent.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "channel": {
+          "description": "The installed channel; `None` until an installation record is found.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "executable_sha256": {
+          "description": "SHA-256 of this `airkctl` executable, when it could be read.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "i1_protocol": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "i2_contract": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "i2_contracts_supported": {
+          "items": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "installation": {
+          "$ref": "#/$defs/Installation"
+        },
+        "product": {
+          "type": "string"
+        },
+        "schema": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "product",
+        "version",
+        "i2_contract",
+        "i2_contracts_supported",
+        "i1_protocol",
+        "capabilities",
+        "installation"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "i2_contract": 1,
+  "roots": [
+    "VersionDocument",
+    "ErrorLine",
+    "ExitClass",
+    "SessionRequest",
+    "SessionResponse",
+    "SessionEventFrame"
+  ],
+  "title": "airkctl I2 contract"
+}
